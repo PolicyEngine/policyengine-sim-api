@@ -1419,6 +1419,24 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-exporter-otlp-proto-grpc"
+version = "1.30.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "deprecated" },
+    { name = "googleapis-common-protos" },
+    { name = "grpcio" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-common" },
+    { name = "opentelemetry-proto" },
+    { name = "opentelemetry-sdk" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/86/3e/c7246df92c25e6ce95c349ad21597b4471b01ec9471e95d5261f1629fe92/opentelemetry_exporter_otlp_proto_grpc-1.30.0.tar.gz", hash = "sha256:d0f10f0b9b9a383b7d04a144d01cb280e70362cccc613987e234183fd1f01177", size = 26256, upload-time = "2025-02-04T18:17:16.956Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/35/d9f63fd84c2ed8dbd407bcbb933db4ed6e1b08e7fbdaca080b9ac309b927/opentelemetry_exporter_otlp_proto_grpc-1.30.0-py3-none-any.whl", hash = "sha256:2906bcae3d80acc54fd1ffcb9e44d324e8631058b502ebe4643ca71d1ff30830", size = 18550, upload-time = "2025-02-04T18:16:52.532Z" },
+]
+
+[[package]]
 name = "opentelemetry-exporter-otlp-proto-http"
 version = "1.30.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1481,6 +1499,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2d/dc/8db4422b5084177d1ef6c7855c69bf2e9e689f595a4a9b59e60588e0d427/opentelemetry_instrumentation_fastapi-0.51b0.tar.gz", hash = "sha256:1624e70f2f4d12ceb792d8a0c331244cd6723190ccee01336273b4559bc13abc", size = 19249, upload-time = "2025-02-04T18:21:28.379Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/55/1c/ec2d816b78edf2404d7b3df6d09eefb690b70bfd191b7da06f76634f1bdc/opentelemetry_instrumentation_fastapi-0.51b0-py3-none-any.whl", hash = "sha256:10513bbc11a1188adb9c1d2c520695f7a8f2b5f4de14e8162098035901cd6493", size = 12117, upload-time = "2025-02-04T18:20:15.267Z" },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-httpx"
+version = "0.51b0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-semantic-conventions" },
+    { name = "opentelemetry-util-http" },
+    { name = "wrapt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b7/d5/4a3990c461ae7e55212115e0f8f3aa412b5ce6493579e85c292245ac69ea/opentelemetry_instrumentation_httpx-0.51b0.tar.gz", hash = "sha256:061d426a04bf5215a859fea46662e5074f920e5cbde7e6ad6825a0a1b595802c", size = 17700, upload-time = "2025-02-04T18:21:31.685Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c3/ba/23d4ab6402408c01f1c3f32e0c04ea6dae575bf19bcb9a0049c9e768c983/opentelemetry_instrumentation_httpx-0.51b0-py3-none-any.whl", hash = "sha256:2e3fdf755ba6ead6ab43031497c3d55d4c796d0368eccc0ce48d304b7ec6486a", size = 14109, upload-time = "2025-02-04T18:20:19.947Z" },
 ]
 
 [[package]]
@@ -1761,6 +1795,28 @@ requires-dist = [
 provides-extras = ["test", "build"]
 
 [[package]]
+name = "policyengine-observability"
+version = "1.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-instrumentation-fastapi" },
+    { name = "opentelemetry-instrumentation-httpx" },
+    { name = "opentelemetry-sdk" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fc/2a/5e0e4c0f30b20a59ffff14364e15374f9eee494f658f41559aba97c152a2/policyengine_observability-1.3.0.tar.gz", hash = "sha256:4c2f3bb2ee59886aef6c90f1edb9c0b957ace75b1518616c0e61905b8be431e0", size = 107961, upload-time = "2026-07-01T21:10:53.084Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a3/a2/80e4bc1c4923e8f4c04483bfd22df2500b0d132c4ce1a6dec6749c94d947/policyengine_observability-1.3.0-py3-none-any.whl", hash = "sha256:7a9444e2cb8ddd7f6d54d601bd1e0a7651bd44783b78627b293a27e741f91930", size = 31087, upload-time = "2026-07-01T21:10:51.793Z" },
+]
+
+[package.optional-dependencies]
+fastapi = [
+    { name = "fastapi" },
+]
+
+[[package]]
 name = "policyengine-simulation-api-project"
 version = "0.1.0"
 source = { editable = "." }
@@ -1772,6 +1828,7 @@ dependencies = [
     { name = "policyengine" },
     { name = "policyengine-core" },
     { name = "policyengine-fastapi" },
+    { name = "policyengine-observability", extra = ["fastapi"] },
     { name = "policyengine-uk" },
     { name = "policyengine-us" },
     { name = "pydantic-settings" },
@@ -1801,6 +1858,7 @@ requires-dist = [
     { name = "policyengine", specifier = "==4.18.9" },
     { name = "policyengine-core", specifier = "==3.28.0" },
     { name = "policyengine-fastapi", editable = "../../libs/policyengine-fastapi" },
+    { name = "policyengine-observability", extras = ["fastapi"], specifier = ">=1.3.0,<2" },
     { name = "policyengine-uk", specifier = "==2.89.2" },
     { name = "policyengine-us", specifier = "==1.752.2" },
     { name = "pydantic-settings", specifier = ">=2.7.1,<3.0.0" },

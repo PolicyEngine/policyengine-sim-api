@@ -10,9 +10,12 @@ and spawns jobs on those apps.
 
 import modal
 
+from src.modal.logfire_legacy import configure_logfire
+
 # Stable app name - this should rarely change
 app = modal.App("policyengine-simulation-gateway")
 gateway_auth_secret = modal.Secret.from_name("policyengine-gateway-auth")
+logfire_secret = modal.Secret.from_name("policyengine-logfire")
 
 # Lightweight image for gateway - no heavy dependencies
 gateway_image = (
@@ -25,6 +28,8 @@ gateway_image = (
         # JWTDecoder lives in the policyengine-fastapi lib; it only needs
         # the auth module at runtime here.
         "cryptography>=41.0.0",
+        "logfire>=3.0.0",
+        "policyengine-observability[fastapi]>=1.3.0,<2",
     )
     .add_local_python_source(
         "src.modal",
@@ -35,7 +40,7 @@ gateway_image = (
 )
 
 
-@app.function(image=gateway_image, secrets=[gateway_auth_secret])
+@app.function(image=gateway_image, secrets=[gateway_auth_secret, logfire_secret])
 @modal.asgi_app()
 def web_app():
     """
@@ -49,11 +54,29 @@ def web_app():
     """
     from fastapi import FastAPI
 
+    from policyengine_api_simulation.observability import (
+        configure_process_observability,
+        init_simulation_observability,
+    )
     from src.modal.gateway.auth import (
         enforce_auth_configured_guard,
         enforce_production_auth_guard,
     )
     from src.modal.gateway.endpoints import router
+
+    api = FastAPI(
+        title="PolicyEngine Simulation Gateway",
+        description="Submit and poll simulation jobs. Routes to versioned simulation apps.",
+        version="1.0.0",
+    )
+    configure_process_observability(
+        platform="modal",
+        service_role="modal_gateway",
+        modal_app_name="policyengine-simulation-gateway",
+        modal_function_name="web_app",
+    )
+    init_simulation_observability(api, service_role="modal_gateway")
+    configure_logfire("policyengine-simulation-gateway")
 
     # Startup guard: crash the container if GATEWAY_AUTH_DISABLED is set in
     # a production-equivalent Modal environment, or set without the
@@ -63,10 +86,5 @@ def web_app():
     enforce_production_auth_guard()
     enforce_auth_configured_guard()
 
-    api = FastAPI(
-        title="PolicyEngine Simulation Gateway",
-        description="Submit and poll simulation jobs. Routes to versioned simulation apps.",
-        version="1.0.0",
-    )
     api.include_router(router)
     return api

@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 import modal
+from policyengine_observability import segment, set_attribute
 
 from src.modal.budget_window_context import (
     BudgetWindowBatchContext,
@@ -30,6 +31,7 @@ from src.modal.budget_window_state import (
     put_batch_job_state,
 )
 from src.modal.gateway.errors import log_and_redact_exception
+from policyengine_api_simulation.observability import SegmentName
 
 # Polling tuning. The runner busy-loops across child FunctionCall.get(timeout=0)
 # probes; when no child resolved we sleep before the next probe to stop the
@@ -49,11 +51,13 @@ POLL_INTERVAL_SECONDS = POLL_INTERVAL_INITIAL_SECONDS
 
 
 def serialize_batch_status(state) -> dict[str, Any]:
-    return build_batch_status_response(state).model_dump(mode="json")
+    with segment(SegmentName.BUDGET_WINDOW_STATUS_SERIALIZATION):
+        return build_batch_status_response(state).model_dump(mode="json")
 
 
 def load_or_create_batch_state(context: BudgetWindowBatchContext):
-    state = get_batch_job_seed(context.batch_job_id)
+    with segment(SegmentName.BUDGET_WINDOW_STATE_LOAD):
+        state = get_batch_job_seed(context.batch_job_id)
     if state is None:
         state = create_initial_batch_state(
             batch_job_id=context.batch_job_id,
@@ -62,7 +66,8 @@ def load_or_create_batch_state(context: BudgetWindowBatchContext):
             resolved_app_name=context.resolved_app_name,
             bundle=context.bundle,
         )
-        put_batch_job_seed(state)
+        with segment(SegmentName.BUDGET_WINDOW_STATE_WRITE):
+            put_batch_job_seed(state)
     return state
 
 
@@ -85,16 +90,21 @@ class BudgetWindowBatchRunner:
         self.poll_interval_backoff_factor = poll_interval_backoff_factor
         # Kept for tests that still read this attribute.
         self.poll_interval_seconds = poll_interval_seconds
+        set_attribute("batch_job_id", context.batch_job_id)
+        set_attribute("resolved_app_name", context.resolved_app_name)
+        set_attribute("resolved_version", context.resolved_version)
         self.state = load_or_create_batch_state(context)
-        self.child_func = self.modal.Function.from_name(
-            context.resolved_app_name,
-            "run_simulation",
-        )
+        with segment(SegmentName.MODAL_FUNCTION_LOOKUP):
+            self.child_func = self.modal.Function.from_name(
+                context.resolved_app_name,
+                "run_simulation",
+            )
         self.child_handles: dict[str, ChildSimulationHandle] = {}
 
     def run(self) -> dict[str, Any]:
         mark_batch_running(self.state)
-        put_batch_job_state(self.state)
+        with segment(SegmentName.BUDGET_WINDOW_STATE_WRITE):
+            put_batch_job_state(self.state)
 
         # Exponential backoff: reset on any progress, double on empty polls.
         current_sleep = self.poll_interval_initial_seconds
@@ -105,7 +115,11 @@ class BudgetWindowBatchRunner:
             if self.state.status == "failed":
                 return serialize_batch_status(self.state)
             if self.state.running_years and not progress_made:
-                time.sleep(current_sleep)
+                with segment(
+                    SegmentName.BUDGET_WINDOW_BACKOFF_SLEEP,
+                    sleep_seconds=current_sleep,
+                ):
+                    time.sleep(current_sleep)
                 current_sleep = min(
                     current_sleep * self.poll_interval_backoff_factor,
                     self.poll_interval_max_seconds,
@@ -124,11 +138,19 @@ class BudgetWindowBatchRunner:
             and self.state.queued_years
         ):
             simulation_year = self.state.queued_years[0]
-            child_request = build_child_simulation_request(
-                self.context,
+            with segment(
+                SegmentName.BUDGET_WINDOW_CHILD_REQUEST_BUILD,
                 simulation_year=simulation_year,
-            )
-            call = self.child_func.spawn(child_request.payload)
+            ):
+                child_request = build_child_simulation_request(
+                    self.context,
+                    simulation_year=simulation_year,
+                )
+            with segment(
+                SegmentName.BUDGET_WINDOW_CHILD_SPAWN,
+                simulation_year=simulation_year,
+            ):
+                call = self.child_func.spawn(child_request.payload)
             self.child_handles[simulation_year] = ChildSimulationHandle(
                 simulation_year=simulation_year,
                 job_id=call.object_id,
@@ -139,7 +161,8 @@ class BudgetWindowBatchRunner:
                 year=simulation_year,
                 child_job_id=call.object_id,
             )
-            put_batch_job_state(self.state)
+            with segment(SegmentName.BUDGET_WINDOW_STATE_WRITE):
+                put_batch_job_state(self.state)
 
     def poll_running_children_once(self) -> bool:
         progress_made = False
@@ -148,7 +171,11 @@ class BudgetWindowBatchRunner:
             handle = self.resolve_child_handle(simulation_year)
 
             try:
-                child_result = handle.call.get(timeout=0)
+                with segment(
+                    SegmentName.BUDGET_WINDOW_CHILD_POLL,
+                    simulation_year=simulation_year,
+                ):
+                    child_result = handle.call.get(timeout=0)
             except TimeoutError:
                 continue
             except Exception as exc:
@@ -167,10 +194,14 @@ class BudgetWindowBatchRunner:
                 return False
 
             try:
-                annual_impact = extract_annual_impact(
+                with segment(
+                    SegmentName.BUDGET_WINDOW_RESULT_PARSE,
                     simulation_year=simulation_year,
-                    child_result=child_result,
-                )
+                ):
+                    annual_impact = extract_annual_impact(
+                        simulation_year=simulation_year,
+                        child_result=child_result,
+                    )
             except Exception as exc:
                 redacted = log_and_redact_exception(
                     exc,
@@ -191,7 +222,8 @@ class BudgetWindowBatchRunner:
                 year=simulation_year,
                 annual_impact=annual_impact,
             )
-            put_batch_job_state(self.state)
+            with segment(SegmentName.BUDGET_WINDOW_STATE_WRITE):
+                put_batch_job_state(self.state)
             progress_made = True
 
         return progress_made
@@ -202,7 +234,11 @@ class BudgetWindowBatchRunner:
             return handle
 
         job_id = self.state.child_jobs[simulation_year].job_id
-        call = self.modal.FunctionCall.from_id(job_id)
+        with segment(
+            SegmentName.BUDGET_WINDOW_CHILD_POLL,
+            simulation_year=simulation_year,
+        ):
+            call = self.modal.FunctionCall.from_id(job_id)
         resolved_handle = ChildSimulationHandle(
             simulation_year=simulation_year,
             job_id=job_id,
@@ -219,19 +255,22 @@ class BudgetWindowBatchRunner:
     ) -> None:
         mark_child_failed(self.state, year=simulation_year, error=error)
         mark_batch_failed(self.state, error=error)
-        put_batch_job_state(self.state)
+        with segment(SegmentName.BUDGET_WINDOW_STATE_WRITE):
+            put_batch_job_state(self.state)
 
     def complete_batch(self) -> dict[str, Any]:
-        annual_impacts = [
-            self.state.partial_annual_impacts[simulation_year]
-            for simulation_year in self.state.years
-            if simulation_year in self.state.partial_annual_impacts
-        ]
-        result = build_budget_window_result(
-            start_year=self.state.start_year,
-            window_size=self.state.window_size,
-            annual_impacts=annual_impacts,
-        )
+        with segment(SegmentName.BUDGET_WINDOW_AGGREGATION):
+            annual_impacts = [
+                self.state.partial_annual_impacts[simulation_year]
+                for simulation_year in self.state.years
+                if simulation_year in self.state.partial_annual_impacts
+            ]
+            result = build_budget_window_result(
+                start_year=self.state.start_year,
+                window_size=self.state.window_size,
+                annual_impacts=annual_impacts,
+            )
         mark_batch_complete(self.state, result=result)
-        put_batch_job_state(self.state)
+        with segment(SegmentName.BUDGET_WINDOW_STATE_WRITE):
+            put_batch_job_state(self.state)
         return serialize_batch_status(self.state)

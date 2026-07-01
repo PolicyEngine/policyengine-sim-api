@@ -34,7 +34,9 @@ import os
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from policyengine_observability import record_event
 from policyengine_fastapi.auth import JWTDecoder
+from src.modal.logfire_legacy import legacy_logfire_attributes
 
 logger = logging.getLogger(__name__)
 
@@ -142,9 +144,9 @@ def enforce_production_auth_guard() -> None:
        the bypass impossible to set via one stray env var — an operator
        must actively opt in.
 
-    Even when the guard passes, emit a ``CRITICAL`` log (and, if available,
-    a ``logfire.error``) so any audit of the service's logs surfaces the
-    bypass immediately.
+    Even when the guard passes, emit a ``CRITICAL`` log, a structured
+    observability event, and a legacy Logfire event so any audit of the
+    service's logs surfaces the bypass immediately.
     """
     if not _auth_disabled():
         return
@@ -175,13 +177,27 @@ def enforce_production_auth_guard() -> None:
     )
     logger.critical(banner)
     try:
-        import logfire  # Local import: logfire is optional in tests.
-
-        logfire.error(
+        record_event(
             "gateway_auth_disabled_bypass_active",
             modal_environment=modal_env,
             ack_value_present=True,
+            **legacy_logfire_attributes(),
         )
+    except Exception:  # pragma: no cover - observability must never block startup
+        pass
+    try:
+        import logfire
+
+        instance = getattr(logfire, "DEFAULT_LOGFIRE_INSTANCE", None)
+        if instance is not None and bool(
+            getattr(instance.config, "send_to_logfire", False)
+        ):
+            logfire.error(
+                "gateway_auth_disabled_bypass_active",
+                modal_environment=modal_env,
+                ack_value_present=True,
+                **legacy_logfire_attributes(),
+            )
     except Exception:  # pragma: no cover - logfire optional / misconfigured
         pass
 

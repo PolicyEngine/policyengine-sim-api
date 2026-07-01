@@ -745,17 +745,32 @@ class TestSubmitSimulationEndpoint:
         assert response.json()["run_id"] == "run-123"
 
     def test__given_unknown_job_id__then_polling_returns_404(
-        self, mock_modal, client: TestClient
+        self, mock_modal, client: TestClient, monkeypatch
     ):
         """
         Given a job id that the gateway never issued
         When polling job status
         Then the gateway returns 404 before asking Modal for a call result.
         """
+        from src.modal.gateway import endpoints as endpoints_module
+
+        recorded_errors = []
+        monkeypatch.setattr(
+            endpoints_module,
+            "record_error",
+            lambda exc, **kwargs: recorded_errors.append((exc, kwargs)),
+        )
+
         response = client.get("/jobs/unknown-job-id")
 
         assert response.status_code == 404
         assert response.json()["detail"] == "Job not found: unknown-job-id"
+        assert str(recorded_errors[0][0]) == "Job not found: unknown-job-id"
+        assert recorded_errors[0][1] == {
+            "handled": True,
+            "status_code": 404,
+            "include_stack": False,
+        }
 
     def test__given_lazy_modal_call_without_metadata__then_polling_returns_404(
         self, mock_modal, client: TestClient
@@ -903,6 +918,29 @@ class TestVersionEndpoints:
         assert response.status_code == 200
         assert response.json()["latest"] == "4.10.0"
 
+    def test__given_unknown_version_kind__then_records_handled_404(
+        self, mock_modal, client: TestClient, monkeypatch
+    ):
+        from src.modal.gateway import endpoints as endpoints_module
+
+        recorded_errors = []
+        monkeypatch.setattr(
+            endpoints_module,
+            "record_error",
+            lambda exc, **kwargs: recorded_errors.append((exc, kwargs)),
+        )
+
+        response = client.get("/versions/fr")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Unknown version kind: fr"
+        assert str(recorded_errors[0][0]) == "Unknown version kind: fr"
+        assert recorded_errors[0][1] == {
+            "handled": True,
+            "status_code": 404,
+            "include_stack": False,
+        }
+
     def test__given_no_active_state__then_versions_fall_back_to_old_dicts(
         self, mock_modal, client: TestClient
     ):
@@ -976,6 +1014,33 @@ class TestBudgetWindowBatchEndpoints:
             "version": "4.10.0",
             "resolved_app_name": "policyengine-simulation-py4-10-0",
             "policyengine_bundle": expected_bundle("us", "1.500.0"),
+        }
+
+    def test__given_unknown_budget_window_job__then_records_handled_404(
+        self, mock_modal, client: TestClient, monkeypatch
+    ):
+        from src.modal.gateway import endpoints as endpoints_module
+
+        recorded_errors = []
+        monkeypatch.setattr(
+            endpoints_module,
+            "record_error",
+            lambda exc, **kwargs: recorded_errors.append((exc, kwargs)),
+        )
+
+        response = client.get("/budget-window-jobs/missing-batch")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == (
+            "Budget-window job not found: missing-batch"
+        )
+        assert str(recorded_errors[0][0]) == (
+            "Budget-window job not found: missing-batch"
+        )
+        assert recorded_errors[0][1] == {
+            "handled": True,
+            "status_code": 404,
+            "include_stack": False,
         }
 
     def test__given_budget_window_include_cliffs__then_returns_422(

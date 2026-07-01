@@ -4,9 +4,9 @@ We intentionally do **not** leak ``str(exc)`` to API callers. Worker-side
 exceptions routinely embed container paths, HF URLs with pre-signed tokens,
 and internal parameter names that we do not want to surface to the public
 internet. Instead, we record the full exception server-side via
-:func:`logfire.exception` (or the configured structured logger) and return
-the caller a stable generic message plus a correlation id they can cite to
-support.
+``policyengine-observability`` and legacy Logfire while we evaluate replacing
+Logfire, then return the caller a stable generic message plus a correlation id
+they can cite to support.
 
 Two helpers live here:
 
@@ -22,6 +22,9 @@ import logging
 import uuid
 from typing import Any
 
+from policyengine_observability import record_error, record_event
+from src.modal.logfire_legacy import legacy_logfire_attributes
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,8 +37,6 @@ except Exception:  # pragma: no cover - logfire optional locally
 def _logfire_is_configured() -> bool:
     if _logfire is None:
         return False
-    # logfire exposes a module-global "configured" flag only in newer
-    # versions; fall back to the private ``DEFAULT_LOGFIRE_INSTANCE``.
     try:
         instance = getattr(_logfire, "DEFAULT_LOGFIRE_INSTANCE", None)
         if instance is None:
@@ -71,31 +72,38 @@ def log_and_redact_exception(
     payload = {
         "correlation_id": correlation_id,
         "scope": scope,
+        "error_type": type(exc).__name__,
+        **legacy_logfire_attributes(),
     }
     if context:
         payload.update(context)
+
+    try:
+        record_error(exc, handled=True, status_code=500)
+        record_event(
+            "gateway_error_redacted",
+            **payload,
+        )
+    except Exception:  # pragma: no cover - defensive, never raise from logger
+        logger.exception(
+            "Gateway %s failed in policyengine-observability (correlation_id=%s)",
+            scope,
+            correlation_id,
+            extra=payload,
+        )
 
     if _logfire_is_configured():
         try:
             _logfire.exception(  # type: ignore[union-attr]
                 "Gateway {scope} failed",
-                scope=scope,
-                correlation_id=correlation_id,
-                **(context or {}),
+                **payload,
             )
         except Exception:  # pragma: no cover - defensive, never raise from logger
             logger.exception(
-                "Gateway %s failed (correlation_id=%s)",
+                "Gateway %s failed in Logfire (correlation_id=%s)",
                 scope,
                 correlation_id,
                 extra=payload,
             )
-    else:
-        logger.exception(
-            "Gateway %s failed (correlation_id=%s)",
-            scope,
-            correlation_id,
-            extra=payload,
-        )
 
     return f"{GENERIC_JOB_FAILURE_MESSAGE} (correlation_id={correlation_id})"

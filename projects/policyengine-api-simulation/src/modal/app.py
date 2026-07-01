@@ -10,9 +10,21 @@ The gateway app (policyengine-simulation-gateway) routes requests to these versi
 import modal
 import os
 
+from policyengine_observability import operation, set_attribute
+
 from src.modal._image_setup import prebuild_country_datasets, snapshot_models
 from src.modal.dependency_pins import project_dependency_pin
+from src.modal.logfire_legacy import (
+    configure_logfire,
+    flush_logfire,
+    legacy_logfire_attributes,
+    logfire_span,
+)
 from src.modal.logging_redaction import redact_params_for_logging
+from policyengine_api_simulation.observability import (
+    configure_process_observability,
+    init_process_observability,
+)
 from policyengine_api_simulation.release_bundle import get_bundled_country_model_version
 
 
@@ -89,7 +101,7 @@ app = modal.App(APP_NAME)
 gcp_secret = modal.Secret.from_name("gcp-credentials", environment_name="main")
 data_secret = modal.Secret.from_name("policyengine-data-credentials")
 hf_secret = modal.Secret.from_name("huggingface-token")
-# Logfire secret is environment-specific
+# Legacy Logfire export remains while we evaluate a replacement observability platform.
 logfire_secret = modal.Secret.from_name("policyengine-logfire")
 
 
@@ -130,7 +142,8 @@ def build_base_simulation_image() -> modal.Image:
             "uv",
             "fastapi>=0.115.0",
             "tables>=3.10.2",
-            "logfire",
+            "logfire>=3.0.0",
+            "policyengine-observability[fastapi]>=1.3.0,<2",
         )
         .run_commands(
             bundle_install_command(POLICYENGINE_VERSION),
@@ -169,20 +182,25 @@ simulation_image = (
 )
 
 
-def configure_logfire(service_name: str = "policyengine-simulation"):
-    """Configure Logfire for observability. Call at start of each function."""
-    import logfire
-
-    token = os.environ.get("LOGFIRE_TOKEN", "")
-    if not token:
-        return
-
-    logfire.configure(
-        service_name=service_name,
-        token=token,
-        environment=os.environ.get("LOGFIRE_ENVIRONMENT", "production"),
-        console=False,
+def _configure_modal_observability(
+    *,
+    service_role: str,
+    modal_function_name: str,
+) -> None:
+    configure_process_observability(
+        platform="modal",
+        service_role=service_role,
+        modal_app_name=APP_NAME,
+        modal_function_name=modal_function_name,
     )
+    init_process_observability(service_role=service_role)
+
+
+def _set_modal_call_attributes() -> None:
+    try:
+        set_attribute("function_call_id", modal.current_function_call_id())
+    except Exception:
+        pass
 
 
 @app.function(
@@ -199,28 +217,36 @@ def run_simulation(params: dict) -> dict:
     Execute economic simulation.
 
     Imports the snapshotted implementation at runtime.
-    Logs input params and output result to Logfire for observability.
+    Emits redacted operation data to both observability systems.
     """
-    import logfire
-
-    from policyengine_api_simulation.simulation_runtime import run_simulation_impl
-
-    configure_logfire()
+    _configure_modal_observability(
+        service_role="simulation_worker",
+        modal_function_name="run_simulation",
+    )
 
     # We deliberately avoid sending full ``params`` or ``result`` blobs to
-    # Logfire: both can embed signed URLs, reform parameter trees with
-    # sensitive policy details, or result payloads large enough to blow the
-    # span attribute size budget. The redacted summary keeps correlation
-    # traceability via run_id while leaving the heavy payload in memory.
-    redacted_params = redact_params_for_logging(params)
+    # either observability system: both can embed signed URLs, reform
+    # parameter trees with sensitive policy details, or result payloads
+    # large enough to blow attribute budgets. The redacted summary keeps
+    # correlation traceability via run_id while leaving the heavy payload
+    # in memory.
+    redacted_params = {
+        **redact_params_for_logging(params),
+        **legacy_logfire_attributes(),
+    }
+    logfire_enabled = False
     try:
-        with logfire.span(
-            "run_simulation",
-            **redacted_params,
-        ):
-            return run_simulation_impl(params)
+        with operation("run_simulation", flavor="modal_function", **redacted_params):
+            logfire_enabled = configure_logfire("policyengine-simulation")
+            _set_modal_call_attributes()
+            with logfire_span(logfire_enabled, "run_simulation", **redacted_params):
+                from policyengine_api_simulation.simulation_runtime import (
+                    run_simulation_impl,
+                )
+
+                return run_simulation_impl(params)
     finally:
-        logfire.force_flush()
+        flush_logfire(logfire_enabled)
 
 
 @app.function(
@@ -234,18 +260,31 @@ def run_simulation(params: dict) -> dict:
 )
 def run_budget_window_batch(params: dict) -> dict:
     """Execute a multi-year budget-window batch orchestration."""
-    import logfire
+    _configure_modal_observability(
+        service_role="budget_window_worker",
+        modal_function_name="run_budget_window_batch",
+    )
 
-    from src.modal.budget_window_batch import run_budget_window_batch_impl
-
-    configure_logfire()
-
-    redacted_params = redact_params_for_logging(params)
+    redacted_params = {
+        **redact_params_for_logging(params),
+        **legacy_logfire_attributes(),
+    }
+    logfire_enabled = False
     try:
-        with logfire.span(
+        with operation(
             "run_budget_window_batch",
+            flavor="modal_function",
             **redacted_params,
         ):
-            return run_budget_window_batch_impl(params)
+            logfire_enabled = configure_logfire("policyengine-simulation")
+            _set_modal_call_attributes()
+            with logfire_span(
+                logfire_enabled,
+                "run_budget_window_batch",
+                **redacted_params,
+            ):
+                from src.modal.budget_window_batch import run_budget_window_batch_impl
+
+                return run_budget_window_batch_impl(params)
     finally:
-        logfire.force_flush()
+        flush_logfire(logfire_enabled)
