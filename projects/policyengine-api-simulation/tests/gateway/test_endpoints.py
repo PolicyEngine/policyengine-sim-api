@@ -1043,6 +1043,68 @@ class TestBudgetWindowBatchEndpoints:
             "include_stack": False,
         }
 
+    def test__given_parent_lookup_failure__then_degraded_poll_is_not_an_error(
+        self, mock_modal, client: TestClient, monkeypatch
+    ):
+        """
+        Given a submitted batch whose parent FunctionCall lookup fails
+        When polling batch status
+        Then the gateway serves the seed state (202) and records a degradation
+        event — NOT a request error, which would emit http_request_failed and
+        error metrics contradicting the successful response.
+        """
+        from fixtures.gateway.test_endpoints import MockFunctionCall
+        from src.modal.gateway import endpoints as endpoints_module
+
+        recorded_errors = []
+        recorded_events = []
+        monkeypatch.setattr(
+            endpoints_module,
+            "record_error",
+            lambda exc, **kwargs: recorded_errors.append((exc, kwargs)),
+        )
+        monkeypatch.setattr(
+            endpoints_module,
+            "record_event",
+            lambda event, **kwargs: recorded_events.append((event, kwargs)),
+        )
+
+        mock_modal["dicts"]["simulation-api-us-versions"] = {
+            "latest": "1.500.0",
+            "1.500.0": "policyengine-simulation-py4-10-0",
+        }
+        submit_response = client.post(
+            "/simulate/economy/budget-window",
+            json={
+                "country": "us",
+                "region": "us",
+                "scope": "macro",
+                "reform": {},
+                "start_year": "2026",
+                "window_size": 3,
+            },
+        )
+        batch_job_id = submit_response.json()["batch_job_id"]
+        MockFunctionCall.from_id_errors[batch_job_id] = RuntimeError(
+            "transient modal control-plane error"
+        )
+
+        response = client.get(f"/budget-window-jobs/{batch_job_id}")
+
+        assert response.status_code == 202
+        assert response.json()["status"] == "submitted"
+        assert recorded_errors == []
+        assert recorded_events == [
+            (
+                "budget_window_parent_lookup_degraded",
+                {
+                    "batch_job_id": batch_job_id,
+                    "error_type": "RuntimeError",
+                    "parent_call_not_found": False,
+                },
+            )
+        ]
+
     def test__given_budget_window_include_cliffs__then_returns_422(
         self, mock_modal, client: TestClient
     ):

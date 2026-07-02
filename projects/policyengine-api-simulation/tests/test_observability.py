@@ -7,15 +7,18 @@ from fastapi.testclient import TestClient
 from policyengine_observability import (
     REQUEST_ID_HEADER,
     ObservabilityRuntime,
+    operation,
     set_observability_runtime,
 )
-from policyengine_observability.runtime import REQUEST_LOGGER
+from policyengine_observability.runtime import OPERATION_LOGGER, REQUEST_LOGGER
 
 from policyengine_api_simulation.observability import (
     LOG_DESTINATIONS,
     SERVICE_NAME,
     configure_process_observability,
+    init_process_observability,
     init_simulation_observability,
+    process_static_attributes,
 )
 
 
@@ -78,6 +81,59 @@ def test_configure_process_observability_overwrites_stale_metadata():
     assert os.environ["OBSERVABILITY_SERVICE_ROLE"] == "budget_window_worker"
     assert os.environ["OBSERVABILITY_RUNTIME_ROLE"] == "budget_window_worker"
     assert os.environ["OBSERVABILITY_MODAL_FUNCTION_NAME"] == "run_budget_window_batch"
+
+
+def test_process_static_attributes_carries_modal_identity():
+    os.environ["MODAL_ENVIRONMENT"] = "main"
+    configure_process_observability(
+        platform="modal",
+        service_role="simulation_worker",
+        modal_app_name="policyengine-simulation-py4-19-1",
+        modal_function_name="run_simulation",
+    )
+
+    attributes = process_static_attributes(service_role="simulation_worker")
+
+    assert attributes["platform"] == "modal"
+    assert attributes["runtime_role"] == "simulation_worker"
+    assert attributes["modal_environment"] == "main"
+    assert attributes["modal_app_name"] == "policyengine-simulation-py4-19-1"
+    assert attributes["modal_function_name"] == "run_simulation"
+    assert attributes["logfire_status"] == "legacy_candidate_for_replacement"
+
+
+def test_worker_operation_log_includes_modal_identity(monkeypatch):
+    """Replicates the Modal worker entrypoint sequence: the operation log
+    must carry the Modal identity attributes, which have no FastAPI-adapter
+    injection point in plain-process runtimes."""
+    configure_process_observability(
+        platform="modal",
+        service_role="simulation_worker",
+        modal_app_name="policyengine-simulation-py4-19-1",
+        modal_function_name="run_simulation",
+    )
+    init_process_observability(service_role="simulation_worker")
+
+    records = []
+    monkeypatch.setattr(
+        OPERATION_LOGGER,
+        "info",
+        lambda message: records.append(json.loads(message)),
+    )
+
+    static_attributes = process_static_attributes(service_role="simulation_worker")
+    with operation("run_simulation", flavor="modal_function", **static_attributes):
+        pass
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["event"] == "operation_completed"
+    assert record["operation"] == "run_simulation"
+    assert record["service_role"] == "simulation_worker"
+    assert record["platform"] == "modal"
+    assert record["runtime_role"] == "simulation_worker"
+    assert record["modal_app_name"] == "policyengine-simulation-py4-19-1"
+    assert record["modal_function_name"] == "run_simulation"
 
 
 def test_init_simulation_observability_forces_stdout_and_disables_exports():

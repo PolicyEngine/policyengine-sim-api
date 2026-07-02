@@ -5,7 +5,15 @@ from __future__ import annotations
 import sys
 from contextlib import nullcontext
 
+import pytest
+
 from src.modal import logfire_legacy
+
+
+@pytest.fixture(autouse=True)
+def _reset_logfire_configured_flag(monkeypatch):
+    """Isolate the module-level configured flag between tests."""
+    monkeypatch.setattr(logfire_legacy, "_logfire_configured", False)
 
 
 class _FakeLogfire:
@@ -66,6 +74,28 @@ def test_configure_logfire_falls_back_to_default_environment(monkeypatch):
     )
 
     assert fake_logfire.configure_calls[0]["environment"] == "development"
+
+
+def test_logfire_is_configured_tracks_configure_state(monkeypatch):
+    """logfire_is_configured must reflect whether a token-backed configure ran.
+
+    Logfire's own ``config.send_to_logfire`` defaults to True on an
+    unconfigured instance, so this module flag is the only reliable signal.
+    """
+    fake_logfire = _FakeLogfire()
+    monkeypatch.setitem(sys.modules, "logfire", fake_logfire)
+
+    monkeypatch.delenv("LOGFIRE_TOKEN", raising=False)
+    assert logfire_legacy.configure_logfire("policyengine-simulation") is False
+    assert logfire_legacy.logfire_is_configured() is False
+
+    monkeypatch.setenv("LOGFIRE_TOKEN", "token-123")
+    assert logfire_legacy.configure_logfire("policyengine-simulation") is True
+    assert logfire_legacy.logfire_is_configured() is True
+
+    monkeypatch.delenv("LOGFIRE_TOKEN", raising=False)
+    assert logfire_legacy.configure_logfire("policyengine-simulation") is False
+    assert logfire_legacy.logfire_is_configured() is False
 
 
 def test_logfire_span_noops_when_disabled():

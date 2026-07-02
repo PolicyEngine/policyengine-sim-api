@@ -74,12 +74,15 @@ class SegmentName(StrEnum):
     BUDGET_WINDOW_STATE_LOAD = "budget_window_state_load"
     BUDGET_WINDOW_STATE_WRITE = "budget_window_state_write"
     BUDGET_WINDOW_CHILD_SPAWN = "budget_window_child_spawn"
-    BUDGET_WINDOW_CHILD_POLL = "budget_window_child_poll"
     BUDGET_WINDOW_RESULT_PARSE = "budget_window_result_parse"
     BUDGET_WINDOW_AGGREGATION = "budget_window_aggregation"
-    BUDGET_WINDOW_BACKOFF_SLEEP = "budget_window_backoff_sleep"
     BUDGET_WINDOW_CHILD_REQUEST_BUILD = "budget_window_child_request_build"
     BUDGET_WINDOW_STATUS_SERIALIZATION = "budget_window_status_serialization"
+    # NOTE: per-iteration poll/sleep segments were removed deliberately —
+    # the scheduler's poll loop publishes bounded aggregate attributes
+    # (child_poll_count/child_poll_ms_total, backoff_sleep_count/
+    # backoff_sleep_ms_total) instead, because one segment per probe grows
+    # the operation's segment tree without bound over a long batch.
 
     MODAL_JOB_METADATA_READ = "modal_job_metadata_read"
 
@@ -151,6 +154,17 @@ def init_process_observability(
     runtime.configure()
     set_observability_runtime(runtime)
     return runtime
+
+
+def process_static_attributes(*, service_role: str) -> dict[str, Any]:
+    """Static identity attributes for non-FastAPI (worker) operations.
+
+    The FastAPI adapter applies these per request via ``static_attributes``;
+    plain-process runtimes have no equivalent hook, so worker entrypoints must
+    merge this dict into their ``operation(...)`` attributes explicitly —
+    otherwise operation logs carry no platform/Modal identity.
+    """
+    return _metadata(_service_role(service_role), _platform())
 
 
 def logfire_replacement_attributes() -> dict[str, str]:

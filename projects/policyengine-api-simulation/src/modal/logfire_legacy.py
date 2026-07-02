@@ -11,8 +11,20 @@ from policyengine_api_simulation.observability import (
 )
 
 
+# Whether configure_logfire successfully configured export in this process.
+# Logfire's own ``config.send_to_logfire`` flag defaults to ``True`` on an
+# UNCONFIGURED instance, so it cannot be used to answer "did we configure
+# Logfire?" — callers must consult this flag instead.
+_logfire_configured = False
+
+
 def legacy_logfire_attributes() -> dict[str, str]:
     return logfire_replacement_attributes()
+
+
+def logfire_is_configured() -> bool:
+    """Whether configure_logfire ran with a token in this process."""
+    return _logfire_configured
 
 
 def configure_logfire(
@@ -21,8 +33,11 @@ def configure_logfire(
     default_environment: str | None = None,
 ) -> bool:
     """Configure legacy Logfire export if the Modal secret is present."""
+    global _logfire_configured
+
     token = os.environ.get("LOGFIRE_TOKEN", "")
     if not token:
+        _logfire_configured = False
         return False
 
     import logfire
@@ -38,6 +53,7 @@ def configure_logfire(
         ),
         console=False,
     )
+    _logfire_configured = True
     return True
 
 

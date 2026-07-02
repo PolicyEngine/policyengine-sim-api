@@ -10,6 +10,7 @@ import modal
 from fastapi import APIRouter, Depends, HTTPException
 from policyengine_observability import (
     record_error,
+    record_event,
     segment,
     set_attribute,
 )
@@ -875,10 +876,22 @@ async def get_budget_window_job_status(batch_job_id: str):
         with segment(SegmentName.MODAL_JOB_STATUS_POLL):
             call = modal.FunctionCall.from_id(batch_job_id)
     except Exception as exc:
-        if _is_modal_job_not_found(exc):
-            record_error(exc, handled=True, status_code=404, include_stack=False)
-        else:
-            record_error(exc, handled=True, status_code=500)
+        # The endpoint degrades gracefully to the seed state (a successful
+        # 202/200 response), so this must NOT be recorded as a request
+        # error — record_error would emit an http_request_failed event and
+        # an error metric contradicting the status the client actually saw.
+        record_event(
+            "budget_window_parent_lookup_degraded",
+            batch_job_id=batch_job_id,
+            error_type=type(exc).__name__,
+            parent_call_not_found=_is_modal_job_not_found(exc),
+        )
+        logger.warning(
+            "Budget-window parent FunctionCall lookup failed; "
+            "serving seed state (batch_job_id=%s)",
+            batch_job_id,
+            exc_info=exc,
+        )
         with segment(SegmentName.BUDGET_WINDOW_STATUS_SERIALIZATION):
             return batch_status_response(build_batch_status_response(seed_state))
 

@@ -24,6 +24,7 @@ from src.modal.logging_redaction import redact_params_for_logging
 from policyengine_api_simulation.observability import (
     configure_process_observability,
     init_process_observability,
+    process_static_attributes,
 )
 from policyengine_api_simulation.release_bundle import get_bundled_country_model_version
 
@@ -186,7 +187,7 @@ def _configure_modal_observability(
     *,
     service_role: str,
     modal_function_name: str,
-) -> None:
+) -> dict:
     configure_process_observability(
         platform="modal",
         service_role=service_role,
@@ -194,6 +195,9 @@ def _configure_modal_observability(
         modal_function_name=modal_function_name,
     )
     init_process_observability(service_role=service_role)
+    # Worker operations have no FastAPI adapter to inject static identity
+    # attributes, so the caller must merge these into its operation attrs.
+    return process_static_attributes(service_role=service_role)
 
 
 def _set_modal_call_attributes() -> None:
@@ -219,7 +223,7 @@ def run_simulation(params: dict) -> dict:
     Imports the snapshotted implementation at runtime.
     Emits redacted operation data to both observability systems.
     """
-    _configure_modal_observability(
+    static_attributes = _configure_modal_observability(
         service_role="simulation_worker",
         modal_function_name="run_simulation",
     )
@@ -232,6 +236,7 @@ def run_simulation(params: dict) -> dict:
     # in memory.
     redacted_params = {
         **redact_params_for_logging(params),
+        **static_attributes,
         **legacy_logfire_attributes(),
     }
     logfire_enabled = False
@@ -260,13 +265,14 @@ def run_simulation(params: dict) -> dict:
 )
 def run_budget_window_batch(params: dict) -> dict:
     """Execute a multi-year budget-window batch orchestration."""
-    _configure_modal_observability(
+    static_attributes = _configure_modal_observability(
         service_role="budget_window_worker",
         modal_function_name="run_budget_window_batch",
     )
 
     redacted_params = {
         **redact_params_for_logging(params),
+        **static_attributes,
         **legacy_logfire_attributes(),
     }
     logfire_enabled = False

@@ -32,7 +32,7 @@ def test_log_and_redact_exception_emits_correlation_id(monkeypatch):
         lambda event, **kwargs: recorded_events.append((event, kwargs)),
     )
     monkeypatch.setattr(errors_module, "_logfire", fake_logfire)
-    monkeypatch.setattr(errors_module, "_logfire_is_configured", lambda: True)
+    monkeypatch.setattr(errors_module, "logfire_is_configured", lambda: True)
 
     exc = RuntimeError(
         "Signed GCS URL https://storage.googleapis.com/foo?token=SECRET "
@@ -80,12 +80,43 @@ def test_log_and_redact_exception_emits_correlation_id(monkeypatch):
     )
 
 
-def test_log_and_redact_exception_falls_back_to_stdlib_logger(monkeypatch, caplog):
+def test_log_and_redact_exception_always_logs_to_stdlib(monkeypatch, caplog):
+    """The stdlib log line must fire even when every structured sink no-ops.
+
+    record_error/record_event silently do nothing on a disabled runtime and
+    Logfire is unconfigured here, so without the unconditional stdlib log the
+    correlation id handed to the caller would point at nothing server-side.
+    """
+    monkeypatch.setattr(errors_module, "record_error", lambda *a, **k: None)
+    monkeypatch.setattr(errors_module, "record_event", lambda *a, **k: None)
+    monkeypatch.setattr(errors_module, "logfire_is_configured", lambda: False)
+    exc = ValueError("secret-parameter-name")
+    with caplog.at_level("ERROR", logger="src.modal.gateway.errors"):
+        message = errors_module.log_and_redact_exception(exc, scope="fallback")
+
+    match = CORRELATION_RE.search(message)
+    assert match is not None, message
+    assert "secret-parameter-name" not in message
+    assert message.startswith("Simulation failed")
+
+    # Exactly one guaranteed server-side record carrying the correlation id
+    # and the full exception (message + stack) for operators.
+    stdlib_records = [
+        record for record in caplog.records if "fallback" in record.getMessage()
+    ]
+    assert len(stdlib_records) == 1
+    record = stdlib_records[0]
+    assert match.group(1) in record.getMessage()
+    assert record.exc_info is not None
+    assert record.exc_info[1] is exc
+
+
+def test_log_and_redact_exception_survives_structured_sink_failure(monkeypatch, caplog):
     def _raise(*args, **kwargs):
         raise RuntimeError("observability failed")
 
     monkeypatch.setattr(errors_module, "record_error", _raise)
-    monkeypatch.setattr(errors_module, "_logfire_is_configured", lambda: False)
+    monkeypatch.setattr(errors_module, "logfire_is_configured", lambda: False)
     exc = ValueError("secret-parameter-name")
     with caplog.at_level("ERROR", logger="src.modal.gateway.errors"):
         message = errors_module.log_and_redact_exception(exc, scope="fallback")

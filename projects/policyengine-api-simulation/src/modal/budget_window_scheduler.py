@@ -100,6 +100,16 @@ class BudgetWindowBatchRunner:
                 "run_simulation",
             )
         self.child_handles: dict[str, ChildSimulationHandle] = {}
+        # Poll/sleep totals are tracked as running aggregates instead of one
+        # segment per loop iteration: a segment appends a node to the
+        # operation's in-memory segment tree, and a near-timeout batch can
+        # poll thousands of times — unbounded memory plus a final operation
+        # log line large enough for Modal's log pipeline to truncate.
+        # ``set_attribute`` overwrites, so publishing these stays bounded.
+        self._child_poll_seconds = 0.0
+        self._child_poll_count = 0
+        self._backoff_sleep_seconds = 0.0
+        self._backoff_sleep_count = 0
 
     def run(self) -> dict[str, Any]:
         mark_batch_running(self.state)
@@ -115,11 +125,10 @@ class BudgetWindowBatchRunner:
             if self.state.status == "failed":
                 return serialize_batch_status(self.state)
             if self.state.running_years and not progress_made:
-                with segment(
-                    SegmentName.BUDGET_WINDOW_BACKOFF_SLEEP,
-                    sleep_seconds=current_sleep,
-                ):
-                    time.sleep(current_sleep)
+                time.sleep(current_sleep)
+                self._backoff_sleep_seconds += current_sleep
+                self._backoff_sleep_count += 1
+                self._publish_poll_stats()
                 current_sleep = min(
                     current_sleep * self.poll_interval_backoff_factor,
                     self.poll_interval_max_seconds,
@@ -170,12 +179,9 @@ class BudgetWindowBatchRunner:
         for simulation_year in list(self.state.running_years):
             handle = self.resolve_child_handle(simulation_year)
 
+            poll_started = time.perf_counter()
             try:
-                with segment(
-                    SegmentName.BUDGET_WINDOW_CHILD_POLL,
-                    simulation_year=simulation_year,
-                ):
-                    child_result = handle.call.get(timeout=0)
+                child_result = handle.call.get(timeout=0)
             except TimeoutError:
                 continue
             except Exception as exc:
@@ -192,6 +198,10 @@ class BudgetWindowBatchRunner:
                     error=redacted,
                 )
                 return False
+            finally:
+                self._child_poll_seconds += time.perf_counter() - poll_started
+                self._child_poll_count += 1
+                self._publish_poll_stats()
 
             try:
                 with segment(
@@ -234,11 +244,10 @@ class BudgetWindowBatchRunner:
             return handle
 
         job_id = self.state.child_jobs[simulation_year].job_id
-        with segment(
-            SegmentName.BUDGET_WINDOW_CHILD_POLL,
-            simulation_year=simulation_year,
-        ):
-            call = self.modal.FunctionCall.from_id(job_id)
+        # ``FunctionCall.from_id`` is a lazy handle (no RPC), so there is
+        # nothing meaningful to time here; the network cost lands in the
+        # subsequent ``call.get`` poll.
+        call = self.modal.FunctionCall.from_id(job_id)
         resolved_handle = ChildSimulationHandle(
             simulation_year=simulation_year,
             job_id=job_id,
@@ -246,6 +255,18 @@ class BudgetWindowBatchRunner:
         )
         self.child_handles[simulation_year] = resolved_handle
         return resolved_handle
+
+    def _publish_poll_stats(self) -> None:
+        set_attribute("child_poll_count", self._child_poll_count)
+        set_attribute(
+            "child_poll_ms_total",
+            round(self._child_poll_seconds * 1000, 1),
+        )
+        set_attribute("backoff_sleep_count", self._backoff_sleep_count)
+        set_attribute(
+            "backoff_sleep_ms_total",
+            round(self._backoff_sleep_seconds * 1000, 1),
+        )
 
     def fail_batch_for_child_error(
         self,

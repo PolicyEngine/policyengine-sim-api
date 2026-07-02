@@ -36,7 +36,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from policyengine_observability import record_event
 from policyengine_fastapi.auth import JWTDecoder
-from src.modal.logfire_legacy import legacy_logfire_attributes
+from src.modal.logfire_legacy import (
+    legacy_logfire_attributes,
+    logfire_is_configured,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -186,12 +189,9 @@ def enforce_production_auth_guard() -> None:
     except Exception:  # pragma: no cover - observability must never block startup
         pass
     try:
-        import logfire
+        if logfire_is_configured():
+            import logfire
 
-        instance = getattr(logfire, "DEFAULT_LOGFIRE_INSTANCE", None)
-        if instance is not None and bool(
-            getattr(instance.config, "send_to_logfire", False)
-        ):
             logfire.error(
                 "gateway_auth_disabled_bypass_active",
                 modal_environment=modal_env,
