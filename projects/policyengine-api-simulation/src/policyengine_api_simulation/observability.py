@@ -54,7 +54,10 @@ class SegmentName(StrEnum):
     REQUEST_PARSE = "request_parse"
     ROUTE_RESOLUTION = "route_resolution"
     POLICYENGINE_BUNDLE = "policyengine_bundle"
-    MODAL_FUNCTION_LOOKUP = "modal_function_lookup"
+    # NOTE: there is deliberately no modal_function_lookup segment —
+    # ``Function.from_name`` is a lazy handle whose control-plane RPC fires
+    # inside ``spawn``, so lookup + spawn are timed together under
+    # MODAL_FUNCTION_SPAWN.
     MODAL_FUNCTION_SPAWN = "modal_function_spawn"
     MODAL_DICT_READ = "modal_dict_read"
     MODAL_JOB_METADATA_WRITE = "modal_job_metadata_write"

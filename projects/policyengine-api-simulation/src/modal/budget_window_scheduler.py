@@ -94,11 +94,12 @@ class BudgetWindowBatchRunner:
         set_attribute("resolved_app_name", context.resolved_app_name)
         set_attribute("resolved_version", context.resolved_version)
         self.state = load_or_create_batch_state(context)
-        with segment(SegmentName.MODAL_FUNCTION_LOOKUP):
-            self.child_func = self.modal.Function.from_name(
-                context.resolved_app_name,
-                "run_simulation",
-            )
+        # ``Function.from_name`` is a lazy handle (no RPC); hydration happens
+        # on first spawn, which BUDGET_WINDOW_CHILD_SPAWN already times.
+        self.child_func = self.modal.Function.from_name(
+            context.resolved_app_name,
+            "run_simulation",
+        )
         self.child_handles: dict[str, ChildSimulationHandle] = {}
         # Poll/sleep totals are tracked as running aggregates instead of one
         # segment per loop iteration: a segment appends a node to the

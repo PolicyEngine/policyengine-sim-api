@@ -689,12 +689,11 @@ async def submit_simulation(request: SimulationRequest):
         run_id,
     )
 
-    # Get function reference from the target app
-    with segment(SegmentName.MODAL_FUNCTION_LOOKUP):
-        sim_func = modal.Function.from_name(route.app_name, "run_simulation")
-
-    # Spawn the job (returns immediately)
+    # Spawn the job (returns immediately). ``Function.from_name`` is a lazy
+    # handle — the control-plane RPC (hydration) happens inside ``spawn`` —
+    # so both live under the spawn segment to time the real network cost.
     with segment(SegmentName.MODAL_FUNCTION_SPAWN):
+        sim_func = modal.Function.from_name(route.app_name, "run_simulation")
         call = sim_func.spawn(payload)
 
     set_attribute("job_id", call.object_id)
@@ -761,9 +760,9 @@ async def submit_budget_window_batch(request: BudgetWindowBatchRequest):
             bundle=bundle,
         )
 
-    with segment(SegmentName.MODAL_FUNCTION_LOOKUP):
-        batch_func = modal.Function.from_name(route.app_name, "run_budget_window_batch")
+    # Lazy handle + spawn together: the RPC cost lands in ``spawn``.
     with segment(SegmentName.MODAL_FUNCTION_SPAWN):
+        batch_func = modal.Function.from_name(route.app_name, "run_budget_window_batch")
         call = batch_func.spawn(payload)
     batch_job_id = call.object_id
     set_attribute("batch_job_id", batch_job_id)
@@ -935,17 +934,19 @@ async def list_versions():
             kind: _version_map_from_state(state, kind) for kind in SUPPORTED_ROUTE_KINDS
         }
 
+    # ``Dict.from_name`` is a lazy handle; the RPCs fire during the
+    # ``dict(...)`` iterations, so those are what the segment must cover.
     with segment(SegmentName.MODAL_DICT_READ):
         policyengine_dict = _optional_modal_dict(POLICYENGINE_VERSION_DICT_NAME)
         us_dict = modal.Dict.from_name("simulation-api-us-versions")
         uk_dict = modal.Dict.from_name("simulation-api-uk-versions")
-    return {
-        "policyengine": (
-            dict(policyengine_dict) if policyengine_dict is not None else {}
-        ),
-        "us": dict(us_dict),
-        "uk": dict(uk_dict),
-    }
+        return {
+            "policyengine": (
+                dict(policyengine_dict) if policyengine_dict is not None else {}
+            ),
+            "us": dict(us_dict),
+            "uk": dict(uk_dict),
+        }
 
 
 def _version_map_from_state(state: dict, kind: str) -> dict:
@@ -969,14 +970,16 @@ async def get_country_versions(kind: str):
     if state:
         return _version_map_from_state(state, kind_lower)
 
+    # The ``dict(...)`` iteration is where the Modal Dict RPCs happen; the
+    # from_name handle itself is lazy and free.
     if kind_lower == "policyengine":
         with segment(SegmentName.MODAL_DICT_READ):
             version_dict = _optional_modal_dict(POLICYENGINE_VERSION_DICT_NAME)
-        return dict(version_dict) if version_dict is not None else {}
+            return dict(version_dict) if version_dict is not None else {}
 
     with segment(SegmentName.MODAL_DICT_READ):
         version_dict = modal.Dict.from_name(f"simulation-api-{kind_lower}-versions")
-    return dict(version_dict)
+        return dict(version_dict)
 
 
 @router.get("/health")
