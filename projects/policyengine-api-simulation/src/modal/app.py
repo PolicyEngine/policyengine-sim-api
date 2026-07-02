@@ -10,7 +10,7 @@ The gateway app (policyengine-simulation-gateway) routes requests to these versi
 import modal
 import os
 
-from src.modal._image_setup import snapshot_models
+from src.modal._image_setup import prebuild_country_datasets, snapshot_models
 from src.modal.dependency_pins import project_dependency_pin
 from src.modal.logging_redaction import redact_params_for_logging
 from policyengine_api_simulation.release_bundle import get_bundled_country_model_version
@@ -130,6 +130,30 @@ simulation_image = (
         secrets=[data_secret, hf_secret],
     )
     .env(VERSION_ENV)
+    # TEMPORARY: remove once single-year datasets are published (issue #596).
+    # Prebuild single-year datasets into the image so cold containers skip
+    # the slow runtime build. One layer per country: independent cache
+    # entries and resumable builds. These layers MUST stay before
+    # add_local_python_source — that layer is keyed on source file hashes,
+    # so anything after it rebuilds on every code change, and these layers
+    # take hours. To force a rebuild of a cached layer (e.g. after a data
+    # re-release under the same revision), temporarily add force_build=True.
+    .run_function(
+        prebuild_country_datasets,
+        args=("us",),
+        secrets=[data_secret, hf_secret],
+        cpu=8.0,
+        memory=65536,
+        timeout=4 * 60 * 60,
+    )
+    .run_function(
+        prebuild_country_datasets,
+        args=("uk",),
+        secrets=[data_secret, hf_secret],
+        cpu=8.0,
+        memory=32768,
+        timeout=4 * 60 * 60,
+    )
     .add_local_python_source(
         "src.modal",
         "policyengine_api_simulation",
