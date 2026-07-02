@@ -534,17 +534,22 @@ def test_load_dataset_passes_bundle_default_name_to_country_loader_with_receipt(
 
 
 # TEMPORARY: remove once single-year datasets are published (issue #596).
-# Pins the guard that keeps revision-pinned requests away from the baked
-# default-revision single-year files in POLICYENGINE_DATA_FOLDER.
+# Pins the guard that keeps every non-default dataset request away from the
+# baked default-revision single-year files in POLICYENGINE_DATA_FOLDER.
+# ensure_datasets keys its cache on a revision-stripped filename stem, so
+# even an explicit dataset name or foreign URI can collide with the baked
+# default (e.g. hf://other/repo/populace_us_2024.h5).
 @pytest.mark.parametrize(
-    "revision_params",
+    "explicit_data_params",
     [
         {"data_version": "custom-v1"},
         {"data": "populace_us_2024@custom-v1"},
+        {"data": "populace_us_2024"},
+        {"data": "hf://other-org/other-repo/populace_us_2024.h5"},
     ],
 )
-def test_load_dataset_bypasses_baked_folder_for_revision_overrides(
-    revision_params,
+def test_load_dataset_bypasses_baked_folder_for_explicit_dataset_requests(
+    explicit_data_params,
     tmp_path,
     monkeypatch,
 ):
@@ -557,7 +562,7 @@ def test_load_dataset_bypasses_baked_folder_for_revision_overrides(
         return {"dataset": SimpleNamespace()}
 
     _load_dataset(
-        {"country": "us", "time_period": "2026", **revision_params},
+        {"country": "us", "time_period": "2026", **explicit_data_params},
         country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
     )
 

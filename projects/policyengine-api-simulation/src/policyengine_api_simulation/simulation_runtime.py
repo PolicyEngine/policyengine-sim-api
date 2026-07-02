@@ -382,9 +382,11 @@ def _load_dataset(
     # TEMPORARY: remove once single-year datasets are published (issue #596).
     # The image bakes default-revision single-year files into
     # POLICYENGINE_DATA_FOLDER, and ensure_datasets keys its cache on a
-    # revision-stripped stem, so requests pinning a non-default data
-    # revision must not read the baked folder.
-    if _requested_data_version(params) is not None:
+    # revision-stripped filename stem — a custom dataset or revision whose
+    # stem matches the default would silently read the baked files. Only
+    # pure default requests may use the baked folder. (Region requests
+    # resolve their dataset without the "data" param, so they keep it.)
+    if params.get("data") is not None or params.get("data_version") is not None:
         data_folder = "/tmp/policyengine-data"
 
     start = time.monotonic()

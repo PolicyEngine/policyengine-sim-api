@@ -11,7 +11,7 @@ so policyengine_api_simulation is not importable there at all.
 # These years are baked into the image; uncovered years still build at runtime.
 # NOTE: this constant is a referenced global of prebuild_country_datasets, so
 # changing it (like editing the function body, even comments) invalidates the
-# cached multi-hour image layers.
+# cached multi-hour image layer.
 PREBUILD_DATASET_YEARS = [2025, 2026, 2027]
 
 

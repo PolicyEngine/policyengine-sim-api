@@ -23,5 +23,6 @@ Operational notes:
 - To force a rebuild of a cached layer (e.g. a data re-release under the
   same revision label), temporarily add `force_build=True` to the affected
   `run_function` call in `src/modal/app.py` for one deploy.
-- Requests pinning a non-default `data_version` bypass the baked folder
-  (see `_load_dataset` in `simulation_runtime.py`).
+- Only pure default requests read the baked folder: any request naming an
+  explicit `data` dataset or pinning a `data_version` bypasses it (see
+  `_load_dataset` in `simulation_runtime.py`).
