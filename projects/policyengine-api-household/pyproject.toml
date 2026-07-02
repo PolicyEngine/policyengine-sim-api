@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "policyengine-household-api-project"
+version = "0.1.0"
+readme = "README.md"
+authors = [
+    {name = "PolicyEngine", email = "hello@policyengine.org"},
+]
+license = {file = "../../LICENSE"}
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "pydantic-settings (>=2.7.1,<3.0.0)",
+    "policyengine-fastapi",
+    # Engine: country model packages used directly (same approach as the
+    # original PR #49 and the v1 household API). Versions pinned to match
+    # projects/policyengine-api-simulation's dependency set.
+    "policyengine-core==3.28.0",
+    "policyengine-uk==2.89.2",
+    "policyengine-us==1.729.0",
+    # Used to locate null (to-be-computed) leaves in the household tree,
+    # exactly as the v1 household API / PR #49 did.
+    "dpath>=2.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/policyengine_api_household"]
+
+[tool.uv.sources]
+policyengine-fastapi = { path = "../../libs/policyengine-fastapi", editable = true }
+
+[project.optional-dependencies]
+test = [ "pytest>=8.3.4", "pytest-asyncio>=0.25.3", "pytest-cov>=6.1.1",]
+build = [ "pyright>=1.1.401", "black>=25.1.0",]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "src",
+]
+
+testpaths = ["tests"]
