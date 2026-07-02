@@ -29,8 +29,8 @@ class FakeImage:
         self.calls.append(("add_local_python_source", args, kwargs))
         return self
 
-    def run_function(self, function):
-        self.calls.append(("run_function", function.__name__))
+    def run_function(self, function, **kwargs):
+        self.calls.append(("run_function", function.__name__, kwargs))
         return self
 
 
@@ -97,3 +97,46 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
             app.hf_secret,
             app.logfire_secret,
         ]
+
+
+# TEMPORARY: remove once single-year datasets are published (issue #596).
+def test_modal_image_prebuilds_datasets_between_env_and_local_source(monkeypatch):
+    install_fake_modal(monkeypatch)
+    monkeypatch.setenv("POLICYENGINE_VERSION", "4.19.1")
+    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.27.1")
+    monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.700.0")
+    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.0")
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    calls = app.simulation_image.calls
+    prebuild_indices = [
+        index
+        for index, call in enumerate(calls)
+        if call[0] == "run_function" and call[1] == "prebuild_country_datasets"
+    ]
+    # US only — UK is deliberately not prebuilt (keeps image build short).
+    assert [calls[index][2]["args"] for index in prebuild_indices] == [("us",)]
+    prebuild_kwargs = calls[prebuild_indices[0]][2]
+    assert prebuild_kwargs["secrets"] == [app.data_secret, app.hf_secret]
+    assert prebuild_kwargs["timeout"] == 4 * 60 * 60
+    assert prebuild_kwargs["memory"] == 65536
+
+    # The prebuild layer is a multi-hour build keyed only on upstream
+    # layers and its own definition. It must stay after the version env
+    # (so version bumps rebuild it) and before add_local_python_source
+    # (whose content-hash key would otherwise invalidate it on every
+    # source commit).
+    env_index = next(index for index, call in enumerate(calls) if call[0] == "env")
+    local_source_index = next(
+        index
+        for index, call in enumerate(calls)
+        if call[0] == "add_local_python_source"
+    )
+    snapshot_index = next(
+        index
+        for index, call in enumerate(calls)
+        if call[0] == "run_function" and call[1] == "snapshot_models"
+    )
+    assert env_index < prebuild_indices[0] < local_source_index < snapshot_index

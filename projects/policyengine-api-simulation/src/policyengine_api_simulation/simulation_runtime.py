@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, Iterator
@@ -377,12 +378,29 @@ def _load_dataset(
         if region_resolution is not None and region_resolution.dataset_reference
         else _resolve_dataset_reference(country, params)
     )
+    data_folder = os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")
+    # TEMPORARY: remove once single-year datasets are published (issue #596).
+    # The image bakes default-revision single-year files into
+    # POLICYENGINE_DATA_FOLDER, and ensure_datasets keys its cache on a
+    # revision-stripped filename stem — a custom dataset or revision whose
+    # stem matches the default would silently read the baked files. Only
+    # pure default requests may use the baked folder. (Region requests
+    # resolve their dataset without the "data" param, so they keep it.)
+    if params.get("data") is not None or params.get("data_version") is not None:
+        data_folder = "/tmp/policyengine-data"
+
+    start = time.monotonic()
     datasets = country_module.ensure_datasets(
         datasets=[dataset_name],
         years=[year],
-        data_folder=os.environ.get(
-            "POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data"
-        ),
+        data_folder=data_folder,
+    )
+    logger.info(
+        "Loaded dataset %s year %s from %s in %.1fs",
+        dataset_name,
+        year,
+        data_folder,
+        time.monotonic() - start,
     )
     return next(iter(datasets.values()))
 
