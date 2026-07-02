@@ -116,37 +116,50 @@ def bundle_install_command(policyengine_version: str) -> str:
     )
 
 
+def build_base_simulation_image() -> modal.Image:
+    """Image layers up to and including the dataset prebuild.
+
+    Shared by the deployed app and the prewarm app
+    (src/modal/prewarm_app.py): both must construct these layers through
+    this one code path so their definitions — and therefore Modal's
+    content-addressed layer cache keys — are identical.
+    """
+    return (
+        modal.Image.debian_slim(python_version="3.13")
+        .pip_install(
+            "uv",
+            "fastapi>=0.115.0",
+            "tables>=3.10.2",
+            "logfire",
+        )
+        .run_commands(
+            bundle_install_command(POLICYENGINE_VERSION),
+            secrets=[data_secret, hf_secret],
+        )
+        .env(VERSION_ENV)
+        # TEMPORARY: remove once single-year datasets are published (issue
+        # #596). Prebuild US single-year datasets into the image so cold
+        # containers skip the slow runtime build. US only for now, to keep
+        # image build time low — UK requests still build at request time.
+        # This layer MUST stay before add_local_python_source — that layer
+        # is keyed on source file hashes, so anything after it rebuilds on
+        # every code change, and this layer takes hours. To force a rebuild
+        # of a cached layer (e.g. after a data re-release under the same
+        # revision), temporarily add force_build=True.
+        .run_function(
+            prebuild_country_datasets,
+            args=("us",),
+            secrets=[data_secret, hf_secret],
+            cpu=8.0,
+            memory=65536,
+            timeout=4 * 60 * 60,
+        )
+    )
+
+
 # Heavy image with model snapshot for simulation
 simulation_image = (
-    modal.Image.debian_slim(python_version="3.13")
-    .pip_install(
-        "uv",
-        "fastapi>=0.115.0",
-        "tables>=3.10.2",
-        "logfire",
-    )
-    .run_commands(
-        bundle_install_command(POLICYENGINE_VERSION),
-        secrets=[data_secret, hf_secret],
-    )
-    .env(VERSION_ENV)
-    # TEMPORARY: remove once single-year datasets are published (issue #596).
-    # Prebuild US single-year datasets into the image so cold containers
-    # skip the slow runtime build. US only for now, to keep image build
-    # time low — UK requests still build at request time. This layer MUST
-    # stay before add_local_python_source — that layer is keyed on source
-    # file hashes, so anything after it rebuilds on every code change, and
-    # this layer takes hours. To force a rebuild of a cached layer (e.g.
-    # after a data re-release under the same revision), temporarily add
-    # force_build=True.
-    .run_function(
-        prebuild_country_datasets,
-        args=("us",),
-        secrets=[data_secret, hf_secret],
-        cpu=8.0,
-        memory=65536,
-        timeout=4 * 60 * 60,
-    )
+    build_base_simulation_image()
     .add_local_python_source(
         "src.modal",
         "policyengine_api_simulation",

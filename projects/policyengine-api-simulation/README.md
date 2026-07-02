@@ -18,8 +18,13 @@ Operational notes:
   `modal deploy`, and only rebuilds when `POLICYENGINE_*` versions change or
   the prebuild function itself is edited (even comment changes). It sits
   before `add_local_python_source` on purpose — do not reorder.
-- The first deploy after a version bump pays the multi-hour build; consider
-  pre-warming with a scratch `MODAL_APP_NAME` deploy before merging.
+- The first deploy after a version bump pays the multi-hour build. Pre-warm
+  it off the deploy path with the minimum-reproduction app, which builds
+  only the layers up to the prebuild and then verifies the baked files and
+  load path from inside a container:
+  `uv run modal run --env=staging src/modal/prewarm_app.py`.
+  Because it shares the layer construction with `app.py`, a successful run
+  leaves the layers cached and the next real deploy fast-forwards.
 - To force a rebuild of a cached layer (e.g. a data re-release under the
   same revision label), temporarily add `force_build=True` to the affected
   `run_function` call in `src/modal/app.py` for one deploy.
