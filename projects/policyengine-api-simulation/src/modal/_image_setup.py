@@ -43,9 +43,9 @@ def prebuild_country_datasets(country: str):
     )
 
     data_folder = os.environ.get("POLICYENGINE_DATA_FOLDER", "/opt/policyengine/data")
-    # Pass the dataset name explicitly: the UK ensure_datasets has no
-    # datasets=None fallback, and the explicit name mirrors the runtime
-    # call shape in simulation_runtime._load_dataset.
+    # Pass the dataset name explicitly to mirror the runtime call shape in
+    # simulation_runtime._load_dataset (not every country module accepts
+    # datasets=None).
     default_dataset = get_release_manifest(country).default_dataset
     stem = dataset_logical_name(resolve_dataset_reference(country, default_dataset))
     targets = {

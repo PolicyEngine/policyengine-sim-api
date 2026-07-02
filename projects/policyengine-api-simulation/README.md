@@ -4,8 +4,9 @@ PolicyEngine Simulation API service.
 
 ## Temporary: prebuilt single-year datasets in the Modal image
 
-The Modal image prebuilds single-year datasets (2025–2027, US + UK national
-defaults) into `POLICYENGINE_DATA_FOLDER` at image build time
+The Modal image prebuilds single-year datasets (2025–2027, US national
+default only — UK deliberately excluded to keep image builds short) into
+`POLICYENGINE_DATA_FOLDER` at image build time
 (`src/modal/_image_setup.py:prebuild_country_datasets`), so cold containers
 skip the slow runtime `ensure_datasets()` build. This is temporary until
 Populace publishes single-year datasets to Hugging Face — see issue #596 for
@@ -13,9 +14,9 @@ the removal checklist; all code sites are greppable via `TEMPORARY`.
 
 Operational notes:
 
-- The prebuild layers run in series on Modal's cloud image builder during
-  `modal deploy`, and only rebuild when `POLICYENGINE_*` versions change or
-  the prebuild function itself is edited (even comment changes). They sit
+- The prebuild layer runs on Modal's cloud image builder during
+  `modal deploy`, and only rebuilds when `POLICYENGINE_*` versions change or
+  the prebuild function itself is edited (even comment changes). It sits
   before `add_local_python_source` on purpose — do not reorder.
 - The first deploy after a version bump pays the multi-hour build; consider
   pre-warming with a scratch `MODAL_APP_NAME` deploy before merging.

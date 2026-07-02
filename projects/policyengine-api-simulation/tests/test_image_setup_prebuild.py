@@ -41,8 +41,7 @@ def _install_country_stub(monkeypatch, country: str, ensure_datasets):
     )
 
 
-@pytest.mark.parametrize("country", ["us", "uk"])
-def test_prebuild_stem_matches_runtime_default_lookup(country, monkeypatch):
+def test_prebuild_stem_matches_runtime_default_lookup(monkeypatch):
     """The critical coupling pin: the stem the prebuild writes must equal the
     stem the runtime resolves for default requests. If bundle metadata ever
     diverges from the packaged manifest default, the baked files would be
@@ -52,10 +51,10 @@ def test_prebuild_stem_matches_runtime_default_lookup(country, monkeypatch):
     get_country_release_bundle.cache_clear()
 
     runtime_stem = dataset_logical_name(
-        resolve_dataset_reference(country, resolve_bundle_dataset_name(country, None))
+        resolve_dataset_reference("us", resolve_bundle_dataset_name("us", None))
     )
 
-    assert _expected_stem(country) == runtime_stem
+    assert _expected_stem("us") == runtime_stem
 
 
 def test_prebuild_years_cover_runtime_default_year():
@@ -63,10 +62,9 @@ def test_prebuild_years_cover_runtime_default_year():
     assert DEFAULT_YEAR in PREBUILD_DATASET_YEARS
 
 
-@pytest.mark.parametrize("country", ["us", "uk"])
-def test_prebuild_passes_explicit_manifest_default(country, tmp_path, monkeypatch):
+def test_prebuild_passes_explicit_manifest_default(tmp_path, monkeypatch):
     monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
-    stem = _expected_stem(country)
+    stem = _expected_stem("us")
     calls = []
 
     def ensure_datasets(**kwargs):
@@ -75,13 +73,13 @@ def test_prebuild_passes_explicit_manifest_default(country, tmp_path, monkeypatc
             Path(kwargs["data_folder"], f"{stem}_year_{year}.h5").write_bytes(b"h5")
         return {}
 
-    _install_country_stub(monkeypatch, country, ensure_datasets)
+    _install_country_stub(monkeypatch, "us", ensure_datasets)
 
-    prebuild_country_datasets(country)
+    prebuild_country_datasets("us")
 
     assert calls == [
         {
-            "datasets": [get_release_manifest(country).default_dataset],
+            "datasets": [get_release_manifest("us").default_dataset],
             "years": [2025, 2026, 2027],
             "data_folder": str(tmp_path),
         }

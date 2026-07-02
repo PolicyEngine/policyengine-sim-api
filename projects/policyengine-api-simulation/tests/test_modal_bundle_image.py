@@ -116,20 +116,17 @@ def test_modal_image_prebuilds_datasets_between_env_and_local_source(monkeypatch
         for index, call in enumerate(calls)
         if call[0] == "run_function" and call[1] == "prebuild_country_datasets"
     ]
-    assert [calls[index][2]["args"] for index in prebuild_indices] == [
-        ("us",),
-        ("uk",),
-    ]
-    for index in prebuild_indices:
-        kwargs = calls[index][2]
-        assert kwargs["secrets"] == [app.data_secret, app.hf_secret]
-        assert kwargs["timeout"] == 4 * 60 * 60
-        assert kwargs["memory"] in (65536, 32768)
+    # US only — UK is deliberately not prebuilt (keeps image build short).
+    assert [calls[index][2]["args"] for index in prebuild_indices] == [("us",)]
+    prebuild_kwargs = calls[prebuild_indices[0]][2]
+    assert prebuild_kwargs["secrets"] == [app.data_secret, app.hf_secret]
+    assert prebuild_kwargs["timeout"] == 4 * 60 * 60
+    assert prebuild_kwargs["memory"] == 65536
 
-    # The prebuild layers are multi-hour builds keyed only on upstream
-    # layers and their own definition. They must stay after the version env
-    # (so version bumps rebuild them) and before add_local_python_source
-    # (whose content-hash key would otherwise invalidate them on every
+    # The prebuild layer is a multi-hour build keyed only on upstream
+    # layers and its own definition. It must stay after the version env
+    # (so version bumps rebuild it) and before add_local_python_source
+    # (whose content-hash key would otherwise invalidate it on every
     # source commit).
     env_index = next(index for index, call in enumerate(calls) if call[0] == "env")
     local_source_index = next(
@@ -142,10 +139,4 @@ def test_modal_image_prebuilds_datasets_between_env_and_local_source(monkeypatch
         for index, call in enumerate(calls)
         if call[0] == "run_function" and call[1] == "snapshot_models"
     )
-    assert (
-        env_index
-        < prebuild_indices[0]
-        < prebuild_indices[1]
-        < local_source_index
-        < snapshot_index
-    )
+    assert env_index < prebuild_indices[0] < local_source_index < snapshot_index
