@@ -533,6 +533,58 @@ def test_load_dataset_passes_bundle_default_name_to_country_loader_with_receipt(
     ]
 
 
+# TEMPORARY: remove once single-year datasets are published (issue #596).
+# Pins the guard that keeps revision-pinned requests away from the baked
+# default-revision single-year files in POLICYENGINE_DATA_FOLDER.
+@pytest.mark.parametrize(
+    "revision_params",
+    [
+        {"data_version": "custom-v1"},
+        {"data": "populace_us_2024@custom-v1"},
+    ],
+)
+def test_load_dataset_bypasses_baked_folder_for_revision_overrides(
+    revision_params,
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
+
+    ensure_calls = []
+
+    def ensure_datasets(**kwargs):
+        ensure_calls.append(kwargs)
+        return {"dataset": SimpleNamespace()}
+
+    _load_dataset(
+        {"country": "us", "time_period": "2026", **revision_params},
+        country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+    )
+
+    assert len(ensure_calls) == 1
+    assert ensure_calls[0]["data_folder"] == "/tmp/policyengine-data"
+
+
+def test_load_dataset_uses_baked_folder_for_default_requests(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
+
+    ensure_calls = []
+
+    def ensure_datasets(**kwargs):
+        ensure_calls.append(kwargs)
+        return {"dataset": SimpleNamespace()}
+
+    _load_dataset(
+        {"country": "us", "time_period": "2026"},
+        country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+    )
+
+    assert ensure_calls[0]["data_folder"] == str(tmp_path)
+
+
 def test_resolve_region_scopes_us_state_from_national_populace_dataset():
     bundle = get_country_release_bundle("us")
     scoping_strategy = object()
