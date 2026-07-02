@@ -19,7 +19,7 @@ dependencies = [
     # projects/policyengine-api-simulation's dependency set.
     "policyengine-core==3.28.0",
     "policyengine-uk==2.89.2",
-    "policyengine-us==1.729.0",
+    "policyengine-us==1.744.0",
     # Used to locate null (to-be-computed) leaves in the household tree,
     # exactly as the v1 household API / PR #49 did.
     "dpath>=2.1.0",
