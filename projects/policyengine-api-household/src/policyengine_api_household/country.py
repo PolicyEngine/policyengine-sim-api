@@ -39,6 +39,8 @@ from policyengine_core.simulations import Simulation
 from policyengine_core.taxbenefitsystems import TaxBenefitSystem
 from policyengine_core.variables import Variable
 
+from policyengine_api_household.periods import normalize_period_keys
+
 logger = logging.getLogger(__name__)
 
 # PyPI distribution names, used for the response's model-version block.
@@ -76,6 +78,13 @@ class PolicyEngineCountry:
         """
         system: TaxBenefitSystem = self._prepare_tax_benefit_system(reform)
 
+        # Hand a normalized copy to the engine so YEAR-keyed inputs on
+        # MONTH-defined variables behave like the hosted v1 API instead of
+        # being silently dropped (policyengine-core issue #1489). The
+        # normalizer deep-copies internally so the original ``household``
+        # is intact and the response can echo back the partner's keys.
+        normalized_household = normalize_period_keys(household, system)
+
         # ``axes`` is understood by the core simulation builder but is
         # not an entity group; keep it in the situation, but never treat
         # it as a computation target.
@@ -89,7 +98,7 @@ class PolicyEngineCountry:
         try:
             simulation: Simulation = self.country_package.Simulation(
                 tax_benefit_system=system,
-                situation=household,
+                situation=normalized_household,
             )
         except TypeError:
             if reform:
@@ -98,7 +107,7 @@ class PolicyEngineCountry:
                     f"{self.country_package_name} in this experiment."
                 )
             simulation = self.country_package.Simulation(
-                situation=household,
+                situation=normalized_household,
             )
             system = simulation.tax_benefit_system
 
@@ -173,7 +182,9 @@ class PolicyEngineCountry:
             variable: Variable = system.get_variable(variable_name)
             result: ArrayLike = simulation.calculate(variable_name, period)
 
-            if household.get("axes"):
+            # v1 switches on key presence (even an empty ``axes`` list
+            # takes the axes result-shaping path), so mirror that.
+            if "axes" in household:
                 self._handle_axes_computation(
                     household,
                     entity_plural,
