@@ -14,3 +14,6 @@ backend.tfvars
 .vscode
 deployment/terraform/*/auto.tfvars
 .claude-plan
+
+# macOS Finder metadata
+.DS_Store
