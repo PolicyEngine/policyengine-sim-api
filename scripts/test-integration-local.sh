@@ -33,7 +33,7 @@ check_service() {
 
 # Check each service
 check_service "api-full" 8081
-check_service "api-simulation" 8082
+check_service "simulation-executor" 8082
 check_service "api-tagger" 8083
 
 echo ""

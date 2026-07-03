@@ -104,7 +104,7 @@ publish-clients: generate-clients
 # Testing
 test:
 	@echo "Running tests for all services..."
-	@for service in api-full api-simulation api-tagger; do \
+	@for service in api-full simulation-executor api-tagger; do \
 		echo "Testing $$service..."; \
 		docker-compose -f deployment/docker-compose.yml run --rm $$service sh -c "cd /app/projects/policyengine-$$service && uv run --extra test pytest" || exit 1; \
 	done
@@ -229,8 +229,8 @@ terraform-plan: terraform-ensure-init
 	fi
 	@echo "\n=== Planning INFRA module ==="
 	@# Auto-populate all required variables
-	@US_VERSION=$$(grep -A1 'name = "policyengine-us"' projects/policyengine-api-simulation/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
-	UK_VERSION=$$(grep -A1 'name = "policyengine-uk"' projects/policyengine-api-simulation/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
+	@US_VERSION=$$(grep -A1 'name = "policyengine-us"' projects/policyengine-simulation-executor/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
+	UK_VERSION=$$(grep -A1 'name = "policyengine-uk"' projects/policyengine-simulation-executor/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
 	COMMIT_URL="https://github.com/PolicyEngine/policyengine-api-v2/commit/$$(git rev-parse HEAD)" && \
 	echo "project_id = \"$${TF_VAR_project_id}\"" > deployment/terraform/infra/auto.tfvars && \
 	echo "commit_url = \"$$COMMIT_URL\"" >> deployment/terraform/infra/auto.tfvars && \
@@ -257,8 +257,8 @@ terraform-deploy-project: terraform-ensure-init
 terraform-deploy-infra: terraform-ensure-init
 	@echo "Deploying infrastructure (Cloud Run, etc)..."
 	@# Auto-populate all required variables
-	@US_VERSION=$$(grep -A1 'name = "policyengine-us"' projects/policyengine-api-simulation/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
-	UK_VERSION=$$(grep -A1 'name = "policyengine-uk"' projects/policyengine-api-simulation/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
+	@US_VERSION=$$(grep -A1 'name = "policyengine-us"' projects/policyengine-simulation-executor/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
+	UK_VERSION=$$(grep -A1 'name = "policyengine-uk"' projects/policyengine-simulation-executor/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
 	COMMIT_URL="https://github.com/PolicyEngine/policyengine-api-v2/commit/$$(git rev-parse HEAD)" && \
 	echo "project_id = \"$${TF_VAR_project_id}\"" > deployment/terraform/infra/auto.tfvars && \
 	echo "commit_url = \"$$COMMIT_URL\"" >> deployment/terraform/infra/auto.tfvars && \
@@ -390,7 +390,7 @@ dev-full:
 	docker-compose -f deployment/docker-compose.yml up api-full
 
 dev-sim:
-	docker-compose -f deployment/docker-compose.yml up api-simulation
+	docker-compose -f deployment/docker-compose.yml up simulation-executor
 
 dev-tagger:
 	docker-compose -f deployment/docker-compose.yml up api-tagger

@@ -17,7 +17,7 @@ make push-pr-branch        # push current branch to origin with tracking
 For simulation-service-only checks:
 
 ```bash
-cd projects/policyengine-api-simulation
+cd projects/policyengine-simulation-executor
 uv sync --extra test
 uv run pytest tests/ -v
 ```
@@ -25,7 +25,7 @@ uv run pytest tests/ -v
 ## Test Organisation
 
 - Service unit tests live under each service's `tests/` directory, for example
-  `projects/policyengine-api-simulation/tests/`.
+  `projects/policyengine-simulation-executor/tests/`.
 - Generated-client integration tests live under
   `projects/policyengine-apis-integ/tests/`.
 - Unit tests should mock Modal, GCP, Hugging Face, and other network seams.

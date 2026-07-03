@@ -1,0 +1,80 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "policyengine-simulation-executor"
+version = "0.1.0"
+readme = "README.md"
+authors = [
+    {name = "PolicyEngine", email = "hello@policyengine.org"},
+]
+license = {file = "../../LICENSE"}
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "opentelemetry-instrumentation-sqlalchemy (>=0.51b0,<0.52)",
+    "pydantic-settings (>=2.7.1,<3.0.0)",
+    "opentelemetry-instrumentation-fastapi (>=0.51b0,<0.52)",
+    "policyengine-fastapi",
+    "policyengine==4.18.9",
+    "policyengine-core==3.28.0",
+    "policyengine-uk==2.89.2",
+    "policyengine-us==1.752.2",
+    "tables>=3.10.2",
+    "modal>=0.73.0",
+    "policyengine-observability[fastapi]>=1.3.0,<2",
+    "logfire>=3.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/policyengine_simulation_executor"]
+
+# Modal image dependencies. Resolved inside uv.lock together with the
+# project, then exported to requirements/modal-*.txt (see
+# scripts/export-modal-image-requirements.sh); the images install those
+# pinned exports so their packages can only change through a relock and
+# always match the versions the test environment runs against.
+[dependency-groups]
+modal-simulation-image = [
+    "uv",
+    "fastapi>=0.115.0",
+    "tables>=3.10.2",
+    "logfire>=3.0.0",
+    # logfire imports importlib_metadata unconditionally on Python 3.13
+    # but does not declare it (see issue #602).
+    "importlib-metadata>=8",
+    "policyengine-observability[fastapi]>=1.3.0,<2",
+]
+modal-gateway-image = [
+    "fastapi>=0.115.0",
+    "pydantic>=2.0",
+    # PyJWT powers the bearer-token decoder in gateway.auth.
+    "pyjwt>=2.10.1,<3.0.0",
+    # JWTDecoder lives in the policyengine-fastapi lib; it only needs
+    # the auth module at runtime here.
+    "cryptography>=41.0.0",
+    "logfire>=3.0.0",
+    "importlib-metadata>=8",
+    "policyengine-observability[fastapi]>=1.3.0,<2",
+]
+
+[tool.uv.sources]
+policyengine-fastapi = { path = "../../libs/policyengine-fastapi", editable = true }
+
+[project.optional-dependencies]
+test = [ "pytest>=8.3.4", "pytest-asyncio>=0.25.3", "pytest-cov>=6.1.1",]
+build = [ "pyright>=1.1.401", "black>=25.1.0", "openapi-python-client>=0.21.6",]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "src",
+]
+
+testpaths = ["tests"]
+
+# Skip real-Modal integration smoke tests unless the operator explicitly
+# opts in with ``-m integration``. The default test run stays hermetic.
+addopts = "-m 'not integration'"
+markers = [
+  "integration: runs against a real (ephemeral) Modal deployment",
+]

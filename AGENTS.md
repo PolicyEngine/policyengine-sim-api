@@ -52,7 +52,7 @@ same-repository draft PR.
 
 ## Repository Notes
 
-- The simulation service lives in `projects/policyengine-api-simulation`.
+- The simulation service lives in `projects/policyengine-simulation-executor`.
 - API integration tests live in `projects/policyengine-apis-integ`.
 - PR CI runs simulation unit tests, Ruff format checks, Docker build, and local
   integration tests.

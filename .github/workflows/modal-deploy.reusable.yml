@@ -69,15 +69,15 @@ jobs:
       run: chmod +x .github/scripts/*.sh
 
     - name: Install dependencies
-      working-directory: projects/policyengine-api-simulation
+      working-directory: projects/policyengine-simulation-executor
       run: uv sync
 
     - name: Extract package versions
       id: versions
-      run: .github/scripts/modal-extract-versions.sh projects/policyengine-api-simulation
+      run: .github/scripts/modal-extract-versions.sh projects/policyengine-simulation-executor
 
     - name: Sync Modal secrets from GitHub
-      working-directory: projects/policyengine-api-simulation
+      working-directory: projects/policyengine-simulation-executor
       env:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -92,7 +92,7 @@ jobs:
       run: ../../.github/scripts/modal-sync-secrets.sh "${{ inputs.modal_environment }}" "${{ inputs.environment }}"
 
     - name: Deploy simulation API to Modal
-      working-directory: projects/policyengine-api-simulation
+      working-directory: projects/policyengine-simulation-executor
       env:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
@@ -104,7 +104,7 @@ jobs:
 
     - name: Get deployed URL
       id: get-url
-      working-directory: projects/policyengine-api-simulation
+      working-directory: projects/policyengine-simulation-executor
       env:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}

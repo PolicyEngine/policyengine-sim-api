@@ -40,11 +40,11 @@ jobs:
       run: chmod +x .github/scripts/*.sh
 
     - name: Install dependencies
-      working-directory: projects/policyengine-api-simulation
+      working-directory: projects/policyengine-simulation-executor
       run: uv sync
 
     - name: Ensure Modal environments exist
-      working-directory: projects/policyengine-api-simulation
+      working-directory: projects/policyengine-simulation-executor
       env:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}

@@ -1,16 +1,16 @@
 services:
-  api-simulation:
+  simulation-executor:
     build:
       context: ..
-      dockerfile: projects/policyengine-api-simulation/Dockerfile
+      dockerfile: projects/policyengine-simulation-executor/Dockerfile
     environment:
       - ENVIRONMENT=desktop
     volumes:
-      - ../projects/policyengine-api-simulation/src:/app/projects/policyengine-api-simulation/src
+      - ../projects/policyengine-simulation-executor/src:/app/projects/policyengine-simulation-executor/src
       - ../libs:/app/libs
     ports:
       - "8082:8080"
-    command: sh -c "cd src && uv run uvicorn policyengine_api_simulation.main:app --reload --host 0.0.0.0 --port 8080"
+    command: sh -c "cd src && uv run uvicorn policyengine_simulation_executor.main:app --reload --host 0.0.0.0 --port 8080"
     networks:
       - policyengine
 

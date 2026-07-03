@@ -6,7 +6,7 @@
 # from the lock.
 set -euo pipefail
 
-cd "$(dirname "$0")/../projects/policyengine-api-simulation"
+cd "$(dirname "$0")/../projects/policyengine-simulation-executor"
 mkdir -p requirements
 
 for group in modal-simulation-image modal-gateway-image; do

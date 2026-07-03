@@ -8,7 +8,7 @@ echo "Generating OpenAPI specs and client libraries..."
 # Function to generate client for a service
 generate_client() {
     local SERVICE=$1
-    local PROJECT_DIR="projects/policyengine-api-${SERVICE}"
+    local PROJECT_DIR=$2
 
     echo "Processing ${SERVICE} API..."
 
@@ -61,7 +61,7 @@ generate_client() {
 }
 
 # Generate client for simulation service (Modal gateway)
-generate_client "simulation"
+generate_client "simulation" "projects/policyengine-simulation-executor"
 
 echo "✅ Client generated successfully!"
 echo ""
