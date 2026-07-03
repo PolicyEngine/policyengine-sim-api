@@ -2,19 +2,19 @@ name: Update dependencies
 
 on:
   schedule:
-    # Run every 15 minutes
-    - cron: '*/15 * * * *'
+    # Run daily at 06:00 UTC
+    - cron: '0 6 * * *'
   workflow_dispatch:  # Allow manual triggering
 
 jobs:
   update-dependencies:
     name: File update PR
     runs-on: ubuntu-latest
-    
+
     permissions:
       contents: write
       pull-requests: write
-    
+
     steps:
       - name: Generate GitHub App token
         id: app-token
@@ -25,30 +25,66 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v6
-        # Checkout main branch
         with:
           ref: main
+          # Full history so the existing update branch can be reused and
+          # merged with main.
+          fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
-      
+
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0
-      
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      
+
+      - name: Prepare update branch
+        id: branch
+        run: |
+          git config --global user.name "policyengine-auto"
+          git config --global user.email "policyengine-auto@users.noreply.github.com"
+
+          # While an update PR is open, append commits to its branch
+          # instead of opening a new PR each day.
+          open_pr=$(gh pr list --head update-dependencies --state open \
+            --json number --jq '.[0].number // empty')
+
+          mode=fresh
+          if [ -n "$open_pr" ]; then
+            echo "pr_number=$open_pr" >> "$GITHUB_OUTPUT"
+            git fetch origin update-dependencies
+            git checkout -B update-dependencies origin/update-dependencies
+            # Keep the open PR mergeable. Lock-file conflicts resolve in
+            # main's favor: the relock below regenerates them anyway.
+            if git merge --no-edit -X theirs origin/main; then
+              mode=append
+            else
+              # Unresolvable overlap with main; rebuild the branch from
+              # main. The force push below refreshes the same open PR.
+              git merge --abort
+              git checkout -B update-dependencies origin/main
+              mode=reset
+            fi
+          else
+            git checkout -B update-dependencies origin/main
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
       - name: Generate API clients
         run: |
           # Generate clients with correct naming before updating dependencies
           ./scripts/generate-clients.sh
-      
-      - name: Update dependencies
+
+      - name: Relock dependencies
         id: update
         run: |
-          # Run the update command
+          # Runs `uv lock --upgrade` in every lib and project
           make update
-          
+
           # Check if there are changes
           if [[ -z $(git status --porcelain) ]]; then
             echo "No changes detected"
@@ -57,27 +93,45 @@ jobs:
             echo "Changes detected"
             echo "changes_detected=true" >> $GITHUB_OUTPUT
           fi
-      
-      - name: Create pull request
-        if: steps.update.outputs.changes_detected == 'true'
+
+      - name: Commit and push
+        id: push
+        if: steps.update.outputs.changes_detected == 'true' || steps.branch.outputs.mode == 'append'
         run: |
-          git config --global user.name "policyengine-auto"
-          git config --global user.email "policyengine-auto@users.noreply.github.com"
-          
-          git checkout -b update-dependencies
-          git add .
-          git commit -m "Update dependencies"
-          git push origin update-dependencies --force
-          
-          # Try to create PR, ignore if it already exists
-          gh pr create \
-            --title "Update dependencies" \
-            --body "Automated dependency updates
+          if [[ -n $(git status --porcelain) ]]; then
+            git add .
+            git commit -m "Update dependencies ($(date -u +%Y-%m-%d))"
+          fi
 
-          This PR was automatically created by the dependency update workflow.
+          # Nothing new relative to the remote branch (no relock changes
+          # and no merge commit): leave the PR untouched.
+          ahead=$(git rev-list --count origin/update-dependencies..HEAD 2>/dev/null || echo new)
+          if [ "$ahead" = "0" ]; then
+            echo "Nothing to push"
+            exit 0
+          fi
 
-          Last updated: $(date)" \
-            --base main \
-            --head update-dependencies || echo "PR may already exist, continuing..."
+          if [ "${{ steps.branch.outputs.mode }}" = "append" ]; then
+            git push origin update-dependencies
+          else
+            # fresh: no open PR owns the branch, any remote copy is stale.
+            # reset: the open PR's branch was rebuilt from main above.
+            git push --force origin update-dependencies
+          fi
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - name: Create pull request
+        if: steps.update.outputs.changes_detected == 'true' && steps.branch.outputs.pr_number == ''
+        run: |
+          gh pr create \
+            --title "Update dependencies" \
+            --body "Automated dependency updates.
+
+          This PR was created by the dependency update workflow. While it
+          stays open, subsequent daily runs push new commits to this branch
+          instead of opening new PRs." \
+            --base main \
+            --head update-dependencies
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
