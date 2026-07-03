@@ -8,7 +8,7 @@ echo "Generating OpenAPI specs and client libraries..."
 # Function to generate client for a service
 generate_client() {
     local SERVICE=$1
-    local PROJECT_DIR="projects/policyengine-api-${SERVICE}"
+    local PROJECT_DIR=$2
 
     echo "Processing ${SERVICE} API..."
 
@@ -21,7 +21,7 @@ generate_client() {
 
     # Use gateway's OpenAPI generator for simulation service (Modal-based)
     if [ "$SERVICE" = "simulation" ]; then
-        uv run python -m src.modal.gateway.generate_openapi
+        uv run python -m policyengine_simulation_gateway.generate_openapi
     else
         uv run python -m policyengine_api_${SERVICE//-/_}.generate_openapi
     fi
@@ -61,7 +61,7 @@ generate_client() {
 }
 
 # Generate client for simulation service (Modal gateway)
-generate_client "simulation"
+generate_client "simulation" "projects/policyengine-simulation-gateway"
 
 echo "✅ Client generated successfully!"
 echo ""

@@ -10,7 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [api-simulation]
+        # Each entry is a uv project tested in its own locked environment.
+        # For the gateway this is the parity guarantee: the same lock the
+        # Modal image installs with uv_sync(frozen=True).
+        project:
+          - projects/policyengine-simulation-executor
+          - projects/policyengine-simulation-gateway
+          - libs/policyengine-simulation-contract
+          - libs/policyengine-simulation-observability
 
     steps:
     - uses: actions/checkout@v6
@@ -27,12 +34,12 @@ jobs:
 
     - name: Install dependencies
       run: |
-        cd projects/policyengine-${{ matrix.service }}
+        cd ${{ matrix.project }}
         uv sync --extra test
 
     - name: Run tests
       run: |
-        cd projects/policyengine-${{ matrix.service }}
+        cd ${{ matrix.project }}
         uv run pytest tests/ -v
 
   lint:
@@ -68,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [api-simulation]
+        service: [simulation-executor]
 
     steps:
     - uses: actions/checkout@v6

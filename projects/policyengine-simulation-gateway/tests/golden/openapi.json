@@ -1,0 +1,1333 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PolicyEngine Simulation Gateway API",
+    "description": "Submit and poll simulation jobs on Modal",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/simulate/economy/comparison": {
+      "post": {
+        "summary": "Submit Simulation",
+        "description": "Submit a simulation job.\n\nRoutes to the appropriate simulation app based on country and version.\nReturns immediately with a job_id for polling.",
+        "operationId": "submit_simulation_simulate_economy_comparison_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimulationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Job submitted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobSubmitResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (unknown country/version)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/simulate/economy/budget-window": {
+      "post": {
+        "summary": "Submit Budget Window Batch",
+        "description": "Submit a budget-window batch job.\n\nReturns immediately with a parent batch job ID for polling.",
+        "operationId": "submit_budget_window_batch_simulate_economy_budget_window_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetWindowBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Budget-window batch submitted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetWindowBatchSubmitResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (unknown country/version/year)"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/jobs/{job_id}": {
+      "get": {
+        "summary": "Get Job Status",
+        "description": "Poll for job status.\n\nReturns:\n    - 200 with status=\"complete\" and result when done\n    - 202 with status=\"running\" while in progress\n    - 404 if job_id not found\n    - 500 with status=\"failed\" and error on failure",
+        "operationId": "get_job_status_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job complete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatusResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Job still running"
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "500": {
+            "description": "Job failed"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/budget-window-jobs/{batch_job_id}": {
+      "get": {
+        "summary": "Get Budget Window Job Status",
+        "description": "Poll for budget-window batch status.",
+        "operationId": "get_budget_window_job_status_budget_window_jobs__batch_job_id__get",
+        "parameters": [
+          {
+            "name": "batch_job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Batch Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Batch complete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BudgetWindowBatchStatusResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Batch submitted or running"
+          },
+          "404": {
+            "description": "Batch job not found"
+          },
+          "500": {
+            "description": "Batch failed"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/versions": {
+      "get": {
+        "summary": "List Versions",
+        "description": "List all available routing versions.",
+        "operationId": "list_versions_versions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response List Versions Versions Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/versions/{kind}": {
+      "get": {
+        "summary": "Get Country Versions",
+        "description": "Get available versions for policyengine, US, or UK routing.",
+        "operationId": "get_country_versions_versions__kind__get",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Country Versions Versions  Kind  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "description": "Health check endpoint.",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ping": {
+      "post": {
+        "summary": "Ping",
+        "description": "Verify the API is able to receive and process requests.",
+        "operationId": "ping_ping_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PingResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BatchChildJobStatus": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status"
+        ],
+        "title": "BatchChildJobStatus",
+        "description": "Per-year child simulation job tracking."
+      },
+      "BudgetWindowAnnualImpact": {
+        "properties": {
+          "year": {
+            "type": "string",
+            "title": "Year"
+          },
+          "taxRevenueImpact": {
+            "type": "number",
+            "title": "Taxrevenueimpact"
+          },
+          "federalTaxRevenueImpact": {
+            "type": "number",
+            "title": "Federaltaxrevenueimpact"
+          },
+          "stateTaxRevenueImpact": {
+            "type": "number",
+            "title": "Statetaxrevenueimpact"
+          },
+          "benefitSpendingImpact": {
+            "type": "number",
+            "title": "Benefitspendingimpact"
+          },
+          "budgetaryImpact": {
+            "type": "number",
+            "title": "Budgetaryimpact"
+          }
+        },
+        "type": "object",
+        "required": [
+          "year",
+          "taxRevenueImpact",
+          "federalTaxRevenueImpact",
+          "stateTaxRevenueImpact",
+          "benefitSpendingImpact",
+          "budgetaryImpact"
+        ],
+        "title": "BudgetWindowAnnualImpact",
+        "description": "Annual budget-window impact row."
+      },
+      "BudgetWindowBatchRequest": {
+        "properties": {
+          "country": {
+            "type": "string",
+            "title": "Country"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "policyengine_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policyengine Version"
+          },
+          "telemetry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TelemetryEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "time_period": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Period"
+          },
+          "reform": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reform"
+          },
+          "baseline": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline"
+          },
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "include_cliffs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Cliffs"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "data_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Version"
+          },
+          "start_year": {
+            "type": "string",
+            "title": "Start Year"
+          },
+          "window_size": {
+            "type": "integer",
+            "maximum": 75.0,
+            "minimum": 1.0,
+            "title": "Window Size"
+          },
+          "max_parallel": {
+            "type": "integer",
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Max Parallel",
+            "default": 20
+          },
+          "target": {
+            "type": "string",
+            "const": "general",
+            "title": "Target",
+            "default": "general"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "country",
+          "region",
+          "start_year",
+          "window_size"
+        ],
+        "title": "BudgetWindowBatchRequest",
+        "description": "Request model for budget-window batch submission."
+      },
+      "BudgetWindowBatchStatusResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress"
+          },
+          "completed_years": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Completed Years"
+          },
+          "running_years": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Running Years"
+          },
+          "queued_years": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Queued Years"
+          },
+          "failed_years": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Failed Years"
+          },
+          "child_jobs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/BatchChildJobStatus"
+            },
+            "type": "object",
+            "title": "Child Jobs"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BudgetWindowResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "resolved_app_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved App Name"
+          },
+          "policyengine_bundle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PolicyEngineBundle"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "BudgetWindowBatchStatusResponse",
+        "description": "Response model for budget-window batch polling."
+      },
+      "BudgetWindowBatchSubmitResponse": {
+        "properties": {
+          "batch_job_id": {
+            "type": "string",
+            "title": "Batch Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "poll_url": {
+            "type": "string",
+            "title": "Poll Url"
+          },
+          "country": {
+            "type": "string",
+            "title": "Country"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "resolved_app_name": {
+            "type": "string",
+            "title": "Resolved App Name"
+          },
+          "policyengine_bundle": {
+            "$ref": "#/components/schemas/PolicyEngineBundle"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "batch_job_id",
+          "status",
+          "poll_url",
+          "country",
+          "version",
+          "resolved_app_name",
+          "policyengine_bundle"
+        ],
+        "title": "BudgetWindowBatchSubmitResponse",
+        "description": "Response model for budget-window batch submission."
+      },
+      "BudgetWindowResult": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "budgetWindow",
+            "title": "Kind",
+            "default": "budgetWindow"
+          },
+          "startYear": {
+            "type": "string",
+            "title": "Startyear"
+          },
+          "endYear": {
+            "type": "string",
+            "title": "Endyear"
+          },
+          "windowSize": {
+            "type": "integer",
+            "title": "Windowsize"
+          },
+          "annualImpacts": {
+            "items": {
+              "$ref": "#/components/schemas/BudgetWindowAnnualImpact"
+            },
+            "type": "array",
+            "title": "Annualimpacts"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/BudgetWindowTotals"
+          }
+        },
+        "type": "object",
+        "required": [
+          "startYear",
+          "endYear",
+          "windowSize",
+          "totals"
+        ],
+        "title": "BudgetWindowResult",
+        "description": "Completed budget-window output."
+      },
+      "BudgetWindowTotals": {
+        "properties": {
+          "year": {
+            "type": "string",
+            "const": "Total",
+            "title": "Year",
+            "default": "Total"
+          },
+          "taxRevenueImpact": {
+            "type": "number",
+            "title": "Taxrevenueimpact"
+          },
+          "federalTaxRevenueImpact": {
+            "type": "number",
+            "title": "Federaltaxrevenueimpact"
+          },
+          "stateTaxRevenueImpact": {
+            "type": "number",
+            "title": "Statetaxrevenueimpact"
+          },
+          "benefitSpendingImpact": {
+            "type": "number",
+            "title": "Benefitspendingimpact"
+          },
+          "budgetaryImpact": {
+            "type": "number",
+            "title": "Budgetaryimpact"
+          }
+        },
+        "type": "object",
+        "required": [
+          "taxRevenueImpact",
+          "federalTaxRevenueImpact",
+          "stateTaxRevenueImpact",
+          "benefitSpendingImpact",
+          "budgetaryImpact"
+        ],
+        "title": "BudgetWindowTotals",
+        "description": "Aggregate totals for a completed budget-window response."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "JobStatusResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "resolved_app_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved App Name"
+          },
+          "policyengine_bundle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PolicyEngineBundle"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "JobStatusResponse",
+        "description": "Response model for job status polling."
+      },
+      "JobSubmitResponse": {
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "title": "Job Id"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "poll_url": {
+            "type": "string",
+            "title": "Poll Url"
+          },
+          "country": {
+            "type": "string",
+            "title": "Country"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "resolved_app_name": {
+            "type": "string",
+            "title": "Resolved App Name"
+          },
+          "policyengine_bundle": {
+            "$ref": "#/components/schemas/PolicyEngineBundle"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "status",
+          "poll_url",
+          "country",
+          "version",
+          "resolved_app_name",
+          "policyengine_bundle"
+        ],
+        "title": "JobSubmitResponse",
+        "description": "Response model for job submission."
+      },
+      "PingRequest": {
+        "properties": {
+          "value": {
+            "type": "integer",
+            "title": "Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "PingRequest",
+        "description": "Request model for ping endpoint."
+      },
+      "PingResponse": {
+        "properties": {
+          "incremented": {
+            "type": "integer",
+            "title": "Incremented"
+          }
+        },
+        "type": "object",
+        "required": [
+          "incremented"
+        ],
+        "title": "PingResponse",
+        "description": "Response model for ping endpoint."
+      },
+      "PolicyEngineBundle": {
+        "properties": {
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "policyengine_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policyengine Version"
+          },
+          "data_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Version"
+          },
+          "dataset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_version"
+        ],
+        "title": "PolicyEngineBundle",
+        "description": "Resolved runtime provenance returned by the gateway."
+      },
+      "SimulationRequest": {
+        "properties": {
+          "country": {
+            "type": "string",
+            "title": "Country"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "policyengine_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policyengine Version"
+          },
+          "telemetry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TelemetryEnvelope"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "time_period": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Period"
+          },
+          "reform": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reform"
+          },
+          "baseline": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "include_cliffs": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Cliffs"
+          },
+          "model_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Version"
+          },
+          "data_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Version"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "country"
+        ],
+        "title": "SimulationRequest",
+        "description": "Request model for simulation submission."
+      },
+      "TelemetryEnvelope": {
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "process_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Process Id"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "traceparent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Traceparent"
+          },
+          "requested_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested At"
+          },
+          "simulation_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Simulation Kind"
+          },
+          "geography_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geography Code"
+          },
+          "geography_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geography Type"
+          },
+          "config_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Hash"
+          },
+          "capture_mode": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "failures",
+              "threshold",
+              "sampled",
+              "always"
+            ],
+            "title": "Capture Mode",
+            "default": "disabled"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "run_id"
+        ],
+        "title": "TelemetryEnvelope",
+        "description": "Minimal shared telemetry payload shape for gateway and worker code."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

@@ -5,7 +5,7 @@ Use this skill whenever adding, moving, or reviewing tests.
 ## Canonical Layout
 
 - Service unit tests live under each service's `tests/` directory, for example
-  `projects/policyengine-api-simulation/tests/`.
+  `projects/policyengine-simulation-executor/tests/`.
 - Generated-client integration tests live under
   `projects/policyengine-apis-integ/tests/`.
 - Put reusable test helpers in local fixture modules or support modules near
@@ -38,7 +38,7 @@ make test-complete
 Simulation-service focused checks:
 
 ```bash
-cd projects/policyengine-api-simulation
+cd projects/policyengine-simulation-executor
 uv sync --extra test
 uv run pytest tests/ -v
 ```

@@ -1,0 +1,52 @@
+name: PR image smoke
+
+# Import the true app entrypoints inside the real Modal images before
+# merge (issue #602's class: image-only dependency breakage that unit
+# tests in the locked env cannot see). Path-filtered to image inputs;
+# skipped on fork PRs (no Modal secrets there) — those rely on the
+# post-merge beta integration tests as before.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'projects/policyengine-simulation-gateway/**'
+      - 'projects/policyengine-simulation-executor/uv.lock'
+      - 'projects/policyengine-simulation-executor/pyproject.toml'
+      - 'projects/policyengine-simulation-executor/src/modal/**'
+      - 'projects/policyengine-simulation-executor/src/policyengine_simulation_executor/**'
+      - 'libs/policyengine-simulation-contract/**'
+      - 'libs/policyengine-simulation-observability/**'
+      - 'libs/policyengine-fastapi/**'
+      - '.github/workflows/pr-image-smoke.yml'
+      - '.github/scripts/modal-image-smoke.sh'
+
+jobs:
+  image-smoke:
+    name: Image smoke (staging)
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Warm cache: ~2 min. After a relock the executor smoke pays the
+    # policyengine bundle install layer (~15-20 min).
+    timeout-minutes: 45
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v8.1.0
+      with:
+        enable-cache: true
+
+    - name: Run image smokes
+      env:
+        MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+        MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      run: |
+        chmod +x .github/scripts/modal-image-smoke.sh
+        .github/scripts/modal-image-smoke.sh staging

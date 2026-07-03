@@ -1,0 +1,37 @@
+[project]
+name = "policyengine-simulation-contract"
+version = "0.1.0"
+readme = "README.md"
+authors = [
+    {name = "PolicyEngine", email = "hello@policyengine.org"},
+]
+license = {file = "../../LICENSE"}
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.0",
+    "modal>=1.4,<2",
+    # gateway_models embeds the TelemetryEnvelope from the observability lib.
+    "policyengine-simulation-observability",
+]
+
+[project.optional-dependencies]
+test = [ "pytest>=8.3.4", "pytest-asyncio>=0.25.3", "pytest-cov>=6.1.1",]
+build = [ "pyright>=1.1.401", "black>=25.1.0",]
+
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+sources = ["src"]
+only-include = ["src/policyengine_simulation_contract"]
+packages = ["src/policyengine_simulation_contract"]
+
+[tool.uv.sources]
+policyengine-simulation-observability = { path = "../policyengine-simulation-observability", editable = true }
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "src"
+]
+testpaths = ["tests"]

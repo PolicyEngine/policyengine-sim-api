@@ -25,7 +25,7 @@ fi
 
 PACKAGE="policyengine"
 ROOT_DIR="$(git rev-parse --show-toplevel)"
-PROJECT_DIR="${PROJECT_DIR:-projects/policyengine-api-simulation}"
+PROJECT_DIR="${PROJECT_DIR:-projects/policyengine-simulation-executor}"
 PROJECT_PATH="${ROOT_DIR}/${PROJECT_DIR}"
 PYPROJECT="${PROJECT_PATH}/pyproject.toml"
 LOCKFILE="${PROJECT_PATH}/uv.lock"

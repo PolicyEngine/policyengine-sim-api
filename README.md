@@ -33,7 +33,7 @@ make test-complete                 # Everything: unit + integration tests
 The repository contains three main API services:
 
 - **api-full** (port 8081): Main PolicyEngine API with household calculations
-- **api-simulation** (port 8082): Economic simulation engine  
+- **simulation-executor** (port 8082): Economic simulation engine  
 - **api-tagger** (port 8083): Cloud Run revision management
 
 Each service generates OpenAPI specs and Python client libraries for integration testing.
@@ -67,7 +67,7 @@ make test-integration        # Run integration tests (requires services running)
 /
 ├── projects/               # Service applications
 │   ├── policyengine-api-full/
-│   ├── policyengine-api-simulation/
+│   ├── policyengine-simulation-executor/
 │   ├── policyengine-api-tagger/
 │   └── policyengine-apis-integ/    # Integration tests
 ├── libs/                   # Shared libraries

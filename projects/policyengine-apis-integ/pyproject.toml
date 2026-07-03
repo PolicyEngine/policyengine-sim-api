@@ -27,7 +27,7 @@ markers = [
 ]
 
 [tool.uv.sources]
-policyengine_api_simulation_client = { path = "../policyengine-api-simulation/artifacts/clients/python" }
+policyengine_api_simulation_client = { path = "../policyengine-simulation-gateway/artifacts/clients/python" }
 
 [tool.pyright]
 #The generated clients do not do the "public export" convention

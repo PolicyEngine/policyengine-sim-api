@@ -1,0 +1,70 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "policyengine-simulation-gateway"
+version = "0.1.0"
+readme = "README.md"
+authors = [
+    {name = "PolicyEngine", email = "hello@policyengine.org"},
+]
+license = {file = "../../LICENSE"}
+requires-python = ">=3.13,<3.14"
+# The full third-party runtime set for the gateway Modal image: the image
+# is built with uv_sync(frozen=True) from this project's uv.lock, so CI
+# unit tests (uv sync --extra test) run in the exact environment the
+# image ships. Local packages (the libs below) are NOT listed here — they
+# ship into the image as mounted source via add_local_python_source.
+dependencies = [
+    "fastapi>=0.115.0",
+    "pydantic>=2.0",
+    # PyJWT powers the bearer-token decoder in gateway auth.
+    "pyjwt>=2.10.1,<3.0.0",
+    # JWTDecoder (policyengine-fastapi lib) needs cryptography at runtime.
+    "cryptography>=41.0.0",
+    "logfire>=3.0.0",
+    # logfire imports importlib_metadata unconditionally on Python 3.13
+    # but does not declare it (see issue #602).
+    "importlib-metadata>=8",
+    "policyengine-observability[fastapi]>=1.3.0,<2",
+    "modal>=1.4,<2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/policyengine_simulation_gateway"]
+
+# Path dependencies live ONLY in the dev group: Modal's uv_sync copies
+# just pyproject.toml + uv.lock into the image build context, so any
+# group it installs must resolve without ../../libs. The image build
+# passes --no-default-groups to skip this group; local source arrives
+# via add_local_python_source instead.
+[dependency-groups]
+dev = [
+    "policyengine-fastapi",
+    "policyengine-simulation-contract",
+    "policyengine-simulation-observability",
+]
+
+[tool.uv.sources]
+policyengine-fastapi = { path = "../../libs/policyengine-fastapi", editable = true }
+policyengine-simulation-contract = { path = "../../libs/policyengine-simulation-contract", editable = true }
+policyengine-simulation-observability = { path = "../../libs/policyengine-simulation-observability", editable = true }
+
+[project.optional-dependencies]
+test = [ "pytest>=8.3.4", "pytest-asyncio>=0.25.3", "pytest-cov>=6.1.1", "httpx2",]
+build = [ "pyright>=1.1.401", "black>=25.1.0", "openapi-python-client>=0.21.6",]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "src",
+]
+
+testpaths = ["tests"]
+
+# Skip real-Modal integration smoke tests unless the operator explicitly
+# opts in with ``-m integration``. The default test run stays hermetic.
+addopts = "-m 'not integration'"
+markers = [
+  "integration: runs against a real (ephemeral) Modal deployment",
+]
