@@ -134,32 +134,6 @@ def test_app_module_imports_at_container_entrypoint_path(monkeypatch):
     """Modal loads the deployed function's module as /root/app.py.
 
     Module-level path math must survive that placement (parents[2] does
-    not exist there) with modal.is_local() returning False.
-    """
-    import importlib.util
-
-    install_fake_modal(monkeypatch)
-    sys.modules["modal"].is_local = lambda: False
-    sys.modules.pop("policyengine_simulation_gateway.app", None)
-
-    source_path = (
-        PROJECT_ROOT / "src" / "policyengine_simulation_gateway" / "app.py"
-    )
-    code = compile(source_path.read_text(), "/root/app.py", "exec")
-    spec = importlib.util.spec_from_loader(
-        "container_entrypoint_gateway_app", loader=None, origin="/root/app.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    module.__file__ = "/root/app.py"
-    exec(code, module.__dict__)
-
-    assert module.app.name == "policyengine-simulation-gateway"
-
-
-def test_app_module_imports_at_container_entrypoint_path(monkeypatch):
-    """Modal loads the deployed function's module as /root/app.py.
-
-    Module-level path math must survive that placement (parents[2] does
     not exist there) with modal.is_local() returning False — the exact
     setup that crash-looped the staging worker (executor) on first boot.
     """

@@ -3,12 +3,22 @@
 
 set -e
 
-echo "Publishing API client packages to PyPI..."
+echo "Publishing API client package to PyPI..."
 
 # Function to publish a client package
 publish_client() {
     local SERVICE=$1
-    local CLIENT_DIR="projects/policyengine-simulation-gateway/artifacts/clients/python"
+    local CLIENT_DIR
+
+    case "$SERVICE" in
+        simulation)
+            CLIENT_DIR="projects/policyengine-simulation-gateway/artifacts/clients/python"
+            ;;
+        *)
+            echo "❌ Unsupported API client service: ${SERVICE}"
+            exit 1
+            ;;
+    esac
     
     echo "Publishing ${SERVICE} API client..."
     
@@ -57,8 +67,7 @@ if [ -z "${PYPI_TOKEN}" ]; then
     exit 1
 fi
 
-# Publish both clients
-publish_client "full"
+# The repo currently generates and publishes the simulation client.
 publish_client "simulation"
 
-echo "✅ All clients published successfully!"
+echo "✅ API client published successfully!"
