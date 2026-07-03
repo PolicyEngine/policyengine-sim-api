@@ -109,6 +109,21 @@ hf_secret = modal.Secret.from_name("huggingface-token")
 logfire_secret = modal.Secret.from_name("policyengine-logfire")
 
 
+# Only meaningful locally: image definitions are built on the deploying
+# machine. Inside containers this module loads as the entrypoint at
+# /root/app.py, where parents[2] does not exist (and the requirements
+# file is never read container-side).
+_REQUIREMENTS_FILE = (
+    str(
+        Path(__file__).resolve().parents[2]
+        / "requirements"
+        / "modal-simulation-image.txt"
+    )
+    if modal.is_local()
+    else "requirements/modal-simulation-image.txt"
+)
+
+
 def bundle_install_command(policyengine_version: str) -> str:
     return " ".join(
         [
@@ -148,13 +163,7 @@ def build_runtime_simulation_image() -> modal.Image:
         # only change through a relock. Regenerate with
         # scripts/export-modal-image-requirements.sh after editing the
         # group or relocking.
-        .pip_install_from_requirements(
-            str(
-                Path(__file__).resolve().parents[2]
-                / "requirements"
-                / "modal-simulation-image.txt"
-            )
-        )
+        .pip_install_from_requirements(_REQUIREMENTS_FILE)
         .run_commands(
             bundle_install_command(POLICYENGINE_VERSION),
             secrets=[data_secret, hf_secret],

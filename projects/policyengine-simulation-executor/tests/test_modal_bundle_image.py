@@ -183,3 +183,65 @@ def test_modal_image_prebuilds_datasets_between_env_and_local_source(monkeypatch
         "policyengine_simulation_observability",
         "policyengine_simulation_contract",
     )
+
+
+def test_app_module_imports_at_container_entrypoint_path(monkeypatch):
+    """Modal loads the deployed function's module as /root/app.py.
+
+    Module-level path math must survive that placement (parents[2] does
+    not exist there) with modal.is_local() returning False — the exact
+    setup that crash-looped the staging worker on first boot.
+    """
+    import importlib.util
+
+    install_fake_modal(monkeypatch)
+    sys.modules["modal"].is_local = lambda: False
+    monkeypatch.setenv("POLICYENGINE_VERSION", "4.19.1")
+    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.27.1")
+    monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.700.0")
+    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.0")
+    sys.modules.pop("src.modal.app", None)
+
+    source_path = (
+        Path(__file__).resolve().parents[1] / "src" / "modal" / "app.py"
+    )
+    code = compile(source_path.read_text(), "/root/app.py", "exec")
+    spec = importlib.util.spec_from_loader(
+        "container_entrypoint_app", loader=None, origin="/root/app.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    module.__file__ = "/root/app.py"
+    exec(code, module.__dict__)
+
+    assert module.APP_NAME.startswith("policyengine-simulation-py")
+
+
+def test_app_module_imports_at_container_entrypoint_path(monkeypatch):
+    """Modal loads the deployed function's module as /root/app.py.
+
+    Module-level path math must survive that placement (parents[2] does
+    not exist there) with modal.is_local() returning False — the exact
+    setup that crash-looped the staging worker on first boot.
+    """
+    import importlib.util
+
+    install_fake_modal(monkeypatch)
+    sys.modules["modal"].is_local = lambda: False
+    monkeypatch.setenv("POLICYENGINE_VERSION", "4.19.1")
+    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.27.1")
+    monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.700.0")
+    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.0")
+    sys.modules.pop("src.modal.app", None)
+
+    source_path = (
+        Path(__file__).resolve().parents[1] / "src" / "modal" / "app.py"
+    )
+    code = compile(source_path.read_text(), "/root/app.py", "exec")
+    spec = importlib.util.spec_from_loader(
+        "container_entrypoint_app", loader=None, origin="/root/app.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    module.__file__ = "/root/app.py"
+    exec(code, module.__dict__)
+
+    assert module.APP_NAME.startswith("policyengine-simulation-py")
