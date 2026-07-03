@@ -29,6 +29,10 @@ gateway_image = (
         # the auth module at runtime here.
         "cryptography>=41.0.0",
         "logfire>=3.0.0",
+        # logfire imports importlib_metadata unconditionally but does not
+        # declare it as a dependency on Python 3.13, so install it
+        # explicitly or the container crashes at startup.
+        "importlib-metadata>=8",
         "policyengine-observability[fastapi]>=1.3.0,<2",
     )
     .add_local_python_source(

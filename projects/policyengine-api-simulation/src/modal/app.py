@@ -144,6 +144,10 @@ def build_base_simulation_image() -> modal.Image:
             "fastapi>=0.115.0",
             "tables>=3.10.2",
             "logfire>=3.0.0",
+            # logfire imports importlib_metadata unconditionally but does
+            # not declare it as a dependency on Python 3.13, so install it
+            # explicitly or workers crash on ``import logfire``.
+            "importlib-metadata>=8",
             "policyengine-observability[fastapi]>=1.3.0,<2",
         )
         .run_commands(

@@ -95,6 +95,10 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     packages = pip_install_calls[0][1]
     assert "policyengine-observability[fastapi]>=1.3.0,<2" in packages
     assert "logfire>=3.0.0" in packages
+    # logfire needs importlib_metadata at import time on Python 3.13 but
+    # does not declare it; without the explicit install every worker
+    # crashes on ``import logfire``.
+    assert "importlib-metadata>=8" in packages
 
     runtime_secret_sets = {
         name: kwargs["secrets"] for name, kwargs in app.app.function_calls
@@ -164,6 +168,9 @@ def test_gateway_image_installs_dual_observability(monkeypatch):
     packages = pip_install_calls[0][1]
     assert "policyengine-observability[fastapi]>=1.3.0,<2" in packages
     assert "logfire>=3.0.0" in packages
+    # Same importlib_metadata gap as the simulation image: without this the
+    # gateway ASGI factory dies in configure_logfire and every request 303s.
+    assert "importlib-metadata>=8" in packages
 
     function_kwargs = {name: kwargs for name, kwargs in app.app.function_calls}
     assert function_kwargs["web_app"]["secrets"] == [
