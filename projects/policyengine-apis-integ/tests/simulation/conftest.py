@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     base_url: str = "http://localhost:8082"
     access_token: str | None = None
     gateway_auth_required: bool = False
-    timeout_in_millis: int = 900_000  # 15 minutes for full simulations
+    timeout_in_millis: int = 1_500_000  # 25 minutes for full simulations
     poll_interval_seconds: float = 5.0
     us_model_version: str = "1.690.7"
     uk_model_version: str = "2.88.14"
