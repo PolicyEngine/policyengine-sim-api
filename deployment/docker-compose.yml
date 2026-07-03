@@ -10,7 +10,7 @@ services:
       - ../libs:/app/libs
     ports:
       - "8082:8080"
-    command: sh -c "cd src && uv run uvicorn policyengine_simulation_executor.main:app --reload --host 0.0.0.0 --port 8080"
+    command: sh -c "cd src && uv run --frozen --no-dev uvicorn policyengine_simulation_executor.main:app --reload --host 0.0.0.0 --port 8080"
     networks:
       - policyengine
 

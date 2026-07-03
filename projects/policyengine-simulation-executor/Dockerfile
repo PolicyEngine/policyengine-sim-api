@@ -32,4 +32,4 @@ RUN uv sync --frozen --no-dev
 EXPOSE 8080
 
 # Run with uvicorn (with 2 workers for simulation API)
-CMD ["uv", "run", "uvicorn", "policyengine_simulation_executor.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]
+CMD ["uv", "run", "--frozen", "--no-dev", "uvicorn", "policyengine_simulation_executor.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]
