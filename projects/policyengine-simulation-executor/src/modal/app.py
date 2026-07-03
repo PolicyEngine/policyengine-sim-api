@@ -132,11 +132,12 @@ def bundle_install_command(policyengine_version: str) -> str:
     )
 
 
-def build_base_simulation_image() -> modal.Image:
-    """Image layers up to and including the dataset prebuild.
+def build_runtime_simulation_image() -> modal.Image:
+    """Image layers up to the version env — everything except the dataset
+    prebuild and model snapshot.
 
-    Shared by the deployed app and the prewarm app
-    (src/modal/prewarm_app.py): both must construct these layers through
+    Shared by the deployed app, the prewarm app, and the image smoke app
+    (src/modal/smoke_app.py): all must construct these layers through
     this one code path so their definitions — and therefore Modal's
     content-addressed layer cache keys — are identical.
     """
@@ -159,6 +160,13 @@ def build_base_simulation_image() -> modal.Image:
             secrets=[data_secret, hf_secret],
         )
         .env(VERSION_ENV)
+    )
+
+
+def build_base_simulation_image() -> modal.Image:
+    """Runtime image layers plus the dataset prebuild."""
+    return (
+        build_runtime_simulation_image()
         # TEMPORARY: remove once single-year datasets are published (issue
         # #596). Prebuild US single-year datasets into the image so cold
         # containers skip the slow runtime build. US only for now, to keep

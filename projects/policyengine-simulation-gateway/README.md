@@ -20,9 +20,13 @@ build context.
 ```bash
 uv sync --extra test && uv run pytest          # unit tests (parity env)
 uv run modal deploy --env=staging src/policyengine_simulation_gateway/app.py
+uv run modal run --env=staging src/policyengine_simulation_gateway/smoke_app.py  # in-image import smoke
 uv run python -m policyengine_simulation_gateway.generate_openapi
 ../../scripts/generate-clients.sh              # regen client for apis-integ
 ```
+
+PRs touching image inputs run the smoke automatically
+(`.github/workflows/pr-image-smoke.yml`).
 
 The generated client package name stays `policyengine_api_simulation_client`
 (external consumers depend on it; see `openapi-python-client.yaml`).

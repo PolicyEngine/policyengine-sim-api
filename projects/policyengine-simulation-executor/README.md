@@ -17,7 +17,9 @@ directly from that project's lock via `uv_sync` — see its README.
 To change image dependencies, edit the dependency group, then run
 `uv lock` and `scripts/export-modal-image-requirements.sh` (or
 `make update`, which relocks and re-exports everything). CI fails if the
-exports drift from the lock (`tests/test_modal_image_requirements.py`).
+exports drift from the lock (`tests/test_modal_image_requirements.py`),
+and PRs touching image inputs run an in-image import smoke
+(`src/modal/smoke_app.py` via `.github/workflows/pr-image-smoke.yml`).
 Note that any change to the exports invalidates the image layer cache,
 including the dataset prebuild layer below.
 

@@ -33,21 +33,29 @@ logfire_secret = modal.Secret.from_name("policyengine-logfire")
 # definition is never used there — so short-circuit the path.
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
 
-gateway_image = (
-    modal.Image.debian_slim(python_version="3.13")
-    .uv_sync(
-        uv_project_dir=_UV_PROJECT_DIR,
-        frozen=True,
-        extra_options="--no-default-groups",
+
+def build_gateway_image() -> modal.Image:
+    """The gateway image, shared with the smoke app (smoke_app.py) so
+    both construct identical layer definitions and share Modal's
+    content-addressed cache."""
+    return (
+        modal.Image.debian_slim(python_version="3.13")
+        .uv_sync(
+            uv_project_dir=_UV_PROJECT_DIR,
+            frozen=True,
+            extra_options="--no-default-groups",
+        )
+        .add_local_python_source(
+            "policyengine_simulation_gateway",
+            "policyengine_simulation_contract",
+            "policyengine_simulation_observability",
+            "policyengine_fastapi",
+            copy=True,
+        )
     )
-    .add_local_python_source(
-        "policyengine_simulation_gateway",
-        "policyengine_simulation_contract",
-        "policyengine_simulation_observability",
-        "policyengine_fastapi",
-        copy=True,
-    )
-)
+
+
+gateway_image = build_gateway_image()
 
 
 @app.function(image=gateway_image, secrets=[gateway_auth_secret, logfire_secret])
