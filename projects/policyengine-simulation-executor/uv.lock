@@ -1873,14 +1873,8 @@ test = [
 ]
 
 [package.dev-dependencies]
-modal-gateway-image = [
-    { name = "cryptography" },
-    { name = "fastapi" },
-    { name = "importlib-metadata" },
-    { name = "logfire" },
-    { name = "policyengine-observability", extra = ["fastapi"] },
-    { name = "pydantic" },
-    { name = "pyjwt" },
+dev = [
+    { name = "policyengine-simulation-gateway" },
 ]
 modal-simulation-image = [
     { name = "fastapi" },
@@ -1917,15 +1911,7 @@ requires-dist = [
 provides-extras = ["test", "build"]
 
 [package.metadata.requires-dev]
-modal-gateway-image = [
-    { name = "cryptography", specifier = ">=41.0.0" },
-    { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "importlib-metadata", specifier = ">=8" },
-    { name = "logfire", specifier = ">=3.0.0" },
-    { name = "policyengine-observability", extras = ["fastapi"], specifier = ">=1.3.0,<2" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pyjwt", specifier = ">=2.10.1,<3.0.0" },
-]
+dev = [{ name = "policyengine-simulation-gateway", editable = "../policyengine-simulation-gateway" }]
 modal-simulation-image = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "importlib-metadata", specifier = ">=8" },
@@ -1933,6 +1919,48 @@ modal-simulation-image = [
     { name = "policyengine-observability", extras = ["fastapi"], specifier = ">=1.3.0,<2" },
     { name = "tables", specifier = ">=3.10.2" },
     { name = "uv" },
+]
+
+[[package]]
+name = "policyengine-simulation-gateway"
+version = "0.1.0"
+source = { editable = "../policyengine-simulation-gateway" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "fastapi" },
+    { name = "importlib-metadata" },
+    { name = "logfire" },
+    { name = "modal" },
+    { name = "policyengine-observability", extra = ["fastapi"] },
+    { name = "pydantic" },
+    { name = "pyjwt" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "black", marker = "extra == 'build'", specifier = ">=25.1.0" },
+    { name = "cryptography", specifier = ">=41.0.0" },
+    { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "httpx2", marker = "extra == 'test'" },
+    { name = "importlib-metadata", specifier = ">=8" },
+    { name = "logfire", specifier = ">=3.0.0" },
+    { name = "modal", specifier = ">=1.4,<2" },
+    { name = "openapi-python-client", marker = "extra == 'build'", specifier = ">=0.21.6" },
+    { name = "policyengine-observability", extras = ["fastapi"], specifier = ">=1.3.0,<2" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyjwt", specifier = ">=2.10.1,<3.0.0" },
+    { name = "pyright", marker = "extra == 'build'", specifier = ">=1.1.401" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.25.3" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1" },
+]
+provides-extras = ["test", "build"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "policyengine-fastapi", editable = "../../libs/policyengine-fastapi" },
+    { name = "policyengine-simulation-contract", editable = "../../libs/policyengine-simulation-contract" },
+    { name = "policyengine-simulation-observability", editable = "../../libs/policyengine-simulation-observability" },
 ]
 
 [[package]]

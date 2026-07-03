@@ -1,6 +1,6 @@
 """Contract tests for simulation API response shapes."""
 
-from src.modal.gateway.generate_openapi import create_openapi_app
+from policyengine_simulation_gateway.generate_openapi import create_openapi_app
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowAnnualImpact,
     BudgetWindowResult,

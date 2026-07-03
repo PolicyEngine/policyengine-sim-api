@@ -18,6 +18,17 @@ def fake_repo(tmp_path: Path) -> Path:
     project = tmp_path / "simulation"
     project.mkdir(parents=True)
 
+    # The updater re-exports the Modal image requirements after relocking;
+    # mirror the real repo layout with a stub that records its invocation.
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    export_stub = scripts_dir / "export-modal-image-requirements.sh"
+    export_stub.write_text(
+        "#!/usr/bin/env bash\necho ran >> \"$(dirname \"$0\")/export.log\"\n",
+        encoding="utf-8",
+    )
+    export_stub.chmod(0o755)
+
     (project / "pyproject.toml").write_text(
         "\n".join(
             [

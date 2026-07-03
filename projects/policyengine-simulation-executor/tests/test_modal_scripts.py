@@ -409,6 +409,13 @@ class TestModalDeployApp:
             call for call in calls if "update_version_registry" in call
         )
         assert "--force-latest" not in registry_call
+        # The gateway deploys from its own project (uv_sync image).
+        gateway_call = next(
+            call
+            for call in calls
+            if "policyengine_simulation_gateway/app.py" in call
+        )
+        assert "modal deploy" in gateway_call
 
     def test_passes_force_latest_when_requested(self, tmp_path):
         result, calls = self._run_with_fake_uv(tmp_path, "main", "true")

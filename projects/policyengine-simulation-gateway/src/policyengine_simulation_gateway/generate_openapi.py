@@ -6,7 +6,7 @@ but without Modal dependencies, allowing OpenAPI generation without credentials.
 
 Usage:
     cd projects/policyengine-simulation-executor
-    uv run python -m src.modal.gateway.generate_openapi
+    uv run python -m policyengine_simulation_gateway.generate_openapi
 """
 
 import json
@@ -140,9 +140,7 @@ def main():
     app = create_openapi_app()
     openapi_spec = app.openapi()
 
-    output_path = (
-        Path(__file__).parent.parent.parent.parent / "artifacts" / "openapi.json"
-    )
+    output_path = Path(__file__).resolve().parents[2] / "artifacts" / "openapi.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_path, "w") as f:

@@ -47,23 +47,17 @@ modal-simulation-image = [
     "importlib-metadata>=8",
     "policyengine-observability[fastapi]>=1.3.0,<2",
 ]
-modal-gateway-image = [
-    "fastapi>=0.115.0",
-    "pydantic>=2.0",
-    # PyJWT powers the bearer-token decoder in gateway.auth.
-    "pyjwt>=2.10.1,<3.0.0",
-    # JWTDecoder lives in the policyengine-fastapi lib; it only needs
-    # the auth module at runtime here.
-    "cryptography>=41.0.0",
-    "logfire>=3.0.0",
-    "importlib-metadata>=8",
-    "policyengine-observability[fastapi]>=1.3.0,<2",
+# The executor's budget-window scheduler tests exercise the gateway app
+# end-to-end; the gateway project rides in as a dev-only path dependency.
+dev = [
+    "policyengine-simulation-gateway",
 ]
 
 [tool.uv.sources]
 policyengine-fastapi = { path = "../../libs/policyengine-fastapi", editable = true }
 policyengine-simulation-observability = { path = "../../libs/policyengine-simulation-observability", editable = true }
 policyengine-simulation-contract = { path = "../../libs/policyengine-simulation-contract", editable = true }
+policyengine-simulation-gateway = { path = "../policyengine-simulation-gateway", editable = true }
 
 [project.optional-dependencies]
 test = [ "pytest>=8.3.4", "pytest-asyncio>=0.25.3", "pytest-cov>=6.1.1",]

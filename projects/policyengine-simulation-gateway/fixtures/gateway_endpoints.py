@@ -242,7 +242,7 @@ def mock_modal(monkeypatch):
     """Patch Modal calls in the gateway endpoints module."""
     from policyengine_simulation_contract import dataset_uri
     from policyengine_simulation_contract import budget_window_state
-    from src.modal.gateway import endpoints
+    from policyengine_simulation_gateway import endpoints
 
     mock_func = MockFunction()
     mock_dicts = {

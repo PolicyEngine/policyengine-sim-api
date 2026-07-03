@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../projects/policyengine-simulation-executor"
 mkdir -p requirements
 
-for group in modal-simulation-image modal-gateway-image; do
+for group in modal-simulation-image; do
     uv export \
         --only-group "$group" \
         --frozen \

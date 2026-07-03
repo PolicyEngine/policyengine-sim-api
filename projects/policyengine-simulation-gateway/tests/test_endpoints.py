@@ -10,7 +10,7 @@ from copy import deepcopy
 import pytest
 from fastapi.testclient import TestClient
 
-from fixtures.gateway.test_endpoints import (
+from fixtures.gateway_endpoints import (
     TEST_APP_RELEASE_BUNDLE,
     TEST_ROUTING_STATE,
     resolve_test_dataset_uri,
@@ -50,7 +50,7 @@ class TestGetAppName:
     def test__given_no_version__then_prefers_latest_policyengine_bundle(
         self, mock_modal
     ):
-        from src.modal.gateway.endpoints import get_app_name
+        from policyengine_simulation_gateway.endpoints import get_app_name
 
         app_name, resolved_version = get_app_name("us", None)
 
@@ -60,7 +60,7 @@ class TestGetAppName:
     def test__given_legacy_version_matching_policyengine_bundle__then_routes_by_bundle(
         self, mock_modal
     ):
-        from src.modal.gateway.endpoints import get_app_name
+        from policyengine_simulation_gateway.endpoints import get_app_name
 
         app_name, resolved_version = get_app_name("uk", "4.10.0")
 
@@ -73,7 +73,7 @@ class TestGetAppName:
         When get_app_name is called
         Then returns the app name for the 'latest' version.
         """
-        from src.modal.gateway.endpoints import get_app_name
+        from policyengine_simulation_gateway.endpoints import get_app_name
 
         # When
         app_name, resolved_version = get_app_name("us", None)
@@ -90,7 +90,7 @@ class TestGetAppName:
         When get_app_name is called
         Then returns the app name for that version.
         """
-        from src.modal.gateway.endpoints import get_app_name
+        from policyengine_simulation_gateway.endpoints import get_app_name
 
         # When
         app_name, resolved_version = get_app_name("us", "1.459.0")
@@ -105,7 +105,7 @@ class TestGetAppName:
         When get_app_name is called
         Then uses the UK version dictionary.
         """
-        from src.modal.gateway.endpoints import get_app_name
+        from policyengine_simulation_gateway.endpoints import get_app_name
 
         # When
         app_name, resolved_version = get_app_name("uk", None)
@@ -120,7 +120,7 @@ class TestGetAppName:
         When get_app_name is called
         Then raises ValueError.
         """
-        from src.modal.gateway.endpoints import get_app_name
+        from policyengine_simulation_gateway.endpoints import get_app_name
 
         # When / Then
         with pytest.raises(ValueError, match="Unknown country"):
@@ -132,7 +132,7 @@ class TestGetAppName:
         When get_app_name is called
         Then raises ValueError.
         """
-        from src.modal.gateway.endpoints import get_app_name
+        from policyengine_simulation_gateway.endpoints import get_app_name
 
         # When / Then
         with pytest.raises(ValueError, match="Unknown version"):
@@ -141,7 +141,7 @@ class TestGetAppName:
     def test__given_active_state_absent__then_falls_back_to_legacy_country_dict(
         self, mock_modal
     ):
-        from src.modal.gateway.endpoints import get_app_name
+        from policyengine_simulation_gateway.endpoints import get_app_name
 
         del mock_modal["dicts"]["simulation-api-routing-state"]
         mock_modal["dicts"]["simulation-api-us-versions"] = {
@@ -157,7 +157,7 @@ class TestGetAppName:
     def test__given_active_state_with_only_legacy_country_routes__then_no_version_uses_country_latest(
         self, mock_modal
     ):
-        from src.modal.gateway.endpoints import get_app_name
+        from policyengine_simulation_gateway.endpoints import get_app_name
 
         mock_modal["dicts"]["simulation-api-routing-state"] = {
             "active": {
@@ -182,7 +182,7 @@ class TestGetAppName:
         assert app_name == "policyengine-simulation-us1-715-2-uk2-88-20"
 
     def test__given_policyengine_version_field__then_routes_by_bundle(self, mock_modal):
-        from src.modal.gateway.endpoints import resolve_route
+        from policyengine_simulation_gateway.endpoints import resolve_route
 
         route = resolve_route("us", None, "4.10.0")
 
@@ -752,7 +752,7 @@ class TestSubmitSimulationEndpoint:
         When polling job status
         Then the gateway returns 404 before asking Modal for a call result.
         """
-        from src.modal.gateway import endpoints as endpoints_module
+        from policyengine_simulation_gateway import endpoints as endpoints_module
 
         recorded_errors = []
         monkeypatch.setattr(
@@ -921,7 +921,7 @@ class TestVersionEndpoints:
     def test__given_unknown_version_kind__then_records_handled_404(
         self, mock_modal, client: TestClient, monkeypatch
     ):
-        from src.modal.gateway import endpoints as endpoints_module
+        from policyengine_simulation_gateway import endpoints as endpoints_module
 
         recorded_errors = []
         monkeypatch.setattr(
@@ -1019,7 +1019,7 @@ class TestBudgetWindowBatchEndpoints:
     def test__given_unknown_budget_window_job__then_records_handled_404(
         self, mock_modal, client: TestClient, monkeypatch
     ):
-        from src.modal.gateway import endpoints as endpoints_module
+        from policyengine_simulation_gateway import endpoints as endpoints_module
 
         recorded_errors = []
         monkeypatch.setattr(
@@ -1053,8 +1053,8 @@ class TestBudgetWindowBatchEndpoints:
         event — NOT a request error, which would emit http_request_failed and
         error metrics contradicting the successful response.
         """
-        from fixtures.gateway.test_endpoints import MockFunctionCall
-        from src.modal.gateway import endpoints as endpoints_module
+        from fixtures.gateway_endpoints import MockFunctionCall
+        from policyengine_simulation_gateway import endpoints as endpoints_module
 
         recorded_errors = []
         recorded_events = []

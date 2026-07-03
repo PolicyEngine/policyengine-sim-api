@@ -38,11 +38,16 @@ echo "  UK version: ${POLICYENGINE_UK_VERSION}"
 echo "  Force latest: ${FORCE_LATEST}"
 echo "========================================"
 
-# 1. Deploy the gateway app (stable URL)
+# 1. Deploy the gateway app (stable URL) from its own project
 echo ""
 echo "Step 1: Deploying gateway app..."
 echo "  App name: policyengine-simulation-gateway"
-uv run modal deploy --env="$MODAL_ENV" src/modal/gateway/app.py
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+(
+    cd "$REPO_ROOT/projects/policyengine-simulation-gateway"
+    uv run modal deploy --env="$MODAL_ENV" \
+        src/policyengine_simulation_gateway/app.py
+)
 
 # 2. Deploy the versioned simulation app
 echo ""

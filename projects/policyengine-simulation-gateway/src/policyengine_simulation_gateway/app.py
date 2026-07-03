@@ -18,29 +18,35 @@ app = modal.App("policyengine-simulation-gateway")
 gateway_auth_secret = modal.Secret.from_name("policyengine-gateway-auth")
 logfire_secret = modal.Secret.from_name("policyengine-logfire")
 
-# Lightweight image for gateway - no heavy dependencies
+# Lightweight image for gateway - no heavy dependencies.
+#
+# uv_sync installs this project's [project.dependencies] straight from
+# uv.lock (frozen), so the image environment is exactly what CI unit
+# tests run against — packages can only change through a relock.
+# --no-default-groups is load-bearing: uv sync installs the dev group by
+# default, and that group holds ../../libs path dependencies that do not
+# exist in Modal's build context (uv_sync ships only pyproject + lock).
+# Local packages arrive as mounted source below instead.
+# The project dir only resolves locally: at deploy time the image
+# definition is built on the developer/CI machine. Inside the container
+# this module mounts at /root/app.py (no parents[2]), and the image
+# definition is never used there — so short-circuit the path.
+_UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
+
 gateway_image = (
     modal.Image.debian_slim(python_version="3.13")
-    # Pinned export of the modal-gateway-image dependency group in
-    # uv.lock, so image packages match the tested environment and can
-    # only change through a relock. Regenerate with
-    # scripts/export-modal-image-requirements.sh after editing the group
-    # or relocking.
-    .pip_install_from_requirements(
-        str(
-            Path(__file__).resolve().parents[3]
-            / "requirements"
-            / "modal-gateway-image.txt"
-        )
+    .uv_sync(
+        uv_project_dir=_UV_PROJECT_DIR,
+        frozen=True,
+        extra_options="--no-default-groups",
     )
     .add_local_python_source(
-        "src.modal",
-        "policyengine_simulation_executor",
-        "policyengine_simulation_observability",
+        "policyengine_simulation_gateway",
         "policyengine_simulation_contract",
+        "policyengine_simulation_observability",
+        "policyengine_fastapi",
         copy=True,
     )
-    .add_local_python_source("policyengine_fastapi", copy=True)
 )
 
 
@@ -62,11 +68,11 @@ def web_app():
         configure_process_observability,
         init_simulation_observability,
     )
-    from src.modal.gateway.auth import (
+    from policyengine_simulation_gateway.auth import (
         enforce_auth_configured_guard,
         enforce_production_auth_guard,
     )
-    from src.modal.gateway.endpoints import router
+    from policyengine_simulation_gateway.endpoints import router
 
     api = FastAPI(
         title="PolicyEngine Simulation Gateway",

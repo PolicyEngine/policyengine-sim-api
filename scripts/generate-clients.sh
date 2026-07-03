@@ -21,7 +21,7 @@ generate_client() {
 
     # Use gateway's OpenAPI generator for simulation service (Modal-based)
     if [ "$SERVICE" = "simulation" ]; then
-        uv run python -m src.modal.gateway.generate_openapi
+        uv run python -m policyengine_simulation_gateway.generate_openapi
     else
         uv run python -m policyengine_api_${SERVICE//-/_}.generate_openapi
     fi
@@ -61,7 +61,7 @@ generate_client() {
 }
 
 # Generate client for simulation service (Modal gateway)
-generate_client "simulation" "projects/policyengine-simulation-executor"
+generate_client "simulation" "projects/policyengine-simulation-gateway"
 
 echo "✅ Client generated successfully!"
 echo ""

@@ -3,7 +3,6 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-
 def requirements_package_names(path):
     """Package names pinned in an exported requirements file."""
     return {
@@ -184,33 +183,3 @@ def test_modal_image_prebuilds_datasets_between_env_and_local_source(monkeypatch
         "policyengine_simulation_observability",
         "policyengine_simulation_contract",
     )
-
-
-def test_gateway_image_installs_dual_observability(monkeypatch):
-    install_fake_modal(monkeypatch)
-    sys.modules.pop("src.modal.gateway.app", None)
-
-    app = importlib.import_module("src.modal.gateway.app")
-
-    requirements_calls = [
-        call
-        for call in app.gateway_image.calls
-        if call[0] == "pip_install_from_requirements"
-    ]
-    assert requirements_calls
-    requirements_path = Path(requirements_calls[0][1])
-    assert requirements_path.name == "modal-gateway-image.txt"
-    packages = requirements_package_names(requirements_path)
-    assert "policyengine-observability" in packages
-    assert "logfire" in packages
-    # Same importlib_metadata gap as the simulation image: without this the
-    # gateway ASGI factory dies in configure_logfire and every request 303s.
-    assert "importlib-metadata" in packages
-    assert "pyjwt" in packages
-    assert "cryptography" in packages
-
-    function_kwargs = {name: kwargs for name, kwargs in app.app.function_calls}
-    assert function_kwargs["web_app"]["secrets"] == [
-        app.gateway_auth_secret,
-        app.logfire_secret,
-    ]

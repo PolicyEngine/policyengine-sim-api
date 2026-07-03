@@ -108,6 +108,12 @@ test:
 		echo "Testing $$service..."; \
 		docker-compose -f deployment/docker-compose.yml run --rm $$service sh -c "cd /app/projects/policyengine-$$service && uv run --extra test pytest" || exit 1; \
 	done
+	@echo "Testing simulation-gateway (no compose service)..."
+	@cd projects/policyengine-simulation-gateway && uv sync --extra test && uv run pytest
+	@for lib in policyengine-simulation-contract policyengine-simulation-observability; do \
+		echo "Testing $$lib..."; \
+		(cd libs/$$lib && uv sync --extra test && uv run pytest) || exit 1; \
+	done
 
 test-service:
 ifndef service

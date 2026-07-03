@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from fixtures.gateway.shared import create_gateway_app
-from src.modal.gateway import auth as auth_module
+from policyengine_simulation_gateway.testing import create_gateway_app
+from policyengine_simulation_gateway import auth as auth_module
 
 
 GATED_REQUESTS = [
@@ -129,7 +129,7 @@ def test__given_partial_auth_config__then_dependency_raises_503(monkeypatch):
 def test__given_health_endpoint__then_auth_not_required(monkeypatch):
     """Health/ping/versions endpoints remain public by design."""
 
-    from fixtures.gateway.shared import create_gateway_app
+    from policyengine_simulation_gateway.testing import create_gateway_app
 
     client = TestClient(create_gateway_app(authenticate=False))
     response = client.get("/health")
@@ -177,7 +177,7 @@ def test__given_repeated_requests__then_decoder_not_reinstantiated(monkeypatch):
     decoder. We spy on ``JWTDecoder.__init__`` and assert it runs at most
     once across many requests."""
 
-    from fixtures.gateway.shared import create_gateway_app
+    from policyengine_simulation_gateway.testing import create_gateway_app
     from policyengine_fastapi.auth import jwt_decoder as jwt_decoder_module
 
     monkeypatch.delenv(auth_module.GATEWAY_AUTH_DISABLED_ENV, raising=False)

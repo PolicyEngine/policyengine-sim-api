@@ -23,7 +23,7 @@ from policyengine_simulation_contract.budget_window_state import (
     put_batch_job_seed,
     put_batch_job_state,
 )
-from src.modal.gateway.auth import require_auth
+from policyengine_simulation_gateway.auth import require_auth
 from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
@@ -36,7 +36,7 @@ from policyengine_simulation_contract.gateway_models import (
     PolicyEngineBundle,
     SimulationRequest,
 )
-from src.modal.gateway.responses import (
+from policyengine_simulation_gateway.responses import (
     batch_status_response,
     failed_job_response,
     running_job_response,

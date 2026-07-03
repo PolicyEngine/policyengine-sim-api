@@ -4,13 +4,15 @@ PolicyEngine Simulation API service.
 
 ## Modal image dependencies
 
-The Modal images (gateway in `src/modal/gateway/app.py`, base simulation
-image in `src/modal/app.py`) install from pinned requirements files under
-`requirements/`, exported from the `modal-simulation-image` and
-`modal-gateway-image` dependency groups in `pyproject.toml`/`uv.lock`.
+The executor image (`src/modal/app.py`) installs its bootstrap packages
+from a pinned requirements file under `requirements/`, exported from the
+`modal-simulation-image` dependency group in `pyproject.toml`/`uv.lock`.
 Image packages therefore match the versions the test environment runs
 against and can only change through a relock — never through a fresh
 resolution at image-build time (issue #602 is what happens otherwise).
+The gateway lives in its own project
+(`projects/policyengine-simulation-gateway`) whose image installs
+directly from that project's lock via `uv_sync` — see its README.
 
 To change image dependencies, edit the dependency group, then run
 `uv lock` and `scripts/export-modal-image-requirements.sh` (or

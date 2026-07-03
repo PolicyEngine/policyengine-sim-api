@@ -11,8 +11,8 @@ import pytest
 
 
 GATEWAY_MODEL_MODULE = "policyengine_simulation_contract.gateway_models"
-GATEWAY_ENDPOINTS_MODULE = "src.modal.gateway.endpoints"
-GATEWAY_PACKAGE_MODULE = "src.modal.gateway"
+GATEWAY_ENDPOINTS_MODULE = "policyengine_simulation_gateway.endpoints"
+GATEWAY_PACKAGE_MODULE = "policyengine_simulation_gateway"
 FASTAPI_MODULE = "fastapi"
 
 GATEWAY_MODEL_IMPORT_MODULES = (

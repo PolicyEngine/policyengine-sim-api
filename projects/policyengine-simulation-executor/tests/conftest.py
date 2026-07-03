@@ -4,11 +4,7 @@ import importlib
 import sys
 from pathlib import Path
 
-pytest_plugins = (
-    "fixtures.gateway.shared",
-    "fixtures.gateway.test_endpoints",
-    "fixtures.gateway.package_imports",
-)
+pytest_plugins = ()
 
 project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:

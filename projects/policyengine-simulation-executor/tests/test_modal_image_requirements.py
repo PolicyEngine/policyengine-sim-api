@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-GROUPS = ("modal-simulation-image", "modal-gateway-image")
+GROUPS = ("modal-simulation-image",)
 
 
 def package_lines(text):

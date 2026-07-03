@@ -1,14 +1,17 @@
-"""Shared fixtures for gateway tests."""
+"""Test factory for the gateway app.
 
-import pytest
+Lives in the package (not test fixtures) so other projects — e.g. the
+executor's budget-window scheduler tests — can build a gateway app
+without importing this project's test tree.
+"""
+
 from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
 from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
-from src.modal.gateway.auth import require_auth
-from src.modal.gateway.endpoints import router
+from policyengine_simulation_gateway.auth import require_auth
+from policyengine_simulation_gateway.endpoints import router
 
 
 def create_gateway_app(*, authenticate: bool = True) -> FastAPI:
@@ -29,9 +32,3 @@ def create_gateway_app(*, authenticate: bool = True) -> FastAPI:
     if authenticate:
         app.dependency_overrides[require_auth] = lambda: None
     return app
-
-
-@pytest.fixture
-def client() -> TestClient:
-    """Create a test client for the gateway API."""
-    return TestClient(create_gateway_app())

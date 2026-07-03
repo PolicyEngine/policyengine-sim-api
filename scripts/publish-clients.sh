@@ -8,7 +8,7 @@ echo "Publishing API client packages to PyPI..."
 # Function to publish a client package
 publish_client() {
     local SERVICE=$1
-    local CLIENT_DIR="projects/policyengine-api-${SERVICE}/artifacts/clients/python"
+    local CLIENT_DIR="projects/policyengine-simulation-gateway/artifacts/clients/python"
     
     echo "Publishing ${SERVICE} API client..."
     
