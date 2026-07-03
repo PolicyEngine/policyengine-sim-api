@@ -11,13 +11,12 @@ on:
     branches: [main]
     paths:
       - 'projects/policyengine-simulation-gateway/**'
-      - 'projects/policyengine-simulation-executor/requirements/**'
       - 'projects/policyengine-simulation-executor/uv.lock'
+      - 'projects/policyengine-simulation-executor/pyproject.toml'
       - 'projects/policyengine-simulation-executor/src/modal/**'
       - 'libs/policyengine-simulation-contract/**'
       - 'libs/policyengine-simulation-observability/**'
       - 'libs/policyengine-fastapi/**'
-      - 'scripts/export-modal-image-requirements.sh'
       - '.github/workflows/pr-image-smoke.yml'
       - '.github/scripts/modal-image-smoke.sh'
 

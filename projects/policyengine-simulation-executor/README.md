@@ -5,23 +5,23 @@ PolicyEngine Simulation API service.
 ## Modal image dependencies
 
 The executor image (`src/modal/app.py`) installs its bootstrap packages
-from a pinned requirements file under `requirements/`, exported from the
-`modal-simulation-image` dependency group in `pyproject.toml`/`uv.lock`.
-Image packages therefore match the versions the test environment runs
-against and can only change through a relock — never through a fresh
-resolution at image-build time (issue #602 is what happens otherwise).
-The gateway lives in its own project
-(`projects/policyengine-simulation-gateway`) whose image installs
-directly from that project's lock via `uv_sync` — see its README.
+straight from this project's `uv.lock` via
+`uv_sync(frozen=True, --only-group modal-simulation-image)`. Image
+packages therefore match the versions the test environment runs against
+and can only change through a relock — never through a fresh resolution
+at image-build time (issue #602 is what happens otherwise). Country
+model packages are deliberately not in the group: the
+`policyengine bundle install` layer manages them, installing into the
+same interpreter (uv_sync's venv is first on PATH). The gateway lives in
+its own project (`projects/policyengine-simulation-gateway`) whose image
+installs the same way from that project's lock — see its README.
 
-To change image dependencies, edit the dependency group, then run
-`uv lock` and `scripts/export-modal-image-requirements.sh` (or
-`make update`, which relocks and re-exports everything). CI fails if the
-exports drift from the lock (`tests/test_modal_image_requirements.py`),
-and PRs touching image inputs run an in-image import smoke
-(`src/modal/smoke_app.py` via `.github/workflows/pr-image-smoke.yml`).
-Note that any change to the exports invalidates the image layer cache,
-including the dataset prebuild layer below.
+To change image dependencies, edit the `modal-simulation-image`
+dependency group and run `uv lock`. PRs touching image inputs run an
+in-image import smoke (`src/modal/smoke_app.py` via
+`.github/workflows/pr-image-smoke.yml`). Note that any change to the
+group or lock invalidates the image layer cache, including the dataset
+prebuild layer below.
 
 ## Temporary: prebuilt single-year datasets in the Modal image
 

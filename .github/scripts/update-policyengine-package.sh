@@ -201,20 +201,14 @@ PY
   uv lock
 )
 
-# The Modal image installs a pinned export of the lock's
-# modal-simulation-image group; regenerate it or the freshness test
-# (tests/test_modal_image_requirements.py) fails on this PR.
-"${ROOT_DIR}/scripts/export-modal-image-requirements.sh"
-REQUIREMENTS_DIR="$PROJECT_PATH/requirements"
-
-if git diff --quiet -- "$PYPROJECT" "$LOCKFILE" "$REQUIREMENTS_DIR"; then
+if git diff --quiet -- "$PYPROJECT" "$LOCKFILE"; then
   echo "No changes after update. Nothing to do."
   exit 0
 fi
 
 PR_BODY_FILE="$(create_pr_body_file)"
 
-git add "$PYPROJECT" "$LOCKFILE" "$REQUIREMENTS_DIR"
+git add "$PYPROJECT" "$LOCKFILE"
 git commit -m "chore(deps): update policyengine to ${LATEST}"
 git push -u origin "$BRANCH"
 

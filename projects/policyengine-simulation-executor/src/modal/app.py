@@ -111,17 +111,9 @@ logfire_secret = modal.Secret.from_name("policyengine-logfire")
 
 # Only meaningful locally: image definitions are built on the deploying
 # machine. Inside containers this module loads as the entrypoint at
-# /root/app.py, where parents[2] does not exist (and the requirements
-# file is never read container-side).
-_REQUIREMENTS_FILE = (
-    str(
-        Path(__file__).resolve().parents[2]
-        / "requirements"
-        / "modal-simulation-image.txt"
-    )
-    if modal.is_local()
-    else "requirements/modal-simulation-image.txt"
-)
+# /root/app.py, where parents[2] does not exist (and the project dir is
+# never read container-side).
+_UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
 
 
 def bundle_install_command(policyengine_version: str) -> str:
@@ -134,8 +126,14 @@ def bundle_install_command(policyengine_version: str) -> str:
             "bundle",
             "install",
             policyengine_version,
-            "--python",
-            "/usr/local/bin/python",
+            # Install into uv_sync's venv so the bundle's model packages
+            # share one environment with the locked bootstrap packages
+            # (Modal's uv_sync creates the venv at /.uv/.venv and prepends
+            # its bin to PATH). Temporary bridge: once policyengine's CLI
+            # grows a datasets-only mode, uv will own all packages and
+            # this step shrinks to data + receipt.
+            "--venv",
+            "/.uv/.venv",
             "--country",
             "us",
             "--country",
@@ -158,12 +156,16 @@ def build_runtime_simulation_image() -> modal.Image:
     """
     return (
         modal.Image.debian_slim(python_version="3.13")
-        # Pinned export of the modal-simulation-image dependency group in
-        # uv.lock, so image packages match the tested environment and can
-        # only change through a relock. Regenerate with
-        # scripts/export-modal-image-requirements.sh after editing the
-        # group or relocking.
-        .pip_install_from_requirements(_REQUIREMENTS_FILE)
+        # The modal-simulation-image dependency group, installed straight
+        # from this project's uv.lock (frozen): image packages match the
+        # tested environment and can only change through a relock.
+        # --only-group keeps the heavyweight project dependencies out —
+        # country models arrive via the policyengine bundle install below.
+        .uv_sync(
+            uv_project_dir=_UV_PROJECT_DIR,
+            frozen=True,
+            extra_options="--only-group modal-simulation-image",
+        )
         .run_commands(
             bundle_install_command(POLICYENGINE_VERSION),
             secrets=[data_secret, hf_secret],

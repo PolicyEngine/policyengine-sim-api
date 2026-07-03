@@ -1,16 +1,8 @@
 import importlib
 import sys
+import tomllib
 from pathlib import Path
 from types import ModuleType
-
-def requirements_package_names(path):
-    """Package names pinned in an exported requirements file."""
-    return {
-        line.split(";")[0].split("==")[0].strip()
-        for line in Path(path).read_text().splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    }
-
 
 class FakeImage:
     def __init__(self):
@@ -30,6 +22,10 @@ class FakeImage:
         self.calls.append(
             ("pip_install_from_requirements", requirements_txt, kwargs)
         )
+        return self
+
+    def uv_sync(self, uv_project_dir="./", **kwargs):
+        self.calls.append(("uv_sync", uv_project_dir, kwargs))
         return self
 
     def run_commands(self, *commands, **kwargs):
@@ -96,30 +92,45 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     assert command.startswith(
         "uvx --from policyengine==4.19.1 policyengine bundle install 4.19.1"
     )
-    assert "--python /usr/local/bin/python" in command
+    # The bundle installs into uv_sync's venv so locked packages and
+    # bundled models share one environment.
+    assert "--venv /.uv/.venv" in command
     assert "--data-dir /opt/policyengine/data" in command
     assert app.VERSION_ENV["POLICYENGINE_DATA_FOLDER"] == "/opt/policyengine/data"
     assert app.VERSION_ENV["POLICYENGINE_BUNDLE_RECEIPT"].endswith(
         "/.policyengine-bundle-receipt.json"
     )
     assert command_calls[0][2]["secrets"] == [app.data_secret, app.hf_secret]
-    requirements_calls = [
+    uv_sync_calls = [
+        call for call in app.simulation_image.calls if call[0] == "uv_sync"
+    ]
+    assert len(uv_sync_calls) == 1
+    _, uv_project_dir, kwargs = uv_sync_calls[0]
+    assert Path(uv_project_dir) == Path(__file__).resolve().parents[1]
+    assert kwargs["frozen"] is True
+    # Only the image dependency group — the project's heavyweight deps
+    # (country models) arrive via the bundle install instead.
+    assert "--only-group modal-simulation-image" in kwargs["extra_options"]
+    # The lock is the only package source; ad-hoc pip layers would
+    # reintroduce build-time resolution (issue #602).
+    assert not [
         call
         for call in app.simulation_image.calls
-        if call[0] == "pip_install_from_requirements"
+        if call[0] in ("pip_install", "pip_install_from_requirements")
     ]
-    assert requirements_calls
-    requirements_path = Path(requirements_calls[0][1])
-    assert requirements_path.name == "modal-simulation-image.txt"
-    packages = requirements_package_names(requirements_path)
-    assert "policyengine-observability" in packages
-    assert "logfire" in packages
+
+    group = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    )["dependency-groups"]["modal-simulation-image"]
+    names = {requirement.split(">=")[0].split("[")[0] for requirement in group}
+    assert "policyengine-observability" in names
+    assert "logfire" in names
     # logfire needs importlib_metadata at import time on Python 3.13 but
-    # does not declare it; the pinned export must keep providing it or
-    # every worker crashes on ``import logfire``.
-    assert "importlib-metadata" in packages
+    # does not declare it; the group must keep providing it or every
+    # worker crashes on ``import logfire``.
+    assert "importlib-metadata" in names
     # uvx drives the policyengine bundle install into the image.
-    assert "uv" in packages
+    assert "uv" in names
 
     runtime_secret_sets = {
         name: kwargs["secrets"] for name, kwargs in app.app.function_calls

@@ -316,8 +316,6 @@ update:
 			(cd "$$dir" && uv lock --upgrade); \
 		fi \
 	done
-	@echo "Re-exporting Modal image requirements from uv.lock..."
-	@./scripts/export-modal-image-requirements.sh
 	@echo "✅ All dependencies updated"
 
 # Code quality

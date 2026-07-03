@@ -145,10 +145,6 @@ def test_update_policyengine_package_updates_py_and_bundled_runtime_pins(
     assert result.returncode == 0, result.stderr
     assert "PR created for policyengine 4.0.0 -> 4.1.0" in result.stdout
 
-    # The relock must be followed by the image-requirements re-export, or
-    # the freshness test fails on the bot's PR.
-    assert (fake_repo / "scripts" / "export.log").exists()
-
     pyproject_text = (fake_repo / "simulation" / "pyproject.toml").read_text(
         encoding="utf-8"
     )

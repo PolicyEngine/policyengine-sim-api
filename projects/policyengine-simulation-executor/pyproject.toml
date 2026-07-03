@@ -31,14 +31,18 @@ dependencies = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/policyengine_simulation_executor"]
 
-# Modal image dependencies. Resolved inside uv.lock together with the
-# project, then exported to requirements/modal-*.txt (see
-# scripts/export-modal-image-requirements.sh); the images install those
-# pinned exports so their packages can only change through a relock and
-# always match the versions the test environment runs against.
+# Modal image bootstrap. Resolved inside uv.lock together with the
+# project; the image installs it directly with
+# uv_sync(--only-group modal-simulation-image, frozen=True), so image
+# packages can only change through a relock and always match the
+# versions the test environment runs against. Country models are NOT
+# here — the policyengine bundle install manages them.
 [dependency-groups]
 modal-simulation-image = [
     "uv",
+    # The policyengine bundle installer runs `python -m pip install` in
+    # the target environment, and uv-created venvs do not ship pip.
+    "pip",
     "fastapi>=0.115.0",
     "tables>=3.10.2",
     "logfire>=3.0.0",
