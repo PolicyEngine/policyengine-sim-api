@@ -2,6 +2,23 @@
 
 PolicyEngine Simulation API service.
 
+## Modal image dependencies
+
+The Modal images (gateway in `src/modal/gateway/app.py`, base simulation
+image in `src/modal/app.py`) install from pinned requirements files under
+`requirements/`, exported from the `modal-simulation-image` and
+`modal-gateway-image` dependency groups in `pyproject.toml`/`uv.lock`.
+Image packages therefore match the versions the test environment runs
+against and can only change through a relock — never through a fresh
+resolution at image-build time (issue #602 is what happens otherwise).
+
+To change image dependencies, edit the dependency group, then run
+`uv lock` and `scripts/export-modal-image-requirements.sh` (or
+`make update`, which relocks and re-exports everything). CI fails if the
+exports drift from the lock (`tests/test_modal_image_requirements.py`).
+Note that any change to the exports invalidates the image layer cache,
+including the dataset prebuild layer below.
+
 ## Temporary: prebuilt single-year datasets in the Modal image
 
 The Modal image prebuilds single-year datasets (2025–2027, US national

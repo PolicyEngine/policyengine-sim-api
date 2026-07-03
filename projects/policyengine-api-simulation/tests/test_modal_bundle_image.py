@@ -1,6 +1,16 @@
 import importlib
 import sys
+from pathlib import Path
 from types import ModuleType
+
+
+def requirements_package_names(path):
+    """Package names pinned in an exported requirements file."""
+    return {
+        line.split(";")[0].split("==")[0].strip()
+        for line in Path(path).read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
 
 
 class FakeImage:
@@ -15,6 +25,12 @@ class FakeImage:
 
     def pip_install(self, *packages):
         self.calls.append(("pip_install", packages))
+        return self
+
+    def pip_install_from_requirements(self, requirements_txt, **kwargs):
+        self.calls.append(
+            ("pip_install_from_requirements", requirements_txt, kwargs)
+        )
         return self
 
     def run_commands(self, *commands, **kwargs):
@@ -88,17 +104,23 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
         "/.policyengine-bundle-receipt.json"
     )
     assert command_calls[0][2]["secrets"] == [app.data_secret, app.hf_secret]
-    pip_install_calls = [
-        call for call in app.simulation_image.calls if call[0] == "pip_install"
+    requirements_calls = [
+        call
+        for call in app.simulation_image.calls
+        if call[0] == "pip_install_from_requirements"
     ]
-    assert pip_install_calls
-    packages = pip_install_calls[0][1]
-    assert "policyengine-observability[fastapi]>=1.3.0,<2" in packages
-    assert "logfire>=3.0.0" in packages
+    assert requirements_calls
+    requirements_path = Path(requirements_calls[0][1])
+    assert requirements_path.name == "modal-simulation-image.txt"
+    packages = requirements_package_names(requirements_path)
+    assert "policyengine-observability" in packages
+    assert "logfire" in packages
     # logfire needs importlib_metadata at import time on Python 3.13 but
-    # does not declare it; without the explicit install every worker
-    # crashes on ``import logfire``.
-    assert "importlib-metadata>=8" in packages
+    # does not declare it; the pinned export must keep providing it or
+    # every worker crashes on ``import logfire``.
+    assert "importlib-metadata" in packages
+    # uvx drives the policyengine bundle install into the image.
+    assert "uv" in packages
 
     runtime_secret_sets = {
         name: kwargs["secrets"] for name, kwargs in app.app.function_calls
@@ -161,16 +183,22 @@ def test_gateway_image_installs_dual_observability(monkeypatch):
 
     app = importlib.import_module("src.modal.gateway.app")
 
-    pip_install_calls = [
-        call for call in app.gateway_image.calls if call[0] == "pip_install"
+    requirements_calls = [
+        call
+        for call in app.gateway_image.calls
+        if call[0] == "pip_install_from_requirements"
     ]
-    assert pip_install_calls
-    packages = pip_install_calls[0][1]
-    assert "policyengine-observability[fastapi]>=1.3.0,<2" in packages
-    assert "logfire>=3.0.0" in packages
+    assert requirements_calls
+    requirements_path = Path(requirements_calls[0][1])
+    assert requirements_path.name == "modal-gateway-image.txt"
+    packages = requirements_package_names(requirements_path)
+    assert "policyengine-observability" in packages
+    assert "logfire" in packages
     # Same importlib_metadata gap as the simulation image: without this the
     # gateway ASGI factory dies in configure_logfire and every request 303s.
-    assert "importlib-metadata>=8" in packages
+    assert "importlib-metadata" in packages
+    assert "pyjwt" in packages
+    assert "cryptography" in packages
 
     function_kwargs = {name: kwargs for name, kwargs in app.app.function_calls}
     assert function_kwargs["web_app"]["secrets"] == [

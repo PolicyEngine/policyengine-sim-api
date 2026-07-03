@@ -9,6 +9,7 @@ and spawns jobs on those apps.
 """
 
 import modal
+from pathlib import Path
 
 from src.modal.logfire_legacy import configure_logfire
 
@@ -20,20 +21,17 @@ logfire_secret = modal.Secret.from_name("policyengine-logfire")
 # Lightweight image for gateway - no heavy dependencies
 gateway_image = (
     modal.Image.debian_slim(python_version="3.13")
-    .pip_install(
-        "fastapi>=0.115.0",
-        "pydantic>=2.0",
-        # PyJWT powers the bearer-token decoder in gateway.auth.
-        "pyjwt>=2.10.1,<3.0.0",
-        # JWTDecoder lives in the policyengine-fastapi lib; it only needs
-        # the auth module at runtime here.
-        "cryptography>=41.0.0",
-        "logfire>=3.0.0",
-        # logfire imports importlib_metadata unconditionally but does not
-        # declare it as a dependency on Python 3.13, so install it
-        # explicitly or the container crashes at startup.
-        "importlib-metadata>=8",
-        "policyengine-observability[fastapi]>=1.3.0,<2",
+    # Pinned export of the modal-gateway-image dependency group in
+    # uv.lock, so image packages match the tested environment and can
+    # only change through a relock. Regenerate with
+    # scripts/export-modal-image-requirements.sh after editing the group
+    # or relocking.
+    .pip_install_from_requirements(
+        str(
+            Path(__file__).resolve().parents[3]
+            / "requirements"
+            / "modal-gateway-image.txt"
+        )
     )
     .add_local_python_source(
         "src.modal",

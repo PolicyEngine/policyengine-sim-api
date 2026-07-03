@@ -9,6 +9,7 @@ The gateway app (policyengine-simulation-gateway) routes requests to these versi
 
 import modal
 import os
+from pathlib import Path
 
 from policyengine_observability import operation, set_attribute
 
@@ -139,16 +140,17 @@ def build_base_simulation_image() -> modal.Image:
     """
     return (
         modal.Image.debian_slim(python_version="3.13")
-        .pip_install(
-            "uv",
-            "fastapi>=0.115.0",
-            "tables>=3.10.2",
-            "logfire>=3.0.0",
-            # logfire imports importlib_metadata unconditionally but does
-            # not declare it as a dependency on Python 3.13, so install it
-            # explicitly or workers crash on ``import logfire``.
-            "importlib-metadata>=8",
-            "policyengine-observability[fastapi]>=1.3.0,<2",
+        # Pinned export of the modal-simulation-image dependency group in
+        # uv.lock, so image packages match the tested environment and can
+        # only change through a relock. Regenerate with
+        # scripts/export-modal-image-requirements.sh after editing the
+        # group or relocking.
+        .pip_install_from_requirements(
+            str(
+                Path(__file__).resolve().parents[2]
+                / "requirements"
+                / "modal-simulation-image.txt"
+            )
         )
         .run_commands(
             bundle_install_command(POLICYENGINE_VERSION),
