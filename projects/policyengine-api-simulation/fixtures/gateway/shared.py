@@ -4,6 +4,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from policyengine_api_simulation.observability import (
+    init_simulation_observability,
+)
 from src.modal.gateway.auth import require_auth
 from src.modal.gateway.endpoints import router
 
@@ -21,6 +24,7 @@ def create_gateway_app(*, authenticate: bool = True) -> FastAPI:
         description="Test instance for unit tests",
         version="0.0.1",
     )
+    init_simulation_observability(app, service_role="modal_gateway")
     app.include_router(router)
     if authenticate:
         app.dependency_overrides[require_auth] = lambda: None

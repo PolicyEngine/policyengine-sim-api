@@ -7,6 +7,11 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
+from policyengine_observability import (
+    ObservabilityConfig,
+    ObservabilityRuntime,
+    set_observability_runtime,
+)
 
 from fixtures.test_simulation_api_contracts import (
     CURRENT_SINGLE_YEAR_MACRO_KEYS,
@@ -25,19 +30,28 @@ from fixtures.test_simulation_output_builder import (
 )
 from policyengine_api_simulation.release_bundle import BUNDLE_RECEIPT_FILENAME
 from policyengine_api_simulation.release_bundle import get_country_release_bundle
+from policyengine_api_simulation.observability import SegmentName
 from policyengine_api_simulation.simulation_runtime import RegionResolution
 from policyengine_api_simulation.simulation_runtime import _load_dataset
 from policyengine_api_simulation.simulation_runtime import _normalise_policy
 from policyengine_api_simulation.simulation_runtime import _resolve_dataset_reference
 from policyengine_api_simulation.simulation_runtime import _resolve_region
 from policyengine_api_simulation.simulation_runtime import _run_simulation_impl_core
+from policyengine_api_simulation.simulation_runtime import run_simulation_impl
 from policyengine_api_simulation.simulation_macro_output import (
+    AgePovertyOutput,
+    BaselineReformValue,
     BudgetaryImpact,
     BudgetaryOutput,
     DecileOutput,
     DetailedBudgetOutput,
     GeographicImpactOutput,
+    GenderPovertyOutput,
+    InequalityOutput,
     IntraDecileOutput,
+    LaborSupplyResponseOutput,
+    PovertyByGenderOutput,
+    PovertyModuleOutputs,
     PovertyOutput,
     SingleYearMacroOutput,
 )
@@ -57,6 +71,32 @@ class _FakeSimulation:
 
     def ensure(self):
         raise AssertionError("test data is already materialized")
+
+
+def _with_observability_timings(callback):
+    runtime = ObservabilityRuntime(
+        ObservabilityConfig(
+            service_name="policyengine-api-simulation-test",
+            service_role="test",
+            environment="test",
+            otel_enabled=False,
+        ),
+        segment_registry=SegmentName,
+    )
+    set_observability_runtime(runtime)
+    handle = runtime.start_operation("test_operation", flavor="unit")
+    try:
+        result = callback()
+        operation = handle["operation"]
+        return (
+            result,
+            dict(operation.timings_ms),
+            dict(operation.timing_counts),
+            [node.as_dict() for node in operation.segment_tree],
+        )
+    finally:
+        runtime.end_operation(handle)
+        set_observability_runtime(ObservabilityRuntime.disabled())
 
 
 def _macro_baseline_reform():
@@ -216,6 +256,331 @@ def test_builder_returns_existing_single_year_macro_shape(monkeypatch):
 
     assert set(output) == CURRENT_SINGLE_YEAR_MACRO_KEYS
     assert output == CURRENT_SINGLE_YEAR_MACRO_RESULT
+
+
+def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
+    monkeypatch,
+):
+    dataset = object()
+    country_module = SimpleNamespace(model=SimpleNamespace(version="1.715.2"))
+    baseline_simulation = object()
+    reform_simulation = object()
+    build_calls = []
+
+    def fake_build_simulation(params, *, dataset, policy, scoping_strategy=None):
+        build_calls.append((params, dataset, policy, scoping_strategy))
+        return baseline_simulation if len(build_calls) == 1 else reform_simulation
+
+    class FakeSimulationOutputBuilder:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def serialize(self):
+            return CURRENT_SINGLE_YEAR_MACRO_RESULT
+
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", raising=False)
+    monkeypatch.delenv("GCP_CREDENTIALS_JSON", raising=False)
+    monkeypatch.delenv("GOOGLE_CREDENTIALS", raising=False)
+    monkeypatch.delenv("SERVICE_ACCOUNT_JSON", raising=False)
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_runtime._country_module",
+        lambda country: country_module,
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_runtime._resolve_region",
+        lambda **kwargs: RegionResolution(
+            code="us",
+            dataset_reference="mock-dataset",
+            scoping_strategy="mock-scoping",
+        ),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_runtime._load_dataset",
+        lambda params, country_module, region_resolution: dataset,
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_runtime._build_simulation",
+        fake_build_simulation,
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_runtime.SimulationOutputBuilder",
+        FakeSimulationOutputBuilder,
+    )
+
+    result, timings, counts, segment_tree = _with_observability_timings(
+        lambda: run_simulation_impl(
+            {
+                "country": "us",
+                "baseline": {"gov.test.parameter": {"2026-01-01": 1}},
+                "reform": {"gov.test.parameter": {"2026-01-01": 2}},
+            }
+        )
+    )
+
+    assert result == CURRENT_SINGLE_YEAR_MACRO_RESULT
+    assert set(timings) >= {
+        SegmentName.CREDENTIAL_SETUP,
+        SegmentName.REQUEST_PARSE,
+        SegmentName.COUNTRY_MODULE_LOAD,
+        SegmentName.REGION_RESOLUTION,
+        SegmentName.DATASET_LOAD,
+        SegmentName.POLICY_NORMALIZATION,
+        SegmentName.SIMULATION_BUILD,
+    }
+    assert counts[SegmentName.SIMULATION_BUILD] == 2
+    assert [node["name"] for node in segment_tree] == [
+        SegmentName.CREDENTIAL_SETUP,
+        SegmentName.REQUEST_PARSE,
+        SegmentName.COUNTRY_MODULE_LOAD,
+        SegmentName.REGION_RESOLUTION,
+        SegmentName.DATASET_LOAD,
+        SegmentName.POLICY_NORMALIZATION,
+        SegmentName.SIMULATION_BUILD,
+        SegmentName.SIMULATION_BUILD,
+    ]
+    simulation_builds = [
+        node for node in segment_tree if node["name"] == SegmentName.SIMULATION_BUILD
+    ]
+    assert [node["attrs"] for node in simulation_builds] == [
+        {"simulation_kind": "baseline"},
+        {"simulation_kind": "reform"},
+    ]
+    assert build_calls == [
+        (
+            {
+                "country": "us",
+                "baseline": {"gov.test.parameter": {"2026-01-01": 1}},
+                "reform": {"gov.test.parameter": {"2026-01-01": 2}},
+            },
+            dataset,
+            {"gov.test.parameter": {"2026-01-01": 1}},
+            "mock-scoping",
+        ),
+        (
+            {
+                "country": "us",
+                "baseline": {"gov.test.parameter": {"2026-01-01": 1}},
+                "reform": {"gov.test.parameter": {"2026-01-01": 2}},
+            },
+            dataset,
+            {"gov.test.parameter": {"2026-01-01": 2}},
+            "mock-scoping",
+        ),
+    ]
+
+
+def test_builder_records_output_timings_without_real_calculation(monkeypatch):
+    baseline = object()
+    reform = object()
+    analysis = SimpleNamespace(
+        wealth_decile_impacts=object(),
+        intra_wealth_decile_impacts=object(),
+    )
+    analysis_calls = []
+
+    def economic_impact_analysis(
+        baseline_simulation,
+        reform_simulation,
+        *,
+        include_cliff_impacts=False,
+    ):
+        analysis_calls.append(
+            (baseline_simulation, reform_simulation, include_cliff_impacts)
+        )
+        return analysis
+
+    value = BaselineReformValue(baseline=0.0, reform=0.0)
+    age_poverty = AgePovertyOutput(
+        child=value,
+        adult=value,
+        senior=value,
+        all=value,
+    )
+    gender_poverty = GenderPovertyOutput(male=value, female=value)
+    poverty_outputs = PovertyModuleOutputs(
+        poverty=PovertyOutput(
+            poverty=age_poverty,
+            deep_poverty=age_poverty,
+        ),
+        poverty_by_gender=PovertyByGenderOutput(
+            poverty=gender_poverty,
+            deep_poverty=gender_poverty,
+        ),
+        poverty_by_race=None,
+    )
+    output_calls = []
+
+    def record(name, value):
+        def wrapper(*args, **kwargs):
+            output_calls.append(name)
+            return value
+
+        return wrapper
+
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_budget.build_budgetary_impact",
+        record(
+            "budgetary_impact",
+            BudgetaryImpact(
+                tax_revenue_impact=0.0,
+                state_tax_revenue_impact=0.0,
+                benefit_spending_impact=0.0,
+                budgetary_impact=0.0,
+                households=0.0,
+                baseline_net_income=0.0,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_budget.build_detailed_budget",
+        record("detailed_budget", DetailedBudgetOutput({})),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_distribution.build_decile",
+        record("decile", DecileOutput(average={}, relative={})),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_inequality.build_inequality",
+        record(
+            "inequality",
+            InequalityOutput(
+                gini=value,
+                top_10_pct_share=value,
+                top_1_pct_share=value,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_poverty.build_poverty_outputs",
+        record("poverty", poverty_outputs),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_distribution.build_intra_decile_output",
+        record("intra_decile", IntraDecileOutput(deciles={}, all={})),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_distribution.build_wealth_decile",
+        record("wealth_decile", None),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_distribution.build_intra_wealth_decile",
+        record("intra_wealth_decile", None),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_labor.build_labor_supply_response",
+        record("labor_supply", LaborSupplyResponseOutput({})),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_cliff.build_cliff_impact",
+        record("cliff", None),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_geographic.build_congressional_district_impact",
+        record("congressional_district", GeographicImpactOutput([])),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_geographic.build_uk_constituency_impact",
+        record("uk_constituency", None),
+    )
+    monkeypatch.setattr(
+        "policyengine_api_simulation.simulation_output_geographic.build_uk_local_authority_impact",
+        record("uk_local_authority", None),
+    )
+
+    builder = SimulationOutputBuilder(
+        country="us",
+        simulation_params={"country": "us", "data_version": "mock-data-version"},
+        country_module=SimpleNamespace(
+            model=SimpleNamespace(version="mock-model-version"),
+            economic_impact_analysis=economic_impact_analysis,
+        ),
+        dataset=SimpleNamespace(metadata={}),
+        baseline=baseline,
+        reform=reform,
+    )
+
+    result, timings, counts, segment_tree = _with_observability_timings(
+        builder.serialize
+    )
+
+    assert result["model_version"] == "mock-model-version"
+    assert result["data_version"] == "mock-data-version"
+    assert analysis_calls == [(baseline, reform, False)]
+    assert set(output_calls) == {
+        "budgetary_impact",
+        "detailed_budget",
+        "decile",
+        "inequality",
+        "poverty",
+        "intra_decile",
+        "wealth_decile",
+        "intra_wealth_decile",
+        "labor_supply",
+        "cliff",
+        "congressional_district",
+        "uk_constituency",
+        "uk_local_authority",
+    }
+    assert set(timings) >= {
+        SegmentName.CALCULATION,
+        SegmentName.SIMULATION_OUTPUT_BUILD,
+        SegmentName.ECONOMIC_IMPACT_ANALYSIS,
+        SegmentName.OUTPUT_MODEL_VERSION,
+        SegmentName.OUTPUT_DATA_VERSION,
+        SegmentName.OUTPUT_BUDGETARY_IMPACT,
+        SegmentName.OUTPUT_DETAILED_BUDGET,
+        SegmentName.OUTPUT_DECILE,
+        SegmentName.OUTPUT_INEQUALITY,
+        SegmentName.OUTPUT_POVERTY,
+        SegmentName.OUTPUT_INTRA_DECILE,
+        SegmentName.OUTPUT_WEALTH_DECILE,
+        SegmentName.OUTPUT_INTRA_WEALTH_DECILE,
+        SegmentName.OUTPUT_LABOR_SUPPLY,
+        SegmentName.OUTPUT_CONGRESSIONAL_DISTRICT,
+        SegmentName.OUTPUT_UK_CONSTITUENCY,
+        SegmentName.OUTPUT_UK_LOCAL_AUTHORITY,
+        SegmentName.OUTPUT_CLIFF,
+        SegmentName.RESPONSE_SERIALIZATION,
+        SegmentName.SIMULATION_OUTPUT_MODEL_DUMP,
+    }
+    assert counts[SegmentName.ECONOMIC_IMPACT_ANALYSIS] == 1
+    assert counts[SegmentName.SIMULATION_OUTPUT_MODEL_DUMP] == 1
+    assert [node["name"] for node in segment_tree] == [
+        SegmentName.CALCULATION,
+        SegmentName.RESPONSE_SERIALIZATION,
+    ]
+    calculation_children = segment_tree[0]["children"]
+    assert [node["name"] for node in calculation_children] == [
+        SegmentName.SIMULATION_OUTPUT_BUILD
+    ]
+    output_build_children = calculation_children[0]["children"]
+    assert {node["name"] for node in output_build_children} >= {
+        SegmentName.OUTPUT_BUDGETARY_IMPACT,
+        SegmentName.OUTPUT_DETAILED_BUDGET,
+        SegmentName.OUTPUT_DECILE,
+        SegmentName.OUTPUT_INEQUALITY,
+        SegmentName.OUTPUT_POVERTY,
+        SegmentName.OUTPUT_INTRA_DECILE,
+        SegmentName.OUTPUT_WEALTH_DECILE,
+        SegmentName.OUTPUT_INTRA_WEALTH_DECILE,
+        SegmentName.OUTPUT_LABOR_SUPPLY,
+        SegmentName.OUTPUT_CONGRESSIONAL_DISTRICT,
+        SegmentName.OUTPUT_UK_CONSTITUENCY,
+        SegmentName.OUTPUT_UK_LOCAL_AUTHORITY,
+        SegmentName.OUTPUT_CLIFF,
+        SegmentName.OUTPUT_MODEL_VERSION,
+        SegmentName.OUTPUT_DATA_VERSION,
+    }
+    poverty_node = next(
+        node
+        for node in output_build_children
+        if node["name"] == SegmentName.OUTPUT_POVERTY
+    )
+    assert poverty_node["children"][0]["name"] == (SegmentName.ECONOMIC_IMPACT_ANALYSIS)
+    assert segment_tree[1]["children"][0]["name"] == (
+        SegmentName.SIMULATION_OUTPUT_MODEL_DUMP
+    )
 
 
 def test_builder_maps_uk_wealth_outputs_and_omits_us_only_race(monkeypatch):

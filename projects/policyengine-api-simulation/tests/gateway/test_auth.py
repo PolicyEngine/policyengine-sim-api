@@ -310,6 +310,42 @@ class TestProductionAuthGuard:
             "GATEWAY AUTH IS DISABLED" in record.message for record in caplog.records
         ), f"Expected critical auth-disabled banner, got {caplog.records!r}"
 
+    def test__given_bypass_active__then_logfire_event_gated_on_configuration(
+        self, monkeypatch
+    ):
+        """The legacy Logfire audit event fires only when configure_logfire
+        actually ran with a token — not based on logfire's send_to_logfire
+        flag, which is True even on an unconfigured instance."""
+        import sys
+
+        monkeypatch.setenv(auth_module.GATEWAY_AUTH_DISABLED_ENV, "1")
+        monkeypatch.setenv(auth_module.MODAL_ENVIRONMENT_ENV, "dev")
+        monkeypatch.setenv(
+            auth_module.GATEWAY_AUTH_DISABLED_ACK_ENV,
+            auth_module.GATEWAY_AUTH_DISABLED_ACK_VALUE,
+        )
+
+        class _FakeLogfire:
+            def __init__(self):
+                self.calls = []
+
+            def error(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+
+        fake_logfire = _FakeLogfire()
+        monkeypatch.setitem(sys.modules, "logfire", fake_logfire)
+
+        monkeypatch.setattr(auth_module, "logfire_is_configured", lambda: False)
+        auth_module.enforce_production_auth_guard()
+        assert fake_logfire.calls == []
+
+        monkeypatch.setattr(auth_module, "logfire_is_configured", lambda: True)
+        auth_module.enforce_production_auth_guard()
+        assert len(fake_logfire.calls) == 1
+        args, kwargs = fake_logfire.calls[0]
+        assert args == ("gateway_auth_disabled_bypass_active",)
+        assert kwargs["modal_environment"] == "dev"
+
 
 class TestAuthConfiguredGuard:
     """Startup guard for required-or-partial auth misconfiguration."""

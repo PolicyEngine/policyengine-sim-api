@@ -745,17 +745,32 @@ class TestSubmitSimulationEndpoint:
         assert response.json()["run_id"] == "run-123"
 
     def test__given_unknown_job_id__then_polling_returns_404(
-        self, mock_modal, client: TestClient
+        self, mock_modal, client: TestClient, monkeypatch
     ):
         """
         Given a job id that the gateway never issued
         When polling job status
         Then the gateway returns 404 before asking Modal for a call result.
         """
+        from src.modal.gateway import endpoints as endpoints_module
+
+        recorded_errors = []
+        monkeypatch.setattr(
+            endpoints_module,
+            "record_error",
+            lambda exc, **kwargs: recorded_errors.append((exc, kwargs)),
+        )
+
         response = client.get("/jobs/unknown-job-id")
 
         assert response.status_code == 404
         assert response.json()["detail"] == "Job not found: unknown-job-id"
+        assert str(recorded_errors[0][0]) == "Job not found: unknown-job-id"
+        assert recorded_errors[0][1] == {
+            "handled": True,
+            "status_code": 404,
+            "include_stack": False,
+        }
 
     def test__given_lazy_modal_call_without_metadata__then_polling_returns_404(
         self, mock_modal, client: TestClient
@@ -903,6 +918,29 @@ class TestVersionEndpoints:
         assert response.status_code == 200
         assert response.json()["latest"] == "4.10.0"
 
+    def test__given_unknown_version_kind__then_records_handled_404(
+        self, mock_modal, client: TestClient, monkeypatch
+    ):
+        from src.modal.gateway import endpoints as endpoints_module
+
+        recorded_errors = []
+        monkeypatch.setattr(
+            endpoints_module,
+            "record_error",
+            lambda exc, **kwargs: recorded_errors.append((exc, kwargs)),
+        )
+
+        response = client.get("/versions/fr")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Unknown version kind: fr"
+        assert str(recorded_errors[0][0]) == "Unknown version kind: fr"
+        assert recorded_errors[0][1] == {
+            "handled": True,
+            "status_code": 404,
+            "include_stack": False,
+        }
+
     def test__given_no_active_state__then_versions_fall_back_to_old_dicts(
         self, mock_modal, client: TestClient
     ):
@@ -977,6 +1015,95 @@ class TestBudgetWindowBatchEndpoints:
             "resolved_app_name": "policyengine-simulation-py4-10-0",
             "policyengine_bundle": expected_bundle("us", "1.500.0"),
         }
+
+    def test__given_unknown_budget_window_job__then_records_handled_404(
+        self, mock_modal, client: TestClient, monkeypatch
+    ):
+        from src.modal.gateway import endpoints as endpoints_module
+
+        recorded_errors = []
+        monkeypatch.setattr(
+            endpoints_module,
+            "record_error",
+            lambda exc, **kwargs: recorded_errors.append((exc, kwargs)),
+        )
+
+        response = client.get("/budget-window-jobs/missing-batch")
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == (
+            "Budget-window job not found: missing-batch"
+        )
+        assert str(recorded_errors[0][0]) == (
+            "Budget-window job not found: missing-batch"
+        )
+        assert recorded_errors[0][1] == {
+            "handled": True,
+            "status_code": 404,
+            "include_stack": False,
+        }
+
+    def test__given_parent_lookup_failure__then_degraded_poll_is_not_an_error(
+        self, mock_modal, client: TestClient, monkeypatch
+    ):
+        """
+        Given a submitted batch whose parent FunctionCall lookup fails
+        When polling batch status
+        Then the gateway serves the seed state (202) and records a degradation
+        event — NOT a request error, which would emit http_request_failed and
+        error metrics contradicting the successful response.
+        """
+        from fixtures.gateway.test_endpoints import MockFunctionCall
+        from src.modal.gateway import endpoints as endpoints_module
+
+        recorded_errors = []
+        recorded_events = []
+        monkeypatch.setattr(
+            endpoints_module,
+            "record_error",
+            lambda exc, **kwargs: recorded_errors.append((exc, kwargs)),
+        )
+        monkeypatch.setattr(
+            endpoints_module,
+            "record_event",
+            lambda event, **kwargs: recorded_events.append((event, kwargs)),
+        )
+
+        mock_modal["dicts"]["simulation-api-us-versions"] = {
+            "latest": "1.500.0",
+            "1.500.0": "policyengine-simulation-py4-10-0",
+        }
+        submit_response = client.post(
+            "/simulate/economy/budget-window",
+            json={
+                "country": "us",
+                "region": "us",
+                "scope": "macro",
+                "reform": {},
+                "start_year": "2026",
+                "window_size": 3,
+            },
+        )
+        batch_job_id = submit_response.json()["batch_job_id"]
+        MockFunctionCall.from_id_errors[batch_job_id] = RuntimeError(
+            "transient modal control-plane error"
+        )
+
+        response = client.get(f"/budget-window-jobs/{batch_job_id}")
+
+        assert response.status_code == 202
+        assert response.json()["status"] == "submitted"
+        assert recorded_errors == []
+        assert recorded_events == [
+            (
+                "budget_window_parent_lookup_degraded",
+                {
+                    "batch_job_id": batch_job_id,
+                    "error_type": "RuntimeError",
+                    "parent_call_not_found": False,
+                },
+            )
+        ]
 
     def test__given_budget_window_include_cliffs__then_returns_422(
         self, mock_modal, client: TestClient

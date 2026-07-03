@@ -350,6 +350,72 @@ def test_scheduler_sleep_exponentially_backs_off_then_resets_on_progress(
     assert sleeps == [0.5, 1.0, 2.0, 4.0]
 
 
+def test_scheduler_publishes_bounded_poll_aggregates(monkeypatch, mock_batch_modal):
+    """Poll/sleep telemetry must be published as overwriting aggregate
+    attributes, not one segment per probe: segments append nodes to the
+    operation's in-memory segment tree, so a near-timeout batch polling for
+    an hour would grow memory without bound and emit a final operation log
+    line large enough for Modal's log pipeline to truncate.
+    """
+
+    request, payload = _build_parent_payload(window_size=1)
+    _seed_parent_batch(request, mock_batch_modal["parent_call_id"])
+
+    tracker = SpawnTracker()
+    run_simulation = MockRunSimulationFunction(
+        tracker=tracker,
+        results_by_year={
+            "2026": [
+                TimeoutError(),
+                TimeoutError(),
+                {
+                    "budget": {
+                        "tax_revenue_impact": 10,
+                        "state_tax_revenue_impact": 3,
+                        "benefit_spending_impact": 5,
+                        "budgetary_impact": 15,
+                    }
+                },
+            ],
+        },
+        call_registry=mock_batch_modal["call_registry"],
+    )
+    mock_batch_modal["functions"][
+        ("policyengine-simulation-py4-10-0", "run_simulation")
+    ] = run_simulation
+
+    monkeypatch.setattr(scheduler_module.time, "sleep", lambda _: None)
+    attributes: dict[str, object] = {}
+    monkeypatch.setattr(
+        scheduler_module,
+        "set_attribute",
+        lambda key, value: attributes.__setitem__(key, value),
+    )
+
+    runner = scheduler_module.BudgetWindowBatchRunner(
+        context=scheduler_module.BudgetWindowBatchContext(
+            batch_job_id=mock_batch_modal["parent_call_id"],
+            request=request,
+            resolved_version="1.500.0",
+            resolved_app_name="policyengine-simulation-py4-10-0",
+            bundle=PolicyEngineBundle(model_version="1.500.0"),
+            raw_params=payload,
+        ),
+        poll_interval_seconds=0.5,
+        poll_interval_max_seconds=4.0,
+        poll_interval_backoff_factor=2.0,
+    )
+
+    runner.run()
+
+    # Two TimeoutError probes plus the resolving poll.
+    assert attributes["child_poll_count"] == 3
+    assert attributes["child_poll_ms_total"] >= 0
+    # Two empty polls: 0.5s + 1.0s of backoff sleep.
+    assert attributes["backoff_sleep_count"] == 2
+    assert attributes["backoff_sleep_ms_total"] == 1500.0
+
+
 def test_run_budget_window_batch_impl_fails_on_malformed_child_result(
     mock_batch_modal,
 ):

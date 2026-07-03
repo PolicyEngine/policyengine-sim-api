@@ -22,6 +22,7 @@ dependencies = [
     "policyengine-us==1.752.2",
     "tables>=3.10.2",
     "modal>=0.73.0",
+    "policyengine-observability[fastapi]>=1.3.0,<2",
     "logfire>=3.0.0",
 ]
 

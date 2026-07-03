@@ -59,6 +59,7 @@ def install_fake_modal(monkeypatch):
     modal.Secret = FakeSecret
     modal.App = FakeApp
     modal.is_local = lambda: True
+    modal.asgi_app = lambda: lambda function: function
     monkeypatch.setitem(sys.modules, "modal", modal)
 
 
@@ -87,6 +88,14 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
         "/.policyengine-bundle-receipt.json"
     )
     assert command_calls[0][2]["secrets"] == [app.data_secret, app.hf_secret]
+    pip_install_calls = [
+        call for call in app.simulation_image.calls if call[0] == "pip_install"
+    ]
+    assert pip_install_calls
+    packages = pip_install_calls[0][1]
+    assert "policyengine-observability[fastapi]>=1.3.0,<2" in packages
+    assert "logfire>=3.0.0" in packages
+
     runtime_secret_sets = {
         name: kwargs["secrets"] for name, kwargs in app.app.function_calls
     }
@@ -140,3 +149,24 @@ def test_modal_image_prebuilds_datasets_between_env_and_local_source(monkeypatch
         if call[0] == "run_function" and call[1] == "snapshot_models"
     )
     assert env_index < prebuild_indices[0] < local_source_index < snapshot_index
+
+
+def test_gateway_image_installs_dual_observability(monkeypatch):
+    install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.gateway.app", None)
+
+    app = importlib.import_module("src.modal.gateway.app")
+
+    pip_install_calls = [
+        call for call in app.gateway_image.calls if call[0] == "pip_install"
+    ]
+    assert pip_install_calls
+    packages = pip_install_calls[0][1]
+    assert "policyengine-observability[fastapi]>=1.3.0,<2" in packages
+    assert "logfire>=3.0.0" in packages
+
+    function_kwargs = {name: kwargs for name, kwargs in app.app.function_calls}
+    assert function_kwargs["web_app"]["secrets"] == [
+        app.gateway_auth_secret,
+        app.logfire_secret,
+    ]

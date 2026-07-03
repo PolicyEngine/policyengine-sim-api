@@ -16,7 +16,10 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, Iterator
 
+from policyengine_observability import segment, set_attribute
+
 from policyengine_api_simulation.dataset_uri import runtime_dataset_uri
+from policyengine_api_simulation.observability import SegmentName
 from policyengine_api_simulation.release_bundle import (
     get_country_release_bundle,
     resolve_bundle_dataset_name,
@@ -73,54 +76,54 @@ def setup_gcp_credentials() -> Iterator[None]:
     ``tempfile.mkstemp`` path leaked credential material on disk every
     time a container served a request.
     """
-    # Log available GCP-related env vars for debugging
-    gcp_vars = {
-        k: v[:50] + "..." if len(v) > 50 else v
-        for k, v in os.environ.items()
-        if "GOOGLE" in k or "GCP" in k or "CREDENTIAL" in k
-    }
-    logger.info(f"GCP-related env vars: {list(gcp_vars.keys())}")
-
-    # Check if credentials are already set as a file path
-    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-        logger.info("GOOGLE_APPLICATION_CREDENTIALS already set")
-        yield
-        return
-
-    # Check for credentials JSON in various env var names
-    creds_json = (
-        os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-        or os.environ.get("GCP_CREDENTIALS_JSON")
-        or os.environ.get("GOOGLE_CREDENTIALS")
-        or os.environ.get("SERVICE_ACCOUNT_JSON")
-    )
-
-    if not creds_json:
-        logger.warning("No GCP credentials found in environment variables")
-        yield
-        return
-
-    normalized = _normalize_credentials_blob(creds_json)
-
-    # ``NamedTemporaryFile(delete=True)`` removes the file when the context
-    # exits (either normally or via exception). We restore any prior value
-    # of ``GOOGLE_APPLICATION_CREDENTIALS`` so a retry in the same
-    # container doesn't silently pick up a path that no longer exists.
     previous = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=True
-    ) as creds_file:
-        creds_file.write(normalized)
-        creds_file.flush()
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_file.name
-        logger.info(f"GCP credentials written to {creds_file.name}")
-        try:
-            yield
-        finally:
+    creds_file = None
+    try:
+        with segment(SegmentName.CREDENTIAL_SETUP):
+            # Log available GCP-related env vars for debugging.
+            gcp_vars = {
+                k: v[:50] + "..." if len(v) > 50 else v
+                for k, v in os.environ.items()
+                if "GOOGLE" in k or "GCP" in k or "CREDENTIAL" in k
+            }
+            logger.info(f"GCP-related env vars: {list(gcp_vars.keys())}")
+
+            if previous:
+                logger.info("GOOGLE_APPLICATION_CREDENTIALS already set")
+            else:
+                creds_json = (
+                    os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+                    or os.environ.get("GCP_CREDENTIALS_JSON")
+                    or os.environ.get("GOOGLE_CREDENTIALS")
+                    or os.environ.get("SERVICE_ACCOUNT_JSON")
+                )
+
+                if not creds_json:
+                    logger.warning("No GCP credentials found in environment variables")
+                else:
+                    normalized = _normalize_credentials_blob(creds_json)
+                    # ``NamedTemporaryFile(delete=True)`` removes the file when
+                    # the context exits. We restore any prior value of
+                    # ``GOOGLE_APPLICATION_CREDENTIALS`` so a retry in the same
+                    # container doesn't silently pick up a stale path.
+                    creds_file = tempfile.NamedTemporaryFile(
+                        mode="w",
+                        suffix=".json",
+                        delete=True,
+                    )
+                    creds_file.write(normalized)
+                    creds_file.flush()
+                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_file.name
+                    logger.info(f"GCP credentials written to {creds_file.name}")
+
+        yield
+    finally:
+        if creds_file is not None:
             if previous is None:
                 os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
             else:
                 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = previous
+            creds_file.close()
 
 
 def run_simulation_impl(params: dict) -> dict:
@@ -188,6 +191,11 @@ def _requested_data_version(params: dict[str, Any]) -> str | None:
 
 
 def _resolve_dataset_reference(country: str, params: dict[str, Any]) -> str:
+    with segment(SegmentName.DATASET_RESOLUTION):
+        return _resolve_dataset_reference_inner(country, params)
+
+
+def _resolve_dataset_reference_inner(country: str, params: dict[str, Any]) -> str:
     requested_data = params.get("data")
     requested_data = requested_data if isinstance(requested_data, str) else None
     requested_data_version = _requested_data_version(params)
@@ -424,7 +432,9 @@ def _build_simulation(
 
 
 def _run_simulation_impl_core(params: dict) -> dict:
-    simulation_params, telemetry, metadata = split_internal_payload(params)
+    with segment(SegmentName.REQUEST_PARSE):
+        simulation_params, telemetry, metadata = split_internal_payload(params)
+    metadata = metadata or {}
 
     logger.info(
         "Starting simulation for country=%s run_id=%s process_id=%s",
@@ -436,36 +446,50 @@ def _run_simulation_impl_core(params: dict) -> dict:
         logger.info("Received simulation metadata keys: %s", sorted(metadata))
 
     country = simulation_params.get("country", "us").lower()
-    country_module = _country_module(country)
-    region_resolution = _resolve_region(
-        country_module=country_module,
+    _set_runtime_attributes(
+        simulation_params=simulation_params,
+        telemetry=telemetry,
+        metadata=metadata,
         country=country,
-        params=simulation_params,
     )
-    dataset = _load_dataset(
-        simulation_params,
-        country_module=country_module,
-        region_resolution=region_resolution,
-    )
-    baseline_policy = _normalise_policy(simulation_params.get("baseline"))
-    reform_policy = _normalise_policy(simulation_params.get("reform"))
+
+    with segment(SegmentName.COUNTRY_MODULE_LOAD):
+        country_module = _country_module(country)
+    with segment(SegmentName.REGION_RESOLUTION):
+        region_resolution = _resolve_region(
+            country_module=country_module,
+            country=country,
+            params=simulation_params,
+        )
+    set_attribute("region", region_resolution.code)
+    with segment(SegmentName.DATASET_LOAD):
+        dataset = _load_dataset(
+            simulation_params,
+            country_module=country_module,
+            region_resolution=region_resolution,
+        )
+    with segment(SegmentName.POLICY_NORMALIZATION):
+        baseline_policy = _normalise_policy(simulation_params.get("baseline"))
+        reform_policy = _normalise_policy(simulation_params.get("reform"))
 
     logger.info("Initialising baseline and reform simulations")
-    baseline = _build_simulation(
-        simulation_params,
-        dataset=dataset,
-        policy=baseline_policy,
-        scoping_strategy=region_resolution.scoping_strategy,
-    )
-    reform = _build_simulation(
-        simulation_params,
-        dataset=dataset,
-        policy=reform_policy,
-        scoping_strategy=region_resolution.scoping_strategy,
-    )
+    with segment(SegmentName.SIMULATION_BUILD, simulation_kind="baseline"):
+        baseline = _build_simulation(
+            simulation_params,
+            dataset=dataset,
+            policy=baseline_policy,
+            scoping_strategy=region_resolution.scoping_strategy,
+        )
+    with segment(SegmentName.SIMULATION_BUILD, simulation_kind="reform"):
+        reform = _build_simulation(
+            simulation_params,
+            dataset=dataset,
+            policy=reform_policy,
+            scoping_strategy=region_resolution.scoping_strategy,
+        )
 
     logger.info("Calculating economic impact")
-    output = SimulationOutputBuilder(
+    builder = SimulationOutputBuilder(
         country=country,
         simulation_params=simulation_params,
         country_module=country_module,
@@ -473,6 +497,32 @@ def _run_simulation_impl_core(params: dict) -> dict:
         baseline=baseline,
         reform=reform,
         resolved_data_version=_requested_data_version(simulation_params),
-    ).serialize()
+    )
+    output = builder.serialize()
     logger.info("Comparison complete")
     return output
+
+
+def _set_runtime_attributes(
+    *,
+    simulation_params: dict[str, Any],
+    telemetry,
+    metadata: dict[str, Any],
+    country: str,
+) -> None:
+    set_attribute("country", country)
+    set_attribute("scope", simulation_params.get("scope"))
+    set_attribute("simulation_year", _parse_year(simulation_params))
+    set_attribute("run_id", getattr(telemetry, "run_id", None))
+    set_attribute("process_id", getattr(telemetry, "process_id", None))
+    set_attribute("request_id", getattr(telemetry, "request_id", None))
+    set_attribute("geography_code", getattr(telemetry, "geography_code", None))
+    set_attribute("geography_type", getattr(telemetry, "geography_type", None))
+
+    set_attribute("resolved_version", metadata.get("resolved_version"))
+    set_attribute("resolved_app_name", metadata.get("resolved_app_name"))
+    bundle = metadata.get("policyengine_bundle")
+    if isinstance(bundle, dict):
+        set_attribute("policyengine_version", bundle.get("policyengine_version"))
+        set_attribute("model_version", bundle.get("model_version"))
+        set_attribute("data_version", bundle.get("data_version"))
