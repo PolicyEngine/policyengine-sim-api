@@ -7,7 +7,7 @@ from src.modal.budget_window_results import (
     extract_annual_impact,
     sum_annual_impacts,
 )
-from src.modal.gateway.models import BudgetWindowAnnualImpact
+from policyengine_simulation_contract.gateway_models import BudgetWindowAnnualImpact
 
 
 def test_extract_annual_impact_matches_v1_shape():

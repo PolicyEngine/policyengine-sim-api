@@ -182,6 +182,7 @@ def test_modal_image_prebuilds_datasets_between_env_and_local_source(monkeypatch
         "src.modal",
         "policyengine_simulation_executor",
         "policyengine_simulation_observability",
+        "policyengine_simulation_contract",
     )
 
 

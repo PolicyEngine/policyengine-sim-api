@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 import modal
 
-from src.modal.gateway.models import (
+from policyengine_simulation_contract.gateway_models import (
     BatchChildJobStatus,
     BudgetWindowAnnualImpact,
     BudgetWindowBatchRequest,

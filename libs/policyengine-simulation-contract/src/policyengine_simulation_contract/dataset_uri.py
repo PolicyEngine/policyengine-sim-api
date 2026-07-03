@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from policyengine_simulation_executor.hf_dataset import (
+from policyengine_simulation_contract.hf_dataset import (
     parse_hf_dataset_uri,
     validate_hf_dataset_uri,
     with_hf_revision,

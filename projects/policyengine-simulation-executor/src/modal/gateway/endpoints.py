@@ -15,7 +15,7 @@ from policyengine_observability import (
     set_attribute,
 )
 
-from src.modal.budget_window_state import (
+from policyengine_simulation_contract.budget_window_state import (
     build_batch_status_response,
     create_initial_batch_state,
     get_batch_job_seed,
@@ -25,7 +25,7 @@ from src.modal.budget_window_state import (
 )
 from src.modal.gateway.auth import require_auth
 from policyengine_simulation_observability.errors import log_and_redact_exception
-from src.modal.gateway.models import (
+from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
     BudgetWindowBatchSubmitResponse,
@@ -41,11 +41,11 @@ from src.modal.gateway.responses import (
     failed_job_response,
     running_job_response,
 )
-from policyengine_simulation_executor.dataset_uri import (
+from policyengine_simulation_contract.dataset_uri import (
     runtime_dataset_uri,
     select_dataset_revision,
 )
-from policyengine_simulation_executor.hf_dataset import (
+from policyengine_simulation_contract.hf_dataset import (
     HuggingFaceDatasetReferenceError,
 )
 from policyengine_simulation_observability.observability import SegmentName

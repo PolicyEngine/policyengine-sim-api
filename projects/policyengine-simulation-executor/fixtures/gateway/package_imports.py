@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import pytest
 
 
-GATEWAY_MODEL_MODULE = "src.modal.gateway.models"
+GATEWAY_MODEL_MODULE = "policyengine_simulation_contract.gateway_models"
 GATEWAY_ENDPOINTS_MODULE = "src.modal.gateway.endpoints"
 GATEWAY_PACKAGE_MODULE = "src.modal.gateway"
 FASTAPI_MODULE = "fastapi"

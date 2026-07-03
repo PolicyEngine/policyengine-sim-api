@@ -37,6 +37,7 @@ gateway_image = (
         "src.modal",
         "policyengine_simulation_executor",
         "policyengine_simulation_observability",
+        "policyengine_simulation_contract",
         copy=True,
     )
     .add_local_python_source("policyengine_fastapi", copy=True)

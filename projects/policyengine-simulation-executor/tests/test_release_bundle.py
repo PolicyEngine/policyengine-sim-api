@@ -21,7 +21,7 @@ def stub_hf_revision_validation(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "policyengine_simulation_executor.dataset_uri.with_hf_revision",
+        "policyengine_simulation_contract.dataset_uri.with_hf_revision",
         with_revision,
     )
 

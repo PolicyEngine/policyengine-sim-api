@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from fastapi.responses import JSONResponse
 
-from src.modal.gateway.models import BudgetWindowBatchStatusResponse
+from policyengine_simulation_contract.gateway_models import (
+    BudgetWindowBatchStatusResponse,
+)
 
 
 class AcceptedResponse(JSONResponse):

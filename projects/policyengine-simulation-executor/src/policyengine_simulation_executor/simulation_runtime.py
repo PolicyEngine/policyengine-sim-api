@@ -18,7 +18,7 @@ from typing import Any, Iterator
 
 from policyengine_observability import segment, set_attribute
 
-from policyengine_simulation_executor.dataset_uri import runtime_dataset_uri
+from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 from policyengine_simulation_observability.observability import SegmentName
 from policyengine_simulation_executor.release_bundle import (
     get_country_release_bundle,

@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from src.modal.gateway.models import (
+from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
     BudgetWindowBatchSubmitResponse,

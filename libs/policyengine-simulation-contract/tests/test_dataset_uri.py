@@ -2,7 +2,7 @@
 
 import pytest
 
-from policyengine_simulation_executor.dataset_uri import runtime_dataset_uri
+from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 
 
 def test_runtime_dataset_uri_preserves_populace_hf_artifact_without_hf_validation(
@@ -14,7 +14,7 @@ def test_runtime_dataset_uri_preserves_populace_hf_artifact_without_hf_validatio
         )
 
     monkeypatch.setattr(
-        "policyengine_simulation_executor.dataset_uri.with_hf_revision",
+        "policyengine_simulation_contract.dataset_uri.with_hf_revision",
         reject_hf_validation,
     )
 
@@ -63,7 +63,7 @@ def test_runtime_dataset_uri_still_validates_unmanaged_hf_revisions(monkeypatch)
         return f"{dataset_uri.rsplit('@', maxsplit=1)[0]}@{revision}"
 
     monkeypatch.setattr(
-        "policyengine_simulation_executor.dataset_uri.with_hf_revision",
+        "policyengine_simulation_contract.dataset_uri.with_hf_revision",
         pin_hf_revision,
     )
 

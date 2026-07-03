@@ -15,7 +15,7 @@ from fixtures.gateway.test_endpoints import (
     TEST_ROUTING_STATE,
     resolve_test_dataset_uri,
 )
-from policyengine_simulation_executor.hf_dataset import HuggingFaceDatasetReferenceError
+from policyengine_simulation_contract.hf_dataset import HuggingFaceDatasetReferenceError
 
 
 def expected_bundle(
@@ -532,7 +532,7 @@ class TestSubmitSimulationEndpoint:
             raise HuggingFaceDatasetReferenceError("revision missing")
 
         monkeypatch.setattr(
-            "policyengine_simulation_executor.dataset_uri.validate_hf_dataset_uri",
+            "policyengine_simulation_contract.dataset_uri.validate_hf_dataset_uri",
             reject_revision,
         )
 
@@ -604,7 +604,7 @@ class TestSubmitSimulationEndpoint:
             )
 
         monkeypatch.setattr(
-            "policyengine_simulation_executor.dataset_uri.with_hf_revision",
+            "policyengine_simulation_contract.dataset_uri.with_hf_revision",
             reject_revision,
         )
 
@@ -1179,8 +1179,8 @@ class TestBudgetWindowBatchEndpoints:
     def test__given_batch_state__then_poll_returns_completed_response(
         self, mock_modal, client: TestClient
     ):
-        from src.modal.budget_window_state import put_batch_job_state
-        from src.modal.gateway.models import (
+        from policyengine_simulation_contract.budget_window_state import put_batch_job_state
+        from policyengine_simulation_contract.gateway_models import (
             BudgetWindowAnnualImpact,
             BudgetWindowBatchState,
             BudgetWindowResult,

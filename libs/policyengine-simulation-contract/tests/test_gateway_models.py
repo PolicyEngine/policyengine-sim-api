@@ -5,7 +5,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from src.modal.gateway.models import (
+from policyengine_simulation_contract.gateway_models import (
     BatchChildJobStatus,
     BudgetWindowAnnualImpact,
     BudgetWindowBatchRequest,

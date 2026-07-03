@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-import policyengine_simulation_executor.hf_dataset as hf_dataset
-from policyengine_simulation_executor.hf_dataset import (
+import policyengine_simulation_contract.hf_dataset as hf_dataset
+from policyengine_simulation_contract.hf_dataset import (
     HuggingFaceDatasetReferenceError,
     parse_hf_dataset_uri,
     validate_hf_dataset_uri,

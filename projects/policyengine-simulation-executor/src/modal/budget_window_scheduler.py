@@ -17,7 +17,7 @@ from src.modal.budget_window_results import (
     build_budget_window_result,
     extract_annual_impact,
 )
-from src.modal.budget_window_state import (
+from policyengine_simulation_contract.budget_window_state import (
     build_batch_status_response,
     create_initial_batch_state,
     get_batch_job_seed,

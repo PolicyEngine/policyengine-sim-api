@@ -186,6 +186,7 @@ simulation_image = (
         "src.modal",
         "policyengine_simulation_executor",
         "policyengine_simulation_observability",
+        "policyengine_simulation_contract",
         copy=True,
     )
     .run_function(snapshot_models)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from src.modal.gateway.models import (
+from policyengine_simulation_contract.gateway_models import (
     BudgetWindowAnnualImpact,
     BudgetWindowResult,
     BudgetWindowTotals,

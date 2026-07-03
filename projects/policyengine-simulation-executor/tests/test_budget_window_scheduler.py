@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 import src.modal.budget_window_batch as batch_module
 import src.modal.budget_window_scheduler as scheduler_module
-import src.modal.budget_window_state as state_module
+import policyengine_simulation_contract.budget_window_state as state_module
 from fixtures.gateway.shared import create_gateway_app
 from src.modal.gateway import endpoints
 

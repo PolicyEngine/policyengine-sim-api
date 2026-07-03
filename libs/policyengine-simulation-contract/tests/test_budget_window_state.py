@@ -1,6 +1,6 @@
 """Tests for budget-window batch state helpers."""
 
-from src.modal.budget_window_state import (
+from policyengine_simulation_contract.budget_window_state import (
     build_batch_status_response,
     create_initial_batch_state,
     get_batch_job_state,
@@ -12,7 +12,7 @@ from src.modal.budget_window_state import (
     mark_child_started,
     put_batch_job_state,
 )
-from src.modal.gateway.models import (
+from policyengine_simulation_contract.gateway_models import (
     BudgetWindowAnnualImpact,
     BudgetWindowBatchRequest,
     BudgetWindowResult,
@@ -223,7 +223,7 @@ def test_mark_child_completed_handles_missing_child_jobs_entry(caplog):
     # were restored but child_jobs wasn't fully repopulated.
     state.running_years = ["2026"]
 
-    with caplog.at_level("WARNING", logger="src.modal.budget_window_state"):
+    with caplog.at_level("WARNING", logger="policyengine_simulation_contract.budget_window_state"):
         mark_child_completed(
             state,
             year="2026",
@@ -259,7 +259,7 @@ def test_mark_child_failed_handles_missing_child_jobs_entry(caplog):
     )
     state.running_years = ["2026"]
 
-    with caplog.at_level("WARNING", logger="src.modal.budget_window_state"):
+    with caplog.at_level("WARNING", logger="policyengine_simulation_contract.budget_window_state"):
         mark_child_failed(state, year="2026", error="boom")
 
     assert state.child_jobs["2026"].status == "failed"

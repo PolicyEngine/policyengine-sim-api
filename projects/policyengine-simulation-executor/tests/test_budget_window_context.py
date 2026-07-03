@@ -4,7 +4,7 @@ from src.modal.budget_window_context import (
     build_batch_context,
     build_child_simulation_request,
 )
-from src.modal.gateway.models import BudgetWindowBatchRequest, PolicyEngineBundle
+from policyengine_simulation_contract.gateway_models import BudgetWindowBatchRequest, PolicyEngineBundle
 
 
 def _build_parent_payload():

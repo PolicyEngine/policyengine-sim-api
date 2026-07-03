@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from src.modal.gateway.models import BudgetWindowBatchRequest, PolicyEngineBundle
+from policyengine_simulation_contract.gateway_models import (
+    BudgetWindowBatchRequest,
+    PolicyEngineBundle,
+)
 
 BATCH_ONLY_FIELDS = {
     "version",

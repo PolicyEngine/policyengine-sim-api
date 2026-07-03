@@ -11,7 +11,7 @@ from policyengine_simulation_executor.main import app
 
 PACKAGED_RUNTIME_MODULES = (
     "policyengine_simulation_executor.compat_models",
-    "policyengine_simulation_executor.hf_dataset",
+    "policyengine_simulation_contract.hf_dataset",
     "policyengine_simulation_executor.release_bundle",
     "policyengine_simulation_executor.simulation",
     "policyengine_simulation_executor.simulation_macro_output",

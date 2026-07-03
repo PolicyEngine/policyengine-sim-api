@@ -8,9 +8,9 @@ import pytest
 
 import src.modal.budget_window_batch as batch_module
 import src.modal.budget_window_scheduler as scheduler_module
-import src.modal.budget_window_state as state_module
+import policyengine_simulation_contract.budget_window_state as state_module
 from src.modal.budget_window_batch import run_budget_window_batch_impl
-from src.modal.gateway.models import (
+from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     PolicyEngineBundle,
 )

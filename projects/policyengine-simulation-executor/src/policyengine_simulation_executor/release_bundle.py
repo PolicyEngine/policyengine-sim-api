@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from policyengine_simulation_executor.dataset_uri import (
+from policyengine_simulation_contract.dataset_uri import (
     runtime_dataset_uri,
     select_dataset_revision,
     split_dataset_revision,
