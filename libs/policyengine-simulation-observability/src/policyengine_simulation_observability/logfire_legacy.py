@@ -6,7 +6,7 @@ import os
 from contextlib import nullcontext
 from typing import Any
 
-from policyengine_simulation_executor.observability import (
+from policyengine_simulation_observability.observability import (
     logfire_replacement_attributes,
 )
 

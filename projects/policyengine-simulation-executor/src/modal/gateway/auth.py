@@ -36,7 +36,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from policyengine_observability import record_event
 from policyengine_fastapi.auth import JWTDecoder
-from src.modal.logfire_legacy import (
+from policyengine_simulation_observability.logfire_legacy import (
     legacy_logfire_attributes,
     logfire_is_configured,
 )

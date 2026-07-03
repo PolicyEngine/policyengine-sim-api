@@ -176,6 +176,14 @@ def test_modal_image_prebuilds_datasets_between_env_and_local_source(monkeypatch
     )
     assert env_index < prebuild_indices[0] < local_source_index < snapshot_index
 
+    # The shared libs ship into the image as mounted source; dropping one
+    # from this tuple crashes workers at import time.
+    assert calls[local_source_index][1] == (
+        "src.modal",
+        "policyengine_simulation_executor",
+        "policyengine_simulation_observability",
+    )
+
 
 def test_gateway_image_installs_dual_observability(monkeypatch):
     install_fake_modal(monkeypatch)

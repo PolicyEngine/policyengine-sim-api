@@ -7,7 +7,7 @@ from contextlib import nullcontext
 
 import pytest
 
-from src.modal import logfire_legacy
+from policyengine_simulation_observability import logfire_legacy
 
 
 @pytest.fixture(autouse=True)

@@ -25,7 +25,7 @@ PACKAGED_RUNTIME_MODULES = (
     "policyengine_simulation_executor.simulation_output_labor",
     "policyengine_simulation_executor.simulation_output_poverty",
     "policyengine_simulation_executor.simulation_runtime",
-    "policyengine_simulation_executor.telemetry",
+    "policyengine_simulation_observability.telemetry",
 )
 
 

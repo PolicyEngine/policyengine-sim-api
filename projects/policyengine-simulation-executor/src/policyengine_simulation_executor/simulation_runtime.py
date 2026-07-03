@@ -19,7 +19,7 @@ from typing import Any, Iterator
 from policyengine_observability import segment, set_attribute
 
 from policyengine_simulation_executor.dataset_uri import runtime_dataset_uri
-from policyengine_simulation_executor.observability import SegmentName
+from policyengine_simulation_observability.observability import SegmentName
 from policyengine_simulation_executor.release_bundle import (
     get_country_release_bundle,
     resolve_bundle_dataset_name,
@@ -28,7 +28,7 @@ from policyengine_simulation_executor.release_bundle import (
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
 )
-from policyengine_simulation_executor.telemetry import split_internal_payload
+from policyengine_simulation_observability.telemetry import split_internal_payload
 
 logger = logging.getLogger(__name__)
 

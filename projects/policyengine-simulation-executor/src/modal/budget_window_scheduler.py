@@ -30,8 +30,8 @@ from src.modal.budget_window_state import (
     put_batch_job_seed,
     put_batch_job_state,
 )
-from src.modal.gateway.errors import log_and_redact_exception
-from policyengine_simulation_executor.observability import SegmentName
+from policyengine_simulation_observability.errors import log_and_redact_exception
+from policyengine_simulation_observability.observability import SegmentName
 
 # Polling tuning. The runner busy-loops across child FunctionCall.get(timeout=0)
 # probes; when no child resolved we sleep before the next probe to stop the

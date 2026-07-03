@@ -11,7 +11,7 @@ and spawns jobs on those apps.
 import modal
 from pathlib import Path
 
-from src.modal.logfire_legacy import configure_logfire
+from policyengine_simulation_observability.logfire_legacy import configure_logfire
 
 # Stable app name - this should rarely change
 app = modal.App("policyengine-simulation-gateway")
@@ -36,6 +36,7 @@ gateway_image = (
     .add_local_python_source(
         "src.modal",
         "policyengine_simulation_executor",
+        "policyengine_simulation_observability",
         copy=True,
     )
     .add_local_python_source("policyengine_fastapi", copy=True)
@@ -56,7 +57,7 @@ def web_app():
     """
     from fastapi import FastAPI
 
-    from policyengine_simulation_executor.observability import (
+    from policyengine_simulation_observability.observability import (
         configure_process_observability,
         init_simulation_observability,
     )

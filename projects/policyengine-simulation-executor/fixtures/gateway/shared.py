@@ -4,7 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from policyengine_simulation_executor.observability import (
+from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
 from src.modal.gateway.auth import require_auth

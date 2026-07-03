@@ -24,7 +24,7 @@ from src.modal.budget_window_state import (
     put_batch_job_state,
 )
 from src.modal.gateway.auth import require_auth
-from src.modal.gateway.errors import log_and_redact_exception
+from policyengine_simulation_observability.errors import log_and_redact_exception
 from src.modal.gateway.models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
@@ -48,7 +48,7 @@ from policyengine_simulation_executor.dataset_uri import (
 from policyengine_simulation_executor.hf_dataset import (
     HuggingFaceDatasetReferenceError,
 )
-from policyengine_simulation_executor.observability import SegmentName
+from policyengine_simulation_observability.observability import SegmentName
 
 logger = logging.getLogger(__name__)
 

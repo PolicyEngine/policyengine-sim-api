@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from src.modal.gateway import errors as errors_module
+from policyengine_simulation_observability import errors as errors_module
 
 
 CORRELATION_RE = re.compile(r"correlation_id=([0-9a-f]{32})")
@@ -91,7 +91,7 @@ def test_log_and_redact_exception_always_logs_to_stdlib(monkeypatch, caplog):
     monkeypatch.setattr(errors_module, "record_event", lambda *a, **k: None)
     monkeypatch.setattr(errors_module, "logfire_is_configured", lambda: False)
     exc = ValueError("secret-parameter-name")
-    with caplog.at_level("ERROR", logger="src.modal.gateway.errors"):
+    with caplog.at_level("ERROR", logger="policyengine_simulation_observability.errors"):
         message = errors_module.log_and_redact_exception(exc, scope="fallback")
 
     match = CORRELATION_RE.search(message)
@@ -118,7 +118,7 @@ def test_log_and_redact_exception_survives_structured_sink_failure(monkeypatch, 
     monkeypatch.setattr(errors_module, "record_error", _raise)
     monkeypatch.setattr(errors_module, "logfire_is_configured", lambda: False)
     exc = ValueError("secret-parameter-name")
-    with caplog.at_level("ERROR", logger="src.modal.gateway.errors"):
+    with caplog.at_level("ERROR", logger="policyengine_simulation_observability.errors"):
         message = errors_module.log_and_redact_exception(exc, scope="fallback")
 
     assert "secret-parameter-name" not in message

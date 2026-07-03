@@ -1,4 +1,4 @@
-from policyengine_simulation_executor.telemetry import (
+from policyengine_simulation_observability.telemetry import (
     TelemetryEnvelope,
     split_internal_payload,
 )

@@ -1,0 +1,37 @@
+[project]
+name = "policyengine-simulation-observability"
+version = "0.1.0"
+readme = "README.md"
+authors = [
+    {name = "PolicyEngine", email = "hello@policyengine.org"},
+]
+license = {file = "../../LICENSE"}
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "pydantic>=2.0",
+    "policyengine-observability[fastapi]>=1.3.0,<2",
+    "logfire>=3.0.0",
+    # logfire imports importlib_metadata unconditionally on Python 3.13
+    # but does not declare it (see issue #602).
+    "importlib-metadata>=8",
+]
+
+[project.optional-dependencies]
+test = [ "pytest>=8.3.4", "pytest-asyncio>=0.25.3", "pytest-cov>=6.1.1", "httpx2",]
+build = [ "pyright>=1.1.401", "black>=25.1.0",]
+
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+sources = ["src"]
+only-include = ["src/policyengine_simulation_observability"]
+packages = ["src/policyengine_simulation_observability"]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "src"
+]
+testpaths = ["tests"]

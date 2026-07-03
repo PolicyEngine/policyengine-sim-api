@@ -15,14 +15,14 @@ from policyengine_observability import operation, set_attribute
 
 from src.modal._image_setup import prebuild_country_datasets, snapshot_models
 from src.modal.dependency_pins import project_dependency_pin
-from src.modal.logfire_legacy import (
+from policyengine_simulation_observability.logfire_legacy import (
     configure_logfire,
     flush_logfire,
     legacy_logfire_attributes,
     logfire_span,
 )
 from src.modal.logging_redaction import redact_params_for_logging
-from policyengine_simulation_executor.observability import (
+from policyengine_simulation_observability.observability import (
     configure_process_observability,
     init_process_observability,
     process_static_attributes,
@@ -185,6 +185,7 @@ simulation_image = (
     .add_local_python_source(
         "src.modal",
         "policyengine_simulation_executor",
+        "policyengine_simulation_observability",
         copy=True,
     )
     .run_function(snapshot_models)

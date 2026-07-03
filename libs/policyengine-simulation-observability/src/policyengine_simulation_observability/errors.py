@@ -28,7 +28,7 @@ import uuid
 from typing import Any
 
 from policyengine_observability import record_error, record_event
-from src.modal.logfire_legacy import (
+from policyengine_simulation_observability.logfire_legacy import (
     legacy_logfire_attributes,
     logfire_is_configured,
 )

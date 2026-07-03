@@ -9,7 +9,7 @@ from policyengine_observability import segment, set_attribute
 
 from src.modal.budget_window_context import build_batch_context
 from src.modal.budget_window_scheduler import BudgetWindowBatchRunner
-from policyengine_simulation_executor.observability import SegmentName
+from policyengine_simulation_observability.observability import SegmentName
 
 
 def run_budget_window_batch_impl(params: dict[str, Any]) -> dict[str, Any]:

@@ -12,7 +12,7 @@ from policyengine_observability import (
 )
 from policyengine_observability.runtime import OPERATION_LOGGER, REQUEST_LOGGER
 
-from policyengine_simulation_executor.observability import (
+from policyengine_simulation_observability.observability import (
     LOG_DESTINATIONS,
     SERVICE_NAME,
     configure_process_observability,
