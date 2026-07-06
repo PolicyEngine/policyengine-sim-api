@@ -497,6 +497,7 @@ def _run_simulation_impl_core(params: dict) -> dict:
         baseline=baseline,
         reform=reform,
         resolved_data_version=_requested_data_version(simulation_params),
+        resolved_region_code=region_resolution.code,
     )
     output = builder.serialize()
     logger.info("Comparison complete")

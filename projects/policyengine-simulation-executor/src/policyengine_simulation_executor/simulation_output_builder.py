@@ -19,6 +19,7 @@ from policyengine_simulation_executor.release_bundle import get_country_release_
 from policyengine_simulation_executor.simulation_macro_output import (
     BudgetaryImpact,
     CliffImpactOutput,
+    CongressionalDistrictImpactOutput,
     DecileOutput,
     DetailedBudgetOutput,
     GeographicImpactOutput,
@@ -42,6 +43,7 @@ class SimulationOutputBuilder:
     baseline: Any
     reform: Any
     resolved_data_version: str | None = None
+    resolved_region_code: str | None = None
     _analysis: Any = field(default=None, init=False)
 
     def __post_init__(self) -> None:
@@ -208,10 +210,13 @@ class SimulationOutputBuilder:
 
     def _build_congressional_district_impact(
         self,
-    ) -> GeographicImpactOutput | None:
+    ) -> CongressionalDistrictImpactOutput | None:
         with segment(SegmentName.OUTPUT_CONGRESSIONAL_DISTRICT):
             return simulation_output_geographic.build_congressional_district_impact(
-                self.country, self.baseline, self.reform
+                self.country,
+                self.baseline,
+                self.reform,
+                region_code=self.resolved_region_code,
             )
 
     def _build_uk_constituency_impact(self) -> GeographicImpactOutput | None:
