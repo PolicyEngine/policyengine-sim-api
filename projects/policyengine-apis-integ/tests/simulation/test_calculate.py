@@ -8,6 +8,7 @@ that economy-wide simulations complete successfully.
 import time
 from collections.abc import Mapping
 from http import HTTPStatus
+from typing import Protocol, TypeGuard
 
 import pytest
 
@@ -33,6 +34,33 @@ _REQUIRED_DISTRICT_RESULT_KEYS = {
     "population",
 }
 _AT_LARGE_DISTRICT_IDS = {"AK-01", "DC-01", "DE-01", "ND-01", "SD-01", "VT-01", "WY-01"}
+
+
+class _ObjectWithToDict(Protocol):
+    def to_dict(self) -> object: ...
+
+
+def _has_to_dict(value: object) -> TypeGuard[_ObjectWithToDict]:
+    return callable(getattr(value, "to_dict", None))
+
+
+def _as_mapping(value: object, *, label: str) -> Mapping:
+    if _has_to_dict(value):
+        value = value.to_dict()
+
+    assert isinstance(
+        value, Mapping
+    ), f"Expected {label} to be an object, got {type(value)}"
+    return value
+
+
+def _district_ids(district_results: list[Mapping]) -> list[str]:
+    district_ids: list[str] = []
+    for district in district_results:
+        district_id = district["district"]
+        assert isinstance(district_id, str)
+        district_ids.append(district_id)
+    return district_ids
 
 
 def poll_for_completion(
@@ -66,9 +94,9 @@ def poll_for_completion(
 
         if response.status_code == HTTPStatus.OK:
             assert isinstance(response.parsed, JobStatusResponse)
-            assert response.parsed.status == "complete", (
-                f"Unexpected status: {response.parsed}"
-            )
+            assert (
+                response.parsed.status == "complete"
+            ), f"Unexpected status: {response.parsed}"
             return response.parsed
 
         if response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR:
@@ -97,16 +125,14 @@ def submit_simulation_request(
         f"Simulation submit failed with status {response.status_code}: "
         f"{response.content!r}"
     )
-    assert isinstance(response.parsed, JobSubmitResponse), (
-        f"Unexpected response type: {type(response.parsed)}"
-    )
+    assert isinstance(
+        response.parsed, JobSubmitResponse
+    ), f"Unexpected response type: {type(response.parsed)}"
     return response.parsed
 
 
 def assert_economy_result_sections(economy_result: object) -> None:
-    assert isinstance(economy_result, Mapping), (
-        f"Expected economy result to be an object, got {type(economy_result)}"
-    )
+    economy_result = _as_mapping(economy_result, label="economy result")
     missing = _REQUIRED_ECONOMY_RESULT_SECTIONS - set(economy_result)
     assert not missing, (
         f"Missing expected economy result sections {sorted(missing)} "
@@ -120,16 +146,14 @@ def assert_congressional_district_results(
     expected_district_prefix: str | None = None,
     expected_district_ids: set[str] | None = None,
 ) -> None:
-    assert isinstance(economy_result, Mapping), (
-        f"Expected economy result to be an object, got {type(economy_result)}"
-    )
-    assert "congressional_district_impact" in economy_result, (
-        f"Missing 'congressional_district_impact' in result: {economy_result.keys()}"
-    )
+    economy_result = _as_mapping(economy_result, label="economy result")
+    assert (
+        "congressional_district_impact" in economy_result
+    ), f"Missing 'congressional_district_impact' in result: {economy_result.keys()}"
 
-    impact = economy_result["congressional_district_impact"]
-    assert isinstance(impact, Mapping), (
-        f"Expected congressional_district_impact to be an object, got {type(impact)}"
+    impact = _as_mapping(
+        economy_result["congressional_district_impact"],
+        label="congressional_district_impact",
     )
     districts = impact.get("districts")
     assert isinstance(districts, list), (
@@ -138,11 +162,12 @@ def assert_congressional_district_results(
     )
     assert districts, "Expected congressional_district_impact.districts to be non-empty"
 
-    for district in districts:
-        assert isinstance(district, Mapping), (
-            "Expected each congressional district result to be an object, "
-            f"got {type(district)}"
-        )
+    district_results = [
+        _as_mapping(district, label="congressional district result")
+        for district in districts
+    ]
+
+    for district in district_results:
         missing = _REQUIRED_DISTRICT_RESULT_KEYS - set(district)
         assert not missing, (
             f"Missing expected district result keys {sorted(missing)} "
@@ -151,7 +176,7 @@ def assert_congressional_district_results(
         assert isinstance(district["district"], str)
 
     if expected_district_prefix is not None:
-        district_ids = [district["district"] for district in districts]
+        district_ids = _district_ids(district_results)
         assert all(
             district_id.startswith(expected_district_prefix)
             for district_id in district_ids
@@ -161,12 +186,50 @@ def assert_congressional_district_results(
         )
 
     if expected_district_ids is not None:
-        district_ids = {district["district"] for district in districts}
+        district_ids = set(_district_ids(district_results))
         missing = expected_district_ids - district_ids
         assert not missing, (
             f"Missing expected district IDs {sorted(missing)} "
             f"from result IDs: {sorted(district_ids)}"
         )
+
+
+class _GeneratedClientObject:
+    def __init__(self, payload: Mapping) -> None:
+        self._payload = dict(payload)
+
+    def to_dict(self) -> dict:
+        return dict(self._payload)
+
+
+def test_result_assertions_accept_generated_client_objects() -> None:
+    result = _GeneratedClientObject(
+        {
+            "budget": {},
+            "poverty": {},
+            "inequality": {},
+            "congressional_district_impact": _GeneratedClientObject(
+                {
+                    "districts": [
+                        _GeneratedClientObject(
+                            {
+                                "district": "UT-01",
+                                "average_household_income_change": 0.0,
+                                "relative_household_income_change": 0.0,
+                                "winner_percentage": 0.0,
+                                "loser_percentage": 0.0,
+                                "no_change_percentage": 1.0,
+                                "population": 1.0,
+                            }
+                        )
+                    ]
+                }
+            ),
+        }
+    )
+
+    assert_economy_result_sections(result)
+    assert_congressional_district_results(result, expected_district_prefix="UT-")
 
 
 @pytest.mark.beta_only
@@ -290,9 +353,9 @@ def test_calculate_specific_model(
 
     # When - submit job
     submit_response = submit_simulation_request(client, request)
-    assert submit_response.version == us_model_version, (
-        f"Version mismatch: expected {us_model_version}, got {submit_response.version}"
-    )
+    assert (
+        submit_response.version == us_model_version
+    ), f"Version mismatch: expected {us_model_version}, got {submit_response.version}"
     job_id = submit_response.job_id
 
     # When - poll for completion
@@ -336,9 +399,9 @@ def test_calculate_uk_model(
 
     # When - submit job
     submit_response = submit_simulation_request(client, request)
-    assert submit_response.version == uk_model_version, (
-        f"Version mismatch: expected {uk_model_version}, got {submit_response.version}"
-    )
+    assert (
+        submit_response.version == uk_model_version
+    ), f"Version mismatch: expected {uk_model_version}, got {submit_response.version}"
     job_id = submit_response.job_id
 
     # When - poll for completion
