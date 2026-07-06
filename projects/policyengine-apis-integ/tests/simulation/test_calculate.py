@@ -6,6 +6,7 @@ that economy-wide simulations complete successfully.
 """
 
 import time
+from collections.abc import Mapping
 from http import HTTPStatus
 
 import pytest
@@ -20,6 +21,18 @@ from policyengine_api_simulation_client.models import (
     JobSubmitResponse,
     SimulationRequest,
 )
+
+_REQUIRED_ECONOMY_RESULT_SECTIONS = {"budget", "poverty", "inequality"}
+_REQUIRED_DISTRICT_RESULT_KEYS = {
+    "district",
+    "average_household_income_change",
+    "relative_household_income_change",
+    "winner_percentage",
+    "loser_percentage",
+    "no_change_percentage",
+    "population",
+}
+_AT_LARGE_DISTRICT_IDS = {"AK-01", "DC-01", "DE-01", "ND-01", "SD-01", "VT-01", "WY-01"}
 
 
 def poll_for_completion(
@@ -90,6 +103,72 @@ def submit_simulation_request(
     return response.parsed
 
 
+def assert_economy_result_sections(economy_result: object) -> None:
+    assert isinstance(economy_result, Mapping), (
+        f"Expected economy result to be an object, got {type(economy_result)}"
+    )
+    missing = _REQUIRED_ECONOMY_RESULT_SECTIONS - set(economy_result)
+    assert not missing, (
+        f"Missing expected economy result sections {sorted(missing)} "
+        f"in result: {economy_result.keys()}"
+    )
+
+
+def assert_congressional_district_results(
+    economy_result: object,
+    *,
+    expected_district_prefix: str | None = None,
+    expected_district_ids: set[str] | None = None,
+) -> None:
+    assert isinstance(economy_result, Mapping), (
+        f"Expected economy result to be an object, got {type(economy_result)}"
+    )
+    assert "congressional_district_impact" in economy_result, (
+        f"Missing 'congressional_district_impact' in result: {economy_result.keys()}"
+    )
+
+    impact = economy_result["congressional_district_impact"]
+    assert isinstance(impact, Mapping), (
+        f"Expected congressional_district_impact to be an object, got {type(impact)}"
+    )
+    districts = impact.get("districts")
+    assert isinstance(districts, list), (
+        "Expected congressional_district_impact.districts to be a list, "
+        f"got {type(districts)}"
+    )
+    assert districts, "Expected congressional_district_impact.districts to be non-empty"
+
+    for district in districts:
+        assert isinstance(district, Mapping), (
+            "Expected each congressional district result to be an object, "
+            f"got {type(district)}"
+        )
+        missing = _REQUIRED_DISTRICT_RESULT_KEYS - set(district)
+        assert not missing, (
+            f"Missing expected district result keys {sorted(missing)} "
+            f"in district result: {district}"
+        )
+        assert isinstance(district["district"], str)
+
+    if expected_district_prefix is not None:
+        district_ids = [district["district"] for district in districts]
+        assert all(
+            district_id.startswith(expected_district_prefix)
+            for district_id in district_ids
+        ), (
+            f"Expected all district IDs to start with {expected_district_prefix!r}, "
+            f"got {district_ids}"
+        )
+
+    if expected_district_ids is not None:
+        district_ids = {district["district"] for district in districts}
+        missing = expected_district_ids - district_ids
+        assert not missing, (
+            f"Missing expected district IDs {sorted(missing)} "
+            f"from result IDs: {sorted(district_ids)}"
+        )
+
+
 @pytest.mark.beta_only
 def test_calculate_default_model(
     client: Client | AuthenticatedClient,
@@ -125,16 +204,11 @@ def test_calculate_default_model(
     assert result.status == "complete"
     assert result.result is not None
 
-    # Verify key economic impact sections are present
     economy_result = result.result
-    assert "budget" in economy_result, (
-        f"Missing 'budget' in result: {economy_result.keys()}"
-    )
-    assert "poverty" in economy_result, (
-        f"Missing 'poverty' in result: {economy_result.keys()}"
-    )
-    assert "inequality" in economy_result, (
-        f"Missing 'inequality' in result: {economy_result.keys()}"
+    assert_economy_result_sections(economy_result)
+    assert_congressional_district_results(
+        economy_result,
+        expected_district_ids=_AT_LARGE_DISTRICT_IDS,
     )
 
 
@@ -178,16 +252,11 @@ def test_calculate_us_state_region_model(
     assert result.status == "complete"
     assert result.result is not None
 
-    # Verify key economic impact sections are present
     economy_result = result.result
-    assert "budget" in economy_result, (
-        f"Missing 'budget' in result: {economy_result.keys()}"
-    )
-    assert "poverty" in economy_result, (
-        f"Missing 'poverty' in result: {economy_result.keys()}"
-    )
-    assert "inequality" in economy_result, (
-        f"Missing 'inequality' in result: {economy_result.keys()}"
+    assert_economy_result_sections(economy_result)
+    assert_congressional_district_results(
+        economy_result,
+        expected_district_prefix="UT-",
     )
 
 
@@ -234,9 +303,11 @@ def test_calculate_specific_model(
     assert result.result is not None
 
     economy_result = result.result
-    assert "budget" in economy_result
-    assert "poverty" in economy_result
-    assert "inequality" in economy_result
+    assert_economy_result_sections(economy_result)
+    assert_congressional_district_results(
+        economy_result,
+        expected_district_prefix="UT-",
+    )
 
 
 @pytest.mark.beta_only
@@ -278,6 +349,4 @@ def test_calculate_uk_model(
     assert result.result is not None
 
     economy_result = result.result
-    assert "budget" in economy_result
-    assert "poverty" in economy_result
-    assert "inequality" in economy_result
+    assert_economy_result_sections(economy_result)
