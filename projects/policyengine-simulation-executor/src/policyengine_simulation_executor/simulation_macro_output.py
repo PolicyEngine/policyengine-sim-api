@@ -124,6 +124,20 @@ class GeographicImpactOutput(MacroRootModel[list[dict[str, Any]]]):
     pass
 
 
+class CongressionalDistrictImpactRecord(MacroOutputModel):
+    district: str
+    average_household_income_change: float
+    relative_household_income_change: float
+    winner_percentage: float
+    loser_percentage: float
+    no_change_percentage: float
+    population: float
+
+
+class CongressionalDistrictImpactOutput(MacroOutputModel):
+    districts: list[CongressionalDistrictImpactRecord]
+
+
 class SingleYearMacroOutput(MacroOutputModel):
     model_version: str
     data_version: str
@@ -140,5 +154,5 @@ class SingleYearMacroOutput(MacroOutputModel):
     labor_supply_response: LaborSupplyResponseOutput | None
     constituency_impact: GeographicImpactOutput | None
     local_authority_impact: GeographicImpactOutput | None
-    congressional_district_impact: GeographicImpactOutput | None
+    congressional_district_impact: CongressionalDistrictImpactOutput | None
     cliff_impact: CliffImpactOutput | None = None

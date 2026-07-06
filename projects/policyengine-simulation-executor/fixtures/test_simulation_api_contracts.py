@@ -126,6 +126,18 @@ CURRENT_SINGLE_YEAR_MACRO_RESULT = {
     },
     "constituency_impact": None,
     "local_authority_impact": None,
-    "congressional_district_impact": [{"district_geoid": 101}],
+    "congressional_district_impact": {
+        "districts": [
+            {
+                "district": "AL-01",
+                "average_household_income_change": 10.0,
+                "relative_household_income_change": 0.01,
+                "winner_percentage": 0.6,
+                "loser_percentage": 0.3,
+                "no_change_percentage": 0.1,
+                "population": 1000.0,
+            }
+        ]
+    },
     "cliff_impact": None,
 }
