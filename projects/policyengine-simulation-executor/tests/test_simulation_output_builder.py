@@ -285,6 +285,8 @@ def test_builder_returns_existing_single_year_macro_shape(monkeypatch):
 
 
 def test_congressional_district_output_formats_policyengine_results():
+    from policyengine.countries.us.data import US_STATE_FIPS
+
     output = build_congressional_district_impact_output(
         [
             {
@@ -316,6 +318,15 @@ def test_congressional_district_output_formats_policyengine_results():
                 "loser_percentage": 0.1,
                 "no_change_percentage": 0.1,
                 "population": 3000,
+            },
+            {
+                "district_geoid": US_STATE_FIPS["DC"] * 100,
+                "average_household_income_change": 40,
+                "relative_household_income_change": 0.04,
+                "winner_percentage": 0.9,
+                "loser_percentage": 0.05,
+                "no_change_percentage": 0.05,
+                "population": 4000,
             },
         ]
     )
@@ -349,6 +360,15 @@ def test_congressional_district_output_formats_policyengine_results():
                 "loser_percentage": 0.1,
                 "no_change_percentage": 0.1,
                 "population": 3000.0,
+            },
+            {
+                "district": "DC-01",
+                "average_household_income_change": 40.0,
+                "relative_household_income_change": 0.04,
+                "winner_percentage": 0.9,
+                "loser_percentage": 0.05,
+                "no_change_percentage": 0.05,
+                "population": 4000.0,
             },
         ]
     }
