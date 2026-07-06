@@ -9,7 +9,10 @@
 #
 # Optional environment:
 #   PROJECT_DIR      Project containing pyproject.toml and uv.lock.
-#   LATEST_OVERRIDE  policyengine version to use instead of querying PyPI.
+#   LATEST_OVERRIDE  policyengine version to use instead of querying PyPI (the
+#                    repository_dispatch trigger passes the just-released
+#                    version here).
+#   FORCE=1          Allow targeting a version not newer than the current pin.
 #   DRY_RUN=1        Report planned changes without editing files or opening a PR.
 
 set -euo pipefail
@@ -95,6 +98,11 @@ if [[ "$CURRENT" == "$LATEST" ]]; then
   exit 0
 fi
 
+if [[ "$(printf '%s\n%s\n' "$CURRENT" "$LATEST" | sort -V | tail -n1)" != "$LATEST" && "${FORCE:-0}" != "1" ]]; then
+  echo "Requested ${LATEST} is not newer than current ${CURRENT}. Skipping (set FORCE=1 to override)."
+  exit 0
+fi
+
 BRANCH="auto/update-policyengine-${LATEST}"
 echo "Update available: ${CURRENT} -> ${LATEST}"
 
@@ -150,10 +158,22 @@ if old_pin not in pyproject_text:
 pyproject.write_text(pyproject_text.replace(old_pin, new_pin), encoding="utf-8")
 PY
 
-(
-  cd "$PROJECT_PATH"
-  uv lock --upgrade-package "$PACKAGE"
-)
+# The PyPI Simple index (which uv resolves from) can lag the JSON API right
+# after a release, so retry the lock a few times.
+for attempt in 1 2 3; do
+  if (
+    cd "$PROJECT_PATH"
+    uv lock --upgrade-package "$PACKAGE"
+  ); then
+    break
+  fi
+  if [[ "$attempt" == "3" ]]; then
+    echo "ERROR: uv lock failed after ${attempt} attempts." >&2
+    exit 1
+  fi
+  echo "uv lock attempt ${attempt} failed; retrying in 30s..."
+  sleep 30
+done
 
 BUNDLE_OUTPUT=$(
   cd "$PROJECT_PATH"
