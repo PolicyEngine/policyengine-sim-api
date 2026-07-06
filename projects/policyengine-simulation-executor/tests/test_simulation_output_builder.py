@@ -34,9 +34,13 @@ from policyengine_simulation_observability.observability import SegmentName
 from policyengine_simulation_executor.simulation_runtime import RegionResolution
 from policyengine_simulation_executor.simulation_runtime import _load_dataset
 from policyengine_simulation_executor.simulation_runtime import _normalise_policy
-from policyengine_simulation_executor.simulation_runtime import _resolve_dataset_reference
+from policyengine_simulation_executor.simulation_runtime import (
+    _resolve_dataset_reference,
+)
 from policyengine_simulation_executor.simulation_runtime import _resolve_region
-from policyengine_simulation_executor.simulation_runtime import _run_simulation_impl_core
+from policyengine_simulation_executor.simulation_runtime import (
+    _run_simulation_impl_core,
+)
 from policyengine_simulation_executor.simulation_runtime import run_simulation_impl
 from policyengine_simulation_executor.simulation_macro_output import (
     AgePovertyOutput,
@@ -45,7 +49,7 @@ from policyengine_simulation_executor.simulation_macro_output import (
     BudgetaryOutput,
     DecileOutput,
     DetailedBudgetOutput,
-    GeographicImpactOutput,
+    CongressionalDistrictImpactOutput,
     GenderPovertyOutput,
     InequalityOutput,
     IntraDecileOutput,
@@ -54,6 +58,10 @@ from policyengine_simulation_executor.simulation_macro_output import (
     PovertyModuleOutputs,
     PovertyOutput,
     SingleYearMacroOutput,
+)
+from policyengine_simulation_executor.simulation_output_geographic import (
+    build_congressional_district_impact,
+    build_congressional_district_impact_output,
 )
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
@@ -131,6 +139,7 @@ def _simulation_output_builder(
     reform,
     analysis=None,
     include_cliffs: bool | None = None,
+    resolved_region_code: str | None = "us",
 ) -> SimulationOutputBuilder:
     analysis = analysis or fake_analysis()
 
@@ -160,6 +169,23 @@ def _simulation_output_builder(
         dataset=SimpleNamespace(metadata={}),
         baseline=baseline,
         reform=reform,
+        resolved_region_code=resolved_region_code,
+    )
+
+
+def _congressional_district_output() -> CongressionalDistrictImpactOutput:
+    return CongressionalDistrictImpactOutput(
+        districts=[
+            {
+                "district": "AL-01",
+                "average_household_income_change": 10.0,
+                "relative_household_income_change": 0.01,
+                "winner_percentage": 0.6,
+                "loser_percentage": 0.3,
+                "no_change_percentage": 0.1,
+                "population": 1000.0,
+            }
+        ]
     )
 
 
@@ -203,9 +229,7 @@ def _stub_policyengine_output_calls(monkeypatch, baseline, reform) -> None:
         SimulationOutputBuilder,
         "_build_congressional_district_impact",
         lambda self: (
-            self._build_geographic_impact_output([{"district_geoid": 101}])
-            if self.country == "us"
-            else None
+            _congressional_district_output() if self.country == "us" else None
         ),
     )
     monkeypatch.setattr(
@@ -246,9 +270,11 @@ def test_builder_returns_schema_modules_before_legacy_dict_dump(monkeypatch):
     assert isinstance(output.decile, DecileOutput)
     assert isinstance(output.intra_decile, IntraDecileOutput)
     assert isinstance(output.poverty, PovertyOutput)
-    assert isinstance(output.congressional_district_impact, GeographicImpactOutput)
+    assert isinstance(
+        output.congressional_district_impact, CongressionalDistrictImpactOutput
+    )
     assert output.wealth_decile is None
-    assert output.congressional_district_impact.root == [{"district_geoid": 101}]
+    assert output.congressional_district_impact.districts[0].district == "AL-01"
 
 
 def test_builder_returns_existing_single_year_macro_shape(monkeypatch):
@@ -256,6 +282,117 @@ def test_builder_returns_existing_single_year_macro_shape(monkeypatch):
 
     assert set(output) == CURRENT_SINGLE_YEAR_MACRO_KEYS
     assert output == CURRENT_SINGLE_YEAR_MACRO_RESULT
+
+
+def test_congressional_district_output_formats_policyengine_results():
+    output = build_congressional_district_impact_output(
+        [
+            {
+                "district_geoid": 101,
+                "state_fips": 1,
+                "district_number": 1,
+                "average_household_income_change": 10,
+                "relative_household_income_change": "0.01",
+                "winner_percentage": 0.6,
+                "loser_percentage": 0.3,
+                "no_change_percentage": 0.1,
+                "population": 1000,
+            },
+            {
+                "district_geoid": 200,
+                "average_household_income_change": 20,
+                "relative_household_income_change": 0.02,
+                "winner_percentage": 0.7,
+                "loser_percentage": 0.2,
+                "no_change_percentage": 0.1,
+                "population": 2000,
+            },
+            {
+                "state_fips": 6,
+                "district_number": 12,
+                "average_household_income_change": 30,
+                "relative_household_income_change": 0.03,
+                "winner_percentage": 0.8,
+                "loser_percentage": 0.1,
+                "no_change_percentage": 0.1,
+                "population": 3000,
+            },
+        ]
+    )
+
+    assert output is not None
+    assert output.model_dump(mode="json") == {
+        "districts": [
+            {
+                "district": "AL-01",
+                "average_household_income_change": 10.0,
+                "relative_household_income_change": 0.01,
+                "winner_percentage": 0.6,
+                "loser_percentage": 0.3,
+                "no_change_percentage": 0.1,
+                "population": 1000.0,
+            },
+            {
+                "district": "AK-01",
+                "average_household_income_change": 20.0,
+                "relative_household_income_change": 0.02,
+                "winner_percentage": 0.7,
+                "loser_percentage": 0.2,
+                "no_change_percentage": 0.1,
+                "population": 2000.0,
+            },
+            {
+                "district": "CA-12",
+                "average_household_income_change": 30.0,
+                "relative_household_income_change": 0.03,
+                "winner_percentage": 0.8,
+                "loser_percentage": 0.1,
+                "no_change_percentage": 0.1,
+                "population": 3000.0,
+            },
+        ]
+    }
+
+
+def test_congressional_district_output_skips_narrow_regions():
+    assert (
+        build_congressional_district_impact(
+            "us",
+            object(),
+            object(),
+            region_code="congressional_district/AL-01",
+        )
+        is None
+    )
+    assert build_congressional_district_impact("uk", object(), object()) is None
+
+
+def test_builder_passes_resolved_region_to_congressional_district_output(monkeypatch):
+    baseline, reform = _macro_baseline_reform()
+    calls = []
+
+    def fake_build_congressional_district_impact(
+        country, baseline_arg, reform_arg, *, region_code=None
+    ):
+        calls.append((country, baseline_arg, reform_arg, region_code))
+        return CongressionalDistrictImpactOutput(districts=[])
+
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_output_geographic.build_congressional_district_impact",
+        fake_build_congressional_district_impact,
+    )
+
+    builder = _simulation_output_builder(
+        "us",
+        baseline,
+        reform,
+        resolved_region_code="state/ut",
+    )
+
+    assert builder._build_congressional_district_impact() == (
+        CongressionalDistrictImpactOutput(districts=[])
+    )
+    assert calls == [("us", baseline, reform, "state/ut")]
 
 
 def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
@@ -477,7 +614,9 @@ def test_builder_records_output_timings_without_real_calculation(monkeypatch):
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_geographic.build_congressional_district_impact",
-        record("congressional_district", GeographicImpactOutput([])),
+        record(
+            "congressional_district", CongressionalDistrictImpactOutput(districts=[])
+        ),
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_geographic.build_uk_constituency_impact",
@@ -765,6 +904,7 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
             "baseline": baseline_simulation,
             "reform": reform_simulation,
             "resolved_data_version": None,
+            "resolved_region_code": "us",
         }
     ]
 
