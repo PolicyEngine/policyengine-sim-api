@@ -10,32 +10,32 @@ endif
 help:
 	@echo "PolicyEngine Sim API - Available commands:"
 	@echo ""
-	@echo "Setup (first time):"
-	@echo "  make setup            - Create .env file from template"
-	@echo "  make init-gcp         - Initialize GCP project (APIs, registry, bucket)"
+	@echo "Development (local simulation-executor via docker-compose, port 8082):"
+	@echo "  make up [service=x]   - Start services in the background"
+	@echo "  make dev              - Start services in the foreground (build + reload)"
+	@echo "  make down             - Stop services"
+	@echo "  make logs [service=x] - Tail service logs"
+	@echo "  make ps               - Show running services"
 	@echo ""
-	@echo "Development:"
-	@echo "  make dev              - Start all services in development mode"
-	@echo "  make up [service=x]   - Start specific service or all services"
-	@echo "  make down             - Stop all services"
-	@echo "  make logs [service=x] - Show logs for service"
-	@echo "  make test             - Run tests for all services"
+	@echo "Testing:"
+	@echo "  make test             - Unit tests for all projects and libs"
+	@echo "  make test-service service=x - Unit tests for one compose service"
+	@echo "  make test-integration - Integration tests (services must be up)"
+	@echo "  make test-complete    - Unit + integration (manages services)"
 	@echo ""
-	@echo "Deployment:"
-	@echo "  make deploy           - Full deployment (builds, pushes, deploys project + infra)"
-	@echo "  make terraform-init   - Initialize terraform modules"
-	@echo "  make terraform-force-init - Force reinitialize (if stuck)"
-	@echo "  make terraform-plan   - Preview changes for both modules"
-	@echo "  make terraform-deploy-project - Deploy project configuration only"
-	@echo "  make terraform-deploy-infra   - Deploy infrastructure only"
-	@echo "  make terraform-destroy        - Destroy all terraform resources"
+	@echo "Clients:"
+	@echo "  make generate-clients - Regenerate the OpenAPI Python client"
+	@echo "  make publish-clients  - Publish the client to PyPI (needs PYPI_TOKEN)"
 	@echo ""
 	@echo "Maintenance:"
-	@echo "  make build            - Build all Docker images"
-	@echo "  make clean            - Clean up containers and volumes"
-	@echo "  make format           - Format Python code with ruff"
-	@echo "  make check            - Run code quality checks"
-	@echo "  make push-pr-branch   - Push current branch to origin for PR creation"
+	@echo "  make build            - Build Docker images"
+	@echo "  make format           - Format code with ruff"
+	@echo "  make check            - ruff check + pyright"
+	@echo "  make update           - uv lock --upgrade across packages"
+	@echo "  make clean            - Remove caches and stop containers"
+	@echo "  make push-pr-branch   - Push current branch to origin for a PR"
+	@echo ""
+	@echo "Deployment is automated via GitHub Actions to Modal; there is no manual deploy target."
 
 # Initialize GCP (enables APIs, creates bucket, etc)
 init-gcp: check-deploy-env
@@ -103,21 +103,19 @@ publish-clients: generate-clients
 
 # Testing
 test:
-	@echo "Running tests for all services..."
-	@for service in api-full simulation-executor api-tagger; do \
-		echo "Testing $$service..."; \
-		docker-compose -f deployment/docker-compose.yml run --rm $$service sh -c "cd /app/projects/policyengine-$$service && uv run --extra test pytest" || exit 1; \
+	@echo "Running unit tests for all projects and libs..."
+	@for proj in projects/policyengine-simulation-executor \
+		projects/policyengine-simulation-gateway \
+		libs/policyengine-simulation-contract \
+		libs/policyengine-simulation-observability; do \
+		echo "Testing $$proj..."; \
+		(cd "$$proj" && uv sync --extra test && uv run pytest tests/ -v) || exit 1; \
 	done
-	@echo "Testing simulation-gateway (no compose service)..."
-	@cd projects/policyengine-simulation-gateway && uv sync --extra test && uv run pytest
-	@for lib in policyengine-simulation-contract policyengine-simulation-observability; do \
-		echo "Testing $$lib..."; \
-		(cd libs/$$lib && uv sync --extra test && uv run pytest) || exit 1; \
-	done
+	@echo "✅ All unit tests passed"
 
 test-service:
 ifndef service
-	@echo "Please specify service: make test-service service=api-full"
+	@echo "Please specify service: make test-service service=simulation-executor"
 else
 	docker-compose -f deployment/docker-compose.yml run --rm $(service) sh -c "cd /app/projects/policyengine-$(service) && uv run --extra test pytest"
 endif
@@ -374,7 +372,7 @@ clean:
 # Local development helpers
 shell:
 ifndef service
-	@echo "Please specify service: make shell service=api-full"
+	@echo "Please specify service: make shell service=simulation-executor"
 else
 	docker-compose -f deployment/docker-compose.yml exec $(service) /bin/bash
 endif
@@ -389,12 +387,6 @@ prod-build:
 prod-push:
 	docker-compose -f deployment/docker-compose.prod.yml push
 
-# Quick commands for specific services
-dev-full:
-	docker-compose -f deployment/docker-compose.yml up api-full
-
+# Quick command for the simulation executor
 dev-sim:
 	docker-compose -f deployment/docker-compose.yml up simulation-executor
-
-dev-tagger:
-	docker-compose -f deployment/docker-compose.yml up api-tagger
