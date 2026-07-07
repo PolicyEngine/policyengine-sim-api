@@ -1,5 +1,5 @@
 # Simplified Makefile using docker-compose
-.PHONY: help dev up down build test deploy clean logs format check terraform-deploy push-pr-branch
+.PHONY: help dev up down build test clean logs format check push-pr-branch
 
 # Load environment variables if .env exists
 ifneq (,$(wildcard deployment/.env))
@@ -37,29 +37,6 @@ help:
 	@echo ""
 	@echo "Deployment is automated via GitHub Actions to Modal; there is no manual deploy target."
 
-# Initialize GCP (enables APIs, creates bucket, etc)
-init-gcp: check-deploy-env
-	@bash deployment/init-gcp.sh
-
-# Setup for first-time users
-setup:
-	@echo "Setting up PolicyEngine API for first time..."
-	@echo "Note: Using gcloud storage commands (compatible with Python 3.13+)"
-	@if [ ! -f deployment/.env ]; then \
-		cp deployment/.env.example deployment/.env; \
-		echo "✅ Created deployment/.env"; \
-		echo ""; \
-		echo "⚠️  IMPORTANT: Edit deployment/.env and set:"; \
-		echo "   - PROJECT_ID to your GCP project ID"; \
-		echo "   - GOOGLE_CLOUD_PROJECT to match PROJECT_ID"; \
-		echo ""; \
-		echo "Then run:"; \
-		echo "   make dev              # For local development"; \
-		echo "   make deploy           # To deploy to GCP"; \
-	else \
-		echo "✅ deployment/.env already exists"; \
-	fi
-
 # Development commands
 dev:
 	docker-compose -f deployment/docker-compose.yml up --build
@@ -84,9 +61,6 @@ endif
 # Build commands
 build:
 	docker-compose -f deployment/docker-compose.yml build --parallel
-
-build-prod:
-	docker-compose -f deployment/docker-compose.prod.yml build --parallel
 
 # Client generation
 generate-clients:
@@ -147,162 +121,6 @@ test-all: test test-integration
 # Complete test suite with services startup/shutdown
 test-complete: test test-integration-with-services
 	@echo "✅ All tests including integration passed!"
-
-# Deployment
-deploy: check-deploy-env build-prod push-images terraform-ensure-init terraform-deploy-all
-
-check-deploy-env:
-	@if [ ! -f "deployment/.env" ]; then \
-		echo "Error: deployment/.env not found. Run 'make setup' first"; \
-		exit 1; \
-	fi
-	@if [ -z "$(PROJECT_ID)" ]; then \
-		echo "Error: PROJECT_ID not set in deployment/.env"; \
-		exit 1; \
-	fi
-
-push-images:
-	@echo "Pushing images to GCP..."
-	docker-compose -f deployment/docker-compose.prod.yml push
-
-# Terraform commands
-terraform-backend:
-	@echo "Setting up Terraform backend..."
-	@if [ -z "$(PROJECT_ID)" ]; then \
-		echo "Error: PROJECT_ID not set. Please update deployment/.env"; \
-		exit 1; \
-	fi
-	@echo "Creating GCS bucket for Terraform state: $(PROJECT_ID)-state"
-	@gcloud storage buckets create gs://$(PROJECT_ID)-state \
-		--project=$(PROJECT_ID) \
-		--location=$(REGION) \
-		--uniform-bucket-level-access 2>/dev/null || echo "Bucket already exists"
-	@gcloud storage buckets update gs://$(PROJECT_ID)-state --versioning
-	@echo "Backend bucket ready"
-
-terraform-force-init:
-	@echo "Force reinitializing Terraform (cleaning existing state)..."
-	@rm -rf deployment/terraform/infra/.terraform deployment/terraform/project/.terraform
-	@$(MAKE) terraform-init
-
-terraform-init: terraform-backend
-	@echo "Initializing Terraform..."
-	@# Remove example backend files if they exist
-	@rm -f deployment/terraform/infra/backend.example.tf deployment/terraform/infra/backend.example.tfvars
-	@rm -f deployment/terraform/project/backend.example.tf deployment/terraform/project/backend.example_tf
-	@# Create or update backend.tf files
-	@echo "Configuring backend for $(PROJECT_ID)-state..."
-	@echo "terraform {" > deployment/terraform/infra/backend.tf.tmp
-	@echo "  backend \"gcs\" {" >> deployment/terraform/infra/backend.tf.tmp
-	@echo "    bucket = \"$(PROJECT_ID)-state\"" >> deployment/terraform/infra/backend.tf.tmp
-	@echo "    prefix = \"infra\"" >> deployment/terraform/infra/backend.tf.tmp
-	@echo "  }" >> deployment/terraform/infra/backend.tf.tmp
-	@echo "}" >> deployment/terraform/infra/backend.tf.tmp
-	@mv deployment/terraform/infra/backend.tf.tmp deployment/terraform/infra/backend.tf
-	@echo "terraform {" > deployment/terraform/project/backend.tf.tmp
-	@echo "  backend \"gcs\" {" >> deployment/terraform/project/backend.tf.tmp
-	@echo "    bucket = \"$(PROJECT_ID)-state\"" >> deployment/terraform/project/backend.tf.tmp
-	@echo "    prefix = \"project\"" >> deployment/terraform/project/backend.tf.tmp
-	@echo "  }" >> deployment/terraform/project/backend.tf.tmp
-	@echo "}" >> deployment/terraform/project/backend.tf.tmp
-	@mv deployment/terraform/project/backend.tf.tmp deployment/terraform/project/backend.tf
-	@echo "Initializing project module..."
-	-cd deployment/terraform/project && terraform init -reconfigure 2>/dev/null || true
-	@echo "Initializing infra module..."
-	cd deployment/terraform/infra && terraform init -reconfigure
-
-terraform-ensure-init:
-	@echo "Checking Terraform initialization..."
-	@# Always run init if backend.tf was recently modified or .terraform doesn't exist
-	@if [ ! -d "deployment/terraform/infra/.terraform" ] || \
-	   [ "deployment/terraform/infra/backend.tf" -nt "deployment/terraform/infra/.terraform" ] || \
-	   [ ! -f "deployment/terraform/infra/.terraform/terraform.tfstate" ]; then \
-		echo "Running terraform init..."; \
-		$(MAKE) terraform-init; \
-	else \
-		echo "Terraform already initialized"; \
-	fi
-
-terraform-plan: terraform-ensure-init
-	@echo "Planning Terraform changes..."
-	@if [ -z "$(TF_VAR_org_id)" ] || [ "$(TF_VAR_org_id)" = "your-org-id" ]; then \
-		echo "\n=== Skipping PROJECT module (using existing project) ==="; \
-	else \
-		echo "\n=== Planning PROJECT module ==="; \
-		cd deployment/terraform/project && terraform plan; \
-	fi
-	@echo "\n=== Planning INFRA module ==="
-	@# Auto-populate all required variables
-	@US_VERSION=$$(grep -A1 'name = "policyengine-us"' projects/policyengine-simulation-executor/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
-	UK_VERSION=$$(grep -A1 'name = "policyengine-uk"' projects/policyengine-simulation-executor/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
-	COMMIT_URL="https://github.com/PolicyEngine/policyengine-sim-api/commit/$$(git rev-parse HEAD)" && \
-	echo "project_id = \"$${TF_VAR_project_id}\"" > deployment/terraform/infra/auto.tfvars && \
-	echo "commit_url = \"$$COMMIT_URL\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "policyengine-us-package-version = \"$$US_VERSION\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "policyengine-uk-package-version = \"$$UK_VERSION\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "is_prod = $${TF_VAR_is_prod:-false}" >> deployment/terraform/infra/auto.tfvars && \
-	echo "full_container_tag = \"$${TF_VAR_full_container_tag:-latest}\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "simulation_container_tag = \"$${TF_VAR_simulation_container_tag:-latest}\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "tagger_container_tag = \"$${TF_VAR_tagger_container_tag:-latest}\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "region = \"$${TF_VAR_region:-us-central1}\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "stage = \"$${TF_VAR_stage:-dev}\"" >> deployment/terraform/infra/auto.tfvars && \
-	cd deployment/terraform/infra && terraform plan -var-file=auto.tfvars
-
-terraform-deploy-project: terraform-ensure-init
-	@echo "Deploying GCP project configuration..."
-	@echo "Note: This creates a NEW GCP project. Skip if using existing project."
-	@if [ -z "$(TF_VAR_org_id)" ] || [ "$(TF_VAR_org_id)" = "your-org-id" ]; then \
-		echo "⚠️  Skipping project creation - TF_VAR_org_id not set"; \
-		echo "   Using existing project: $(PROJECT_ID)"; \
-	else \
-		cd deployment/terraform/project && terraform apply -auto-approve; \
-	fi
-
-terraform-deploy-infra: terraform-ensure-init
-	@echo "Deploying infrastructure (Cloud Run, etc)..."
-	@# Auto-populate all required variables
-	@US_VERSION=$$(grep -A1 'name = "policyengine-us"' projects/policyengine-simulation-executor/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
-	UK_VERSION=$$(grep -A1 'name = "policyengine-uk"' projects/policyengine-simulation-executor/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
-	COMMIT_URL="https://github.com/PolicyEngine/policyengine-sim-api/commit/$$(git rev-parse HEAD)" && \
-	echo "project_id = \"$${TF_VAR_project_id}\"" > deployment/terraform/infra/auto.tfvars && \
-	echo "commit_url = \"$$COMMIT_URL\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "policyengine-us-package-version = \"$$US_VERSION\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "policyengine-uk-package-version = \"$$UK_VERSION\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "is_prod = $${TF_VAR_is_prod:-false}" >> deployment/terraform/infra/auto.tfvars && \
-	echo "full_container_tag = \"$${TF_VAR_full_container_tag:-latest}\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "simulation_container_tag = \"$${TF_VAR_simulation_container_tag:-latest}\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "tagger_container_tag = \"$${TF_VAR_tagger_container_tag:-latest}\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "region = \"$${TF_VAR_region:-us-central1}\"" >> deployment/terraform/infra/auto.tfvars && \
-	echo "stage = \"$${TF_VAR_stage:-dev}\"" >> deployment/terraform/infra/auto.tfvars && \
-	cd deployment/terraform/infra && terraform apply -auto-approve -var-file=auto.tfvars
-
-terraform-deploy-all: terraform-ensure-init
-	@echo "Starting full deployment..."
-	@# Try project deployment but don't fail if skipped
-	@$(MAKE) terraform-deploy-project || true
-	@# Always deploy infrastructure
-	@$(MAKE) terraform-deploy-infra
-	@echo "✅ Deployment completed successfully!"
-
-terraform-deploy: terraform-deploy-all  # Alias for backward compatibility
-
-terraform-import:
-	@echo "Importing existing resources into terraform state..."
-	@cd deployment/terraform && ./import-existing.sh
-
-terraform-handle-workflows:
-	@echo "Checking and handling existing workflows..."
-	@cd deployment/terraform && ./handle-existing-workflows.sh $(PROJECT_ID) $(TF_VAR_region)
-
-terraform-destroy:
-	@echo "⚠️  WARNING: This will destroy all terraform-managed resources!"
-	@echo "Press Ctrl+C to cancel, or Enter to continue..."
-	@read confirm
-	@echo "Destroying infrastructure first..."
-	cd deployment/terraform/infra && terraform destroy -auto-approve
-	@echo "Destroying project configuration..."
-	cd deployment/terraform/project && terraform destroy -auto-approve
-	@echo "✅ All terraform resources destroyed"
 
 # Update dependencies
 update:
@@ -379,13 +197,6 @@ endif
 
 ps:
 	docker-compose -f deployment/docker-compose.yml ps
-
-# Production helpers
-prod-build:
-	docker-compose -f deployment/docker-compose.prod.yml build
-
-prod-push:
-	docker-compose -f deployment/docker-compose.prod.yml push
 
 # Quick command for the simulation executor
 dev-sim:
