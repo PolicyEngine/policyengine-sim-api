@@ -22,7 +22,9 @@ jobs:
   update:
     name: Update policyengine.py bundle
     runs-on: ubuntu-latest
-    if: github.repository == 'PolicyEngine/policyengine-api-v2'
+    if: >-
+      github.repository == 'PolicyEngine/policyengine-api-v2' ||
+      github.repository == 'PolicyEngine/policyengine-sim-api'
 
     steps:
       - name: Generate GitHub App token
