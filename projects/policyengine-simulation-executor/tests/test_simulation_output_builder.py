@@ -1,4 +1,4 @@
-"""Tests for building PolicyEngine v4 outputs into API-v2 macro results."""
+"""Tests for building PolicyEngine v4 outputs into simulation API macro results."""
 
 from __future__ import annotations
 
