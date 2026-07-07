@@ -1,7 +1,7 @@
-# Contributing to policyengine-api-v2
+# Contributing to policyengine-sim-api
 
 See the shared PolicyEngine contribution guide for cross-repo conventions. This
-file covers policyengine-api-v2 specifics.
+file covers policyengine-sim-api specifics.
 
 ## Commands
 
@@ -45,15 +45,15 @@ pushes the current branch to `origin` with the correct tracking so
 `gh pr create` works. Then create and verify the PR explicitly:
 
 ```bash
-gh pr create --draft --repo PolicyEngine/policyengine-api-v2 --head "$(git branch --show-current)" --base main
-gh pr view <PR> --repo PolicyEngine/policyengine-api-v2 --json isDraft,headRepositoryOwner,headRepository
+gh pr create --draft --repo PolicyEngine/policyengine-sim-api --head "$(git branch --show-current)" --base main
+gh pr view <PR> --repo PolicyEngine/policyengine-sim-api --json isDraft,headRepositoryOwner,headRepository
 ```
 
 Before opening the PR, open or identify a GitHub issue for the work. The first
 line of the PR description must be `Fixes #ISSUE_NUMBER`.
 
 The PR is valid only if it is a draft and the head repository is
-`PolicyEngine/policyengine-api-v2`. If you cannot push to that repository, ask
+`PolicyEngine/policyengine-sim-api`. If you cannot push to that repository, ask
 for access instead of opening a fork PR.
 
 ## Repo-Specific Anti-Patterns

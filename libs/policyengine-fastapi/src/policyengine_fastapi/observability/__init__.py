@@ -1,5 +1,5 @@
 """
-Shared observability contracts and utilities for API v2 services.
+Shared observability contracts and utilities for the PolicyEngine simulation API services.
 
 This stays in `policyengine-fastapi` for now because only one active service
 needs it and the main value today is shared contract stability, not a separate
