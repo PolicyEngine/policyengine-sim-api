@@ -350,8 +350,8 @@ push-pr-branch:
 	fi; \
 	REMOTE_URL=$$(git remote get-url origin 2>/dev/null || true); \
 	case "$$REMOTE_URL" in \
-		*PolicyEngine/policyengine-api-v2* ) ;; \
-		* ) echo "Missing canonical origin remote PolicyEngine/policyengine-api-v2"; exit 1 ;; \
+		*PolicyEngine/policyengine-api-v2* | *PolicyEngine/policyengine-sim-api* ) ;; \
+		* ) echo "Missing canonical origin remote PolicyEngine/policyengine-sim-api"; exit 1 ;; \
 	esac; \
 	git push -u origin HEAD:$$BRANCH; \
 	echo "Create the PR with: gh pr create --draft --repo PolicyEngine/policyengine-api-v2 --head $$BRANCH --base main"
