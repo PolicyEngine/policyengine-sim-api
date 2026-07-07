@@ -8,7 +8,7 @@ ifneq (,$(wildcard deployment/.env))
 endif
 
 help:
-	@echo "PolicyEngine API v2 - Available commands:"
+	@echo "PolicyEngine Sim API - Available commands:"
 	@echo ""
 	@echo "Setup (first time):"
 	@echo "  make setup            - Create .env file from template"
@@ -237,7 +237,7 @@ terraform-plan: terraform-ensure-init
 	@# Auto-populate all required variables
 	@US_VERSION=$$(grep -A1 'name = "policyengine-us"' projects/policyengine-simulation-executor/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
 	UK_VERSION=$$(grep -A1 'name = "policyengine-uk"' projects/policyengine-simulation-executor/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
-	COMMIT_URL="https://github.com/PolicyEngine/policyengine-api-v2/commit/$$(git rev-parse HEAD)" && \
+	COMMIT_URL="https://github.com/PolicyEngine/policyengine-sim-api/commit/$$(git rev-parse HEAD)" && \
 	echo "project_id = \"$${TF_VAR_project_id}\"" > deployment/terraform/infra/auto.tfvars && \
 	echo "commit_url = \"$$COMMIT_URL\"" >> deployment/terraform/infra/auto.tfvars && \
 	echo "policyengine-us-package-version = \"$$US_VERSION\"" >> deployment/terraform/infra/auto.tfvars && \
@@ -265,7 +265,7 @@ terraform-deploy-infra: terraform-ensure-init
 	@# Auto-populate all required variables
 	@US_VERSION=$$(grep -A1 'name = "policyengine-us"' projects/policyengine-simulation-executor/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
 	UK_VERSION=$$(grep -A1 'name = "policyengine-uk"' projects/policyengine-simulation-executor/uv.lock | grep version | head -1 | sed 's/.*"\(.*\)".*/\1/') && \
-	COMMIT_URL="https://github.com/PolicyEngine/policyengine-api-v2/commit/$$(git rev-parse HEAD)" && \
+	COMMIT_URL="https://github.com/PolicyEngine/policyengine-sim-api/commit/$$(git rev-parse HEAD)" && \
 	echo "project_id = \"$${TF_VAR_project_id}\"" > deployment/terraform/infra/auto.tfvars && \
 	echo "commit_url = \"$$COMMIT_URL\"" >> deployment/terraform/infra/auto.tfvars && \
 	echo "policyengine-us-package-version = \"$$US_VERSION\"" >> deployment/terraform/infra/auto.tfvars && \
@@ -350,11 +350,11 @@ push-pr-branch:
 	fi; \
 	REMOTE_URL=$$(git remote get-url origin 2>/dev/null || true); \
 	case "$$REMOTE_URL" in \
-		*PolicyEngine/policyengine-api-v2* | *PolicyEngine/policyengine-sim-api* ) ;; \
+		*PolicyEngine/policyengine-sim-api* ) ;; \
 		* ) echo "Missing canonical origin remote PolicyEngine/policyengine-sim-api"; exit 1 ;; \
 	esac; \
 	git push -u origin HEAD:$$BRANCH; \
-	echo "Create the PR with: gh pr create --draft --repo PolicyEngine/policyengine-api-v2 --head $$BRANCH --base main"
+	echo "Create the PR with: gh pr create --draft --repo PolicyEngine/policyengine-sim-api --head $$BRANCH --base main"
 
 # Integration tests
 integ-test:

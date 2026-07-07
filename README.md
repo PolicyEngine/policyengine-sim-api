@@ -1,4 +1,4 @@
-# PolicyEngine API v2
+# PolicyEngine Sim API
 
 Monorepo for PolicyEngine's API infrastructure, containing all services, libraries, and deployment configuration. 
 
