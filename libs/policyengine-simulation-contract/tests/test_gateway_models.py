@@ -202,6 +202,29 @@ class TestSimulationRequest:
         assert dumped["data"] == "custom_dataset_label"
         assert dumped["scope"] == "macro"
 
+    def test_simulation_request_accepts_region_group(self):
+        """A region_group (list of member region codes) is accepted and preserved."""
+        request = SimulationRequest(
+            country="us",
+            region_group=["state/hi", "state/ia", "state/wi"],
+            scope="macro",
+        )
+        assert request.region_group == ["state/hi", "state/ia", "state/wi"]
+        assert request.region is None
+
+    def test_simulation_request_accepts_neither_region_nor_region_group(self):
+        """Neither region nor region_group is valid (a national run)."""
+        request = SimulationRequest(country="us", scope="macro")
+        assert request.region is None
+        assert request.region_group is None
+
+    def test_simulation_request_rejects_region_and_region_group_together(self):
+        """region and region_group are mutually exclusive."""
+        with pytest.raises(ValidationError, match="not both"):
+            SimulationRequest(
+                country="us", region="state/hi", region_group=["state/ia"]
+            )
+
     def test_simulation_request_rejects_unknown_fields(self):
         """Unknown fields should fail fast with ``extra="forbid"``."""
         with pytest.raises(ValidationError):
