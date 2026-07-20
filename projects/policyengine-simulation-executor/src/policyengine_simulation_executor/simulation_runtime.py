@@ -323,6 +323,10 @@ def _resolve_region(
     country: str,
     params: dict[str, Any],
 ) -> RegionResolution:
+    if params.get("region_group"):
+        return _resolve_region_group(
+            country_module=country_module, country=country, params=params
+        )
     region_code = _normalise_region_code(country, params.get("region"))
     if region_code == country:
         return RegionResolution(
@@ -361,6 +365,52 @@ def _resolve_region(
         code=region_code,
         dataset_reference=dataset_reference,
         scoping_strategy=getattr(region, "scoping_strategy", None),
+    )
+
+
+def _resolve_region_group(
+    *,
+    country_module,
+    country: str,
+    params: dict[str, Any],
+) -> RegionResolution:
+    """Resolve a ``region_group`` (list of member region codes) to one
+    ``RegionGroupStrategy`` that scopes a single simulation to the union of the
+    members.
+
+    Members must be row-filter regions (states/CDs) so national weights are
+    preserved (INV-5); the group filters the national dataset.
+    """
+    from policyengine.core.scoping_strategy import (
+        RegionGroupStrategy,
+        RowFilterStrategy,
+    )
+
+    codes = [
+        _normalise_region_code(country, code)
+        for code in (params.get("region_group") or [])
+    ]
+    if not codes:
+        raise ValueError("region_group must contain at least one region code")
+
+    members = []
+    for code in codes:
+        region = country_module.model.get_region(code)
+        if region is None:
+            raise ValueError(f"Unsupported {country.upper()} region in group: {code}")
+        scoping_strategy = getattr(region, "scoping_strategy", None)
+        if not isinstance(scoping_strategy, RowFilterStrategy):
+            raise ValueError(
+                f"Region group member '{code}' is not a row-filter region "
+                f"(got {type(scoping_strategy).__name__}); region groups must "
+                "preserve national weights."
+            )
+        members.append(scoping_strategy)
+
+    return RegionResolution(
+        code="region_group/" + "+".join(sorted(codes)),
+        dataset_reference=_resolve_dataset_reference(country, params),
+        scoping_strategy=RegionGroupStrategy(members=members),
     )
 
 
@@ -501,6 +551,15 @@ def _run_simulation_impl_core(params: dict) -> dict:
     )
     output = builder.serialize()
     logger.info("Comparison complete")
+    if params.get("_emit_microdata"):
+        from policyengine_simulation_executor.simulation_microdata import (
+            country_entities,
+            extract_output_microdata,
+        )
+
+        output["_microdata"] = extract_output_microdata(
+            baseline, reform, country_entities(country)
+        )
     return output
 
 

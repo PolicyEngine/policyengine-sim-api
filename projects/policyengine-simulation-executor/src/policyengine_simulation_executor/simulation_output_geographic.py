@@ -124,7 +124,13 @@ def _should_build_us_congressional_district_impact(region_code: str | None) -> b
     if region_code is None:
         return True
     normalized_region_code = region_code.lower()
-    return normalized_region_code == "us" or normalized_region_code.startswith("state/")
+    return (
+        normalized_region_code == "us"
+        or normalized_region_code.startswith("state/")
+        # A region group is a union of whole states; the CD table computed over
+        # its households is exactly its member states' districts.
+        or normalized_region_code.startswith("region_group/")
+    )
 
 
 def build_congressional_district_impact(
