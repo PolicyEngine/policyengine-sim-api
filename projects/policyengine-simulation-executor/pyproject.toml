@@ -18,7 +18,7 @@ dependencies = [
     "policyengine-fastapi",
     "policyengine-simulation-observability",
     "policyengine-simulation-contract",
-    "policyengine==4.20.3",
+    "policyengine==4.21.1",
     "policyengine-core==3.28.0",
     "policyengine-uk==2.89.2",
     "policyengine-us==1.764.6",
