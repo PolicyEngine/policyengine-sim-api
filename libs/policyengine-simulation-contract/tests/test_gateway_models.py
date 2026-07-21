@@ -225,6 +225,22 @@ class TestSimulationRequest:
                 country="us", region="state/hi", region_group=["state/ia"]
             )
 
+    def test_simulation_request_segmented_defaults_to_none(self):
+        """Absent segmented means the default (segmented where eligible)."""
+        request = SimulationRequest(country="us", scope="macro")
+        assert request.segmented is None
+
+    def test_simulation_request_accepts_segmented_opt_out(self):
+        """segmented=False (force monolithic) round-trips."""
+        request = SimulationRequest(country="us", scope="macro", segmented=False)
+        assert request.segmented is False
+        assert request.model_dump(exclude_none=True)["segmented"] is False
+
+    def test_simulation_request_accepts_segmented_true(self):
+        """An explicit segmented=True is accepted (same as the default)."""
+        request = SimulationRequest(country="us", scope="macro", segmented=True)
+        assert request.segmented is True
+
     def test_simulation_request_rejects_unknown_fields(self):
         """Unknown fields should fail fast with ``extra="forbid"``."""
         with pytest.raises(ValidationError):

@@ -98,6 +98,10 @@ class GatewayRequestBase(BaseModel):
     include_cliffs: Optional[bool] = None
     model_version: Optional[str] = None
     data_version: Optional[str] = None
+    # National macro requests run segmented across region groups by default;
+    # False forces a monolithic single-process run. Ignored for requests that
+    # are not eligible for segmentation (regional, household-scope, UK).
+    segmented: Optional[bool] = None
 
     model_config = ConfigDict(
         extra="forbid",
