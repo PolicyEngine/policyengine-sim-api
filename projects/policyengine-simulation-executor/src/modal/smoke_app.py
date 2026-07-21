@@ -44,12 +44,19 @@ def smoke_import_executor() -> dict:
     # baked env layer).
     importlib.import_module("src.modal.app")
 
-    # The lazy request-time imports of the two worker functions.
+    # The lazy request-time imports of the worker functions. run_simulation
+    # imports the segmented-national dispatch (and its pandas/microdf/
+    # policyengine.core chain) on EVERY request, so a break there crashes
+    # all requests at import time — exactly the #602 failure class this
+    # smoke exists to catch.
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: F401
         run_simulation_impl,
     )
     from src.modal.budget_window_batch import (  # noqa: F401
         run_budget_window_batch_impl,
+    )
+    from src.modal.segmented_national import (  # noqa: F401
+        dispatch_run_simulation,
     )
 
     import policyengine_simulation_contract

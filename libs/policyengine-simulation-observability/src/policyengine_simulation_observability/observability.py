@@ -87,6 +87,9 @@ class SegmentName(StrEnum):
     # backoff_sleep_ms_total) instead, because one segment per probe grows
     # the operation's segment tree without bound over a long batch.
 
+    SEGMENTED_NATIONAL_CHILD_SPAWN = "segmented_national_child_spawn"
+    SEGMENTED_NATIONAL_REDUCE = "segmented_national_reduce"
+
     MODAL_JOB_METADATA_READ = "modal_job_metadata_read"
 
     SIMULATION_OUTPUT_BUILD = "simulation_output_build"

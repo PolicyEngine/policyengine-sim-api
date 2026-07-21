@@ -73,3 +73,17 @@ def test_build_child_simulation_request_removes_batch_only_fields():
     assert "max_parallel" not in child_request.payload
     assert "target" not in child_request.payload
     assert "_metadata" not in child_request.payload
+
+
+def test_build_child_simulation_request_pins_children_monolithic():
+    """A national budget-window child must not fan out again (years x 21
+    containers); enabling nested segmentation is a deliberate follow-up."""
+    _, payload = _build_parent_payload()
+    context = build_batch_context(payload, batch_job_id="parent-123")
+
+    child_request = build_child_simulation_request(
+        context,
+        simulation_year="2028",
+    )
+
+    assert child_request.payload["segmented"] is False

@@ -9,6 +9,7 @@ from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     PolicyEngineBundle,
 )
+from src.modal.fanout import build_child_payload
 
 BATCH_ONLY_FIELDS = {
     "version",
@@ -86,16 +87,17 @@ def build_child_simulation_request(
     *,
     simulation_year: str,
 ) -> ChildSimulationRequest:
-    payload = {
-        key: value
-        for key, value in context.raw_params.items()
-        if key not in BATCH_ONLY_FIELDS
-    }
-    payload["time_period"] = simulation_year
-
-    telemetry = context.raw_params.get("_telemetry")
-    if isinstance(telemetry, dict):
-        payload["_telemetry"] = telemetry
+    payload = build_child_payload(
+        context.raw_params,
+        strip_fields=BATCH_ONLY_FIELDS,
+        overrides={
+            "time_period": simulation_year,
+            # Budget-window children stay monolithic for now: a national
+            # child would otherwise fan out again (years x 21 containers).
+            # Enabling nested segmentation is a deliberate follow-up.
+            "segmented": False,
+        },
+    )
 
     return ChildSimulationRequest(
         simulation_year=simulation_year,
