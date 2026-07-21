@@ -482,6 +482,20 @@
             "type": "string",
             "title": "Region"
           },
+          "region_group": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Group"
+          },
           "title": {
             "anyOf": [
               {
@@ -1125,6 +1139,20 @@
               }
             ],
             "title": "Region"
+          },
+          "region_group": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region Group"
           },
           "title": {
             "anyOf": [

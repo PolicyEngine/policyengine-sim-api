@@ -93,6 +93,7 @@ class GatewayRequestBase(BaseModel):
     reform: Optional[dict[str, Any]] = None
     baseline: Optional[dict[str, Any]] = None
     region: Optional[str] = None
+    region_group: Optional[list[str]] = None
     title: Optional[str] = None
     include_cliffs: Optional[bool] = None
     model_version: Optional[str] = None
@@ -117,6 +118,13 @@ class GatewayRequestBase(BaseModel):
     @classmethod
     def enforce_max_payload_size(cls, value):
         return _enforce_max_payload_size(value)
+
+    @model_validator(mode="after")
+    def region_xor_region_group(self):
+        """A request scopes to a single region OR a region group, never both."""
+        if self.region is not None and self.region_group is not None:
+            raise ValueError("Provide `region` or `region_group`, not both.")
+        return self
 
 
 class SimulationRequest(GatewayRequestBase):
