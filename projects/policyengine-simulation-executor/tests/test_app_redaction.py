@@ -37,6 +37,29 @@ def test_redact_params_strips_signed_urls_and_reform_bodies():
     assert all("SECRET" not in str(value) for value in redacted.values())
 
 
+def test_redact_params_strips_all_underscore_prefixed_keys():
+    """Underscore-prefixed internal keys must never reach observability
+    attributes: the backend rejects attribute keys starting with '_', so a
+    leaked key crashes the span. Regression for the segmented-national
+    child failure where `_emit_microdata` reached operation() (#640)."""
+    params = {
+        "country": "us",
+        "scope": "macro",
+        "region_group": ["state/hi", "state/ia"],
+        "_emit_microdata": True,
+        "_telemetry": {"run_id": "run-9"},
+        "_metadata": {"resolved_app_name": "x"},
+    }
+
+    redacted = redact_params_for_logging(params)
+
+    assert redacted["country"] == "us"
+    assert redacted["region_group"] == ["state/hi", "state/ia"]
+    assert redacted["run_id"] == "run-9"
+    # No underscore-prefixed key survives — this is what the backend forbids.
+    assert not any(key.startswith("_") for key in redacted)
+
+
 def test_redact_params_tolerates_non_dict_input():
     assert redact_params_for_logging(None) == {}
     assert redact_params_for_logging("string-payload") == {}
