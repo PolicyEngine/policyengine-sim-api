@@ -30,7 +30,9 @@ def extract_output_microdata(baseline, reform) -> dict[str, Any]:
     stays valid on the reassembled national data.
     """
 
-    def dump(simulation) -> tuple[dict[str, dict[str, list]], dict[str, dict[str, str]]]:
+    def dump(
+        simulation,
+    ) -> tuple[dict[str, dict[str, list]], dict[str, dict[str, str]]]:
         columns: dict[str, dict[str, list]] = {}
         dtypes: dict[str, dict[str, str]] = {}
         for entity, frame in simulation.output_dataset.data.entity_data.items():

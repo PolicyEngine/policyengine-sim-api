@@ -70,9 +70,7 @@ def build_group_child_payload(
     telemetry so child spans join the parent's trace.
     """
     payload = {
-        key: value
-        for key, value in params.items()
-        if key not in SEGMENTED_STRIP_FIELDS
+        key: value for key, value in params.items() if key not in SEGMENTED_STRIP_FIELDS
     }
     payload["region_group"] = list(group)
     payload["_emit_microdata"] = True
@@ -104,14 +102,10 @@ class SegmentedNationalRunner:
         self.country = str(params.get("country") or "us").lower()
         groups = national_region_groups(self.country)
         if not groups:
-            raise ValueError(
-                f"No national partition for country {self.country!r}"
-            )
+            raise ValueError(f"No national partition for country {self.country!r}")
         self.groups = groups
         # Lazy handle, no RPC until first spawn (budget-window precedent).
-        self.child_func = self.modal.Function.from_name(
-            app_name, "run_simulation"
-        )
+        self.child_func = self.modal.Function.from_name(app_name, "run_simulation")
         set_attribute("national_execution", "segmented")
         set_attribute("segmented_group_count", len(self.groups))
         self._poll_count = 0
@@ -200,9 +194,7 @@ class SegmentedNationalRunner:
                 simulation_params=simulation_params,
                 country_module=_country_module(self.country),
                 year=_parse_year(simulation_params),
-                resolved_data_version=_requested_data_version(
-                    simulation_params
-                ),
+                resolved_data_version=_requested_data_version(simulation_params),
             )
 
 
@@ -215,9 +207,7 @@ def run_segmented_national_impl(
     return runner.run()
 
 
-def dispatch_run_simulation(
-    params: dict[str, Any], *, app_name: str
-) -> dict[str, Any]:
+def dispatch_run_simulation(params: dict[str, Any], *, app_name: str) -> dict[str, Any]:
     """The run_simulation entrypoint's routing: segmented national fan-out
     for eligible requests, the monolithic path for everything else."""
     if should_run_segmented_national(params):
