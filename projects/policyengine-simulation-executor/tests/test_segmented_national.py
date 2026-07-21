@@ -1,4 +1,4 @@
-"""Unit tests for the segmented-national fan-out runner (C5)."""
+"""Unit tests for the segmented-national fan-out runner (C5/C6 + review fixes)."""
 
 from types import SimpleNamespace
 
@@ -6,9 +6,49 @@ import pytest
 
 from src.modal import segmented_national as sn
 from policyengine_simulation_executor import simulation_runtime as sr
+from policyengine_simulation_executor.national_partition import (
+    US_NATIONAL_REGION_GROUPS,
+)
 
 
 NATIONAL = {"country": "us", "scope": "macro", "time_period": "2026"}
+
+
+def _bare_country_module():
+    """A country module whose model has no loadable region registry."""
+    return SimpleNamespace(
+        model=SimpleNamespace(get_region=lambda code: None, region_registry=None)
+    )
+
+
+class TestIsPlainNationalMacro:
+    def test__plain_national_shape(self):
+        assert sn.is_plain_national_macro(dict(NATIONAL)) is True
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"region": "state/ut"},
+            {"region_group": ["state/hi"]},
+            {"country": "uk"},
+            {"scope": "household"},
+            {"scope": None},
+        ],
+    )
+    def test__non_national_shapes(self, overrides):
+        assert sn.is_plain_national_macro({**NATIONAL, **overrides}) is False
+
+    def test__knobs_do_not_change_the_shape(self):
+        assert (
+            sn.is_plain_national_macro({**NATIONAL, "segmented": False}) is True
+        )
+
+    @pytest.mark.parametrize("region", ["us", "US", " us "])
+    def test__v1_style_region_us_is_national(self, region):
+        # API v1 sends region:"us" on every national macro run; both
+        # national spellings must match (simulation_runtime normalises
+        # None/empty/"us" to the country).
+        assert sn.is_plain_national_macro({**NATIONAL, "region": region}) is True
 
 
 class TestShouldRunSegmentedNational:
@@ -37,6 +77,38 @@ class TestShouldRunSegmentedNational:
             is True
         )
 
+    def test__v1_style_region_us_is_eligible(self):
+        assert (
+            sn.should_run_segmented_national({**NATIONAL, "region": "us"})
+            is True
+        )
+
+    @pytest.mark.parametrize("policy_key", ["reform", "baseline"])
+    def test__labor_supply_response_reforms_fall_back_monolithic(
+        self, policy_key
+    ):
+        # The reduce's stand-ins carry no policy, so LSR would silently
+        # zero out (see LSR_PARAMETER_PREFIX) — these must run monolithic.
+        params = {
+            **NATIONAL,
+            policy_key: {
+                "gov.simulation.labor_supply_responses.elasticities."
+                "income.all": {"2026-01-01.2100-12-31": -0.05}
+            },
+        }
+        assert sn.should_run_segmented_national(params) is False
+
+    def test__non_lsr_reform_stays_eligible(self):
+        params = {
+            **NATIONAL,
+            "reform": {
+                "gov.irs.credits.ctc.refundable.fully_refundable": {
+                    "2023-01-01.2100-12-31": True
+                }
+            },
+        }
+        assert sn.should_run_segmented_national(params) is True
+
 
 class TestBuildGroupChildPayload:
     def test__scopes_to_group_and_requests_microdata(self):
@@ -62,17 +134,30 @@ class TestBuildGroupChildPayload:
         )
         assert "_metadata" not in payload
 
+    def test__strips_v1_style_region_us_from_children(self):
+        # A child must scope by its region_group alone, never a stale
+        # parent region.
+        payload = sn.build_group_child_payload(
+            {**NATIONAL, "region": "us"}, ["state/ca"]
+        )
+        assert "region" not in payload
+        assert payload["region_group"] == ["state/ca"]
+
 
 class FakeCall:
     """A FunctionCall whose result resolves after N polls (or raises)."""
 
-    def __init__(self, result, polls_until_ready=0, error=None):
+    def __init__(self, result, polls_until_ready=0, error=None, errors_once=0):
         self.result = result
         self.polls_until_ready = polls_until_ready
         self.error = error
+        self.errors_once = errors_once
         self.cancelled = False
 
     def get(self, timeout):
+        if self.errors_once > 0:
+            self.errors_once -= 1
+            raise ConnectionError("transient control-plane blip")
         if self.error is not None:
             raise self.error
         if self.polls_until_ready > 0:
@@ -85,8 +170,9 @@ class FakeCall:
 
 
 class FakeModal:
-    def __init__(self, calls):
+    def __init__(self, calls, fail_spawn_at=None):
         self._calls = list(calls)
+        self.fail_spawn_at = fail_spawn_at
         self.spawned_payloads = []
         self.from_name_args = None
         fake = self
@@ -100,6 +186,11 @@ class FakeModal:
         self.Function = _Function
 
     def _spawn(self, payload):
+        if (
+            self.fail_spawn_at is not None
+            and len(self.spawned_payloads) == self.fail_spawn_at
+        ):
+            raise ConnectionError("spawn RPC failed")
         self.spawned_payloads.append(payload)
         return self._calls[len(self.spawned_payloads) - 1]
 
@@ -118,45 +209,120 @@ def _twenty_calls(**kwargs):
     return [FakeCall({"child": i}, **kwargs) for i in range(20)]
 
 
+@pytest.fixture
+def bare_country(monkeypatch):
+    monkeypatch.setattr(sr, "_country_module", lambda c: _bare_country_module())
+
+
 class TestSegmentedNationalRunner:
-    def test__spawns_one_child_per_partition_group(self, monkeypatch):
+    def test__spawns_one_child_per_group_into_the_segment_pool(
+        self, monkeypatch, bare_country
+    ):
         fake = FakeModal(_twenty_calls())
         runner = _runner(fake)
-        monkeypatch.setattr(runner, "_reduce", lambda results: {"ok": results})
+        monkeypatch.setattr(
+            runner, "_reduce", lambda results, country_module: {"ok": results}
+        )
 
         result = runner.run()
 
+        # Children draw from the dedicated segment pool, never the
+        # gateway-facing run_simulation pool the parent occupies.
         assert fake.from_name_args == (
             "policyengine-simulation-py-test",
-            "run_simulation",
+            sn.SEGMENT_FUNCTION_NAME,
         )
         assert len(fake.spawned_payloads) == 20
         groups = [p["region_group"] for p in fake.spawned_payloads]
         assert groups == [list(g) for g in runner.groups]
         assert all(p["_emit_microdata"] is True for p in fake.spawned_payloads)
-        # Results arrive in group order regardless of completion order.
         assert result == {"ok": [{"child": i} for i in range(20)]}
 
     def test__collects_out_of_order_completions_in_group_order(
-        self, monkeypatch
+        self, monkeypatch, bare_country
     ):
         calls = [
             FakeCall({"child": i}, polls_until_ready=(19 - i) % 3)
             for i in range(20)
         ]
         runner = _runner(FakeModal(calls))
-        monkeypatch.setattr(runner, "_reduce", lambda results: results)
+        monkeypatch.setattr(
+            runner, "_reduce", lambda results, country_module: results
+        )
         assert runner.run() == [{"child": i} for i in range(20)]
 
-    def test__child_failure_fails_fast_and_cancels_the_rest(self, monkeypatch):
+    def test__child_failure_fails_fast_and_cancels_the_rest(
+        self, monkeypatch, bare_country
+    ):
         calls = _twenty_calls(polls_until_ready=5)
         calls[7] = FakeCall(None, error=ValueError("boom"))
         runner = _runner(FakeModal(calls))
-        monkeypatch.setattr(runner, "_reduce", lambda results: results)
+        monkeypatch.setattr(
+            runner, "_reduce", lambda results, country_module: results
+        )
 
         with pytest.raises(RuntimeError, match="Segmented national child failed"):
             runner.run()
         assert all(c.cancelled for c in calls if c.error is None)
+
+    def test__one_transient_poll_error_is_tolerated(
+        self, monkeypatch, bare_country
+    ):
+        # A single control-plane blip on one handle must not kill the job.
+        calls = _twenty_calls()
+        calls[3] = FakeCall({"child": 3}, errors_once=1)
+        runner = _runner(FakeModal(calls))
+        monkeypatch.setattr(
+            runner, "_reduce", lambda results, country_module: results
+        )
+        assert runner.run() == [{"child": i} for i in range(20)]
+
+    def test__spawn_failure_cancels_already_spawned_children(
+        self, monkeypatch, bare_country
+    ):
+        calls = _twenty_calls(polls_until_ready=100)
+        fake = FakeModal(calls, fail_spawn_at=15)
+        runner = _runner(fake)
+        monkeypatch.setattr(
+            runner, "_reduce", lambda results, country_module: results
+        )
+
+        with pytest.raises(ConnectionError):
+            runner.run()
+        assert all(c.cancelled for c in calls[:15])
+
+    def test__uncovered_registry_states_ride_in_the_last_group(
+        self, monkeypatch, bare_country
+    ):
+        partition_codes = [
+            code for group in US_NATIONAL_REGION_GROUPS for code in group
+        ]
+        registry = SimpleNamespace(
+            regions=[
+                SimpleNamespace(code=code, region_type="state")
+                for code in partition_codes + ["state/pr"]
+            ]
+        )
+        country_module = SimpleNamespace(
+            model=SimpleNamespace(
+                get_region=lambda code: None, region_registry=registry
+            )
+        )
+        monkeypatch.setattr(sr, "_country_module", lambda c: country_module)
+
+        fake = FakeModal([FakeCall({"child": i}) for i in range(20)])
+        runner = _runner(fake)
+        monkeypatch.setattr(
+            runner, "_reduce", lambda results, country_module: results
+        )
+        runner.run()
+
+        assert runner.groups[-1][-1] == "state/pr"
+        assert fake.spawned_payloads[-1]["region_group"][-1] == "state/pr"
+        # Only the last group changes.
+        assert [p["region_group"] for p in fake.spawned_payloads[:-1]] == [
+            list(g) for g in US_NATIONAL_REGION_GROUPS[:-1]
+        ]
 
     def test__reduce_receives_clean_params_and_all_children(self, monkeypatch):
         captured = {}
@@ -169,7 +335,9 @@ class TestSegmentedNationalRunner:
         monkeypatch.setattr(
             sn, "build_national_output", fake_build_national_output
         )
-        monkeypatch.setattr(sr, "_country_module", lambda c: "fake-country-module")
+        monkeypatch.setattr(
+            sr, "_country_module", lambda c: _bare_country_module()
+        )
 
         params = {**NATIONAL, "segmented": True, "_telemetry": {"run_id": "r"}}
         runner = _runner(FakeModal(_twenty_calls()), params=params)
@@ -178,7 +346,6 @@ class TestSegmentedNationalRunner:
         assert len(captured["children"]) == 20
         assert captured["country"] == "us"
         assert captured["year"] == 2026
-        assert captured["country_module"] == "fake-country-module"
         assert "segmented" not in captured["simulation_params"]
         assert "_telemetry" not in captured["simulation_params"]
 

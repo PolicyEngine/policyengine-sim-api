@@ -280,8 +280,55 @@ def run_simulation(params: dict) -> dict:
 
                 # Plain national macro requests fan out across region groups
                 # by default (segmented: false opts out). APP_NAME is this
-                # deployed app, so children spawn into the same worker pool.
+                # deployed app; children spawn into its dedicated
+                # run_simulation_segment pool.
                 return dispatch_run_simulation(params, app_name=APP_NAME)
+    finally:
+        flush_logfire(logfire_enabled)
+
+
+@app.function(
+    image=simulation_image,
+    cpu=8.0,
+    memory=32768,
+    timeout=3600,
+    retries=0,
+    max_containers=300,
+    secrets=[gcp_secret, data_secret, hf_secret, logfire_secret],
+)
+def run_simulation_segment(params: dict) -> dict:
+    """One region-group child of a segmented national run.
+
+    The same worker as ``run_simulation`` but a separate Modal function so
+    segment children draw from their own container pool: a blocking
+    segmented parent must never share a bounded pool with the children it
+    waits on. Calls the monolithic impl directly — children are
+    ``region_group`` requests and never re-segment.
+    """
+    static_attributes = _configure_modal_observability(
+        service_role="simulation_worker",
+        modal_function_name="run_simulation_segment",
+    )
+    redacted_params = {
+        **redact_params_for_logging(params),
+        **static_attributes,
+        **legacy_logfire_attributes(),
+    }
+    logfire_enabled = False
+    try:
+        with operation(
+            "run_simulation_segment", flavor="modal_function", **redacted_params
+        ):
+            logfire_enabled = configure_logfire("policyengine-simulation")
+            _set_modal_call_attributes()
+            with logfire_span(
+                logfire_enabled, "run_simulation_segment", **redacted_params
+            ):
+                from policyengine_simulation_executor.simulation_runtime import (
+                    run_simulation_impl,
+                )
+
+                return run_simulation_impl(params)
     finally:
         flush_logfire(logfire_enabled)
 
