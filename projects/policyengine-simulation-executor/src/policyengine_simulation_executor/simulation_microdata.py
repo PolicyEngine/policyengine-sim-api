@@ -13,9 +13,12 @@ with ``rebuild_entity_frame`` restores the source dtypes so the reduce is
 bit-exact against a direct run.
 """
 
+import logging
 from typing import Any
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def extract_output_microdata(baseline, reform) -> dict[str, Any]:
@@ -44,7 +47,6 @@ def extract_output_microdata(baseline, reform) -> dict[str, Any]:
     baseline_columns, baseline_dtypes = dump(baseline)
     reform_columns, reform_dtypes = dump(reform)
     return {
-        "entities": list(baseline_columns),
         "baseline": baseline_columns,
         "reform": reform_columns,
         "dtypes": {"baseline": baseline_dtypes, "reform": reform_dtypes},
@@ -55,15 +57,31 @@ def rebuild_entity_frame(
     columns: dict[str, list], dtypes: dict[str, str] | None
 ) -> pd.DataFrame:
     """Rebuild one transported entity table, casting each column back to its
-    source dtype (float32 stays float32 — see module docstring). Tolerant of
-    missing or uncastable dtype entries: those columns keep pandas' inferred
-    dtype rather than failing the reduce.
+    source dtype (float32 stays float32 — see module docstring). A missing
+    or uncastable dtype falls back to pandas' inferred dtype rather than
+    failing the reduce, but LOUDLY: that fallback breaks the bit-exactness
+    guarantee (float64 widening, ~1e-7 aggregate drift).
     """
     df = pd.DataFrame(columns)
-    for col, dtype in (dtypes or {}).items():
+    if dtypes is None:
+        logger.warning(
+            "Transported microdata carries no dtypes; rebuilding with "
+            "inferred dtypes — the reduce is no longer bit-exact against a "
+            "monolithic run (version-skewed child?)"
+        )
+        return df
+    for col, dtype in dtypes.items():
         if col in df.columns and str(df[col].dtype) != dtype:
             try:
                 df[col] = df[col].astype(dtype)
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as exc:
+                logger.warning(
+                    "Could not restore dtype %s for transported column %r "
+                    "(%s); keeping inferred dtype %s — bit-exactness is not "
+                    "guaranteed for aggregates over this column",
+                    dtype,
+                    col,
+                    type(exc).__name__,
+                    df[col].dtype,
+                )
     return df

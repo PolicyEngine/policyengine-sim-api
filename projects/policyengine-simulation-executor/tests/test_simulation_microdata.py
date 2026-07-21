@@ -30,9 +30,12 @@ def _fake_sim(net_income):
 
 
 class TestExtractOutputMicrodata:
-    def test__entities_derive_from_the_models_entity_data(self):
+    def test__entity_tables_derive_from_the_models_entity_data(self):
         out = extract_output_microdata(_fake_sim(100.0), _fake_sim(120.0))
-        assert out["entities"] == ["person", "household"]
+        # The payload's entity list IS the baseline dict's keys — no
+        # separate "entities" field to drift out of sync.
+        assert list(out["baseline"]) == ["person", "household"]
+        assert list(out["reform"]) == ["person", "household"]
 
     def test__dumps_baseline_and_reform_per_entity(self):
         out = extract_output_microdata(_fake_sim(100.0), _fake_sim(120.0))

@@ -22,6 +22,7 @@ Two hazards this module exists to handle:
   aggregates drift ~1e-7 relative.
 """
 
+import logging
 from typing import Any
 
 import pandas as pd
@@ -35,6 +36,8 @@ from policyengine_simulation_executor.simulation_microdata import (
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class PrecomputedSimulation(Simulation):
@@ -62,7 +65,7 @@ def concatenate_microdata(
             raise ValueError(f"Child {index} returned no _microdata payload")
         payloads.append(payload)
 
-    entities = payloads[0]["entities"]
+    entities = list(payloads[0]["baseline"])
     sides: dict[str, dict[str, pd.DataFrame]] = {}
     for side in ("baseline", "reform"):
         frames: dict[str, pd.DataFrame] = {}
@@ -152,4 +155,17 @@ def build_national_output(
         resolved_data_version=resolved_data_version,
         resolved_region_code=country,
     )
-    return builder.serialize()
+    output = builder.serialize()
+    # The rebuilt in-memory dataset carries no artifact metadata, so the
+    # builder's version fallbacks can misreport provenance; the children
+    # loaded the real artifact, so their reported versions are authoritative.
+    for key in ("model_version", "data_version"):
+        values = sorted({str(child[key]) for child in child_outputs if child.get(key)})
+        if not values:
+            continue
+        if len(values) > 1:
+            logger.warning(
+                "Segmented national children disagree on %s: %s", key, values
+            )
+        output[key] = values[0]
+    return output

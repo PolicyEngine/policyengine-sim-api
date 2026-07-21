@@ -20,7 +20,7 @@ from policyengine_simulation_executor.segmented_national_reduce import (
 )
 
 
-def _child(household_ids, incomes):
+def _child(household_ids, incomes, **extra):
     """A minimal child output dict with a _microdata payload."""
     frame = {
         "household_id": list(household_ids),
@@ -34,8 +34,8 @@ def _child(household_ids, incomes):
     }
     return {
         "budget": {"budgetary_impact": -1.0},
+        **extra,
         "_microdata": {
-            "entities": ["household"],
             "baseline": {"household": frame},
             "reform": {"household": frame},
             "dtypes": {
@@ -158,3 +158,45 @@ class TestBuildNationalOutputWiring:
                 country_module=SimpleNamespace(model=object()),
                 year=2026,
             )
+
+    def test__propagates_child_versions_over_builder_fallbacks(
+        self, monkeypatch
+    ):
+        # The rebuilt dataset has no artifact metadata, so the builder's
+        # version fallbacks misreport provenance; the children loaded the
+        # real artifact and their reported versions win.
+        class FakeBuilder:
+            def __init__(self, **kwargs):
+                pass
+
+            def serialize(self):
+                return {
+                    "model_version": "bundle-fallback",
+                    "data_version": "bundle-fallback",
+                }
+
+        monkeypatch.setattr(reduce_mod, "SimulationOutputBuilder", FakeBuilder)
+        monkeypatch.setattr(
+            reduce_mod,
+            "PrecomputedSimulation",
+            lambda **kwargs: SimpleNamespace(output_dataset=None, **kwargs),
+        )
+        monkeypatch.setattr(
+            reduce_mod,
+            "_us_dataset_from_frames",
+            lambda frames, *, year: SimpleNamespace(frames=frames, year=year),
+        )
+
+        children = [
+            _child([1], [10], model_version="1.764.6", data_version="buildm-x"),
+            _child([2], [20], model_version="1.764.6", data_version="buildm-x"),
+        ]
+        result = build_national_output(
+            children,
+            country="us",
+            simulation_params={"country": "us", "scope": "macro"},
+            country_module=SimpleNamespace(model=object()),
+            year=2026,
+        )
+        assert result["model_version"] == "1.764.6"
+        assert result["data_version"] == "buildm-x"
