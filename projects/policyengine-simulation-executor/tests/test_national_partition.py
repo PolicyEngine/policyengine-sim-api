@@ -39,6 +39,28 @@ class TestPartitionInvariants:
         assert all(len(group) >= 1 for group in US_NATIONAL_REGION_GROUPS)
 
 
+class TestPartitionMatchesModelRegistry:
+    def test__partition_covers_exactly_the_registry_state_regions(self):
+        """A policyengine pin bump that adds/renames a state-level region
+        must fail here, forcing a measured partition rebalance. (At runtime
+        the runner also assigns uncovered registry states to the last group
+        as a stopgap — this test is what makes the drift loud in CI.)"""
+        from policyengine_simulation_executor.simulation_runtime import (
+            _country_module,
+        )
+
+        registry = _country_module("us").model.region_registry
+        registry_states = {
+            region.code
+            for region in registry.regions
+            if region.region_type == "state"
+        }
+        partition_codes = {
+            code for group in US_NATIONAL_REGION_GROUPS for code in group
+        }
+        assert partition_codes == registry_states
+
+
 class TestNationalRegionGroups:
     def test__us_returns_mutable_copies(self):
         groups = national_region_groups("us")

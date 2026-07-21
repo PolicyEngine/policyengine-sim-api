@@ -177,9 +177,9 @@ class SegmentedNationalRunner:
         (Households whose state has NO registered region remain invisible
         here; the partition test pins the registry at pin-bump time.)
         """
-        model = country_module.model
-        model.get_region(self.groups[0][0])  # force lazy registry load
-        registry = getattr(model, "region_registry", None)
+        # region_registry is populated eagerly in the model version's
+        # __init__; None only occurs for stub models (unit tests).
+        registry = getattr(country_module.model, "region_registry", None)
         if registry is None:
             return
         state_codes = {
@@ -230,6 +230,9 @@ class SegmentedNationalRunner:
                 try:
                     results[index] = call.get(timeout=0)
                 except TimeoutError:
+                    # A not-ready probe is a SUCCESSFUL RPC: reset the error
+                    # tally so only consecutive failures fail the job.
+                    poll_errors.pop(index, None)
                     continue
                 except Exception as exc:
                     # One transient poll-RPC blip must not kill the job; a
