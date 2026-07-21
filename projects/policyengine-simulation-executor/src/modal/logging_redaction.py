@@ -10,11 +10,10 @@ from __future__ import annotations
 
 # Keys in request payloads that must never reach observability backends.
 # ``data`` is a signed GCS/HF URL (may contain embedded short-lived
-# credentials), the reform/baseline parameter trees are potentially large
-# and reveal proprietary policy design, and ``_telemetry`` / ``_metadata``
-# hold internal routing and correlation fields we log separately via
-# dedicated structured attributes.
-SENSITIVE_PARAM_KEYS = ("data", "reform", "baseline", "_telemetry", "_metadata")
+# credentials), and the reform/baseline parameter trees are potentially
+# large and reveal proprietary policy design. Internal control/routing keys
+# are stripped separately by the underscore rule below.
+SENSITIVE_PARAM_KEYS = ("data", "reform", "baseline")
 
 
 def redact_params_for_logging(params) -> dict:
@@ -24,14 +23,22 @@ def redact_params_for_logging(params) -> dict:
     period, etc.) so operators can still trace which simulation a span
     corresponds to, but strip any field that may contain URLs with signed
     credentials or arbitrarily large user-submitted parameter trees.
-    Non-dict inputs return an empty dict so callers can splat the result
-    into operation attributes without additional guards.
+
+    Underscore-prefixed keys (``_telemetry``, ``_metadata``,
+    ``_emit_microdata``, and any future internal flag) are dropped: they are
+    internal control/routing fields, and observability backends reject
+    attribute keys that start with an underscore — so leaking one crashes
+    the span rather than merely over-logging. Correlation ids are surfaced
+    explicitly below. Non-dict inputs return an empty dict so callers can
+    splat the result into operation attributes without additional guards.
     """
 
     if not isinstance(params, dict):
         return {}
     redacted = {
-        key: value for key, value in params.items() if key not in SENSITIVE_PARAM_KEYS
+        key: value
+        for key, value in params.items()
+        if key not in SENSITIVE_PARAM_KEYS and not key.startswith("_")
     }
     # Surface only the correlation/run ids from telemetry, not the whole
     # envelope.
