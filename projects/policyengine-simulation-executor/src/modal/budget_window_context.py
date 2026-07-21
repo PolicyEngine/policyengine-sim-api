@@ -92,6 +92,10 @@ def build_child_simulation_request(
         if key not in BATCH_ONLY_FIELDS
     }
     payload["time_period"] = simulation_year
+    # Budget-window children stay monolithic for now: a national child would
+    # otherwise fan out again (years x 21 containers). Enabling nested
+    # segmentation is a deliberate follow-up, not a side effect.
+    payload["segmented"] = False
 
     telemetry = context.raw_params.get("_telemetry")
     if isinstance(telemetry, dict):

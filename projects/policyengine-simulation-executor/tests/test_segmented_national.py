@@ -185,3 +185,45 @@ class TestSegmentedNationalRunner:
     def test__uk_has_no_partition_to_run(self):
         with pytest.raises(ValueError, match="No national partition"):
             _runner(FakeModal([]), params={"country": "uk", "scope": "macro"})
+
+
+class TestDispatchRunSimulation:
+    def test__eligible_national_takes_the_segmented_path(self, monkeypatch):
+        calls = {}
+
+        def fake_segmented(params, *, app_name):
+            calls["segmented"] = (params, app_name)
+            return {"segmented": True}
+
+        monkeypatch.setattr(sn, "run_segmented_national_impl", fake_segmented)
+        monkeypatch.setattr(
+            sr,
+            "run_simulation_impl",
+            lambda params: pytest.fail("monolithic path must not run"),
+        )
+        result = sn.dispatch_run_simulation(dict(NATIONAL), app_name="app-x")
+        assert result == {"segmented": True}
+        assert calls["segmented"][1] == "app-x"
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {**NATIONAL, "segmented": False},
+            {**NATIONAL, "region": "state/ut"},
+            {"country": "uk", "scope": "macro"},
+        ],
+    )
+    def test__everything_else_takes_the_monolithic_path(
+        self, monkeypatch, params
+    ):
+        monkeypatch.setattr(
+            sn,
+            "run_segmented_national_impl",
+            lambda *a, **k: pytest.fail("segmented path must not run"),
+        )
+        monkeypatch.setattr(
+            sr, "run_simulation_impl", lambda params: {"monolithic": True}
+        )
+        assert sn.dispatch_run_simulation(params, app_name="app-x") == {
+            "monolithic": True
+        }

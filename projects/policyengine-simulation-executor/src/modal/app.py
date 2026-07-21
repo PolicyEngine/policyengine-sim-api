@@ -274,11 +274,14 @@ def run_simulation(params: dict) -> dict:
             logfire_enabled = configure_logfire("policyengine-simulation")
             _set_modal_call_attributes()
             with logfire_span(logfire_enabled, "run_simulation", **redacted_params):
-                from policyengine_simulation_executor.simulation_runtime import (
-                    run_simulation_impl,
+                from src.modal.segmented_national import (
+                    dispatch_run_simulation,
                 )
 
-                return run_simulation_impl(params)
+                # Plain national macro requests fan out across region groups
+                # by default (segmented: false opts out). APP_NAME is this
+                # deployed app, so children spawn into the same worker pool.
+                return dispatch_run_simulation(params, app_name=APP_NAME)
     finally:
         flush_logfire(logfire_enabled)
 

@@ -213,3 +213,19 @@ def run_segmented_national_impl(
         params, app_name=app_name, modal_module=modal_module
     )
     return runner.run()
+
+
+def dispatch_run_simulation(
+    params: dict[str, Any], *, app_name: str
+) -> dict[str, Any]:
+    """The run_simulation entrypoint's routing: segmented national fan-out
+    for eligible requests, the monolithic path for everything else."""
+    if should_run_segmented_national(params):
+        return run_segmented_national_impl(params, app_name=app_name)
+
+    from policyengine_simulation_executor.simulation_runtime import (
+        run_simulation_impl,
+    )
+
+    set_attribute("national_execution", "monolithic")
+    return run_simulation_impl(params)
