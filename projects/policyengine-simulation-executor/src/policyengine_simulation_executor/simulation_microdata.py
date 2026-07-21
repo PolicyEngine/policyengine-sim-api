@@ -11,19 +11,13 @@ from typing import Any
 
 import pandas as pd
 
-# Entity tables per country (person + group entities), in a stable order.
-US_ENTITIES = ["person", "tax_unit", "spm_unit", "family", "marital_unit", "household"]
-UK_ENTITIES = ["person", "benunit", "household"]
 
-
-def country_entities(country: str) -> list[str]:
-    return UK_ENTITIES if country.lower() == "uk" else US_ENTITIES
-
-
-def extract_output_microdata(baseline, reform, entities: list[str]) -> dict[str, Any]:
+def extract_output_microdata(baseline, reform) -> dict[str, Any]:
     """Columnar dump of each simulation's computed ``output_dataset.data`` per
     entity, for baseline and reform.
 
+    The entity tables come from the model's own ``YearData.entity_data``
+    property, so there is no hardcoded per-country entity list to drift.
     ``output_dataset.data`` is already populated (the output builder ran), so
     this only reads arrays — no model recompute. All columns (including the
     ``*_id`` link columns) are emitted so the coordinator's ``map_to_entity``
@@ -31,10 +25,15 @@ def extract_output_microdata(baseline, reform, entities: list[str]) -> dict[str,
     """
 
     def dump(simulation) -> dict[str, dict[str, list]]:
-        data = simulation.output_dataset.data
+        entity_data = simulation.output_dataset.data.entity_data
         return {
-            entity: pd.DataFrame(getattr(data, entity)).to_dict("list")
-            for entity in entities
+            entity: pd.DataFrame(frame).to_dict("list")
+            for entity, frame in entity_data.items()
         }
 
-    return {"entities": entities, "baseline": dump(baseline), "reform": dump(reform)}
+    baseline_dump = dump(baseline)
+    return {
+        "entities": list(baseline_dump),
+        "baseline": baseline_dump,
+        "reform": dump(reform),
+    }

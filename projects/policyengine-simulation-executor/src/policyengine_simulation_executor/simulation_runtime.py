@@ -553,13 +553,10 @@ def _run_simulation_impl_core(params: dict) -> dict:
     logger.info("Comparison complete")
     if params.get("_emit_microdata"):
         from policyengine_simulation_executor.simulation_microdata import (
-            country_entities,
             extract_output_microdata,
         )
 
-        output["_microdata"] = extract_output_microdata(
-            baseline, reform, country_entities(country)
-        )
+        output["_microdata"] = extract_output_microdata(baseline, reform)
     return output
 
 
