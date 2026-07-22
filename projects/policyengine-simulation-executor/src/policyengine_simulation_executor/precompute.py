@@ -7,6 +7,12 @@ here, mirroring the deployed app's split (``run_simulation`` ->
 executor package makes it testable without Modal fakes and importable by
 the CI deploy job and the GC planner.
 
+Data flow is strictly typed via ``precompute_models``: plans, entries,
+receipts, manifests, and worker results are Pydantic models everywhere
+inside the library; plain dicts appear only at the Modal serialization
+boundary (the app wrappers dump on the way out and validate on the way
+in).
+
 The store is content-addressed, so a precompute run is idempotent: it
 plans against the store and computes only misses; a re-run against a warm
 store is a no-op. ``force`` recomputes everything but CANNOT replace
@@ -27,7 +33,24 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Callable
+from typing import Callable
+
+from policyengine_simulation_executor.artifact_keys import (
+    BaselineArtifactIdentity,
+)
+from policyengine_simulation_executor.precompute_models import (
+    ArtifactManifest,
+    BaselineComputeResult,
+    BaselinePlanEntry,
+    BundleReceipt,
+    DatasetBuildResult,
+    DatasetPlanEntry,
+    DeterminismVerdict,
+    ManifestArtifact,
+    PrecomputePlan,
+    RemoteFunction,
+    WorkSelection,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +80,7 @@ def cohort_params(year: int, group: list[str]) -> dict:
     }
 
 
-def cohort_identity(year: int, group: list[str]):
+def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
     """Identity via the executor's own resolution path (writer==reader)."""
     from policyengine_simulation_executor.baseline_artifacts import (
         qualifying_baseline_identity,
@@ -91,43 +114,44 @@ def cohort_identity(year: int, group: list[str]):
     return identity
 
 
-def select_work(plan: dict, *, force: bool) -> dict:
-    """Pure work selection: which plan entries need computing."""
-    datasets = [entry for entry in plan["datasets"] if force or not entry["exists"]]
-    baselines = [entry for entry in plan["baselines"] if force or not entry["exists"]]
-    return {"datasets": datasets, "baselines": baselines}
+def select_work(plan: PrecomputePlan, *, force: bool) -> WorkSelection:
+    """Which plan entries need computing."""
+    return WorkSelection(
+        datasets=[entry for entry in plan.datasets if force or not entry.exists],
+        baselines=[entry for entry in plan.baselines if force or not entry.exists],
+    )
 
 
-def build_manifest_payload(plan: dict) -> dict:
+def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
     """The deploy manifest: receipt + every artifact the image must fetch."""
     artifacts = [
-        {
-            "type": "dataset",
-            "path": entry["path"],
-            "filename": entry["filename"],
-            "year": entry["year"],
-            "digest": entry["digest"],
-        }
-        for entry in plan["datasets"]
+        ManifestArtifact(
+            type="dataset",
+            path=entry.path,
+            filename=entry.filename,
+            year=entry.year,
+            digest=entry.digest,
+        )
+        for entry in plan.datasets
     ] + [
-        {
-            "type": "baseline",
-            "path": entry["path"],
-            "filename": f"{entry['simulation_id']}.h5",
-            "year": entry["year"],
-            "digest": entry["digest"],
-        }
-        for entry in plan["baselines"]
+        ManifestArtifact(
+            type="baseline",
+            path=entry.path,
+            filename=f"{entry.simulation_id}.h5",
+            year=entry.year,
+            digest=entry.digest,
+        )
+        for entry in plan.baselines
     ]
-    return {
-        "schema": MANIFEST_SCHEMA,
-        "country": PRECOMPUTE_COUNTRY,
-        "receipt": plan["receipt"],
-        "artifacts": artifacts,
-    }
+    return ArtifactManifest(
+        manifest_schema=MANIFEST_SCHEMA,
+        country=PRECOMPUTE_COUNTRY,
+        receipt=plan.receipt,
+        artifacts=artifacts,
+    )
 
 
-def plan_artifacts_impl(bucket: str) -> dict:
+def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
     """Compute every expected artifact identity and its store presence."""
     from policyengine_simulation_executor.artifact_keys import (
         collect_dataset_identity,
@@ -145,45 +169,45 @@ def plan_artifacts_impl(bucket: str) -> dict:
     if not groups:
         raise RuntimeError(f"No national partition for {PRECOMPUTE_COUNTRY!r}")
 
-    datasets = []
-    baselines = []
+    datasets: list[DatasetPlanEntry] = []
+    baselines: list[BaselinePlanEntry] = []
     for year in PRECOMPUTE_YEARS:
         dataset_identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, year)
         datasets.append(
-            {
-                "year": year,
-                "digest": dataset_identity.digest,
-                "path": dataset_identity.store_path,
-                "filename": dataset_identity.filename,
-                "exists": store.exists(dataset_identity.store_path),
-            }
+            DatasetPlanEntry(
+                year=year,
+                digest=dataset_identity.digest,
+                path=dataset_identity.store_path,
+                filename=dataset_identity.filename,
+                exists=store.exists(dataset_identity.store_path),
+            )
         )
         for group in groups:
             identity = cohort_identity(year, group)
             baselines.append(
-                {
-                    "year": year,
-                    "group": list(group),
-                    "region": identity.region,
-                    "digest": identity.digest,
-                    "path": identity.store_path,
-                    "simulation_id": identity.simulation_id,
-                    "exists": store.exists(identity.store_path),
-                }
+                BaselinePlanEntry(
+                    year=year,
+                    group=list(group),
+                    region=identity.region,
+                    digest=identity.digest,
+                    path=identity.store_path,
+                    simulation_id=identity.simulation_id,
+                    exists=store.exists(identity.store_path),
+                )
             )
 
     bundle = get_country_release_bundle(PRECOMPUTE_COUNTRY)
-    receipt = {
-        "policyengine_version": bundle.policyengine_version,
-        "model_version": bundle.model_version,
-        "data_version": bundle.data_version,
-        "data_artifact_revision": bundle.data_artifact_revision,
-        "default_dataset": bundle.default_dataset,
-    }
-    return {"datasets": datasets, "baselines": baselines, "receipt": receipt}
+    receipt = BundleReceipt(
+        policyengine_version=bundle.policyengine_version,
+        model_version=bundle.model_version,
+        data_version=bundle.data_version,
+        data_artifact_revision=bundle.data_artifact_revision,
+        default_dataset=bundle.default_dataset,
+    )
+    return PrecomputePlan(datasets=datasets, baselines=baselines, receipt=receipt)
 
 
-def build_dataset_impl(bucket: str, year: int, expected_path: str) -> dict:
+def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildResult:
     """Wave 1: build one single-year dataset and upload it."""
     import os
     from pathlib import Path
@@ -199,11 +223,11 @@ def build_dataset_impl(bucket: str, year: int, expected_path: str) -> dict:
         _country_module,
     )
 
-    identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, year)
-    if identity.store_path != expected_path:
+    identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, expected.year)
+    if identity.store_path != expected.path:
         raise RuntimeError(
             "Planned and in-container dataset identities disagree "
-            f"({expected_path} != {identity.store_path}); refusing to upload "
+            f"({expected.path} != {identity.store_path}); refusing to upload "
             "under a mismatched key."
         )
 
@@ -212,7 +236,7 @@ def build_dataset_impl(bucket: str, year: int, expected_path: str) -> dict:
     started = time.monotonic()
     country_module.ensure_datasets(
         datasets=[get_country_release_bundle(PRECOMPUTE_COUNTRY).default_dataset],
-        years=[year],
+        years=[expected.year],
         data_folder=data_folder,
     )
     build_seconds = time.monotonic() - started
@@ -221,16 +245,16 @@ def build_dataset_impl(bucket: str, year: int, expected_path: str) -> dict:
     if not local_file.exists():
         raise RuntimeError(f"ensure_datasets produced no file at {local_file}")
     uploaded = ArtifactStore(bucket).upload_file(identity.store_path, local_file)
-    return {
-        "year": year,
-        "path": identity.store_path,
-        "uploaded": uploaded,
-        "build_seconds": round(build_seconds, 1),
-        "size_bytes": local_file.stat().st_size,
-    }
+    return DatasetBuildResult(
+        year=expected.year,
+        path=identity.store_path,
+        uploaded=uploaded,
+        build_seconds=round(build_seconds, 1),
+        size_bytes=local_file.stat().st_size,
+    )
 
 
-def _prepare_cohort_baseline(bucket: str, year: int, group: list[str]):
+def _prepare_cohort_baseline(bucket: str, expected: BaselinePlanEntry):
     """Shared by compute and verify: dataset download + simulation build."""
     import os
     from pathlib import Path
@@ -251,12 +275,12 @@ def _prepare_cohort_baseline(bucket: str, year: int, group: list[str]):
         os.environ.get("POLICYENGINE_DATA_FOLDER", "/opt/policyengine/data")
     )
 
-    dataset_identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, year)
+    dataset_identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, expected.year)
     local_dataset = data_folder / dataset_identity.filename
     if not local_dataset.exists():
         store.download_file(dataset_identity.store_path, local_dataset)
 
-    params = cohort_params(year, group)
+    params = cohort_params(expected.year, expected.group)
     country_module = _country_module(PRECOMPUTE_COUNTRY)
     resolution = _resolve_region(
         country_module=country_module,
@@ -273,6 +297,12 @@ def _prepare_cohort_baseline(bucket: str, year: int, group: list[str]):
         scoping_strategy=resolution.scoping_strategy,
         region_code=resolution.code,
     )
+    if baseline.id != expected.simulation_id:
+        raise RuntimeError(
+            "Planned and in-container baseline ids disagree "
+            f"({expected.simulation_id} != {baseline.id}); refusing to act "
+            "under a mismatched key."
+        )
 
     # The extras economic_impact_analysis applies unconditionally before
     # ensure(); the artifact must carry them or every request would fail
@@ -286,24 +316,18 @@ def _prepare_cohort_baseline(bucket: str, year: int, group: list[str]):
 
 
 def compute_baseline_impl(
-    bucket: str, year: int, group: list[str], expected: dict
-) -> dict:
+    bucket: str, expected: BaselinePlanEntry
+) -> BaselineComputeResult:
     """Wave 2: compute one cohort baseline and upload its output."""
     from policyengine_simulation_executor.baseline_artifacts import (
         ArtifactBaselineSimulation,
     )
 
-    store, data_folder, baseline = _prepare_cohort_baseline(bucket, year, group)
+    store, data_folder, baseline = _prepare_cohort_baseline(bucket, expected)
     if not isinstance(baseline, ArtifactBaselineSimulation):
         raise RuntimeError(
             "Precompute built a plain Simulation — the qualifying predicate "
             "rejected the cohort request shape."
-        )
-    if baseline.id != expected["simulation_id"]:
-        raise RuntimeError(
-            "Planned and in-container baseline ids disagree "
-            f"({expected['simulation_id']} != {baseline.id}); refusing to "
-            "upload under a mismatched key."
         )
 
     started = time.monotonic()
@@ -313,21 +337,21 @@ def compute_baseline_impl(
     artifact_file = data_folder / f"{baseline.id}.h5"
     if not artifact_file.exists():
         raise RuntimeError(f"ensure() left no artifact at {artifact_file}")
-    uploaded = store.upload_file(expected["path"], artifact_file)
-    return {
-        "year": year,
-        "group": list(group),
-        "simulation_id": baseline.id,
-        "outcome": baseline.artifact_outcome,
-        "uploaded": uploaded,
-        "compute_seconds": round(compute_seconds, 1),
-        "size_bytes": artifact_file.stat().st_size,
-    }
+    uploaded = store.upload_file(expected.path, artifact_file)
+    return BaselineComputeResult(
+        year=expected.year,
+        group=list(expected.group),
+        simulation_id=baseline.id,
+        outcome=baseline.artifact_outcome,
+        uploaded=uploaded,
+        compute_seconds=round(compute_seconds, 1),
+        size_bytes=artifact_file.stat().st_size,
+    )
 
 
 def verify_determinism_impl(
-    bucket: str, year: int, group: list[str], expected: dict
-) -> dict:
+    bucket: str, expected: BaselinePlanEntry
+) -> DeterminismVerdict:
     """Load the uploaded artifact, recompute independently, compare frames.
 
     Exact comparison of every entity column (values and dtypes) between the
@@ -339,15 +363,10 @@ def verify_determinism_impl(
     """
     from policyengine.core import Simulation
 
-    store, data_folder, baseline = _prepare_cohort_baseline(bucket, year, group)
-    if baseline.id != expected["simulation_id"]:
-        raise RuntimeError(
-            "Planned and in-container baseline ids disagree "
-            f"({expected['simulation_id']} != {baseline.id})"
-        )
+    store, data_folder, baseline = _prepare_cohort_baseline(bucket, expected)
     artifact_file = data_folder / f"{baseline.id}.h5"
     if not artifact_file.exists():
-        store.download_file(expected["path"], artifact_file)
+        store.download_file(expected.path, artifact_file)
     baseline.ensure()
     if baseline.artifact_outcome != "hit":
         raise RuntimeError(
@@ -380,81 +399,81 @@ def verify_determinism_impl(
                 differences.append(f"{entity}.{column}: dtype differs")
             elif not left[column].equals(right[column]):
                 differences.append(f"{entity}.{column}: values differ")
-    return {"equal": not differences, "differences": differences[:50]}
+    return DeterminismVerdict(equal=not differences, differences=differences[:50])
 
 
-def publish_manifest_impl(bucket: str, plan: dict) -> str:
+def publish_manifest_impl(bucket: str, plan: PrecomputePlan) -> str:
     from policyengine_simulation_executor.artifact_store import ArtifactStore
 
-    return ArtifactStore(bucket).write_manifest(build_manifest_payload(plan))
+    manifest = build_manifest(plan)
+    return ArtifactStore(bucket).write_manifest(manifest.canonical_payload())
 
 
 def run_precompute(
     bucket: str,
     *,
     force: bool,
-    plan_artifacts: Any,
-    build_dataset: Any,
-    compute_baseline: Any,
-    verify_determinism: Any,
-    publish_manifest: Any,
+    plan_artifacts: RemoteFunction,
+    build_dataset: RemoteFunction,
+    compute_baseline: RemoteFunction,
+    verify_determinism: RemoteFunction,
+    publish_manifest: RemoteFunction,
     echo: Callable[[str], None] = print,
 ) -> str:
     """The local-entrypoint orchestration: plan, spawn misses, gate, publish.
 
     Takes the five Modal function handles as parameters (each offering
-    ``.remote``/``.spawn``) so the flow is testable with plain fakes. The
-    determinism gate runs only when baselines were actually computed (a
-    no-op run must stay a no-op). Returns the manifest digest; the LAST
-    echoed line is the ``MANIFEST_DIGEST=`` contract the deploy job parses.
+    ``.remote``/``.spawn``) so the flow is testable with plain fakes.
+    Everything crossing a handle is a plain dict (Modal's serialization
+    boundary); it is validated back into models immediately on return.
+    The determinism gate runs only when baselines were actually computed
+    (a no-op run must stay a no-op). Returns the manifest digest; the
+    LAST echoed line is the ``MANIFEST_DIGEST=`` contract the deploy job
+    parses.
     """
     echo(f"Planning against gs://{bucket} (force={force})")
-    plan = plan_artifacts.remote(bucket)
+    plan = PrecomputePlan.model_validate(plan_artifacts.remote(bucket))
     work = select_work(plan, force=force)
     echo(
-        f"Plan: {len(plan['datasets'])} datasets ({len(work['datasets'])} to "
-        f"build), {len(plan['baselines'])} baselines "
-        f"({len(work['baselines'])} to compute)"
+        f"Plan: {len(plan.datasets)} datasets ({len(work.datasets)} to "
+        f"build), {len(plan.baselines)} baselines "
+        f"({len(work.baselines)} to compute)"
     )
 
     dataset_handles = [
-        build_dataset.spawn(bucket, entry["year"], entry["path"])
-        for entry in work["datasets"]
+        build_dataset.spawn(bucket, entry.model_dump()) for entry in work.datasets
     ]
     for handle in dataset_handles:
-        result = handle.get()
+        result = DatasetBuildResult.model_validate(handle.get())
         echo(
-            f"dataset year={result['year']} built in "
-            f"{result['build_seconds']}s ({result['size_bytes']} bytes, "
-            f"uploaded={result['uploaded']})"
+            f"dataset year={result.year} built in "
+            f"{result.build_seconds}s ({result.size_bytes} bytes, "
+            f"uploaded={result.uploaded})"
         )
 
     baseline_handles = [
-        compute_baseline.spawn(bucket, entry["year"], entry["group"], entry)
-        for entry in work["baselines"]
+        compute_baseline.spawn(bucket, entry.model_dump()) for entry in work.baselines
     ]
     for handle in baseline_handles:
-        result = handle.get()
+        result = BaselineComputeResult.model_validate(handle.get())
         echo(
-            f"baseline year={result['year']} id={result['simulation_id']} "
-            f"outcome={result['outcome']} in {result['compute_seconds']}s "
-            f"(uploaded={result['uploaded']})"
+            f"baseline year={result.year} id={result.simulation_id} "
+            f"outcome={result.outcome} in {result.compute_seconds}s "
+            f"(uploaded={result.uploaded})"
         )
 
-    if work["baselines"]:
-        probe = work["baselines"][0]
-        echo(
-            f"Determinism gate: recomputing year={probe['year']} group={probe['group']}"
+    if work.baselines:
+        probe = work.baselines[0]
+        echo(f"Determinism gate: recomputing year={probe.year} group={probe.group}")
+        verdict = DeterminismVerdict.model_validate(
+            verify_determinism.remote(bucket, probe.model_dump())
         )
-        verdict = verify_determinism.remote(
-            bucket, probe["year"], probe["group"], probe
-        )
-        if not verdict["equal"]:
+        if not verdict.equal:
             raise SystemExit(
-                "Determinism gate FAILED: " + "; ".join(verdict["differences"])
+                "Determinism gate FAILED: " + "; ".join(verdict.differences)
             )
         echo("Determinism gate passed")
 
-    manifest_digest = publish_manifest.remote(bucket, plan)
+    manifest_digest = publish_manifest.remote(bucket, plan.model_dump())
     echo(manifest_digest_line(manifest_digest))
     return manifest_digest

@@ -2,89 +2,179 @@
 writer==reader identity contract.
 
 No Modal involved — the library takes function handles as parameters, so
-the orchestration runs against plain fakes here.
+the orchestration runs against plain fakes here. Everything structured is
+a strict model from precompute_models; the fakes speak dicts, exactly
+like Modal's serialization boundary does.
 """
 
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from policyengine_simulation_executor import precompute
+from policyengine_simulation_executor.artifact_keys import canonical_digest
+from policyengine_simulation_executor.precompute_models import (
+    ArtifactManifest,
+    BaselinePlanEntry,
+    BundleReceipt,
+    DatasetPlanEntry,
+    PrecomputePlan,
+)
 
 
-def _plan():
-    return {
-        "datasets": [
-            {
-                "year": 2026,
-                "digest": "d1",
-                "path": "datasets/us/d1/populace_year_2026.h5",
-                "filename": "populace_year_2026.h5",
-                "exists": True,
-            },
-            {
-                "year": 2027,
-                "digest": "d2",
-                "path": "datasets/us/d2/populace_year_2027.h5",
-                "filename": "populace_year_2027.h5",
-                "exists": False,
-            },
+def _receipt() -> BundleReceipt:
+    return BundleReceipt(
+        policyengine_version="4.22.0",
+        model_version="1.0.0",
+        data_version="1.2.3",
+        data_artifact_revision="rev-abc",
+        default_dataset="populace_cps",
+    )
+
+
+def _plan() -> PrecomputePlan:
+    return PrecomputePlan(
+        datasets=[
+            DatasetPlanEntry(
+                year=2026,
+                digest="d1",
+                path="datasets/us/d1/populace_year_2026.h5",
+                filename="populace_year_2026.h5",
+                exists=True,
+            ),
+            DatasetPlanEntry(
+                year=2027,
+                digest="d2",
+                path="datasets/us/d2/populace_year_2027.h5",
+                filename="populace_year_2027.h5",
+                exists=False,
+            ),
         ],
-        "baselines": [
-            {
-                "year": 2026,
-                "group": ["state/ca"],
-                "region": "region_group/state/ca",
-                "digest": "b1",
-                "path": "baselines/us/b1/bl1-aaaa.h5",
-                "simulation_id": "bl1-aaaa",
-                "exists": True,
-            },
-            {
-                "year": 2027,
-                "group": ["state/ca"],
-                "region": "region_group/state/ca",
-                "digest": "b2",
-                "path": "baselines/us/b2/bl1-bbbb.h5",
-                "simulation_id": "bl1-bbbb",
-                "exists": False,
-            },
+        baselines=[
+            BaselinePlanEntry(
+                year=2026,
+                group=["state/ca"],
+                region="region_group/state/ca",
+                digest="b1",
+                path="baselines/us/b1/bl1-aaaa.h5",
+                simulation_id="bl1-aaaa",
+                exists=True,
+            ),
+            BaselinePlanEntry(
+                year=2027,
+                group=["state/ca"],
+                region="region_group/state/ca",
+                digest="b2",
+                path="baselines/us/b2/bl1-bbbb.h5",
+                simulation_id="bl1-bbbb",
+                exists=False,
+            ),
         ],
-        "receipt": {"policyengine_version": "4.22.0", "model_version": "1.0.0"},
-    }
+        receipt=_receipt(),
+    )
+
+
+class TestSchemas:
+    def test_plan_round_trips_through_the_modal_boundary(self):
+        plan = _plan()
+        assert PrecomputePlan.model_validate(plan.model_dump()) == plan
+
+    def test_unknown_keys_are_rejected(self):
+        payload = _plan().model_dump()
+        payload["surprise"] = True
+        with pytest.raises(ValidationError):
+            PrecomputePlan.model_validate(payload)
+
+    def test_missing_keys_are_rejected(self):
+        payload = _plan().model_dump()
+        del payload["baselines"][0]["simulation_id"]
+        with pytest.raises(ValidationError):
+            PrecomputePlan.model_validate(payload)
 
 
 class TestPlanning:
     def test_select_work_computes_only_misses(self):
         work = precompute.select_work(_plan(), force=False)
-        assert [entry["year"] for entry in work["datasets"]] == [2027]
-        assert [entry["simulation_id"] for entry in work["baselines"]] == ["bl1-bbbb"]
+        assert [entry.year for entry in work.datasets] == [2027]
+        assert [entry.simulation_id for entry in work.baselines] == ["bl1-bbbb"]
 
     def test_force_selects_everything(self):
         work = precompute.select_work(_plan(), force=True)
-        assert len(work["datasets"]) == 2
-        assert len(work["baselines"]) == 2
+        assert len(work.datasets) == 2
+        assert len(work.baselines) == 2
 
     def test_years_are_in_priority_order(self):
         assert precompute.PRECOMPUTE_YEARS == [2026, 2027, 2025]
 
     def test_manifest_lists_every_artifact_with_runtime_filenames(self):
-        payload = precompute.build_manifest_payload(_plan())
-        assert payload["schema"] == precompute.MANIFEST_SCHEMA
-        assert payload["receipt"] == _plan()["receipt"]
-        by_type = {}
-        for artifact in payload["artifacts"]:
-            by_type.setdefault(artifact["type"], []).append(artifact)
-        assert [a["filename"] for a in by_type["dataset"]] == [
+        manifest = precompute.build_manifest(_plan())
+        assert manifest.manifest_schema == precompute.MANIFEST_SCHEMA
+        assert manifest.receipt == _receipt()
+        by_type: dict[str, list] = {}
+        for artifact in manifest.artifacts:
+            by_type.setdefault(artifact.type, []).append(artifact)
+        assert [a.filename for a in by_type["dataset"]] == [
             "populace_year_2026.h5",
             "populace_year_2027.h5",
         ]
         # Baseline runtime filename is {simulation_id}.h5 — the exact name
         # Simulation.ensure() resolves beside the dataset.
-        assert [a["filename"] for a in by_type["baseline"]] == [
+        assert [a.filename for a in by_type["baseline"]] == [
             "bl1-aaaa.h5",
             "bl1-bbbb.h5",
         ]
+
+    def test_manifest_payload_is_wire_compatible(self):
+        """The manifest is content-addressed: the typed model must digest
+        identically to the raw dict shape already published to the store
+        (key names included — note "schema", not "manifest_schema")."""
+        raw = {
+            "schema": "mf1",
+            "country": "us",
+            "receipt": {
+                "policyengine_version": "4.22.0",
+                "model_version": "1.0.0",
+                "data_version": "1.2.3",
+                "data_artifact_revision": "rev-abc",
+                "default_dataset": "populace_cps",
+            },
+            "artifacts": [
+                {
+                    "type": "dataset",
+                    "path": "datasets/us/d1/populace_year_2026.h5",
+                    "filename": "populace_year_2026.h5",
+                    "year": 2026,
+                    "digest": "d1",
+                },
+                {
+                    "type": "dataset",
+                    "path": "datasets/us/d2/populace_year_2027.h5",
+                    "filename": "populace_year_2027.h5",
+                    "year": 2027,
+                    "digest": "d2",
+                },
+                {
+                    "type": "baseline",
+                    "path": "baselines/us/b1/bl1-aaaa.h5",
+                    "filename": "bl1-aaaa.h5",
+                    "year": 2026,
+                    "digest": "b1",
+                },
+                {
+                    "type": "baseline",
+                    "path": "baselines/us/b2/bl1-bbbb.h5",
+                    "filename": "bl1-bbbb.h5",
+                    "year": 2027,
+                    "digest": "b2",
+                },
+            ],
+        }
+        payload = precompute.build_manifest(_plan()).canonical_payload()
+        assert payload == raw
+        assert canonical_digest(payload) == canonical_digest(raw)
+        # And the wire shape validates back into the model.
+        assert ArtifactManifest.model_validate(raw).canonical_payload() == raw
 
 
 class FakeHandle:
@@ -96,11 +186,14 @@ class FakeHandle:
 
 
 class FakeFunction:
-    """Stands in for a Modal function handle (.remote / .spawn)."""
+    """Stands in for a Modal function handle (.remote / .spawn).
 
-    def __init__(self, result=None, results_by_key=None):
+    Speaks dicts only, as the real boundary does.
+    """
+
+    def __init__(self, result=None, results_by_year=None):
         self.result = result
-        self.results_by_key = results_by_key or {}
+        self.results_by_year = results_by_year or {}
         self.remote_calls = []
         self.spawn_calls = []
 
@@ -110,31 +203,41 @@ class FakeFunction:
 
     def spawn(self, *args):
         self.spawn_calls.append(args)
-        key = args[1] if len(args) > 1 else None
-        return FakeHandle(self.results_by_key.get(key, self.result))
+        year = args[1]["year"] if len(args) > 1 else None
+        return FakeHandle(self.results_by_year.get(year, self.result))
 
 
 def _dataset_result(year):
-    return {"year": year, "build_seconds": 1.0, "size_bytes": 10, "uploaded": True}
+    return {
+        "year": year,
+        "path": f"datasets/us/d/populace_year_{year}.h5",
+        "uploaded": True,
+        "build_seconds": 1.0,
+        "size_bytes": 10,
+    }
 
 
 def _baseline_result(year):
     return {
         "year": year,
+        "group": ["state/ca"],
         "simulation_id": f"bl1-{year}",
         "outcome": "miss",
-        "compute_seconds": 2.0,
         "uploaded": True,
+        "compute_seconds": 2.0,
+        "size_bytes": 10,
     }
 
 
 class TestRunPrecompute:
     def _functions(self, verify_result=None):
         return {
-            "plan_artifacts": FakeFunction(result=_plan()),
-            "build_dataset": FakeFunction(results_by_key={2027: _dataset_result(2027)}),
+            "plan_artifacts": FakeFunction(result=_plan().model_dump()),
+            "build_dataset": FakeFunction(
+                results_by_year={2027: _dataset_result(2027)}
+            ),
             "compute_baseline": FakeFunction(
-                results_by_key={2027: _baseline_result(2027)}
+                results_by_year={2027: _baseline_result(2027)}
             ),
             "verify_determinism": FakeFunction(
                 result=verify_result or {"equal": True, "differences": []}
@@ -153,14 +256,14 @@ class TestRunPrecompute:
         functions = self._functions()
         digest, lines = self._run(functions)
 
-        assert functions["build_dataset"].spawn_calls == [
-            ("bucket-x", 2027, "datasets/us/d2/populace_year_2027.h5")
-        ]
-        assert [call[1] for call in functions["compute_baseline"].spawn_calls] == [2027]
+        (dataset_spawn,) = functions["build_dataset"].spawn_calls
+        assert dataset_spawn[0] == "bucket-x"
+        assert dataset_spawn[1] == _plan().datasets[1].model_dump()
+        (baseline_spawn,) = functions["compute_baseline"].spawn_calls
+        assert baseline_spawn[1] == _plan().baselines[1].model_dump()
         # The gate probes the first computed baseline, with its plan entry.
         (verify_call,) = functions["verify_determinism"].remote_calls
-        assert verify_call[1] == 2027
-        assert verify_call[3]["simulation_id"] == "bl1-bbbb"
+        assert verify_call[1]["simulation_id"] == "bl1-bbbb"
         assert digest == "digest-123"
 
     def test_last_echo_line_is_the_digest_contract(self):
@@ -171,9 +274,9 @@ class TestRunPrecompute:
     def test_noop_run_spawns_nothing_and_skips_the_gate(self):
         functions = self._functions()
         noop_plan = _plan()
-        for entry in noop_plan["datasets"] + noop_plan["baselines"]:
-            entry["exists"] = True
-        functions["plan_artifacts"] = FakeFunction(result=noop_plan)
+        for entry in noop_plan.datasets + noop_plan.baselines:
+            entry.exists = True
+        functions["plan_artifacts"] = FakeFunction(result=noop_plan.model_dump())
 
         digest, lines = self._run(functions)
         assert functions["build_dataset"].spawn_calls == []
@@ -191,6 +294,14 @@ class TestRunPrecompute:
         with pytest.raises(SystemExit, match="values differ"):
             self._run(functions)
         assert functions["publish_manifest"].remote_calls == []
+
+    def test_malformed_worker_result_fails_loudly(self):
+        functions = self._functions()
+        functions["build_dataset"] = FakeFunction(
+            results_by_year={2027: {"year": 2027, "unexpected": "shape"}}
+        )
+        with pytest.raises(ValidationError):
+            self._run(functions)
 
 
 class TestWriterReaderContract:

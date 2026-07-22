@@ -39,6 +39,12 @@ precompute_image = build_runtime_simulation_image().add_local_python_source(
 _worker_secrets = [gcp_secret, data_secret, hf_secret]
 
 
+# Wrapper signatures use plain dicts: they sit on Modal's serialization
+# boundary. Each validates into the strict precompute_models schema on the
+# way in and dumps on the way out, so planner/worker shape drift fails
+# loudly at the edge.
+
+
 @app.function(
     image=precompute_image,
     cpu=4.0,
@@ -49,7 +55,7 @@ _worker_secrets = [gcp_secret, data_secret, hf_secret]
 def plan_artifacts(bucket: str) -> dict:
     from policyengine_simulation_executor.precompute import plan_artifacts_impl
 
-    return plan_artifacts_impl(bucket)
+    return plan_artifacts_impl(bucket).model_dump()
 
 
 @app.function(
@@ -59,10 +65,13 @@ def plan_artifacts(bucket: str) -> dict:
     timeout=2 * 60 * 60,
     secrets=_worker_secrets,
 )
-def build_dataset(bucket: str, year: int, expected_path: str) -> dict:
+def build_dataset(bucket: str, expected: dict) -> dict:
     from policyengine_simulation_executor.precompute import build_dataset_impl
+    from policyengine_simulation_executor.precompute_models import DatasetPlanEntry
 
-    return build_dataset_impl(bucket, year, expected_path)
+    return build_dataset_impl(
+        bucket, DatasetPlanEntry.model_validate(expected)
+    ).model_dump()
 
 
 @app.function(
@@ -72,10 +81,13 @@ def build_dataset(bucket: str, year: int, expected_path: str) -> dict:
     timeout=3600,
     secrets=_worker_secrets,
 )
-def compute_baseline(bucket: str, year: int, group: list[str], expected: dict) -> dict:
+def compute_baseline(bucket: str, expected: dict) -> dict:
     from policyengine_simulation_executor.precompute import compute_baseline_impl
+    from policyengine_simulation_executor.precompute_models import BaselinePlanEntry
 
-    return compute_baseline_impl(bucket, year, group, expected)
+    return compute_baseline_impl(
+        bucket, BaselinePlanEntry.model_validate(expected)
+    ).model_dump()
 
 
 @app.function(
@@ -85,12 +97,13 @@ def compute_baseline(bucket: str, year: int, group: list[str], expected: dict) -
     timeout=3600,
     secrets=_worker_secrets,
 )
-def verify_determinism(
-    bucket: str, year: int, group: list[str], expected: dict
-) -> dict:
+def verify_determinism(bucket: str, expected: dict) -> dict:
     from policyengine_simulation_executor.precompute import verify_determinism_impl
+    from policyengine_simulation_executor.precompute_models import BaselinePlanEntry
 
-    return verify_determinism_impl(bucket, year, group, expected)
+    return verify_determinism_impl(
+        bucket, BaselinePlanEntry.model_validate(expected)
+    ).model_dump()
 
 
 @app.function(
@@ -102,8 +115,9 @@ def verify_determinism(
 )
 def publish_manifest(bucket: str, plan: dict) -> str:
     from policyengine_simulation_executor.precompute import publish_manifest_impl
+    from policyengine_simulation_executor.precompute_models import PrecomputePlan
 
-    return publish_manifest_impl(bucket, plan)
+    return publish_manifest_impl(bucket, PrecomputePlan.model_validate(plan))
 
 
 @app.local_entrypoint()
