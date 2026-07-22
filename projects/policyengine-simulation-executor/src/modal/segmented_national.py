@@ -41,7 +41,7 @@ from src.modal.fanout import build_child_payload, next_backoff
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_INITIAL_SECONDS = 0.5
-POLL_INTERVAL_MAX_SECONDS = 15.0
+POLL_INTERVAL_MAX_SECONDS = 8.0
 POLL_INTERVAL_BACKOFF_FACTOR = 2.0
 
 # The dedicated children pool (see module docstring).
