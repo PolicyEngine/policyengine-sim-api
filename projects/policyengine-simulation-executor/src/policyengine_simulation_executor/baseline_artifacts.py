@@ -58,6 +58,11 @@ def qualifying_baseline_identity(
     artifacts for — unscoped national or a region group. Single states stay
     on random ids in v1.
 
+    Deliberately broader than what the store contains: UK national and
+    off-precompute years qualify too, get deterministic ids, miss, and
+    compute — a free in-process-cache win for warm containers, and their
+    artifacts appear automatically if the precompute ever produces them.
+
     Both the runtime reader (via ``deterministic_baseline_id``) and the
     precompute writer derive identity through THIS function, so writer and
     reader cannot disagree by construction. Identity-collection errors

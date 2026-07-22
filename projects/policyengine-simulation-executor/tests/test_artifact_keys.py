@@ -1,10 +1,10 @@
 """Artifact key discipline tests.
 
 The content-addressed store's whole correctness story rests on three
-properties pinned here: (1) digests are canonical (field order never
+properties locked in here: (1) digests are canonical (field order never
 matters), (2) every payload field independently rotates the digest (no
 input silently outside the key), and (3) the digests and the upstream
-``ScopingStrategy.cache_key`` strings are STABLE — the golden pins turn
+``ScopingStrategy.cache_key`` strings are STABLE — the golden tests turn
 any change into a conscious, reviewable diff instead of silent cache
 churn (or, worse, a writer/reader mismatch).
 """
@@ -94,8 +94,8 @@ class TestStoreLayout:
         assert ak.deployed_marker_path("beta") == "deployed/beta.json"
 
 
-class TestUpstreamCacheKeyPins:
-    """Golden pins on policyengine's ScopingStrategy.cache_key.
+class TestUpstreamCacheKeyGoldens:
+    """Golden tests on policyengine's ScopingStrategy.cache_key format.
 
     The baseline key embeds these strings verbatim. If a policyengine pin
     bump breaks one of these tests, the upstream format changed: every
@@ -103,13 +103,13 @@ class TestUpstreamCacheKeyPins:
     bump PR rather than discovering it as a silent 100%-miss deploy.
     """
 
-    def test_row_filter_cache_key_pin(self):
+    def test_row_filter_cache_key_golden(self):
         from policyengine.core.scoping_strategy import RowFilterStrategy
 
         strategy = RowFilterStrategy(variable_name="state_code", variable_value="CA")
         assert strategy.cache_key == "row_filter:state_code=CA"
 
-    def test_region_group_cache_key_pin_and_order_invariance(self):
+    def test_region_group_cache_key_golden_and_order_invariance(self):
         from policyengine.core.scoping_strategy import (
             RegionGroupStrategy,
             RowFilterStrategy,
