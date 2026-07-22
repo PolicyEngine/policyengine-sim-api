@@ -321,3 +321,161 @@ class TestBuildSimulationSelection:
         assert wired.artifact_kwargs is None
         assert wired.plain_kwargs["policy"] == {"gov.x": 1}
         assert "id" not in wired.plain_kwargs
+
+
+def _year_data(person_columns=None):
+    """Minimal real USYearData — six entities, weights included."""
+    from microdf import MicroDataFrame
+
+    from policyengine.tax_benefit_models.us.datasets import USYearData
+
+    person = {
+        "person_id": [1, 2],
+        "person_weight": [1.5, 2.5],
+        "age": [30.0, 40.0],
+        "employment_income": [1000.0, 2000.0],
+    }
+    if person_columns is not None:
+        person = {k: v for k, v in person.items() if k in person_columns}
+
+    def frame(entity, extra=None):
+        data = {f"{entity}_id": [1, 2], f"{entity}_weight": [1.0, 1.0], **(extra or {})}
+        return MicroDataFrame(pd.DataFrame(data), weights=f"{entity}_weight")
+
+    return USYearData(
+        person=MicroDataFrame(pd.DataFrame(person), weights="person_weight"),
+        marital_unit=frame("marital_unit"),
+        family=frame("family"),
+        spm_unit=frame("spm_unit"),
+        tax_unit=frame("tax_unit"),
+        household=frame("household", {"household_net_income": [900.0, 1800.0]}),
+    )
+
+
+class DiskModelVersion:
+    """Duck model version reusing the REAL load/save implementations, so
+    these tests exercise genuine h5 files on disk — including the exception
+    type a missing artifact raises — without loading the US tax system."""
+
+    def __init__(self):
+        from policyengine.tax_benefit_models.us.datasets import PolicyEngineUSDataset
+
+        self._dataset_class = PolicyEngineUSDataset
+        self.run_calls = 0
+
+    def resolve_entity_variables(self, simulation):
+        return {
+            "person": ["age", "employment_income"],
+            "household": ["household_net_income"],
+        }
+
+    def load(self, simulation):
+        from policyengine.tax_benefit_models.common.model_version import (
+            MicrosimulationModelVersion,
+        )
+
+        MicrosimulationModelVersion.load(self, simulation)
+
+    def save(self, simulation):
+        from policyengine.tax_benefit_models.common.model_version import (
+            MicrosimulationModelVersion,
+        )
+
+        MicrosimulationModelVersion.save(self, simulation)
+
+    def run(self, simulation):
+        from policyengine.tax_benefit_models.common.model_version import (
+            output_dataset_filepath,
+        )
+
+        self.run_calls += 1
+        simulation.output_dataset = self._dataset_class(
+            id=simulation.id,
+            name="output",
+            description="output",
+            filepath=str(output_dataset_filepath(simulation)),
+            year=simulation.dataset.year,
+            is_output_dataset=True,
+            data=_year_data(),
+        )
+
+
+def _make_disk_sim(model, tmp_path, sim_id):
+    dataset = model._dataset_class(
+        name="input",
+        description="input",
+        filepath=str(tmp_path / "populace_year_2026.h5"),
+        year=2026,
+        data=_year_data(),
+    )
+    return ba.ArtifactBaselineSimulation.model_construct(
+        id=sim_id,
+        dataset=dataset,
+        tax_benefit_model_version=model,
+        policy=None,
+        dynamic=None,
+        scoping_strategy=None,
+        extra_variables={},
+        output_dataset=None,
+    )
+
+
+class TestArtifactDiskRoundTrip:
+    """The guard against real h5 files, through the real load/save code.
+
+    Locks in what was only verified by hand before: a missing artifact
+    raises FileNotFoundError end-to-end (the clean miss branch, no
+    catch-all warning), a saved artifact loads as a hit with weight
+    columns intact, and an on-disk artifact missing a requested column
+    triggers the recompute-and-overwrite path.
+    """
+
+    def test_missing_artifact_is_a_clean_miss_that_saves(self, fresh_cache, tmp_path):
+        model = DiskModelVersion()
+        sim = _make_disk_sim(model, tmp_path, "bl1-roundtrip-miss")
+        sim.ensure()
+        assert sim.artifact_outcome == ba.OUTCOME_MISS
+        assert model.run_calls == 1
+        assert (tmp_path / "bl1-roundtrip-miss.h5").exists()
+
+    def test_saved_artifact_loads_as_hit_with_weights(self, fresh_cache, tmp_path):
+        model = DiskModelVersion()
+        model._dataset_class(
+            name="artifact",
+            description="artifact",
+            filepath=str(tmp_path / "bl1-roundtrip-hit.h5"),
+            year=2026,
+            data=_year_data(),
+        ).save()
+
+        sim = _make_disk_sim(model, tmp_path, "bl1-roundtrip-hit")
+        sim.ensure()
+        assert sim.artifact_outcome == ba.OUTCOME_HIT
+        assert model.run_calls == 0
+        person = sim.output_dataset.data.person
+        assert list(person["age"]) == [30.0, 40.0]
+        assert "person_weight" in person.columns
+
+    def test_incomplete_disk_artifact_recomputes_and_overwrites(
+        self, fresh_cache, tmp_path
+    ):
+        model = DiskModelVersion()
+        model._dataset_class(
+            name="artifact",
+            description="artifact",
+            filepath=str(tmp_path / "bl1-roundtrip-gap.h5"),
+            year=2026,
+            data=_year_data(person_columns={"person_id", "person_weight", "age"}),
+        ).save()
+
+        sim = _make_disk_sim(model, tmp_path, "bl1-roundtrip-gap")
+        sim.ensure()
+        assert sim.artifact_outcome == ba.OUTCOME_INCOMPLETE
+        assert model.run_calls == 1
+        reloaded = model._dataset_class(
+            name="check",
+            description="check",
+            filepath=str(tmp_path / "bl1-roundtrip-gap.h5"),
+            year=2026,
+        )
+        assert "employment_income" in reloaded.data.person.columns

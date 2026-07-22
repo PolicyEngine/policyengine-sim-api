@@ -425,7 +425,7 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
     def fake_build_simulation(
         params, *, dataset, policy, scoping_strategy=None, region_code=None
     ):
-        build_calls.append((params, dataset, policy, scoping_strategy))
+        build_calls.append((params, dataset, policy, scoping_strategy, region_code))
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
 
     class FakeSimulationOutputBuilder:
@@ -503,6 +503,9 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
         {"simulation_kind": "baseline"},
         {"simulation_kind": "reform"},
     ]
+    # region_code must be the RESOLVED code: it feeds the deterministic
+    # baseline-id predicate, and dropping it silently disables artifact
+    # reuse (every baseline becomes a miss).
     assert build_calls == [
         (
             {
@@ -513,6 +516,7 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
             dataset,
             {"gov.test.parameter": {"2026-01-01": 1}},
             "mock-scoping",
+            "us",
         ),
         (
             {
@@ -523,6 +527,7 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
             dataset,
             {"gov.test.parameter": {"2026-01-01": 2}},
             "mock-scoping",
+            "us",
         ),
     ]
 
