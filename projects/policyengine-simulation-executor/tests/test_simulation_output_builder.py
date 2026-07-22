@@ -228,9 +228,7 @@ def _stub_policyengine_output_calls(monkeypatch, baseline, reform) -> None:
     monkeypatch.setattr(
         SimulationOutputBuilder,
         "_build_congressional_district_impact",
-        lambda self: (
-            _congressional_district_output() if self.country == "us" else None
-        ),
+        lambda self: _congressional_district_output() if self.country == "us" else None,
     )
     monkeypatch.setattr(
         SimulationOutputBuilder,
@@ -424,7 +422,9 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
     reform_simulation = object()
     build_calls = []
 
-    def fake_build_simulation(params, *, dataset, policy, scoping_strategy=None):
+    def fake_build_simulation(
+        params, *, dataset, policy, scoping_strategy=None, region_code=None
+    ):
         build_calls.append((params, dataset, policy, scoping_strategy))
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
 
@@ -866,7 +866,9 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
         assert country == "us"
         return country_module
 
-    def fake_build_simulation(params, *, dataset, policy, scoping_strategy=None):
+    def fake_build_simulation(
+        params, *, dataset, policy, scoping_strategy=None, region_code=None
+    ):
         build_calls.append((params, dataset, policy, scoping_strategy))
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
 
@@ -942,7 +944,9 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
     )
     build_calls = []
 
-    def fake_build_simulation(params, *, dataset, policy, scoping_strategy=None):
+    def fake_build_simulation(
+        params, *, dataset, policy, scoping_strategy=None, region_code=None
+    ):
         build_calls.append((params, dataset, policy, scoping_strategy))
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
 

@@ -469,10 +469,36 @@ def _build_simulation(
     dataset,
     policy: dict[str, Any] | None,
     scoping_strategy=None,
+    region_code: str | None = None,
 ):
     from policyengine.core import Simulation
 
-    country_module = _country_module(params.get("country", "us"))
+    from policyengine_simulation_executor.baseline_artifacts import (
+        ArtifactBaselineSimulation,
+        deterministic_baseline_id,
+    )
+
+    country = params.get("country", "us")
+    country_module = _country_module(country)
+    simulation_id = deterministic_baseline_id(
+        params,
+        country=country,
+        policy=policy,
+        region_code=region_code,
+        scoping_strategy=scoping_strategy,
+        year=_parse_year(params),
+    )
+    if simulation_id is not None:
+        # Deterministic id: ensure() loads a precomputed baseline artifact
+        # when one is baked beside the dataset, and the subclass validates
+        # the load (falling back to run()) — see baseline_artifacts.
+        return ArtifactBaselineSimulation(
+            id=simulation_id,
+            dataset=dataset,
+            tax_benefit_model_version=country_module.model,
+            policy=policy,
+            scoping_strategy=scoping_strategy,
+        )
     return Simulation(
         dataset=dataset,
         tax_benefit_model_version=country_module.model,
@@ -529,6 +555,7 @@ def _run_simulation_impl_core(params: dict) -> dict:
             dataset=dataset,
             policy=baseline_policy,
             scoping_strategy=region_resolution.scoping_strategy,
+            region_code=region_resolution.code,
         )
     with segment(SegmentName.SIMULATION_BUILD, simulation_kind="reform"):
         reform = _build_simulation(
@@ -536,6 +563,7 @@ def _run_simulation_impl_core(params: dict) -> dict:
             dataset=dataset,
             policy=reform_policy,
             scoping_strategy=region_resolution.scoping_strategy,
+            region_code=region_resolution.code,
         )
 
     logger.info("Calculating economic impact")
@@ -550,6 +578,12 @@ def _run_simulation_impl_core(params: dict) -> dict:
         resolved_region_code=region_resolution.code,
     )
     output = builder.serialize()
+    # ensure() has run inside the builder by now, so the artifact outcome
+    # (hit / incomplete / miss) is known for deterministic-id baselines.
+    artifact_outcome = getattr(baseline, "artifact_outcome", None)
+    if artifact_outcome is not None:
+        set_attribute("baseline_artifact", artifact_outcome)
+        logger.info("Baseline artifact outcome: %s", artifact_outcome)
     logger.info("Comparison complete")
     if params.get("_emit_microdata"):
         from policyengine_simulation_executor.simulation_microdata import (
