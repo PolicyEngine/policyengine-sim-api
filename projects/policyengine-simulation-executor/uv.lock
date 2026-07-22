@@ -1853,6 +1853,7 @@ name = "policyengine-simulation-executor"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "google-cloud-storage" },
     { name = "logfire" },
     { name = "modal" },
     { name = "opentelemetry-instrumentation-fastapi" },
@@ -1887,6 +1888,7 @@ dev = [
 ]
 modal-simulation-image = [
     { name = "fastapi" },
+    { name = "google-cloud-storage" },
     { name = "importlib-metadata" },
     { name = "logfire" },
     { name = "pip" },
@@ -1898,6 +1900,7 @@ modal-simulation-image = [
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'build'", specifier = ">=25.1.0" },
+    { name = "google-cloud-storage", specifier = ">=2" },
     { name = "logfire", specifier = ">=3.0.0" },
     { name = "modal", specifier = ">=0.73.0" },
     { name = "openapi-python-client", marker = "extra == 'build'", specifier = ">=0.21.6" },
@@ -1924,6 +1927,7 @@ provides-extras = ["test", "build"]
 dev = [{ name = "policyengine-simulation-gateway", editable = "../policyengine-simulation-gateway" }]
 modal-simulation-image = [
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "google-cloud-storage", specifier = ">=2" },
     { name = "importlib-metadata", specifier = ">=8" },
     { name = "logfire", specifier = ">=3.0.0" },
     { name = "pip" },
