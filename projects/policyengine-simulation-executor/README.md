@@ -75,9 +75,14 @@ Operational notes:
   run plans against the store and computes only misses. A re-run against a
   warm store is a fast no-op. Version bumps rotate the keys and trigger
   recompute automatically — there is no staleness to manage.
-- Uploads are write-once. `--force` recomputes everything but cannot
-  replace an existing object; to heal a suspected-bad artifact, delete its
-  object from the bucket first, then re-run (with or without `--force`).
+- Uploads are write-once, by policy, not accident: an existing store
+  object is never overwritten by anything, including `--force` (which
+  recomputes and re-verifies but uploads nothing for existing keys). This
+  buys concurrent-warmer race safety, artifact auditability (verified
+  bytes can never drift), and protection against stale-code runners
+  clobbering trusted artifacts. The heal procedure for a bad artifact is
+  therefore always: delete its object from the bucket, then re-run the
+  precompute — deletion turns the key back into an ordinary miss.
 - A determinism gate runs whenever baselines were computed: one cohort's
   uploaded artifact is compared frame-by-frame against an independent
   fresh run. The run fails if they differ.
