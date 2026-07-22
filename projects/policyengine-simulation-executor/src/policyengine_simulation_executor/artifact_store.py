@@ -115,9 +115,7 @@ class ArtifactStore:
     def write_manifest(self, payload: Mapping[str, Any]) -> str:
         """Store a manifest under its own content digest; returns the digest."""
         digest = artifact_keys.canonical_digest(payload)
-        self._upload_json(
-            artifact_keys.manifest_path(digest), payload, overwrite=False
-        )
+        self._upload_json(artifact_keys.manifest_path(digest), payload, overwrite=False)
         return digest
 
     def read_manifest(self, digest: str) -> Optional[Mapping[str, Any]]:
