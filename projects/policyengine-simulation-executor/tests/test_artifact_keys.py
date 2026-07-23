@@ -9,10 +9,9 @@ any change into a conscious, reviewable diff instead of silent cache
 churn (or, worse, a writer/reader mismatch).
 """
 
-from types import SimpleNamespace
-
 import pytest
 
+from fixtures.identity_stubs import install_identity_stubs
 from policyengine_simulation_executor import artifact_keys as ak
 
 
@@ -40,6 +39,9 @@ _BASELINE_KWARGS = dict(
     dataset_digest=_DATASET_GOLDEN,
     model_version="9.9.9",
     policyengine_version="4.22.0",
+    # Explicit (== the default) so the perturbation matrix proves the
+    # policy field participates in the digest.
+    policy=ak.CURRENT_LAW_POLICY,
 )
 
 _BASELINE_GOLDEN = "f9cac05d94509895eb48ea33ea5f72d40eb9b954989df05ca6506009d8dedae2"
@@ -125,49 +127,7 @@ class TestUpstreamCacheKeyGoldens:
 @pytest.fixture
 def stub_identity_sources(monkeypatch):
     """Stub the bundle/manifest/receipt seams collect_dataset_identity reads."""
-    from policyengine.provenance import manifest as manifest_module
-
-    from policyengine_simulation_executor import release_bundle
-
-    bundle = SimpleNamespace(
-        country="us",
-        policyengine_version="4.22.0",
-        model_version="9.9.9",
-        data_version="1.2.3",
-        data_artifact_revision="rev-abc",
-        default_dataset="populace_cps",
-    )
-    receipt_entry = {
-        "country": "us",
-        "version": "1.2.3",
-        "installed_sha256": "feedbead" * 8,
-    }
-    state = SimpleNamespace(bundle=bundle, receipt_entry=receipt_entry)
-
-    monkeypatch.setattr(
-        release_bundle, "get_country_release_bundle", lambda country: state.bundle
-    )
-    monkeypatch.setattr(
-        release_bundle, "_receipt_dataset", lambda country: state.receipt_entry
-    )
-    monkeypatch.setattr(
-        manifest_module,
-        "resolve_dataset_reference",
-        lambda country, dataset: f"hf://org/repo/{dataset}.h5@rev-abc",
-    )
-    monkeypatch.setattr(
-        manifest_module,
-        "dataset_logical_name",
-        lambda reference: "populace_cps",
-    )
-    monkeypatch.setattr(
-        manifest_module,
-        "get_release_manifest",
-        lambda country: SimpleNamespace(
-            certification=SimpleNamespace(data_build_fingerprint="fp-123")
-        ),
-    )
-    return state
+    return install_identity_stubs(monkeypatch)
 
 
 class TestIdentityCollection:

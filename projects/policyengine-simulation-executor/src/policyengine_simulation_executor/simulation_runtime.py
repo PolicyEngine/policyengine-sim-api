@@ -422,6 +422,16 @@ def _country_module(country: str):
     return import_module(f"policyengine.tax_benefit_models.{country}")
 
 
+def resolve_data_folder() -> str:
+    """The folder datasets and baseline artifacts are read from and saved to.
+
+    One home for the default: the precompute downloads store artifacts into
+    this folder for ``ensure_datasets``/``Simulation.ensure()`` to find, so
+    any divergence from ``_load_dataset``'s resolution strands them.
+    """
+    return os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")
+
+
 def _load_dataset(
     params: dict[str, Any],
     *,
@@ -436,7 +446,9 @@ def _load_dataset(
         if region_resolution is not None and region_resolution.dataset_reference
         else _resolve_dataset_reference(country, params)
     )
-    data_folder = os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")
+    from policyengine_simulation_executor.baseline_artifacts import uses_custom_data
+
+    data_folder = resolve_data_folder()
     # TEMPORARY: remove once single-year datasets are published (issue #596).
     # The image bakes default-revision single-year files into
     # POLICYENGINE_DATA_FOLDER, and ensure_datasets keys its cache on a
@@ -444,7 +456,7 @@ def _load_dataset(
     # stem matches the default would silently read the baked files. Only
     # pure default requests may use the baked folder. (Region requests
     # resolve their dataset without the "data" param, so they keep it.)
-    if params.get("data") is not None or params.get("data_version") is not None:
+    if uses_custom_data(params):
         data_folder = "/tmp/policyengine-data"
 
     start = time.monotonic()

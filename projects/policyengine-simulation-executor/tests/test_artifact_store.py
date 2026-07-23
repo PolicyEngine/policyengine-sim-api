@@ -42,6 +42,12 @@ class FakeBlob:
     def download_to_filename(self, filename):
         if self.path not in self.store.objects:
             raise NotFound(self.path)
+        if self.path in self.store.broken_downloads:
+            # Simulate a mid-stream failure: partial bytes hit disk, then
+            # the transport dies.
+            with open(filename, "wb") as handle:
+                handle.write(self.store.objects[self.path][:1])
+            raise ConnectionError("stream reset")
         with open(filename, "wb") as handle:
             handle.write(self.store.objects[self.path])
 
@@ -56,6 +62,7 @@ class FakeClient:
         self.objects = {}
         self.upload_calls = []
         self.bucket_names = []
+        self.broken_downloads = set()
 
     def bucket(self, name):
         self.bucket_names.append(name)
@@ -104,6 +111,20 @@ def test_download_creates_parent_dirs(store, fake_client, tmp_path):
     destination = tmp_path / "nested" / "dir" / "populace_year_2026.h5"
     store.download_file("datasets/us/d/populace_year_2026.h5", destination)
     assert destination.read_bytes() == b"content"
+    # The temp-then-rename download leaves no .partial residue on success.
+    assert list(destination.parent.iterdir()) == [destination]
+
+
+def test_failed_download_leaves_no_file_at_the_final_name(store, fake_client, tmp_path):
+    """Callers guard on exists(): a truncated file surviving at the final
+    name would be trusted as complete by the next run in the container."""
+    fake_client.objects["datasets/us/d/populace_year_2026.h5"] = b"content"
+    fake_client.broken_downloads.add("datasets/us/d/populace_year_2026.h5")
+    destination = tmp_path / "populace_year_2026.h5"
+    with pytest.raises(ConnectionError):
+        store.download_file("datasets/us/d/populace_year_2026.h5", destination)
+    assert not destination.exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_exists(store, fake_client):
@@ -113,6 +134,11 @@ def test_exists(store, fake_client):
 
 
 def test_read_json_missing_returns_none(store):
+    assert store.read_json("deployed/beta.json") is None
+
+
+def test_read_json_non_mapping_payload_reads_as_none(store, fake_client):
+    fake_client.objects["deployed/beta.json"] = b'["not", "a", "marker"]'
     assert store.read_json("deployed/beta.json") is None
 
 

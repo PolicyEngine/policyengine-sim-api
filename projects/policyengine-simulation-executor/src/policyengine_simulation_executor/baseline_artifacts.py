@@ -40,6 +40,18 @@ OUTCOME_INCOMPLETE = "incomplete"
 OUTCOME_MISS = "miss"
 
 
+def uses_custom_data(params: dict[str, Any]) -> bool:
+    """True when the request asks for non-default data.
+
+    Shared by the qualifying predicate below and ``_load_dataset``'s
+    baked-folder guard: both sites must see the same request facts, or a
+    custom-data request could be given a default-data deterministic id —
+    and in a warm container the in-process cache (keyed on id alone) would
+    then serve default-data output the column guard cannot distinguish.
+    """
+    return params.get("data") is not None or params.get("data_version") is not None
+
+
 def qualifying_baseline_identity(
     params: dict[str, Any],
     *,
@@ -74,7 +86,7 @@ def qualifying_baseline_identity(
         return None
     if str(params.get("scope") or "").lower() != "macro":
         return None
-    if params.get("data") is not None or params.get("data_version") is not None:
+    if uses_custom_data(params):
         return None
     if region_code is None:
         return None
@@ -144,16 +156,30 @@ class ArtifactBaselineSimulation(Simulation):
         self._computed_this_process = True
         super().run()
 
+    def _record_outcome(self, outcome: str) -> None:
+        """First outcome wins for the life of this instance.
+
+        Every request ensures its baseline more than once (the economic
+        impact analysis and the decile impacts each call ``ensure()``), and
+        after a miss the later calls self-hit the in-process cache with a
+        now-complete column set — without the latch they would overwrite a
+        genuine ``miss`` with ``hit`` and blind the rollout metric. The
+        runtime builds a fresh instance per request, so latching per
+        instance is latching per request.
+        """
+        if self._artifact_outcome is None:
+            self._artifact_outcome = outcome
+
     def ensure(self) -> None:
         self._computed_this_process = False
         super().ensure()
         if self._computed_this_process:
-            self._artifact_outcome = OUTCOME_MISS
+            self._record_outcome(OUTCOME_MISS)
             return
 
         missing = self._missing_output_columns()
         if not missing:
-            self._artifact_outcome = OUTCOME_HIT
+            self._record_outcome(OUTCOME_HIT)
             return
 
         logger.warning(
@@ -161,14 +187,17 @@ class ArtifactBaselineSimulation(Simulation):
             self.id,
             missing,
         )
-        self._artifact_outcome = OUTCOME_INCOMPLETE
+        self._record_outcome(OUTCOME_INCOMPLETE)
         self.run()
         self.save()
-        # Mirror ensure()'s tail: replace the in-process cache entry so the
-        # next request in this container gets the completed output instead
-        # of revalidating (and re-running) against the incomplete one.
+        # Replace the in-process cache entry so this request's second
+        # ensure() and every later request in this container get the
+        # completed output instead of revalidating (and re-running) against
+        # the incomplete one. LRUCache.add keeps the OLD value for an
+        # existing key and exposes no remove, so evict directly first.
         from policyengine.core.simulation import _cache
 
+        _cache._cache.pop(self.id, None)
         _cache.add(self.id, self)
 
     def _missing_output_columns(self) -> list[tuple[str, str]]:

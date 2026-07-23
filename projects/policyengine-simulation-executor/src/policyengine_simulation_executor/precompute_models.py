@@ -1,13 +1,15 @@
 """Typed schemas for the precompute pipeline's data flow.
 
 Every structure that crosses a function boundary in the precompute — the
-plan, its entries, the bundle receipt, the deploy manifest, and the worker
-results — is a strict Pydantic model (``extra="forbid"``), matching the
-gateway contract's discipline. Plain dicts exist only at the Modal
-serialization boundary: the app wrappers ``model_dump()`` on the way out
-of a container and ``model_validate()`` on the way in, so a shape drift
-between planner and worker fails loudly at the edge instead of surfacing
-as a KeyError mid-computation.
+plan, its entries, the bundle version identity, the deploy manifest, and
+the worker results — is a strict Pydantic model (``extra="forbid"``),
+matching the gateway contract's discipline. Plain dicts exist only at the
+Modal serialization boundary: wherever a structured value crosses, the
+app wrappers ``model_dump()`` on the way out of a container and
+``model_validate()`` on the way in (bare strings — the bucket, the
+manifest digest — cross as-is), so a shape drift between planner and
+worker fails loudly at the edge instead of surfacing as a KeyError
+mid-computation.
 
 Wire-compatibility constraint: ``ArtifactManifest.canonical_payload()``
 must keep producing the exact key/value shape the store already holds —
@@ -30,8 +32,14 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class BundleReceipt(_StrictModel):
-    """The version identity of the installed bundle a plan was made for."""
+class BundleVersionIdentity(_StrictModel):
+    """The version identity of the installed bundle a plan was made for.
+
+    Travels under the frozen wire key ``receipt``, but is deliberately NOT
+    the install receipt file (``.policyengine-bundle-receipt.json``): that
+    carries per-dataset content hashes, which live inside the artifact
+    digests here, not in this version tuple.
+    """
 
     policyengine_version: str
     model_version: str
@@ -67,7 +75,7 @@ class PrecomputePlan(_StrictModel):
 
     datasets: list[DatasetPlanEntry]
     baselines: list[BaselinePlanEntry]
-    receipt: BundleReceipt
+    receipt: BundleVersionIdentity
 
 
 class WorkSelection(_StrictModel):
@@ -96,7 +104,7 @@ class ArtifactManifest(_StrictModel):
     # BaseModel's deprecated .schema attribute.
     manifest_schema: str = Field(alias="schema")
     country: str
-    receipt: BundleReceipt
+    receipt: BundleVersionIdentity
     artifacts: list[ManifestArtifact]
 
     def canonical_payload(self) -> dict[str, Any]:

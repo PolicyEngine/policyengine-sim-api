@@ -159,6 +159,10 @@ def dataset_artifact_filename(stem: str, year: int) -> str:
     return f"{stem}_year_{year}.h5"
 
 
+def baseline_artifact_filename(simulation_id: str) -> str:
+    return f"{simulation_id}.h5"
+
+
 def dataset_artifact_path(
     country: str, dataset_digest: str, stem: str, year: int
 ) -> str:
@@ -171,7 +175,10 @@ def dataset_artifact_path(
 def baseline_artifact_path(
     country: str, baseline_digest: str, simulation_id: str
 ) -> str:
-    return f"baselines/{country.lower()}/{baseline_digest}/{simulation_id}.h5"
+    return (
+        f"baselines/{country.lower()}/{baseline_digest}/"
+        f"{baseline_artifact_filename(simulation_id)}"
+    )
 
 
 def manifest_path(manifest_digest: str) -> str:

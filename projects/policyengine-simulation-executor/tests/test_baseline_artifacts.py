@@ -251,6 +251,41 @@ class TestArtifactBaselineSimulation:
         # Cache hit short-circuits load; the guard still forces the run.
         assert model.calls == ["run", "save"]
 
+    def test_stale_cache_entry_is_replaced_after_recompute(self, fresh_cache):
+        """After a recompute that started from a cache hit on a DIFFERENT
+        (stale) object, the cache must hold the recomputed simulation.
+        LRUCache.add alone keeps the old value for an existing key, which
+        would make this request's second ensure() clobber the fresh output
+        and run the full model twice."""
+        stale = _make_sim(FakeModelVersion())
+        stale.output_dataset = _output(_incomplete_frames())
+        fresh_cache.add("bl1-test", stale)
+
+        model = FakeModelVersion()
+        sim = _make_sim(model)
+        sim.ensure()
+        assert fresh_cache.get("bl1-test") is sim
+
+        # The request's second ensure() self-hits the completed entry:
+        # no second full run.
+        sim.ensure()
+        assert model.calls == ["run", "save"]
+        assert sim.artifact_outcome == ba.OUTCOME_INCOMPLETE
+
+    def test_container_converges_after_stale_recompute(self, fresh_cache):
+        stale = _make_sim(FakeModelVersion())
+        stale.output_dataset = _output(_incomplete_frames())
+        fresh_cache.add("bl1-test", stale)
+
+        _make_sim(FakeModelVersion()).ensure()
+
+        # A later request hits the enriched entry: zero model work.
+        later_model = FakeModelVersion()
+        later = _make_sim(later_model)
+        later.ensure()
+        assert later.artifact_outcome == ba.OUTCOME_HIT
+        assert later_model.calls == []
+
     def test_loaded_output_without_data_recomputes(self, fresh_cache):
         model = FakeModelVersion()
         model.load = lambda simulation: setattr(  # type: ignore[method-assign]
@@ -260,6 +295,29 @@ class TestArtifactBaselineSimulation:
         sim.ensure()
         assert sim.artifact_outcome == ba.OUTCOME_INCOMPLETE
 
+    def test_second_ensure_keeps_a_genuine_miss(self, fresh_cache):
+        """Every request ensures the baseline twice (analysis + deciles).
+        The second call self-hits the in-process cache with a complete
+        column set — it must not overwrite the miss the request actually
+        experienced (the rollout metric depends on it)."""
+        model = FakeModelVersion(load_result="absent")
+        sim = _make_sim(model)
+        sim.ensure()
+        assert sim.artifact_outcome == ba.OUTCOME_MISS
+        sim.ensure()
+        assert sim.artifact_outcome == ba.OUTCOME_MISS
+        # The second ensure() was a pure cache hit: no extra model work.
+        assert model.calls == ["load", "run", "save"]
+
+    def test_second_ensure_keeps_an_incomplete_outcome(self, fresh_cache):
+        model = FakeModelVersion(load_result="incomplete")
+        sim = _make_sim(model)
+        sim.ensure()
+        assert sim.artifact_outcome == ba.OUTCOME_INCOMPLETE
+        sim.ensure()
+        assert sim.artifact_outcome == ba.OUTCOME_INCOMPLETE
+        assert model.calls == ["load", "run", "save"]
+
 
 class TestBuildSimulationSelection:
     @pytest.fixture
@@ -268,7 +326,9 @@ class TestBuildSimulationSelection:
 
         from policyengine_simulation_executor import simulation_runtime as sr
 
-        recorded = SimpleNamespace(artifact_kwargs=None, plain_kwargs=None, id=None)
+        recorded = SimpleNamespace(
+            artifact_kwargs=None, plain_kwargs=None, id=None, id_kwargs=None
+        )
 
         class FakeArtifactSimulation:
             def __init__(self, **kwargs):
@@ -285,11 +345,12 @@ class TestBuildSimulationSelection:
             "_country_module",
             lambda country: SimpleNamespace(model=SimpleNamespace(id="us-model")),
         )
-        monkeypatch.setattr(
-            ba,
-            "deterministic_baseline_id",
-            lambda params, **kwargs: recorded.id,
-        )
+
+        def fake_deterministic_id(params, **kwargs):
+            recorded.id_kwargs = {"params": params, **kwargs}
+            return recorded.id
+
+        monkeypatch.setattr(ba, "deterministic_baseline_id", fake_deterministic_id)
         return recorded
 
     def test_qualifying_baseline_uses_artifact_class(self, wired):
@@ -306,6 +367,18 @@ class TestBuildSimulationSelection:
         assert wired.plain_kwargs is None
         assert wired.artifact_kwargs["id"] == "bl1-deadbeefdeadbeef"
         assert wired.artifact_kwargs["dataset"] == "dataset"
+        # The predicate must see the request's own facts. A wiring
+        # regression (e.g. policy=None passed unconditionally) would hand
+        # a REFORM simulation the baseline's deterministic id — and
+        # ensure() would then serve the baseline artifact as the reform.
+        assert wired.id_kwargs == {
+            "params": {"country": "us", "scope": "macro"},
+            "country": "us",
+            "policy": None,
+            "region_code": "us",
+            "scoping_strategy": None,
+            "year": sr.DEFAULT_YEAR,
+        }
 
     def test_non_qualifying_uses_plain_simulation(self, wired):
         from policyengine_simulation_executor import simulation_runtime as sr
@@ -321,6 +394,38 @@ class TestBuildSimulationSelection:
         assert wired.artifact_kwargs is None
         assert wired.plain_kwargs["policy"] == {"gov.x": 1}
         assert "id" not in wired.plain_kwargs
+        # The reform's own policy reaches the predicate (which returns a
+        # random id for it) — not a hardwired None.
+        assert wired.id_kwargs["policy"] == {"gov.x": 1}
+
+
+class TestIdentityErrorContract:
+    """The stated split: the writer path fails loud, the reader degrades."""
+
+    def _kwargs(self):
+        return dict(
+            params={"scope": "macro"},
+            country="us",
+            policy=None,
+            region_code="us",
+            scoping_strategy=None,
+            year=2026,
+        )
+
+    def test_qualifying_identity_propagates_collection_errors(self, monkeypatch):
+        def boom(*args, **kwargs):
+            raise RuntimeError("receipt unreadable")
+
+        monkeypatch.setattr(ak, "collect_baseline_identity", boom)
+        with pytest.raises(RuntimeError, match="receipt unreadable"):
+            ba.qualifying_baseline_identity(**self._kwargs())
+
+    def test_deterministic_id_swallows_collection_errors(self, monkeypatch):
+        def boom(*args, **kwargs):
+            raise RuntimeError("receipt unreadable")
+
+        monkeypatch.setattr(ak, "collect_baseline_identity", boom)
+        assert ba.deterministic_baseline_id(**self._kwargs()) is None
 
 
 def _year_data(person_columns=None):

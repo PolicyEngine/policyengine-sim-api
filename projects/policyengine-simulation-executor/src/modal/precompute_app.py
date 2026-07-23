@@ -40,9 +40,10 @@ _worker_secrets = [gcp_secret, data_secret, hf_secret]
 
 
 # Wrapper signatures use plain dicts: they sit on Modal's serialization
-# boundary. Each validates into the strict precompute_models schema on the
-# way in and dumps on the way out, so planner/worker shape drift fails
-# loudly at the edge.
+# boundary. Every structured value validates into the strict
+# precompute_models schema on the way in and dumps back to a dict on the
+# way out (bare strings — the bucket, publish_manifest's digest — cross
+# as-is), so planner/worker shape drift fails loudly at the edge.
 
 
 @app.function(

@@ -87,7 +87,17 @@ class ArtifactStore:
     def download_file(self, path: str, local_path: str | Path) -> None:
         destination = Path(local_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        self._blob(path).download_to_filename(str(destination))
+        # Download to a sibling temp name and rename: callers guard on
+        # exists(), so a mid-stream failure must never leave a truncated
+        # file at the final name (it would poison the container's later
+        # work for the rest of the run).
+        partial = destination.with_name(destination.name + ".partial")
+        try:
+            self._blob(path).download_to_filename(str(partial))
+        except BaseException:
+            partial.unlink(missing_ok=True)
+            raise
+        partial.replace(destination)
 
     def _upload_json(self, path: str, payload: Mapping[str, Any], *, overwrite: bool):
         data = json.dumps(payload, sort_keys=True, indent=2)

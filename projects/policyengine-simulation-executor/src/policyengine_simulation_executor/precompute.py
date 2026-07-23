@@ -8,10 +8,11 @@ executor package makes it testable without Modal fakes and importable by
 the CI deploy job and the GC planner.
 
 Data flow is strictly typed via ``precompute_models``: plans, entries,
-receipts, manifests, and worker results are Pydantic models everywhere
-inside the library; plain dicts appear only at the Modal serialization
-boundary (the app wrappers dump on the way out and validate on the way
-in).
+version identities, manifests, and worker results are Pydantic models
+everywhere inside the library; plain dicts appear only at the Modal
+serialization boundary (the app wrappers validate structured inputs on
+the way in and dump model results on the way out; bare strings — the
+bucket, the manifest digest — cross as-is).
 
 The store is content-addressed, so a precompute run is idempotent: it
 plans against the store and computes only misses; a re-run against a warm
@@ -37,12 +38,13 @@ from typing import Callable
 
 from policyengine_simulation_executor.artifact_keys import (
     BaselineArtifactIdentity,
+    baseline_artifact_filename,
 )
 from policyengine_simulation_executor.precompute_models import (
     ArtifactManifest,
     BaselineComputeResult,
     BaselinePlanEntry,
-    BundleReceipt,
+    BundleVersionIdentity,
     DatasetBuildResult,
     DatasetPlanEntry,
     DeterminismVerdict,
@@ -80,11 +82,14 @@ def cohort_params(year: int, group: list[str]) -> dict:
     }
 
 
-def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
-    """Identity via the executor's own resolution path (writer==reader)."""
-    from policyengine_simulation_executor.baseline_artifacts import (
-        qualifying_baseline_identity,
-    )
+def _cohort_resolution(year: int, group: list[str]):
+    """Cohort request params, country module, and region resolution.
+
+    The planner's identity (``cohort_identity``) and the worker's
+    simulation (``_prepare_cohort_baseline``) must derive from ONE
+    resolution or the in-container id checks abort the run; sharing this
+    prologue removes the drift surface.
+    """
     from policyengine_simulation_executor.simulation_runtime import (
         _country_module,
         _resolve_region,
@@ -97,6 +102,16 @@ def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
         country=PRECOMPUTE_COUNTRY,
         params=params,
     )
+    return params, country_module, resolution
+
+
+def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
+    """Identity via the executor's own resolution path (writer==reader)."""
+    from policyengine_simulation_executor.baseline_artifacts import (
+        qualifying_baseline_identity,
+    )
+
+    params, _, resolution = _cohort_resolution(year, group)
     identity = qualifying_baseline_identity(
         params,
         country=PRECOMPUTE_COUNTRY,
@@ -137,7 +152,7 @@ def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
         ManifestArtifact(
             type="baseline",
             path=entry.path,
-            filename=f"{entry.simulation_id}.h5",
+            filename=baseline_artifact_filename(entry.simulation_id),
             year=entry.year,
             digest=entry.digest,
         )
@@ -197,7 +212,7 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
             )
 
     bundle = get_country_release_bundle(PRECOMPUTE_COUNTRY)
-    receipt = BundleReceipt(
+    receipt = BundleVersionIdentity(
         policyengine_version=bundle.policyengine_version,
         model_version=bundle.model_version,
         data_version=bundle.data_version,
@@ -209,7 +224,6 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
 
 def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildResult:
     """Wave 1: build one single-year dataset and upload it."""
-    import os
     from pathlib import Path
 
     from policyengine_simulation_executor.artifact_keys import (
@@ -221,6 +235,7 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
     )
     from policyengine_simulation_executor.simulation_runtime import (
         _country_module,
+        resolve_data_folder,
     )
 
     identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, expected.year)
@@ -231,7 +246,7 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
             "under a mismatched key."
         )
 
-    data_folder = os.environ.get("POLICYENGINE_DATA_FOLDER", "/opt/policyengine/data")
+    data_folder = resolve_data_folder()
     country_module = _country_module(PRECOMPUTE_COUNTRY)
     started = time.monotonic()
     country_module.ensure_datasets(
@@ -256,7 +271,6 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
 
 def _prepare_cohort_baseline(bucket: str, expected: BaselinePlanEntry):
     """Shared by compute and verify: dataset download + simulation build."""
-    import os
     from pathlib import Path
 
     from policyengine_simulation_executor.artifact_keys import (
@@ -265,27 +279,20 @@ def _prepare_cohort_baseline(bucket: str, expected: BaselinePlanEntry):
     from policyengine_simulation_executor.artifact_store import ArtifactStore
     from policyengine_simulation_executor.simulation_runtime import (
         _build_simulation,
-        _country_module,
         _load_dataset,
-        _resolve_region,
+        resolve_data_folder,
     )
 
     store = ArtifactStore(bucket)
-    data_folder = Path(
-        os.environ.get("POLICYENGINE_DATA_FOLDER", "/opt/policyengine/data")
-    )
+    data_folder = Path(resolve_data_folder())
 
     dataset_identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, expected.year)
     local_dataset = data_folder / dataset_identity.filename
     if not local_dataset.exists():
         store.download_file(dataset_identity.store_path, local_dataset)
 
-    params = cohort_params(expected.year, expected.group)
-    country_module = _country_module(PRECOMPUTE_COUNTRY)
-    resolution = _resolve_region(
-        country_module=country_module,
-        country=PRECOMPUTE_COUNTRY,
-        params=params,
+    params, country_module, resolution = _cohort_resolution(
+        expected.year, expected.group
     )
     dataset = _load_dataset(
         params, country_module=country_module, region_resolution=resolution
@@ -334,7 +341,7 @@ def compute_baseline_impl(
     baseline.ensure()
     compute_seconds = time.monotonic() - started
 
-    artifact_file = data_folder / f"{baseline.id}.h5"
+    artifact_file = data_folder / baseline_artifact_filename(baseline.id)
     if not artifact_file.exists():
         raise RuntimeError(f"ensure() left no artifact at {artifact_file}")
     uploaded = store.upload_file(expected.path, artifact_file)
@@ -363,12 +370,14 @@ def verify_determinism_impl(
     """
     from policyengine.core import Simulation
 
+    from policyengine_simulation_executor.baseline_artifacts import OUTCOME_HIT
+
     store, data_folder, baseline = _prepare_cohort_baseline(bucket, expected)
-    artifact_file = data_folder / f"{baseline.id}.h5"
+    artifact_file = data_folder / baseline_artifact_filename(baseline.id)
     if not artifact_file.exists():
         store.download_file(expected.path, artifact_file)
     baseline.ensure()
-    if baseline.artifact_outcome != "hit":
+    if baseline.artifact_outcome != OUTCOME_HIT:
         raise RuntimeError(
             "Determinism gate could not load the artifact it verifies "
             f"(outcome={baseline.artifact_outcome})"

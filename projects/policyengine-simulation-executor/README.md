@@ -59,7 +59,7 @@ The precompute app fills a content-addressed GCS store with single-year US
 datasets (2026, 2027, 2025) and the 20 per-cohort national baseline
 simulations per year, so a later deploy can bake them into the image and
 the runtime can load baselines instead of computing them. Library logic
-lives in `policyengine_simulation_executor/precompute.py` (keys:
+lives in `src/policyengine_simulation_executor/precompute.py` (keys:
 `artifact_keys.py`, store client: `artifact_store.py`); the Modal app
 (`src/modal/precompute_app.py`) is plumbing only.
 
