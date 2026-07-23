@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from policyengine_simulation_api import app as app_module
 from policyengine_simulation_api.app import create_app
 from policyengine_simulation_api.backend import (
     BackendResponse,
@@ -77,6 +78,31 @@ def test_job_status_preserves_id_and_status(client, backend):
     assert result.status_code == 202
     assert result.json() == {"status": "running", "run_id": "run-1"}
     assert backend.requests[-1]["path"] == "/jobs/fc-123"
+
+
+def test_job_status_records_sanitized_backend_telemetry(
+    client,
+    backend,
+    monkeypatch,
+):
+    events = []
+    monkeypatch.setattr(
+        app_module,
+        "record_event",
+        lambda name, **attributes: events.append((name, attributes)),
+    )
+    backend.responses[("GET", "/jobs/fc-123")] = response(
+        202,
+        {"status": "running", "job_id": "must-not-be-recorded"},
+    )
+
+    client.get("/jobs/fc-123")
+
+    name, attributes = events[-1]
+    assert name == "simulation_api_backend_response"
+    assert attributes["job_state"] == "running"
+    assert attributes["status_code"] == 202
+    assert "job_id" not in attributes
 
 
 def test_budget_window_routes_use_original_batch_id(client, backend):

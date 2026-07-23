@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -118,6 +119,7 @@ def create_app(
         path: str,
         body: Mapping[str, Any] | None = None,
     ) -> Response:
+        backend_started = time.monotonic()
         try:
             result = await runtime_backend.request(
                 method,
@@ -125,6 +127,23 @@ def create_app(
                 json_body=body,
                 request_id=request.state.request_id,
             )
+            attributes: dict[str, Any] = {
+                "request_id": request.state.request_id,
+                "route": path,
+                "method": method,
+                "status_code": result.status_code,
+                "elapsed_ms": round(
+                    (time.monotonic() - backend_started) * 1000,
+                    2,
+                ),
+            }
+            try:
+                job_state = json.loads(result.content).get("status")
+            except (AttributeError, json.JSONDecodeError, UnicodeDecodeError):
+                job_state = None
+            if isinstance(job_state, str):
+                attributes["job_state"] = job_state
+            record_event("simulation_api_backend_response", **attributes)
             return _response(result)
         except BackendTimeout:
             record_event(

@@ -8,6 +8,7 @@ import logging
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt
+from policyengine_observability import record_event
 
 from policyengine_simulation_api.config import Settings
 
@@ -29,6 +30,7 @@ class JWTDecoder:
         token: HTTPAuthorizationCredentials | None,
     ) -> dict[str, str]:
         if token is None:
+            record_event("simulation_api_auth_rejected", reason="missing_token")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
         try:
@@ -43,10 +45,12 @@ class JWTDecoder:
                 issuer=self.issuer,
             )
         except Exception as error:
+            reason = type(error).__name__
             logger.info(
                 "invalid_simulation_api_bearer_token",
-                extra={"error_type": type(error).__name__},
+                extra={"error_type": reason},
             )
+            record_event("simulation_api_auth_rejected", reason=reason)
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN) from error
 
 
