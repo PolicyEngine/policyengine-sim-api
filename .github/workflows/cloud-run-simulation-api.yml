@@ -11,15 +11,6 @@ on:
       - ".github/scripts/cloud-run-simulation-api-smoke.sh"
       - ".github/workflows/cloud-run-simulation-api.yml"
   workflow_dispatch:
-    inputs:
-      promote_production:
-        description: Promote the tested production candidate
-        type: boolean
-        default: false
-      rollback_revision:
-        description: Existing production revision to restore to 100%
-        type: string
-        required: false
 
 permissions:
   contents: read
@@ -38,7 +29,6 @@ env:
 
 jobs:
   test:
-    if: ${{ !inputs.rollback_revision }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -52,7 +42,6 @@ jobs:
         working-directory: ${{ env.PROJECT_DIR }}
 
   build:
-    if: ${{ !inputs.rollback_revision }}
     needs: test
     runs-on: ubuntu-latest
     outputs:
@@ -71,7 +60,6 @@ jobs:
       - run: docker push "${{ steps.image.outputs.uri }}"
 
   deploy-staging:
-    if: ${{ !inputs.rollback_revision }}
     needs: build
     runs-on: ubuntu-latest
     environment: staging
@@ -119,15 +107,8 @@ jobs:
           test -n "${url}"
           echo "url=${url}" >> "$GITHUB_OUTPUT"
       - run: bash .github/scripts/cloud-run-simulation-api-smoke.sh "${{ steps.url.outputs.url }}"
-      - name: Promote tested staging tag
-        run: |
-          gcloud run services update-traffic policyengine-simulation-api-staging \
-            --project "${PROJECT_ID}" \
-            --region "${REGION}" \
-            --to-tags "${{ steps.metadata.outputs.tag }}=100"
 
   deploy-production-candidate:
-    if: ${{ !inputs.rollback_revision }}
     needs: [build, deploy-staging]
     runs-on: ubuntu-latest
     environment: production
@@ -173,36 +154,3 @@ jobs:
             --format=json | jq -r --arg tag "${TAG}" '.status.traffic[] | select(.tag == $tag) | .url')"
           test -n "${url}"
           bash .github/scripts/cloud-run-simulation-api-smoke.sh "${url}"
-
-  promote-production:
-    if: ${{ inputs.promote_production && !inputs.rollback_revision }}
-    needs: deploy-production-candidate
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.SIMULATION_GCP_WIF_PROVIDER }}
-          service_account: ${{ secrets.SIMULATION_GCP_DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
-      - run: |
-          gcloud run services update-traffic policyengine-simulation-api \
-            --project "${PROJECT_ID}" \
-            --region "${REGION}" \
-            --to-tags "${{ needs.deploy-production-candidate.outputs.tag }}=100"
-
-  rollback-production:
-    if: ${{ inputs.rollback_revision }}
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.SIMULATION_GCP_WIF_PROVIDER }}
-          service_account: ${{ secrets.SIMULATION_GCP_DEPLOY_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v2
-      - run: |
-          gcloud run services update-traffic policyengine-simulation-api \
-            --project "${PROJECT_ID}" \
-            --region "${REGION}" \
-            --to-revisions "${{ inputs.rollback_revision }}=100"

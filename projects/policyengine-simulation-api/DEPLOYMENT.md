@@ -34,20 +34,27 @@ Configure SIMULATION_RUNTIME_SERVICE_ACCOUNT separately in the staging and
 production GitHub environments. Each environment also supplies its own old
 gateway URL/client ID and the shared Auth0 issuer/audiences.
 
-## Deploy, promote, and roll back
+## Deploy candidates
 
 The Deploy Simulation API to Cloud Run workflow:
 
 1. tests and builds one immutable image;
-2. deploys a tagged no-traffic staging revision and promotes it after smoke
-   checks;
-3. deploys a tagged no-traffic production candidate and smoke-tests it;
-4. promotes production only when manually dispatched with
-   promote_production=true.
+2. deploys and smoke-tests a tagged no-traffic staging revision;
+3. deploys and smoke-tests a tagged no-traffic production revision.
 
-To roll back, manually dispatch the same workflow with rollback_revision set to
-the known-good Cloud Run revision name. The workflow restores that revision to
-100 percent without rebuilding.
+The workflow never changes a service's traffic. After reviewing its smoke
+evidence, an authorized operator promotes an exact known-good revision manually:
+
+    SIMULATION_GCP_PROJECT_ID=policyengine-simulation-api \
+    SIMULATION_DEPLOYMENT_ENVIRONMENT=staging \
+    SIMULATION_TARGET_REVISION=REVISION_NAME \
+    bash .github/scripts/set-cloud-run-simulation-api-revision.sh
+
+Use `SIMULATION_DEPLOYMENT_ENVIRONMENT=production` for production. Rollback uses
+the same command with the prior known-good revision. The script verifies that
+the revision is Ready and belongs to the selected service before assigning it
+100 percent. Use `SIMULATION_TRAFFIC_DRY_RUN=1` to inspect the command without
+changing traffic.
 
 After the first successful deployment creates both services, configure the
 domain mappings idempotently:

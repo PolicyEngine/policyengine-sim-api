@@ -16,6 +16,9 @@ DOMAIN_SCRIPT = (
     / "scripts"
     / "configure-cloud-run-simulation-api-domains.sh"
 )
+TRAFFIC_SCRIPT = (
+    REPOSITORY_ROOT / ".github" / "scripts" / "set-cloud-run-simulation-api-revision.sh"
+)
 WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "cloud-run-simulation-api.yml"
 DOCKERIGNORE = (
     REPOSITORY_ROOT
@@ -28,6 +31,7 @@ DOCKERIGNORE = (
 def test_bootstrap_script_has_valid_shell_syntax():
     subprocess.run(["bash", "-n", BOOTSTRAP_SCRIPT], check=True)
     subprocess.run(["bash", "-n", DOMAIN_SCRIPT], check=True)
+    subprocess.run(["bash", "-n", TRAFFIC_SCRIPT], check=True)
 
 
 def test_bootstrap_dry_run_is_self_contained():
@@ -56,13 +60,41 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     assert "gcloud run deploy" in workflow
-    assert "gcloud run services update-traffic" in workflow
+    assert "update-traffic" not in workflow
+    assert "set-cloud-run-simulation-api-revision.sh" not in workflow
     assert "terraform" not in workflow.lower()
     assert not list(
         (REPOSITORY_ROOT / "projects" / "policyengine-simulation-api" / "infra").glob(
             "*.tf"
         )
     )
+
+
+def test_traffic_changes_are_operator_run_and_revision_validated():
+    script = TRAFFIC_SCRIPT.read_text(encoding="utf-8")
+
+    assert "run revisions describe" in script
+    assert 'select(.type == "Ready" and .status == "True")' in script
+    assert '["serving.knative.dev/service"]' in script
+    assert 'run services update-traffic "${service}"' in script
+    assert '--to-revisions "${revision}=100"' in script
+
+    result = subprocess.run(
+        ["bash", TRAFFIC_SCRIPT],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "SIMULATION_GCP_PROJECT_ID": "simulation-api-test",
+            "SIMULATION_DEPLOYMENT_ENVIRONMENT": "production",
+            "SIMULATION_TARGET_REVISION": "policyengine-simulation-api-00001-abc",
+            "SIMULATION_TRAFFIC_DRY_RUN": "1",
+        },
+    )
+
+    assert "policyengine-simulation-api-00001-abc=100" in result.stdout
+    assert "policyengine-simulation-api-staging" not in result.stdout
 
 
 def test_container_context_excludes_local_environments_and_unrelated_projects():
