@@ -19,9 +19,9 @@ generate_client() {
     # Install build dependencies if not already installed
     uv sync --extra build
 
-    # Use gateway's OpenAPI generator for simulation service (Modal-based)
+    # The permanent Cloud Run Simulation API owns the public schema.
     if [ "$SERVICE" = "simulation" ]; then
-        uv run python -m policyengine_simulation_gateway.generate_openapi
+        uv run python -m policyengine_simulation_api.generate_openapi
     else
         uv run python -m policyengine_api_${SERVICE//-/_}.generate_openapi
     fi
@@ -60,8 +60,8 @@ generate_client() {
     cd ../..
 }
 
-# Generate client for simulation service (Modal gateway)
-generate_client "simulation" "projects/policyengine-simulation-gateway"
+# Generate the client from the permanent Cloud Run front door.
+generate_client "simulation" "projects/policyengine-simulation-api"
 
 echo "✅ Client generated successfully!"
 echo ""
