@@ -61,6 +61,18 @@ def _response(result: BackendResponse) -> Response:
     )
 
 
+def _route_template(request: Request) -> str:
+    return getattr(request.scope.get("route"), "path", request.url.path)
+
+
+def _request_identifiers(request: Request) -> dict[str, str]:
+    return {
+        key: value
+        for key in ("job_id", "batch_job_id")
+        if isinstance((value := request.path_params.get(key)), str)
+    }
+
+
 def create_app(
     *,
     settings: Settings | None = None,
@@ -108,10 +120,11 @@ def create_app(
             extra={
                 "request_id": request_id,
                 "method": request.method,
-                "path": request.url.path,
+                "path": _route_template(request),
                 "status_code": response.status_code,
                 "elapsed_ms": elapsed_ms,
                 "backend": "old_gateway",
+                **_request_identifiers(request),
             },
         )
         return response
@@ -126,7 +139,7 @@ def create_app(
         response_identifier_key: str | None = None,
     ) -> Response:
         backend_started = time.monotonic()
-        route = getattr(request.scope.get("route"), "path", request.url.path)
+        route = _route_template(request)
         event_identifiers = dict(identifiers or {})
         try:
             result = await runtime_backend.request(

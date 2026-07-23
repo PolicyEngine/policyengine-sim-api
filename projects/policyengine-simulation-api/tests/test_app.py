@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -104,6 +105,33 @@ def test_job_status_records_structured_backend_telemetry(
     assert attributes["status_code"] == 202
     assert attributes["route"] == "/jobs/{job_id}"
     assert attributes["job_id"] == "fc-123"
+
+
+def test_request_log_templates_route_and_keeps_structured_job_id(
+    client,
+    backend,
+    caplog,
+):
+    backend.responses[("GET", "/jobs/fc-123")] = BackendResponse(
+        202,
+        b'{"job_id":"fc-123","status":"running"}',
+        {"content-type": "application/json"},
+    )
+
+    with caplog.at_level(logging.INFO):
+        result = client.get(
+            "/jobs/fc-123",
+            headers={"Authorization": "Bearer caller"},
+        )
+
+    assert result.status_code == 202
+    request_record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "simulation_api_request"
+    )
+    assert request_record.path == "/jobs/{job_id}"
+    assert request_record.job_id == "fc-123"
 
 
 def test_budget_window_routes_use_original_batch_id(client, backend):
