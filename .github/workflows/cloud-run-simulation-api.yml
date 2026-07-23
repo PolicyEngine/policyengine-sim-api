@@ -1,0 +1,208 @@
+name: Deploy Simulation API to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "projects/policyengine-simulation-api/**"
+      - "libs/policyengine-fastapi/**"
+      - "libs/policyengine-simulation-contract/**"
+      - "libs/policyengine-simulation-observability/**"
+      - ".github/scripts/cloud-run-simulation-api-smoke.sh"
+      - ".github/workflows/cloud-run-simulation-api.yml"
+  workflow_dispatch:
+    inputs:
+      promote_production:
+        description: Promote the tested production candidate
+        type: boolean
+        default: false
+      rollback_revision:
+        description: Existing production revision to restore to 100%
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cloud-run-simulation-api
+  cancel-in-progress: false
+
+env:
+  PROJECT_DIR: projects/policyengine-simulation-api
+  REGION: ${{ vars.SIMULATION_GCP_REGION || 'us-central1' }}
+  PROJECT_ID: ${{ vars.SIMULATION_GCP_PROJECT_ID }}
+  REPOSITORY: ${{ vars.SIMULATION_ARTIFACT_REPOSITORY || 'policyengine-simulation-api' }}
+  IMAGE_NAME: policyengine-simulation-api
+
+jobs:
+  test:
+    if: ${{ !inputs.rollback_revision }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v8.1.0
+      - run: uv sync --extra test --frozen
+        working-directory: ${{ env.PROJECT_DIR }}
+      - run: uv run pytest tests/ -v
+        working-directory: ${{ env.PROJECT_DIR }}
+
+  build:
+    if: ${{ !inputs.rollback_revision }}
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.uri }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.SIMULATION_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.SIMULATION_GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+      - id: image
+        run: echo "uri=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - run: docker build --file "${PROJECT_DIR}/Dockerfile" --tag "${{ steps.image.outputs.uri }}" .
+      - run: docker push "${{ steps.image.outputs.uri }}"
+
+  deploy-staging:
+    if: ${{ !inputs.rollback_revision }}
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+    outputs:
+      tag: ${{ steps.metadata.outputs.tag }}
+      url: ${{ steps.url.outputs.url }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.SIMULATION_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.SIMULATION_GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - id: metadata
+        run: echo "tag=s${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+      - name: Deploy tagged staging candidate
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: |
+          gcloud run deploy policyengine-simulation-api-staging \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --image "${IMAGE}" \
+            --tag "${TAG}" \
+            --no-traffic \
+            --allow-unauthenticated \
+            --service-account "${{ vars.SIMULATION_RUNTIME_SERVICE_ACCOUNT }}" \
+            --set-env-vars "^@^APP_ENVIRONMENT=staging@SIMULATION_API_PUBLIC_URL=https://staging.simulation.api.policyengine.org@SIMULATION_API_AUTH_REQUIRED=1@SIMULATION_API_AUTH_ISSUER=${{ secrets.SIMULATION_API_AUTH_ISSUER }}@SIMULATION_API_AUTH_AUDIENCE=${{ secrets.SIMULATION_API_AUTH_AUDIENCE }}@OLD_GATEWAY_URL=${{ secrets.OLD_GATEWAY_URL }}@OLD_GATEWAY_AUTH_ISSUER=${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}@OLD_GATEWAY_AUTH_AUDIENCE=${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}@OLD_GATEWAY_AUTH_CLIENT_ID=${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}" \
+            --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=simulation-api-old-gateway-client-secret-staging:latest" \
+            --cpu 1 \
+            --memory 512Mi \
+            --concurrency 80 \
+            --timeout 60 \
+            --min-instances 0 \
+            --max-instances 2
+      - id: url
+        env:
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: |
+          url="$(gcloud run services describe policyengine-simulation-api-staging \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format=json | jq -r --arg tag "${TAG}" '.status.traffic[] | select(.tag == $tag) | .url')"
+          test -n "${url}"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+      - run: bash .github/scripts/cloud-run-simulation-api-smoke.sh "${{ steps.url.outputs.url }}"
+      - name: Promote tested staging tag
+        run: |
+          gcloud run services update-traffic policyengine-simulation-api-staging \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --to-tags "${{ steps.metadata.outputs.tag }}=100"
+
+  deploy-production-candidate:
+    if: ${{ !inputs.rollback_revision }}
+    needs: [build, deploy-staging]
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      tag: ${{ steps.metadata.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.SIMULATION_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.SIMULATION_GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - id: metadata
+        run: echo "tag=p${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+      - name: Deploy no-traffic production candidate
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: |
+          gcloud run deploy policyengine-simulation-api \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --image "${IMAGE}" \
+            --tag "${TAG}" \
+            --no-traffic \
+            --allow-unauthenticated \
+            --service-account "${{ vars.SIMULATION_RUNTIME_SERVICE_ACCOUNT }}" \
+            --set-env-vars "^@^APP_ENVIRONMENT=production@SIMULATION_API_PUBLIC_URL=https://simulation.api.policyengine.org@SIMULATION_API_AUTH_REQUIRED=1@SIMULATION_API_AUTH_ISSUER=${{ secrets.SIMULATION_API_AUTH_ISSUER }}@SIMULATION_API_AUTH_AUDIENCE=${{ secrets.SIMULATION_API_AUTH_AUDIENCE }}@OLD_GATEWAY_URL=${{ secrets.OLD_GATEWAY_URL }}@OLD_GATEWAY_AUTH_ISSUER=${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}@OLD_GATEWAY_AUTH_AUDIENCE=${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}@OLD_GATEWAY_AUTH_CLIENT_ID=${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}" \
+            --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=simulation-api-old-gateway-client-secret-production:latest" \
+            --cpu 1 \
+            --memory 512Mi \
+            --concurrency 80 \
+            --timeout 60 \
+            --min-instances 1 \
+            --max-instances 20
+      - name: Resolve and smoke candidate
+        env:
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: |
+          url="$(gcloud run services describe policyengine-simulation-api \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format=json | jq -r --arg tag "${TAG}" '.status.traffic[] | select(.tag == $tag) | .url')"
+          test -n "${url}"
+          bash .github/scripts/cloud-run-simulation-api-smoke.sh "${url}"
+
+  promote-production:
+    if: ${{ inputs.promote_production && !inputs.rollback_revision }}
+    needs: deploy-production-candidate
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.SIMULATION_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.SIMULATION_GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: |
+          gcloud run services update-traffic policyengine-simulation-api \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --to-tags "${{ needs.deploy-production-candidate.outputs.tag }}=100"
+
+  rollback-production:
+    if: ${{ inputs.rollback_revision }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.SIMULATION_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.SIMULATION_GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - run: |
+          gcloud run services update-traffic policyengine-simulation-api \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --to-revisions "${{ inputs.rollback_revision }}=100"
