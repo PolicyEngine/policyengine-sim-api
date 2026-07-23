@@ -40,6 +40,9 @@ from policyengine_simulation_api.config import Settings
 
 
 logger = logging.getLogger(__name__)
+BACKEND_RESPONSE_HEADER = {
+    "X-PolicyEngine-Simulation-Backend": "old_gateway",
+}
 
 
 def _model_json(model: Any) -> Mapping[str, Any]:
@@ -49,7 +52,7 @@ def _model_json(model: Any) -> Mapping[str, Any]:
 def _response(result: BackendResponse) -> Response:
     headers = {
         **result.headers,
-        "X-PolicyEngine-Simulation-Backend": "old_gateway",
+        **BACKEND_RESPONSE_HEADER,
     }
     return Response(
         content=result.content,
@@ -118,8 +121,13 @@ def create_app(
         method: str,
         path: str,
         body: Mapping[str, Any] | None = None,
+        *,
+        identifiers: Mapping[str, str] | None = None,
+        response_identifier_key: str | None = None,
     ) -> Response:
         backend_started = time.monotonic()
+        route = getattr(request.scope.get("route"), "path", request.url.path)
+        event_identifiers = dict(identifiers or {})
         try:
             result = await runtime_backend.request(
                 method,
@@ -129,52 +137,83 @@ def create_app(
             )
             attributes: dict[str, Any] = {
                 "request_id": request.state.request_id,
-                "route": path,
+                "route": route,
                 "method": method,
                 "status_code": result.status_code,
                 "elapsed_ms": round(
                     (time.monotonic() - backend_started) * 1000,
                     2,
                 ),
+                **event_identifiers,
             }
             try:
-                job_state = json.loads(result.content).get("status")
+                response_payload = json.loads(result.content)
             except (AttributeError, json.JSONDecodeError, UnicodeDecodeError):
-                job_state = None
+                response_payload = None
+            job_state = (
+                response_payload.get("status")
+                if isinstance(response_payload, dict)
+                else None
+            )
             if isinstance(job_state, str):
                 attributes["job_state"] = job_state
+            response_identifier = (
+                response_payload.get(response_identifier_key)
+                if isinstance(response_payload, dict) and response_identifier_key
+                else None
+            )
+            if response_identifier_key and isinstance(response_identifier, str):
+                attributes[response_identifier_key] = response_identifier
             record_event("simulation_api_backend_response", **attributes)
             return _response(result)
         except BackendTimeout:
             record_event(
                 "simulation_api_backend_timeout",
                 request_id=request.state.request_id,
-                route=path,
+                route=route,
+                **event_identifiers,
             )
             return JSONResponse(
                 status_code=504,
                 content={"detail": "Simulation backend timed out."},
-                headers={"Retry-After": "10"},
+                headers={
+                    "Retry-After": "10",
+                    **BACKEND_RESPONSE_HEADER,
+                },
             )
         except (BackendUnavailable, BackendAuthenticationError):
             record_event(
                 "simulation_api_backend_unavailable",
                 request_id=request.state.request_id,
-                route=path,
+                route=route,
+                **event_identifiers,
             )
             return JSONResponse(
                 status_code=503,
                 content={"detail": "Simulation backend is unavailable."},
-                headers={"Retry-After": "10"},
+                headers={
+                    "Retry-After": "10",
+                    **BACKEND_RESPONSE_HEADER,
+                },
             )
 
     protected = [Depends(authenticate)]
 
     @app.post(
         "/simulate/economy/comparison",
+        summary="Submit Simulation",
+        description=(
+            "Submit a simulation job.\n\n"
+            "Routes to the appropriate simulation app based on country and version.\n"
+            "Returns immediately with a job_id for polling."
+        ),
         operation_id="submit_simulation_simulate_economy_comparison_post",
         response_model=JobSubmitResponse,
         response_model_exclude_none=True,
+        responses={
+            200: {"description": "Job submitted successfully"},
+            400: {"description": "Invalid request (unknown country/version)"},
+        },
         dependencies=protected,
     )
     async def submit_comparison(
@@ -186,13 +225,23 @@ def create_app(
             "POST",
             "/simulate/economy/comparison",
             _model_json(body),
+            response_identifier_key="job_id",
         )
 
     @app.post(
         "/simulate/economy/budget-window",
+        summary="Submit Budget Window Batch",
+        description=(
+            "Submit a budget-window batch job.\n\n"
+            "Returns immediately with a parent batch job ID for polling."
+        ),
         operation_id=("submit_budget_window_batch_simulate_economy_budget_window_post"),
         response_model=BudgetWindowBatchSubmitResponse,
         response_model_exclude_none=True,
+        responses={
+            200: {"description": "Budget-window batch submitted successfully"},
+            400: {"description": "Invalid request (unknown country/version/year)"},
+        },
         dependencies=protected,
     )
     async def submit_budget_window(
@@ -204,25 +253,57 @@ def create_app(
             "POST",
             "/simulate/economy/budget-window",
             _model_json(body),
+            response_identifier_key="batch_job_id",
         )
 
     @app.get(
         "/jobs/{job_id}",
+        summary="Get Job Status",
+        description=(
+            "Poll for job status.\n\n"
+            "Returns:\n"
+            '    - 200 with status="complete" and result when done\n'
+            '    - 202 with status="running" while in progress\n'
+            "    - 404 if job_id not found\n"
+            '    - 500 with status="failed" and error on failure'
+        ),
         operation_id="get_job_status_jobs__job_id__get",
         response_model=JobStatusResponse,
         response_model_exclude_none=True,
+        responses={
+            200: {"description": "Job complete", "model": JobStatusResponse},
+            202: {"description": "Job still running"},
+            404: {"description": "Job not found"},
+            500: {"description": "Job failed"},
+        },
         dependencies=protected,
     )
     async def get_job(job_id: str, request: Request) -> Response:
-        return await forward(request, "GET", f"/jobs/{job_id}")
+        return await forward(
+            request,
+            "GET",
+            f"/jobs/{job_id}",
+            identifiers={"job_id": job_id},
+        )
 
     @app.get(
         "/budget-window-jobs/{batch_job_id}",
+        summary="Get Budget Window Job Status",
+        description="Poll for budget-window batch status.",
         operation_id=(
             "get_budget_window_job_status_budget_window_jobs__batch_job_id__get"
         ),
         response_model=BudgetWindowBatchStatusResponse,
         response_model_exclude_none=True,
+        responses={
+            200: {
+                "description": "Batch complete",
+                "model": BudgetWindowBatchStatusResponse,
+            },
+            202: {"description": "Batch submitted or running"},
+            404: {"description": "Batch job not found"},
+            500: {"description": "Batch failed"},
+        },
         dependencies=protected,
     )
     async def get_budget_window_job(
@@ -233,21 +314,33 @@ def create_app(
             request,
             "GET",
             f"/budget-window-jobs/{batch_job_id}",
+            identifiers={"batch_job_id": batch_job_id},
         )
 
-    @app.get("/versions", operation_id="list_versions_versions_get")
-    async def versions(request: Request) -> Response:
+    @app.get(
+        "/versions",
+        summary="List Versions",
+        description="List all available routing versions.",
+        operation_id="list_versions_versions_get",
+    )
+    async def list_versions(request: Request) -> dict:
         return await forward(request, "GET", "/versions")
 
     @app.get(
         "/versions/{kind}",
+        summary="Get Country Versions",
+        description="Get available versions for policyengine, US, or UK routing.",
         operation_id="get_country_versions_versions__kind__get",
     )
-    async def versions_by_kind(kind: str, request: Request) -> Response:
+    async def get_country_versions(kind: str, request: Request) -> dict:
         return await forward(request, "GET", f"/versions/{kind}")
 
-    @app.get("/health", operation_id="health_health_get")
-    async def health() -> dict[str, str]:
+    @app.get(
+        "/health",
+        description="Health check endpoint.",
+        operation_id="health_health_get",
+    )
+    async def health() -> dict:
         return {"status": "healthy"}
 
     @app.get("/ready")
@@ -258,6 +351,7 @@ def create_app(
 
     @app.post(
         "/ping",
+        description="Verify the API is able to receive and process requests.",
         operation_id="ping_ping_post",
         response_model=PingResponse,
     )

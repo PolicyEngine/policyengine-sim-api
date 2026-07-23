@@ -80,7 +80,7 @@ def test_job_status_preserves_id_and_status(client, backend):
     assert backend.requests[-1]["path"] == "/jobs/fc-123"
 
 
-def test_job_status_records_sanitized_backend_telemetry(
+def test_job_status_records_structured_backend_telemetry(
     client,
     backend,
     monkeypatch,
@@ -102,7 +102,8 @@ def test_job_status_records_sanitized_backend_telemetry(
     assert name == "simulation_api_backend_response"
     assert attributes["job_state"] == "running"
     assert attributes["status_code"] == 202
-    assert "job_id" not in attributes
+    assert attributes["route"] == "/jobs/{job_id}"
+    assert attributes["job_id"] == "fc-123"
 
 
 def test_budget_window_routes_use_original_batch_id(client, backend):
@@ -191,6 +192,7 @@ def test_backend_failures_are_sanitized(error, expected_status, expected_detail)
     assert result.status_code == expected_status
     assert result.json() == {"detail": expected_detail}
     assert result.headers["retry-after"] == "10"
+    assert result.headers["x-policyengine-simulation-backend"] == "old_gateway"
 
 
 @pytest.mark.parametrize("status_code", [400, 404, 409, 500])

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 
@@ -37,6 +38,17 @@ def operation_ids(spec: dict) -> dict[tuple[str, str], str]:
     }
 
 
+def normalized_compatibility_paths(spec: dict) -> dict:
+    """Remove the two intentional Cloud Run-only OpenAPI additions."""
+    paths = deepcopy(spec["paths"])
+    paths.pop("/ready", None)
+    for operations in paths.values():
+        for method, operation in operations.items():
+            if method.lower() in {"get", "post", "put", "patch", "delete"}:
+                operation.pop("security", None)
+    return paths
+
+
 def test_route_table_is_frozen():
     assert methods(create_app().openapi()) == EXPECTED_ROUTES
 
@@ -55,7 +67,7 @@ def test_old_gateway_routes_are_all_present():
     assert methods(gateway_spec) <= cloud_run_routes
 
 
-def test_normalized_contract_schemas_match_old_gateway():
+def test_normalized_contract_matches_old_gateway():
     gateway_spec_path = (
         Path(__file__).resolve().parents[2]
         / "policyengine-simulation-gateway"
@@ -66,6 +78,9 @@ def test_normalized_contract_schemas_match_old_gateway():
     gateway_spec = json.loads(gateway_spec_path.read_text())
     cloud_run_spec = create_app().openapi()
 
+    assert normalized_compatibility_paths(
+        cloud_run_spec
+    ) == normalized_compatibility_paths(gateway_spec)
     assert (
         cloud_run_spec["components"]["schemas"] == gateway_spec["components"]["schemas"]
     )
