@@ -26,6 +26,9 @@ dependencies = [
     "modal>=0.73.0",
     "policyengine-observability[fastapi]>=1.3.0,<2",
     "logfire>=3.0.0",
+    # Imported directly by the artifact store client; do not rely on the
+    # transitive pin via policyengine.
+    "google-cloud-storage>=2",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -50,6 +53,10 @@ modal-simulation-image = [
     # but does not declare it (see issue #602).
     "importlib-metadata>=8",
     "policyengine-observability[fastapi]>=1.3.0,<2",
+    # The artifact fetch layer and store client read GCS. The lib is also a
+    # transitive dependency of policyengine, but the image must not depend
+    # on an upstream package keeping it.
+    "google-cloud-storage>=2",
 ]
 # The executor's budget-window scheduler tests exercise the gateway app
 # end-to-end; the gateway project rides in as a dev-only path dependency.

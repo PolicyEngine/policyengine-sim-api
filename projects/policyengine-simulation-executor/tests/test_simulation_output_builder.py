@@ -228,9 +228,7 @@ def _stub_policyengine_output_calls(monkeypatch, baseline, reform) -> None:
     monkeypatch.setattr(
         SimulationOutputBuilder,
         "_build_congressional_district_impact",
-        lambda self: (
-            _congressional_district_output() if self.country == "us" else None
-        ),
+        lambda self: _congressional_district_output() if self.country == "us" else None,
     )
     monkeypatch.setattr(
         SimulationOutputBuilder,
@@ -424,8 +422,10 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
     reform_simulation = object()
     build_calls = []
 
-    def fake_build_simulation(params, *, dataset, policy, scoping_strategy=None):
-        build_calls.append((params, dataset, policy, scoping_strategy))
+    def fake_build_simulation(
+        params, *, dataset, policy, scoping_strategy=None, region_code=None
+    ):
+        build_calls.append((params, dataset, policy, scoping_strategy, region_code))
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
 
     class FakeSimulationOutputBuilder:
@@ -503,6 +503,9 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
         {"simulation_kind": "baseline"},
         {"simulation_kind": "reform"},
     ]
+    # region_code must be the RESOLVED code: it feeds the deterministic
+    # baseline-id predicate, and dropping it silently disables artifact
+    # reuse (every baseline becomes a miss).
     assert build_calls == [
         (
             {
@@ -513,6 +516,7 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
             dataset,
             {"gov.test.parameter": {"2026-01-01": 1}},
             "mock-scoping",
+            "us",
         ),
         (
             {
@@ -523,8 +527,87 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
             dataset,
             {"gov.test.parameter": {"2026-01-01": 2}},
             "mock-scoping",
+            "us",
         ),
     ]
+
+
+def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
+    """The hit/incomplete/miss attribute is the rollout metric for the
+    artifact pipeline; losing the export would blind that measurement."""
+    dataset = object()
+    country_module = SimpleNamespace(model=SimpleNamespace(version="1.715.2"))
+    simulations = {
+        "baseline": SimpleNamespace(artifact_outcome="incomplete"),
+        "reform": object(),
+    }
+    build_count = [0]
+
+    def fake_build_simulation(
+        params, *, dataset, policy, scoping_strategy=None, region_code=None
+    ):
+        build_count[0] += 1
+        return simulations["baseline"] if build_count[0] == 1 else simulations["reform"]
+
+    class FakeSimulationOutputBuilder:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def serialize(self):
+            return CURRENT_SINGLE_YEAR_MACRO_RESULT
+
+    attributes = []
+    for env in (
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+        "GCP_CREDENTIALS_JSON",
+        "GOOGLE_CREDENTIALS",
+        "SERVICE_ACCOUNT_JSON",
+    ):
+        monkeypatch.delenv(env, raising=False)
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._country_module",
+        lambda country: country_module,
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._resolve_region",
+        lambda **kwargs: RegionResolution(
+            code="us",
+            dataset_reference="mock-dataset",
+            scoping_strategy="mock-scoping",
+        ),
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._load_dataset",
+        lambda params, country_module, region_resolution: dataset,
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._build_simulation",
+        fake_build_simulation,
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime.SimulationOutputBuilder",
+        FakeSimulationOutputBuilder,
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime.set_attribute",
+        lambda key, value: attributes.append((key, value)),
+    )
+
+    params = {
+        "country": "us",
+        "baseline": {"gov.test.parameter": {"2026-01-01": 1}},
+        "reform": {"gov.test.parameter": {"2026-01-01": 2}},
+    }
+    run_simulation_impl(params)
+    assert ("baseline_artifact", "incomplete") in attributes
+
+    # A plain Simulation baseline (no artifact_outcome) must emit nothing.
+    attributes.clear()
+    build_count[0] = 0
+    simulations["baseline"] = object()
+    run_simulation_impl(params)
+    assert all(key != "baseline_artifact" for key, _ in attributes)
 
 
 def test_builder_records_output_timings_without_real_calculation(monkeypatch):
@@ -866,7 +949,9 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
         assert country == "us"
         return country_module
 
-    def fake_build_simulation(params, *, dataset, policy, scoping_strategy=None):
+    def fake_build_simulation(
+        params, *, dataset, policy, scoping_strategy=None, region_code=None
+    ):
         build_calls.append((params, dataset, policy, scoping_strategy))
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
 
@@ -942,7 +1027,9 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
     )
     build_calls = []
 
-    def fake_build_simulation(params, *, dataset, policy, scoping_strategy=None):
+    def fake_build_simulation(
+        params, *, dataset, policy, scoping_strategy=None, region_code=None
+    ):
         build_calls.append((params, dataset, policy, scoping_strategy))
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
 

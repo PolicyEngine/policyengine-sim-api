@@ -53,6 +53,42 @@ Operational notes:
   explicit `data` dataset or pinning a `data_version` bypasses it (see
   `_load_dataset` in `simulation_runtime.py`).
 
+## Artifact precompute (baseline artifact pipeline, phase 1)
+
+The precompute app fills a content-addressed GCS store with single-year US
+datasets (2026, 2027, 2025) and the 20 per-cohort national baseline
+simulations per year, so a later deploy can bake them into the image and
+the runtime can load baselines instead of computing them. Library logic
+lives in `src/policyengine_simulation_executor/precompute.py` (keys:
+`artifact_keys.py`, store client: `artifact_store.py`); the Modal app
+(`src/modal/precompute_app.py`) is plumbing only.
+
+Run it manually (phase 1; a CI deploy job takes over in a later phase):
+
+    export POLICYENGINE_ARTIFACT_BUCKET=<bucket-name>
+    uv run modal run --env=staging src/modal/precompute_app.py
+
+Operational notes:
+
+- Idempotent by construction: artifact keys digest the full input closure
+  (package versions, data content sha, certification fingerprint), so the
+  run plans against the store and computes only misses. A re-run against a
+  warm store is a fast no-op. Version bumps rotate the keys and trigger
+  recompute automatically — there is no staleness to manage.
+- Uploads are write-once, by policy, not accident: an existing store
+  object is never overwritten by anything, including `--force` (which
+  recomputes and re-verifies but uploads nothing for existing keys). This
+  buys concurrent-warmer race safety, artifact auditability (verified
+  bytes can never drift), and protection against stale-code runners
+  clobbering trusted artifacts. The heal procedure for a bad artifact is
+  therefore always: delete its object from the bucket, then re-run the
+  precompute — deletion turns the key back into an ordinary miss.
+- A determinism gate runs whenever baselines were computed: one cohort's
+  uploaded artifact is compared frame-by-frame against an independent
+  fresh run. The run fails if they differ.
+- The final stdout line `MANIFEST_DIGEST=<digest>` names the published
+  deploy manifest; the deploy pipeline consumes exactly that line.
+
 ## Observability
 
 The service currently runs two observability backends in parallel:
