@@ -561,6 +561,40 @@ class TestModalPrecompute:
         assert "no MANIFEST_DIGEST= line" in result.stderr
         assert "manifest_digest=" not in github_out
 
+    def test_deploy_workflow_runs_precompute_before_deploy(self):
+        """The reusable workflow must gate deploy on the precompute job."""
+        reusable_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+        ).read_text(encoding="utf-8")
+
+        assert "precompute:" in reusable_workflow
+        assert "needs: [precompute]" in reusable_workflow
+        assert 'modal-precompute.sh "${{ inputs.modal_environment }}"' in (
+            reusable_workflow
+        )
+        assert (
+            "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}"
+            in reusable_workflow
+        )
+        assert (
+            "manifest_digest: ${{ steps.run-precompute.outputs.manifest_digest }}"
+            in reusable_workflow
+        )
+
+    def test_precompute_job_syncs_its_own_secrets(self):
+        """Precompute must not depend on a prior deploy's secret sync."""
+        reusable_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+        ).read_text(encoding="utf-8")
+
+        sync_invocation = (
+            'modal-sync-secrets.sh "${{ inputs.modal_environment }}" '
+            '"${{ inputs.environment }}"'
+        )
+        assert reusable_workflow.count(sync_invocation) == 2, (
+            "Expected the precompute AND deploy jobs to each sync Modal secrets"
+        )
+
 
 class TestModalGetUrl:
     """Tests for modal-get-url.sh"""

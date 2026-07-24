@@ -40,8 +40,62 @@ on:
         value: ${{ jobs.deploy.outputs.uk_data_version }}
 
 jobs:
+  precompute:
+    name: Precompute artifacts
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 60
+    outputs:
+      manifest_digest: ${{ steps.run-precompute.outputs.manifest_digest }}
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v6
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: "3.13"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v8.1.0
+
+    - name: Make scripts executable
+      run: chmod +x .github/scripts/*.sh
+
+    - name: Install dependencies
+      working-directory: projects/policyengine-simulation-executor
+      run: uv sync
+
+    # Deliberately duplicates the deploy job's sync: precompute must never
+    # depend on a prior deploy having created the Modal secrets it uses.
+    - name: Sync Modal secrets from GitHub
+      working-directory: projects/policyengine-simulation-executor
+      env:
+        MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+        MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+        GATEWAY_AUTH_ISSUER: ${{ secrets.GATEWAY_AUTH_ISSUER }}
+        GATEWAY_AUTH_AUDIENCE: ${{ secrets.GATEWAY_AUTH_AUDIENCE }}
+        GATEWAY_AUTH_CLIENT_ID: ${{ secrets.GATEWAY_AUTH_CLIENT_ID }}
+        GATEWAY_AUTH_CLIENT_SECRET: ${{ secrets.GATEWAY_AUTH_CLIENT_SECRET }}
+        GATEWAY_AUTH_REQUIRED: ${{ vars.GATEWAY_AUTH_REQUIRED }}
+      run: ../../.github/scripts/modal-sync-secrets.sh "${{ inputs.modal_environment }}" "${{ inputs.environment }}"
+
+    - name: Run artifact precompute
+      id: run-precompute
+      working-directory: projects/policyengine-simulation-executor
+      env:
+        MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+        MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}
+      run: ../../.github/scripts/modal-precompute.sh "${{ inputs.modal_environment }}" "false"
+
   deploy:
     name: Deploy to Modal
+    needs: [precompute]
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     outputs:
