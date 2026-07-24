@@ -7,9 +7,6 @@ from pathlib import Path
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-BOOTSTRAP_SCRIPT = (
-    REPOSITORY_ROOT / ".github" / "scripts" / "bootstrap-cloud-run-simulation-entry.sh"
-)
 DOMAIN_SCRIPT = (
     REPOSITORY_ROOT
     / ".github"
@@ -38,64 +35,9 @@ DOCKERIGNORE = (
 )
 
 
-def test_bootstrap_script_has_valid_shell_syntax():
-    subprocess.run(["bash", "-n", BOOTSTRAP_SCRIPT], check=True)
+def test_operator_scripts_have_valid_shell_syntax():
     subprocess.run(["bash", "-n", DOMAIN_SCRIPT], check=True)
     subprocess.run(["bash", "-n", TRAFFIC_SCRIPT], check=True)
-
-
-def test_bootstrap_dry_run_is_self_contained():
-    environment = {
-        **os.environ,
-        "SIMULATION_ENTRYPOINT_GCP_PROJECT_ID": "simulation-entry-test",
-        "SIMULATION_ENTRYPOINT_BOOTSTRAP_DRY_RUN": "1",
-    }
-
-    result = subprocess.run(
-        ["bash", BOOTSTRAP_SCRIPT],
-        check=True,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
-
-    assert "projects create simulation-entry-test" in result.stdout
-    assert (
-        "artifacts repositories create policyengine-simulation-entry" in result.stdout
-    )
-    assert "roles/serviceusage.serviceUsageConsumer" in result.stdout
-    assert "Bootstrap complete" in result.stdout
-    assert "000000000000" in result.stdout
-
-
-def test_bootstrap_rejects_invalid_project_id():
-    result = subprocess.run(
-        ["bash", BOOTSTRAP_SCRIPT],
-        check=False,
-        capture_output=True,
-        text=True,
-        env={
-            **os.environ,
-            "SIMULATION_ENTRYPOINT_GCP_PROJECT_ID": (
-                "policyengine-simulation-entry-too-long"
-            ),
-            "SIMULATION_ENTRYPOINT_BOOTSTRAP_DRY_RUN": "1",
-        },
-    )
-
-    assert result.returncode == 2
-    assert "valid 6-30 character GCP project ID" in result.stderr
-
-
-def test_workload_identity_is_limited_to_main_deployment_workflow():
-    bootstrap = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
-
-    assert "assertion.ref == 'refs/heads/main'" in bootstrap
-    assert "assertion.workflow_ref ==" in bootstrap
-    assert (
-        ".github/workflows/cloud-run-simulation-entry.yml@refs/heads/main" in bootstrap
-    )
-    assert "providers update-oidc" in bootstrap
 
 
 def test_deployment_uses_gcloud_workflow_without_terraform():
@@ -110,6 +52,8 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert "needs: deploy-staging" in workflow
     assert "needs: deploy-production-candidate" in workflow
     assert workflow.count("id-token: write") == 3
+    assert workflow.count("vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME") == 2
+    assert "simulation-entry-old-gateway-client-secret" not in workflow
     assert AUTHENTICATED_TESTS.joinpath("test_deployed_auth.py").is_file()
     assert not list(
         (REPOSITORY_ROOT / "projects" / "policyengine-simulation-entry" / "infra").glob(

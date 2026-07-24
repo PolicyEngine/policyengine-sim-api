@@ -94,7 +94,7 @@ jobs:
             --allow-unauthenticated \
             --service-account "${{ vars.SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT }}" \
             --set-env-vars "^@^APP_ENVIRONMENT=staging@SIMULATION_ENTRYPOINT_PUBLIC_URL=https://staging.simulation.api.policyengine.org@SIMULATION_ENTRYPOINT_AUTH_REQUIRED=1@SIMULATION_ENTRYPOINT_AUTH_ISSUER=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}@SIMULATION_ENTRYPOINT_AUTH_AUDIENCE=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}@OLD_GATEWAY_URL=${{ secrets.OLD_GATEWAY_URL }}@OLD_GATEWAY_AUTH_ISSUER=${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}@OLD_GATEWAY_AUTH_AUDIENCE=${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}@OLD_GATEWAY_AUTH_CLIENT_ID=${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}" \
-            --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=simulation-entry-old-gateway-client-secret-staging:latest" \
+            --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=${{ vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME }}:latest" \
             --cpu 1 \
             --memory 512Mi \
             --concurrency 80 \
@@ -168,7 +168,7 @@ jobs:
             --allow-unauthenticated \
             --service-account "${{ vars.SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT }}" \
             --set-env-vars "^@^APP_ENVIRONMENT=production@SIMULATION_ENTRYPOINT_PUBLIC_URL=https://simulation.api.policyengine.org@SIMULATION_ENTRYPOINT_AUTH_REQUIRED=1@SIMULATION_ENTRYPOINT_AUTH_ISSUER=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}@SIMULATION_ENTRYPOINT_AUTH_AUDIENCE=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}@OLD_GATEWAY_URL=${{ secrets.OLD_GATEWAY_URL }}@OLD_GATEWAY_AUTH_ISSUER=${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}@OLD_GATEWAY_AUTH_AUDIENCE=${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}@OLD_GATEWAY_AUTH_CLIENT_ID=${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}" \
-            --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=simulation-entry-old-gateway-client-secret-production:latest" \
+            --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=${{ vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME }}:latest" \
             --cpu 1 \
             --memory 512Mi \
             --concurrency 80 \
