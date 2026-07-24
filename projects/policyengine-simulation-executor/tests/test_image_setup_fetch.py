@@ -9,6 +9,7 @@ add_local_python_source).
 """
 
 import ast
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -170,6 +171,83 @@ class TestFreshnessGate:
         )
         fetch_artifacts("test-bucket", _manifest(), client=fake_client)
         assert len(fake_client.downloads) == 2
+
+
+class TestCredentialShim:
+    """The client=None path: credentials are built in memory from the
+    secret blob via service_account.Credentials.from_service_account_info
+    (never written to disk — the layer's filesystem is committed into the
+    image), falling back to ambient ADC when no blob is present."""
+
+    @pytest.fixture
+    def patched_google(self, monkeypatch, fake_client):
+        from google.cloud import storage
+        from google.oauth2 import service_account
+
+        recorder = SimpleNamespace(infos=[], client_calls=[], sentinel=object())
+
+        def fake_from_info(info):
+            recorder.infos.append(info)
+            return recorder.sentinel
+
+        def fake_client_factory(**kwargs):
+            recorder.client_calls.append(kwargs)
+            return fake_client
+
+        monkeypatch.setattr(
+            service_account.Credentials, "from_service_account_info", fake_from_info
+        )
+        monkeypatch.setattr(storage, "Client", fake_client_factory)
+        return recorder
+
+    def test_builds_in_memory_credentials_from_the_secret_blob(
+        self, monkeypatch, fake_client, data_folder, patched_google
+    ):
+        monkeypatch.setenv(
+            "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+            '{"type": "service_account", "project_id": "pe-test"}',
+        )
+
+        fetch_artifacts("test-bucket", _manifest())
+
+        assert patched_google.infos == [
+            {"type": "service_account", "project_id": "pe-test"}
+        ]
+        assert patched_google.client_calls == [
+            {"credentials": patched_google.sentinel, "project": "pe-test"}
+        ]
+        assert len(fake_client.downloads) == 2
+
+    def test_unwraps_the_double_encoded_blob(
+        self, monkeypatch, fake_client, data_folder, patched_google
+    ):
+        clean = json.dumps({"type": "service_account", "project_id": "pe-test"})
+        monkeypatch.setenv(
+            "GOOGLE_APPLICATION_CREDENTIALS_JSON", clean.replace('"', '\\"')
+        )
+
+        fetch_artifacts("test-bucket", _manifest())
+
+        assert patched_google.infos == [
+            {"type": "service_account", "project_id": "pe-test"}
+        ]
+
+    def test_falls_back_to_ambient_adc_without_a_blob(
+        self, monkeypatch, fake_client, data_folder, patched_google
+    ):
+        monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", raising=False)
+
+        fetch_artifacts("test-bucket", _manifest())
+
+        assert patched_google.infos == []
+        assert patched_google.client_calls == [{}]
+
+
+def test_fetch_never_writes_credentials_to_disk():
+    """A run_function layer commits its container filesystem into the
+    image, so the shim must never materialize the key as a file."""
+    source = Path(image_setup.__file__).read_text(encoding="utf-8")
+    assert "tempfile" not in source
 
 
 def test_image_setup_module_stays_self_contained():

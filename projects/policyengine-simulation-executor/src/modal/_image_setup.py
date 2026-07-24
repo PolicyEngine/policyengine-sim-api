@@ -28,7 +28,6 @@ def fetch_artifacts(bucket: str, manifest, *, client=None):
     import json
     import logging
     import os
-    import tempfile
     from pathlib import Path
 
     logging.basicConfig(level=logging.INFO)
@@ -86,81 +85,74 @@ def fetch_artifacts(bucket: str, manifest, *, client=None):
             "current version-set."
         )
 
-    creds_file = None
-    try:
-        if client is None:
-            if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-                blob = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-                if blob:
-                    # The secret payload is sometimes double-encoded (the
-                    # whole JSON object wrapped in quotes with escaped
-                    # interior quotes) — same unwrap as the runtime's
-                    # _normalize_credentials_blob.
-                    try:
-                        json.loads(blob)
-                    except json.JSONDecodeError:
-                        if blob.lstrip().startswith('"') or '\\"' in blob:
-                            blob = json.loads(f'"{blob}"')
-                        else:
-                            raise
-                    # This layer's container filesystem is committed into
-                    # the image, so the credentials file must be a temp
-                    # file deleted before returning — never a path under
-                    # the data folder.
-                    creds_file = tempfile.NamedTemporaryFile(
-                        mode="w", suffix=".json", delete=True
-                    )
-                    creds_file.write(blob)
-                    creds_file.flush()
-                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_file.name
-                # No creds env at all: fall through to ambient ADC (the
-                # local fault-drill path).
-            from google.cloud import storage
+    if client is None:
+        creds_kwargs = {}
+        blob = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        if blob:
+            # The secret payload is sometimes double-encoded (escaped
+            # interior quotes, with or without outer quotes) — same
+            # unwrap as the runtime's _normalize_credentials_blob.
+            try:
+                parsed = json.loads(blob)
+            except json.JSONDecodeError:
+                if blob.lstrip().startswith('"') or '\\"' in blob:
+                    parsed = json.loads(f'"{blob}"')
+                else:
+                    raise
+            info = json.loads(parsed) if isinstance(parsed, str) else parsed
 
-            client = storage.Client()
+            from google.oauth2 import service_account
 
-        data_folder = Path(
-            os.environ.get("POLICYENGINE_DATA_FOLDER", "/opt/policyengine/data")
+            # Credentials built in memory, never written to disk: this
+            # layer's container filesystem is committed into the image,
+            # so a credentials file would ship inside it.
+            creds_kwargs = {
+                "credentials": service_account.Credentials.from_service_account_info(
+                    info
+                ),
+                "project": info.get("project_id"),
+            }
+        # No blob: ambient ADC (the local fault-drill path).
+        from google.cloud import storage
+
+        client = storage.Client(**creds_kwargs)
+
+    data_folder = Path(
+        os.environ.get("POLICYENGINE_DATA_FOLDER", "/opt/policyengine/data")
+    )
+    data_folder.mkdir(parents=True, exist_ok=True)
+    bucket_handle = client.bucket(bucket)
+    artifacts = manifest["artifacts"]
+
+    missing = [
+        artifact["path"]
+        for artifact in artifacts
+        if not bucket_handle.blob(artifact["path"]).exists()
+    ]
+    if missing:
+        # Fail the image build loudly rather than shipping an image
+        # with a partial artifact set. Heal: re-run the precompute
+        # (a deleted object is an ordinary miss to it).
+        raise RuntimeError(
+            "Artifact store is missing objects the manifest lists: "
+            + ", ".join(missing)
         )
-        data_folder.mkdir(parents=True, exist_ok=True)
-        bucket_handle = client.bucket(bucket)
-        artifacts = manifest["artifacts"]
 
-        missing = [
-            artifact["path"]
-            for artifact in artifacts
-            if not bucket_handle.blob(artifact["path"]).exists()
-        ]
-        if missing:
-            # Fail the image build loudly rather than shipping an image
-            # with a partial artifact set. Heal: re-run the precompute
-            # (a deleted object is an ordinary miss to it).
-            raise RuntimeError(
-                "Artifact store is missing objects the manifest lists: "
-                + ", ".join(missing)
-            )
+    # Unconditional downloads: a same-named stale file must never
+    # survive into the image, and the layer starts empty of these
+    # files anyway.
+    for artifact in artifacts:
+        target = data_folder / artifact["filename"]
+        bucket_handle.blob(artifact["path"]).download_to_filename(str(target))
+        logger.info("Fetched %s (%.1f MB)", target, target.stat().st_size / 1e6)
 
-        # Unconditional downloads: a same-named stale file must never
-        # survive into the image, and the layer starts empty of these
-        # files anyway.
-        for artifact in artifacts:
-            target = data_folder / artifact["filename"]
-            bucket_handle.blob(artifact["path"]).download_to_filename(str(target))
-            logger.info("Fetched %s (%.1f MB)", target, target.stat().st_size / 1e6)
-
-        absent = [
-            str(data_folder / artifact["filename"])
-            for artifact in artifacts
-            if not (data_folder / artifact["filename"]).exists()
-        ]
-        if absent:
-            raise RuntimeError(
-                f"Artifact fetch did not produce expected files: {absent}"
-            )
-    finally:
-        if creds_file is not None:
-            os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
-            creds_file.close()
+    absent = [
+        str(data_folder / artifact["filename"])
+        for artifact in artifacts
+        if not (data_folder / artifact["filename"]).exists()
+    ]
+    if absent:
+        raise RuntimeError(f"Artifact fetch did not produce expected files: {absent}")
 
 
 def snapshot_models():
