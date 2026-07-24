@@ -1,8 +1,9 @@
 """Typed schemas for the precompute pipeline's data flow.
 
 Every structure that crosses a function boundary in the precompute — the
-plan, its entries, the bundle version identity, the deploy manifest, and
-the worker results — is a strict Pydantic model (``extra="forbid"``),
+plan, its entries, the bundle version identity, the deploy manifest, the
+deployed-environment marker, and the worker results — is a strict
+Pydantic model (``extra="forbid"``),
 matching the gateway contract's discipline. Plain dicts exist only at the
 Modal serialization boundary: wherever a structured value crosses, the
 app wrappers ``model_dump()`` on the way out of a container and
@@ -110,6 +111,29 @@ class ArtifactManifest(_StrictModel):
     def canonical_payload(self) -> dict[str, Any]:
         """The exact dict shape that gets digested and stored."""
         return self.model_dump(by_alias=True)
+
+
+class DeployedMarker(_StrictModel):
+    """The ``deployed/<environment>.json`` record of what an environment runs.
+
+    Written after a healthy deploy (last-writer-wins) by
+    ``src.modal.utils.record_deployment`` and read by artifact GC as its
+    liveness signal — the ``manifest_digest`` here is what keeps a live
+    artifact set from being collected. This is a persisted wire shape:
+    keep the keys stable.
+    """
+
+    environment: str
+    manifest_digest: str
+    policyengine_version: str
+    us_version: str
+    uk_version: str
+    us_data_version: str
+    uk_data_version: str
+    github_run_id: str
+    github_run_url: str
+    github_sha: str
+    deployed_at: str
 
 
 class DatasetBuildResult(_StrictModel):

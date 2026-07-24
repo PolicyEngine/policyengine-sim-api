@@ -2,9 +2,8 @@
 
 Import parity, not data parity: the image here is the deployed image's
 layer prefix (pinned pip layer, policyengine bundle install, version
-env) plus the source mounts — deliberately excluding the multi-hour
-dataset-prebuild and model-snapshot layers, which add no Python
-packages. Because layers are content-addressed and built through the
+env) plus the source mounts — deliberately excluding the artifact-fetch
+and model-snapshot layers, which add no Python packages. Because layers are content-addressed and built through the
 shared ``build_runtime_simulation_image()``, a warm cache makes this run
 take seconds; after a relock it pays only the bundle install.
 

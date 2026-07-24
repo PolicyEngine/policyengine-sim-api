@@ -35,6 +35,9 @@ def precompute_module(monkeypatch):
         "POLICYENGINE_UK_VERSION",
     ):
         monkeypatch.setenv(env, "0.0.0-test")
+    # A developer following the local-deploy instructions may have the
+    # digest exported; importing src.modal.app must not reach for GCS.
+    monkeypatch.delenv("POLICYENGINE_MANIFEST_DIGEST", raising=False)
     for module in ("src.modal.app", "src.modal.precompute_app"):
         sys.modules.pop(module, None)
     module = importlib.import_module("src.modal.precompute_app")
@@ -69,7 +72,7 @@ def test_compute_baseline_matches_segment_worker_shape(precompute_module):
     assert kwargs["timeout"] == 3600
 
 
-def test_dataset_builder_gets_prebuild_scale_resources(precompute_module):
+def test_dataset_builder_gets_dataset_build_scale_resources(precompute_module):
     kwargs = _function_kwargs(precompute_module, "build_dataset")
     assert kwargs["cpu"] == 8.0
     assert kwargs["memory"] == 65536

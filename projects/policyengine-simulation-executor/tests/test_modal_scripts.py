@@ -614,6 +614,38 @@ class TestModalPrecompute:
             '"${{ inputs.force_recompute }}"' in reusable_workflow
         )
 
+    def test_deploy_workflow_threads_manifest_and_store_credentials_to_deploy(self):
+        """The deploy step resolves the manifest from GCS on the runner,
+        so it needs the digest, the store bucket, and GCP credentials."""
+        reusable_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+        ).read_text(encoding="utf-8")
+
+        deploy_step = reusable_workflow[
+            reusable_workflow.index(
+                "Deploy simulation API to Modal"
+            ) : reusable_workflow.index("Get deployed URL")
+        ]
+        assert (
+            "POLICYENGINE_MANIFEST_DIGEST: "
+            "${{ needs.precompute.outputs.manifest_digest }}" in deploy_step
+        )
+        assert (
+            "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}"
+            in deploy_step
+        )
+        assert "GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}" in (
+            deploy_step
+        )
+        # The precompute, deploy, and record-marker steps each carry the
+        # bucket var.
+        assert (
+            reusable_workflow.count(
+                "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}"
+            )
+            == 3
+        )
+
     def test_precompute_job_syncs_its_own_secrets(self):
         """Precompute must not depend on a prior deploy's secret sync."""
         reusable_workflow = (
@@ -627,6 +659,123 @@ class TestModalPrecompute:
         assert reusable_workflow.count(sync_invocation) == 2, (
             "Expected the precompute AND deploy jobs to each sync Modal secrets"
         )
+
+
+class TestModalRecordDeployment:
+    """Tests for modal-record-deployment.sh"""
+
+    script = SCRIPTS_DIR / "modal-record-deployment.sh"
+
+    def _run_with_fake_uv(self, tmp_path, *args, bucket="policyengine-sim-artifacts"):
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        log_path = tmp_path / "uv-calls.log"
+        uv_path = bin_dir / "uv"
+        uv_path.write_text(
+            '#!/bin/bash\nprintf \'%s\\n\' "$*" >> "$UV_FAKE_LOG"\n',
+            encoding="utf-8",
+        )
+        uv_path.chmod(0o755)
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
+                "UV_FAKE_LOG": str(log_path),
+            }
+        )
+        if bucket is None:
+            env.pop("POLICYENGINE_ARTIFACT_BUCKET", None)
+        else:
+            env["POLICYENGINE_ARTIFACT_BUCKET"] = bucket
+
+        result = subprocess.run(
+            ["bash", str(self.script), *args],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        calls = (
+            log_path.read_text(encoding="utf-8").splitlines()
+            if log_path.exists()
+            else []
+        )
+        return result, calls
+
+    def test_script_exists(self):
+        """Script file should exist."""
+        assert self.script.exists(), f"Script not found at {self.script}"
+
+    def test_requires_environment_argument(self):
+        """Should fail with no arguments."""
+        result = subprocess.run(
+            ["bash", str(self.script)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0
+
+    def test_requires_manifest_digest_argument(self, tmp_path):
+        """Should fail before invoking anything without a digest."""
+        result, calls = self._run_with_fake_uv(tmp_path, "beta")
+
+        assert result.returncode != 0
+        assert calls == []
+
+    def test_requires_artifact_bucket(self, tmp_path):
+        """Should fail before invoking anything without the bucket env."""
+        result, calls = self._run_with_fake_uv(
+            tmp_path, "beta", "digest-abc", bucket=None
+        )
+
+        assert result.returncode != 0
+        assert "POLICYENGINE_ARTIFACT_BUCKET is required" in result.stderr
+        assert calls == []
+
+    def test_invokes_the_recorder_module(self, tmp_path):
+        """The exact python -m invocation, environment and digest threaded."""
+        result, calls = self._run_with_fake_uv(tmp_path, "beta", "digest-abc")
+
+        assert result.returncode == 0, result.stderr
+        assert calls == [
+            "run python -m src.modal.utils.record_deployment "
+            "--environment beta --manifest-digest digest-abc"
+        ]
+
+    def test_deploy_workflow_records_marker_after_health_check(self):
+        """Both legs write deployed/<env>.json once the deploy is healthy."""
+        reusable_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+        ).read_text(encoding="utf-8")
+
+        invocation = (
+            'modal-record-deployment.sh "${{ inputs.environment }}" '
+            '"${{ needs.precompute.outputs.manifest_digest }}"'
+        )
+        assert invocation in reusable_workflow
+        # The marker means deployed AND healthy: it must come after the
+        # health check step.
+        assert reusable_workflow.index("Verify deployment health") < (
+            reusable_workflow.index("modal-record-deployment.sh")
+        )
+
+        # The payload builder maps missing env vars to empty strings, so a
+        # silent rename here would empty the marker's fields — assert every
+        # env line the step feeds it.
+        marker_step = reusable_workflow[
+            reusable_workflow.index("Record deployment marker") :
+        ]
+        marker_step = marker_step[: marker_step.index("integ_test:")]
+        for env_line in (
+            "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}",
+            "GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}",
+            "POLICYENGINE_VERSION: ${{ steps.versions.outputs.policyengine_version }}",
+            "POLICYENGINE_US_VERSION: ${{ steps.versions.outputs.us_version }}",
+            "POLICYENGINE_UK_VERSION: ${{ steps.versions.outputs.uk_version }}",
+            "US_DATA_VERSION: ${{ steps.versions.outputs.us_data_version }}",
+            "UK_DATA_VERSION: ${{ steps.versions.outputs.uk_data_version }}",
+        ):
+            assert env_line in marker_step, f"marker step is missing: {env_line}"
 
 
 class TestModalGetUrl:

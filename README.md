@@ -83,7 +83,7 @@ manual deploy step. On merge to `main`, the Modal deploy workflow
 
 The stable gateway app is `policyengine-simulation-gateway`; executors deploy as
 versioned `policyengine-simulation-py{version}` apps. For Modal image and deploy
-specifics (image dependency pinning, dataset prebuild, observability), see the
+specifics (image dependency pinning, artifact fetch, observability), see the
 service READMEs:
 
 - `projects/policyengine-simulation-gateway/README.md`

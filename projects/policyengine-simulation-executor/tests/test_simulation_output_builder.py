@@ -1145,8 +1145,7 @@ def test_load_dataset_passes_bundle_default_name_to_country_loader_with_receipt(
     ]
 
 
-# TEMPORARY: remove once single-year datasets are published (issue #596).
-# Pins the guard that keeps every non-default dataset request away from the
+# Locks the guard that keeps every non-default dataset request away from the
 # baked default-revision single-year files in POLICYENGINE_DATA_FOLDER.
 # ensure_datasets keys its cache on a revision-stripped filename stem, so
 # even an explicit dataset name or foreign URI can collide with the baked
