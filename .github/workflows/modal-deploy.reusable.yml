@@ -16,6 +16,11 @@ on:
         default: false
         type: boolean
         description: 'Force latest pointers to this deployment'
+      force_recompute:
+        required: false
+        default: false
+        type: boolean
+        description: 'Recompute artifacts even when the store already has them'
     outputs:
       simulation_api_url:
         description: 'The deployed simulation API URL'
@@ -91,7 +96,7 @@ jobs:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}
-      run: ../../.github/scripts/modal-precompute.sh "${{ inputs.modal_environment }}" "false"
+      run: ../../.github/scripts/modal-precompute.sh "${{ inputs.modal_environment }}" "${{ inputs.force_recompute }}"
 
   deploy:
     name: Deploy to Modal

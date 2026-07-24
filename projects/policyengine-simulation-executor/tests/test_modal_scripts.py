@@ -581,6 +581,25 @@ class TestModalPrecompute:
             in reusable_workflow
         )
 
+    def test_deploy_workflow_threads_force_recompute_to_script(self):
+        """The manual recompute flag should reach the precompute script."""
+        deploy_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "modal-deploy.yml"
+        ).read_text(encoding="utf-8")
+        reusable_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+        ).read_text(encoding="utf-8")
+
+        assert "force_recompute:" in deploy_workflow
+        assert (
+            "force_recompute: ${{ inputs.force_recompute || false }}" in deploy_workflow
+        )
+        assert "force_recompute:" in reusable_workflow
+        assert (
+            'modal-precompute.sh "${{ inputs.modal_environment }}" '
+            '"${{ inputs.force_recompute }}"' in reusable_workflow
+        )
+
     def test_precompute_job_syncs_its_own_secrets(self):
         """Precompute must not depend on a prior deploy's secret sync."""
         reusable_workflow = (
