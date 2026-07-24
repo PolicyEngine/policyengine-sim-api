@@ -125,6 +125,14 @@ class TestPlanning:
     def test_years_are_in_priority_order(self):
         assert precompute.PRECOMPUTE_YEARS == [2026, 2027, 2025]
 
+    def test_precompute_years_cover_runtime_default_year(self):
+        """The image bakes exactly the precomputed years, so the runtime
+        default year must be one of them or every default request pays a
+        runtime dataset build."""
+        from policyengine_simulation_executor.simulation_runtime import DEFAULT_YEAR
+
+        assert DEFAULT_YEAR in precompute.PRECOMPUTE_YEARS
+
     def test_manifest_lists_every_artifact_with_runtime_filenames(self):
         manifest = precompute.build_manifest(_plan())
         assert manifest.manifest_schema == precompute.MANIFEST_SCHEMA
@@ -678,8 +686,8 @@ class TestComputeBaselineImpl:
                 return True
 
         fake_analysis = ModuleType("policyengine.tax_benefit_models.us.analysis")
-        fake_analysis.configure_budgetary_impact_variables = (
-            lambda baseline, reform: state.configured.append((baseline, reform))
+        fake_analysis.configure_budgetary_impact_variables = lambda baseline, reform: (
+            state.configured.append((baseline, reform))
         )
         monkeypatch.setitem(
             sys.modules, "policyengine.tax_benefit_models.us.analysis", fake_analysis
