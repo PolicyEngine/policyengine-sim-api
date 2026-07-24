@@ -14,14 +14,15 @@ from datetime import datetime, timezone
 from typing import Mapping
 
 from policyengine_simulation_executor.artifact_store import ArtifactStore
+from policyengine_simulation_executor.precompute_models import DeployedMarker
 
 
-def build_marker_payload(
+def build_marker(
     environment: str,
     manifest_digest: str,
     env: Mapping[str, str],
-) -> dict[str, str]:
-    """Pure payload assembly: the deploy identity that referenced this
+) -> DeployedMarker:
+    """Pure marker assembly: the deploy identity that referenced this
     manifest. Missing env vars become empty fields, never errors — the
     marker write itself is the part that must not fail silently."""
     server = env.get("GITHUB_SERVER_URL", "")
@@ -32,19 +33,19 @@ def build_marker_payload(
         if server and repository and run_id
         else ""
     )
-    return {
-        "environment": environment,
-        "manifest_digest": manifest_digest,
-        "policyengine_version": env.get("POLICYENGINE_VERSION", ""),
-        "us_version": env.get("POLICYENGINE_US_VERSION", ""),
-        "uk_version": env.get("POLICYENGINE_UK_VERSION", ""),
-        "us_data_version": env.get("US_DATA_VERSION", ""),
-        "uk_data_version": env.get("UK_DATA_VERSION", ""),
-        "github_run_id": run_id,
-        "github_run_url": run_url,
-        "github_sha": env.get("GITHUB_SHA", ""),
-        "deployed_at": datetime.now(timezone.utc).isoformat(),
-    }
+    return DeployedMarker(
+        environment=environment,
+        manifest_digest=manifest_digest,
+        policyengine_version=env.get("POLICYENGINE_VERSION", ""),
+        us_version=env.get("POLICYENGINE_US_VERSION", ""),
+        uk_version=env.get("POLICYENGINE_UK_VERSION", ""),
+        us_data_version=env.get("US_DATA_VERSION", ""),
+        uk_data_version=env.get("UK_DATA_VERSION", ""),
+        github_run_id=run_id,
+        github_run_url=run_url,
+        github_sha=env.get("GITHUB_SHA", ""),
+        deployed_at=datetime.now(timezone.utc).isoformat(),
+    )
 
 
 def main() -> None:
@@ -53,8 +54,10 @@ def main() -> None:
     parser.add_argument("--manifest-digest", required=True)
     args = parser.parse_args()
 
-    payload = build_marker_payload(args.environment, args.manifest_digest, os.environ)
-    ArtifactStore().write_deployed_marker(args.environment, payload)
+    marker = build_marker(args.environment, args.manifest_digest, os.environ)
+    # The store speaks JSON-able mappings; models dump at the call site
+    # (same discipline as publish_manifest_impl).
+    ArtifactStore().write_deployed_marker(args.environment, marker.model_dump())
     print(
         f"Recorded deployed/{args.environment}.json for manifest {args.manifest_digest}"
     )

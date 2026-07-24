@@ -77,26 +77,33 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
 
 
 def _fake_manifest():
-    return {
-        "schema": "mf1",
-        "country": "us",
-        "receipt": {
-            "policyengine_version": "4.19.1",
-            "model_version": "1.700.0",
-            "data_version": "1.2.3",
-            "data_artifact_revision": "rev-abc",
-            "default_dataset": "populace_cps",
-        },
-        "artifacts": [
-            {
-                "type": "dataset",
-                "path": "datasets/us/d1/populace_year_2026.h5",
-                "filename": "populace_year_2026.h5",
-                "year": 2026,
-                "digest": "d1",
+    """A schema-valid store payload: app.py validates what it reads, so
+    the fake must satisfy ArtifactManifest — deriving it from the model
+    keeps the test from drifting off the wire shape."""
+    from policyengine_simulation_executor.precompute_models import ArtifactManifest
+
+    return ArtifactManifest.model_validate(
+        {
+            "schema": "mf1",
+            "country": "us",
+            "receipt": {
+                "policyengine_version": "4.19.1",
+                "model_version": "1.700.0",
+                "data_version": "1.2.3",
+                "data_artifact_revision": "rev-abc",
+                "default_dataset": "populace_cps",
             },
-        ],
-    }
+            "artifacts": [
+                {
+                    "type": "dataset",
+                    "path": "datasets/us/d1/populace_year_2026.h5",
+                    "filename": "populace_year_2026.h5",
+                    "year": 2026,
+                    "digest": "d1",
+                },
+            ],
+        }
+    ).canonical_payload()
 
 
 def test_modal_image_fetches_artifacts_between_env_and_local_source(monkeypatch):

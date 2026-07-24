@@ -1,4 +1,4 @@
-"""Deployment-marker recording: pure payload assembly plus the store write.
+"""Deployment-marker recording: typed marker assembly plus the store write.
 
 The deployed/<env>.json marker is the artifact GC's liveness signal, so
 main() writes through the real store client seam (faked here) and any
@@ -9,6 +9,7 @@ from datetime import datetime
 
 import pytest
 
+from policyengine_simulation_executor.precompute_models import DeployedMarker
 from src.modal.utils import record_deployment
 
 
@@ -26,35 +27,33 @@ def _github_env():
     }
 
 
-class TestBuildMarkerPayload:
+class TestBuildMarker:
     def test_records_the_deploy_identity(self):
-        payload = record_deployment.build_marker_payload(
-            "beta", "digest-1", _github_env()
-        )
+        marker = record_deployment.build_marker("beta", "digest-1", _github_env())
 
-        assert payload["environment"] == "beta"
-        assert payload["manifest_digest"] == "digest-1"
-        assert payload["policyengine_version"] == "4.22.0"
-        assert payload["us_version"] == "1.3.0"
-        assert payload["uk_version"] == "2.9.0"
-        assert payload["us_data_version"] == "1.2.3"
-        assert payload["uk_data_version"] == "3.4.5"
-        assert payload["github_run_id"] == "12345"
-        assert payload["github_run_url"] == (
+        assert marker.environment == "beta"
+        assert marker.manifest_digest == "digest-1"
+        assert marker.policyengine_version == "4.22.0"
+        assert marker.us_version == "1.3.0"
+        assert marker.uk_version == "2.9.0"
+        assert marker.us_data_version == "1.2.3"
+        assert marker.uk_data_version == "3.4.5"
+        assert marker.github_run_id == "12345"
+        assert marker.github_run_url == (
             "https://github.com/PolicyEngine/policyengine-sim-api/actions/runs/12345"
         )
-        assert payload["github_sha"] == "abc123"
+        assert marker.github_sha == "abc123"
 
     def test_timestamp_is_utc_iso8601(self):
-        payload = record_deployment.build_marker_payload("beta", "d", {})
-        parsed = datetime.fromisoformat(payload["deployed_at"])
+        marker = record_deployment.build_marker("beta", "d", {})
+        parsed = datetime.fromisoformat(marker.deployed_at)
         assert parsed.utcoffset() is not None
         assert parsed.utcoffset().total_seconds() == 0
 
     def test_missing_env_yields_empty_fields_not_errors(self):
-        payload = record_deployment.build_marker_payload("prod", "d", {})
-        assert payload["github_run_url"] == ""
-        assert payload["policyengine_version"] == ""
+        marker = record_deployment.build_marker("prod", "d", {})
+        assert marker.github_run_url == ""
+        assert marker.policyengine_version == ""
 
 
 class TestMain:
@@ -85,7 +84,11 @@ class TestMain:
         assert len(writes) == 1
         environment, payload = writes[0]
         assert environment == "beta"
+        # The persisted payload is exactly the model's dump — the wire
+        # shape GC will read back.
+        assert set(payload) == set(DeployedMarker.model_fields)
         assert payload["manifest_digest"] == "digest-9"
+        assert DeployedMarker.model_validate(payload).environment == "beta"
 
     def test_requires_both_arguments(self, monkeypatch):
         monkeypatch.setattr("sys.argv", ["record_deployment", "--environment", "beta"])

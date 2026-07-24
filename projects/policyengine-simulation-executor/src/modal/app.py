@@ -127,6 +127,11 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
     yields a None manifest and fetch_artifacts fails at build time
     instead — a digest-less deploy cannot silently ship an artifact-less
     image.
+
+    A resolved manifest is validated as ArtifactManifest and crosses into
+    the layer as its canonical payload: fetch_artifacts cannot import the
+    model by design (the layer is import-restricted), so the dict exists
+    only at that serialization boundary.
     """
     if not modal.is_local():
         return "", None
@@ -135,15 +140,19 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
     if not digest:
         return bucket, None
     from policyengine_simulation_executor.artifact_store import ArtifactStore
+    from policyengine_simulation_executor.precompute_models import ArtifactManifest
 
     store = ArtifactStore(bucket or None)
-    manifest = store.read_manifest(digest)
-    if manifest is None:
+    payload = store.read_manifest(digest)
+    if payload is None:
         raise RuntimeError(
             f"Artifact manifest {digest} is not in the store: the deploy "
             "must consume a digest published by the precompute run."
         )
-    return store.bucket_name, dict(manifest)
+    # Validate on the runner so a corrupt or foreign manifest fails the
+    # deploy here, not mid-image-build.
+    manifest = ArtifactManifest.model_validate(payload)
+    return store.bucket_name, manifest.canonical_payload()
 
 
 _ARTIFACT_BUCKET, _DEPLOY_MANIFEST = _deploy_time_artifact_inputs()

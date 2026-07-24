@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 import src.modal._image_setup as image_setup
+from policyengine_simulation_executor.precompute_models import ArtifactManifest
 from src.modal._image_setup import fetch_artifacts
 
 
@@ -44,33 +45,38 @@ class FakeGcsClient:
 
 
 def _manifest():
-    return {
-        "schema": "mf1",
-        "country": "us",
-        "receipt": {
-            "policyengine_version": "4.22.0",
-            "model_version": "1.3.0",
-            "data_version": "1.2.3",
-            "data_artifact_revision": "rev-abc",
-            "default_dataset": "populace_cps",
-        },
-        "artifacts": [
-            {
-                "type": "dataset",
-                "path": "datasets/us/d1/populace_year_2026.h5",
-                "filename": "populace_year_2026.h5",
-                "year": 2026,
-                "digest": "d1",
+    """The wire shape fetch_artifacts consumes, derived from the schema
+    (the layer itself cannot import the model, so it speaks the canonical
+    dict — building the fake through ArtifactManifest keeps it honest)."""
+    return ArtifactManifest.model_validate(
+        {
+            "schema": "mf1",
+            "country": "us",
+            "receipt": {
+                "policyengine_version": "4.22.0",
+                "model_version": "1.3.0",
+                "data_version": "1.2.3",
+                "data_artifact_revision": "rev-abc",
+                "default_dataset": "populace_cps",
             },
-            {
-                "type": "baseline",
-                "path": "baselines/us/b1/bl1-aaaa.h5",
-                "filename": "bl1-aaaa.h5",
-                "year": 2026,
-                "digest": "b1",
-            },
-        ],
-    }
+            "artifacts": [
+                {
+                    "type": "dataset",
+                    "path": "datasets/us/d1/populace_year_2026.h5",
+                    "filename": "populace_year_2026.h5",
+                    "year": 2026,
+                    "digest": "d1",
+                },
+                {
+                    "type": "baseline",
+                    "path": "baselines/us/b1/bl1-aaaa.h5",
+                    "filename": "bl1-aaaa.h5",
+                    "year": 2026,
+                    "digest": "b1",
+                },
+            ],
+        }
+    ).canonical_payload()
 
 
 @pytest.fixture
