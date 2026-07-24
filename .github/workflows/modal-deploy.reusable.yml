@@ -159,6 +159,12 @@ jobs:
         POLICYENGINE_CORE_VERSION: ${{ steps.versions.outputs.policyengine_core_version }}
         POLICYENGINE_US_VERSION: ${{ steps.versions.outputs.us_version }}
         POLICYENGINE_UK_VERSION: ${{ steps.versions.outputs.uk_version }}
+        # app.py resolves the deploy manifest from GCS on the runner at
+        # modal.is_local() time, so this step needs the digest, the store
+        # bucket, and GCP credentials alongside the version env vars.
+        POLICYENGINE_MANIFEST_DIGEST: ${{ needs.precompute.outputs.manifest_digest }}
+        POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}
+        GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
       run: ../../.github/scripts/modal-deploy-app.sh "${{ inputs.modal_environment }}" "${{ inputs.force_latest }}"
 
     - name: Get deployed URL

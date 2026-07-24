@@ -173,9 +173,9 @@ class TestFreshnessGate:
 
 
 def test_image_setup_module_stays_self_contained():
-    """The fetch and prebuild layers run before add_local_python_source,
-    so the module must have no module-level imports and must never import
-    the executor package, even lazily inside a function body."""
+    """The fetch layer runs before add_local_python_source, so the module
+    must have no module-level imports and must never import the executor
+    package, even lazily inside a function body."""
     source = Path(image_setup.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
 

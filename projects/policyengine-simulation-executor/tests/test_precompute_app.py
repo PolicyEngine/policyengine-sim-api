@@ -35,6 +35,9 @@ def precompute_module(monkeypatch):
         "POLICYENGINE_UK_VERSION",
     ):
         monkeypatch.setenv(env, "0.0.0-test")
+    # A developer following the local-deploy instructions may have the
+    # digest exported; importing src.modal.app must not reach for GCS.
+    monkeypatch.delenv("POLICYENGINE_MANIFEST_DIGEST", raising=False)
     for module in ("src.modal.app", "src.modal.precompute_app"):
         sys.modules.pop(module, None)
     module = importlib.import_module("src.modal.precompute_app")

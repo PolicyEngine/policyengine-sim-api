@@ -614,6 +614,37 @@ class TestModalPrecompute:
             '"${{ inputs.force_recompute }}"' in reusable_workflow
         )
 
+    def test_deploy_workflow_threads_manifest_and_store_credentials_to_deploy(self):
+        """The deploy step resolves the manifest from GCS on the runner,
+        so it needs the digest, the store bucket, and GCP credentials."""
+        reusable_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+        ).read_text(encoding="utf-8")
+
+        deploy_step = reusable_workflow[
+            reusable_workflow.index(
+                "Deploy simulation API to Modal"
+            ) : reusable_workflow.index("Get deployed URL")
+        ]
+        assert (
+            "POLICYENGINE_MANIFEST_DIGEST: "
+            "${{ needs.precompute.outputs.manifest_digest }}" in deploy_step
+        )
+        assert (
+            "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}"
+            in deploy_step
+        )
+        assert "GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}" in (
+            deploy_step
+        )
+        # Precompute and deploy each carry the bucket var.
+        assert (
+            reusable_workflow.count(
+                "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}"
+            )
+            == 2
+        )
+
     def test_precompute_job_syncs_its_own_secrets(self):
         """Precompute must not depend on a prior deploy's secret sync."""
         reusable_workflow = (

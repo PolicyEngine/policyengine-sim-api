@@ -76,35 +76,77 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
         ]
 
 
-# TEMPORARY: remove once single-year datasets are published (issue #596).
-def test_modal_image_prebuilds_datasets_between_env_and_local_source(monkeypatch):
+def _fake_manifest():
+    return {
+        "schema": "mf1",
+        "country": "us",
+        "receipt": {
+            "policyengine_version": "4.19.1",
+            "model_version": "1.700.0",
+            "data_version": "1.2.3",
+            "data_artifact_revision": "rev-abc",
+            "default_dataset": "populace_cps",
+        },
+        "artifacts": [
+            {
+                "type": "dataset",
+                "path": "datasets/us/d1/populace_year_2026.h5",
+                "filename": "populace_year_2026.h5",
+                "year": 2026,
+                "digest": "d1",
+            },
+        ],
+    }
+
+
+def test_modal_image_fetches_artifacts_between_env_and_local_source(monkeypatch):
     install_fake_modal(monkeypatch)
     monkeypatch.setenv("POLICYENGINE_VERSION", "4.19.1")
     monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.27.1")
     monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.700.0")
     monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.0")
+    monkeypatch.setenv("POLICYENGINE_MANIFEST_DIGEST", "digest-abc")
+    monkeypatch.setenv("POLICYENGINE_ARTIFACT_BUCKET", "test-bucket")
+
+    manifest = _fake_manifest()
+
+    class FakeStore:
+        def __init__(self, bucket_name=None, **kwargs):
+            self.bucket_name = bucket_name
+
+        def read_manifest(self, digest):
+            assert digest == "digest-abc"
+            return manifest
+
+    # The app imports ArtifactStore lazily inside the digest-set branch,
+    # so patching the module attribute is enough — no GCS involved.
+    import policyengine_simulation_executor.artifact_store as artifact_store
+
+    monkeypatch.setattr(artifact_store, "ArtifactStore", FakeStore)
     sys.modules.pop("src.modal.app", None)
 
     app = importlib.import_module("src.modal.app")
 
     calls = app.simulation_image.calls
-    prebuild_indices = [
+    fetch_indices = [
         index
         for index, call in enumerate(calls)
-        if call[0] == "run_function" and call[1] == "prebuild_country_datasets"
+        if call[0] == "run_function" and call[1] == "fetch_artifacts"
     ]
-    # US only — UK is deliberately not prebuilt (keeps image build short).
-    assert [calls[index][2]["args"] for index in prebuild_indices] == [("us",)]
-    prebuild_kwargs = calls[prebuild_indices[0]][2]
-    assert prebuild_kwargs["secrets"] == [app.data_secret, app.hf_secret]
-    assert prebuild_kwargs["timeout"] == 4 * 60 * 60
-    assert prebuild_kwargs["memory"] == 65536
+    assert len(fetch_indices) == 1
+    fetch_kwargs = calls[fetch_indices[0]][2]
+    # The manifest content is in the layer args: the layer cache key
+    # follows the artifact set, nothing else.
+    assert fetch_kwargs["args"] == ("test-bucket", manifest)
+    assert fetch_kwargs["secrets"] == [app.gcp_secret]
+    assert fetch_kwargs["cpu"] == 2.0
+    assert fetch_kwargs["memory"] == 4096
+    assert fetch_kwargs["timeout"] == 900
 
-    # The prebuild layer is a multi-hour build keyed only on upstream
-    # layers and its own definition. It must stay after the version env
-    # (so version bumps rebuild it) and before add_local_python_source
-    # (whose content-hash key would otherwise invalidate it on every
-    # source commit).
+    # The fetch layer must stay after the version env (its freshness gate
+    # reads the baked versions) and before add_local_python_source (whose
+    # content-hash key would otherwise invalidate it on every source
+    # commit).
     env_index = next(index for index, call in enumerate(calls) if call[0] == "env")
     local_source_index = next(
         index
@@ -116,7 +158,7 @@ def test_modal_image_prebuilds_datasets_between_env_and_local_source(monkeypatch
         for index, call in enumerate(calls)
         if call[0] == "run_function" and call[1] == "snapshot_models"
     )
-    assert env_index < prebuild_indices[0] < local_source_index < snapshot_index
+    assert env_index < fetch_indices[0] < local_source_index < snapshot_index
 
     # The shared libs ship into the image as mounted source; dropping one
     # from this tuple crashes workers at import time.
@@ -126,6 +168,32 @@ def test_modal_image_prebuilds_datasets_between_env_and_local_source(monkeypatch
         "policyengine_simulation_observability",
         "policyengine_simulation_contract",
     )
+
+
+def test_modal_image_uses_failing_sentinel_without_manifest_digest(monkeypatch):
+    """Without a digest the app must still import — the precompute and
+    smoke apps import it where no digest can exist — but the fetch layer
+    args must carry a None manifest, which makes fetch_artifacts fail the
+    build loudly. A digest-less deploy cannot silently ship an
+    artifact-less image."""
+    install_fake_modal(monkeypatch)
+    monkeypatch.setenv("POLICYENGINE_VERSION", "4.19.1")
+    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.27.1")
+    monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.700.0")
+    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.0")
+    monkeypatch.delenv("POLICYENGINE_MANIFEST_DIGEST", raising=False)
+    monkeypatch.delenv("POLICYENGINE_ARTIFACT_BUCKET", raising=False)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    fetch_calls = [
+        call
+        for call in app.simulation_image.calls
+        if call[0] == "run_function" and call[1] == "fetch_artifacts"
+    ]
+    assert len(fetch_calls) == 1
+    assert fetch_calls[0][2]["args"] == ("", None)
 
 
 def test_app_module_imports_at_container_entrypoint_path(monkeypatch):

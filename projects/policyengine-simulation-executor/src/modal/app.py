@@ -13,7 +13,7 @@ from pathlib import Path
 
 from policyengine_observability import operation, set_attribute
 
-from src.modal._image_setup import prebuild_country_datasets, snapshot_models
+from src.modal._image_setup import fetch_artifacts, snapshot_models
 from src.modal.dependency_pins import project_dependency_pin
 from policyengine_simulation_observability.logfire_legacy import (
     configure_logfire,
@@ -116,6 +116,39 @@ logfire_secret = modal.Secret.from_name("policyengine-logfire")
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
 
 
+def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
+    """Resolve the artifact bucket and deploy manifest on the deploying machine.
+
+    The manifest content rides into the fetch layer's args, so Modal's
+    layer cache busts exactly when the deployed artifact set changes.
+    Resolution must never hard-fail at import: this module is imported
+    where no digest can exist (inside containers, by the precompute app
+    that produces the digest, by the PR image smoke), so a missing digest
+    yields a None manifest and fetch_artifacts fails at build time
+    instead — a digest-less deploy cannot silently ship an artifact-less
+    image.
+    """
+    if not modal.is_local():
+        return "", None
+    digest = os.environ.get("POLICYENGINE_MANIFEST_DIGEST")
+    bucket = os.environ.get("POLICYENGINE_ARTIFACT_BUCKET", "")
+    if not digest:
+        return bucket, None
+    from policyengine_simulation_executor.artifact_store import ArtifactStore
+
+    store = ArtifactStore(bucket or None)
+    manifest = store.read_manifest(digest)
+    if manifest is None:
+        raise RuntimeError(
+            f"Artifact manifest {digest} is not in the store: the deploy "
+            "must consume a digest published by the precompute run."
+        )
+    return store.bucket_name, dict(manifest)
+
+
+_ARTIFACT_BUCKET, _DEPLOY_MANIFEST = _deploy_time_artifact_inputs()
+
+
 def bundle_install_command(policyengine_version: str) -> str:
     return " ".join(
         [
@@ -146,10 +179,10 @@ def bundle_install_command(policyengine_version: str) -> str:
 
 
 def build_runtime_simulation_image() -> modal.Image:
-    """Image layers up to the version env — everything except the dataset
-    prebuild and model snapshot.
+    """Image layers up to the version env — everything except the artifact
+    fetch and model snapshot.
 
-    Shared by the deployed app, the prewarm app, and the image smoke app
+    Shared by the deployed app and the image smoke app
     (src/modal/smoke_app.py): all must construct these layers through
     this one code path so their definitions — and therefore Modal's
     content-addressed layer cache keys — are identical.
@@ -175,25 +208,23 @@ def build_runtime_simulation_image() -> modal.Image:
 
 
 def build_base_simulation_image() -> modal.Image:
-    """Runtime image layers plus the dataset prebuild."""
+    """Runtime image layers plus the artifact fetch."""
     return (
         build_runtime_simulation_image()
-        # TEMPORARY: remove once single-year datasets are published (issue
-        # #596). Prebuild US single-year datasets into the image so cold
-        # containers skip the slow runtime build. US only for now, to keep
-        # image build time low — UK requests still build at request time.
-        # This layer MUST stay before add_local_python_source — that layer
-        # is keyed on source file hashes, so anything after it rebuilds on
-        # every code change, and this layer takes hours. To force a rebuild
-        # of a cached layer (e.g. after a data re-release under the same
-        # revision), temporarily add force_build=True.
+        # Bake the precomputed store artifacts (single-year US datasets
+        # and cohort baselines) into the image. This layer MUST stay
+        # before add_local_python_source — that layer is keyed on source
+        # file hashes, so anything after it rebuilds on every code
+        # change. Its args carry the content-addressed manifest, so the
+        # cache busts exactly when the artifact set changes and never
+        # otherwise. UK requests still build datasets at request time.
         .run_function(
-            prebuild_country_datasets,
-            args=("us",),
-            secrets=[data_secret, hf_secret],
-            cpu=8.0,
-            memory=65536,
-            timeout=4 * 60 * 60,
+            fetch_artifacts,
+            args=(_ARTIFACT_BUCKET, _DEPLOY_MANIFEST),
+            secrets=[gcp_secret],
+            cpu=2.0,
+            memory=4096,
+            timeout=900,
         )
     )
 
