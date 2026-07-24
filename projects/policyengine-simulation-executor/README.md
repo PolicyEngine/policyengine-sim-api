@@ -53,7 +53,7 @@ Operational notes:
   explicit `data` dataset or pinning a `data_version` bypasses it (see
   `_load_dataset` in `simulation_runtime.py`).
 
-## Artifact precompute (baseline artifact pipeline, phase 1)
+## Artifact precompute (baseline artifact pipeline)
 
 The precompute app fills a content-addressed GCS store with single-year US
 datasets (2026, 2027, 2025) and the 20 per-cohort national baseline
@@ -63,7 +63,12 @@ lives in `src/policyengine_simulation_executor/precompute.py` (keys:
 `artifact_keys.py`, store client: `artifact_store.py`); the Modal app
 (`src/modal/precompute_app.py`) is plumbing only.
 
-Run it manually (phase 1; a CI deploy job takes over in a later phase):
+The deploy pipeline runs it automatically: a `precompute` job in the
+reusable deploy workflow fills the store on both legs before each deploy
+(via `.github/scripts/modal-precompute.sh`, bucket from the repo-level
+`POLICYENGINE_ARTIFACT_BUCKET` Actions variable), and the deploy
+workflow's `force_recompute` dispatch input threads through as `--force`.
+Manual runs remain valid for ad-hoc warming:
 
     export POLICYENGINE_ARTIFACT_BUCKET=<bucket-name>
     uv run modal run --env=staging src/modal/precompute_app.py
