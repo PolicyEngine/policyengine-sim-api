@@ -18,6 +18,14 @@ if [ -z "${POLICYENGINE_ARTIFACT_BUCKET:-}" ]; then
   exit 1
 fi
 
+# Check up front: failing at the final append after a long compute would
+# waste the whole run.
+if [ -z "${GITHUB_OUTPUT:-}" ]; then
+  echo "GITHUB_OUTPUT is required (the manifest digest is exported there)." >&2
+  echo 'For local runs: export GITHUB_OUTPUT="$(mktemp)".' >&2
+  exit 1
+fi
+
 RUN_COMMAND=(uv run modal run --env="$MODAL_ENV" src/modal/precompute_app.py)
 if [[ "$FORCE" == "true" || "$FORCE" == "1" ]]; then
     RUN_COMMAND+=(--force)

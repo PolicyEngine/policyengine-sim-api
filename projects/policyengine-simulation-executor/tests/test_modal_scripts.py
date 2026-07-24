@@ -437,6 +437,7 @@ class TestModalPrecompute:
         *args,
         fake_output="MANIFEST_DIGEST=abc123",
         bucket="policyengine-sim-artifacts",
+        with_github_output=True,
     ):
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
@@ -457,9 +458,12 @@ class TestModalPrecompute:
                 "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
                 "UV_FAKE_LOG": str(log_path),
                 "UV_FAKE_OUTPUT": fake_output,
-                "GITHUB_OUTPUT": str(github_output),
             }
         )
+        if with_github_output:
+            env["GITHUB_OUTPUT"] = str(github_output)
+        else:
+            env.pop("GITHUB_OUTPUT", None)
         if bucket is None:
             env.pop("POLICYENGINE_ARTIFACT_BUCKET", None)
         else:
@@ -510,6 +514,16 @@ class TestModalPrecompute:
         assert result.returncode != 0
         assert "POLICYENGINE_ARTIFACT_BUCKET is required" in result.stderr
         assert calls == [], "Should not invoke modal without a bucket"
+
+    def test_requires_github_output_before_running(self, tmp_path):
+        """A missing GITHUB_OUTPUT must fail fast, not after the compute."""
+        result, calls, _ = self._run_with_fake_uv(
+            tmp_path, "staging", with_github_output=False
+        )
+
+        assert result.returncode != 0
+        assert "GITHUB_OUTPUT is required" in result.stderr
+        assert calls == [], "Should not invoke modal without GITHUB_OUTPUT"
 
     def test_runs_precompute_app_and_exports_digest(self, tmp_path):
         """Default run has no --force and the digest reaches GITHUB_OUTPUT."""
