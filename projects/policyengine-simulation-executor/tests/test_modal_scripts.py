@@ -411,9 +411,7 @@ class TestModalDeployApp:
         assert "--force-latest" not in registry_call
         # The gateway deploys from its own project (uv_sync image).
         gateway_call = next(
-            call
-            for call in calls
-            if "policyengine_simulation_gateway/app.py" in call
+            call for call in calls if "policyengine_simulation_gateway/app.py" in call
         )
         assert "modal deploy" in gateway_call
 
@@ -426,6 +424,142 @@ class TestModalDeployApp:
             call for call in calls if "update_version_registry" in call
         )
         assert registry_call.endswith("--force-latest")
+
+
+class TestModalPrecompute:
+    """Tests for modal-precompute.sh"""
+
+    script = SCRIPTS_DIR / "modal-precompute.sh"
+
+    def _run_with_fake_uv(
+        self,
+        tmp_path,
+        *args,
+        fake_output="MANIFEST_DIGEST=abc123",
+        bucket="policyengine-sim-artifacts",
+    ):
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        log_path = tmp_path / "uv-calls.log"
+        github_output = tmp_path / "github-output.txt"
+        uv_path = bin_dir / "uv"
+        uv_path.write_text(
+            "#!/bin/bash\n"
+            'printf \'%s\\n\' "$*" >> "$UV_FAKE_LOG"\n'
+            "printf '%s\\n' \"$UV_FAKE_OUTPUT\"\n",
+            encoding="utf-8",
+        )
+        uv_path.chmod(0o755)
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
+                "UV_FAKE_LOG": str(log_path),
+                "UV_FAKE_OUTPUT": fake_output,
+                "GITHUB_OUTPUT": str(github_output),
+            }
+        )
+        if bucket is None:
+            env.pop("POLICYENGINE_ARTIFACT_BUCKET", None)
+        else:
+            env["POLICYENGINE_ARTIFACT_BUCKET"] = bucket
+
+        result = subprocess.run(
+            ["bash", str(self.script), *args],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        calls = (
+            log_path.read_text(encoding="utf-8").splitlines()
+            if log_path.exists()
+            else []
+        )
+        github_out = (
+            github_output.read_text(encoding="utf-8") if github_output.exists() else ""
+        )
+        return result, calls, github_out
+
+    def test_script_exists(self):
+        """Script file should exist."""
+        assert self.script.exists(), f"Script not found at {self.script}"
+
+    def test_script_syntax(self):
+        """Script should have valid bash syntax."""
+        result = subprocess.run(
+            ["bash", "-n", str(self.script)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, f"Syntax error: {result.stderr}"
+
+    def test_requires_modal_environment_argument(self):
+        """Should fail when no modal environment is provided."""
+        result = subprocess.run(
+            ["bash", str(self.script)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0, "Should fail without modal environment"
+
+    def test_requires_artifact_bucket(self, tmp_path):
+        """Should fail before invoking modal when the bucket env var is unset."""
+        result, calls, _ = self._run_with_fake_uv(tmp_path, "staging", bucket=None)
+
+        assert result.returncode != 0
+        assert "POLICYENGINE_ARTIFACT_BUCKET is required" in result.stderr
+        assert calls == [], "Should not invoke modal without a bucket"
+
+    def test_runs_precompute_app_and_exports_digest(self, tmp_path):
+        """Default run has no --force and the digest reaches GITHUB_OUTPUT."""
+        result, calls, github_out = self._run_with_fake_uv(
+            tmp_path,
+            "staging",
+            fake_output=(
+                "Planning against gs://policyengine-sim-artifacts (force=False)\n"
+                "MANIFEST_DIGEST=abc123\n"
+                "Stopping app - local entrypoint completed."
+            ),
+        )
+
+        assert result.returncode == 0, result.stderr
+        run_call = next(call for call in calls if "modal run" in call)
+        assert "run modal run --env=staging src/modal/precompute_app.py" in run_call
+        assert "--force" not in run_call
+        assert "manifest_digest=abc123" in github_out
+
+    def test_takes_the_last_digest_line(self, tmp_path):
+        """The MANIFEST_DIGEST= contract is last-line-wins."""
+        result, _, github_out = self._run_with_fake_uv(
+            tmp_path,
+            "staging",
+            fake_output="MANIFEST_DIGEST=old\nMANIFEST_DIGEST=new",
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "manifest_digest=new" in github_out
+        assert "manifest_digest=old" not in github_out
+
+    def test_passes_force_when_requested(self, tmp_path):
+        """A truthy force argument appends --force to the modal run."""
+        result, calls, _ = self._run_with_fake_uv(tmp_path, "staging", "true")
+
+        assert result.returncode == 0, result.stderr
+        run_call = next(call for call in calls if "modal run" in call)
+        assert run_call.endswith("--force")
+
+    def test_fails_when_no_digest_line_is_emitted(self, tmp_path):
+        """A run that never prints the digest contract must fail the job."""
+        result, _, github_out = self._run_with_fake_uv(
+            tmp_path,
+            "staging",
+            fake_output="Planning against gs://bucket (force=False)",
+        )
+
+        assert result.returncode != 0
+        assert "no MANIFEST_DIGEST= line" in result.stderr
+        assert "manifest_digest=" not in github_out
 
 
 class TestModalGetUrl:
