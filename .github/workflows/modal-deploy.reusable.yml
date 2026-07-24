@@ -178,6 +178,21 @@ jobs:
     - name: Verify deployment health
       run: .github/scripts/modal-health-check.sh "${{ steps.get-url.outputs.simulation_api_url }}"
 
+    # After the health check, so the marker means deployed AND healthy.
+    # The marker is the artifact GC's liveness signal: a deploy that
+    # cannot record itself fails the job.
+    - name: Record deployment marker
+      working-directory: projects/policyengine-simulation-executor
+      env:
+        POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}
+        GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+        POLICYENGINE_VERSION: ${{ steps.versions.outputs.policyengine_version }}
+        POLICYENGINE_US_VERSION: ${{ steps.versions.outputs.us_version }}
+        POLICYENGINE_UK_VERSION: ${{ steps.versions.outputs.uk_version }}
+        US_DATA_VERSION: ${{ steps.versions.outputs.us_data_version }}
+        UK_DATA_VERSION: ${{ steps.versions.outputs.uk_data_version }}
+      run: ../../.github/scripts/modal-record-deployment.sh "${{ inputs.environment }}" "${{ needs.precompute.outputs.manifest_digest }}"
+
   integ_test:
     name: Run integration tests
     needs: [deploy]

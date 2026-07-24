@@ -637,12 +637,13 @@ class TestModalPrecompute:
         assert "GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}" in (
             deploy_step
         )
-        # Precompute and deploy each carry the bucket var.
+        # The precompute, deploy, and record-marker steps each carry the
+        # bucket var.
         assert (
             reusable_workflow.count(
                 "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}"
             )
-            == 2
+            == 3
         )
 
     def test_precompute_job_syncs_its_own_secrets(self):
@@ -657,6 +658,105 @@ class TestModalPrecompute:
         )
         assert reusable_workflow.count(sync_invocation) == 2, (
             "Expected the precompute AND deploy jobs to each sync Modal secrets"
+        )
+
+
+class TestModalRecordDeployment:
+    """Tests for modal-record-deployment.sh"""
+
+    script = SCRIPTS_DIR / "modal-record-deployment.sh"
+
+    def _run_with_fake_uv(self, tmp_path, *args, bucket="policyengine-sim-artifacts"):
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        log_path = tmp_path / "uv-calls.log"
+        uv_path = bin_dir / "uv"
+        uv_path.write_text(
+            '#!/bin/bash\nprintf \'%s\\n\' "$*" >> "$UV_FAKE_LOG"\n',
+            encoding="utf-8",
+        )
+        uv_path.chmod(0o755)
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
+                "UV_FAKE_LOG": str(log_path),
+            }
+        )
+        if bucket is None:
+            env.pop("POLICYENGINE_ARTIFACT_BUCKET", None)
+        else:
+            env["POLICYENGINE_ARTIFACT_BUCKET"] = bucket
+
+        result = subprocess.run(
+            ["bash", str(self.script), *args],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        calls = (
+            log_path.read_text(encoding="utf-8").splitlines()
+            if log_path.exists()
+            else []
+        )
+        return result, calls
+
+    def test_script_exists(self):
+        """Script file should exist."""
+        assert self.script.exists(), f"Script not found at {self.script}"
+
+    def test_requires_environment_argument(self):
+        """Should fail with no arguments."""
+        result = subprocess.run(
+            ["bash", str(self.script)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0
+
+    def test_requires_manifest_digest_argument(self, tmp_path):
+        """Should fail before invoking anything without a digest."""
+        result, calls = self._run_with_fake_uv(tmp_path, "beta")
+
+        assert result.returncode != 0
+        assert calls == []
+
+    def test_requires_artifact_bucket(self, tmp_path):
+        """Should fail before invoking anything without the bucket env."""
+        result, calls = self._run_with_fake_uv(
+            tmp_path, "beta", "digest-abc", bucket=None
+        )
+
+        assert result.returncode != 0
+        assert "POLICYENGINE_ARTIFACT_BUCKET is required" in result.stderr
+        assert calls == []
+
+    def test_invokes_the_recorder_module(self, tmp_path):
+        """The exact python -m invocation, environment and digest threaded."""
+        result, calls = self._run_with_fake_uv(tmp_path, "beta", "digest-abc")
+
+        assert result.returncode == 0, result.stderr
+        assert calls == [
+            "run python -m src.modal.utils.record_deployment "
+            "--environment beta --manifest-digest digest-abc"
+        ]
+
+    def test_deploy_workflow_records_marker_after_health_check(self):
+        """Both legs write deployed/<env>.json once the deploy is healthy."""
+        reusable_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+        ).read_text(encoding="utf-8")
+
+        invocation = (
+            'modal-record-deployment.sh "${{ inputs.environment }}" '
+            '"${{ needs.precompute.outputs.manifest_digest }}"'
+        )
+        assert invocation in reusable_workflow
+        # The marker means deployed AND healthy: it must come after the
+        # health check step.
+        assert reusable_workflow.index("Verify deployment health") < (
+            reusable_workflow.index("modal-record-deployment.sh")
         )
 
 
