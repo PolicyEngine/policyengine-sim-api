@@ -1,4 +1,4 @@
-"""FastAPI application for the Cloud Run Simulation API."""
+"""FastAPI application for the Cloud Run Simulation Entrypoint."""
 
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
 
-from policyengine_simulation_api.auth import CallerAuthenticator
-from policyengine_simulation_api.backend import (
+from policyengine_simulation_entrypoint.auth import CallerAuthenticator
+from policyengine_simulation_entrypoint.backend import (
     BackendAuthenticationError,
     BackendResponse,
     BackendTimeout,
@@ -36,7 +36,7 @@ from policyengine_simulation_api.backend import (
     OldGatewayBackend,
     SimulationBackend,
 )
-from policyengine_simulation_api.config import Settings
+from policyengine_simulation_entrypoint.config import Settings
 
 
 logger = logging.getLogger(__name__)
@@ -95,7 +95,7 @@ def create_app(
             await runtime_backend.close()
 
     app = FastAPI(
-        title="PolicyEngine Simulation API",
+        title="PolicyEngine Simulation Entrypoint",
         description=("Authenticated simulation submission and polling control plane."),
         version="1.0.0",
         lifespan=lifespan,
@@ -103,9 +103,9 @@ def create_app(
 
     configure_process_observability(
         platform="cloud_run",
-        service_role="simulation_api",
+        service_role="simulation_entrypoint",
     )
-    init_simulation_observability(app, service_role="simulation_api")
+    init_simulation_observability(app, service_role="simulation_entrypoint")
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
@@ -116,7 +116,7 @@ def create_app(
         elapsed_ms = round((time.monotonic() - started) * 1000, 2)
         response.headers["X-Request-ID"] = request_id
         logger.info(
-            "simulation_api_request",
+            "simulation_entrypoint_request",
             extra={
                 "request_id": request_id,
                 "method": request.method,
@@ -177,11 +177,11 @@ def create_app(
             )
             if response_identifier_key and isinstance(response_identifier, str):
                 attributes[response_identifier_key] = response_identifier
-            record_event("simulation_api_backend_response", **attributes)
+            record_event("simulation_entrypoint_backend_response", **attributes)
             return _response(result)
         except BackendTimeout:
             record_event(
-                "simulation_api_backend_timeout",
+                "simulation_entrypoint_backend_timeout",
                 request_id=request.state.request_id,
                 route=route,
                 **event_identifiers,
@@ -196,7 +196,7 @@ def create_app(
             )
         except (BackendUnavailable, BackendAuthenticationError):
             record_event(
-                "simulation_api_backend_unavailable",
+                "simulation_entrypoint_backend_unavailable",
                 request_id=request.state.request_id,
                 route=route,
                 **event_identifiers,

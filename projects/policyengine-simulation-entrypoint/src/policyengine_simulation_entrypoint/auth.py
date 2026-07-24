@@ -1,4 +1,4 @@
-"""Inbound bearer authentication for protected Simulation API routes."""
+"""Inbound bearer authentication for protected Simulation Entrypoint routes."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt
 from policyengine_observability import record_event
 
-from policyengine_simulation_api.config import Settings
+from policyengine_simulation_entrypoint.config import Settings
 
 
 _bearer = HTTPBearer(auto_error=False)
@@ -30,7 +30,7 @@ class JWTDecoder:
         token: HTTPAuthorizationCredentials | None,
     ) -> dict[str, str]:
         if token is None:
-            record_event("simulation_api_auth_rejected", reason="missing_token")
+            record_event("simulation_entrypoint_auth_rejected", reason="missing_token")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
         try:
@@ -47,10 +47,10 @@ class JWTDecoder:
         except Exception as error:
             reason = type(error).__name__
             logger.info(
-                "invalid_simulation_api_bearer_token",
+                "invalid_simulation_entrypoint_bearer_token",
                 extra={"error_type": reason},
             )
-            record_event("simulation_api_auth_rejected", reason=reason)
+            record_event("simulation_entrypoint_auth_rejected", reason=reason)
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN) from error
 
 

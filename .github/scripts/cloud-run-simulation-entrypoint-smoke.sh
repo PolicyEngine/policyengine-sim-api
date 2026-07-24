@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-base_url="${1:?Simulation API base URL is required}"
+base_url="${1:?Simulation Entrypoint base URL is required}"
 base_url="${base_url%/}"
 
 curl --fail --silent --show-error "${base_url}/health" |

@@ -1,4 +1,4 @@
-"""Runtime configuration for the Cloud Run Simulation API."""
+"""Runtime configuration for the Cloud Run Simulation Entrypoint."""
 
 from __future__ import annotations
 
@@ -45,13 +45,15 @@ class Settings:
     def from_env(cls) -> "Settings":
         return cls(
             environment=os.getenv("APP_ENVIRONMENT", "local").lower(),
-            public_url=os.getenv("SIMULATION_API_PUBLIC_URL", ""),
+            public_url=os.getenv("SIMULATION_ENTRYPOINT_PUBLIC_URL", ""),
             auth_required=_truthy(
-                os.getenv("SIMULATION_API_AUTH_REQUIRED"),
+                os.getenv("SIMULATION_ENTRYPOINT_AUTH_REQUIRED"),
                 default=True,
             ),
-            auth_issuer=_normalized_issuer(os.getenv("SIMULATION_API_AUTH_ISSUER", "")),
-            auth_audience=os.getenv("SIMULATION_API_AUTH_AUDIENCE", ""),
+            auth_issuer=_normalized_issuer(
+                os.getenv("SIMULATION_ENTRYPOINT_AUTH_ISSUER", "")
+            ),
+            auth_audience=os.getenv("SIMULATION_ENTRYPOINT_AUTH_AUDIENCE", ""),
             old_gateway_url=os.getenv("OLD_GATEWAY_URL", "").rstrip("/"),
             old_gateway_auth_issuer=_normalized_issuer(
                 os.getenv("OLD_GATEWAY_AUTH_ISSUER", "")
@@ -81,7 +83,7 @@ class Settings:
 
         if bool(self.auth_issuer) != bool(self.auth_audience):
             raise ConfigurationError(
-                "Set both SIMULATION_API_AUTH_ISSUER and SIMULATION_API_AUTH_AUDIENCE."
+                "Set both SIMULATION_ENTRYPOINT_AUTH_ISSUER and SIMULATION_ENTRYPOINT_AUTH_AUDIENCE."
             )
         if self.auth_required and not self.auth_issuer:
             raise ConfigurationError(
@@ -108,5 +110,5 @@ class Settings:
         upstream_host = urlparse(self.old_gateway_url).hostname
         if public_host and upstream_host and public_host == upstream_host:
             raise ConfigurationError(
-                "OLD_GATEWAY_URL must not point to the Simulation API itself."
+                "OLD_GATEWAY_URL must not point to the Simulation Entrypoint itself."
             )

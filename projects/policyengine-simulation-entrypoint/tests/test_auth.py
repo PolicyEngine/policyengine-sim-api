@@ -8,8 +8,8 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
-from policyengine_simulation_api import auth as auth_module
-from policyengine_simulation_api.app import create_app
+from policyengine_simulation_entrypoint import auth as auth_module
+from policyengine_simulation_entrypoint.app import create_app
 
 from conftest import FakeBackend, make_settings
 
@@ -25,7 +25,7 @@ def _token(private_key, **overrides) -> str:
     claims = {
         "sub": "api-v1",
         "iss": "https://issuer.example/",
-        "aud": "simulation-api",
+        "aud": "simulation-entrypoint",
         "iat": now,
         "exp": now + timedelta(minutes=5),
     }
@@ -36,7 +36,7 @@ def _token(private_key, **overrides) -> str:
 def _use_static_signing_key(monkeypatch, public_key) -> None:
     decoder = auth_module.JWTDecoder(
         issuer="https://issuer.example/",
-        audience="simulation-api",
+        audience="simulation-entrypoint",
     )
     decoder.jwks_client = SimpleNamespace(
         get_signing_key_from_jwt=lambda _: SimpleNamespace(key=public_key)

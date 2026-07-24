@@ -1,6 +1,6 @@
-# policyengine-simulation-api
+# policyengine-simulation-entrypoint
 
-The permanent Cloud Run front door for PolicyEngine simulation submission and
+The permanent Cloud Run entrypoint for PolicyEngine simulation submission and
 polling.
 
 During migration Stage 5 this service is a contract-compatible control-plane
@@ -14,5 +14,5 @@ compute dispatch.
     uv sync --extra test
     uv run pytest tests/ -v
 
-The production app is policyengine_simulation_api.app:app. Required runtime
-configuration is documented in policyengine_simulation_api.config.Settings.
+The production app is policyengine_simulation_entrypoint.app:app. Required runtime
+configuration is documented in policyengine_simulation_entrypoint.config.Settings.

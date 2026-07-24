@@ -3,11 +3,11 @@
 set -euo pipefail
 
 gcloud_bin="${GCLOUD_BIN:-gcloud}"
-project_id="${SIMULATION_GCP_PROJECT_ID:?SIMULATION_GCP_PROJECT_ID is required}"
-region="${SIMULATION_GCP_REGION:-us-central1}"
-production_domain="${SIMULATION_PRODUCTION_DOMAIN:-simulation.api.policyengine.org}"
-staging_domain="${SIMULATION_STAGING_DOMAIN:-staging.simulation.api.policyengine.org}"
-dry_run="${SIMULATION_DOMAINS_DRY_RUN:-0}"
+project_id="${SIMULATION_ENTRYPOINT_GCP_PROJECT_ID:?SIMULATION_ENTRYPOINT_GCP_PROJECT_ID is required}"
+region="${SIMULATION_ENTRYPOINT_GCP_REGION:-us-central1}"
+production_domain="${SIMULATION_ENTRYPOINT_PRODUCTION_DOMAIN:-simulation.api.policyengine.org}"
+staging_domain="${SIMULATION_ENTRYPOINT_STAGING_DOMAIN:-staging.simulation.api.policyengine.org}"
+dry_run="${SIMULATION_ENTRYPOINT_DOMAINS_DRY_RUN:-0}"
 
 run() {
   if [ "${dry_run}" = "1" ]; then
@@ -42,8 +42,8 @@ ensure_mapping() {
   fi
 }
 
-ensure_mapping policyengine-simulation-api-staging "${staging_domain}"
-ensure_mapping policyengine-simulation-api "${production_domain}"
+ensure_mapping policyengine-simulation-entrypoint-staging "${staging_domain}"
+ensure_mapping policyengine-simulation-entrypoint "${production_domain}"
 
 printf '\nInspect the mappings for the DNS records that must be published:\n'
 printf '  %s\n' "${staging_domain}" "${production_domain}"

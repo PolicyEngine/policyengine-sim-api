@@ -6,10 +6,10 @@
 **/*.pyc
 
 projects/*
-!projects/policyengine-simulation-api/
-!projects/policyengine-simulation-api/**
-projects/policyengine-simulation-api/artifacts
-projects/policyengine-simulation-api/tests
+!projects/policyengine-simulation-entrypoint/
+!projects/policyengine-simulation-entrypoint/**
+projects/policyengine-simulation-entrypoint/artifacts
+projects/policyengine-simulation-entrypoint/tests
 
 libs/*
 !libs/policyengine-simulation-contract/

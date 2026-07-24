@@ -1,11 +1,11 @@
-"""Generate the Cloud Run Simulation API OpenAPI document."""
+"""Generate the Cloud Run Simulation Entrypoint OpenAPI document."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from policyengine_simulation_api.app import create_app
+from policyengine_simulation_entrypoint.app import create_app
 
 
 def main() -> None:

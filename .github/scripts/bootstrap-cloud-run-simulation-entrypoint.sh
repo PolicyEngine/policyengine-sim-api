@@ -3,20 +3,20 @@
 set -euo pipefail
 
 gcloud_bin="${GCLOUD_BIN:-gcloud}"
-project_id="${SIMULATION_GCP_PROJECT_ID:?SIMULATION_GCP_PROJECT_ID is required}"
-billing_account="${SIMULATION_GCP_BILLING_ACCOUNT:-}"
-region="${SIMULATION_GCP_REGION:-us-central1}"
-repository="${SIMULATION_ARTIFACT_REPOSITORY:-policyengine-simulation-api}"
-github_repository="${SIMULATION_GITHUB_REPOSITORY:-PolicyEngine/policyengine-sim-api}"
-pool_id="${SIMULATION_WIF_POOL_ID:-simulation-api-github}"
-provider_id="${SIMULATION_WIF_PROVIDER_ID:-github}"
-dry_run="${SIMULATION_BOOTSTRAP_DRY_RUN:-0}"
+project_id="${SIMULATION_ENTRYPOINT_GCP_PROJECT_ID:?SIMULATION_ENTRYPOINT_GCP_PROJECT_ID is required}"
+billing_account="${SIMULATION_ENTRYPOINT_GCP_BILLING_ACCOUNT:-}"
+region="${SIMULATION_ENTRYPOINT_GCP_REGION:-us-central1}"
+repository="${SIMULATION_ENTRYPOINT_ARTIFACT_REPOSITORY:-policyengine-simulation-entrypoint}"
+github_repository="${SIMULATION_ENTRYPOINT_GITHUB_REPOSITORY:-PolicyEngine/policyengine-sim-api}"
+pool_id="${SIMULATION_ENTRYPOINT_WIF_POOL_ID:-simulation-entrypoint-github}"
+provider_id="${SIMULATION_ENTRYPOINT_WIF_PROVIDER_ID:-github}"
+dry_run="${SIMULATION_ENTRYPOINT_BOOTSTRAP_DRY_RUN:-0}"
 
-deployer_account_id="simulation-api-github-deployer"
-staging_runtime_account_id="simulation-api-stg-runtime"
-production_runtime_account_id="simulation-api-prod-runtime"
-staging_secret="simulation-api-old-gateway-client-secret-staging"
-production_secret="simulation-api-old-gateway-client-secret-production"
+deployer_account_id="sim-entrypoint-gh-deployer"
+staging_runtime_account_id="sim-entrypoint-stg-runtime"
+production_runtime_account_id="sim-entrypoint-prod-runtime"
+staging_secret="simulation-entrypoint-old-gateway-client-secret-staging"
+production_secret="simulation-entrypoint-old-gateway-client-secret-production"
 
 run() {
   if [ "${dry_run}" = "1" ]; then
@@ -38,12 +38,12 @@ exists() {
 if ! exists "${gcloud_bin}" projects describe "${project_id}"; then
   project_args=(
     projects create "${project_id}"
-    --name "PolicyEngine Simulation API"
+    --name "PolicyEngine Simulation Entrypoint"
   )
-  if [ -n "${SIMULATION_GCP_FOLDER_ID:-}" ]; then
-    project_args+=(--folder "${SIMULATION_GCP_FOLDER_ID}")
-  elif [ -n "${SIMULATION_GCP_ORGANIZATION_ID:-}" ]; then
-    project_args+=(--organization "${SIMULATION_GCP_ORGANIZATION_ID}")
+  if [ -n "${SIMULATION_ENTRYPOINT_GCP_FOLDER_ID:-}" ]; then
+    project_args+=(--folder "${SIMULATION_ENTRYPOINT_GCP_FOLDER_ID}")
+  elif [ -n "${SIMULATION_ENTRYPOINT_GCP_ORGANIZATION_ID:-}" ]; then
+    project_args+=(--organization "${SIMULATION_ENTRYPOINT_GCP_ORGANIZATION_ID}")
   fi
   run "${gcloud_bin}" "${project_args[@]}"
 fi
@@ -70,7 +70,7 @@ if ! exists "${gcloud_bin}" artifacts repositories describe "${repository}" \
     --project "${project_id}" \
     --location "${region}" \
     --repository-format docker \
-    --description "Cloud Run images for the PolicyEngine Simulation API"
+    --description "Cloud Run images for the PolicyEngine Simulation Entrypoint"
 fi
 
 ensure_service_account() {
@@ -86,11 +86,11 @@ ensure_service_account() {
 }
 
 ensure_service_account "${deployer_account_id}" \
-  "Simulation API GitHub deployer"
+  "Simulation Entrypoint GitHub deployer"
 ensure_service_account "${staging_runtime_account_id}" \
-  "Simulation API staging runtime"
+  "Simulation Entrypoint staging runtime"
 ensure_service_account "${production_runtime_account_id}" \
-  "Simulation API production runtime"
+  "Simulation Entrypoint production runtime"
 
 deployer_email="${deployer_account_id}@${project_id}.iam.gserviceaccount.com"
 staging_runtime_email="${staging_runtime_account_id}@${project_id}.iam.gserviceaccount.com"
@@ -147,7 +147,7 @@ if ! exists "${gcloud_bin}" iam workload-identity-pools describe "${pool_id}" \
   run "${gcloud_bin}" iam workload-identity-pools create "${pool_id}" \
     --project "${project_id}" \
     --location global \
-    --display-name "Simulation API GitHub Actions"
+    --display-name "Simulation Entrypoint GitHub Actions"
 fi
 
 if ! exists "${gcloud_bin}" iam workload-identity-pools providers describe \
@@ -182,11 +182,11 @@ run "${gcloud_bin}" iam service-accounts add-iam-policy-binding \
 provider_name="projects/${project_number}/locations/global/workloadIdentityPools/${pool_id}/providers/${provider_id}"
 
 printf '\nBootstrap complete. Configure these GitHub values:\n'
-printf '  SIMULATION_GCP_PROJECT_ID=%s\n' "${project_id}"
-printf '  SIMULATION_GCP_REGION=%s\n' "${region}"
-printf '  SIMULATION_ARTIFACT_REPOSITORY=%s\n' "${repository}"
-printf '  SIMULATION_GCP_WIF_PROVIDER=%s\n' "${provider_name}"
-printf '  SIMULATION_GCP_DEPLOY_SERVICE_ACCOUNT=%s\n' "${deployer_email}"
-printf '  staging SIMULATION_RUNTIME_SERVICE_ACCOUNT=%s\n' "${staging_runtime_email}"
-printf '  production SIMULATION_RUNTIME_SERVICE_ACCOUNT=%s\n' "${production_runtime_email}"
+printf '  SIMULATION_ENTRYPOINT_GCP_PROJECT_ID=%s\n' "${project_id}"
+printf '  SIMULATION_ENTRYPOINT_GCP_REGION=%s\n' "${region}"
+printf '  SIMULATION_ENTRYPOINT_ARTIFACT_REPOSITORY=%s\n' "${repository}"
+printf '  SIMULATION_ENTRYPOINT_GCP_WIF_PROVIDER=%s\n' "${provider_name}"
+printf '  SIMULATION_ENTRYPOINT_GCP_DEPLOY_SERVICE_ACCOUNT=%s\n' "${deployer_email}"
+printf '  staging SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT=%s\n' "${staging_runtime_email}"
+printf '  production SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT=%s\n' "${production_runtime_email}"
 printf '\nAdd one secret version to each empty Secret Manager secret before deploying.\n'

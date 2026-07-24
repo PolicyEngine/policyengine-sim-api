@@ -8,22 +8,30 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 BOOTSTRAP_SCRIPT = (
-    REPOSITORY_ROOT / ".github" / "scripts" / "bootstrap-cloud-run-simulation-api.sh"
+    REPOSITORY_ROOT
+    / ".github"
+    / "scripts"
+    / "bootstrap-cloud-run-simulation-entrypoint.sh"
 )
 DOMAIN_SCRIPT = (
     REPOSITORY_ROOT
     / ".github"
     / "scripts"
-    / "configure-cloud-run-simulation-api-domains.sh"
+    / "configure-cloud-run-simulation-entrypoint-domains.sh"
 )
 TRAFFIC_SCRIPT = (
-    REPOSITORY_ROOT / ".github" / "scripts" / "set-cloud-run-simulation-api-revision.sh"
+    REPOSITORY_ROOT
+    / ".github"
+    / "scripts"
+    / "set-cloud-run-simulation-entrypoint-revision.sh"
 )
-WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "cloud-run-simulation-api.yml"
+WORKFLOW = (
+    REPOSITORY_ROOT / ".github" / "workflows" / "cloud-run-simulation-entrypoint.yml"
+)
 DOCKERIGNORE = (
     REPOSITORY_ROOT
     / "projects"
-    / "policyengine-simulation-api"
+    / "policyengine-simulation-entrypoint"
     / "Dockerfile.dockerignore"
 )
 
@@ -37,8 +45,8 @@ def test_bootstrap_script_has_valid_shell_syntax():
 def test_bootstrap_dry_run_is_self_contained():
     environment = {
         **os.environ,
-        "SIMULATION_GCP_PROJECT_ID": "simulation-api-test",
-        "SIMULATION_BOOTSTRAP_DRY_RUN": "1",
+        "SIMULATION_ENTRYPOINT_GCP_PROJECT_ID": "simulation-entrypoint-test",
+        "SIMULATION_ENTRYPOINT_BOOTSTRAP_DRY_RUN": "1",
     }
 
     result = subprocess.run(
@@ -49,8 +57,11 @@ def test_bootstrap_dry_run_is_self_contained():
         env=environment,
     )
 
-    assert "projects create simulation-api-test" in result.stdout
-    assert "artifacts repositories create policyengine-simulation-api" in result.stdout
+    assert "projects create simulation-entrypoint-test" in result.stdout
+    assert (
+        "artifacts repositories create policyengine-simulation-entrypoint"
+        in result.stdout
+    )
     assert "roles/serviceusage.serviceUsageConsumer" in result.stdout
     assert "Bootstrap complete" in result.stdout
     assert "000000000000" in result.stdout
@@ -61,12 +72,15 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
 
     assert "gcloud run deploy" in workflow
     assert "update-traffic" not in workflow
-    assert "set-cloud-run-simulation-api-revision.sh" not in workflow
+    assert "set-cloud-run-simulation-entrypoint-revision.sh" not in workflow
     assert "terraform" not in workflow.lower()
     assert not list(
-        (REPOSITORY_ROOT / "projects" / "policyengine-simulation-api" / "infra").glob(
-            "*.tf"
-        )
+        (
+            REPOSITORY_ROOT
+            / "projects"
+            / "policyengine-simulation-entrypoint"
+            / "infra"
+        ).glob("*.tf")
     )
 
 
@@ -86,15 +100,15 @@ def test_traffic_changes_are_operator_run_and_revision_validated():
         text=True,
         env={
             **os.environ,
-            "SIMULATION_GCP_PROJECT_ID": "simulation-api-test",
-            "SIMULATION_DEPLOYMENT_ENVIRONMENT": "production",
-            "SIMULATION_TARGET_REVISION": "policyengine-simulation-api-00001-abc",
-            "SIMULATION_TRAFFIC_DRY_RUN": "1",
+            "SIMULATION_ENTRYPOINT_GCP_PROJECT_ID": "simulation-entrypoint-test",
+            "SIMULATION_ENTRYPOINT_DEPLOYMENT_ENVIRONMENT": "production",
+            "SIMULATION_ENTRYPOINT_TARGET_REVISION": "policyengine-simulation-entrypoint-00001-abc",
+            "SIMULATION_ENTRYPOINT_TRAFFIC_DRY_RUN": "1",
         },
     )
 
-    assert "policyengine-simulation-api-00001-abc=100" in result.stdout
-    assert "policyengine-simulation-api-staging" not in result.stdout
+    assert "policyengine-simulation-entrypoint-00001-abc=100" in result.stdout
+    assert "policyengine-simulation-entrypoint-staging" not in result.stdout
 
 
 def test_container_context_excludes_local_environments_and_unrelated_projects():
@@ -102,14 +116,17 @@ def test_container_context_excludes_local_environments_and_unrelated_projects():
 
     assert "**/.venv" in ignore_rules
     assert "projects/*" in ignore_rules
-    assert "!projects/policyengine-simulation-api/**" in ignore_rules
+    assert "!projects/policyengine-simulation-entrypoint/**" in ignore_rules
     assert "libs/*" in ignore_rules
 
 
 def test_production_lock_excludes_modal_and_database_runtime_packages():
     lockfile = tomllib.loads(
         (
-            REPOSITORY_ROOT / "projects" / "policyengine-simulation-api" / "uv.lock"
+            REPOSITORY_ROOT
+            / "projects"
+            / "policyengine-simulation-entrypoint"
+            / "uv.lock"
         ).read_text(encoding="utf-8")
     )
     resolved_packages = {package["name"] for package in lockfile["package"]}
@@ -126,12 +143,12 @@ def test_domain_mapping_dry_run_targets_both_services():
         text=True,
         env={
             **os.environ,
-            "SIMULATION_GCP_PROJECT_ID": "simulation-api-test",
-            "SIMULATION_DOMAINS_DRY_RUN": "1",
+            "SIMULATION_ENTRYPOINT_GCP_PROJECT_ID": "simulation-entrypoint-test",
+            "SIMULATION_ENTRYPOINT_DOMAINS_DRY_RUN": "1",
         },
     )
 
-    assert "policyengine-simulation-api-staging" in result.stdout
+    assert "policyengine-simulation-entrypoint-staging" in result.stdout
     assert "staging.simulation.api.policyengine.org" in result.stdout
-    assert "policyengine-simulation-api" in result.stdout
+    assert "policyengine-simulation-entrypoint" in result.stdout
     assert "simulation.api.policyengine.org" in result.stdout

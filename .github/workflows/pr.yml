@@ -15,7 +15,7 @@ jobs:
         # Modal image installs with uv_sync(frozen=True).
         project:
           - projects/policyengine-simulation-executor
-          - projects/policyengine-simulation-api
+          - projects/policyengine-simulation-entrypoint
           - projects/policyengine-simulation-gateway
           - libs/policyengine-simulation-contract
           - libs/policyengine-simulation-observability
@@ -76,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [simulation-api, simulation-executor]
+        service: [simulation-entrypoint, simulation-executor]
 
     steps:
     - uses: actions/checkout@v6

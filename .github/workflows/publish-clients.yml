@@ -2,7 +2,7 @@ name: Publish API clients
 
 on:
   workflow_run:
-    workflows: ["Deploy Simulation API to Cloud Run"]
+    workflows: ["Deploy Simulation Entrypoint to Cloud Run"]
     types:
       - completed
     branches:
@@ -31,9 +31,9 @@ jobs:
       run: |
         ./scripts/generate-clients.sh
 
-    - name: Build simulation API client
+    - name: Build simulation API client from the entrypoint contract
       run: |
-        cd projects/policyengine-simulation-api/artifacts/clients/python
+        cd projects/policyengine-simulation-entrypoint/artifacts/clients/python
         # Update version
         DATE=$(date +%Y%m%d)
         RUN_NUMBER="${{ github.run_number }}"
@@ -45,4 +45,4 @@ jobs:
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         password: ${{ secrets.PYPI }}
-        packages-dir: projects/policyengine-simulation-api/artifacts/clients/python/dist/
+        packages-dir: projects/policyengine-simulation-entrypoint/artifacts/clients/python/dist/

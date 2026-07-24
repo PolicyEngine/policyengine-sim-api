@@ -4,7 +4,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
-from policyengine_simulation_api.app import create_app
+from policyengine_simulation_entrypoint.app import create_app
 
 
 EXPECTED_ROUTES = {

@@ -6,21 +6,21 @@
 set -euo pipefail
 
 gcloud_bin="${GCLOUD_BIN:-gcloud}"
-project_id="${SIMULATION_GCP_PROJECT_ID:?SIMULATION_GCP_PROJECT_ID is required}"
-region="${SIMULATION_GCP_REGION:-us-central1}"
-environment="${SIMULATION_DEPLOYMENT_ENVIRONMENT:?SIMULATION_DEPLOYMENT_ENVIRONMENT is required}"
-revision="${SIMULATION_TARGET_REVISION:?SIMULATION_TARGET_REVISION is required}"
-dry_run="${SIMULATION_TRAFFIC_DRY_RUN:-0}"
+project_id="${SIMULATION_ENTRYPOINT_GCP_PROJECT_ID:?SIMULATION_ENTRYPOINT_GCP_PROJECT_ID is required}"
+region="${SIMULATION_ENTRYPOINT_GCP_REGION:-us-central1}"
+environment="${SIMULATION_ENTRYPOINT_DEPLOYMENT_ENVIRONMENT:?SIMULATION_ENTRYPOINT_DEPLOYMENT_ENVIRONMENT is required}"
+revision="${SIMULATION_ENTRYPOINT_TARGET_REVISION:?SIMULATION_ENTRYPOINT_TARGET_REVISION is required}"
+dry_run="${SIMULATION_ENTRYPOINT_TRAFFIC_DRY_RUN:-0}"
 
 case "${environment}" in
   staging)
-    service="policyengine-simulation-api-staging"
+    service="policyengine-simulation-entrypoint-staging"
     ;;
   production)
-    service="policyengine-simulation-api"
+    service="policyengine-simulation-entrypoint"
     ;;
   *)
-    printf 'SIMULATION_DEPLOYMENT_ENVIRONMENT must be staging or production\n' >&2
+    printf 'SIMULATION_ENTRYPOINT_DEPLOYMENT_ENVIRONMENT must be staging or production\n' >&2
     exit 2
     ;;
 esac

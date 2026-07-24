@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from policyengine_simulation_api.config import ConfigurationError
+from policyengine_simulation_entrypoint.config import ConfigurationError
 
 from conftest import make_settings
 

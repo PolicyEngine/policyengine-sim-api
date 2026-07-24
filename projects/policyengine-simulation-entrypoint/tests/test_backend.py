@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from policyengine_simulation_api.backend import (
+from policyengine_simulation_entrypoint.backend import (
     BackendUnavailable,
     OldGatewayBackend,
 )

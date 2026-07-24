@@ -9,7 +9,7 @@ from typing import Any, Mapping, Protocol
 
 import httpx
 
-from policyengine_simulation_api.config import Settings
+from policyengine_simulation_entrypoint.config import Settings
 
 
 SAFE_RESPONSE_HEADERS = frozenset(
@@ -60,7 +60,7 @@ class SimulationBackend(Protocol):
 
 
 class ClientCredentialsTokenProvider:
-    """Fetch and cache the Simulation API's old-gateway M2M token."""
+    """Fetch and cache the Simulation Entrypoint's old-gateway M2M token."""
 
     REFRESH_MARGIN_SECONDS = 60
 

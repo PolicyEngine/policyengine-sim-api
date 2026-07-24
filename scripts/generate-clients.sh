@@ -19,9 +19,9 @@ generate_client() {
     # Install build dependencies if not already installed
     uv sync --extra build
 
-    # The permanent Cloud Run Simulation API owns the public schema.
+    # The permanent Cloud Run Simulation Entrypoint owns the public schema.
     if [ "$SERVICE" = "simulation" ]; then
-        uv run python -m policyengine_simulation_api.generate_openapi
+        uv run python -m policyengine_simulation_entrypoint.generate_openapi
     else
         uv run python -m policyengine_api_${SERVICE//-/_}.generate_openapi
     fi
@@ -60,8 +60,8 @@ generate_client() {
     cd ../..
 }
 
-# Generate the client from the permanent Cloud Run front door.
-generate_client "simulation" "projects/policyengine-simulation-api"
+# Generate the client from the permanent Cloud Run entrypoint.
+generate_client "simulation" "projects/policyengine-simulation-entrypoint"
 
 echo "✅ Client generated successfully!"
 echo ""

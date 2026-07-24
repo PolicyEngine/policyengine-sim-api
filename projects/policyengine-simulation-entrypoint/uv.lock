@@ -646,7 +646,7 @@ fastapi = [
 ]
 
 [[package]]
-name = "policyengine-simulation-api"
+name = "policyengine-simulation-entrypoint"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
