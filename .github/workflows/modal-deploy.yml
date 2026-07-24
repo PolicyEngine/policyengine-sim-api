@@ -16,6 +16,11 @@ on:
         required: false
         default: false
         type: boolean
+      force_recompute:
+        description: 'Recompute artifacts even when the store already has them (write-once: existing objects are never replaced)'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: modal-deploy-main
@@ -59,6 +64,7 @@ jobs:
       environment: beta
       modal_environment: staging
       force_latest: ${{ inputs.force_latest || false }}
+      force_recompute: ${{ inputs.force_recompute || false }}
     secrets: inherit
 
   deploy_prod:
@@ -70,6 +76,7 @@ jobs:
       environment: prod
       modal_environment: main
       force_latest: ${{ inputs.force_latest || false }}
+      force_recompute: ${{ inputs.force_recompute || false }}
     secrets: inherit
 
   summary:
