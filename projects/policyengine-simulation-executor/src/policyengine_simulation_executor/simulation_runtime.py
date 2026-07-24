@@ -449,13 +449,13 @@ def _load_dataset(
     from policyengine_simulation_executor.baseline_artifacts import uses_custom_data
 
     data_folder = resolve_data_folder()
-    # TEMPORARY: remove once single-year datasets are published (issue #596).
-    # The image bakes default-revision single-year files into
-    # POLICYENGINE_DATA_FOLDER, and ensure_datasets keys its cache on a
-    # revision-stripped filename stem — a custom dataset or revision whose
-    # stem matches the default would silently read the baked files. Only
-    # pure default requests may use the baked folder. (Region requests
-    # resolve their dataset without the "data" param, so they keep it.)
+    # The artifact fetch layer bakes default-revision single-year files
+    # into POLICYENGINE_DATA_FOLDER, and ensure_datasets keys its cache on
+    # a revision-stripped filename stem — a custom dataset or revision
+    # whose stem matches the default would silently read the baked files.
+    # Only pure default requests may use the baked folder. (Region
+    # requests resolve their dataset without the "data" param, so they
+    # keep it.)
     if uses_custom_data(params):
         data_folder = "/tmp/policyengine-data"
 

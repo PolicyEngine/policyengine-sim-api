@@ -211,6 +211,10 @@ def test_app_module_imports_at_container_entrypoint_path(monkeypatch):
     monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.27.1")
     monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.700.0")
     monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.0")
+    # Containers must stay inert even if a digest leaks into their env:
+    # the is_local() check comes before any env read or GCS work, so this
+    # value must be ignored entirely.
+    monkeypatch.setenv("POLICYENGINE_MANIFEST_DIGEST", "digest-must-be-ignored")
     sys.modules.pop("src.modal.app", None)
 
     source_path = Path(__file__).resolve().parents[1] / "src" / "modal" / "app.py"
@@ -223,3 +227,9 @@ def test_app_module_imports_at_container_entrypoint_path(monkeypatch):
     exec(code, module.__dict__)
 
     assert module.APP_NAME.startswith("policyengine-simulation-py")
+    fetch_calls = [
+        call
+        for call in module.simulation_image.calls
+        if call[0] == "run_function" and call[1] == "fetch_artifacts"
+    ]
+    assert fetch_calls[0][2]["args"] == ("", None)

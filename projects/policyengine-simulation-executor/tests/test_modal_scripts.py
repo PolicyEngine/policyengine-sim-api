@@ -759,6 +759,24 @@ class TestModalRecordDeployment:
             reusable_workflow.index("modal-record-deployment.sh")
         )
 
+        # The payload builder maps missing env vars to empty strings, so a
+        # silent rename here would empty the marker's fields — assert every
+        # env line the step feeds it.
+        marker_step = reusable_workflow[
+            reusable_workflow.index("Record deployment marker") :
+        ]
+        marker_step = marker_step[: marker_step.index("integ_test:")]
+        for env_line in (
+            "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}",
+            "GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}",
+            "POLICYENGINE_VERSION: ${{ steps.versions.outputs.policyengine_version }}",
+            "POLICYENGINE_US_VERSION: ${{ steps.versions.outputs.us_version }}",
+            "POLICYENGINE_UK_VERSION: ${{ steps.versions.outputs.uk_version }}",
+            "US_DATA_VERSION: ${{ steps.versions.outputs.us_data_version }}",
+            "UK_DATA_VERSION: ${{ steps.versions.outputs.uk_data_version }}",
+        ):
+            assert env_line in marker_step, f"marker step is missing: {env_line}"
+
 
 class TestModalGetUrl:
     """Tests for modal-get-url.sh"""
