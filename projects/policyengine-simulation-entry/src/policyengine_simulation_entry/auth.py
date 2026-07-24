@@ -11,6 +11,7 @@ import jwt
 from policyengine_observability import record_event
 
 from policyengine_simulation_entry.config import Settings
+from policyengine_simulation_entry.schemas import CallerIdentity
 
 
 _bearer = HTTPBearer(auto_error=False)
@@ -28,7 +29,7 @@ class JWTDecoder:
     def __call__(
         self,
         token: HTTPAuthorizationCredentials | None,
-    ) -> dict[str, str]:
+    ) -> CallerIdentity:
         if token is None:
             record_event("simulation_entry_auth_rejected", reason="missing_token")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
@@ -37,12 +38,14 @@ class JWTDecoder:
             signing_key = self.jwks_client.get_signing_key_from_jwt(
                 token.credentials
             ).key
-            return jwt.decode(
-                token.credentials,
-                signing_key,
-                algorithms=["RS256"],
-                audience=self.audience,
-                issuer=self.issuer,
+            return CallerIdentity.model_validate(
+                jwt.decode(
+                    token.credentials,
+                    signing_key,
+                    algorithms=["RS256"],
+                    audience=self.audience,
+                    issuer=self.issuer,
+                )
             )
         except Exception as error:
             reason = type(error).__name__
@@ -68,7 +71,7 @@ class CallerAuthenticator:
     def __call__(
         self,
         token: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    ) -> dict[str, str] | None:
+    ) -> CallerIdentity | None:
         if not self.settings.auth_required:
             return None
         return _decoder(

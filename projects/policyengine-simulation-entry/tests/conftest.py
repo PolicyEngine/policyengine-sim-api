@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from dataclasses import dataclass
 
 import pytest
 from fastapi.testclient import TestClient
+from policyengine_simulation_contract.json_types import JsonObject
 
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.backend import BackendResponse
@@ -30,9 +30,19 @@ def make_settings(**overrides) -> Settings:
     return Settings(**values)
 
 
+@dataclass(frozen=True)
+class BackendRequest:
+    """One request captured by the fake simulation backend."""
+
+    method: str
+    path: str
+    json_body: JsonObject | None
+    request_id: str | None
+
+
 class FakeBackend:
     def __init__(self):
-        self.requests: list[dict[str, Any]] = []
+        self.requests: list[BackendRequest] = []
         self.responses: dict[tuple[str, str], BackendResponse] = {}
         self.is_ready = True
         self.started = False
@@ -51,16 +61,16 @@ class FakeBackend:
         method: str,
         path: str,
         *,
-        json_body: Mapping[str, Any] | None = None,
+        json_body: JsonObject | None = None,
         request_id: str | None = None,
     ) -> BackendResponse:
         self.requests.append(
-            {
-                "method": method,
-                "path": path,
-                "json_body": json_body,
-                "request_id": request_id,
-            }
+            BackendRequest(
+                method=method,
+                path=path,
+                json_body=json_body,
+                request_id=request_id,
+            )
         )
         return self.responses.get(
             (method, path),

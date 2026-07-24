@@ -6,10 +6,12 @@ from types import SimpleNamespace
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
 
 from policyengine_simulation_entry import auth as auth_module
 from policyengine_simulation_entry.app import create_app
+from policyengine_simulation_entry.schemas import CallerIdentity
 
 from conftest import FakeBackend, make_settings
 
@@ -86,6 +88,33 @@ def test_valid_api_v1_token_can_poll(monkeypatch, signing_keys):
         )
 
     assert result.status_code == 200
+
+
+def test_decoder_returns_only_the_declared_caller_identity(signing_keys):
+    private_key, public_key = signing_keys
+    decoder = auth_module.JWTDecoder(
+        issuer="https://issuer.example/",
+        audience="simulation-entry",
+    )
+    decoder.jwks_client = SimpleNamespace(
+        get_signing_key_from_jwt=lambda _: SimpleNamespace(key=public_key)
+    )
+
+    identity = decoder(
+        HTTPAuthorizationCredentials(
+            scheme="Bearer",
+            credentials=_token(
+                private_key,
+                scope="simulate:read",
+                undocumented_claim="ignored",
+            ),
+        )
+    )
+
+    assert isinstance(identity, CallerIdentity)
+    assert identity.subject == "api-v1"
+    assert identity.scope == "simulate:read"
+    assert "undocumented_claim" not in identity.model_dump()
 
 
 @pytest.mark.parametrize(

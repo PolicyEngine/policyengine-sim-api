@@ -4,6 +4,7 @@ import json
 import logging
 
 import pytest
+from policyengine_simulation_contract.json_types import JsonObject
 
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
@@ -16,7 +17,7 @@ from policyengine_simulation_entry.backend import (
 from conftest import FakeBackend, make_settings
 
 
-def response(status: int, payload: dict) -> BackendResponse:
+def response(status: int, payload: JsonObject) -> BackendResponse:
     return BackendResponse(
         status_code=status,
         content=json.dumps(payload).encode(),
@@ -65,7 +66,7 @@ def test_comparison_submission_preserves_upstream_response(client, backend):
     assert result.status_code == 202
     assert result.json() == payload
     assert result.headers["x-policyengine-simulation-backend"] == "old_gateway"
-    assert backend.requests[-1]["path"] == "/simulate/economy/comparison"
+    assert backend.requests[-1].path == "/simulate/economy/comparison"
 
 
 def test_job_status_preserves_id_and_status(client, backend):
@@ -78,7 +79,7 @@ def test_job_status_preserves_id_and_status(client, backend):
 
     assert result.status_code == 202
     assert result.json() == {"status": "running", "run_id": "run-1"}
-    assert backend.requests[-1]["path"] == "/jobs/fc-123"
+    assert backend.requests[-1].path == "/jobs/fc-123"
 
 
 def test_job_status_records_structured_backend_telemetry(
@@ -164,7 +165,7 @@ def test_budget_window_routes_use_original_batch_id(client, backend):
     assert submitted.status_code == 202
     assert submitted.json()["batch_job_id"] == "batch-123"
     assert polled.status_code == 200
-    assert backend.requests[-1]["path"] == "/budget-window-jobs/batch-123"
+    assert backend.requests[-1].path == "/budget-window-jobs/batch-123"
 
 
 def test_versions_and_ping_are_public_proxy_routes(client, backend):
@@ -182,7 +183,7 @@ def test_request_id_is_propagated_and_returned(client, backend):
     result = client.get("/versions", headers={"X-Request-ID": "request-123"})
 
     assert result.headers["x-request-id"] == "request-123"
-    assert backend.requests[-1]["request_id"] == "request-123"
+    assert backend.requests[-1].request_id == "request-123"
 
 
 def test_request_validation_matches_shared_contract(client):

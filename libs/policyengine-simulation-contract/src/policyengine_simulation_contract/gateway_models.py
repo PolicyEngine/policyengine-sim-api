@@ -3,10 +3,19 @@ Pydantic models for the Gateway API.
 """
 
 import json
-from typing import Any, ClassVar, Literal, Optional
+from typing import ClassVar, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    field_validator,
+    model_validator,
+)
 
+from policyengine_simulation_contract.json_types import JsonObject
+from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_observability.telemetry import TelemetryEnvelope
 
 
@@ -21,6 +30,10 @@ MAX_GATEWAY_REQUEST_BYTES = 262_144
 
 
 INTERNAL_PASSTHROUGH_FIELDS = frozenset({"_metadata", "_runtime_bundle"})
+
+
+class PolicyParameterChanges(RootModel[JsonObject]):
+    """Policy parameter names mapped to their dated values."""
 
 
 def _move_internal_telemetry_alias(value):
@@ -90,9 +103,8 @@ class GatewayRequestBase(BaseModel):
     scope: Optional[str] = None
     data: Optional[str] = None
     time_period: Optional[str] = None
-    reform: Optional[dict[str, Any]] = None
-    baseline: Optional[dict[str, Any]] = None
-    region: Optional[str] = None
+    reform: Optional[PolicyParameterChanges] = None
+    baseline: Optional[PolicyParameterChanges] = None
     region_group: Optional[list[str]] = None
     title: Optional[str] = None
     include_cliffs: Optional[bool] = None
@@ -123,16 +135,18 @@ class GatewayRequestBase(BaseModel):
     def enforce_max_payload_size(cls, value):
         return _enforce_max_payload_size(value)
 
+
+class SimulationRequest(GatewayRequestBase):
+    """Request model for simulation submission."""
+
+    region: Optional[str] = None
+
     @model_validator(mode="after")
-    def region_xor_region_group(self):
+    def region_xor_region_group(self) -> "SimulationRequest":
         """A request scopes to a single region OR a region group, never both."""
         if self.region is not None and self.region_group is not None:
             raise ValueError("Provide `region` or `region_group`, not both.")
         return self
-
-
-class SimulationRequest(GatewayRequestBase):
-    """Request model for simulation submission."""
 
 
 class PolicyEngineBundle(BaseModel):
@@ -148,7 +162,7 @@ class JobSubmitResponse(BaseModel):
     """Response model for job submission."""
 
     job_id: str
-    status: str
+    status: Literal["submitted"]
     poll_url: str
     country: str
     version: str
@@ -160,8 +174,8 @@ class JobSubmitResponse(BaseModel):
 class JobStatusResponse(BaseModel):
     """Response model for job status polling."""
 
-    status: str
-    result: Optional[dict] = None
+    status: Literal["running", "complete", "failed"]
+    result: Optional[SingleYearMacroOutput] = None
     error: Optional[str] = None
     resolved_app_name: Optional[str] = None
     policyengine_bundle: Optional[PolicyEngineBundle] = None
@@ -191,6 +205,8 @@ class BudgetWindowBatchRequest(GatewayRequestBase):
 
     @model_validator(mode="after")
     def validate_end_year(self) -> "BudgetWindowBatchRequest":
+        if self.region_group is not None:
+            raise ValueError("Provide `region` or `region_group`, not both.")
         end_year = int(self.start_year) + self.window_size - 1
         if end_year > self.MAX_END_YEAR:
             raise ValueError(
@@ -241,7 +257,14 @@ class BatchChildJobStatus(BaseModel):
     """Per-year child simulation job tracking."""
 
     job_id: str
-    status: str
+    status: Literal[
+        "pending",
+        "queued",
+        "running",
+        "complete",
+        "failed",
+        "cancelled",
+    ]
     error: Optional[str] = None
 
 
@@ -249,7 +272,7 @@ class BudgetWindowBatchSubmitResponse(BaseModel):
     """Response model for budget-window batch submission."""
 
     batch_job_id: str
-    status: str
+    status: Literal["submitted"]
     poll_url: str
     country: str
     version: str
@@ -261,7 +284,7 @@ class BudgetWindowBatchSubmitResponse(BaseModel):
 class BudgetWindowBatchStatusResponse(BaseModel):
     """Response model for budget-window batch polling."""
 
-    status: str
+    status: Literal["submitted", "running", "complete", "failed"]
     progress: Optional[int] = None
     completed_years: list[str] = Field(default_factory=list)
     running_years: list[str] = Field(default_factory=list)
@@ -279,7 +302,7 @@ class BudgetWindowBatchState(BaseModel):
     """Internal state persisted for a budget-window parent batch job."""
 
     batch_job_id: str
-    status: str
+    status: Literal["submitted", "running", "complete", "failed"]
     country: str
     region: str
     version: str
@@ -289,7 +312,7 @@ class BudgetWindowBatchState(BaseModel):
     start_year: str
     window_size: int
     max_parallel: int
-    request_payload: dict[str, Any] = Field(default_factory=dict)
+    request_payload: JsonObject = Field(default_factory=dict)
     years: list[str] = Field(default_factory=list)
     queued_years: list[str] = Field(default_factory=list)
     running_years: list[str] = Field(default_factory=list)
@@ -316,3 +339,27 @@ class PingResponse(BaseModel):
     """Response model for ping endpoint."""
 
     incremented: int
+
+
+class VersionMap(RootModel[dict[str, str]]):
+    """Version alias or exact version mapped to a deployed worker app."""
+
+
+class VersionsResponse(BaseModel):
+    """All supported simulation routing version maps."""
+
+    policyengine: VersionMap
+    us: VersionMap
+    uk: VersionMap
+
+
+class HealthResponse(BaseModel):
+    """Local process health response."""
+
+    status: Literal["healthy"] = "healthy"
+
+
+class ReadinessResponse(BaseModel):
+    """Dependency readiness response."""
+
+    status: Literal["ready", "not_ready"]

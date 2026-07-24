@@ -2,26 +2,32 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Any, Callable, Mapping
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from policyengine_observability import record_event
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
     BudgetWindowBatchSubmitResponse,
+    HealthResponse,
     JobStatusResponse,
     JobSubmitResponse,
     PingRequest,
     PingResponse,
+    ReadinessResponse,
     SimulationRequest,
+    VersionMap,
+    VersionsResponse,
 )
+from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_observability.observability import (
     configure_process_observability,
     init_simulation_observability,
@@ -37,16 +43,27 @@ from policyengine_simulation_entry.backend import (
     SimulationBackend,
 )
 from policyengine_simulation_entry.config import Settings
+from policyengine_simulation_entry.schemas import (
+    BackendTelemetryAttributes,
+    BackendTelemetryPayload,
+    CallerIdentity,
+    RequestIdentifiers,
+)
 
 
 logger = logging.getLogger(__name__)
 BACKEND_RESPONSE_HEADER = {
     "X-PolicyEngine-Simulation-Backend": "old_gateway",
 }
+_json_object_adapter = TypeAdapter(JsonObject)
+type AuthenticationDependency = Callable[[], CallerIdentity | None]
+type ResponseIdentifier = Literal["job_id", "batch_job_id"]
 
 
-def _model_json(model: Any) -> Mapping[str, Any]:
-    return model.model_dump(mode="json", by_alias=True, exclude_none=True)
+def _model_json(model: BaseModel) -> JsonObject:
+    return _json_object_adapter.validate_python(
+        model.model_dump(mode="json", by_alias=True, exclude_none=True)
+    )
 
 
 def _response(result: BackendResponse) -> Response:
@@ -65,19 +82,22 @@ def _route_template(request: Request) -> str:
     return getattr(request.scope.get("route"), "path", request.url.path)
 
 
-def _request_identifiers(request: Request) -> dict[str, str]:
-    return {
-        key: value
-        for key in ("job_id", "batch_job_id")
-        if isinstance((value := request.path_params.get(key)), str)
-    }
+def _request_identifiers(request: Request) -> RequestIdentifiers:
+    identifiers: RequestIdentifiers = {}
+    job_id = request.path_params.get("job_id")
+    batch_job_id = request.path_params.get("batch_job_id")
+    if isinstance(job_id, str):
+        identifiers["job_id"] = job_id
+    if isinstance(batch_job_id, str):
+        identifiers["batch_job_id"] = batch_job_id
+    return identifiers
 
 
 def create_app(
     *,
     settings: Settings | None = None,
     backend: SimulationBackend | None = None,
-    auth_dependency: Callable[..., Any] | None = None,
+    auth_dependency: AuthenticationDependency | None = None,
 ) -> FastAPI:
     """Build the app with injectable auth/backend seams for hermetic tests."""
 
@@ -133,14 +153,14 @@ def create_app(
         request: Request,
         method: str,
         path: str,
-        body: Mapping[str, Any] | None = None,
+        body: JsonObject | None = None,
         *,
-        identifiers: Mapping[str, str] | None = None,
-        response_identifier_key: str | None = None,
+        identifiers: RequestIdentifiers | None = None,
+        response_identifier_key: ResponseIdentifier | None = None,
     ) -> Response:
         backend_started = time.monotonic()
         route = _route_template(request)
-        event_identifiers = dict(identifiers or {})
+        event_identifiers: RequestIdentifiers = identifiers or {}
         try:
             result = await runtime_backend.request(
                 method,
@@ -148,7 +168,7 @@ def create_app(
                 json_body=body,
                 request_id=request.state.request_id,
             )
-            attributes: dict[str, Any] = {
+            attributes: BackendTelemetryAttributes = {
                 "request_id": request.state.request_id,
                 "route": route,
                 "method": method,
@@ -160,22 +180,22 @@ def create_app(
                 **event_identifiers,
             }
             try:
-                response_payload = json.loads(result.content)
-            except (AttributeError, json.JSONDecodeError, UnicodeDecodeError):
+                response_payload = BackendTelemetryPayload.model_validate_json(
+                    result.content
+                )
+            except ValidationError:
                 response_payload = None
             job_state = (
-                response_payload.get("status")
-                if isinstance(response_payload, dict)
-                else None
+                response_payload.status if response_payload is not None else None
             )
-            if isinstance(job_state, str):
+            if job_state is not None:
                 attributes["job_state"] = job_state
             response_identifier = (
-                response_payload.get(response_identifier_key)
-                if isinstance(response_payload, dict) and response_identifier_key
+                getattr(response_payload, response_identifier_key)
+                if response_payload is not None and response_identifier_key
                 else None
             )
-            if response_identifier_key and isinstance(response_identifier, str):
+            if response_identifier_key and response_identifier is not None:
                 attributes[response_identifier_key] = response_identifier
             record_event("simulation_entry_backend_response", **attributes)
             return _response(result)
@@ -335,7 +355,7 @@ def create_app(
         summary="List Versions",
         description="List all available routing versions.",
         operation_id="list_versions_versions_get",
-        response_model=dict,
+        response_model=VersionsResponse,
     )
     async def list_versions(request: Request) -> Response:
         return await forward(request, "GET", "/versions")
@@ -345,7 +365,7 @@ def create_app(
         summary="Get Country Versions",
         description="Get available versions for policyengine, US, or UK routing.",
         operation_id="get_country_versions_versions__kind__get",
-        response_model=dict,
+        response_model=VersionMap,
     )
     async def get_country_versions(kind: str, request: Request) -> Response:
         return await forward(request, "GET", f"/versions/{kind}")
@@ -354,15 +374,19 @@ def create_app(
         "/health",
         description="Health check endpoint.",
         operation_id="health_health_get",
+        response_model=HealthResponse,
     )
-    async def health() -> dict:
-        return {"status": "healthy"}
+    async def health() -> HealthResponse:
+        return HealthResponse()
 
-    @app.get("/ready")
+    @app.get("/ready", response_model=ReadinessResponse)
     async def ready() -> Response:
         if await runtime_backend.ready():
-            return JSONResponse({"status": "ready"})
-        return JSONResponse({"status": "not_ready"}, status_code=503)
+            return JSONResponse(ReadinessResponse(status="ready").model_dump())
+        return JSONResponse(
+            ReadinessResponse(status="not_ready").model_dump(),
+            status_code=503,
+        )
 
     @app.post(
         "/ping",

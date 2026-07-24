@@ -5,11 +5,14 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol
+from typing import Protocol
 
 import httpx
+from pydantic import ValidationError
+from policyengine_simulation_contract.json_types import JsonObject
 
 from policyengine_simulation_entry.config import Settings
+from policyengine_simulation_entry.schemas import BackendServiceToken
 
 
 SAFE_RESPONSE_HEADERS = frozenset(
@@ -54,7 +57,7 @@ class SimulationBackend(Protocol):
         method: str,
         path: str,
         *,
-        json_body: Mapping[str, Any] | None = None,
+        json_body: JsonObject | None = None,
         request_id: str | None = None,
     ) -> BackendResponse: ...
 
@@ -99,18 +102,12 @@ class ClientCredentialsTokenProvider:
                 },
             )
             response.raise_for_status()
-            payload = response.json()
-            token = payload.get("access_token")
-            expires_in = payload.get("expires_in")
-            if not token or expires_in is None:
-                raise BackendAuthenticationError(
-                    "Auth0 response omitted access_token or expires_in."
-                )
-            self._token = str(token)
-            self._expires_at = time.time() + max(int(expires_in), 1)
+            token = BackendServiceToken.model_validate(response.json())
+            self._token = token.access_token
+            self._expires_at = time.time() + token.expires_in
         except BackendAuthenticationError:
             raise
-        except (httpx.HTTPError, TypeError, ValueError) as exc:
+        except (httpx.HTTPError, TypeError, ValueError, ValidationError) as exc:
             raise BackendAuthenticationError(
                 "Unable to obtain old-gateway credentials."
             ) from exc
@@ -172,7 +169,7 @@ class OldGatewayBackend:
         method: str,
         path: str,
         *,
-        json_body: Mapping[str, Any] | None = None,
+        json_body: JsonObject | None = None,
         request_id: str | None = None,
     ) -> BackendResponse:
         client, token_provider = self._runtime()

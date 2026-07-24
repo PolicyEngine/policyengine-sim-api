@@ -15,6 +15,33 @@ from conftest import make_settings
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "token_payload",
+    [
+        {},
+        {"access_token": "", "expires_in": 3600},
+        {"access_token": "service-token", "expires_in": 0},
+    ],
+    ids=["missing-fields", "empty-token", "non-positive-expiry"],
+)
+async def test_backend_rejects_an_invalid_service_token_schema(token_payload):
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/oauth/token"
+        return httpx.Response(200, json=token_payload)
+
+    backend = OldGatewayBackend(
+        make_settings(),
+        transport=httpx.MockTransport(handler),
+    )
+    await backend.start()
+    try:
+        with pytest.raises(BackendAuthenticationError):
+            await backend.request("GET", "/jobs/fc-123")
+    finally:
+        await backend.close()
+
+
+@pytest.mark.asyncio
 async def test_backend_uses_own_token_and_preserves_safe_response_headers():
     requests: list[httpx.Request] = []
 

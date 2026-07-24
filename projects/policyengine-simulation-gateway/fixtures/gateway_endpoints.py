@@ -3,6 +3,19 @@
 from copy import deepcopy
 
 import pytest
+from policyengine_simulation_contract.macro_output import (
+    AgePovertyOutput,
+    BaselineReformValue,
+    BudgetaryImpact,
+    DecileOutput,
+    DetailedBudgetOutput,
+    GenderPovertyOutput,
+    InequalityOutput,
+    IntraDecileOutput,
+    PovertyByGenderOutput,
+    PovertyOutput,
+    SingleYearMacroOutput,
+)
 
 TEST_APP_RELEASE_BUNDLE = {
     "app_name": "policyengine-simulation-py4-10-0",
@@ -171,7 +184,50 @@ class MockFunctionCall:
 
     def __init__(self, object_id: str = "mock-job-id-123"):
         self.object_id = object_id
-        self.result = {"budget": {"total": 1000000}}
+        value = BaselineReformValue(baseline=0.0, reform=0.0)
+        age_poverty = AgePovertyOutput(
+            child=value,
+            adult=value,
+            senior=value,
+            all=value,
+        )
+        gender_poverty = GenderPovertyOutput(male=value, female=value)
+        self.result = SingleYearMacroOutput(
+            model_version="1.500.0",
+            data_version="1.0.0",
+            budget=BudgetaryImpact(
+                tax_revenue_impact=0.0,
+                state_tax_revenue_impact=0.0,
+                benefit_spending_impact=0.0,
+                budgetary_impact=0.0,
+                households=0.0,
+                baseline_net_income=0.0,
+            ),
+            detailed_budget=DetailedBudgetOutput({}),
+            decile=DecileOutput(average={}, relative={}),
+            inequality=InequalityOutput(
+                gini=value,
+                top_10_pct_share=value,
+                top_1_pct_share=value,
+            ),
+            poverty=PovertyOutput(
+                poverty=age_poverty,
+                deep_poverty=age_poverty,
+            ),
+            poverty_by_gender=PovertyByGenderOutput(
+                poverty=gender_poverty,
+                deep_poverty=gender_poverty,
+            ),
+            poverty_by_race=None,
+            intra_decile=IntraDecileOutput(deciles={}, all={}),
+            wealth_decile=None,
+            intra_wealth_decile=None,
+            labor_supply_response=None,
+            constituency_impact=None,
+            local_authority_impact=None,
+            congressional_district_impact=None,
+            cliff_impact=None,
+        ).model_dump(mode="json")
         self.error = None
         self.running = False
         self.__class__.registry[object_id] = self

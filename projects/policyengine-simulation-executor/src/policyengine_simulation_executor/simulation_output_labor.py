@@ -15,4 +15,8 @@ def build_labor_supply_response(analysis: Any) -> LaborSupplyResponseOutput | No
     if isinstance(labor_supply_response, LaborSupplyResponseOutput):
         return labor_supply_response
     output = _output_model_dump(labor_supply_response)
-    return LaborSupplyResponseOutput(output) if isinstance(output, dict) else None
+    return (
+        LaborSupplyResponseOutput.model_validate(output)
+        if isinstance(output, dict)
+        else None
+    )

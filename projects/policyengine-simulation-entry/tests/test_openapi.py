@@ -3,8 +3,29 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 from pathlib import Path
+from typing import Literal, TypedDict, cast
 
 from policyengine_simulation_entry.app import create_app
+
+
+type HttpMethod = Literal["get", "post", "put", "patch", "delete"]
+
+
+class OpenAPIOperation(TypedDict, total=False):
+    operationId: str
+    security: list[object]
+
+
+type OpenAPIPathMap = dict[str, dict[str, OpenAPIOperation]]
+
+
+class OpenAPIComponents(TypedDict):
+    schemas: dict[str, object]
+
+
+class OpenAPIDocument(TypedDict):
+    paths: OpenAPIPathMap
+    components: OpenAPIComponents
 
 
 EXPECTED_ROUTES = {
@@ -20,7 +41,7 @@ EXPECTED_ROUTES = {
 }
 
 
-def methods(spec: dict) -> set[tuple[str, str]]:
+def methods(spec: OpenAPIDocument) -> set[tuple[str, str]]:
     return {
         (method.upper(), path)
         for path, operations in spec["paths"].items()
@@ -29,7 +50,7 @@ def methods(spec: dict) -> set[tuple[str, str]]:
     }
 
 
-def operation_ids(spec: dict) -> dict[tuple[str, str], str]:
+def operation_ids(spec: OpenAPIDocument) -> dict[tuple[str, str], str]:
     return {
         (method.upper(), path): operation["operationId"]
         for path, operations in spec["paths"].items()
@@ -38,7 +59,7 @@ def operation_ids(spec: dict) -> dict[tuple[str, str], str]:
     }
 
 
-def normalized_compatibility_paths(spec: dict) -> dict:
+def normalized_compatibility_paths(spec: OpenAPIDocument) -> OpenAPIPathMap:
     """Remove the two intentional Cloud Run-only OpenAPI additions."""
     paths = deepcopy(spec["paths"])
     paths.pop("/ready", None)
@@ -50,7 +71,7 @@ def normalized_compatibility_paths(spec: dict) -> dict:
 
 
 def test_route_table_is_frozen():
-    assert methods(create_app().openapi()) == EXPECTED_ROUTES
+    assert methods(cast(OpenAPIDocument, create_app().openapi())) == EXPECTED_ROUTES
 
 
 def test_old_gateway_routes_are_all_present():
@@ -61,8 +82,11 @@ def test_old_gateway_routes_are_all_present():
         / "golden"
         / "openapi.json"
     )
-    gateway_spec = json.loads(gateway_spec_path.read_text())
-    cloud_run_routes = methods(create_app().openapi())
+    gateway_spec = cast(
+        OpenAPIDocument,
+        json.loads(gateway_spec_path.read_text()),
+    )
+    cloud_run_routes = methods(cast(OpenAPIDocument, create_app().openapi()))
 
     assert methods(gateway_spec) <= cloud_run_routes
 
@@ -75,15 +99,18 @@ def test_normalized_contract_matches_old_gateway():
         / "golden"
         / "openapi.json"
     )
-    gateway_spec = json.loads(gateway_spec_path.read_text())
-    cloud_run_spec = create_app().openapi()
+    gateway_spec = cast(
+        OpenAPIDocument,
+        json.loads(gateway_spec_path.read_text()),
+    )
+    cloud_run_spec = cast(OpenAPIDocument, create_app().openapi())
 
     assert normalized_compatibility_paths(
         cloud_run_spec
     ) == normalized_compatibility_paths(gateway_spec)
-    assert (
-        cloud_run_spec["components"]["schemas"] == gateway_spec["components"]["schemas"]
-    )
+    cloud_run_schemas = deepcopy(cloud_run_spec["components"]["schemas"])
+    cloud_run_schemas.pop("ReadinessResponse")
+    assert cloud_run_schemas == gateway_spec["components"]["schemas"]
     gateway_operation_ids = operation_ids(gateway_spec)
     cloud_run_operation_ids = operation_ids(cloud_run_spec)
     assert {

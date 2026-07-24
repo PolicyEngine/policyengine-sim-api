@@ -47,13 +47,14 @@ from policyengine_simulation_executor.simulation_macro_output import (
     BaselineReformValue,
     BudgetaryImpact,
     BudgetaryOutput,
+    ConstituencyImpactRecord,
     DecileOutput,
     DetailedBudgetOutput,
     CongressionalDistrictImpactOutput,
     GenderPovertyOutput,
     InequalityOutput,
     IntraDecileOutput,
-    LaborSupplyResponseOutput,
+    LocalAuthorityImpactRecord,
     PovertyByGenderOutput,
     PovertyModuleOutputs,
     PovertyOutput,
@@ -189,6 +190,30 @@ def _congressional_district_output() -> CongressionalDistrictImpactOutput:
     )
 
 
+def _constituency_impact_record() -> ConstituencyImpactRecord:
+    return ConstituencyImpactRecord(
+        constituency_code="E14000530",
+        constituency_name="Birmingham, Ladywood",
+        x=None,
+        y=None,
+        average_household_income_change=10.0,
+        relative_household_income_change=0.01,
+        population=1000.0,
+    )
+
+
+def _local_authority_impact_record() -> LocalAuthorityImpactRecord:
+    return LocalAuthorityImpactRecord(
+        local_authority_code="E06000001",
+        local_authority_name="Hartlepool",
+        x=None,
+        y=None,
+        average_household_income_change=12.0,
+        relative_household_income_change=0.02,
+        population=900.0,
+    )
+
+
 def _stub_policyengine_output_calls(monkeypatch, baseline, reform) -> None:
     def fake_poverty_module_function(name):
         def compute(simulation):
@@ -234,7 +259,9 @@ def _stub_policyengine_output_calls(monkeypatch, baseline, reform) -> None:
         SimulationOutputBuilder,
         "_build_uk_constituency_impact",
         lambda self: (
-            self._build_geographic_impact_output([{"constituency_code": "E14000530"}])
+            self._build_geographic_impact_output(
+                [_constituency_impact_record().model_dump(mode="json")]
+            )
             if self.country == "uk"
             else None
         ),
@@ -244,7 +271,7 @@ def _stub_policyengine_output_calls(monkeypatch, baseline, reform) -> None:
         "_build_uk_local_authority_impact",
         lambda self: (
             self._build_geographic_impact_output(
-                [{"local_authority_code": "E06000001"}]
+                [_local_authority_impact_record().model_dump(mode="json")]
             )
             if self.country == "uk"
             else None
@@ -709,7 +736,7 @@ def test_builder_records_output_timings_without_real_calculation(monkeypatch):
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_labor.build_labor_supply_response",
-        record("labor_supply", LaborSupplyResponseOutput({})),
+        record("labor_supply", None),
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_cliff.build_cliff_impact",
@@ -834,8 +861,8 @@ def test_builder_maps_uk_wealth_outputs_and_omits_us_only_race(monkeypatch):
         "relative": {"1": 0.03},
     }
     assert output["intra_wealth_decile"]["deciles"]["Lose more than 5%"] == [0.1]
-    assert output["constituency_impact"] == [{"constituency_code": "E14000530"}]
-    assert output["local_authority_impact"] == [{"local_authority_code": "E06000001"}]
+    assert output["constituency_impact"][0]["constituency_code"] == "E14000530"
+    assert output["local_authority_impact"][0]["local_authority_code"] == "E06000001"
 
 
 def test_builder_calls_policyengine_economic_impact_analysis():
@@ -1420,7 +1447,7 @@ def test_builder_budgetary_impact_propagates_required_calculation_errors(monkeyp
 def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
     baseline = object()
     reform = object()
-    expected = [{"constituency_code": "E14000530"}]
+    expected = [_constituency_impact_record().model_dump(mode="json")]
 
     def fake_output_module_function(module_name, name):
         assert module_name == "constituency_impact"
@@ -1438,12 +1465,11 @@ def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
         fake_output_module_function,
     )
 
-    assert (
-        _simulation_output_builder("uk", baseline, reform)
-        ._build_uk_constituency_impact()
-        .root
-        == expected
-    )
+    result = _simulation_output_builder(
+        "uk", baseline, reform
+    )._build_uk_constituency_impact()
+    assert result is not None
+    assert result.model_dump(mode="json") == expected
     assert (
         _simulation_output_builder(
             "us", baseline, reform
@@ -1455,7 +1481,7 @@ def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
 def test_uk_local_authority_impact_uses_policyengine_output_function(monkeypatch):
     baseline = object()
     reform = object()
-    expected = [{"local_authority_code": "E06000001"}]
+    expected = [_local_authority_impact_record().model_dump(mode="json")]
 
     def fake_output_module_function(module_name, name):
         assert module_name == "local_authority_impact"
@@ -1473,12 +1499,11 @@ def test_uk_local_authority_impact_uses_policyengine_output_function(monkeypatch
         fake_output_module_function,
     )
 
-    assert (
-        _simulation_output_builder("uk", baseline, reform)
-        ._build_uk_local_authority_impact()
-        .root
-        == expected
-    )
+    result = _simulation_output_builder(
+        "uk", baseline, reform
+    )._build_uk_local_authority_impact()
+    assert result is not None
+    assert result.model_dump(mode="json") == expected
     assert (
         _simulation_output_builder(
             "us", baseline, reform
