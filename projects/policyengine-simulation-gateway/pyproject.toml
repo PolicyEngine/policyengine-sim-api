@@ -42,7 +42,7 @@ packages = ["src/policyengine_simulation_gateway"]
 [dependency-groups]
 dev = [
     "policyengine-fastapi",
-    "policyengine-simulation-contract",
+    "policyengine-simulation-contract[modal]",
     "policyengine-simulation-observability",
 ]
 

@@ -6,17 +6,24 @@ gcloud_bin="${GCLOUD_BIN:-gcloud}"
 project_id="${SIMULATION_ENTRYPOINT_GCP_PROJECT_ID:?SIMULATION_ENTRYPOINT_GCP_PROJECT_ID is required}"
 billing_account="${SIMULATION_ENTRYPOINT_GCP_BILLING_ACCOUNT:-}"
 region="${SIMULATION_ENTRYPOINT_GCP_REGION:-us-central1}"
-repository="${SIMULATION_ENTRYPOINT_ARTIFACT_REPOSITORY:-policyengine-simulation-entrypoint}"
+repository="${SIMULATION_ENTRYPOINT_ARTIFACT_REPOSITORY:-policyengine-simulation-entry}"
 github_repository="${SIMULATION_ENTRYPOINT_GITHUB_REPOSITORY:-PolicyEngine/policyengine-sim-api}"
-pool_id="${SIMULATION_ENTRYPOINT_WIF_POOL_ID:-simulation-entrypoint-github}"
+pool_id="${SIMULATION_ENTRYPOINT_WIF_POOL_ID:-simulation-entry-github}"
 provider_id="${SIMULATION_ENTRYPOINT_WIF_PROVIDER_ID:-github}"
 dry_run="${SIMULATION_ENTRYPOINT_BOOTSTRAP_DRY_RUN:-0}"
+workflow_ref="${github_repository}/.github/workflows/cloud-run-simulation-entry.yml@refs/heads/main"
 
-deployer_account_id="sim-entrypoint-gh-deployer"
-staging_runtime_account_id="sim-entrypoint-stg-runtime"
-production_runtime_account_id="sim-entrypoint-prod-runtime"
-staging_secret="simulation-entrypoint-old-gateway-client-secret-staging"
-production_secret="simulation-entrypoint-old-gateway-client-secret-production"
+deployer_account_id="sim-entry-gh-deployer"
+staging_runtime_account_id="sim-entry-stg-runtime"
+production_runtime_account_id="sim-entry-prod-runtime"
+staging_secret="simulation-entry-old-gateway-client-secret-staging"
+production_secret="simulation-entry-old-gateway-client-secret-production"
+
+if [ "${#project_id}" -gt 30 ] ||
+  ! [[ "${project_id}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+  printf 'SIMULATION_ENTRYPOINT_GCP_PROJECT_ID must be a valid 6-30 character GCP project ID\n' >&2
+  exit 2
+fi
 
 run() {
   if [ "${dry_run}" = "1" ]; then
@@ -38,7 +45,7 @@ exists() {
 if ! exists "${gcloud_bin}" projects describe "${project_id}"; then
   project_args=(
     projects create "${project_id}"
-    --name "PolicyEngine Simulation Entrypoint"
+    --name "PE Simulation Entrypoint"
   )
   if [ -n "${SIMULATION_ENTRYPOINT_GCP_FOLDER_ID:-}" ]; then
     project_args+=(--folder "${SIMULATION_ENTRYPOINT_GCP_FOLDER_ID}")
@@ -150,20 +157,29 @@ if ! exists "${gcloud_bin}" iam workload-identity-pools describe "${pool_id}" \
     --display-name "Simulation Entrypoint GitHub Actions"
 fi
 
-if ! exists "${gcloud_bin}" iam workload-identity-pools providers describe \
+provider_args=(
+  "${provider_id}"
+  --project "${project_id}"
+  --location global
+  --workload-identity-pool "${pool_id}"
+  --issuer-uri "https://token.actions.githubusercontent.com"
+  --attribute-mapping "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref,attribute.workflow_ref=assertion.workflow_ref"
+  --attribute-condition "assertion.repository == '${github_repository}' && assertion.ref == 'refs/heads/main' && assertion.workflow_ref == '${workflow_ref}'"
+)
+
+if exists "${gcloud_bin}" iam workload-identity-pools providers describe \
   "${provider_id}" \
   --project "${project_id}" \
   --location global \
   --workload-identity-pool "${pool_id}"; then
-  run "${gcloud_bin}" iam workload-identity-pools providers create-oidc \
-    "${provider_id}" \
-    --project "${project_id}" \
-    --location global \
-    --workload-identity-pool "${pool_id}" \
+  run "${gcloud_bin}" iam workload-identity-pools providers update-oidc \
+    "${provider_args[@]}" \
     --display-name "PolicyEngine simulation repository" \
-    --issuer-uri "https://token.actions.githubusercontent.com" \
-    --attribute-mapping "google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
-    --attribute-condition "assertion.repository == '${github_repository}'"
+    --quiet
+else
+  run "${gcloud_bin}" iam workload-identity-pools providers create-oidc \
+    "${provider_args[@]}" \
+    --display-name "PolicyEngine simulation repository"
 fi
 
 if [ "${dry_run}" = "1" ]; then

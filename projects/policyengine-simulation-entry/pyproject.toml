@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "policyengine-simulation-entrypoint"
+name = "policyengine-simulation-entry"
 version = "0.1.0"
 readme = "README.md"
 authors = [
@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/policyengine_simulation_entrypoint"]
+packages = ["src/policyengine_simulation_entry"]
 
 [tool.uv.sources]
 policyengine-simulation-contract = { path = "../../libs/policyengine-simulation-contract", editable = true }

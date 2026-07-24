@@ -21,7 +21,7 @@ generate_client() {
 
     # The permanent Cloud Run Simulation Entrypoint owns the public schema.
     if [ "$SERVICE" = "simulation" ]; then
-        uv run python -m policyengine_simulation_entrypoint.generate_openapi
+        uv run python -m policyengine_simulation_entry.generate_openapi
     else
         uv run python -m policyengine_api_${SERVICE//-/_}.generate_openapi
     fi
@@ -61,7 +61,7 @@ generate_client() {
 }
 
 # Generate the client from the permanent Cloud Run entrypoint.
-generate_client "simulation" "projects/policyengine-simulation-entrypoint"
+generate_client "simulation" "projects/policyengine-simulation-entry"
 
 echo "✅ Client generated successfully!"
 echo ""

@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 
 PRODUCTION_ENVIRONMENTS = frozenset({"main", "prod", "production"})
+MODAL_GATEWAY_HOST_SUFFIX = ".modal.run"
 
 
 class ConfigurationError(RuntimeError):
@@ -106,9 +107,22 @@ class Settings:
         if self.connect_timeout_seconds <= 0 or self.request_timeout_seconds <= 0:
             raise ConfigurationError("Old-gateway timeouts must be positive.")
 
-        public_host = urlparse(self.public_url).hostname
-        upstream_host = urlparse(self.old_gateway_url).hostname
-        if public_host and upstream_host and public_host == upstream_host:
+        if not self.public_url:
+            raise ConfigurationError("SIMULATION_ENTRYPOINT_PUBLIC_URL is required.")
+
+        public = urlparse(self.public_url)
+        upstream = urlparse(self.old_gateway_url)
+        if public.scheme != "https" or not public.hostname:
+            raise ConfigurationError(
+                "SIMULATION_ENTRYPOINT_PUBLIC_URL must be an absolute HTTPS URL."
+            )
+        if upstream.scheme != "https" or not upstream.hostname:
+            raise ConfigurationError("OLD_GATEWAY_URL must be an absolute HTTPS URL.")
+        if not upstream.hostname.endswith(MODAL_GATEWAY_HOST_SUFFIX):
+            raise ConfigurationError(
+                "OLD_GATEWAY_URL must point to the existing Modal gateway."
+            )
+        if public.hostname == upstream.hostname:
             raise ConfigurationError(
                 "OLD_GATEWAY_URL must not point to the Simulation Entrypoint itself."
             )

@@ -5,9 +5,9 @@ import logging
 
 import pytest
 
-from policyengine_simulation_entrypoint import app as app_module
-from policyengine_simulation_entrypoint.app import create_app
-from policyengine_simulation_entrypoint.backend import (
+from policyengine_simulation_entry import app as app_module
+from policyengine_simulation_entry.app import create_app
+from policyengine_simulation_entry.backend import (
     BackendResponse,
     BackendTimeout,
     BackendUnavailable,
@@ -100,7 +100,7 @@ def test_job_status_records_structured_backend_telemetry(
     client.get("/jobs/fc-123")
 
     name, attributes = events[-1]
-    assert name == "simulation_entrypoint_backend_response"
+    assert name == "simulation_entry_backend_response"
     assert attributes["job_state"] == "running"
     assert attributes["status_code"] == 202
     assert attributes["route"] == "/jobs/{job_id}"
@@ -128,7 +128,7 @@ def test_request_log_templates_route_and_keeps_structured_job_id(
     request_record = next(
         record
         for record in caplog.records
-        if record.getMessage() == "simulation_entrypoint_request"
+        if record.getMessage() == "simulation_entry_request"
     )
     assert request_record.path == "/jobs/{job_id}"
     assert request_record.job_id == "fc-123"

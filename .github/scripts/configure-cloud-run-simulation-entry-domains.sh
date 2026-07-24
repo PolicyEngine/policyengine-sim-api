@@ -42,8 +42,8 @@ ensure_mapping() {
   fi
 }
 
-ensure_mapping policyengine-simulation-entrypoint-staging "${staging_domain}"
-ensure_mapping policyengine-simulation-entrypoint "${production_domain}"
+ensure_mapping policyengine-simulation-entry-staging "${staging_domain}"
+ensure_mapping policyengine-simulation-entry "${production_domain}"
 
 printf '\nInspect the mappings for the DNS records that must be published:\n'
 printf '  %s\n' "${staging_domain}" "${production_domain}"

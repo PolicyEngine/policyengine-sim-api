@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from policyengine_simulation_entrypoint.app import create_app
+from policyengine_simulation_entry.app import create_app
 
 
 def main() -> None:

@@ -5,7 +5,8 @@ import json
 import httpx
 import pytest
 
-from policyengine_simulation_entrypoint.backend import (
+from policyengine_simulation_entry.backend import (
+    BackendAuthenticationError,
     BackendUnavailable,
     OldGatewayBackend,
 )
@@ -61,7 +62,10 @@ async def test_backend_uses_own_token_and_preserves_safe_response_headers():
 
 
 @pytest.mark.asyncio
-async def test_backend_refreshes_token_once_after_401():
+@pytest.mark.parametrize("rejection_status", [401, 403])
+async def test_backend_refreshes_token_once_after_gateway_auth_rejection(
+    rejection_status,
+):
     token_fetches = 0
     gateway_calls = 0
 
@@ -78,7 +82,7 @@ async def test_backend_refreshes_token_once_after_401():
             )
         gateway_calls += 1
         if gateway_calls == 1:
-            return httpx.Response(401)
+            return httpx.Response(rejection_status)
         return httpx.Response(200, json={"status": "complete"})
 
     backend = OldGatewayBackend(
@@ -94,6 +98,37 @@ async def test_backend_refreshes_token_once_after_401():
     assert result.status_code == 200
     assert token_fetches == 2
     assert gateway_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_repeated_gateway_auth_rejection_is_backend_unavailable():
+    token_fetches = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal token_fetches
+        if request.url.path == "/oauth/token":
+            token_fetches += 1
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": f"token-{token_fetches}",
+                    "expires_in": 3600,
+                },
+            )
+        return httpx.Response(403)
+
+    backend = OldGatewayBackend(
+        make_settings(),
+        transport=httpx.MockTransport(handler),
+    )
+    await backend.start()
+    try:
+        with pytest.raises(BackendAuthenticationError):
+            await backend.request("POST", "/simulate/economy/comparison")
+    finally:
+        await backend.close()
+
+    assert token_fetches == 2
 
 
 @pytest.mark.asyncio

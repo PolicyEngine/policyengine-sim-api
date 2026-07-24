@@ -1,0 +1,23 @@
+.git
+
+projects/*
+!projects/policyengine-simulation-entry/
+!projects/policyengine-simulation-entry/**
+projects/policyengine-simulation-entry/artifacts
+projects/policyengine-simulation-entry/authenticated_tests
+projects/policyengine-simulation-entry/tests
+
+libs/*
+!libs/policyengine-simulation-contract/
+!libs/policyengine-simulation-contract/**
+!libs/policyengine-simulation-observability/
+!libs/policyengine-simulation-observability/**
+libs/**/tests
+
+# Keep these after the negated project/library rules so local build artifacts
+# cannot be re-included by the broader allowlists above.
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/*.pyc

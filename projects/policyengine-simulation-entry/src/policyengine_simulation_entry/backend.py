@@ -9,7 +9,7 @@ from typing import Any, Mapping, Protocol
 
 import httpx
 
-from policyengine_simulation_entrypoint.config import Settings
+from policyengine_simulation_entry.config import Settings
 
 
 SAFE_RESPONSE_HEADERS = frozenset(
@@ -177,11 +177,10 @@ class OldGatewayBackend:
     ) -> BackendResponse:
         client, token_provider = self._runtime()
         method = method.upper()
-        max_attempts = 2 if method == "GET" else 1
-        attempt = 0
+        connection_retries_remaining = 1 if method == "GET" else 0
+        auth_refreshes_remaining = 1
 
-        while attempt < max_attempts:
-            attempt += 1
+        while True:
             token = await token_provider.get_token()
             headers = {"Authorization": f"Bearer {token}"}
             if request_id:
@@ -195,7 +194,8 @@ class OldGatewayBackend:
                     headers=headers,
                 )
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-                if method == "GET" and attempt < max_attempts:
+                if connection_retries_remaining:
+                    connection_retries_remaining -= 1
                     continue
                 raise BackendUnavailable("Old gateway is unavailable.") from exc
             except httpx.TimeoutException as exc:
@@ -203,12 +203,17 @@ class OldGatewayBackend:
             except httpx.RequestError as exc:
                 raise BackendUnavailable("Old gateway is unavailable.") from exc
 
-            if response.status_code == 401 and attempt == 1:
-                token_provider.invalidate()
-                # A 401 is rejected before endpoint processing, so one
-                # credential-refresh replay is safe for POST as well as GET.
-                max_attempts = 2
-                continue
+            if response.status_code in {401, 403}:
+                if auth_refreshes_remaining:
+                    auth_refreshes_remaining -= 1
+                    token_provider.invalidate()
+                    # The old gateway rejects invalid bearer credentials with
+                    # 403 before endpoint processing. One credential-refresh
+                    # replay is therefore safe for POST as well as GET.
+                    continue
+                raise BackendAuthenticationError(
+                    "Old gateway rejected refreshed service credentials."
+                )
 
             return BackendResponse(
                 status_code=response.status_code,
@@ -219,7 +224,3 @@ class OldGatewayBackend:
                     if key.lower() in SAFE_RESPONSE_HEADERS
                 },
             )
-
-        raise BackendAuthenticationError(
-            "Old gateway rejected refreshed service credentials."
-        )

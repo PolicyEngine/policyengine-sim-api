@@ -6,9 +6,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from policyengine_simulation_entrypoint.app import create_app
-from policyengine_simulation_entrypoint.backend import BackendResponse
-from policyengine_simulation_entrypoint.config import Settings
+from policyengine_simulation_entry.app import create_app
+from policyengine_simulation_entry.backend import BackendResponse
+from policyengine_simulation_entry.config import Settings
 
 
 def make_settings(**overrides) -> Settings:
@@ -17,11 +17,13 @@ def make_settings(**overrides) -> Settings:
         "public_url": "https://simulation.example.test",
         "auth_required": True,
         "auth_issuer": "https://issuer.example/",
-        "auth_audience": "simulation-entrypoint",
-        "old_gateway_url": "https://old-gateway.example.test",
+        "auth_audience": "simulation-entry",
+        "old_gateway_url": (
+            "https://policyengine--policyengine-simulation-gateway-web-app.modal.run"
+        ),
         "old_gateway_auth_issuer": "https://issuer.example/",
         "old_gateway_auth_audience": "simulation-api",
-        "old_gateway_auth_client_id": "simulation-entrypoint-service",
+        "old_gateway_auth_client_id": "simulation-entry-service",
         "old_gateway_auth_client_secret": "secret",
     }
     values.update(overrides)

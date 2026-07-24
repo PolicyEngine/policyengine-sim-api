@@ -73,13 +73,18 @@ make generate-clients # regenerate the OpenAPI Python client
 
 ## Deployment
 
-Deployment targets Modal and is automated through GitHub Actions — there is no
-manual deploy step. On merge to `main`, the Modal deploy workflow
-(`.github/workflows/modal-deploy.yml`):
+Simulation workers and the old gateway continue to deploy to Modal. The
+permanent Simulation Entrypoint deploys independently to Cloud Run as tagged
+no-traffic candidates. On merge to `main`:
 
-1. Deploys to the beta (staging) Modal environment and runs integration tests.
-2. Deploys to the production Modal environment and runs integration tests.
-3. Publishes the API client to PyPI (`.github/workflows/publish-clients.yml`).
+1. `.github/workflows/modal-deploy.yml` deploys the existing gateway/workers.
+2. `.github/workflows/cloud-run-simulation-entry.yml` tests and deploys
+   staging and production Entrypoint candidates, including separate live
+   authenticated checks.
+3. A successful push-triggered Entrypoint deployment publishes the API client
+   from the exact deployed commit.
+
+Cloud Run traffic promotion and rollback remain manual operator actions.
 
 The stable gateway app is `policyengine-simulation-gateway`; executors deploy as
 versioned `policyengine-simulation-py{version}` apps. For Modal image and deploy

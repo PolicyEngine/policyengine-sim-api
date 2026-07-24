@@ -79,7 +79,7 @@ publish-clients: generate-clients
 test:
 	@echo "Running unit tests for all projects and libs..."
 	@for proj in projects/policyengine-simulation-executor \
-		projects/policyengine-simulation-entrypoint \
+		projects/policyengine-simulation-entry \
 		projects/policyengine-simulation-gateway \
 		libs/policyengine-simulation-contract \
 		libs/policyengine-simulation-observability; do \

@@ -27,8 +27,8 @@ from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
 
-from policyengine_simulation_entrypoint.auth import CallerAuthenticator
-from policyengine_simulation_entrypoint.backend import (
+from policyengine_simulation_entry.auth import CallerAuthenticator
+from policyengine_simulation_entry.backend import (
     BackendAuthenticationError,
     BackendResponse,
     BackendTimeout,
@@ -36,7 +36,7 @@ from policyengine_simulation_entrypoint.backend import (
     OldGatewayBackend,
     SimulationBackend,
 )
-from policyengine_simulation_entrypoint.config import Settings
+from policyengine_simulation_entry.config import Settings
 
 
 logger = logging.getLogger(__name__)
@@ -103,9 +103,9 @@ def create_app(
 
     configure_process_observability(
         platform="cloud_run",
-        service_role="simulation_entrypoint",
+        service_role="simulation_entry",
     )
-    init_simulation_observability(app, service_role="simulation_entrypoint")
+    init_simulation_observability(app, service_role="simulation_entry")
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
@@ -116,7 +116,7 @@ def create_app(
         elapsed_ms = round((time.monotonic() - started) * 1000, 2)
         response.headers["X-Request-ID"] = request_id
         logger.info(
-            "simulation_entrypoint_request",
+            "simulation_entry_request",
             extra={
                 "request_id": request_id,
                 "method": request.method,
@@ -177,11 +177,11 @@ def create_app(
             )
             if response_identifier_key and isinstance(response_identifier, str):
                 attributes[response_identifier_key] = response_identifier
-            record_event("simulation_entrypoint_backend_response", **attributes)
+            record_event("simulation_entry_backend_response", **attributes)
             return _response(result)
         except BackendTimeout:
             record_event(
-                "simulation_entrypoint_backend_timeout",
+                "simulation_entry_backend_timeout",
                 request_id=request.state.request_id,
                 route=route,
                 **event_identifiers,
@@ -196,7 +196,7 @@ def create_app(
             )
         except (BackendUnavailable, BackendAuthenticationError):
             record_event(
-                "simulation_entrypoint_backend_unavailable",
+                "simulation_entry_backend_unavailable",
                 request_id=request.state.request_id,
                 route=route,
                 **event_identifiers,
@@ -335,8 +335,9 @@ def create_app(
         summary="List Versions",
         description="List all available routing versions.",
         operation_id="list_versions_versions_get",
+        response_model=dict,
     )
-    async def list_versions(request: Request) -> dict:
+    async def list_versions(request: Request) -> Response:
         return await forward(request, "GET", "/versions")
 
     @app.get(
@@ -344,8 +345,9 @@ def create_app(
         summary="Get Country Versions",
         description="Get available versions for policyengine, US, or UK routing.",
         operation_id="get_country_versions_versions__kind__get",
+        response_model=dict,
     )
-    async def get_country_versions(kind: str, request: Request) -> dict:
+    async def get_country_versions(kind: str, request: Request) -> Response:
         return await forward(request, "GET", f"/versions/{kind}")
 
     @app.get(

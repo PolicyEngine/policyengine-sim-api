@@ -17,7 +17,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi (>=0.51b0,<0.52)",
     "policyengine-fastapi",
     "policyengine-simulation-observability",
-    "policyengine-simulation-contract",
+    "policyengine-simulation-contract[modal]",
     "policyengine==4.22.0",
     "policyengine-core==3.30.0",
     "policyengine-uk==2.89.2",

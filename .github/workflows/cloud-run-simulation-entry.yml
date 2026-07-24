@@ -4,28 +4,27 @@ on:
   push:
     branches: [main]
     paths:
-      - "projects/policyengine-simulation-entrypoint/**"
+      - "projects/policyengine-simulation-entry/**"
       - "libs/policyengine-fastapi/**"
       - "libs/policyengine-simulation-contract/**"
       - "libs/policyengine-simulation-observability/**"
-      - ".github/scripts/cloud-run-simulation-entrypoint-smoke.sh"
-      - ".github/workflows/cloud-run-simulation-entrypoint.yml"
+      - ".github/scripts/cloud-run-simulation-entry-smoke.sh"
+      - ".github/workflows/cloud-run-simulation-entry.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
-  group: cloud-run-simulation-entrypoint
+  group: cloud-run-simulation-entry
   cancel-in-progress: false
 
 env:
-  PROJECT_DIR: projects/policyengine-simulation-entrypoint
+  PROJECT_DIR: projects/policyengine-simulation-entry
   REGION: ${{ vars.SIMULATION_ENTRYPOINT_GCP_REGION || 'us-central1' }}
   PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
-  REPOSITORY: ${{ vars.SIMULATION_ENTRYPOINT_ARTIFACT_REPOSITORY || 'policyengine-simulation-entrypoint' }}
-  IMAGE_NAME: policyengine-simulation-entrypoint
+  REPOSITORY: ${{ vars.SIMULATION_ENTRYPOINT_ARTIFACT_REPOSITORY || 'policyengine-simulation-entry' }}
+  IMAGE_NAME: policyengine-simulation-entry
 
 jobs:
   test:
@@ -44,6 +43,9 @@ jobs:
   build:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       image: ${{ steps.image.outputs.uri }}
     steps:
@@ -63,6 +65,9 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     environment: staging
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       tag: ${{ steps.metadata.outputs.tag }}
       url: ${{ steps.url.outputs.url }}
@@ -80,7 +85,7 @@ jobs:
           IMAGE: ${{ needs.build.outputs.image }}
           TAG: ${{ steps.metadata.outputs.tag }}
         run: |
-          gcloud run deploy policyengine-simulation-entrypoint-staging \
+          gcloud run deploy policyengine-simulation-entry-staging \
             --project "${PROJECT_ID}" \
             --region "${REGION}" \
             --image "${IMAGE}" \
@@ -89,7 +94,7 @@ jobs:
             --allow-unauthenticated \
             --service-account "${{ vars.SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT }}" \
             --set-env-vars "^@^APP_ENVIRONMENT=staging@SIMULATION_ENTRYPOINT_PUBLIC_URL=https://staging.simulation.api.policyengine.org@SIMULATION_ENTRYPOINT_AUTH_REQUIRED=1@SIMULATION_ENTRYPOINT_AUTH_ISSUER=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}@SIMULATION_ENTRYPOINT_AUTH_AUDIENCE=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}@OLD_GATEWAY_URL=${{ secrets.OLD_GATEWAY_URL }}@OLD_GATEWAY_AUTH_ISSUER=${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}@OLD_GATEWAY_AUTH_AUDIENCE=${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}@OLD_GATEWAY_AUTH_CLIENT_ID=${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}" \
-            --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=simulation-entrypoint-old-gateway-client-secret-staging:latest" \
+            --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=simulation-entry-old-gateway-client-secret-staging:latest" \
             --cpu 1 \
             --memory 512Mi \
             --concurrency 80 \
@@ -100,20 +105,46 @@ jobs:
         env:
           TAG: ${{ steps.metadata.outputs.tag }}
         run: |
-          url="$(gcloud run services describe policyengine-simulation-entrypoint-staging \
+          url="$(gcloud run services describe policyengine-simulation-entry-staging \
             --project "${PROJECT_ID}" \
             --region "${REGION}" \
             --format=json | jq -r --arg tag "${TAG}" '.status.traffic[] | select(.tag == $tag) | .url')"
           test -n "${url}"
           echo "url=${url}" >> "$GITHUB_OUTPUT"
-      - run: bash .github/scripts/cloud-run-simulation-entrypoint-smoke.sh "${{ steps.url.outputs.url }}"
+      - run: bash .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ steps.url.outputs.url }}"
+
+  authenticated-test-staging:
+    name: Authenticated deployment test (staging)
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      SIMULATION_ENTRYPOINT_TEST_BASE_URL: ${{ needs.deploy-staging.outputs.url }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v8.1.0
+      - run: uv sync --extra test --frozen
+        working-directory: ${{ env.PROJECT_DIR }}
+      - run: uv run pytest authenticated_tests/ -v
+        working-directory: ${{ env.PROJECT_DIR }}
 
   deploy-production-candidate:
-    needs: [build, deploy-staging]
+    needs: [build, authenticated-test-staging]
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       tag: ${{ steps.metadata.outputs.tag }}
+      url: ${{ steps.url.outputs.url }}
     steps:
       - uses: actions/checkout@v6
       - uses: google-github-actions/auth@v2
@@ -128,7 +159,7 @@ jobs:
           IMAGE: ${{ needs.build.outputs.image }}
           TAG: ${{ steps.metadata.outputs.tag }}
         run: |
-          gcloud run deploy policyengine-simulation-entrypoint \
+          gcloud run deploy policyengine-simulation-entry \
             --project "${PROJECT_ID}" \
             --region "${REGION}" \
             --image "${IMAGE}" \
@@ -137,20 +168,44 @@ jobs:
             --allow-unauthenticated \
             --service-account "${{ vars.SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT }}" \
             --set-env-vars "^@^APP_ENVIRONMENT=production@SIMULATION_ENTRYPOINT_PUBLIC_URL=https://simulation.api.policyengine.org@SIMULATION_ENTRYPOINT_AUTH_REQUIRED=1@SIMULATION_ENTRYPOINT_AUTH_ISSUER=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}@SIMULATION_ENTRYPOINT_AUTH_AUDIENCE=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}@OLD_GATEWAY_URL=${{ secrets.OLD_GATEWAY_URL }}@OLD_GATEWAY_AUTH_ISSUER=${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}@OLD_GATEWAY_AUTH_AUDIENCE=${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}@OLD_GATEWAY_AUTH_CLIENT_ID=${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}" \
-            --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=simulation-entrypoint-old-gateway-client-secret-production:latest" \
+            --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=simulation-entry-old-gateway-client-secret-production:latest" \
             --cpu 1 \
             --memory 512Mi \
             --concurrency 80 \
             --timeout 60 \
             --min-instances 1 \
             --max-instances 20
-      - name: Resolve and smoke candidate
+      - id: url
+        name: Resolve candidate URL
         env:
           TAG: ${{ steps.metadata.outputs.tag }}
         run: |
-          url="$(gcloud run services describe policyengine-simulation-entrypoint \
+          url="$(gcloud run services describe policyengine-simulation-entry \
             --project "${PROJECT_ID}" \
             --region "${REGION}" \
             --format=json | jq -r --arg tag "${TAG}" '.status.traffic[] | select(.tag == $tag) | .url')"
           test -n "${url}"
-          bash .github/scripts/cloud-run-simulation-entrypoint-smoke.sh "${url}"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+      - run: bash .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ steps.url.outputs.url }}"
+
+  authenticated-test-production:
+    name: Authenticated deployment test (production)
+    needs: deploy-production-candidate
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SIMULATION_ENTRYPOINT_TEST_BASE_URL: ${{ needs.deploy-production-candidate.outputs.url }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v8.1.0
+      - run: uv sync --extra test --frozen
+        working-directory: ${{ env.PROJECT_DIR }}
+      - run: uv run pytest authenticated_tests/ -v
+        working-directory: ${{ env.PROJECT_DIR }}

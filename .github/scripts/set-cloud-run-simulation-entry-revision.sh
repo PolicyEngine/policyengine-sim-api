@@ -14,10 +14,10 @@ dry_run="${SIMULATION_ENTRYPOINT_TRAFFIC_DRY_RUN:-0}"
 
 case "${environment}" in
   staging)
-    service="policyengine-simulation-entrypoint-staging"
+    service="policyengine-simulation-entry-staging"
     ;;
   production)
-    service="policyengine-simulation-entrypoint"
+    service="policyengine-simulation-entry"
     ;;
   *)
     printf 'SIMULATION_ENTRYPOINT_DEPLOYMENT_ENVIRONMENT must be staging or production\n' >&2

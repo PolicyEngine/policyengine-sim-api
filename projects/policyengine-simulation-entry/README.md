@@ -1,4 +1,4 @@
-# policyengine-simulation-entrypoint
+# policyengine-simulation-entry
 
 The permanent Cloud Run entrypoint for PolicyEngine simulation submission and
 polling.
@@ -14,5 +14,7 @@ compute dispatch.
     uv sync --extra test
     uv run pytest tests/ -v
 
-The production app is policyengine_simulation_entrypoint.app:app. Required runtime
-configuration is documented in policyengine_simulation_entrypoint.config.Settings.
+The production app is policyengine_simulation_entry.app:app. Required runtime
+configuration is documented in policyengine_simulation_entry.config.Settings.
+Live caller/backend authentication checks are isolated in `authenticated_tests`
+and run only against tagged Cloud Run candidates in the deployment workflow.
