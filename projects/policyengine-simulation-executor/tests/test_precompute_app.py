@@ -72,7 +72,7 @@ def test_compute_baseline_matches_segment_worker_shape(precompute_module):
     assert kwargs["timeout"] == 3600
 
 
-def test_dataset_builder_gets_prebuild_scale_resources(precompute_module):
+def test_dataset_builder_gets_dataset_build_scale_resources(precompute_module):
     kwargs = _function_kwargs(precompute_module, "build_dataset")
     assert kwargs["cpu"] == 8.0
     assert kwargs["memory"] == 65536

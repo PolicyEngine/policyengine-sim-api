@@ -294,7 +294,7 @@ def collect_dataset_identity(country: str, year: int) -> DatasetArtifactIdentity
     Reads the same sources the runtime trusts: the release bundle (versions),
     the bundle receipt (content sha), and the manifest certification
     (fingerprint). The stem comes through the same manifest helpers the
-    prebuild and runtime lookups use, so filename coupling is inherited, not
+    runtime lookup uses, so filename coupling is inherited, not
     re-derived.
     """
     from policyengine.provenance.manifest import (
