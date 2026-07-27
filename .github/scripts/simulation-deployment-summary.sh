@@ -1,6 +1,6 @@
 #!/bin/bash
 # Generate deployment summary for GitHub Actions
-# Usage: ./simulation-deployment-summary.sh <beta-result> <beta-url> <prod-result> <prod-url>
+# Usage: ./simulation-deployment-summary.sh <beta-result> <beta-candidate-url> <prod-result> <prod-stable-url>
 
 set -euo pipefail
 
@@ -31,7 +31,7 @@ PROD_URL="${4:-}"
   case "$PROD_RESULT" in
     success)
       echo "✅ **Prod deployment**: Success"
-      [ -n "$PROD_URL" ] && echo "   - Candidate URL: $PROD_URL"
+      [ -n "$PROD_URL" ] && echo "   - Stable URL: $PROD_URL"
       ;;
     skipped)
       echo "⏭️ **Prod deployment**: Skipped"

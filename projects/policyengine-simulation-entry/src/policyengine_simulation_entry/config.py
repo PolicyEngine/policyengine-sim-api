@@ -30,7 +30,7 @@ class Settings:
     """All configuration required by the Stage 5 control-plane proxy."""
 
     environment: str
-    public_url: str
+    revision: str
     auth_required: bool
     auth_issuer: str
     auth_audience: str
@@ -46,7 +46,7 @@ class Settings:
     def from_env(cls) -> "Settings":
         return cls(
             environment=os.getenv("APP_ENVIRONMENT", "local").lower(),
-            public_url=os.getenv("SIMULATION_ENTRYPOINT_PUBLIC_URL", ""),
+            revision=os.getenv("K_REVISION", ""),
             auth_required=_truthy(
                 os.getenv("SIMULATION_ENTRYPOINT_AUTH_REQUIRED"),
                 default=True,
@@ -107,22 +107,10 @@ class Settings:
         if self.connect_timeout_seconds <= 0 or self.request_timeout_seconds <= 0:
             raise ConfigurationError("Old-gateway timeouts must be positive.")
 
-        if not self.public_url:
-            raise ConfigurationError("SIMULATION_ENTRYPOINT_PUBLIC_URL is required.")
-
-        public = urlparse(self.public_url)
         upstream = urlparse(self.old_gateway_url)
-        if public.scheme != "https" or not public.hostname:
-            raise ConfigurationError(
-                "SIMULATION_ENTRYPOINT_PUBLIC_URL must be an absolute HTTPS URL."
-            )
         if upstream.scheme != "https" or not upstream.hostname:
             raise ConfigurationError("OLD_GATEWAY_URL must be an absolute HTTPS URL.")
         if not upstream.hostname.endswith(MODAL_GATEWAY_HOST_SUFFIX):
             raise ConfigurationError(
                 "OLD_GATEWAY_URL must point to the existing Modal gateway."
-            )
-        if public.hostname == upstream.hostname:
-            raise ConfigurationError(
-                "OLD_GATEWAY_URL must not point to the Simulation Entrypoint itself."
             )

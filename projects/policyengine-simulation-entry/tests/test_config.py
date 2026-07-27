@@ -17,23 +17,6 @@ def test_partial_caller_auth_is_rejected():
         make_settings(auth_audience="").validate()
 
 
-def test_recursive_gateway_url_is_rejected():
-    with pytest.raises(ConfigurationError, match="must not point"):
-        make_settings(
-            public_url=(
-                "https://policyengine--policyengine-simulation-gateway-web-app.modal.run"
-            ),
-            old_gateway_url=(
-                "https://policyengine--policyengine-simulation-gateway-web-app.modal.run"
-            ),
-        ).validate()
-
-
-def test_public_url_is_required():
-    with pytest.raises(ConfigurationError, match="PUBLIC_URL is required"):
-        make_settings(public_url="").validate()
-
-
 @pytest.mark.parametrize(
     "old_gateway_url",
     [

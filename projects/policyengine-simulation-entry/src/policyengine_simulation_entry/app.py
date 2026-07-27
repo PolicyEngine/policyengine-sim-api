@@ -135,6 +135,10 @@ def create_app(
         response = await call_next(request)
         elapsed_ms = round((time.monotonic() - started) * 1000, 2)
         response.headers["X-Request-ID"] = request_id
+        if runtime_settings.revision:
+            response.headers["X-PolicyEngine-Simulation-Revision"] = (
+                runtime_settings.revision
+            )
         logger.info(
             "simulation_entry_request",
             extra={

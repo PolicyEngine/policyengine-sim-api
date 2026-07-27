@@ -30,6 +30,10 @@ def test_health_is_local_and_compatible(client, backend):
 
     assert result.status_code == 200
     assert result.json() == {"status": "healthy"}
+    assert (
+        result.headers["x-policyengine-simulation-revision"]
+        == "simulation-entry-test-revision"
+    )
     assert backend.requests == []
 
 

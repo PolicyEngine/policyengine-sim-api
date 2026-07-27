@@ -35,10 +35,10 @@ jobs:
       release_environment: beta
       modal_environment: staging
       entrypoint_service: policyengine-simulation-entry-staging
-      entrypoint_public_url: https://staging.simulation.api.policyengine.org
       entrypoint_revision_prefix: s
       entrypoint_min_instances: 0
       entrypoint_max_instances: 2
+      promote_entrypoint: false
       force_latest: ${{ inputs.force_latest || false }}
       force_recompute: ${{ inputs.force_recompute || false }}
     secrets: inherit
@@ -54,10 +54,10 @@ jobs:
       release_environment: prod
       modal_environment: main
       entrypoint_service: policyengine-simulation-entry
-      entrypoint_public_url: https://simulation.api.policyengine.org
       entrypoint_revision_prefix: p
       entrypoint_min_instances: 1
       entrypoint_max_instances: 20
+      promote_entrypoint: true
       force_latest: ${{ inputs.force_latest || false }}
       force_recompute: ${{ inputs.force_recompute || false }}
     secrets: inherit
@@ -76,4 +76,4 @@ jobs:
             "${{ needs.beta.result }}" \
             "${{ needs.beta.outputs.simulation_api_url }}" \
             "${{ needs.prod.result }}" \
-            "${{ needs.prod.outputs.simulation_api_url }}"
+            "${{ needs.prod.outputs.stable_url }}"

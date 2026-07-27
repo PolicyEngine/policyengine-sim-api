@@ -15,10 +15,6 @@ on:
         required: true
         type: string
         description: "Cloud Run service name"
-      entrypoint_public_url:
-        required: true
-        type: string
-        description: "Public URL represented by this entrypoint"
       entrypoint_revision_prefix:
         required: true
         type: string
@@ -29,6 +25,10 @@ on:
       entrypoint_max_instances:
         required: true
         type: number
+      promote_entrypoint:
+        required: true
+        type: boolean
+        description: "Assign stable service traffic after all environment tests pass"
       force_latest:
         required: false
         default: false
@@ -42,7 +42,16 @@ on:
     outputs:
       simulation_api_url:
         description: "Tagged Cloud Run candidate URL qualified by this deployment"
-        value: ${{ jobs.deploy_entrypoint.outputs.url }}
+        value: ${{ jobs.deploy_entrypoint.outputs.candidate_url }}
+      stable_url:
+        description: "Stable Cloud Run service URL"
+        value: ${{ jobs.deploy_entrypoint.outputs.stable_url }}
+      entrypoint_revision:
+        description: "Exact Cloud Run revision qualified by this deployment"
+        value: ${{ jobs.deploy_entrypoint.outputs.revision }}
+      entrypoint_image:
+        description: "Image reference resolved on the deployed Cloud Run revision"
+        value: ${{ jobs.deploy_entrypoint.outputs.image }}
       policyengine_version:
         description: "Deployed policyengine.py package version"
         value: ${{ jobs.prepare.outputs.policyengine_version }}
@@ -124,9 +133,12 @@ jobs:
       REPOSITORY: ${{ vars.SIMULATION_ENTRYPOINT_ARTIFACT_REPOSITORY || 'policyengine-simulation-entry' }}
       IMAGE_NAME: policyengine-simulation-entry
     outputs:
-      image: ${{ steps.image.outputs.uri }}
+      image: ${{ steps.candidate.outputs.image }}
       revision_tag: ${{ steps.metadata.outputs.tag }}
-      url: ${{ steps.url.outputs.url }}
+      revision: ${{ steps.candidate.outputs.revision }}
+      candidate_url: ${{ steps.candidate.outputs.url }}
+      stable_url: ${{ steps.previous.outputs.stable_url }}
+      previous_revision: ${{ steps.previous.outputs.revision }}
     steps:
       - uses: actions/checkout@v6
 
@@ -145,6 +157,30 @@ jobs:
 
       - name: Configure Artifact Registry authentication
         run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Capture stable service state before deployment
+        id: previous
+        run: |
+          service_json="$(gcloud run services describe "${{ inputs.entrypoint_service }}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format=json)"
+          stable_url="$(jq -er '.status.url | select(type == "string" and length > 0)' <<<"${service_json}")"
+          revision="$(jq -er '
+            [
+              .status.traffic[]?
+              | select((.percent // 0) == 100)
+              | .revisionName
+              | select(type == "string" and length > 0)
+            ]
+            | if length == 1 then .[0]
+              else error("service must have exactly one revision at 100 percent")
+              end
+          ' <<<"${service_json}")"
+          {
+            echo "stable_url=${stable_url}"
+            echo "revision=${revision}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Select immutable image
         id: image
@@ -175,7 +211,7 @@ jobs:
             --no-traffic \
             --allow-unauthenticated \
             --service-account "${{ vars.SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT }}" \
-            --set-env-vars "^@^APP_ENVIRONMENT=${{ inputs.release_environment }}@SIMULATION_ENTRYPOINT_PUBLIC_URL=${{ inputs.entrypoint_public_url }}@SIMULATION_ENTRYPOINT_AUTH_REQUIRED=1@SIMULATION_ENTRYPOINT_AUTH_ISSUER=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}@SIMULATION_ENTRYPOINT_AUTH_AUDIENCE=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}@OLD_GATEWAY_URL=${{ secrets.OLD_GATEWAY_URL }}@OLD_GATEWAY_AUTH_ISSUER=${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}@OLD_GATEWAY_AUTH_AUDIENCE=${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}@OLD_GATEWAY_AUTH_CLIENT_ID=${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}" \
+            --set-env-vars "^@^APP_ENVIRONMENT=${{ inputs.release_environment }}@SIMULATION_ENTRYPOINT_AUTH_REQUIRED=1@SIMULATION_ENTRYPOINT_AUTH_ISSUER=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}@SIMULATION_ENTRYPOINT_AUTH_AUDIENCE=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}@OLD_GATEWAY_URL=${{ secrets.OLD_GATEWAY_URL }}@OLD_GATEWAY_AUTH_ISSUER=${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}@OLD_GATEWAY_AUTH_AUDIENCE=${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}@OLD_GATEWAY_AUTH_CLIENT_ID=${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}" \
             --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=${{ vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME }}:latest" \
             --cpu 1 \
             --memory 512Mi \
@@ -184,17 +220,43 @@ jobs:
             --min-instances "${{ inputs.entrypoint_min_instances }}" \
             --max-instances "${{ inputs.entrypoint_max_instances }}"
 
-      - name: Resolve tagged candidate URL
-        id: url
+      - name: Resolve exact candidate metadata
+        id: candidate
         env:
           TAG: ${{ steps.metadata.outputs.tag }}
         run: |
-          url="$(gcloud run services describe "${{ inputs.entrypoint_service }}" \
+          service_json="$(gcloud run services describe "${{ inputs.entrypoint_service }}" \
             --project "${PROJECT_ID}" \
             --region "${REGION}" \
-            --format=json | jq -r --arg tag "${TAG}" '.status.traffic[] | select(.tag == $tag) | .url')"
-          test -n "${url}"
-          echo "url=${url}" >> "$GITHUB_OUTPUT"
+            --format=json)"
+          url="$(jq -er --arg tag "${TAG}" '
+            .status.traffic[]
+            | select(.tag == $tag)
+            | .url
+            | select(type == "string" and length > 0)
+          ' <<<"${service_json}")"
+          revision="$(jq -er --arg tag "${TAG}" '
+            .status.traffic[]
+            | select(.tag == $tag)
+            | .revisionName
+            | select(type == "string" and length > 0)
+          ' <<<"${service_json}")"
+          revision_json="$(gcloud run revisions describe "${revision}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format=json)"
+          image="$(jq -er '
+            (.status.imageDigest // .spec.containers[0].image)
+            | select(
+                type == "string"
+                and contains("@sha256:")
+              )
+          ' <<<"${revision_json}")"
+          {
+            echo "url=${url}"
+            echo "revision=${revision}"
+            echo "image=${image}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install entrypoint unit-test dependencies
         working-directory: ${{ env.PROJECT_DIR }}
@@ -358,7 +420,7 @@ jobs:
       - uses: astral-sh/setup-uv@v8.1.0
 
       - name: Verify the complete deployed request path
-        run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.url }}"
+        run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.deploy_entrypoint.outputs.revision }}"
 
       - name: Generate API clients
         run: ./scripts/generate-clients.sh
@@ -370,7 +432,7 @@ jobs:
           SIMULATION_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
           SIMULATION_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
           SIMULATION_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
-        run: .github/scripts/simulation-run-integ-tests.sh "${{ inputs.release_environment }}" "${{ needs.deploy_entrypoint.outputs.url }}" "${{ needs.prepare.outputs.us_version }}" "${{ needs.prepare.outputs.uk_version }}"
+        run: .github/scripts/simulation-run-integ-tests.sh "${{ inputs.release_environment }}" "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.prepare.outputs.us_version }}" "${{ needs.prepare.outputs.uk_version }}"
 
       - name: Record deployment marker
         working-directory: projects/policyengine-simulation-executor
@@ -390,7 +452,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
     env:
-      SIMULATION_ENTRYPOINT_TEST_BASE_URL: ${{ needs.deploy_entrypoint.outputs.url }}
+      SIMULATION_ENTRYPOINT_TEST_BASE_URL: ${{ needs.deploy_entrypoint.outputs.candidate_url }}
       SIMULATION_ENTRYPOINT_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
       SIMULATION_ENTRYPOINT_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
       SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
@@ -411,3 +473,88 @@ jobs:
       - name: Run authenticated deployment tests
         working-directory: projects/policyengine-simulation-entry
         run: uv run pytest authenticated_tests/ -v
+
+  promote_entrypoint:
+    name: Promote and verify Cloud Run entrypoint
+    if: ${{ inputs.promote_entrypoint }}
+    needs: [deploy_entrypoint, authenticated_test]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      REGION: ${{ vars.SIMULATION_ENTRYPOINT_GCP_REGION || 'us-central1' }}
+      PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
+      SERVICE: ${{ inputs.entrypoint_service }}
+      TARGET_REVISION: ${{ needs.deploy_entrypoint.outputs.revision }}
+      PREVIOUS_REVISION: ${{ needs.deploy_entrypoint.outputs.previous_revision }}
+      STABLE_URL: ${{ needs.deploy_entrypoint.outputs.stable_url }}
+      CUSTOM_URL: ${{ vars.SIMULATION_ENTRYPOINT_CUSTOM_URL }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install stable-endpoint test dependencies
+        working-directory: projects/policyengine-simulation-entry
+        run: uv sync --extra test --frozen
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Promote exact tested revision
+        id: promote
+        env:
+          SIMULATION_ENTRYPOINT_GCP_PROJECT_ID: ${{ env.PROJECT_ID }}
+          SIMULATION_ENTRYPOINT_GCP_REGION: ${{ env.REGION }}
+          SIMULATION_ENTRYPOINT_SERVICE: ${{ env.SERVICE }}
+          SIMULATION_ENTRYPOINT_TARGET_REVISION: ${{ env.TARGET_REVISION }}
+          SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION: ${{ env.PREVIOUS_REVISION }}
+        run: .github/scripts/set-cloud-run-simulation-entry-revision.sh
+
+      - name: Verify stable service routing
+        run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}"
+
+      - name: Verify stable service authentication
+        working-directory: projects/policyengine-simulation-entry
+        env:
+          SIMULATION_ENTRYPOINT_TEST_BASE_URL: ${{ env.STABLE_URL }}
+          SIMULATION_ENTRYPOINT_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+          SIMULATION_ENTRYPOINT_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+          SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+          SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+        run: uv run pytest authenticated_tests/ -v
+
+      - name: Verify configured custom hostname
+        if: ${{ env.CUSTOM_URL != '' }}
+        run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${CUSTOM_URL}" "${TARGET_REVISION}"
+
+      - name: Verify configured custom-hostname authentication
+        if: ${{ env.CUSTOM_URL != '' }}
+        working-directory: projects/policyengine-simulation-entry
+        env:
+          SIMULATION_ENTRYPOINT_TEST_BASE_URL: ${{ env.CUSTOM_URL }}
+          SIMULATION_ENTRYPOINT_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+          SIMULATION_ENTRYPOINT_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+          SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+          SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+        run: uv run pytest authenticated_tests/ -v
+
+      - name: Restore previous revision after failed verification
+        if: ${{ failure() && steps.promote.outcome == 'success' }}
+        env:
+          SIMULATION_ENTRYPOINT_GCP_PROJECT_ID: ${{ env.PROJECT_ID }}
+          SIMULATION_ENTRYPOINT_GCP_REGION: ${{ env.REGION }}
+          SIMULATION_ENTRYPOINT_SERVICE: ${{ env.SERVICE }}
+          SIMULATION_ENTRYPOINT_TARGET_REVISION: ${{ env.PREVIOUS_REVISION }}
+          SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION: ${{ env.TARGET_REVISION }}
+        run: .github/scripts/set-cloud-run-simulation-entry-revision.sh

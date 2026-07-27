@@ -173,6 +173,8 @@ class TestSimulationDeploymentSummary:
         assert "Simulation API Deployment Summary" in summary
         assert "Beta deployment" in summary
         assert "Prod deployment" in summary
+        assert "Candidate URL: https://beta.example.com" in summary
+        assert "Stable URL: https://prod.example.com" in summary
         assert "https://beta.example.com" in summary
         assert "https://prod.example.com" in summary
 
@@ -680,9 +682,7 @@ class TestModalRecordDeployment:
         # written until the routed three-service stack passes integration.
         assert reusable_workflow.index(
             "Run integration tests through entrypoint, gateway, and executor"
-        ) < (
-            reusable_workflow.index("modal-record-deployment.sh")
-        )
+        ) < (reusable_workflow.index("modal-record-deployment.sh"))
 
         # The payload builder maps missing env vars to empty strings, so a
         # silent rename here would empty the marker's fields — assert every
@@ -701,6 +701,7 @@ class TestModalRecordDeployment:
             "UK_DATA_VERSION: ${{ needs.prepare.outputs.uk_data_version }}",
         ):
             assert env_line in marker_step, f"marker step is missing: {env_line}"
+
 
 class TestModalGetUrl:
     """Tests for modal-get-url.sh"""

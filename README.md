@@ -75,8 +75,10 @@ make generate-clients # regenerate the OpenAPI Python client
 
 Simulation workers and the old gateway continue to deploy to Modal. The
 permanent Simulation Entrypoint deploys to Cloud Run as tagged no-traffic
-candidates. On merge to `main`, `.github/workflows/simulation-deploy.yml`
-promotes one complete stack at a time:
+candidates. Beta qualification uses Cloud Run's generated candidate URLs and
+does not require a custom beta domain. On merge to `main`,
+`.github/workflows/simulation-deploy.yml` releases one complete stack at a
+time:
 
 1. prepare the environment's deployment inputs and runtime secrets;
 2. deploy and unit test the Entrypoint, Modal gateway, and Modal executor in
@@ -85,12 +87,20 @@ promotes one complete stack at a time:
 4. run generated-client and live authentication tests through the complete
    three-service request path; and
 5. begin the `prod` deployment only after every `beta` deployment and
-   qualification job succeeds.
+   qualification job succeeds;
+6. assign stable production traffic to the exact tested entrypoint revision
+   after the complete production suite passes; and
+7. verify the stable endpoint, restoring its previous revision if immediate
+   post-promotion checks fail.
 
 A successful push-triggered full-stack deployment publishes the API client from
 the exact deployed commit.
 
-Cloud Run traffic promotion and rollback remain manual operator actions.
+The stable production service may have a separately managed custom hostname.
+Domain ownership, DNS, TLS, and other one-time cloud setup remain operator
+responsibilities outside committed deployment automation. Entrypoint traffic
+promotion does not change API v1 revision traffic or its simulation-entrypoint
+migration flag.
 
 The stable gateway app is `policyengine-simulation-gateway`; executors deploy as
 versioned `policyengine-simulation-py{version}` apps. For Modal image and deploy

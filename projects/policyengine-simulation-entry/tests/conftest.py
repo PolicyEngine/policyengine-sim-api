@@ -14,7 +14,7 @@ from policyengine_simulation_entry.config import Settings
 def make_settings(**overrides) -> Settings:
     values = {
         "environment": "test",
-        "public_url": "https://simulation.example.test",
+        "revision": "simulation-entry-test-revision",
         "auth_required": True,
         "auth_issuer": "https://issuer.example/",
         "auth_audience": "simulation-entry",
