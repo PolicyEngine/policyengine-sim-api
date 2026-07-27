@@ -2,7 +2,7 @@ name: Publish API clients
 
 on:
   workflow_run:
-    workflows: ["Deploy Simulation Entrypoint to Cloud Run"]
+    workflows: ["Deploy Simulation API"]
     types:
       - completed
     branches:

@@ -64,30 +64,30 @@ class TestModalExtractVersions:
     def test_deploy_workflow_passes_core_version_to_modal(self):
         """Deploy workflow should pass core version into the Modal app build."""
         workflow = (
-            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
 
         assert "policyengine_core_version" in workflow
         assert (
-            "POLICYENGINE_CORE_VERSION: ${{ steps.versions.outputs.policyengine_core_version }}"
+            "POLICYENGINE_CORE_VERSION: ${{ needs.prepare.outputs.policyengine_core_version }}"
             in workflow
         )
 
-    def test_deploy_workflow_threads_force_latest_to_script(self):
-        """Manual rollback flag should reach the deploy script."""
+    def test_deploy_workflow_threads_force_latest_to_routing_publisher(self):
+        """Manual rollback flag should reach the post-deployment routing job."""
         deploy_workflow = (
-            REPO_ROOT / ".github" / "workflows" / "modal-deploy.yml"
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.yml"
         ).read_text(encoding="utf-8")
         reusable_workflow = (
-            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
 
         assert "force_latest:" in deploy_workflow
         assert "force_latest: ${{ inputs.force_latest || false }}" in deploy_workflow
         assert "force_latest:" in reusable_workflow
-        assert (
-            'modal-deploy-app.sh "${{ inputs.modal_environment }}" "${{ inputs.force_latest }}"'
-            in reusable_workflow
+        assert "args+=(--force-latest)" in reusable_workflow
+        assert reusable_workflow.index("deploy_executor:") < reusable_workflow.index(
+            "update_routing:"
         )
 
 
@@ -128,10 +128,10 @@ class TestModalHealthCheck:
         assert result.returncode != 0, "Should fail on unreachable URL"
 
 
-class TestModalDeploymentSummary:
-    """Tests for modal-deployment-summary.sh"""
+class TestSimulationDeploymentSummary:
+    """Tests for simulation-deployment-summary.sh"""
 
-    script = SCRIPTS_DIR / "modal-deployment-summary.sh"
+    script = SCRIPTS_DIR / "simulation-deployment-summary.sh"
 
     def test_script_exists(self):
         """Script file should exist."""
@@ -170,9 +170,9 @@ class TestModalDeploymentSummary:
         with open(temp_github_step_summary) as f:
             summary = f.read()
 
-        assert "Modal Deployment Summary" in summary
+        assert "Simulation API Deployment Summary" in summary
         assert "Beta deployment" in summary
-        assert "Production deployment" in summary
+        assert "Prod deployment" in summary
         assert "https://beta.example.com" in summary
         assert "https://prod.example.com" in summary
 
@@ -341,91 +341,6 @@ class TestModalSyncSecrets:
         assert "GATEWAY_AUTH_CLIENT_SECRET" not in calls
 
 
-class TestModalDeployApp:
-    """Tests for modal-deploy-app.sh"""
-
-    script = SCRIPTS_DIR / "modal-deploy-app.sh"
-
-    def _run_with_fake_uv(self, tmp_path, *args):
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
-        log_path = tmp_path / "uv-calls.log"
-        uv_path = bin_dir / "uv"
-        uv_path.write_text(
-            '#!/bin/bash\nprintf \'%s\\n\' "$*" >> "$UV_FAKE_LOG"\n',
-            encoding="utf-8",
-        )
-        uv_path.chmod(0o755)
-
-        env = os.environ.copy()
-        env.update(
-            {
-                "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
-                "UV_FAKE_LOG": str(log_path),
-                "POLICYENGINE_VERSION": "4.18.3",
-                "POLICYENGINE_CORE_VERSION": "3.27.1",
-                "POLICYENGINE_US_VERSION": "1.729.0",
-                "POLICYENGINE_UK_VERSION": "2.89.2",
-            }
-        )
-
-        result = subprocess.run(
-            ["bash", str(self.script), *args],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-        calls = log_path.read_text(encoding="utf-8").splitlines()
-        return result, calls
-
-    def test_script_exists(self):
-        """Script file should exist."""
-        assert self.script.exists(), f"Script not found at {self.script}"
-
-    def test_script_syntax(self):
-        """Script should have valid bash syntax."""
-        result = subprocess.run(
-            ["bash", "-n", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, f"Syntax error: {result.stderr}"
-
-    def test_requires_modal_environment_argument(self):
-        """Should fail when no modal environment is provided."""
-        result = subprocess.run(
-            ["bash", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode != 0, "Should fail without modal environment"
-
-    def test_defaults_to_not_forcing_latest(self, tmp_path):
-        result, calls = self._run_with_fake_uv(tmp_path, "main")
-
-        assert result.returncode == 0, result.stderr
-        assert result.stdout.count("Force latest: false") == 1
-        registry_call = next(
-            call for call in calls if "update_version_registry" in call
-        )
-        assert "--force-latest" not in registry_call
-        # The gateway deploys from its own project (uv_sync image).
-        gateway_call = next(
-            call for call in calls if "policyengine_simulation_gateway/app.py" in call
-        )
-        assert "modal deploy" in gateway_call
-
-    def test_passes_force_latest_when_requested(self, tmp_path):
-        result, calls = self._run_with_fake_uv(tmp_path, "main", "true")
-
-        assert result.returncode == 0, result.stderr
-        assert result.stdout.count("Force latest: true") == 1
-        registry_call = next(
-            call for call in calls if "update_version_registry" in call
-        )
-        assert registry_call.endswith("--force-latest")
-
-
 class TestModalPrecompute:
     """Tests for modal-precompute.sh"""
 
@@ -576,32 +491,36 @@ class TestModalPrecompute:
         assert "manifest_digest=" not in github_out
 
     def test_deploy_workflow_runs_precompute_before_deploy(self):
-        """The reusable workflow must gate deploy on the precompute job."""
+        """The executor job must precompute before deploying its Modal app."""
         reusable_workflow = (
-            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
 
-        assert "precompute:" in reusable_workflow
-        assert "needs: [precompute]" in reusable_workflow
-        assert 'modal-precompute.sh "${{ inputs.modal_environment }}"' in (
-            reusable_workflow
+        executor_job = reusable_workflow[
+            reusable_workflow.index("deploy_executor:") : reusable_workflow.index(
+                "update_routing:"
+            )
+        ]
+        assert executor_job.index("Run artifact precompute") < executor_job.index(
+            "Deploy versioned Modal executor"
         )
+        assert 'modal-precompute.sh "${{ inputs.modal_environment }}"' in executor_job
         assert (
             "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}"
-            in reusable_workflow
+            in executor_job
         )
         assert (
-            "manifest_digest: ${{ steps.run-precompute.outputs.manifest_digest }}"
-            in reusable_workflow
+            "manifest_digest: ${{ steps.precompute.outputs.manifest_digest }}"
+            in executor_job
         )
 
     def test_deploy_workflow_threads_force_recompute_to_script(self):
         """The manual recompute flag should reach the precompute script."""
         deploy_workflow = (
-            REPO_ROOT / ".github" / "workflows" / "modal-deploy.yml"
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.yml"
         ).read_text(encoding="utf-8")
         reusable_workflow = (
-            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
 
         assert "force_recompute:" in deploy_workflow
@@ -618,17 +537,17 @@ class TestModalPrecompute:
         """The deploy step resolves the manifest from GCS on the runner,
         so it needs the digest, the store bucket, and GCP credentials."""
         reusable_workflow = (
-            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
 
         deploy_step = reusable_workflow[
             reusable_workflow.index(
-                "Deploy simulation API to Modal"
-            ) : reusable_workflow.index("Get deployed URL")
+                "Deploy versioned Modal executor"
+            ) : reusable_workflow.index("Run executor unit tests")
         ]
         assert (
             "POLICYENGINE_MANIFEST_DIGEST: "
-            "${{ needs.precompute.outputs.manifest_digest }}" in deploy_step
+            "${{ steps.precompute.outputs.manifest_digest }}" in deploy_step
         )
         assert (
             "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}"
@@ -646,19 +565,23 @@ class TestModalPrecompute:
             == 3
         )
 
-    def test_precompute_job_syncs_its_own_secrets(self):
-        """Precompute must not depend on a prior deploy's secret sync."""
+    def test_precompute_is_gated_by_the_shared_secret_sync(self):
+        """All three deploy jobs wait for the shared preparation job."""
         reusable_workflow = (
-            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
 
         sync_invocation = (
             'modal-sync-secrets.sh "${{ inputs.modal_environment }}" '
-            '"${{ inputs.environment }}"'
+            '"${{ inputs.release_environment }}"'
         )
-        assert reusable_workflow.count(sync_invocation) == 2, (
-            "Expected the precompute AND deploy jobs to each sync Modal secrets"
-        )
+        assert reusable_workflow.count(sync_invocation) == 1
+        executor_job = reusable_workflow[
+            reusable_workflow.index("deploy_executor:") : reusable_workflow.index(
+                "update_routing:"
+            )
+        ]
+        assert "needs: prepare" in executor_job
 
 
 class TestModalRecordDeployment:
@@ -742,20 +665,22 @@ class TestModalRecordDeployment:
             "--environment beta --manifest-digest digest-abc"
         ]
 
-    def test_deploy_workflow_records_marker_after_health_check(self):
-        """Both legs write deployed/<env>.json once the deploy is healthy."""
+    def test_deploy_workflow_records_marker_after_integration(self):
+        """Both legs write deployed/<env>.json after the complete stack is healthy."""
         reusable_workflow = (
-            REPO_ROOT / ".github" / "workflows" / "modal-deploy.reusable.yml"
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
 
         invocation = (
-            'modal-record-deployment.sh "${{ inputs.environment }}" '
-            '"${{ needs.precompute.outputs.manifest_digest }}"'
+            'modal-record-deployment.sh "${{ inputs.release_environment }}" '
+            '"${{ needs.deploy_executor.outputs.manifest_digest }}"'
         )
         assert invocation in reusable_workflow
-        # The marker means deployed AND healthy: it must come after the
-        # health check step.
-        assert reusable_workflow.index("Verify deployment health") < (
+        # The marker is the artifact GC liveness signal, so it must not be
+        # written until the routed three-service stack passes integration.
+        assert reusable_workflow.index(
+            "Run integration tests through entrypoint, gateway, and executor"
+        ) < (
             reusable_workflow.index("modal-record-deployment.sh")
         )
 
@@ -765,18 +690,17 @@ class TestModalRecordDeployment:
         marker_step = reusable_workflow[
             reusable_workflow.index("Record deployment marker") :
         ]
-        marker_step = marker_step[: marker_step.index("integ_test:")]
+        marker_step = marker_step[: marker_step.index("authenticated_test:")]
         for env_line in (
             "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}",
             "GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}",
-            "POLICYENGINE_VERSION: ${{ steps.versions.outputs.policyengine_version }}",
-            "POLICYENGINE_US_VERSION: ${{ steps.versions.outputs.us_version }}",
-            "POLICYENGINE_UK_VERSION: ${{ steps.versions.outputs.uk_version }}",
-            "US_DATA_VERSION: ${{ steps.versions.outputs.us_data_version }}",
-            "UK_DATA_VERSION: ${{ steps.versions.outputs.uk_data_version }}",
+            "POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}",
+            "POLICYENGINE_US_VERSION: ${{ needs.prepare.outputs.us_version }}",
+            "POLICYENGINE_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}",
+            "US_DATA_VERSION: ${{ needs.prepare.outputs.us_data_version }}",
+            "UK_DATA_VERSION: ${{ needs.prepare.outputs.uk_data_version }}",
         ):
             assert env_line in marker_step, f"marker step is missing: {env_line}"
-
 
 class TestModalGetUrl:
     """Tests for modal-get-url.sh"""
@@ -825,10 +749,10 @@ class TestModalSetupEnvironments:
         assert result.returncode == 0, f"Syntax error: {result.stderr}"
 
 
-class TestModalRunIntegTests:
-    """Tests for modal-run-integ-tests.sh"""
+class TestSimulationRunIntegTests:
+    """Tests for simulation-run-integ-tests.sh"""
 
-    script = SCRIPTS_DIR / "modal-run-integ-tests.sh"
+    script = SCRIPTS_DIR / "simulation-run-integ-tests.sh"
 
     def test_script_exists(self):
         """Script file should exist."""
@@ -861,13 +785,13 @@ class TestModalRunIntegTests:
         )
         assert result.returncode != 0, "Should fail without base URL"
 
-    def test_fails_when_gateway_auth_config_is_partial(self):
+    def test_fails_when_auth_config_is_partial(self):
         """Should fail before running tests if token-mint config is partial."""
         env = os.environ.copy()
-        env["GATEWAY_AUTH_ISSUER"] = "https://tenant.auth0.com/"
-        env.pop("GATEWAY_AUTH_AUDIENCE", None)
-        env.pop("GATEWAY_AUTH_CLIENT_ID", None)
-        env.pop("GATEWAY_AUTH_CLIENT_SECRET", None)
+        env["SIMULATION_TEST_AUTH_ISSUER"] = "https://tenant.auth0.com/"
+        env.pop("SIMULATION_TEST_AUTH_AUDIENCE", None)
+        env.pop("SIMULATION_TEST_AUTH_CLIENT_ID", None)
+        env.pop("SIMULATION_TEST_AUTH_CLIENT_SECRET", None)
 
         result = subprocess.run(
             ["bash", str(self.script), "beta", "https://example.com"],
@@ -877,17 +801,17 @@ class TestModalRunIntegTests:
         )
 
         assert result.returncode != 0
-        assert "Gateway auth integration-test config is partial." in result.stderr
+        assert "Simulation integration-test auth config is partial." in result.stderr
 
-    def test_fails_when_auth_required_but_gateway_auth_vars_missing(self):
+    def test_fails_when_auth_required_but_auth_vars_missing(self):
         """Required auth must not run tests unauthenticated."""
         env = os.environ.copy()
-        env["GATEWAY_AUTH_REQUIRED"] = "1"
+        env["SIMULATION_TEST_AUTH_REQUIRED"] = "1"
         for key in (
-            "GATEWAY_AUTH_ISSUER",
-            "GATEWAY_AUTH_AUDIENCE",
-            "GATEWAY_AUTH_CLIENT_ID",
-            "GATEWAY_AUTH_CLIENT_SECRET",
+            "SIMULATION_TEST_AUTH_ISSUER",
+            "SIMULATION_TEST_AUTH_AUDIENCE",
+            "SIMULATION_TEST_AUTH_CLIENT_ID",
+            "SIMULATION_TEST_AUTH_CLIENT_SECRET",
         ):
             env.pop(key, None)
 
@@ -899,7 +823,7 @@ class TestModalRunIntegTests:
         )
 
         assert result.returncode != 0
-        assert "GATEWAY_AUTH_REQUIRED is enabled" in result.stderr
+        assert "SIMULATION_TEST_AUTH_REQUIRED is enabled" in result.stderr
 
     def test_exports_us_and_uk_model_versions_to_integration_tests(self, tmp_path):
         """Deploy-extracted model versions should reach the pytest settings."""
@@ -920,11 +844,11 @@ class TestModalRunIntegTests:
         env["PATH"] = f"{fake_bin}:{env['PATH']}"
         env["UV_CALLS_LOG"] = str(uv_calls_log)
         for key in (
-            "GATEWAY_AUTH_REQUIRED",
-            "GATEWAY_AUTH_ISSUER",
-            "GATEWAY_AUTH_AUDIENCE",
-            "GATEWAY_AUTH_CLIENT_ID",
-            "GATEWAY_AUTH_CLIENT_SECRET",
+            "SIMULATION_TEST_AUTH_REQUIRED",
+            "SIMULATION_TEST_AUTH_ISSUER",
+            "SIMULATION_TEST_AUTH_AUDIENCE",
+            "SIMULATION_TEST_AUTH_CLIENT_ID",
+            "SIMULATION_TEST_AUTH_CLIENT_SECRET",
         ):
             env.pop(key, None)
 

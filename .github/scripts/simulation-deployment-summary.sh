@@ -1,6 +1,6 @@
 #!/bin/bash
 # Generate deployment summary for GitHub Actions
-# Usage: ./modal-deployment-summary.sh <beta-result> <beta-url> <prod-result> <prod-url>
+# Usage: ./simulation-deployment-summary.sh <beta-result> <beta-url> <prod-result> <prod-url>
 
 set -euo pipefail
 
@@ -10,13 +10,13 @@ PROD_RESULT="${3:-skipped}"
 PROD_URL="${4:-}"
 
 {
-  echo "## Modal Deployment Summary"
+  echo "## Simulation API Deployment Summary"
   echo ""
 
   case "$BETA_RESULT" in
     success)
       echo "✅ **Beta deployment**: Success"
-      [ -n "$BETA_URL" ] && echo "   - URL: $BETA_URL"
+      [ -n "$BETA_URL" ] && echo "   - Candidate URL: $BETA_URL"
       ;;
     skipped)
       echo "⏭️ **Beta deployment**: Skipped"
@@ -30,14 +30,14 @@ PROD_URL="${4:-}"
 
   case "$PROD_RESULT" in
     success)
-      echo "✅ **Production deployment**: Success"
-      [ -n "$PROD_URL" ] && echo "   - URL: $PROD_URL"
+      echo "✅ **Prod deployment**: Success"
+      [ -n "$PROD_URL" ] && echo "   - Candidate URL: $PROD_URL"
       ;;
     skipped)
-      echo "⏭️ **Production deployment**: Skipped"
+      echo "⏭️ **Prod deployment**: Skipped"
       ;;
     *)
-      echo "❌ **Production deployment**: $PROD_RESULT"
+      echo "❌ **Prod deployment**: $PROD_RESULT"
       ;;
   esac
 } >> "$GITHUB_STEP_SUMMARY"

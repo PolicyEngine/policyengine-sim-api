@@ -74,15 +74,21 @@ make generate-clients # regenerate the OpenAPI Python client
 ## Deployment
 
 Simulation workers and the old gateway continue to deploy to Modal. The
-permanent Simulation Entrypoint deploys independently to Cloud Run as tagged
-no-traffic candidates. On merge to `main`:
+permanent Simulation Entrypoint deploys to Cloud Run as tagged no-traffic
+candidates. On merge to `main`, `.github/workflows/simulation-deploy.yml`
+promotes one complete stack at a time:
 
-1. `.github/workflows/modal-deploy.yml` deploys the existing gateway/workers.
-2. `.github/workflows/cloud-run-simulation-entry.yml` tests and deploys
-   staging and production Entrypoint candidates, including separate live
-   authenticated checks.
-3. A successful push-triggered Entrypoint deployment publishes the API client
-   from the exact deployed commit.
+1. prepare the environment's deployment inputs and runtime secrets;
+2. deploy and unit test the Entrypoint, Modal gateway, and Modal executor in
+   three parallel service jobs;
+3. publish routing only after all three service jobs pass;
+4. run generated-client and live authentication tests through the complete
+   three-service request path; and
+5. begin the `prod` deployment only after every `beta` deployment and
+   qualification job succeeds.
+
+A successful push-triggered full-stack deployment publishes the API client from
+the exact deployed commit.
 
 Cloud Run traffic promotion and rollback remain manual operator actions.
 

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Run simulation integration tests
-# Usage: ./modal-run-integ-tests.sh <environment> <base-url> [us-version] [uk-version]
+# Run integration tests through the deployed Simulation Entrypoint.
+# Usage: ./simulation-run-integ-tests.sh <environment> <base-url> [us-version] [uk-version]
 # Environment: beta runs all tests, prod excludes beta_only tests
 
 set -euo pipefail
@@ -17,15 +17,15 @@ truthy() {
   esac
 }
 
-GATEWAY_AUTH_VARS=(
-  GATEWAY_AUTH_ISSUER
-  GATEWAY_AUTH_AUDIENCE
-  GATEWAY_AUTH_CLIENT_ID
-  GATEWAY_AUTH_CLIENT_SECRET
+TEST_AUTH_VARS=(
+  SIMULATION_TEST_AUTH_ISSUER
+  SIMULATION_TEST_AUTH_AUDIENCE
+  SIMULATION_TEST_AUTH_CLIENT_ID
+  SIMULATION_TEST_AUTH_CLIENT_SECRET
 )
 present=()
 missing=()
-for var in "${GATEWAY_AUTH_VARS[@]}"; do
+for var in "${TEST_AUTH_VARS[@]}"; do
   if [ -n "${!var:-}" ]; then
     present+=("$var")
   else
@@ -34,36 +34,36 @@ for var in "${GATEWAY_AUTH_VARS[@]}"; do
 done
 
 if [ ${#present[@]} -gt 0 ] && [ ${#missing[@]} -gt 0 ]; then
-  echo "Gateway auth integration-test config is partial." >&2
+  echo "Simulation integration-test auth config is partial." >&2
   echo "  Present: ${present[*]-}" >&2
   echo "  Missing: ${missing[*]-}" >&2
   exit 1
 fi
 
 SHOULD_MINT_TOKEN=0
-if truthy "${GATEWAY_AUTH_REQUIRED:-}"; then
+if truthy "${SIMULATION_TEST_AUTH_REQUIRED:-}"; then
   if [ ${#missing[@]} -gt 0 ]; then
-    echo "GATEWAY_AUTH_REQUIRED is enabled but integration-test auth secrets are missing." >&2
+    echo "SIMULATION_TEST_AUTH_REQUIRED is enabled but auth secrets are missing." >&2
     echo "  Missing: ${missing[*]-}" >&2
     exit 1
   fi
   SHOULD_MINT_TOKEN=1
-elif [ ${#present[@]} -eq ${#GATEWAY_AUTH_VARS[@]} ]; then
+elif [ ${#present[@]} -eq ${#TEST_AUTH_VARS[@]} ]; then
   SHOULD_MINT_TOKEN=1
 fi
 
 ACCESS_TOKEN=""
 if [ "$SHOULD_MINT_TOKEN" -eq 1 ]; then
-  ISSUER="${GATEWAY_AUTH_ISSUER%/}"
+  ISSUER="${SIMULATION_TEST_AUTH_ISSUER%/}"
   TOKEN_URL="$ISSUER/oauth/token"
 
   # Build the token-request JSON with Python so that any ", \, or newline in
   # the client secret is encoded correctly (Auth0-generated secrets are random
   # strings that routinely contain characters that break a shell heredoc).
   TOKEN_REQUEST_JSON=$(
-    CLIENT_ID="$GATEWAY_AUTH_CLIENT_ID" \
-    CLIENT_SECRET="$GATEWAY_AUTH_CLIENT_SECRET" \
-    AUDIENCE="$GATEWAY_AUTH_AUDIENCE" \
+    CLIENT_ID="$SIMULATION_TEST_AUTH_CLIENT_ID" \
+    CLIENT_SECRET="$SIMULATION_TEST_AUTH_CLIENT_SECRET" \
+    AUDIENCE="$SIMULATION_TEST_AUTH_AUDIENCE" \
     python3 -c '
 import json, os
 print(json.dumps({
@@ -100,12 +100,12 @@ print(token)
 fi
 
 cd projects/policyengine-apis-integ
-uv sync --extra test
+uv sync --extra test --frozen
 
 export simulation_integ_test_base_url="$BASE_URL"
 
-if [ -n "${GATEWAY_AUTH_REQUIRED:-}" ]; then
-  export simulation_integ_test_gateway_auth_required="$GATEWAY_AUTH_REQUIRED"
+if [ -n "${SIMULATION_TEST_AUTH_REQUIRED:-}" ]; then
+  export simulation_integ_test_gateway_auth_required="$SIMULATION_TEST_AUTH_REQUIRED"
 fi
 
 if [ -n "$ACCESS_TOKEN" ]; then

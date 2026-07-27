@@ -1,0 +1,413 @@
+name: Reusable simulation deployment
+
+on:
+  workflow_call:
+    inputs:
+      release_environment:
+        required: true
+        type: string
+        description: "GitHub environment for Modal deployment secrets"
+      modal_environment:
+        required: true
+        type: string
+        description: "Modal environment name"
+      entrypoint_service:
+        required: true
+        type: string
+        description: "Cloud Run service name"
+      entrypoint_public_url:
+        required: true
+        type: string
+        description: "Public URL represented by this entrypoint"
+      entrypoint_revision_prefix:
+        required: true
+        type: string
+        description: "Prefix for the no-traffic Cloud Run revision tag"
+      entrypoint_min_instances:
+        required: true
+        type: number
+      entrypoint_max_instances:
+        required: true
+        type: number
+      force_latest:
+        required: false
+        default: false
+        type: boolean
+        description: "Force latest routing pointers for an intentional rollback"
+      force_recompute:
+        required: false
+        default: false
+        type: boolean
+        description: "Recompute artifacts even when the store already has them"
+    outputs:
+      simulation_api_url:
+        description: "Tagged Cloud Run candidate URL qualified by this deployment"
+        value: ${{ jobs.deploy_entrypoint.outputs.url }}
+      policyengine_version:
+        description: "Deployed policyengine.py package version"
+        value: ${{ jobs.prepare.outputs.policyengine_version }}
+      policyengine_core_version:
+        description: "Deployed policyengine-core package version"
+        value: ${{ jobs.prepare.outputs.policyengine_core_version }}
+      us_version:
+        description: "Deployed policyengine-us package version"
+        value: ${{ jobs.prepare.outputs.us_version }}
+      us_data_version:
+        description: "Bundled US data release version"
+        value: ${{ jobs.prepare.outputs.us_data_version }}
+      uk_version:
+        description: "Deployed policyengine-uk package version"
+        value: ${{ jobs.prepare.outputs.uk_version }}
+      uk_data_version:
+        description: "Bundled UK data release version"
+        value: ${{ jobs.prepare.outputs.uk_data_version }}
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare deployment inputs
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    outputs:
+      policyengine_version: ${{ steps.versions.outputs.policyengine_version }}
+      policyengine_core_version: ${{ steps.versions.outputs.policyengine_core_version }}
+      us_version: ${{ steps.versions.outputs.us_version }}
+      us_data_version: ${{ steps.versions.outputs.us_data_version }}
+      uk_version: ${{ steps.versions.outputs.uk_version }}
+      uk_data_version: ${{ steps.versions.outputs.uk_data_version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install deployment dependencies
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --frozen
+
+      - name: Extract package versions
+        id: versions
+        run: .github/scripts/modal-extract-versions.sh projects/policyengine-simulation-executor
+
+      - name: Synchronize Modal runtime secrets
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+          GATEWAY_AUTH_ISSUER: ${{ secrets.GATEWAY_AUTH_ISSUER }}
+          GATEWAY_AUTH_AUDIENCE: ${{ secrets.GATEWAY_AUTH_AUDIENCE }}
+          GATEWAY_AUTH_CLIENT_ID: ${{ secrets.GATEWAY_AUTH_CLIENT_ID }}
+          GATEWAY_AUTH_CLIENT_SECRET: ${{ secrets.GATEWAY_AUTH_CLIENT_SECRET }}
+          GATEWAY_AUTH_REQUIRED: ${{ vars.GATEWAY_AUTH_REQUIRED }}
+        run: ../../.github/scripts/modal-sync-secrets.sh "${{ inputs.modal_environment }}" "${{ inputs.release_environment }}"
+
+  deploy_entrypoint:
+    name: Deploy and unit test Cloud Run entrypoint
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PROJECT_DIR: projects/policyengine-simulation-entry
+      REGION: ${{ vars.SIMULATION_ENTRYPOINT_GCP_REGION || 'us-central1' }}
+      PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
+      REPOSITORY: ${{ vars.SIMULATION_ENTRYPOINT_ARTIFACT_REPOSITORY || 'policyengine-simulation-entry' }}
+      IMAGE_NAME: policyengine-simulation-entry
+    outputs:
+      image: ${{ steps.image.outputs.uri }}
+      revision_tag: ${{ steps.metadata.outputs.tag }}
+      url: ${{ steps.url.outputs.url }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Artifact Registry authentication
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Select immutable image
+        id: image
+        run: echo "uri=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push entrypoint image
+        run: |
+          docker build \
+            --file "${PROJECT_DIR}/Dockerfile" \
+            --tag "${{ steps.image.outputs.uri }}" \
+            .
+          docker push "${{ steps.image.outputs.uri }}"
+
+      - name: Select no-traffic revision tag
+        id: metadata
+        run: echo "tag=${{ inputs.entrypoint_revision_prefix }}${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy Cloud Run entrypoint candidate
+        env:
+          IMAGE: ${{ steps.image.outputs.uri }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: |
+          gcloud run deploy "${{ inputs.entrypoint_service }}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --image "${IMAGE}" \
+            --tag "${TAG}" \
+            --no-traffic \
+            --allow-unauthenticated \
+            --service-account "${{ vars.SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT }}" \
+            --set-env-vars "^@^APP_ENVIRONMENT=${{ inputs.release_environment }}@SIMULATION_ENTRYPOINT_PUBLIC_URL=${{ inputs.entrypoint_public_url }}@SIMULATION_ENTRYPOINT_AUTH_REQUIRED=1@SIMULATION_ENTRYPOINT_AUTH_ISSUER=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}@SIMULATION_ENTRYPOINT_AUTH_AUDIENCE=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}@OLD_GATEWAY_URL=${{ secrets.OLD_GATEWAY_URL }}@OLD_GATEWAY_AUTH_ISSUER=${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}@OLD_GATEWAY_AUTH_AUDIENCE=${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}@OLD_GATEWAY_AUTH_CLIENT_ID=${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}" \
+            --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=${{ vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME }}:latest" \
+            --cpu 1 \
+            --memory 512Mi \
+            --concurrency 80 \
+            --timeout 60 \
+            --min-instances "${{ inputs.entrypoint_min_instances }}" \
+            --max-instances "${{ inputs.entrypoint_max_instances }}"
+
+      - name: Resolve tagged candidate URL
+        id: url
+        env:
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: |
+          url="$(gcloud run services describe "${{ inputs.entrypoint_service }}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format=json | jq -r --arg tag "${TAG}" '.status.traffic[] | select(.tag == $tag) | .url')"
+          test -n "${url}"
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
+
+      - name: Install entrypoint unit-test dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: uv sync --extra test --frozen
+
+      - name: Run entrypoint unit tests
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: uv run pytest tests/ -v
+
+  deploy_gateway:
+    name: Deploy and unit test Modal gateway
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    outputs:
+      url: ${{ steps.url.outputs.simulation_api_url }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install gateway dependencies
+        working-directory: projects/policyengine-simulation-gateway
+        run: uv sync --extra test --frozen
+
+      - name: Deploy stable Modal gateway
+        working-directory: projects/policyengine-simulation-gateway
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: uv run modal deploy --env="${{ inputs.modal_environment }}" src/policyengine_simulation_gateway/app.py
+
+      - name: Run gateway unit tests
+        working-directory: projects/policyengine-simulation-gateway
+        run: uv run pytest tests/ -v
+
+      - name: Resolve gateway URL
+        id: url
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: ../../.github/scripts/modal-get-url.sh "${{ inputs.modal_environment }}"
+
+      - name: Verify gateway health
+        run: .github/scripts/modal-health-check.sh "${{ steps.url.outputs.simulation_api_url }}"
+
+  deploy_executor:
+    name: Deploy and unit test Modal executor
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    outputs:
+      app_name: ${{ steps.app.outputs.name }}
+      manifest_digest: ${{ steps.precompute.outputs.manifest_digest }}
+    env:
+      POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
+      POLICYENGINE_CORE_VERSION: ${{ needs.prepare.outputs.policyengine_core_version }}
+      POLICYENGINE_US_VERSION: ${{ needs.prepare.outputs.us_version }}
+      POLICYENGINE_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install executor dependencies
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --extra test --frozen
+
+      - name: Run artifact precompute
+        id: precompute
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}
+        run: ../../.github/scripts/modal-precompute.sh "${{ inputs.modal_environment }}" "${{ inputs.force_recompute }}"
+
+      - name: Select versioned executor app
+        id: app
+        run: |
+          version_safe="${POLICYENGINE_VERSION//./-}"
+          echo "name=policyengine-simulation-py${version_safe}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy versioned Modal executor
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_APP_NAME: ${{ steps.app.outputs.name }}
+          POLICYENGINE_MANIFEST_DIGEST: ${{ steps.precompute.outputs.manifest_digest }}
+          POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}
+          GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+        run: uv run modal deploy --env="${{ inputs.modal_environment }}" src/modal/app.py
+
+      - name: Run executor unit tests
+        working-directory: projects/policyengine-simulation-executor
+        run: uv run pytest tests/ -v
+
+  update_routing:
+    name: Publish routing after all services pass
+    needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install routing publisher dependencies
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --frozen
+
+      - name: Publish active routing state
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          APP_NAME: ${{ needs.deploy_executor.outputs.app_name }}
+          POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
+          POLICYENGINE_US_VERSION: ${{ needs.prepare.outputs.us_version }}
+          POLICYENGINE_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
+          FORCE_LATEST: ${{ inputs.force_latest }}
+        run: |
+          args=(
+            --app-name "${APP_NAME}"
+            --policyengine-version "${POLICYENGINE_VERSION}"
+            --us-version "${POLICYENGINE_US_VERSION}"
+            --uk-version "${POLICYENGINE_UK_VERSION}"
+            --environment "${{ inputs.modal_environment }}"
+          )
+          if [[ "${FORCE_LATEST}" == "true" ]]; then
+            args+=(--force-latest)
+          fi
+          uv run python -m src.modal.utils.update_version_registry "${args[@]}"
+
+  integration:
+    name: Run three-service integration tests
+    needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor, update_routing]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Verify the complete deployed request path
+        run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.url }}"
+
+      - name: Generate API clients
+        run: ./scripts/generate-clients.sh
+
+      - name: Run integration tests through entrypoint, gateway, and executor
+        env:
+          SIMULATION_TEST_AUTH_REQUIRED: "1"
+          SIMULATION_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+          SIMULATION_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+          SIMULATION_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+          SIMULATION_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+        run: .github/scripts/simulation-run-integ-tests.sh "${{ inputs.release_environment }}" "${{ needs.deploy_entrypoint.outputs.url }}" "${{ needs.prepare.outputs.us_version }}" "${{ needs.prepare.outputs.uk_version }}"
+
+      - name: Record deployment marker
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}
+          GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+          POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
+          POLICYENGINE_US_VERSION: ${{ needs.prepare.outputs.us_version }}
+          POLICYENGINE_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
+          US_DATA_VERSION: ${{ needs.prepare.outputs.us_data_version }}
+          UK_DATA_VERSION: ${{ needs.prepare.outputs.uk_data_version }}
+        run: ../../.github/scripts/modal-record-deployment.sh "${{ inputs.release_environment }}" "${{ needs.deploy_executor.outputs.manifest_digest }}"
+
+  authenticated_test:
+    name: Run authenticated deployment tests
+    needs: [deploy_entrypoint, integration]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    env:
+      SIMULATION_ENTRYPOINT_TEST_BASE_URL: ${{ needs.deploy_entrypoint.outputs.url }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install authenticated-test dependencies
+        working-directory: projects/policyengine-simulation-entry
+        run: uv sync --extra test --frozen
+
+      - name: Run authenticated deployment tests
+        working-directory: projects/policyengine-simulation-entry
+        run: uv run pytest authenticated_tests/ -v

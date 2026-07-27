@@ -28,5 +28,8 @@ def temp_github_step_summary():
 
 @pytest.fixture
 def all_modal_scripts():
-    """Return all ``modal-*.sh`` scripts in the repository."""
-    return list(SCRIPTS_DIR.glob("modal-*.sh"))
+    """Return Modal and full-stack simulation deployment scripts."""
+    return [
+        *SCRIPTS_DIR.glob("modal-*.sh"),
+        *SCRIPTS_DIR.glob("simulation-*.sh"),
+    ]

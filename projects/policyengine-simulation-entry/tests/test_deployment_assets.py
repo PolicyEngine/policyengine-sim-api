@@ -19,7 +19,16 @@ TRAFFIC_SCRIPT = (
     / "scripts"
     / "set-cloud-run-simulation-entry-revision.sh"
 )
-WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "cloud-run-simulation-entry.yml"
+SMOKE_SCRIPT = (
+    REPOSITORY_ROOT
+    / ".github"
+    / "scripts"
+    / "cloud-run-simulation-entry-smoke.sh"
+)
+DEPLOY_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.yml"
+REUSABLE_DEPLOY_WORKFLOW = (
+    REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
+)
 PUBLISH_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "publish-clients.yml"
 AUTHENTICATED_TESTS = (
     REPOSITORY_ROOT
@@ -38,28 +47,79 @@ DOCKERIGNORE = (
 def test_operator_scripts_have_valid_shell_syntax():
     subprocess.run(["bash", "-n", DOMAIN_SCRIPT], check=True)
     subprocess.run(["bash", "-n", TRAFFIC_SCRIPT], check=True)
+    subprocess.run(["bash", "-n", SMOKE_SCRIPT], check=True)
+    assert os.access(SMOKE_SCRIPT, os.X_OK)
 
 
 def test_deployment_uses_gcloud_workflow_without_terraform():
-    workflow = WORKFLOW.read_text(encoding="utf-8")
+    deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
-    assert "gcloud run deploy" in workflow
-    assert "update-traffic" not in workflow
-    assert "set-cloud-run-simulation-entry-revision.sh" not in workflow
-    assert "terraform" not in workflow.lower()
-    assert "authenticated-test-staging:" in workflow
-    assert "authenticated-test-production:" in workflow
-    assert "needs: deploy-staging" in workflow
-    assert "needs: deploy-production-candidate" in workflow
-    assert workflow.count("id-token: write") == 3
-    assert workflow.count("vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME") == 2
-    assert "simulation-entry-old-gateway-client-secret" not in workflow
+    assert "gcloud run deploy" in reusable_workflow
+    assert "update-traffic" not in reusable_workflow
+    assert "set-cloud-run-simulation-entry-revision.sh" not in reusable_workflow
+    assert "terraform" not in reusable_workflow.lower()
+    assert "deploy_entrypoint:" in reusable_workflow
+    assert "deploy_gateway:" in reusable_workflow
+    assert "deploy_executor:" in reusable_workflow
+    assert "update_routing:" in reusable_workflow
+    assert "integration:" in reusable_workflow
+    assert "authenticated_test:" in reusable_workflow
+    assert (
+        "needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor]"
+        in reusable_workflow
+    )
+    assert "needs: beta" in deploy_workflow
+    assert deploy_workflow.index("beta:") < deploy_workflow.index("prod:")
+    assert "release_environment: beta" in deploy_workflow
+    assert "release_environment: prod" in deploy_workflow
+    assert "entrypoint_environment" not in deploy_workflow
+    assert "entrypoint_environment" not in reusable_workflow
+    assert (
+        reusable_workflow.count(
+            "environment: ${{ inputs.release_environment }}"
+        )
+        == 7
+    )
+    assert "APP_ENVIRONMENT=${{ inputs.release_environment }}" in reusable_workflow
+    assert "id-token: write" in reusable_workflow
+    assert (
+        reusable_workflow.count("vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME") == 1
+    )
+    assert "simulation-entry-old-gateway-client-secret" not in reusable_workflow
     assert AUTHENTICATED_TESTS.joinpath("test_deployed_auth.py").is_file()
     assert not list(
         (REPOSITORY_ROOT / "projects" / "policyengine-simulation-entry" / "infra").glob(
             "*.tf"
         )
     )
+
+
+def test_full_stack_promotion_order_is_explicit():
+    deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    for deployment_step, unit_test_step in (
+        ("Deploy Cloud Run entrypoint candidate", "Run entrypoint unit tests"),
+        ("Deploy stable Modal gateway", "Run gateway unit tests"),
+        ("Deploy versioned Modal executor", "Run executor unit tests"),
+    ):
+        assert reusable_workflow.index(deployment_step) < reusable_workflow.index(
+            unit_test_step
+        )
+
+    routing_dependencies = (
+        "needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor]"
+    )
+    assert routing_dependencies in reusable_workflow
+    assert reusable_workflow.index("update_routing:") < reusable_workflow.index(
+        "integration:"
+    )
+    assert reusable_workflow.index("integration:") < reusable_workflow.index(
+        "authenticated_test:"
+    )
+    assert "needs: beta" in deploy_workflow
+    assert "skip_beta" not in deploy_workflow
 
 
 def test_traffic_changes_are_operator_run_and_revision_validated():

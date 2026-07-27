@@ -1,9 +1,9 @@
-# Cloud Run deployment
+# Simulation deployment
 
-The Simulation Entry service is deployed to Cloud Run by a dedicated GitHub
-Actions workflow. This document describes the deployment model only. Concrete
-cloud projects, identities, IAM bindings, domains, and secret resources are
-managed through private operator documentation.
+The Simulation Entry service is deployed to Cloud Run as one layer of the
+simulation API deployment. This document describes the deployment model only.
+Concrete cloud projects, identities, IAM bindings, domains, and secret
+resources are managed through private operator documentation.
 
 ## Infrastructure
 
@@ -13,7 +13,7 @@ is intentionally not provisioned by a script in this repository.
 The deployment environment must provide:
 
 - an image registry and Cloud Run services;
-- separate non-production and production runtime identities;
+- separate `beta` and `prod` runtime identities;
 - GitHub workload identity federation with narrowly scoped trust;
 - protected environment configuration and secret storage; and
 - domain and traffic-management configuration.
@@ -24,14 +24,15 @@ receives only the configuration needed to reference those protected resources.
 
 ## Candidate deployment
 
-For each eligible revision, the workflow:
+For each eligible revision, the workflow first deploys `beta`
+candidates for the Cloud Run entrypoint, Modal gateway, and versioned Modal
+executor. Each deployment job runs its own service unit tests. Only after all
+three jobs pass does the workflow publish routing and run integration and
+authentication checks through the complete request path.
 
-1. runs the normal test suite;
-2. builds and publishes an immutable container image;
-3. deploys a tagged, no-traffic non-production candidate;
-4. runs public and authenticated checks against that candidate;
-5. deploys a tagged, no-traffic production candidate; and
-6. repeats the qualification checks against the production candidate.
+The `prod` environment follows the same sequence automatically, but cannot
+begin until every `beta` deployment, routing, integration, and authentication
+job has succeeded.
 
 The workflow does not assign production traffic.
 
