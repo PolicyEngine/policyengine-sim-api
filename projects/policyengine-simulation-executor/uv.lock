@@ -1669,7 +1669,7 @@ name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "ptyprocess", marker = "sys_platform != 'emscripten' and sys_platform != 'win32'" },
+    { name = "ptyprocess" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/42/92/cc564bf6381ff43ce1f4d06852fc19a2f11d180f23dc32d9588bee2f149d/pexpect-4.9.0.tar.gz", hash = "sha256:ee7d41123f3c9911050ea2c2dac107568dc43b2d3b0c7557a33212c398ead30f", size = 166450, upload-time = "2023-11-25T09:07:26.339Z" }
 wheels = [
@@ -1718,7 +1718,7 @@ wheels = [
 
 [[package]]
 name = "policyengine"
-version = "4.22.0"
+version = "5.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "diskcache" },
@@ -1732,9 +1732,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/7c/2f747d91a8071e743988fa79effda9815390a10cf5d08dc6b8e940324cf8/policyengine-4.22.0.tar.gz", hash = "sha256:39e6d69c8f6b19925fb2e1c694628857a4e916159566bf903fbbf8ea11a7e8d5", size = 733878, upload-time = "2026-07-20T14:59:28.484Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3c/ab/6276821c45321d7e94f9e247eb26b81a790ebd734e1983e7f41d65952db6/policyengine-5.0.1.tar.gz", hash = "sha256:2834888a1a02269db8d604608832256697139112cae68a156333adc0d1033bef", size = 744234, upload-time = "2026-07-28T15:59:25.872Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/aa/40/16f59c8945eda75c6c4908bc1a1f1a0f11f504629cd5d9c84953418212d6/policyengine-4.22.0-py3-none-any.whl", hash = "sha256:81a19014d4f7b1ea10567b5da1c6bb08a6e590a2919e1c2cb452c751b60364f5", size = 223875, upload-time = "2026-07-20T14:59:27.282Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/c6/65d4150bda6d34d72f53f0fc0bd977655013659d670b28c06aa777e2f72a/policyengine-5.0.1-py3-none-any.whl", hash = "sha256:5ab08529aeff69fe5d612db7ee988e16f8adcde2412ed8bb7b64a1de117acc26", size = 228034, upload-time = "2026-07-28T15:59:24.336Z" },
 ]
 
 [[package]]
@@ -1911,7 +1911,7 @@ requires-dist = [
     { name = "openapi-python-client", marker = "extra == 'build'", specifier = ">=0.21.6" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.51b0,<0.52" },
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.51b0,<0.52" },
-    { name = "policyengine", specifier = "==4.22.0" },
+    { name = "policyengine", specifier = "==5.0.1" },
     { name = "policyengine-core", specifier = "==3.30.0" },
     { name = "policyengine-fastapi", editable = "../../libs/policyengine-fastapi" },
     { name = "policyengine-observability", extras = ["fastapi"], specifier = ">=1.3.0,<2" },
