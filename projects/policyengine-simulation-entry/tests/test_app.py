@@ -4,6 +4,7 @@ import json
 import logging
 
 import pytest
+from policyengine_observability import REQUEST_ID_HEADER, current_context
 from policyengine_simulation_contract.json_types import JsonObject
 
 from policyengine_simulation_entry import app as app_module
@@ -188,6 +189,36 @@ def test_request_id_is_propagated_and_returned(client, backend):
 
     assert result.headers["x-request-id"] == "request-123"
     assert backend.requests[-1].request_id == "request-123"
+
+
+def test_generated_request_id_is_shared_with_observability():
+    class CapturingBackend(FakeBackend):
+        observability_request_id: str | None = None
+
+        async def request(self, *args, **kwargs):
+            context = current_context()
+            self.observability_request_id = (
+                context.request_id if context is not None else None
+            )
+            return await super().request(*args, **kwargs)
+
+    backend = CapturingBackend()
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as client:
+        result = client.get("/versions")
+
+    request_id = result.headers["x-request-id"]
+    assert request_id
+    assert result.headers[REQUEST_ID_HEADER] == request_id
+    assert backend.requests[-1].request_id == request_id
+    assert backend.observability_request_id == request_id
 
 
 def test_request_validation_matches_shared_contract(client):

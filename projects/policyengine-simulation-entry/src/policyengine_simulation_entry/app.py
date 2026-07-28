@@ -12,7 +12,7 @@ from typing import Literal
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, TypeAdapter, ValidationError
-from policyengine_observability import record_event
+from policyengine_observability import REQUEST_ID_HEADER, record_event
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
@@ -32,6 +32,7 @@ from policyengine_simulation_observability.observability import (
     configure_process_observability,
     init_simulation_observability,
 )
+from starlette.datastructures import MutableHeaders
 
 from policyengine_simulation_entry.auth import CallerAuthenticator
 from policyengine_simulation_entry.backend import (
@@ -128,7 +129,15 @@ def create_app(
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
-        request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+        headers = MutableHeaders(scope=request.scope)
+        request_id = (
+            headers.get("x-request-id")
+            or headers.get(REQUEST_ID_HEADER)
+            or str(uuid.uuid4())
+        )
+        headers["x-request-id"] = request_id
+        # policyengine-observability currently reads its legacy header name.
+        headers[REQUEST_ID_HEADER] = request_id
         request.state.request_id = request_id
         started = time.monotonic()
         try:
