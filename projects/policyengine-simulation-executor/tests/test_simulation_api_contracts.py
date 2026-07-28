@@ -7,7 +7,9 @@ from policyengine_simulation_contract.gateway_models import (
     BudgetWindowTotals,
     JobStatusResponse,
 )
-from policyengine_simulation_executor.simulation_macro_output import SingleYearMacroOutput
+from policyengine_simulation_executor.simulation_macro_output import (
+    SingleYearMacroOutput,
+)
 
 from fixtures.test_simulation_api_contracts import (
     CURRENT_REQUIRED_BUDGET_KEYS,
@@ -23,8 +25,9 @@ def test_job_status_result_preserves_current_single_year_macro_dict_contract():
     )
 
     assert response.result is not None
-    assert set(response.result) == CURRENT_SINGLE_YEAR_MACRO_KEYS
-    assert set(response.result["budget"]) == CURRENT_REQUIRED_BUDGET_KEYS
+    dumped_result = response.result.model_dump(mode="json")
+    assert set(dumped_result) == CURRENT_SINGLE_YEAR_MACRO_KEYS
+    assert set(dumped_result["budget"]) == CURRENT_REQUIRED_BUDGET_KEYS
     assert (
         response.model_dump(mode="json")["result"] == CURRENT_SINGLE_YEAR_MACRO_RESULT
     )
@@ -40,23 +43,24 @@ def test_internal_single_year_macro_schema_serializes_current_public_contract():
     assert output.model_dump(mode="json") == CURRENT_SINGLE_YEAR_MACRO_RESULT
 
 
-def test_openapi_keeps_job_status_result_as_unstructured_dict():
+def test_openapi_publishes_the_single_year_macro_result_schema():
     spec = create_openapi_app().openapi()
     schemas = spec["components"]["schemas"]
 
-    assert "SingleYearMacroOutput" not in schemas
+    assert "SingleYearMacroOutput" in schemas
+    assert set(schemas["SingleYearMacroOutput"]["properties"]) == (
+        CURRENT_SINGLE_YEAR_MACRO_KEYS
+    )
     result_schema = schemas["JobStatusResponse"]["properties"]["result"]
     assert result_schema == {
         "anyOf": [
             {
-                "additionalProperties": True,
-                "type": "object",
+                "$ref": "#/components/schemas/SingleYearMacroOutput",
             },
             {
                 "type": "null",
             },
-        ],
-        "title": "Result",
+        ]
     }
 
 

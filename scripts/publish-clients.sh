@@ -12,7 +12,7 @@ publish_client() {
 
     case "$SERVICE" in
         simulation)
-            CLIENT_DIR="projects/policyengine-simulation-gateway/artifacts/clients/python"
+            CLIENT_DIR="projects/policyengine-simulation-entry/artifacts/clients/python"
             ;;
         *)
             echo "❌ Unsupported API client service: ${SERVICE}"

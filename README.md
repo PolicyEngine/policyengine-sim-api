@@ -2,16 +2,21 @@
 
 Monorepo for PolicyEngine's simulation API — the services, shared libraries, and
 deployment configuration behind PolicyEngine's economic simulation service. The
-public API is served by a stable Modal gateway that routes requests to versioned
-simulation executor apps.
+permanent public entrypoint runs on Cloud Run. During the current migration it
+authenticates callers and delegates to the existing Modal gateway, which
+continues to route requests to versioned simulation executor apps.
 
 ## Architecture
 
 Active services (`projects/`):
 
-- **policyengine-simulation-gateway** — the stable, public Modal gateway. Serves
-  the API contract and routes each request to a versioned executor app
-  (`policyengine-simulation-py{X}`) using routing state in a `modal.Dict`.
+- **policyengine-simulation-entry** — the permanent Cloud Run entrypoint. It
+  owns caller authentication and currently proxies the public contract to the
+  existing Modal gateway with a separate machine identity.
+- **policyengine-simulation-gateway** — the existing Modal routing gateway.
+  During migration it remains the entrypoint's upstream and routes each request
+  to a versioned executor app (`policyengine-simulation-py{X}`) using routing
+  state in a `modal.Dict`.
 - **policyengine-simulation-executor** — the simulation engine. Runs on Modal as
   versioned apps, and also builds a Docker image used for local development and
   integration tests (port 8082).
@@ -46,8 +51,9 @@ make logs      # tail logs
 make down      # stop
 ```
 
-`make dev` runs it in the foreground with a live-reload build. The gateway is not
-run locally — it is a Modal-only service.
+`make dev` runs it in the foreground with a live-reload build. The gateway is
+not run locally — it is a Modal-only service. The Cloud Run entrypoint can be
+run and tested independently from `projects/policyengine-simulation-entry`.
 
 ## Testing
 
@@ -58,8 +64,8 @@ make test-complete                  # unit + integration (manages services)
 ```
 
 Each project's unit tests run in its own locked uv environment — the same lock
-the Modal image installs with `uv_sync(frozen=True)`. Integration tests generate
-the API client, start the executor via Docker Compose, wait for
+used by its deployed image. Integration tests generate the API client, start
+the executor via Docker Compose, wait for
 `http://localhost:8082/ping/alive`, then run `projects/policyengine-apis-integ`
 against it.
 
@@ -73,19 +79,41 @@ make generate-clients # regenerate the OpenAPI Python client
 
 ## Deployment
 
-Deployment targets Modal and is automated through GitHub Actions — there is no
-manual deploy step. On merge to `main`, the Modal deploy workflow
-(`.github/workflows/modal-deploy.yml`):
+Simulation workers and the old gateway continue to deploy to Modal. The
+permanent Simulation Entrypoint deploys to Cloud Run as tagged no-traffic
+candidates. Beta qualification uses Cloud Run's generated candidate URLs and
+does not require a custom beta domain. On merge to `main`,
+`.github/workflows/simulation-deploy.yml` releases one complete stack at a
+time:
 
-1. Deploys to the beta (staging) Modal environment and runs integration tests.
-2. Deploys to the production Modal environment and runs integration tests.
-3. Publishes the API client to PyPI (`.github/workflows/publish-clients.yml`).
+1. prepare the environment's deployment inputs and runtime secrets;
+2. deploy and unit test the Entrypoint, Modal gateway, and Modal executor in
+   three parallel service jobs;
+3. publish routing only after all three service jobs pass;
+4. run generated-client and live authentication tests through the complete
+   three-service request path; and
+5. begin the `prod` deployment only after every `beta` deployment and
+   qualification job succeeds;
+6. assign stable production traffic to the exact tested entrypoint revision
+   after the complete production suite passes; and
+7. verify the stable endpoint, restoring its previous revision if immediate
+   post-promotion checks fail.
+
+A successful push-triggered full-stack deployment publishes the API client from
+the exact deployed commit.
+
+The stable production service may have a separately managed custom hostname.
+Domain ownership, DNS, TLS, and other one-time cloud setup remain operator
+responsibilities outside committed deployment automation. Entrypoint traffic
+promotion does not change API v1 revision traffic or its simulation-entrypoint
+migration flag.
 
 The stable gateway app is `policyengine-simulation-gateway`; executors deploy as
 versioned `policyengine-simulation-py{version}` apps. For Modal image and deploy
 specifics (image dependency pinning, artifact fetch, observability), see the
 service READMEs:
 
+- `projects/policyengine-simulation-entry/README.md`
 - `projects/policyengine-simulation-gateway/README.md`
 - `projects/policyengine-simulation-executor/README.md`
 
@@ -93,7 +121,8 @@ service READMEs:
 
 ```
 projects/
-  policyengine-simulation-gateway/    # stable Modal gateway (public API)
+  policyengine-simulation-entry/      # permanent Cloud Run public entrypoint
+  policyengine-simulation-gateway/    # existing Modal routing gateway
   policyengine-simulation-executor/   # simulation engine (versioned Modal apps)
   policyengine-apis-integ/            # integration tests
   policyengine-api-full/              # reserved stub
@@ -105,7 +134,7 @@ libs/
 deployment/
   docker-compose.yml                  # local simulation-executor
 scripts/                              # client generation + local integration helpers
-.github/workflows/                    # CI, Modal deploy, client publishing
+.github/workflows/                    # CI, Cloud Run/Modal deploy, client publishing
 ```
 
 ## Contributing

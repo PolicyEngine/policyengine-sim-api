@@ -199,9 +199,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response List Versions Versions Get"
+                  "$ref": "#/components/schemas/VersionsResponse"
                 }
               }
             }
@@ -231,9 +229,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Country Versions Versions  Kind  Get"
+                  "$ref": "#/components/schemas/VersionMap"
                 }
               }
             }
@@ -262,9 +258,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Health Health Get"
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             }
@@ -314,6 +308,50 @@
   },
   "components": {
     "schemas": {
+      "AgePovertyOutput": {
+        "properties": {
+          "child": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          },
+          "adult": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          },
+          "senior": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          },
+          "all": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "child",
+          "adult",
+          "senior",
+          "all"
+        ],
+        "title": "AgePovertyOutput"
+      },
+      "BaselineReformValue": {
+        "properties": {
+          "baseline": {
+            "type": "number",
+            "title": "Baseline"
+          },
+          "reform": {
+            "type": "number",
+            "title": "Reform"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "baseline",
+          "reform"
+        ],
+        "title": "BaselineReformValue"
+      },
       "BatchChildJobStatus": {
         "properties": {
           "job_id": {
@@ -322,6 +360,14 @@
           },
           "status": {
             "type": "string",
+            "enum": [
+              "pending",
+              "queued",
+              "running",
+              "complete",
+              "failed",
+              "cancelled"
+            ],
             "title": "Status"
           },
           "error": {
@@ -457,30 +503,22 @@
           "reform": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/PolicyParameterChanges"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Reform"
+            ]
           },
           "baseline": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/PolicyParameterChanges"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Baseline"
-          },
-          "region": {
-            "type": "string",
-            "title": "Region"
+            ]
           },
           "region_group": {
             "anyOf": [
@@ -551,6 +589,10 @@
             ],
             "title": "Segmented"
           },
+          "region": {
+            "type": "string",
+            "title": "Region"
+          },
           "start_year": {
             "type": "string",
             "title": "Start Year"
@@ -590,6 +632,12 @@
         "properties": {
           "status": {
             "type": "string",
+            "enum": [
+              "submitted",
+              "running",
+              "complete",
+              "failed"
+            ],
             "title": "Status"
           },
           "progress": {
@@ -707,6 +755,7 @@
           },
           "status": {
             "type": "string",
+            "const": "submitted",
             "title": "Status"
           },
           "poll_url": {
@@ -834,6 +883,289 @@
         "title": "BudgetWindowTotals",
         "description": "Aggregate totals for a completed budget-window response."
       },
+      "BudgetaryImpact": {
+        "properties": {
+          "tax_revenue_impact": {
+            "type": "number",
+            "title": "Tax Revenue Impact"
+          },
+          "state_tax_revenue_impact": {
+            "type": "number",
+            "title": "State Tax Revenue Impact"
+          },
+          "benefit_spending_impact": {
+            "type": "number",
+            "title": "Benefit Spending Impact"
+          },
+          "budgetary_impact": {
+            "type": "number",
+            "title": "Budgetary Impact"
+          },
+          "households": {
+            "type": "number",
+            "title": "Households"
+          },
+          "baseline_net_income": {
+            "type": "number",
+            "title": "Baseline Net Income"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tax_revenue_impact",
+          "state_tax_revenue_impact",
+          "benefit_spending_impact",
+          "budgetary_impact",
+          "households",
+          "baseline_net_income"
+        ],
+        "title": "BudgetaryImpact"
+      },
+      "CliffImpactInSimulation": {
+        "properties": {
+          "cliff_gap": {
+            "type": "number",
+            "title": "Cliff Gap"
+          },
+          "cliff_share": {
+            "type": "number",
+            "title": "Cliff Share"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "cliff_gap",
+          "cliff_share"
+        ],
+        "title": "CliffImpactInSimulation"
+      },
+      "CliffImpactOutput": {
+        "properties": {
+          "baseline": {
+            "$ref": "#/components/schemas/CliffImpactInSimulation"
+          },
+          "reform": {
+            "$ref": "#/components/schemas/CliffImpactInSimulation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "baseline",
+          "reform"
+        ],
+        "title": "CliffImpactOutput"
+      },
+      "CongressionalDistrictImpactOutput": {
+        "properties": {
+          "districts": {
+            "items": {
+              "$ref": "#/components/schemas/CongressionalDistrictImpactRecord"
+            },
+            "type": "array",
+            "title": "Districts"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "districts"
+        ],
+        "title": "CongressionalDistrictImpactOutput"
+      },
+      "CongressionalDistrictImpactRecord": {
+        "properties": {
+          "district": {
+            "type": "string",
+            "title": "District"
+          },
+          "average_household_income_change": {
+            "type": "number",
+            "title": "Average Household Income Change"
+          },
+          "relative_household_income_change": {
+            "type": "number",
+            "title": "Relative Household Income Change"
+          },
+          "winner_percentage": {
+            "type": "number",
+            "title": "Winner Percentage"
+          },
+          "loser_percentage": {
+            "type": "number",
+            "title": "Loser Percentage"
+          },
+          "no_change_percentage": {
+            "type": "number",
+            "title": "No Change Percentage"
+          },
+          "population": {
+            "type": "number",
+            "title": "Population"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "district",
+          "average_household_income_change",
+          "relative_household_income_change",
+          "winner_percentage",
+          "loser_percentage",
+          "no_change_percentage",
+          "population"
+        ],
+        "title": "CongressionalDistrictImpactRecord"
+      },
+      "ConstituencyImpactRecord": {
+        "properties": {
+          "constituency_code": {
+            "type": "string",
+            "title": "Constituency Code"
+          },
+          "constituency_name": {
+            "type": "string",
+            "title": "Constituency Name"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          },
+          "average_household_income_change": {
+            "type": "number",
+            "title": "Average Household Income Change"
+          },
+          "relative_household_income_change": {
+            "type": "number",
+            "title": "Relative Household Income Change"
+          },
+          "population": {
+            "type": "number",
+            "title": "Population"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "constituency_code",
+          "constituency_name",
+          "x",
+          "y",
+          "average_household_income_change",
+          "relative_household_income_change",
+          "population"
+        ],
+        "title": "ConstituencyImpactRecord"
+      },
+      "DecileOutput": {
+        "properties": {
+          "average": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Average"
+          },
+          "relative": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Relative"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "average",
+          "relative"
+        ],
+        "title": "DecileOutput"
+      },
+      "DetailedBudgetOutput": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/DetailedBudgetProgramOutput"
+        },
+        "type": "object",
+        "title": "DetailedBudgetOutput",
+        "description": "Program name mapped to its baseline and reform totals."
+      },
+      "DetailedBudgetProgramOutput": {
+        "properties": {
+          "baseline": {
+            "type": "number",
+            "title": "Baseline"
+          },
+          "reform": {
+            "type": "number",
+            "title": "Reform"
+          },
+          "difference": {
+            "type": "number",
+            "title": "Difference"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "baseline",
+          "reform",
+          "difference"
+        ],
+        "title": "DetailedBudgetProgramOutput"
+      },
+      "GenderPovertyOutput": {
+        "properties": {
+          "male": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          },
+          "female": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "male",
+          "female"
+        ],
+        "title": "GenderPovertyOutput"
+      },
+      "GeographicImpactOutput": {
+        "items": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ConstituencyImpactRecord"
+            },
+            {
+              "$ref": "#/components/schemas/LocalAuthorityImpactRecord"
+            }
+          ]
+        },
+        "type": "array",
+        "title": "GeographicImpactOutput",
+        "description": "UK constituency or local-authority impact records."
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -847,23 +1179,88 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "healthy",
+            "title": "Status",
+            "default": "healthy"
+          }
+        },
+        "type": "object",
+        "title": "HealthResponse",
+        "description": "Local process health response."
+      },
+      "InequalityOutput": {
+        "properties": {
+          "gini": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          },
+          "top_10_pct_share": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          },
+          "top_1_pct_share": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "gini",
+          "top_10_pct_share",
+          "top_1_pct_share"
+        ],
+        "title": "InequalityOutput"
+      },
+      "IntraDecileOutput": {
+        "properties": {
+          "deciles": {
+            "additionalProperties": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Deciles"
+          },
+          "all": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "All"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "deciles",
+          "all"
+        ],
+        "title": "IntraDecileOutput"
+      },
       "JobStatusResponse": {
         "properties": {
           "status": {
             "type": "string",
+            "enum": [
+              "running",
+              "complete",
+              "failed"
+            ],
             "title": "Status"
           },
           "result": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/SingleYearMacroOutput"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Result"
+            ]
           },
           "error": {
             "anyOf": [
@@ -924,6 +1321,7 @@
           },
           "status": {
             "type": "string",
+            "const": "submitted",
             "title": "Status"
           },
           "poll_url": {
@@ -969,6 +1367,207 @@
         ],
         "title": "JobSubmitResponse",
         "description": "Response model for job submission."
+      },
+      "JsonObject": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/JsonValue"
+        },
+        "type": "object"
+      },
+      "JsonValue": {},
+      "LaborSupplyDecileMetric": {
+        "properties": {
+          "income": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Income"
+          },
+          "substitution": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Substitution"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "income",
+          "substitution"
+        ],
+        "title": "LaborSupplyDecileMetric"
+      },
+      "LaborSupplyDecileOutput": {
+        "properties": {
+          "average": {
+            "$ref": "#/components/schemas/LaborSupplyDecileMetric"
+          },
+          "relative": {
+            "$ref": "#/components/schemas/LaborSupplyDecileMetric"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "average",
+          "relative"
+        ],
+        "title": "LaborSupplyDecileOutput"
+      },
+      "LaborSupplyHoursOutput": {
+        "properties": {
+          "baseline": {
+            "type": "number",
+            "title": "Baseline"
+          },
+          "reform": {
+            "type": "number",
+            "title": "Reform"
+          },
+          "change": {
+            "type": "number",
+            "title": "Change"
+          },
+          "income_effect": {
+            "type": "number",
+            "title": "Income Effect"
+          },
+          "substitution_effect": {
+            "type": "number",
+            "title": "Substitution Effect"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "baseline",
+          "reform",
+          "change",
+          "income_effect",
+          "substitution_effect"
+        ],
+        "title": "LaborSupplyHoursOutput"
+      },
+      "LaborSupplyRelativeResponse": {
+        "properties": {
+          "income": {
+            "type": "number",
+            "title": "Income"
+          },
+          "substitution": {
+            "type": "number",
+            "title": "Substitution"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "income",
+          "substitution"
+        ],
+        "title": "LaborSupplyRelativeResponse"
+      },
+      "LaborSupplyResponseOutput": {
+        "properties": {
+          "substitution_lsr": {
+            "type": "number",
+            "title": "Substitution Lsr"
+          },
+          "income_lsr": {
+            "type": "number",
+            "title": "Income Lsr"
+          },
+          "relative_lsr": {
+            "$ref": "#/components/schemas/LaborSupplyRelativeResponse"
+          },
+          "total_change": {
+            "type": "number",
+            "title": "Total Change"
+          },
+          "revenue_change": {
+            "type": "number",
+            "title": "Revenue Change"
+          },
+          "decile": {
+            "$ref": "#/components/schemas/LaborSupplyDecileOutput"
+          },
+          "hours": {
+            "$ref": "#/components/schemas/LaborSupplyHoursOutput"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "substitution_lsr",
+          "income_lsr",
+          "relative_lsr",
+          "total_change",
+          "revenue_change",
+          "decile",
+          "hours"
+        ],
+        "title": "LaborSupplyResponseOutput"
+      },
+      "LocalAuthorityImpactRecord": {
+        "properties": {
+          "local_authority_code": {
+            "type": "string",
+            "title": "Local Authority Code"
+          },
+          "local_authority_name": {
+            "type": "string",
+            "title": "Local Authority Name"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          },
+          "average_household_income_change": {
+            "type": "number",
+            "title": "Average Household Income Change"
+          },
+          "relative_household_income_change": {
+            "type": "number",
+            "title": "Relative Household Income Change"
+          },
+          "population": {
+            "type": "number",
+            "title": "Population"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "local_authority_code",
+          "local_authority_name",
+          "x",
+          "y",
+          "average_household_income_change",
+          "relative_household_income_change",
+          "population"
+        ],
+        "title": "LocalAuthorityImpactRecord"
       },
       "PingRequest": {
         "properties": {
@@ -1045,6 +1644,83 @@
         "title": "PolicyEngineBundle",
         "description": "Resolved runtime provenance returned by the gateway."
       },
+      "PolicyParameterChanges": {
+        "$ref": "#/components/schemas/JsonObject",
+        "title": "PolicyParameterChanges",
+        "description": "Policy parameter names mapped to their dated values."
+      },
+      "PovertyByGenderOutput": {
+        "properties": {
+          "poverty": {
+            "$ref": "#/components/schemas/GenderPovertyOutput"
+          },
+          "deep_poverty": {
+            "$ref": "#/components/schemas/GenderPovertyOutput"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "poverty",
+          "deep_poverty"
+        ],
+        "title": "PovertyByGenderOutput"
+      },
+      "PovertyByRaceOutput": {
+        "properties": {
+          "poverty": {
+            "$ref": "#/components/schemas/RacePovertyOutput"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "poverty"
+        ],
+        "title": "PovertyByRaceOutput"
+      },
+      "PovertyOutput": {
+        "properties": {
+          "poverty": {
+            "$ref": "#/components/schemas/AgePovertyOutput"
+          },
+          "deep_poverty": {
+            "$ref": "#/components/schemas/AgePovertyOutput"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "poverty",
+          "deep_poverty"
+        ],
+        "title": "PovertyOutput"
+      },
+      "RacePovertyOutput": {
+        "properties": {
+          "white": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          },
+          "black": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          },
+          "hispanic": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          },
+          "other": {
+            "$ref": "#/components/schemas/BaselineReformValue"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "white",
+          "black",
+          "hispanic",
+          "other"
+        ],
+        "title": "RacePovertyOutput"
+      },
       "SimulationRequest": {
         "properties": {
           "country": {
@@ -1119,37 +1795,22 @@
           "reform": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/PolicyParameterChanges"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Reform"
+            ]
           },
           "baseline": {
             "anyOf": [
               {
-                "additionalProperties": true,
-                "type": "object"
+                "$ref": "#/components/schemas/PolicyParameterChanges"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Baseline"
-          },
-          "region": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Region"
+            ]
           },
           "region_group": {
             "anyOf": [
@@ -1219,6 +1880,17 @@
               }
             ],
             "title": "Segmented"
+          },
+          "region": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Region"
           }
         },
         "additionalProperties": false,
@@ -1228,6 +1900,141 @@
         ],
         "title": "SimulationRequest",
         "description": "Request model for simulation submission."
+      },
+      "SingleYearMacroOutput": {
+        "properties": {
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "data_version": {
+            "type": "string",
+            "title": "Data Version"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/BudgetaryImpact"
+          },
+          "detailed_budget": {
+            "$ref": "#/components/schemas/DetailedBudgetOutput"
+          },
+          "decile": {
+            "$ref": "#/components/schemas/DecileOutput"
+          },
+          "inequality": {
+            "$ref": "#/components/schemas/InequalityOutput"
+          },
+          "poverty": {
+            "$ref": "#/components/schemas/PovertyOutput"
+          },
+          "poverty_by_gender": {
+            "$ref": "#/components/schemas/PovertyByGenderOutput"
+          },
+          "poverty_by_race": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PovertyByRaceOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "intra_decile": {
+            "$ref": "#/components/schemas/IntraDecileOutput"
+          },
+          "wealth_decile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecileOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "intra_wealth_decile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntraDecileOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "labor_supply_response": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LaborSupplyResponseOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "constituency_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeographicImpactOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "local_authority_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeographicImpactOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "congressional_district_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CongressionalDistrictImpactOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cliff_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CliffImpactOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model_version",
+          "data_version",
+          "budget",
+          "detailed_budget",
+          "decile",
+          "inequality",
+          "poverty",
+          "poverty_by_gender",
+          "poverty_by_race",
+          "intra_decile",
+          "wealth_decile",
+          "intra_wealth_decile",
+          "labor_supply_response",
+          "constituency_impact",
+          "local_authority_impact",
+          "congressional_district_impact"
+        ],
+        "title": "SingleYearMacroOutput",
+        "description": "Completed response returned by a single-year macro simulation."
       },
       "TelemetryEnvelope": {
         "properties": {
@@ -1377,6 +2184,35 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "VersionMap": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "type": "object",
+        "title": "VersionMap",
+        "description": "Version alias or exact version mapped to a deployed worker app."
+      },
+      "VersionsResponse": {
+        "properties": {
+          "policyengine": {
+            "$ref": "#/components/schemas/VersionMap"
+          },
+          "us": {
+            "$ref": "#/components/schemas/VersionMap"
+          },
+          "uk": {
+            "$ref": "#/components/schemas/VersionMap"
+          }
+        },
+        "type": "object",
+        "required": [
+          "policyengine",
+          "us",
+          "uk"
+        ],
+        "title": "VersionsResponse",
+        "description": "All supported simulation routing version maps."
       }
     }
   }

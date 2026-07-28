@@ -1,0 +1,79 @@
+name: Deploy Simulation API
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      force_latest:
+        description: "Force latest routing pointers for an intentional rollback"
+        required: false
+        default: false
+        type: boolean
+      force_recompute:
+        description: "Recompute artifacts even when the store already has them"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: simulation-deploy-main
+  cancel-in-progress: false
+
+jobs:
+  beta:
+    name: Complete beta deployment
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/simulation-deploy.reusable.yml
+    with:
+      release_environment: beta
+      modal_environment: staging
+      entrypoint_service: policyengine-simulation-entry-staging
+      entrypoint_revision_prefix: s
+      entrypoint_min_instances: 0
+      entrypoint_max_instances: 2
+      promote_entrypoint: false
+      force_latest: ${{ inputs.force_latest || false }}
+      force_recompute: ${{ inputs.force_recompute || false }}
+    secrets: inherit
+
+  prod:
+    name: Complete prod deployment
+    needs: beta
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/simulation-deploy.reusable.yml
+    with:
+      release_environment: prod
+      modal_environment: main
+      entrypoint_service: policyengine-simulation-entry
+      entrypoint_revision_prefix: p
+      entrypoint_min_instances: 1
+      entrypoint_max_instances: 20
+      promote_entrypoint: true
+      force_latest: ${{ inputs.force_latest || false }}
+      force_recompute: ${{ inputs.force_recompute || false }}
+    secrets: inherit
+
+  summary:
+    name: Deployment summary
+    needs: [beta, prod]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Report promotion status
+        run: |
+          .github/scripts/simulation-deployment-summary.sh \
+            "${{ needs.beta.result }}" \
+            "${{ needs.beta.outputs.simulation_api_url }}" \
+            "${{ needs.prod.result }}" \
+            "${{ needs.prod.outputs.stable_url }}"

@@ -13,12 +13,16 @@ from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchSubmitResponse,
     BudgetWindowResult,
     BudgetWindowTotals,
+    HealthResponse,
     JobStatusResponse,
     JobSubmitResponse,
     MAX_GATEWAY_REQUEST_BYTES,
     PingRequest,
     PingResponse,
+    ReadinessResponse,
     SimulationRequest,
+    VersionMap,
+    VersionsResponse,
 )
 
 
@@ -265,7 +269,8 @@ class TestSimulationRequest:
         # Must not raise — this is the just-under-cap happy path.
         request = SimulationRequest(**payload)
         assert request.country == "us"
-        assert request.reform == payload["reform"]
+        assert request.reform is not None
+        assert request.reform.root == payload["reform"]
 
     def test_simulation_request_rejects_payload_just_above_256kb(self):
         """The cap is strict: a payload that crosses 262_144 bytes by even a
@@ -340,22 +345,17 @@ class TestJobSubmitResponse:
 class TestJobStatusResponse:
     """Tests for JobStatusResponse model."""
 
-    def test_job_status_response_complete_with_result(self):
+    def test_job_status_response_rejects_an_unstructured_result(self):
         """
-        Given a completed job with result
+        Given a completed job with a result that does not match the macro schema
         When creating a JobStatusResponse
-        Then the model contains the result.
+        Then validation fails instead of silently accepting an opaque mapping.
         """
-        # Given
-        result = {"budget": {"total": 1000000}}
-
-        # When
-        response = JobStatusResponse(status="complete", result=result)
-
-        # Then
-        assert response.status == "complete"
-        assert response.result == {"budget": {"total": 1000000}}
-        assert response.error is None
+        with pytest.raises(ValidationError):
+            JobStatusResponse(
+                status="complete",
+                result={"budget": {"total": 1000000}},
+            )
 
     def test_job_status_response_running_without_result(self):
         """
@@ -391,7 +391,6 @@ class TestJobStatusResponse:
     def test_job_status_response_accepts_bundle_metadata(self):
         response = JobStatusResponse(
             status="complete",
-            result={"budget": {"total": 1000000}},
             resolved_app_name="policyengine-simulation-py3-9-0",
             policyengine_bundle={
                 "model_version": "1.459.0",
@@ -406,6 +405,28 @@ class TestJobStatusResponse:
         assert response.policyengine_bundle.dataset == (
             "gs://external-bucket/custom/file.h5@custom-v1"
         )
+
+
+class TestOperationalResponses:
+    def test_versions_response_has_named_maps(self):
+        response = VersionsResponse(
+            policyengine=VersionMap({"latest": "4.10.0"}),
+            us=VersionMap({"latest": "1.500.0"}),
+            uk=VersionMap({"latest": "2.66.0"}),
+        )
+
+        assert response.model_dump(mode="json") == {
+            "policyengine": {"latest": "4.10.0"},
+            "us": {"latest": "1.500.0"},
+            "uk": {"latest": "2.66.0"},
+        }
+
+    def test_health_and_readiness_statuses_are_constrained(self):
+        assert HealthResponse().status == "healthy"
+        assert ReadinessResponse(status="ready").status == "ready"
+
+        with pytest.raises(ValidationError):
+            ReadinessResponse(status="unknown")
 
 
 class TestBudgetWindowBatchRequest:

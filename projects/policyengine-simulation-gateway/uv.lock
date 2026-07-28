@@ -1289,15 +1289,20 @@ name = "policyengine-simulation-contract"
 version = "0.1.0"
 source = { editable = "../../libs/policyengine-simulation-contract" }
 dependencies = [
-    { name = "modal" },
     { name = "policyengine-simulation-observability" },
     { name = "pydantic" },
+]
+
+[package.optional-dependencies]
+modal = [
+    { name = "modal" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'build'", specifier = ">=25.1.0" },
-    { name = "modal", specifier = ">=1.4,<2" },
+    { name = "modal", marker = "extra == 'modal'", specifier = ">=1.4,<2" },
+    { name = "modal", marker = "extra == 'test'", specifier = ">=1.4,<2" },
     { name = "policyengine-simulation-observability", editable = "../../libs/policyengine-simulation-observability" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyright", marker = "extra == 'build'", specifier = ">=1.1.401" },
@@ -1305,7 +1310,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.25.3" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1" },
 ]
-provides-extras = ["test", "build"]
+provides-extras = ["modal", "test", "build"]
 
 [[package]]
 name = "policyengine-simulation-gateway"
@@ -1338,7 +1343,7 @@ test = [
 [package.dev-dependencies]
 dev = [
     { name = "policyengine-fastapi" },
-    { name = "policyengine-simulation-contract" },
+    { name = "policyengine-simulation-contract", extra = ["modal"] },
     { name = "policyengine-simulation-observability" },
 ]
 
@@ -1365,7 +1370,7 @@ provides-extras = ["test", "build"]
 [package.metadata.requires-dev]
 dev = [
     { name = "policyengine-fastapi", editable = "../../libs/policyengine-fastapi" },
-    { name = "policyengine-simulation-contract", editable = "../../libs/policyengine-simulation-contract" },
+    { name = "policyengine-simulation-contract", extras = ["modal"], editable = "../../libs/policyengine-simulation-contract" },
     { name = "policyengine-simulation-observability", editable = "../../libs/policyengine-simulation-observability" },
 ]
 

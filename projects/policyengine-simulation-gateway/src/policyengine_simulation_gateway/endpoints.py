@@ -4,7 +4,7 @@ FastAPI endpoints for the Gateway API.
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TypedDict
 
 import modal
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,12 +29,15 @@ from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
     BudgetWindowBatchSubmitResponse,
+    HealthResponse,
     JobStatusResponse,
     JobSubmitResponse,
     PingRequest,
     PingResponse,
     PolicyEngineBundle,
     SimulationRequest,
+    VersionMap,
+    VersionsResponse,
 )
 from policyengine_simulation_gateway.responses import (
     batch_status_response,
@@ -58,6 +61,13 @@ POLICYENGINE_VERSION_DICT_NAME = "simulation-api-policyengine-versions"
 ROUTING_STATE_DICT_NAME = "simulation-api-routing-state"
 ROUTING_STATE_ACTIVE_KEY = "active"
 SUPPORTED_ROUTE_KINDS = ("policyengine", "us", "uk")
+
+
+class VersionRoutingState(TypedDict, total=False):
+    """Routing-state fields required by the public version endpoints."""
+
+    latest: dict[str, str]
+    routes: dict[str, dict[str, str]]
 
 
 @dataclass(frozen=True)
@@ -924,15 +934,17 @@ async def get_budget_window_job_status(batch_job_id: str):
         return batch_status_response(response)
 
 
-@router.get("/versions")
-async def list_versions():
+@router.get("/versions", response_model=VersionsResponse)
+async def list_versions() -> VersionsResponse:
     """List all available routing versions."""
     with segment(SegmentName.ROUTE_RESOLUTION):
         state = _active_routing_state()
     if state:
-        return {
-            kind: _version_map_from_state(state, kind) for kind in SUPPORTED_ROUTE_KINDS
-        }
+        return VersionsResponse(
+            policyengine=_version_map_from_state(state, "policyengine"),
+            us=_version_map_from_state(state, "us"),
+            uk=_version_map_from_state(state, "uk"),
+        )
 
     # ``Dict.from_name`` is a lazy handle; the RPCs fire during the
     # ``dict(...)`` iterations, so those are what the segment must cover.
@@ -940,25 +952,25 @@ async def list_versions():
         policyengine_dict = _optional_modal_dict(POLICYENGINE_VERSION_DICT_NAME)
         us_dict = modal.Dict.from_name("simulation-api-us-versions")
         uk_dict = modal.Dict.from_name("simulation-api-uk-versions")
-        return {
-            "policyengine": (
+        return VersionsResponse(
+            policyengine=VersionMap(
                 dict(policyengine_dict) if policyengine_dict is not None else {}
             ),
-            "us": dict(us_dict),
-            "uk": dict(uk_dict),
-        }
+            us=VersionMap(dict(us_dict)),
+            uk=VersionMap(dict(uk_dict)),
+        )
 
 
-def _version_map_from_state(state: dict, kind: str) -> dict:
-    versions = dict(_routing_state_routes(state, kind))
+def _version_map_from_state(state: VersionRoutingState, kind: str) -> VersionMap:
+    versions: dict[str, str] = dict(_routing_state_routes(state, kind))
     latest = _routing_state_latest(state, kind)
     if latest is not None:
         versions["latest"] = latest
-    return versions
+    return VersionMap(versions)
 
 
-@router.get("/versions/{kind}")
-async def get_country_versions(kind: str):
+@router.get("/versions/{kind}", response_model=VersionMap)
+async def get_country_versions(kind: str) -> VersionMap:
     """Get available versions for policyengine, US, or UK routing."""
     kind_lower = kind.lower()
     if kind_lower not in SUPPORTED_ROUTE_KINDS:
@@ -975,17 +987,17 @@ async def get_country_versions(kind: str):
     if kind_lower == "policyengine":
         with segment(SegmentName.MODAL_DICT_READ):
             version_dict = _optional_modal_dict(POLICYENGINE_VERSION_DICT_NAME)
-            return dict(version_dict) if version_dict is not None else {}
+            return VersionMap(dict(version_dict) if version_dict is not None else {})
 
     with segment(SegmentName.MODAL_DICT_READ):
         version_dict = modal.Dict.from_name(f"simulation-api-{kind_lower}-versions")
-        return dict(version_dict)
+        return VersionMap(dict(version_dict))
 
 
-@router.get("/health")
-async def health():
+@router.get("/health", response_model=HealthResponse)
+async def health() -> HealthResponse:
     """Health check endpoint."""
-    return {"status": "healthy"}
+    return HealthResponse()
 
 
 @router.post("/ping", response_model=PingResponse)

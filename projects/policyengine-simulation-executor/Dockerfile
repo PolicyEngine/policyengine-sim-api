@@ -18,7 +18,7 @@ COPY libs ./libs/
 FROM base AS final
 
 # Service-specific environment
-ENV OT_SERVICE_NAME=policyengine_simulation_api \
+ENV OT_SERVICE_NAME=policyengine_simulation_executor \
     OT_SERVICE_INSTANCE_ID=instance
 
 # Copy service-specific code
@@ -31,5 +31,5 @@ RUN uv sync --frozen --no-dev
 
 EXPOSE 8080
 
-# Run with uvicorn (with 2 workers for simulation API)
+# Run the executor with two uvicorn workers.
 CMD ["uv", "run", "--frozen", "--no-dev", "uvicorn", "policyengine_simulation_executor.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "2"]

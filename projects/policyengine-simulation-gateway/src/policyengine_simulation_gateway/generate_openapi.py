@@ -18,11 +18,14 @@ from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
     BudgetWindowBatchSubmitResponse,
+    HealthResponse,
     JobStatusResponse,
     JobSubmitResponse,
     PingRequest,
     PingResponse,
     SimulationRequest,
+    VersionMap,
+    VersionsResponse,
 )
 
 
@@ -112,20 +115,20 @@ def create_openapi_app() -> FastAPI:
         """
         raise NotImplementedError("Stub for OpenAPI generation")
 
-    @app.get("/versions")
-    async def list_versions() -> dict:
+    @app.get("/versions", response_model=VersionsResponse)
+    async def list_versions() -> VersionsResponse:
         """List all available routing versions."""
         raise NotImplementedError("Stub for OpenAPI generation")
 
-    @app.get("/versions/{kind}")
-    async def get_country_versions(kind: str) -> dict:
+    @app.get("/versions/{kind}", response_model=VersionMap)
+    async def get_country_versions(kind: str) -> VersionMap:
         """Get available versions for policyengine, US, or UK routing."""
         raise NotImplementedError("Stub for OpenAPI generation")
 
-    @app.get("/health")
-    async def health() -> dict:
+    @app.get("/health", response_model=HealthResponse)
+    async def health() -> HealthResponse:
         """Health check endpoint."""
-        return {"status": "healthy"}
+        return HealthResponse()
 
     @app.post("/ping", response_model=PingResponse)
     async def ping(request: PingRequest) -> PingResponse:

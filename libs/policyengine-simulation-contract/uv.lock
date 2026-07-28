@@ -967,7 +967,6 @@ name = "policyengine-simulation-contract"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "modal" },
     { name = "policyengine-simulation-observability" },
     { name = "pydantic" },
 ]
@@ -977,7 +976,11 @@ build = [
     { name = "black" },
     { name = "pyright" },
 ]
+modal = [
+    { name = "modal" },
+]
 test = [
+    { name = "modal" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -986,7 +989,8 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'build'", specifier = ">=25.1.0" },
-    { name = "modal", specifier = ">=1.4,<2" },
+    { name = "modal", marker = "extra == 'modal'", specifier = ">=1.4,<2" },
+    { name = "modal", marker = "extra == 'test'", specifier = ">=1.4,<2" },
     { name = "policyengine-simulation-observability", editable = "../policyengine-simulation-observability" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyright", marker = "extra == 'build'", specifier = ">=1.1.401" },
@@ -994,7 +998,7 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.25.3" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1" },
 ]
-provides-extras = ["test", "build"]
+provides-extras = ["modal", "test", "build"]
 
 [[package]]
 name = "policyengine-simulation-observability"

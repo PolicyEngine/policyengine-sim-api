@@ -2,7 +2,7 @@ name: Publish API clients
 
 on:
   workflow_run:
-    workflows: ["Deploy Simulation API to Modal"]
+    workflows: ["Deploy Simulation API"]
     types:
       - completed
     branches:
@@ -13,11 +13,13 @@ jobs:
   publish:
     name: Publish API clients
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
 
     steps:
     - name: Checkout repo
       uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.workflow_run.head_sha }}
 
     - name: Set up Python
       uses: actions/setup-python@v6
@@ -31,9 +33,9 @@ jobs:
       run: |
         ./scripts/generate-clients.sh
 
-    - name: Build simulation API client
+    - name: Build simulation API client from the entrypoint contract
       run: |
-        cd projects/policyengine-simulation-gateway/artifacts/clients/python
+        cd projects/policyengine-simulation-entry/artifacts/clients/python
         # Update version
         DATE=$(date +%Y%m%d)
         RUN_NUMBER="${{ github.run_number }}"
@@ -45,4 +47,4 @@ jobs:
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
         password: ${{ secrets.PYPI }}
-        packages-dir: projects/policyengine-simulation-gateway/artifacts/clients/python/dist/
+        packages-dir: projects/policyengine-simulation-entry/artifacts/clients/python/dist/
