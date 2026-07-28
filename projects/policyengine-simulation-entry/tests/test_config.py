@@ -18,11 +18,37 @@ def test_partial_caller_auth_is_rejected():
 
 
 @pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("auth_issuer", "http://caller-auth.example/"),
+        ("auth_issuer", "https://caller-auth.example/?tenant=wrong"),
+        ("old_gateway_auth_issuer", "http://backend-auth.example/"),
+        ("old_gateway_auth_issuer", "https://client:secret@backend-auth.example/"),
+    ],
+)
+def test_auth_issuers_must_be_safe_https_urls(setting, value):
+    with pytest.raises(ConfigurationError, match="must"):
+        make_settings(**{setting: value}).validate()
+
+
+@pytest.mark.parametrize(
     "old_gateway_url",
     [
         "https://policyengine-simulation-entry-abc-uc.a.run.app",
         "http://policyengine--policyengine-simulation-gateway-web-app.modal.run",
         "not-a-url",
+        (
+            "https://policyengine--policyengine-simulation-gateway-web-app.modal.run"
+            "/unexpected-path"
+        ),
+        (
+            "https://policyengine--policyengine-simulation-gateway-web-app.modal.run"
+            "?wrong=path"
+        ),
+        (
+            "https://policyengine--policyengine-simulation-gateway-web-app.modal.run"
+            "#wrong-path"
+        ),
     ],
 )
 def test_old_gateway_must_be_the_https_modal_service(old_gateway_url):

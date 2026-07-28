@@ -2,16 +2,21 @@
 
 Monorepo for PolicyEngine's simulation API — the services, shared libraries, and
 deployment configuration behind PolicyEngine's economic simulation service. The
-public API is served by a stable Modal gateway that routes requests to versioned
-simulation executor apps.
+permanent public entrypoint runs on Cloud Run. During the current migration it
+authenticates callers and delegates to the existing Modal gateway, which
+continues to route requests to versioned simulation executor apps.
 
 ## Architecture
 
 Active services (`projects/`):
 
-- **policyengine-simulation-gateway** — the stable, public Modal gateway. Serves
-  the API contract and routes each request to a versioned executor app
-  (`policyengine-simulation-py{X}`) using routing state in a `modal.Dict`.
+- **policyengine-simulation-entry** — the permanent Cloud Run entrypoint. It
+  owns caller authentication and currently proxies the public contract to the
+  existing Modal gateway with a separate machine identity.
+- **policyengine-simulation-gateway** — the existing Modal routing gateway.
+  During migration it remains the entrypoint's upstream and routes each request
+  to a versioned executor app (`policyengine-simulation-py{X}`) using routing
+  state in a `modal.Dict`.
 - **policyengine-simulation-executor** — the simulation engine. Runs on Modal as
   versioned apps, and also builds a Docker image used for local development and
   integration tests (port 8082).
@@ -46,8 +51,9 @@ make logs      # tail logs
 make down      # stop
 ```
 
-`make dev` runs it in the foreground with a live-reload build. The gateway is not
-run locally — it is a Modal-only service.
+`make dev` runs it in the foreground with a live-reload build. The gateway is
+not run locally — it is a Modal-only service. The Cloud Run entrypoint can be
+run and tested independently from `projects/policyengine-simulation-entry`.
 
 ## Testing
 
@@ -58,8 +64,8 @@ make test-complete                  # unit + integration (manages services)
 ```
 
 Each project's unit tests run in its own locked uv environment — the same lock
-the Modal image installs with `uv_sync(frozen=True)`. Integration tests generate
-the API client, start the executor via Docker Compose, wait for
+used by its deployed image. Integration tests generate the API client, start
+the executor via Docker Compose, wait for
 `http://localhost:8082/ping/alive`, then run `projects/policyengine-apis-integ`
 against it.
 
@@ -107,6 +113,7 @@ versioned `policyengine-simulation-py{version}` apps. For Modal image and deploy
 specifics (image dependency pinning, artifact fetch, observability), see the
 service READMEs:
 
+- `projects/policyengine-simulation-entry/README.md`
 - `projects/policyengine-simulation-gateway/README.md`
 - `projects/policyengine-simulation-executor/README.md`
 
@@ -114,7 +121,8 @@ service READMEs:
 
 ```
 projects/
-  policyengine-simulation-gateway/    # stable Modal gateway (public API)
+  policyengine-simulation-entry/      # permanent Cloud Run public entrypoint
+  policyengine-simulation-gateway/    # existing Modal routing gateway
   policyengine-simulation-executor/   # simulation engine (versioned Modal apps)
   policyengine-apis-integ/            # integration tests
   policyengine-api-full/              # reserved stub
@@ -126,7 +134,7 @@ libs/
 deployment/
   docker-compose.yml                  # local simulation-executor
 scripts/                              # client generation + local integration helpers
-.github/workflows/                    # CI, Modal deploy, client publishing
+.github/workflows/                    # CI, Cloud Run/Modal deploy, client publishing
 ```
 
 ## Contributing

@@ -228,6 +228,42 @@ def test_backend_failures_are_sanitized(error, expected_status, expected_detail)
     assert result.headers["x-policyengine-simulation-backend"] == "old_gateway"
 
 
+def test_unexpected_failure_preserves_correlation_headers_and_request_log(caplog):
+    class FailingBackend(FakeBackend):
+        async def request(self, *args, **kwargs):
+            raise RuntimeError("unexpected backend failure")
+
+    app = create_app(
+        settings=make_settings(),
+        backend=FailingBackend(),
+        auth_dependency=lambda: None,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with caplog.at_level(logging.INFO), TestClient(app) as client:
+        result = client.get(
+            "/jobs/job-1",
+            headers={"X-Request-ID": "request-500"},
+        )
+
+    assert result.status_code == 500
+    assert result.text == "Internal Server Error"
+    assert result.headers["x-request-id"] == "request-500"
+    assert (
+        result.headers["x-policyengine-simulation-revision"]
+        == "simulation-entry-test-revision"
+    )
+    request_record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "simulation_entry_request"
+    )
+    assert request_record.status_code == 500
+    assert request_record.path == "/jobs/{job_id}"
+    assert request_record.job_id == "job-1"
+
+
 @pytest.mark.parametrize("status_code", [400, 404, 409, 500])
 def test_upstream_error_status_and_body_are_preserved(client, backend, status_code):
     backend.responses[("GET", "/jobs/job-1")] = response(

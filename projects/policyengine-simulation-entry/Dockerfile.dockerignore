@@ -1,4 +1,5 @@
 .git
+gha-creds-*.json
 
 projects/*
 !projects/policyengine-simulation-entry/

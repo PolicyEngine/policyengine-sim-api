@@ -35,7 +35,7 @@ help:
 	@echo "  make clean            - Remove caches and stop containers"
 	@echo "  make push-pr-branch   - Push current branch to origin for a PR"
 	@echo ""
-	@echo "Deployment is automated via GitHub Actions to Modal; there is no manual deploy target."
+	@echo "Deployment is automated via GitHub Actions to Cloud Run and Modal; there is no manual deploy target."
 
 # Development commands
 dev:

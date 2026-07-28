@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+GITIGNORE = REPOSITORY_ROOT / ".gitignore"
 TRAFFIC_SCRIPT = (
     REPOSITORY_ROOT
     / ".github"
@@ -265,7 +266,10 @@ def test_traffic_change_refuses_an_intervening_promotion(tmp_path):
 
 def test_container_context_excludes_local_environments_and_unrelated_projects():
     ignore_rules = DOCKERIGNORE.read_text(encoding="utf-8")
+    gitignore_rules = GITIGNORE.read_text(encoding="utf-8")
 
+    assert "gha-creds-*.json" in ignore_rules
+    assert "gha-creds-*.json" in gitignore_rules
     assert "**/.venv" in ignore_rules
     assert "projects/*" in ignore_rules
     assert "!projects/policyengine-simulation-entry/**" in ignore_rules

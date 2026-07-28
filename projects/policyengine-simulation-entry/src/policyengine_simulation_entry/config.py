@@ -25,6 +25,29 @@ def _normalized_issuer(value: str) -> str:
     return f"{value.rstrip('/')}/" if value else ""
 
 
+def _validate_https_url(
+    name: str,
+    value: str,
+    *,
+    allow_path: bool = True,
+) -> None:
+    parsed = urlparse(value)
+    if (
+        value != value.strip()
+        or parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ConfigurationError(f"{name} must be an absolute HTTPS URL.")
+    if parsed.params or parsed.query or parsed.fragment:
+        raise ConfigurationError(
+            f"{name} must not contain parameters, a query string, or a fragment."
+        )
+    if not allow_path and parsed.path not in {"", "/"}:
+        raise ConfigurationError(f"{name} must not contain a path.")
+
+
 @dataclass(frozen=True)
 class Settings:
     """All configuration required by the Stage 5 control-plane proxy."""
@@ -90,6 +113,11 @@ class Settings:
             raise ConfigurationError(
                 "Caller authentication is required but issuer/audience are missing."
             )
+        if self.auth_issuer:
+            _validate_https_url(
+                "SIMULATION_ENTRYPOINT_AUTH_ISSUER",
+                self.auth_issuer,
+            )
 
         required_backend = {
             "OLD_GATEWAY_URL": self.old_gateway_url,
@@ -104,13 +132,24 @@ class Settings:
                 f"Missing old-gateway configuration: {', '.join(missing)}."
             )
 
+        _validate_https_url(
+            "OLD_GATEWAY_AUTH_ISSUER",
+            self.old_gateway_auth_issuer,
+        )
+
         if self.connect_timeout_seconds <= 0 or self.request_timeout_seconds <= 0:
             raise ConfigurationError("Old-gateway timeouts must be positive.")
 
+        _validate_https_url(
+            "OLD_GATEWAY_URL",
+            self.old_gateway_url,
+            allow_path=False,
+        )
         upstream = urlparse(self.old_gateway_url)
-        if upstream.scheme != "https" or not upstream.hostname:
-            raise ConfigurationError("OLD_GATEWAY_URL must be an absolute HTTPS URL.")
-        if not upstream.hostname.endswith(MODAL_GATEWAY_HOST_SUFFIX):
+        upstream_hostname = upstream.hostname
+        if upstream_hostname is None or not upstream_hostname.endswith(
+            MODAL_GATEWAY_HOST_SUFFIX
+        ):
             raise ConfigurationError(
                 "OLD_GATEWAY_URL must point to the existing Modal gateway."
             )

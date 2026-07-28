@@ -35,7 +35,6 @@ from policyengine_simulation_observability.observability import (
 
 from policyengine_simulation_entry.auth import CallerAuthenticator
 from policyengine_simulation_entry.backend import (
-    BackendAuthenticationError,
     BackendResponse,
     BackendTimeout,
     BackendUnavailable,
@@ -132,7 +131,23 @@ def create_app(
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         request.state.request_id = request_id
         started = time.monotonic()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            logger.exception(
+                "simulation_entry_unhandled_request",
+                extra={
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": _route_template(request),
+                    **_request_identifiers(request),
+                },
+            )
+            response = Response(
+                content="Internal Server Error",
+                status_code=500,
+                media_type="text/plain",
+            )
         elapsed_ms = round((time.monotonic() - started) * 1000, 2)
         response.headers["X-Request-ID"] = request_id
         if runtime_settings.revision:
@@ -218,7 +233,7 @@ def create_app(
                     **BACKEND_RESPONSE_HEADER,
                 },
             )
-        except (BackendUnavailable, BackendAuthenticationError):
+        except BackendUnavailable:
             record_event(
                 "simulation_entry_backend_unavailable",
                 request_id=request.state.request_id,
