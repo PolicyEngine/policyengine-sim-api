@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import textwrap
 import tomllib
@@ -94,6 +95,27 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
         / "scripts"
         / "configure-cloud-run-simulation-entry-domains.sh"
     ).exists()
+
+
+def test_cloud_run_revision_tags_are_valid_on_the_first_workflow_run():
+    deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    prefixes = re.findall(
+        r"^\s+entrypoint_revision_prefix:\s+(\S+)$",
+        deploy_workflow,
+        flags=re.MULTILINE,
+    )
+
+    assert (
+        "tag=${{ inputs.entrypoint_revision_prefix }}${GITHUB_RUN_NUMBER}"
+        in reusable_workflow
+    )
+    assert len(prefixes) == 2
+
+    first_run_tags = [f"{prefix}1" for prefix in prefixes]
+    for tag in first_run_tags:
+        assert 3 <= len(tag) <= 63
+        assert re.fullmatch(r"[a-z][a-z0-9-]*[a-z0-9]", tag)
 
 
 def test_full_stack_promotion_order_is_explicit():

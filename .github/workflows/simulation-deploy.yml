@@ -35,7 +35,7 @@ jobs:
       release_environment: beta
       modal_environment: staging
       entrypoint_service: policyengine-simulation-entry-staging
-      entrypoint_revision_prefix: s
+      entrypoint_revision_prefix: beta-
       entrypoint_min_instances: 0
       entrypoint_max_instances: 2
       promote_entrypoint: false
@@ -54,7 +54,7 @@ jobs:
       release_environment: prod
       modal_environment: main
       entrypoint_service: policyengine-simulation-entry
-      entrypoint_revision_prefix: p
+      entrypoint_revision_prefix: prod-
       entrypoint_min_instances: 1
       entrypoint_max_instances: 20
       promote_entrypoint: true
