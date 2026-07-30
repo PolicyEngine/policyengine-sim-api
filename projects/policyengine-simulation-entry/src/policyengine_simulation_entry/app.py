@@ -125,18 +125,16 @@ def create_app(
         platform="cloud_run",
         service_role="simulation_entry",
     )
-    init_simulation_observability(app, service_role="simulation_entry")
+    init_simulation_observability(
+        app,
+        service_name="policyengine-simulation-entry",
+        service_role="simulation_entry",
+    )
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
         headers = MutableHeaders(scope=request.scope)
-        request_id = (
-            headers.get("x-request-id")
-            or headers.get(REQUEST_ID_HEADER)
-            or str(uuid.uuid4())
-        )
-        headers["x-request-id"] = request_id
-        # policyengine-observability currently reads its legacy header name.
+        request_id = headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())
         headers[REQUEST_ID_HEADER] = request_id
         request.state.request_id = request_id
         started = time.monotonic()
@@ -156,9 +154,9 @@ def create_app(
                 content="Internal Server Error",
                 status_code=500,
                 media_type="text/plain",
+                headers={REQUEST_ID_HEADER: request_id},
             )
         elapsed_ms = round((time.monotonic() - started) * 1000, 2)
-        response.headers["X-Request-ID"] = request_id
         if runtime_settings.revision:
             response.headers["X-PolicyEngine-Simulation-Revision"] = (
                 runtime_settings.revision

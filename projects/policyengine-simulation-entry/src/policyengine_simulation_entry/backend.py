@@ -9,6 +9,7 @@ from typing import Protocol
 
 import httpx
 from pydantic import ValidationError
+from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_contract.json_types import JsonObject
 
 from policyengine_simulation_entry.config import Settings
@@ -21,7 +22,7 @@ SAFE_RESPONSE_HEADERS = frozenset(
         "content-type",
         "etag",
         "retry-after",
-        "x-request-id",
+        REQUEST_ID_HEADER.lower(),
     }
 )
 
@@ -181,7 +182,7 @@ class OldGatewayBackend:
             token = await token_provider.get_token()
             headers = {"Authorization": f"Bearer {token}"}
             if request_id:
-                headers["X-Request-ID"] = request_id
+                headers[REQUEST_ID_HEADER] = request_id
 
             try:
                 response = await client.request(
@@ -216,7 +217,11 @@ class OldGatewayBackend:
                 status_code=response.status_code,
                 content=response.content,
                 headers={
-                    key: value
+                    (
+                        REQUEST_ID_HEADER
+                        if key.lower() == REQUEST_ID_HEADER.lower()
+                        else key
+                    ): value
                     for key, value in response.headers.items()
                     if key.lower() in SAFE_RESPONSE_HEADERS
                 },
