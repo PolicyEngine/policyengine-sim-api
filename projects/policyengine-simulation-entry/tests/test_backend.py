@@ -4,6 +4,7 @@ import json
 
 import httpx
 import pytest
+from policyengine_observability import REQUEST_ID_HEADER
 
 from policyengine_simulation_entry.backend import (
     BackendAuthenticationError,
@@ -58,7 +59,7 @@ async def test_backend_uses_own_token_and_preserves_safe_response_headers():
             headers={
                 "Retry-After": "2",
                 "Set-Cookie": "must-not-pass",
-                "X-Request-ID": "upstream-request",
+                REQUEST_ID_HEADER: "upstream-request",
             },
         )
 
@@ -79,12 +80,14 @@ async def test_backend_uses_own_token_and_preserves_safe_response_headers():
 
     upstream = requests[-1]
     assert upstream.headers["authorization"] == "Bearer service-token"
-    assert upstream.headers["x-request-id"] == "caller-request"
+    assert upstream.headers[REQUEST_ID_HEADER] == "caller-request"
+    assert "x-request-id" not in upstream.headers
     assert json.loads(result.content) == {
         "job_id": "fc-123",
         "status": "submitted",
     }
     assert result.headers["retry-after"] == "2"
+    assert result.headers[REQUEST_ID_HEADER] == "upstream-request"
     assert "set-cookie" not in result.headers
 
 

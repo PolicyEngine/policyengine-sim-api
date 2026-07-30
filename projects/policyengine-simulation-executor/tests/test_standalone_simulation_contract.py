@@ -29,6 +29,13 @@ PACKAGED_RUNTIME_MODULES = (
 )
 
 
+def test_standalone_executor_uses_its_own_service_name():
+    assert (
+        app.state.policyengine_observability.config.service_name
+        == "policyengine-simulation-executor"
+    )
+
+
 def test_standalone_package_runtime_does_not_import_unpackaged_modal_source():
     for module_name in PACKAGED_RUNTIME_MODULES:
         module = import_module(module_name)
