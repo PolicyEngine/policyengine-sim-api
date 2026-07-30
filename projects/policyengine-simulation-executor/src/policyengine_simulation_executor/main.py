@@ -33,7 +33,11 @@ app = FastAPI(
     title="policyengine-simulation-executor",
     summary="Policyengine simulation api",
 )
-init_simulation_observability(app, service_role="api")
+init_simulation_observability(
+    app,
+    service_name="policyengine-simulation-executor",
+    service_role="api",
+)
 
 # attach the api defined in the app package
 initialize(app=app)

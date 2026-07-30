@@ -184,11 +184,26 @@ def test_versions_and_ping_are_public_proxy_routes(client, backend):
     assert client.post("/ping", json={"value": 1}).json() == {"incremented": 2}
 
 
-def test_request_id_is_propagated_and_returned(client, backend):
-    result = client.get("/versions", headers={"X-Request-ID": "request-123"})
+def test_request_id_is_propagated_logged_and_returned(
+    client,
+    backend,
+    caplog,
+):
+    with caplog.at_level(logging.INFO):
+        result = client.get(
+            "/versions",
+            headers={REQUEST_ID_HEADER: "request-123"},
+        )
 
-    assert result.headers["x-request-id"] == "request-123"
+    assert result.headers[REQUEST_ID_HEADER] == "request-123"
+    assert "x-request-id" not in result.headers
     assert backend.requests[-1].request_id == "request-123"
+    request_record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "simulation_entry_request"
+    )
+    assert request_record.request_id == "request-123"
 
 
 def test_generated_request_id_is_shared_with_observability():
@@ -214,11 +229,37 @@ def test_generated_request_id_is_shared_with_observability():
     with TestClient(app) as client:
         result = client.get("/versions")
 
-    request_id = result.headers["x-request-id"]
+    request_id = result.headers[REQUEST_ID_HEADER]
     assert request_id
-    assert result.headers[REQUEST_ID_HEADER] == request_id
+    assert "x-request-id" not in result.headers
     assert backend.requests[-1].request_id == request_id
     assert backend.observability_request_id == request_id
+
+
+def test_x_request_id_is_not_an_alias(client, backend):
+    result = client.get(
+        "/versions",
+        headers={"X-Request-ID": "must-not-be-used"},
+    )
+
+    request_id = result.headers[REQUEST_ID_HEADER]
+    assert request_id
+    assert request_id != "must-not-be-used"
+    assert backend.requests[-1].request_id == request_id
+    assert "x-request-id" not in result.headers
+
+
+def test_entrypoint_uses_its_own_service_name(backend):
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+    )
+
+    assert (
+        app.state.policyengine_observability.config.service_name
+        == "policyengine-simulation-entry"
+    )
 
 
 def test_request_validation_matches_shared_contract(client):
@@ -251,12 +292,17 @@ def test_backend_failures_are_sanitized(error, expected_status, expected_detail)
     from fastapi.testclient import TestClient
 
     with TestClient(app) as client:
-        result = client.get("/jobs/job-1")
+        result = client.get(
+            "/jobs/job-1",
+            headers={REQUEST_ID_HEADER: "request-backend-failure"},
+        )
 
     assert result.status_code == expected_status
     assert result.json() == {"detail": expected_detail}
     assert result.headers["retry-after"] == "10"
     assert result.headers["x-policyengine-simulation-backend"] == "old_gateway"
+    assert result.headers[REQUEST_ID_HEADER] == "request-backend-failure"
+    assert "x-request-id" not in result.headers
 
 
 def test_unexpected_failure_preserves_correlation_headers_and_request_log(caplog):
@@ -275,12 +321,13 @@ def test_unexpected_failure_preserves_correlation_headers_and_request_log(caplog
     with caplog.at_level(logging.INFO), TestClient(app) as client:
         result = client.get(
             "/jobs/job-1",
-            headers={"X-Request-ID": "request-500"},
+            headers={REQUEST_ID_HEADER: "request-500"},
         )
 
     assert result.status_code == 500
     assert result.text == "Internal Server Error"
-    assert result.headers["x-request-id"] == "request-500"
+    assert result.headers[REQUEST_ID_HEADER] == "request-500"
+    assert "x-request-id" not in result.headers
     assert (
         result.headers["x-policyengine-simulation-revision"]
         == "simulation-entry-test-revision"
@@ -295,14 +342,19 @@ def test_unexpected_failure_preserves_correlation_headers_and_request_log(caplog
     assert request_record.job_id == "job-1"
 
 
-@pytest.mark.parametrize("status_code", [400, 404, 409, 500])
+@pytest.mark.parametrize("status_code", [400, 404, 409, 500, 502])
 def test_upstream_error_status_and_body_are_preserved(client, backend, status_code):
     backend.responses[("GET", "/jobs/job-1")] = response(
         status_code,
         {"detail": "upstream response"},
     )
 
-    result = client.get("/jobs/job-1")
+    result = client.get(
+        "/jobs/job-1",
+        headers={REQUEST_ID_HEADER: "request-upstream-error"},
+    )
 
     assert result.status_code == status_code
     assert result.json() == {"detail": "upstream response"}
+    assert result.headers[REQUEST_ID_HEADER] == "request-upstream-error"
+    assert "x-request-id" not in result.headers

@@ -27,7 +27,11 @@ def create_gateway_app(*, authenticate: bool = True) -> FastAPI:
         description="Test instance for unit tests",
         version="0.0.1",
     )
-    init_simulation_observability(app, service_role="modal_gateway")
+    init_simulation_observability(
+        app,
+        service_name="policyengine-simulation-gateway",
+        service_role="modal_gateway",
+    )
     app.include_router(router)
     if authenticate:
         app.dependency_overrides[require_auth] = lambda: None

@@ -132,16 +132,21 @@ def configure_process_observability(
 def init_simulation_observability(
     app: FastAPI,
     *,
+    service_name: str,
     service_role: str = "api",
 ) -> ObservabilityRuntime:
     service_role = _service_role(service_role)
     platform = _platform()
-    config = _config(service_role=service_role, platform=platform)
+    config = _config(
+        service_name=service_name,
+        service_role=service_role,
+        platform=platform,
+    )
     return init_fastapi_observability(
         app,
         config=config,
         runtime=ObservabilityRuntime(config, segment_registry=SegmentName),
-        service_name=SERVICE_NAME,
+        service_name=service_name,
         service_role=service_role,
         span_prefix=SPAN_PREFIX,
         segment_registry=SegmentName,
@@ -155,7 +160,11 @@ def init_process_observability(
 ) -> ObservabilityRuntime:
     service_role = _service_role(service_role)
     platform = _platform()
-    config = _config(service_role=service_role, platform=platform)
+    config = _config(
+        service_name=SERVICE_NAME,
+        service_role=service_role,
+        platform=platform,
+    )
     runtime = ObservabilityRuntime(config, segment_registry=SegmentName)
     runtime.configure()
     set_observability_runtime(runtime)
@@ -182,11 +191,12 @@ def logfire_replacement_attributes() -> dict[str, str]:
 
 def _config(
     *,
+    service_name: str,
     service_role: str,
     platform: str,
 ) -> ObservabilityConfig:
     config = ObservabilityConfig.from_env(
-        service_name=SERVICE_NAME,
+        service_name=service_name,
         service_role=service_role,
         span_prefix=SPAN_PREFIX,
         extra_metric_attribute_keys=SIMULATION_METRIC_ATTRIBUTE_KEYS,
@@ -206,6 +216,7 @@ def _environment() -> str:
         os.getenv("OBSERVABILITY_ENVIRONMENT")
         or os.getenv("MODAL_ENVIRONMENT")
         or os.getenv("DEPLOYMENT_ENVIRONMENT")
+        or os.getenv("APP_ENVIRONMENT")
         or os.getenv("APP_ENV")
         or os.getenv("ENVIRONMENT")
         or "local"

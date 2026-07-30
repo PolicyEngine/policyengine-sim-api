@@ -93,7 +93,11 @@ def web_app():
         modal_app_name="policyengine-simulation-gateway",
         modal_function_name="web_app",
     )
-    init_simulation_observability(api, service_role="modal_gateway")
+    init_simulation_observability(
+        api,
+        service_name="policyengine-simulation-gateway",
+        service_role="modal_gateway",
+    )
     configure_logfire("policyengine-simulation-gateway")
 
     # Startup guard: crash the container if GATEWAY_AUTH_DISABLED is set in

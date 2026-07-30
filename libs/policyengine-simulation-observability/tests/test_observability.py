@@ -1,3 +1,4 @@
+import inspect
 import json
 import os
 
@@ -14,7 +15,7 @@ from policyengine_observability.runtime import OPERATION_LOGGER, REQUEST_LOGGER
 
 from policyengine_simulation_observability.observability import (
     LOG_DESTINATIONS,
-    SERVICE_NAME,
+    _environment,
     configure_process_observability,
     init_process_observability,
     init_simulation_observability,
@@ -23,6 +24,7 @@ from policyengine_simulation_observability.observability import (
 
 
 OBSERVABILITY_ENV_KEYS = (
+    "OBSERVABILITY_ENVIRONMENT",
     "OBSERVABILITY_PLATFORM",
     "OBSERVABILITY_SERVICE_ROLE",
     "OBSERVABILITY_RUNTIME_ROLE",
@@ -32,6 +34,10 @@ OBSERVABILITY_ENV_KEYS = (
     "OTEL_ENABLED",
     "GOOGLE_CLOUD_PROJECT",
     "MODAL_ENVIRONMENT",
+    "DEPLOYMENT_ENVIRONMENT",
+    "APP_ENVIRONMENT",
+    "APP_ENV",
+    "ENVIRONMENT",
 )
 
 
@@ -143,10 +149,14 @@ def test_init_simulation_observability_forces_stdout_and_disables_exports():
     os.environ["MODAL_ENVIRONMENT"] = "staging"
 
     app = FastAPI()
-    runtime = init_simulation_observability(app, service_role="modal_gateway")
+    runtime = init_simulation_observability(
+        app,
+        service_name="policyengine-simulation-gateway",
+        service_role="modal_gateway",
+    )
 
     assert app.state.policyengine_observability is runtime
-    assert runtime.config.service_name == SERVICE_NAME
+    assert runtime.config.service_name == "policyengine-simulation-gateway"
     assert runtime.config.service_role == "modal_gateway"
     assert runtime.config.environment == "staging"
     assert runtime.config.log_destinations == LOG_DESTINATIONS
@@ -161,7 +171,11 @@ def test_fastapi_observability_emits_structured_request_log(monkeypatch):
     def health():
         return {"status": "healthy"}
 
-    init_simulation_observability(app, service_role="api")
+    init_simulation_observability(
+        app,
+        service_name="policyengine-simulation-entry",
+        service_role="api",
+    )
 
     records = []
     monkeypatch.setattr(
@@ -180,7 +194,7 @@ def test_fastapi_observability_emits_structured_request_log(monkeypatch):
     record = records[0]
     assert record["schema_version"] == "policyengine.observability.request.v1"
     assert record["event"] == "http_request_completed"
-    assert record["service_name"] == SERVICE_NAME
+    assert record["service_name"] == "policyengine-simulation-entry"
     assert record["service_role"] == "api"
     assert record["request_id"] == "request-123"
     assert record["method"] == "GET"
@@ -188,3 +202,81 @@ def test_fastapi_observability_emits_structured_request_log(monkeypatch):
     assert record["status_code"] == 200
     assert record["logfire_status"] == "legacy_candidate_for_replacement"
     assert record["logfire_replacement_candidate"] == "policyengine-observability"
+
+
+def test_fastapi_service_name_is_a_required_keyword_only_argument():
+    parameter = inspect.signature(init_simulation_observability).parameters[
+        "service_name"
+    ]
+
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is inspect.Parameter.empty
+
+
+@pytest.mark.parametrize("app_environment", ["beta", "prod"])
+def test_app_environment_configures_cloud_run_runtime(app_environment):
+    os.environ["APP_ENVIRONMENT"] = app_environment
+
+    app = FastAPI()
+    runtime = init_simulation_observability(
+        app,
+        service_name="policyengine-simulation-entry",
+        service_role="simulation_entry",
+    )
+
+    assert runtime.config.environment == app_environment
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [
+        (
+            {
+                "OBSERVABILITY_ENVIRONMENT": "observability",
+                "MODAL_ENVIRONMENT": "modal",
+                "DEPLOYMENT_ENVIRONMENT": "deployment",
+                "APP_ENVIRONMENT": "app-environment",
+                "APP_ENV": "app-env",
+                "ENVIRONMENT": "generic",
+            },
+            "observability",
+        ),
+        (
+            {
+                "MODAL_ENVIRONMENT": "modal",
+                "DEPLOYMENT_ENVIRONMENT": "deployment",
+                "APP_ENVIRONMENT": "app-environment",
+                "APP_ENV": "app-env",
+                "ENVIRONMENT": "generic",
+            },
+            "modal",
+        ),
+        (
+            {
+                "DEPLOYMENT_ENVIRONMENT": "deployment",
+                "APP_ENVIRONMENT": "app-environment",
+                "APP_ENV": "app-env",
+                "ENVIRONMENT": "generic",
+            },
+            "deployment",
+        ),
+        (
+            {
+                "APP_ENVIRONMENT": "app-environment",
+                "APP_ENV": "app-env",
+                "ENVIRONMENT": "generic",
+            },
+            "app-environment",
+        ),
+        (
+            {"APP_ENV": "app-env", "ENVIRONMENT": "generic"},
+            "app-env",
+        ),
+        ({"ENVIRONMENT": "generic"}, "generic"),
+        ({}, "local"),
+    ],
+)
+def test_environment_precedence(environment, expected):
+    os.environ.update(environment)
+
+    assert _environment() == expected
