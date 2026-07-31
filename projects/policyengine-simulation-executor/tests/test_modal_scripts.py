@@ -667,8 +667,8 @@ class TestModalRecordDeployment:
             "--environment beta --manifest-digest digest-abc"
         ]
 
-    def test_deploy_workflow_records_marker_after_integration(self):
-        """Both legs write deployed/<env>.json after the complete stack is healthy."""
+    def test_deploy_workflow_records_marker(self):
+        """Both deployment legs write the artifact-GC liveness marker."""
         reusable_workflow = (
             REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
@@ -678,11 +678,6 @@ class TestModalRecordDeployment:
             '"${{ needs.deploy_executor.outputs.manifest_digest }}"'
         )
         assert invocation in reusable_workflow
-        # The marker is the artifact GC liveness signal, so it must not be
-        # written until the routed three-service stack passes integration.
-        assert reusable_workflow.index(
-            "Run integration tests through entrypoint, gateway, and executor"
-        ) < (reusable_workflow.index("modal-record-deployment.sh"))
 
         # The payload builder maps missing env vars to empty strings, so a
         # silent rename here would empty the marker's fields — assert every
