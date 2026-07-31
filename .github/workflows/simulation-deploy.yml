@@ -39,6 +39,7 @@ jobs:
       entrypoint_min_instances: 0
       entrypoint_max_instances: 2
       promote_entrypoint: false
+      run_full_integration: true
       force_latest: ${{ inputs.force_latest || false }}
       force_recompute: ${{ inputs.force_recompute || false }}
     secrets: inherit
@@ -58,6 +59,7 @@ jobs:
       entrypoint_min_instances: 1
       entrypoint_max_instances: 20
       promote_entrypoint: true
+      run_full_integration: false
       force_latest: ${{ inputs.force_latest || false }}
       force_recompute: ${{ inputs.force_recompute || false }}
     secrets: inherit

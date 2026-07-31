@@ -29,6 +29,10 @@ on:
         required: true
         type: boolean
         description: "Assign stable service traffic after all environment tests pass"
+      run_full_integration:
+        required: true
+        type: boolean
+        description: "Run the complete calculation suite in this environment"
       force_latest:
         required: false
         default: false
@@ -406,7 +410,7 @@ jobs:
           uv run python -m src.modal.utils.update_version_registry "${args[@]}"
 
   integration:
-    name: Run three-service integration tests
+    name: Verify deployed three-service stack
     needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor, update_routing]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
@@ -422,10 +426,12 @@ jobs:
       - name: Verify the complete deployed request path
         run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.deploy_entrypoint.outputs.revision }}"
 
-      - name: Generate API clients
+      - name: Generate API clients for complete integration tests
+        if: ${{ inputs.run_full_integration }}
         run: ./scripts/generate-clients.sh
 
-      - name: Run integration tests through entrypoint, gateway, and executor
+      - name: Run complete beta integration tests through all services
+        if: ${{ inputs.run_full_integration }}
         env:
           SIMULATION_TEST_AUTH_REQUIRED: "1"
           SIMULATION_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}

@@ -135,11 +135,11 @@ def test_full_stack_promotion_order_is_explicit():
         "needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor]"
     )
     assert routing_dependencies in reusable_workflow
-    assert reusable_workflow.index("update_routing:") < reusable_workflow.index(
-        "integration:"
+    assert reusable_workflow.index("\n  update_routing:") < reusable_workflow.index(
+        "\n  integration:"
     )
-    assert reusable_workflow.index("integration:") < reusable_workflow.index(
-        "authenticated_test:"
+    assert reusable_workflow.index("\n  integration:") < reusable_workflow.index(
+        "\n  authenticated_test:"
     )
     assert reusable_workflow.index("\n  authenticated_test:") < reusable_workflow.index(
         "\n  promote_entrypoint:"
@@ -152,6 +152,22 @@ def test_full_stack_promotion_order_is_explicit():
     assert "failure() && steps.promote.outcome == 'success'" in reusable_workflow
     assert "needs: beta" in deploy_workflow
     assert "skip_beta" not in deploy_workflow
+
+
+def test_complete_integration_suite_is_configured_for_beta_only():
+    deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    beta_workflow = deploy_workflow[
+        deploy_workflow.index("  beta:") : deploy_workflow.index("  prod:")
+    ]
+    prod_workflow = deploy_workflow[
+        deploy_workflow.index("  prod:") : deploy_workflow.index("  summary:")
+    ]
+
+    assert "run_full_integration: true" in beta_workflow
+    assert "run_full_integration: false" in prod_workflow
+    assert "run_full_integration:" in reusable_workflow
 
 
 def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
