@@ -102,11 +102,14 @@ time:
 A successful push-triggered full-stack deployment publishes the API client from
 the exact deployed commit.
 
-The stable production service may have a separately managed custom hostname.
-Domain ownership, DNS, TLS, and other one-time cloud setup remain operator
-responsibilities outside committed deployment automation. Entrypoint traffic
-promotion does not change API v1 revision traffic or its simulation-entrypoint
-migration flag.
+The stable production service is exposed through a separately managed global
+external HTTPS load balancer and canonical hostname. Domain ownership, DNS,
+TLS, load-balancer resources, and other one-time cloud setup remain operator
+responsibilities outside committed deployment automation. When the canonical
+hostname is supplied as protected environment metadata, every production
+promotion verifies it after checking the generated stable service URL.
+Entrypoint traffic promotion does not change API v1 revision traffic or its
+simulation-entrypoint migration flag.
 
 The stable gateway app is `policyengine-simulation-gateway`; executors deploy as
 versioned `policyengine-simulation-py{version}` apps. For Modal image and deploy

@@ -63,13 +63,14 @@ the Cloud Run entrypoint remain separately controlled.
 Cloud Run provides a stable service URL and tagged candidate URLs. Beta uses
 those generated URLs; it does not require a custom hostname.
 
-Production may use a persistent custom hostname mapped to its stable Cloud Run
-service. The mapping follows the service's active traffic assignment and is
-not recreated for each release. When a custom hostname is configured as
-protected environment metadata, post-promotion checks verify it in addition
-to the generated stable URL.
+Production uses a persistent canonical hostname served by a separately managed
+global external HTTPS load balancer with a serverless Cloud Run backend. The
+load balancer follows the service's stable traffic assignment and is not
+recreated for each release. The deployment workflow receives the canonical
+URL as protected environment metadata and verifies it after every production
+promotion, in addition to checking the generated stable URL.
 
-Domain ownership, mapping creation, DNS publication, managed TLS activation,
-and infrastructure administration are one-time operator actions governed by
-private runbooks rather than committed bootstrap scripts in this public
-repository.
+Domain ownership, load-balancer creation, DNS publication, managed TLS
+activation, and infrastructure administration are one-time operator actions
+governed by private runbooks rather than committed bootstrap scripts in this
+public repository. Direct Cloud Run domain mapping is not the production edge.
