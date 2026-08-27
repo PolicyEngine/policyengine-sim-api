@@ -105,6 +105,13 @@ def _country_bundle_data_version(country_bundle: dict) -> str | None:
     return data_version if isinstance(data_version, str) else None
 
 
+def _country_bundle_data_package_version(country_bundle: dict) -> str | None:
+    package_version = country_bundle.get("data_package_version")
+    if isinstance(package_version, str):
+        return package_version
+    return _country_bundle_data_version(country_bundle)
+
+
 def _country_bundle_data_artifact_revision(country_bundle: dict) -> str | None:
     artifact_revision = country_bundle.get("data_artifact_revision")
     return artifact_revision if isinstance(artifact_revision, str) else None
@@ -179,7 +186,7 @@ def _resolve_dataset_uri_from_app_bundle(
             return None
         return runtime_dataset_uri(
             default_uri,
-            default_revision=_country_bundle_data_version(country_bundle),
+            default_revision=_country_bundle_data_package_version(country_bundle),
             override_revision=requested_data_version,
             artifact_revision=_country_bundle_data_artifact_revision(country_bundle),
             validate_hf=False,
@@ -192,8 +199,8 @@ def _resolve_dataset_uri_from_app_bundle(
         requested_revision=requested_revision,
         requested_data_version=requested_data_version,
     )
-    bundle_data_version = (
-        _country_bundle_data_version(country_bundle)
+    bundle_data_package_version = (
+        _country_bundle_data_package_version(country_bundle)
         if isinstance(country_bundle, dict)
         else None
     )
@@ -218,7 +225,7 @@ def _resolve_dataset_uri_from_app_bundle(
             )
             return runtime_dataset_uri(
                 runtime_input,
-                default_revision=bundle_data_version,
+                default_revision=bundle_data_package_version,
                 override_revision=(
                     revision if requested_data_version is not None else None
                 ),
@@ -245,7 +252,7 @@ def _resolve_dataset_uri_from_app_bundle(
     if "://" in dataset_name:
         return runtime_dataset_uri(
             dataset_name,
-            default_revision=bundle_data_version,
+            default_revision=bundle_data_package_version,
             override_revision=revision,
             artifact_revision=artifact_revision,
             validate_hf=not _is_bundle_certified_hf_uri(country_bundle, dataset_name),
@@ -259,7 +266,7 @@ def _resolve_dataset_uri_from_app_bundle(
         return requested_data
     return runtime_dataset_uri(
         dataset_uri,
-        default_revision=bundle_data_version,
+        default_revision=bundle_data_package_version,
         override_revision=revision,
         artifact_revision=artifact_revision,
         validate_hf=False,

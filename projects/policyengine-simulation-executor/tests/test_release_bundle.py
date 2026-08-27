@@ -1,7 +1,12 @@
 """Tests for policyengine.py release bundle helpers."""
 
-import pytest
+from copy import deepcopy
 
+import pytest
+from policyengine.bundle import get_current_bundle
+from policyengine.provenance.dataset_sources import materialize_dataset_source
+
+from policyengine_simulation_executor import release_bundle as release_bundle_module
 from policyengine_simulation_executor.release_bundle import (
     BUNDLE_RECEIPT_FILENAME,
     get_country_release_bundle,
@@ -26,26 +31,86 @@ def stub_hf_revision_validation(monkeypatch):
     )
 
 
-def test_country_release_bundle_exposes_model_and_data_versions():
-    us_bundle = get_country_release_bundle("us")
-    uk_bundle = get_country_release_bundle("uk")
+@pytest.fixture
+def policyengine_uk_data_release(monkeypatch):
+    """Expose the UK package-data release introduced by policyengine.py 5.0.4."""
 
-    assert us_bundle.model_package_name == "policyengine-us"
-    assert us_bundle.model_version
-    assert us_bundle.data_package_name == "populace-data"
-    assert us_bundle.data_version
-    assert us_bundle.data_artifact_revision
-    assert us_bundle.default_dataset == "populace_us_2024"
-    assert us_bundle.default_dataset_uri.startswith("hf://policyengine/populace-us/")
-    assert uk_bundle.model_package_name == "policyengine-uk"
-    assert uk_bundle.model_version
-    assert uk_bundle.data_package_name == "populace-data"
-    assert uk_bundle.data_version
-    assert uk_bundle.data_artifact_revision
-    assert uk_bundle.default_dataset == "populace_uk_2023"
-    assert uk_bundle.default_dataset_uri.startswith(
-        "hf://policyengine/populace-uk-private/"
+    bundle = deepcopy(get_current_bundle())
+    bundle["bundle_version"] = "5.0.4"
+    bundle["policyengine_version"] = "5.0.4"
+    bundle["packages"]["policyengine-uk"]["version"] = "2.90.2"
+    bundle["data_releases"]["uk"] = {
+        "version": "policyengine-uk-data-1.56.16",
+        "build_id": "policyengine-uk-data-1.56.16",
+        "data_package": {
+            "name": "policyengine-uk-data",
+            "version": "1.56.16",
+            "repo_id": "policyengine/policyengine-uk-data-private",
+            "repo_type": "model",
+            "release_manifest_revision": "uk-release-manifest-commit",
+        },
+        "certified_data_artifact": {
+            "dataset": "enhanced_frs_2024_25",
+            "uri": (
+                "hf://policyengine/policyengine-uk-data-private/"
+                "enhanced_frs_2024_25.h5@1.56.16"
+            ),
+        },
+        "default_dataset": "enhanced_frs_2024_25",
+        "default_dataset_uri": (
+            "hf://policyengine/policyengine-uk-data-private/"
+            "enhanced_frs_2024_25.h5@1.56.16"
+        ),
+        "datasets": {
+            "enhanced_frs_2024_25": {
+                "path": "enhanced_frs_2024_25.h5",
+                "repo_id": "policyengine/policyengine-uk-data-private",
+                "repo_type": "model",
+                "revision": "1.56.16",
+            },
+            "populace_uk_2023": {
+                "path": "populace_uk_2023.h5",
+                "repo_id": "policyengine/populace-uk-private",
+                "repo_type": "dataset",
+                "revision": "populace-uk-2023-release",
+            },
+        },
+    }
+    monkeypatch.setattr(
+        release_bundle_module,
+        "_current_policyengine_bundle",
+        lambda: bundle,
     )
+    get_country_release_bundle.cache_clear()
+    yield bundle["data_releases"]["uk"]
+    get_country_release_bundle.cache_clear()
+
+
+def test_country_release_bundle_exposes_model_and_data_versions():
+    manifest = get_current_bundle()
+
+    for country in ("us", "uk"):
+        bundle = get_country_release_bundle(country)
+        release = manifest["data_releases"][country]
+
+        assert bundle.model_package_name == f"policyengine-{country}"
+        assert bundle.model_version
+        assert bundle.data_package_name == release["data_package"]["name"]
+        assert bundle.data_package_version == release["data_package"]["version"]
+        assert bundle.data_version == release["version"]
+        assert bundle.data_artifact_revision
+        assert bundle.default_dataset == release["default_dataset"]
+        assert bundle.default_dataset_uri == release["default_dataset_uri"]
+
+
+def test_policyengine_data_release_keeps_build_and_package_versions_distinct(
+    policyengine_uk_data_release,
+):
+    bundle = get_country_release_bundle("uk")
+
+    assert bundle.data_version == "policyengine-uk-data-1.56.16"
+    assert bundle.data_package_version == "1.56.16"
+    assert bundle.data_artifact_revision == "1.56.16"
 
 
 def test_resolve_bundle_dataset_name_uses_manifest_default():
@@ -84,15 +149,16 @@ def test_resolve_bundle_dataset_uri_does_not_certify_unknown_dataset_labels():
     )
 
 
-def test_resolve_bundle_dataset_uri_maps_populace_dataset_names_to_manifest_uri():
-    assert (
-        resolve_bundle_dataset_uri("us", "populace_us_2024")
-        == get_country_release_bundle("us").default_dataset_uri
-    )
-    assert (
-        resolve_bundle_dataset_uri("uk", "populace_uk_2023")
-        == get_country_release_bundle("uk").default_dataset_uri
-    )
+def test_resolve_bundle_dataset_uri_maps_dataset_names_to_their_own_bundle_uris():
+    for country, dataset in (
+        ("us", "populace_us_2024"),
+        ("uk", "populace_uk_2023"),
+    ):
+        bundle = get_country_release_bundle(country)
+
+        assert (
+            resolve_bundle_dataset_uri(country, dataset) == bundle.dataset_uris[dataset]
+        )
 
 
 def test_resolve_bundle_dataset_uri_preserves_explicit_dataset_uri_and_revision():
@@ -131,20 +197,62 @@ def test_resolve_bundle_dataset_uri_rejects_unknown_logical_revision():
         resolve_bundle_dataset_uri("us", "custom_dataset_label@1.0.0")
 
 
-def test_resolve_runtime_bundle_dataset_uri_maps_default_to_gcs_version():
+def test_resolve_runtime_bundle_dataset_uri_preserves_current_default_reference():
     bundle = get_country_release_bundle("us")
 
     assert resolve_runtime_bundle_dataset_uri("us", None) == bundle.default_dataset_uri
 
 
-def test_resolve_runtime_bundle_dataset_uri_maps_dataset_name_to_populace_uri():
+def test_resolve_runtime_bundle_dataset_uri_maps_dataset_name_to_its_bundle_uri():
     bundle = get_country_release_bundle("uk")
 
     assert (
         resolve_runtime_bundle_dataset_uri("uk", "populace_uk_2023")
-        == bundle.default_dataset_uri
+        == bundle.dataset_uris["populace_uk_2023"]
     )
-    assert bundle.default_dataset == "populace_uk_2023"
+
+
+def test_policyengine_data_release_default_resolves_to_gcs_package_version(
+    policyengine_uk_data_release,
+):
+    assert resolve_runtime_bundle_dataset_uri("uk", None, prefer_local=False) == (
+        "gs://policyengine-uk-data-private/enhanced_frs_2024_25.h5@1.56.16"
+    )
+
+
+def test_policyengine_data_release_preserves_explicit_legacy_populace_dataset(
+    policyengine_uk_data_release,
+):
+    assert resolve_runtime_bundle_dataset_uri(
+        "uk", "populace_uk_2023", prefer_local=False
+    ) == (
+        "hf://policyengine/populace-uk-private/"
+        "populace_uk_2023.h5@populace-uk-2023-release"
+    )
+
+
+def test_policyengine_data_release_loader_receives_package_version(
+    policyengine_uk_data_release,
+    monkeypatch,
+):
+    download_call = {}
+
+    def download_file_from_gcs(bucket, path, version=None):
+        download_call.update(bucket=bucket, path=path, version=version)
+        return "/tmp/enhanced_frs_2024_25.h5", version
+
+    monkeypatch.setattr(
+        "policyengine.provenance.dataset_sources.download_file_from_gcs",
+        download_file_from_gcs,
+    )
+    dataset_uri = resolve_runtime_bundle_dataset_uri("uk", None, prefer_local=False)
+
+    assert materialize_dataset_source(dataset_uri) == ("/tmp/enhanced_frs_2024_25.h5")
+    assert download_call == {
+        "bucket": "policyengine-uk-data-private",
+        "path": "enhanced_frs_2024_25.h5",
+        "version": "1.56.16",
+    }
 
 
 def test_resolve_runtime_bundle_dataset_uri_applies_requested_version():

@@ -66,6 +66,7 @@ def fake_bundle_metadata(monkeypatch):
             ),
             "model_version": "1.687.0" if country == "us" else "2.88.14",
             "data_package_name": "populace-data",
+            "data_package_version": "0.1.0",
             "data_version": (
                 "populace-us-build" if country == "us" else "populace-uk-build"
             ),

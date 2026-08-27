@@ -33,6 +33,7 @@ class CountryReleaseBundle:
     model_package_name: str
     model_version: str
     data_package_name: str
+    data_package_version: str
     data_version: str
     data_artifact_revision: str
     default_dataset: str
@@ -231,6 +232,7 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
     model_package_name = manifest.model_package.name
     model_version = manifest.model_package.version
     data_package_name = manifest.data_package.name
+    data_package_version = manifest.data_package.version
     data_version = manifest.data_package.version
     data_artifact_revision = _artifact_revision(manifest.data_package)
     default_dataset = manifest.default_dataset
@@ -245,6 +247,7 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
         model_version = model_package.get("version") or model_version
         certified_artifact = _mapping(data_release.get("certified_data_artifact"))
         data_package_name = data_package.get("name") or data_package_name
+        data_package_version = data_package.get("version") or data_package_version
         data_version = (
             data_release.get("version") or data_package.get("version") or data_version
         )
@@ -290,6 +293,7 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
         model_package_name=str(model_package_name),
         model_version=str(model_version),
         data_package_name=str(data_package_name),
+        data_package_version=str(data_package_version),
         data_version=str(data_version),
         data_artifact_revision=str(data_artifact_revision),
         default_dataset=str(default_dataset),
@@ -438,7 +442,7 @@ def resolve_runtime_bundle_dataset_uri(
     if requested_data is None:
         return runtime_dataset_uri(
             bundle.default_dataset_uri,
-            default_revision=bundle.data_version,
+            default_revision=bundle.data_package_version,
             override_revision=requested_data_version,
             artifact_revision=bundle.data_artifact_revision,
             validate_hf=False,
@@ -462,7 +466,7 @@ def resolve_runtime_bundle_dataset_uri(
         return runtime_dataset_uri(
             runtime_input,
             default_revision=(
-                bundle.data_version
+                bundle.data_package_version
                 if requested_without_revision.startswith("hf://")
                 else None
             ),
@@ -482,7 +486,7 @@ def resolve_runtime_bundle_dataset_uri(
 
     return runtime_dataset_uri(
         dataset_uri,
-        default_revision=bundle.data_version,
+        default_revision=bundle.data_package_version,
         override_revision=revision,
         artifact_revision=bundle.data_artifact_revision,
         validate_hf=False,

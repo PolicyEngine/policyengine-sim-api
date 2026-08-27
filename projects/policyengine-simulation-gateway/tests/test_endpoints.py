@@ -573,6 +573,63 @@ class TestSubmitSimulationEndpoint:
             "uk", "populace_uk_2023"
         )
 
+    def test__given_policyengine_data_default__then_uses_package_storage_version(
+        self,
+        mock_modal,
+        client: TestClient,
+    ):
+        app_name = "policyengine-simulation-py5-0-4"
+        bundle = deepcopy(TEST_APP_RELEASE_BUNDLE)
+        bundle["app_name"] = app_name
+        bundle["policyengine_version"] = "5.0.4"
+        bundle["uk"].update(
+            {
+                "model_version": "2.90.2",
+                "data_package_name": "policyengine-uk-data",
+                "data_package_version": "1.56.16",
+                "data_version": "policyengine-uk-data-1.56.16",
+                "data_artifact_revision": "1.56.16",
+                "default_dataset": "enhanced_frs_2024_25",
+                "default_dataset_uri": (
+                    "hf://policyengine/policyengine-uk-data-private/"
+                    "enhanced_frs_2024_25.h5@1.56.16"
+                ),
+                "dataset_uris": {
+                    "enhanced_frs_2024_25": (
+                        "hf://policyengine/policyengine-uk-data-private/"
+                        "enhanced_frs_2024_25.h5@1.56.16"
+                    ),
+                },
+            }
+        )
+        state = deepcopy(TEST_ROUTING_STATE)
+        state["latest"] = {
+            "policyengine": "5.0.4",
+            "us": bundle["us"]["model_version"],
+            "uk": "2.90.2",
+        }
+        state["routes"]["policyengine"]["5.0.4"] = app_name
+        state["routes"]["uk"]["2.90.2"] = app_name
+        state["bundles"]["5.0.4"] = bundle
+        mock_modal["dicts"]["simulation-api-routing-state"] = {"active": state}
+
+        response = client.post(
+            "/simulate/economy/comparison",
+            json={
+                "country": "uk",
+                "version": "2.90.2",
+                "scope": "macro",
+                "reform": {},
+            },
+        )
+
+        assert response.status_code == 200
+        response_bundle = response.json()["policyengine_bundle"]
+        assert response_bundle["dataset"] == (
+            "gs://policyengine-uk-data-private/enhanced_frs_2024_25.h5@1.56.16"
+        )
+        assert response_bundle["data_version"] == ("policyengine-uk-data-1.56.16")
+
     def test__given_uk_submission_without_data_and_manifest_commit__then_uses_populace_default(
         self,
         mock_modal,
