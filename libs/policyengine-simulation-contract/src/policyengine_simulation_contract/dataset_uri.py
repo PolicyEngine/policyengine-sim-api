@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from policyengine_simulation_contract.hf_dataset import (
+    HFDatasetReference,
     parse_hf_dataset_uri,
     validate_hf_dataset_uri,
     with_hf_revision,
@@ -63,6 +64,59 @@ def _with_hf_revision_unvalidated(dataset_uri: str, revision: str) -> str:
     return f"{without_revision}@{revision}"
 
 
+def _policyengine_data_runtime_uri(
+    reference: HFDatasetReference,
+    *,
+    package_version: str | None,
+    override_revision: str | None,
+    artifact_revision: str | None,
+) -> str | None:
+    """Resolve a PolicyEngine data-repository artifact through its GCS mirror."""
+
+    bucket = _policyengine_gcs_bucket_for_hf_repo(reference.repo_id)
+    if bucket is None:
+        return None
+
+    selected_revision = reference.revision
+    if override_revision is not None:
+        selected_revision = override_revision
+    elif (
+        package_version is not None
+        and artifact_revision is not None
+        and reference.revision == artifact_revision
+    ):
+        selected_revision = package_version
+    elif selected_revision is None:
+        selected_revision = package_version
+
+    if selected_revision is not None:
+        return f"gs://{bucket}/{reference.path}@{selected_revision}"
+    return f"gs://{bucket}/{reference.path}"
+
+
+def _non_policyengine_data_runtime_uri(
+    dataset_uri: str,
+    reference: HFDatasetReference,
+    *,
+    default_revision: str | None,
+    override_revision: str | None,
+    validate_hf: bool,
+) -> str:
+    """Preserve the existing Hugging Face resolution behavior for other repos."""
+
+    if override_revision is not None:
+        if validate_hf:
+            return with_hf_revision(dataset_uri, override_revision)
+        return _with_hf_revision_unvalidated(dataset_uri, override_revision)
+    if default_revision is not None and reference.revision is None:
+        if validate_hf:
+            return with_hf_revision(dataset_uri, default_revision)
+        return _with_hf_revision_unvalidated(dataset_uri, default_revision)
+    if not validate_hf:
+        return dataset_uri
+    return validate_hf_dataset_uri(dataset_uri)
+
+
 def runtime_dataset_uri(
     dataset_uri: str,
     *,
@@ -90,32 +144,19 @@ def runtime_dataset_uri(
     if parsed is None:
         return dataset_uri
 
-    bucket = _policyengine_gcs_bucket_for_hf_repo(parsed.repo_id)
-    selected_revision = parsed.revision
-    if override_revision is not None:
-        selected_revision = override_revision
-    elif (
-        default_revision is not None
-        and artifact_revision is not None
-        and parsed.revision == artifact_revision
-    ):
-        selected_revision = default_revision
-    elif selected_revision is None:
-        selected_revision = default_revision
-    if bucket is None:
-        if override_revision is not None:
-            if validate_hf:
-                return with_hf_revision(dataset_uri, override_revision)
-            return _with_hf_revision_unvalidated(dataset_uri, override_revision)
-        if default_revision is not None and parsed.revision is None:
-            if validate_hf:
-                return with_hf_revision(dataset_uri, default_revision)
-            return _with_hf_revision_unvalidated(dataset_uri, default_revision)
-        if not validate_hf:
-            return dataset_uri
-        return validate_hf_dataset_uri(dataset_uri)
+    policyengine_data_uri = _policyengine_data_runtime_uri(
+        parsed,
+        package_version=default_revision,
+        override_revision=override_revision,
+        artifact_revision=artifact_revision,
+    )
+    if policyengine_data_uri is not None:
+        return policyengine_data_uri
 
-    if selected_revision is not None:
-        return f"gs://{bucket}/{parsed.path}@{selected_revision}"
-
-    return f"gs://{bucket}/{parsed.path}"
+    return _non_policyengine_data_runtime_uri(
+        dataset_uri,
+        parsed,
+        default_revision=default_revision,
+        override_revision=override_revision,
+        validate_hf=validate_hf,
+    )
