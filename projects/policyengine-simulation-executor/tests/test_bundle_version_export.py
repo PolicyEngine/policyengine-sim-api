@@ -34,18 +34,20 @@ def test_bundled_package_version_rejects_missing_package(monkeypatch):
         get_bundled_package_version("policyengine-core")
 
 
-def test_version_export_reads_core_from_policyengine_bundle(monkeypatch):
+def test_version_export_reads_package_versions_from_policyengine_bundle(monkeypatch):
     bundles = {
         "us": SimpleNamespace(
-            policyengine_version="4.1.0",
-            model_version="1.1.0",
             data_version="1.10.0",
         ),
         "uk": SimpleNamespace(
-            policyengine_version="4.1.0",
-            model_version="2.1.0",
             data_version="1.20.0",
         ),
+    }
+    package_versions = {
+        "policyengine": "4.1.0",
+        "policyengine-core": "9.9.9",
+        "policyengine-us": "1.1.0",
+        "policyengine-uk": "2.1.0",
     }
     requested_packages = []
 
@@ -57,10 +59,22 @@ def test_version_export_reads_core_from_policyengine_bundle(monkeypatch):
     monkeypatch.setattr(
         extract_bundle_versions,
         "get_bundled_package_version",
-        lambda package: requested_packages.append(package) or "9.9.9",
+        lambda package: requested_packages.append(package) or package_versions[package],
     )
 
     outputs = extract_bundle_versions._bundle_outputs()
 
-    assert requested_packages == ["policyengine-core"]
-    assert outputs["policyengine_core_version"] == "9.9.9"
+    assert requested_packages == [
+        "policyengine",
+        "policyengine-core",
+        "policyengine-us",
+        "policyengine-uk",
+    ]
+    assert outputs == {
+        "policyengine_version": "4.1.0",
+        "policyengine_core_version": "9.9.9",
+        "us_version": "1.1.0",
+        "us_data_version": "1.10.0",
+        "uk_version": "2.1.0",
+        "uk_data_version": "1.20.0",
+    }
