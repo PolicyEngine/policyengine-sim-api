@@ -164,7 +164,7 @@ def _current_policyengine_bundle() -> Mapping | None:
         from policyengine.bundle import get_current_bundle
 
         return get_current_bundle()
-    except Exception:
+    except Exception:  # noqa: BLE001 - preserve fallback for invalid legacy bundles
         return None
 
 
@@ -191,6 +191,31 @@ def _bundle_country_metadata(
     if not isinstance(data_release, Mapping):
         data_release = {}
     return bundle, model_package, data_package, data_release
+
+
+def get_bundled_package_version(package: str) -> str:
+    """Return a runtime package version from policyengine.py's bundle manifest."""
+
+    bundle = _current_policyengine_bundle()
+    if not isinstance(bundle, Mapping):
+        raise TypeError("PolicyEngine.py bundle metadata is unavailable")
+
+    packages = bundle.get("packages")
+    if not isinstance(packages, Mapping):
+        raise TypeError("PolicyEngine.py bundle has no package mapping")
+
+    package_metadata = packages.get(package)
+    if not isinstance(package_metadata, Mapping):
+        raise TypeError(
+            f"PolicyEngine.py bundle has no metadata for package {package!r}"
+        )
+
+    version = package_metadata.get("version")
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError(
+            f"PolicyEngine.py bundle has no version for package {package!r}"
+        )
+    return version.strip()
 
 
 @lru_cache

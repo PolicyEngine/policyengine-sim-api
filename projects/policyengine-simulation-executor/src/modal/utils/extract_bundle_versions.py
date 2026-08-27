@@ -6,8 +6,10 @@ import os
 import sys
 from pathlib import Path
 
-from src.modal.dependency_pins import project_dependency_pin
-from policyengine_simulation_executor.release_bundle import get_country_release_bundle
+from policyengine_simulation_executor.release_bundle import (
+    get_bundled_package_version,
+    get_country_release_bundle,
+)
 
 
 def _bundle_outputs() -> dict[str, str]:
@@ -15,11 +17,11 @@ def _bundle_outputs() -> dict[str, str]:
     uk_bundle = get_country_release_bundle("uk")
 
     return {
-        "policyengine_version": us_bundle.policyengine_version,
-        "policyengine_core_version": project_dependency_pin("policyengine-core"),
-        "us_version": us_bundle.model_version,
+        "policyengine_version": get_bundled_package_version("policyengine"),
+        "policyengine_core_version": get_bundled_package_version("policyengine-core"),
+        "us_version": get_bundled_package_version("policyengine-us"),
         "us_data_version": us_bundle.data_version,
-        "uk_version": uk_bundle.model_version,
+        "uk_version": get_bundled_package_version("policyengine-uk"),
         "uk_data_version": uk_bundle.data_version,
     }
 
