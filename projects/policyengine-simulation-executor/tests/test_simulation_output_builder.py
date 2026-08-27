@@ -30,6 +30,9 @@ from fixtures.test_simulation_output_builder import (
 )
 from policyengine_simulation_executor.release_bundle import BUNDLE_RECEIPT_FILENAME
 from policyengine_simulation_executor.release_bundle import get_country_release_bundle
+from policyengine_simulation_executor.release_bundle import (
+    resolve_runtime_bundle_dataset_uri,
+)
 from policyengine_simulation_observability.observability import SegmentName
 from policyengine_simulation_executor.simulation_runtime import RegionResolution
 from policyengine_simulation_executor.simulation_runtime import _load_dataset
@@ -1228,7 +1231,7 @@ def test_load_dataset_uses_baked_folder_for_default_requests(
     assert ensure_calls[0]["data_folder"] == str(tmp_path)
 
 
-def test_resolve_region_scopes_us_state_from_national_populace_dataset():
+def test_resolve_region_scopes_us_state_from_national_dataset():
     bundle = get_country_release_bundle("us")
     scoping_strategy = object()
     state = SimpleNamespace(
@@ -1253,7 +1256,9 @@ def test_resolve_region_scopes_us_state_from_national_populace_dataset():
     )
 
     assert resolution.code == "state/ut"
-    assert resolution.dataset_reference == bundle.default_dataset_uri
+    assert resolution.dataset_reference == resolve_runtime_bundle_dataset_uri(
+        "us", None, prefer_local=False
+    )
     assert resolution.scoping_strategy is scoping_strategy
 
 
@@ -1291,7 +1296,9 @@ def test_resolve_region_scopes_us_congressional_district_from_national_dataset()
     )
 
     assert resolution.code == "congressional_district/UT-01"
-    assert resolution.dataset_reference == bundle.default_dataset_uri
+    assert resolution.dataset_reference == resolve_runtime_bundle_dataset_uri(
+        "us", None, prefer_local=False
+    )
     assert resolution.scoping_strategy is scoping_strategy
 
 
@@ -1319,7 +1326,7 @@ def test_resolve_region_rejects_unscoped_us_place_region():
         )
 
 
-def test_resolve_region_scopes_uk_country_from_national_populace_dataset():
+def test_resolve_region_scopes_uk_country_from_national_dataset():
     bundle = get_country_release_bundle("uk")
     scoping_strategy = object()
     england = SimpleNamespace(
@@ -1344,7 +1351,9 @@ def test_resolve_region_scopes_uk_country_from_national_populace_dataset():
     )
 
     assert resolution.code == "country/england"
-    assert resolution.dataset_reference == bundle.default_dataset_uri
+    assert resolution.dataset_reference == resolve_runtime_bundle_dataset_uri(
+        "uk", None, prefer_local=False
+    )
     assert resolution.scoping_strategy is scoping_strategy
 
 

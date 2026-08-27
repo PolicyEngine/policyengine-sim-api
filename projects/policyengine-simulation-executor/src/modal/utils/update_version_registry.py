@@ -24,6 +24,7 @@ class CountryBundleMetadata(TypedDict):
     model_package_name: str
     model_version: str
     data_package_name: str
+    data_package_version: str
     data_version: str
     data_artifact_revision: str
     default_dataset: str
@@ -88,6 +89,7 @@ def _country_bundle_metadata(country: str) -> CountryBundleMetadata:
         "model_package_name": bundle.model_package_name,
         "model_version": bundle.model_version,
         "data_package_name": bundle.data_package_name,
+        "data_package_version": bundle.data_package_version,
         "data_version": bundle.data_version,
         "data_artifact_revision": bundle.data_artifact_revision,
         "default_dataset": bundle.default_dataset,

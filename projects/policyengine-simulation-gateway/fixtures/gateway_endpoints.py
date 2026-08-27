@@ -22,6 +22,7 @@ TEST_APP_RELEASE_BUNDLE = {
     "policyengine_version": "4.10.0",
     "us": {
         "model_version": "1.500.0",
+        "data_package_version": "0.1.0",
         "data_version": "populace-us-2024-test",
         "data_artifact_revision": "us-artifact-revision",
         "default_dataset": "populace_us_2024",
@@ -32,6 +33,7 @@ TEST_APP_RELEASE_BUNDLE = {
     },
     "uk": {
         "model_version": "2.66.0",
+        "data_package_version": "0.1.0",
         "data_version": "populace-uk-2023-test",
         "data_artifact_revision": "uk-artifact-revision",
         "default_dataset": "populace_uk_2023",
@@ -104,11 +106,15 @@ def _runtime_dataset_uri(
                 selected_revision == country_bundle.get("data_artifact_revision")
                 and revision is None
             ):
-                selected_revision = country_bundle["data_version"]
+                selected_revision = country_bundle.get(
+                    "data_package_version", country_bundle["data_version"]
+                )
             dataset_without_revision = f"gs://{bucket}/{path}"
 
     if selected_revision is None and use_bundle_default:
-        selected_revision = country_bundle["data_version"]
+        selected_revision = country_bundle.get(
+            "data_package_version", country_bundle["data_version"]
+        )
 
     if dataset_without_revision.startswith(("hf://", "gs://")):
         return f"{dataset_without_revision}@{selected_revision}"

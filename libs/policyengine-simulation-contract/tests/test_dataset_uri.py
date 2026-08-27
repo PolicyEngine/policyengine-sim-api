@@ -5,9 +5,13 @@ import pytest
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 
 
-def test_runtime_dataset_uri_preserves_populace_hf_artifact_without_hf_validation(
+def test_runtime_dataset_uri_preserves_populace_build_revision_when_package_differs(
     monkeypatch,
 ):
+    dataset_uri = (
+        "hf://policyengine/populace-uk-private/populace_uk_2023.h5@populace-uk-build"
+    )
+
     def reject_hf_validation(dataset_uri: str, revision: str) -> str:
         raise AssertionError(
             f"HF validation should not run for trusted bundle data: {dataset_uri}@{revision}"
@@ -20,16 +24,25 @@ def test_runtime_dataset_uri_preserves_populace_hf_artifact_without_hf_validatio
 
     assert (
         runtime_dataset_uri(
-            "hf://policyengine/populace-uk-private/"
-            "populace_uk_2023.h5@uk-artifact-revision",
-            default_revision="populace-uk-2023-release",
-            artifact_revision="uk-artifact-revision",
+            dataset_uri,
+            default_revision="0.1.0",
+            artifact_revision="populace-uk-build",
             validate_hf=False,
         )
-        == (
-            "hf://policyengine/populace-uk-private/"
-            "populace_uk_2023.h5@uk-artifact-revision"
+        == dataset_uri
+    )
+
+
+def test_runtime_dataset_uri_uses_package_version_for_policyengine_data_repo():
+    assert (
+        runtime_dataset_uri(
+            "hf://policyengine/policyengine-uk-data-private/"
+            "enhanced_frs_2024_25.h5@release-manifest-revision",
+            default_revision="1.56.16",
+            artifact_revision="release-manifest-revision",
+            validate_hf=False,
         )
+        == "gs://policyengine-uk-data-private/enhanced_frs_2024_25.h5@1.56.16"
     )
 
 

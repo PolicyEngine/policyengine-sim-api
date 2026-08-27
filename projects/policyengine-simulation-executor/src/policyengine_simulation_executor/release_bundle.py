@@ -33,6 +33,7 @@ class CountryReleaseBundle:
     model_package_name: str
     model_version: str
     data_package_name: str
+    data_package_version: str
     data_version: str
     data_artifact_revision: str
     default_dataset: str
@@ -218,6 +219,19 @@ def get_bundled_package_version(package: str) -> str:
     return version.strip()
 
 
+def _derive_data_package_version(
+    *,
+    bundled_data_package: Mapping,
+    manifest_data_package_version: str,
+) -> str:
+    """Return the data package version certified by policyengine.py."""
+
+    version = bundled_data_package.get("version") or manifest_data_package_version
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError("PolicyEngine.py bundle has no data package version")
+    return version.strip()
+
+
 @lru_cache
 def get_country_release_bundle(country: str) -> CountryReleaseBundle:
     """Return package and dataset versions from policyengine.py metadata."""
@@ -236,6 +250,8 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
     default_dataset = manifest.default_dataset
     default_dataset_uri = manifest.default_dataset_uri
     dataset_uris, dataset_repo_types = _dataset_uris_from_manifest(manifest)
+    data_package: Mapping = {}
+    data_release: Mapping = {}
     if bundle_metadata is not None:
         bundle_manifest, model_package, data_package, data_release = bundle_metadata
         policyengine_version = (
@@ -271,6 +287,10 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
         )
         dataset_uris.update(release_dataset_uris)
         dataset_repo_types.update(release_dataset_repo_types)
+    data_package_version = _derive_data_package_version(
+        bundled_data_package=data_package,
+        manifest_data_package_version=manifest.data_package.version,
+    )
     if default_dataset and default_dataset_uri:
         dataset_uris.setdefault(default_dataset, default_dataset_uri)
         release_data_package = _mapping(data_release).get("data_package")
@@ -290,6 +310,7 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
         model_package_name=str(model_package_name),
         model_version=str(model_version),
         data_package_name=str(data_package_name),
+        data_package_version=str(data_package_version),
         data_version=str(data_version),
         data_artifact_revision=str(data_artifact_revision),
         default_dataset=str(default_dataset),
@@ -438,7 +459,7 @@ def resolve_runtime_bundle_dataset_uri(
     if requested_data is None:
         return runtime_dataset_uri(
             bundle.default_dataset_uri,
-            default_revision=bundle.data_version,
+            default_revision=bundle.data_package_version,
             override_revision=requested_data_version,
             artifact_revision=bundle.data_artifact_revision,
             validate_hf=False,
@@ -462,7 +483,7 @@ def resolve_runtime_bundle_dataset_uri(
         return runtime_dataset_uri(
             runtime_input,
             default_revision=(
-                bundle.data_version
+                bundle.data_package_version
                 if requested_without_revision.startswith("hf://")
                 else None
             ),
@@ -482,7 +503,7 @@ def resolve_runtime_bundle_dataset_uri(
 
     return runtime_dataset_uri(
         dataset_uri,
-        default_revision=bundle.data_version,
+        default_revision=bundle.data_package_version,
         override_revision=revision,
         artifact_revision=bundle.data_artifact_revision,
         validate_hf=False,

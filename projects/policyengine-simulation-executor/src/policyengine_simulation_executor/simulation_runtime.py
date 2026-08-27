@@ -294,7 +294,7 @@ def _region_parent_dataset_reference(
             bundle = get_country_release_bundle(country)
             return runtime_dataset_uri(
                 parent_dataset_path,
-                default_revision=bundle.data_version,
+                default_revision=bundle.data_package_version,
                 override_revision=requested_data_version,
                 artifact_revision=bundle.data_artifact_revision,
                 validate_hf=False,
@@ -348,7 +348,7 @@ def _resolve_region(
         bundle = get_country_release_bundle(country)
         dataset_reference = runtime_dataset_uri(
             dataset_path,
-            default_revision=bundle.data_version,
+            default_revision=bundle.data_package_version,
             override_revision=requested_data_version,
             artifact_revision=bundle.data_artifact_revision,
             validate_hf=False,
