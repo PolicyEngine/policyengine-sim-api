@@ -1,11 +1,15 @@
 """Tests for policyengine.py release bundle helpers."""
 
 from copy import deepcopy
+from unittest.mock import MagicMock
 
 import pytest
 from policyengine.bundle import get_current_bundle
-from policyengine.provenance.dataset_sources import materialize_dataset_source
-
+from policyengine.provenance import (
+    get_release_manifest,
+    https_dataset_uri,
+    materialize_dataset,
+)
 from policyengine_simulation_executor import release_bundle as release_bundle_module
 from policyengine_simulation_executor.release_bundle import (
     BUNDLE_RECEIPT_FILENAME,
@@ -231,28 +235,44 @@ def test_policyengine_data_release_preserves_explicit_legacy_populace_dataset(
     )
 
 
-def test_policyengine_data_release_loader_receives_package_version(
-    policyengine_uk_data_release,
+def test_policyengine_dataset_interface_downloads_certified_uk_bundle_reference(
+    tmp_path,
     monkeypatch,
 ):
-    download_call = {}
-
-    def download_file_from_gcs(bucket, path, version=None):
-        download_call.update(bucket=bucket, path=path, version=version)
-        return "/tmp/enhanced_frs_2024_25.h5", version
-
+    manifest = get_release_manifest("uk")
+    reference = manifest.datasets[manifest.default_dataset]
+    response = MagicMock()
+    response.__enter__.return_value = response
+    response.status_code = 200
+    response.iter_content.return_value = [b"dataset"]
+    get = MagicMock(return_value=response)
     monkeypatch.setattr(
-        "policyengine.provenance.dataset_sources.download_file_from_gcs",
-        download_file_from_gcs,
+        "policyengine.provenance.dataset_materialization.requests.get",
+        get,
     )
-    dataset_uri = resolve_runtime_bundle_dataset_uri("uk", None, prefer_local=False)
+    monkeypatch.setattr(
+        "policyengine.provenance.dataset_materialization.sha256_file",
+        lambda _: reference.sha256,
+    )
 
-    assert materialize_dataset_source(dataset_uri) == ("/tmp/enhanced_frs_2024_25.h5")
-    assert download_call == {
-        "bucket": "policyengine-uk-data-private",
-        "path": "enhanced_frs_2024_25.h5",
-        "version": "1.56.16",
-    }
+    result = materialize_dataset("uk", data_dir=tmp_path)
+
+    assert result.bundle_dataset is not None
+    assert result.bundle_dataset.data_package_name == (
+        reference.data_package_name or manifest.data_package.name
+    )
+    assert result.bundle_dataset.repo_type == (
+        reference.repo_type or manifest.data_package.repo_type
+    )
+    assert result.bundle_dataset.revision == reference.revision
+    assert result.bundle_dataset.sha256 == reference.sha256
+    assert result.bundle_dataset.path.read_bytes() == b"dataset"
+    assert get.call_args.args[0] == https_dataset_uri(
+        reference.repo_id or manifest.data_package.repo_id,
+        reference.path,
+        reference.revision,
+        repo_type=reference.repo_type or manifest.data_package.repo_type,
+    )
 
 
 def test_resolve_runtime_bundle_dataset_uri_applies_requested_version():
