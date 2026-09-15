@@ -15,6 +15,7 @@ on:
       - 'projects/policyengine-simulation-executor/pyproject.toml'
       - 'projects/policyengine-simulation-executor/src/modal/**'
       - 'projects/policyengine-simulation-executor/bundle-constraints.txt'
+      - 'projects/policyengine-simulation-executor/bundle-constraints-canonical-spm-v1.txt'
       - 'projects/policyengine-simulation-executor/src/policyengine_simulation_executor/**'
       - 'libs/policyengine-simulation-contract/**'
       - 'libs/policyengine-simulation-observability/**'

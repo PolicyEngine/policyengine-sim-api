@@ -169,6 +169,28 @@ class TestIdentityCollection:
         }
         assert ak.collect_dataset_identity("us", 2026).digest == _DATASET_GOLDEN
 
+    def test_installed_capability_enters_the_dataset_identity(
+        self, stub_identity_sources
+    ):
+        """The certified selection is part of what an artifact is.
+
+        The stub above serves the pre-canonical answer so the goldens stay
+        keyed to the synthetic version-set. This case takes the installed
+        one: on a canonical bundle the resolved selection lands in the
+        identity, which rotates every dataset and baseline key with it.
+        """
+        capability = stub_identity_sources.installed_spm_capability()
+        if capability is None:
+            pytest.skip("The installed bundle certifies no canonical SPM capability")
+        stub_identity_sources.spm_capability = capability
+
+        identity = ak.collect_dataset_identity("us", 2026)
+        assert identity.spm == capability.defaults.model_dump()
+        assert identity.digest != _DATASET_GOLDEN
+        assert identity.digest == ak.dataset_key(
+            **_DATASET_KWARGS, spm=capability.defaults.model_dump()
+        )
+
     def test_baseline_identity_composes(self, stub_identity_sources):
         identity = ak.collect_baseline_identity(
             "us",
@@ -208,24 +230,27 @@ class TestWrapperStorageIdAgreement:
     the same identifier reached down two independent code paths, and a
     disagreement blocks every canonical publish.
 
-    The ``policyengine`` this project pins is pre-canonical: it has neither
-    an ``spm`` field nor a ``storage_id``, so an SPM-capable wrapper cannot
-    be imported in hermetic CI and these tests cannot prove agreement with
-    one. What they do prove:
+    This project now pins an SPM-capable ``policyengine``, so
+    ``test_spm_arm_matches_the_installed_wrapper`` no longer skips: the SPM
+    arm is checked against the real ``Simulation.storage_id``, not only
+    against the transcription in ``fixtures/wrapper_spm.py``. It supplies
+    the two things that wrapper's ``spm_config`` needs and this module
+    otherwise does not — a US model version, and a bundle pinning the
+    selection — because ``spm_config`` refuses a non-US model and
+    re-resolves the selection through ``get_current_bundle`` rather than
+    reading it off the object.
+
+    The transcription stays for now because it is the second, independent
+    derivation: precompute plans a store path from
+    ``BaselineArtifactIdentity.storage_id`` and the in-container worker
+    refuses to publish when the wrapper disagrees, and a test that asked the
+    wrapper for both sides would prove nothing. What the cases prove:
 
     * the no-selection arm agrees through the exact accessor ``precompute``
-      uses, against the real installed object — the same answer on either
-      wrapper, which is the point: that arm must not move;
-    * the SPM arm agrees with the canonical wrapper's expression as read from
-      the wheel above, so our side cannot drift from the contract without a
-      reviewable diff, and the digest cannot be quietly reformatted;
-    * ``test_spm_arm_matches_the_installed_wrapper`` stops skipping and
-      asserts real equality the moment an SPM-capable wrapper is pinned. It
-      supplies the two things that wrapper's ``spm_config`` needs and this
-      project cannot assume — a US model version, and a bundle pinning this
-      selection — because ``spm_config`` refuses a non-US model and
-      re-resolves the selection through ``get_current_bundle`` rather than
-      reading it off the object.
+      uses, against the real installed object — that arm must not move;
+    * the SPM arm agrees with the wrapper's expression, so our side cannot
+      drift from the contract without a reviewable diff, and the digest
+      cannot be quietly reformatted.
 
     Agreement with the real wrapper was checked out of band on 2026-09-11 by
     running the executor environment with that wheel's ``policyengine``

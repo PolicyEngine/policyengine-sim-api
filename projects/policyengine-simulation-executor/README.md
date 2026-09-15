@@ -16,14 +16,20 @@ same interpreter (uv_sync's venv is first on PATH). The gateway lives in
 its own project (`projects/policyengine-simulation-gateway`) whose image
 installs the same way from that project's lock — see its README.
 
-The bundle install subprocess uses `bundle-constraints.txt` through
-`PIP_CONSTRAINT`, because pip does not read `uv.lock`. This preserves SPM
-calculator 0.3.1 for the current country model and historical bundle rebuilds.
-The worker, precompute, and import-smoke images share this constrained build
-path. `BUNDLE_CONSTRAINT_FILES` selects the file by exact bundle version;
-unreviewed versions fail before building. Add a new reviewed file and selection
-for a country/bundle migration, keeping historical selections on their compatible
-calculator version.
+The bundle install subprocess reads a constraints file through
+`PIP_CONSTRAINT`, because pip does not read `uv.lock`. The worker,
+precompute, and import-smoke images share this constrained build path.
+`BUNDLE_CONSTRAINT_FILES` selects the file by exact bundle version;
+unreviewed versions fail before building. Add a new reviewed file and
+selection for a country/bundle migration, keeping historical selections on
+their compatible calculator version.
+
+Two selections exist today. `bundle-constraints.txt` holds SPM calculator
+0.3.1 for the pre-canonical bundles (4.18.3 through 5.3.0), so rebuilding
+one of those historical routes still installs the calculator it was
+reviewed with. `bundle-constraints-canonical-spm-v1.txt` holds calculator
+1.0.0 for the canonical SPM bundles (6.0.0 onward), whose own manifest
+binds that version and whose country model requires it.
 
 To change image dependencies, edit the `modal-simulation-image`
 dependency group and run `uv lock`. PRs touching image inputs run an

@@ -430,3 +430,50 @@ def test_main_publishes_routing_state(
     assert active["latest"]["policyengine"] == "4.19.1"
     assert active["latest"]["us"] == "1.687.0"
     assert active["latest"]["uk"] == "2.88.14"
+
+
+class _StubForecast:
+    """The forecast artifact is the one capability input that leaves the process.
+
+    Everything else ``runtime_spm_capability`` reads — the bundle manifest,
+    the wrapper's model fields, the country model's methods — is a property
+    of the installed image and is exercised for real here.
+    """
+
+    years = (2024,)
+
+    def entry(self, year, *, scenario, as_of):
+        return {"year": year, "scenario": scenario, "as_of": as_of}
+
+
+def test_bundle_manifest_metadata_advertises_installed_canonical_spm(monkeypatch):
+    """The routing state carries the installed bundle's certified capability.
+
+    The gateway builds ``/versions``'s ``spm_capabilities`` from this field,
+    keyed by bundle version, and the API reads the certified defaults from
+    there. A deploy that stopped advertising the contract would route every
+    caller to the uncertified path without failing anything here.
+    """
+    from policyengine.bundle import get_current_bundle
+    from policyengine_simulation_contract.spm import SPM_CONTRACT_VERSION
+    from policyengine_simulation_executor import spm as executor_spm
+
+    monkeypatch.setattr(executor_spm, "_forecast", lambda sha256: _StubForecast())
+
+    bundle = get_current_bundle()
+    configured = bundle["measurements"]["spm"]
+    metadata = registry.build_bundle_manifest_metadata(
+        app_name="policyengine-simulation-py6-0-0",
+        policyengine_version=bundle["policyengine_version"],
+    )
+
+    assert SPM_CONTRACT_VERSION == "canonical-spm-v1"
+    assert metadata["spm"]["contract_version"] == SPM_CONTRACT_VERSION
+    # Bundle defaults, not the model's own attribute defaults: the pinned
+    # forecast hash and scenario are what make the capability certified.
+    assert metadata["spm"]["defaults"] == configured
+    assert configured["forecast_content_sha256"] and configured["scenario"]
+    assert (
+        metadata["us"]["model_version"]
+        == (bundle["packages"]["policyengine-us"]["version"])
+    )
