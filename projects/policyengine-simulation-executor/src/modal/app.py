@@ -78,20 +78,30 @@ BUNDLE_CONSTRAINTS_PATH = "/opt/policyengine/bundle-constraints.txt"
 # Retain old bundle selections when a new method gets its own reviewed file.
 # These include live historical routes, the existing image-smoke fixture,
 # and the released 5.3.0 bundle, whose US model is unchanged from 5.2.0.
+LEGACY_BUNDLE_CONSTRAINTS_FILE = "bundle-constraints.txt"
+# The canonical SPM method (contract canonical-spm-v1) is the new method this
+# scheme anticipated: policyengine 6.0.0 binds spm-calculator 1.0.0 in its own
+# manifest, which the legacy 0.3.1 selection would contradict during the
+# pip-driven bundle install. It gets its own reviewed file so rebuilding a
+# historical route still installs that route's calculator.
+CANONICAL_SPM_BUNDLE_CONSTRAINTS_FILE = "bundle-constraints-canonical-spm-v1.txt"
 BUNDLE_CONSTRAINT_FILES = {
-    version: "bundle-constraints.txt"
-    for version in (
-        "4.18.3",
-        "4.18.5",
-        "4.18.7",
-        "4.18.8",
-        "4.18.9",
-        "4.19.1",
-        "4.20.3",
-        "4.22.0",
-        "5.2.0",
-        "5.3.0",
-    )
+    **{
+        version: LEGACY_BUNDLE_CONSTRAINTS_FILE
+        for version in (
+            "4.18.3",
+            "4.18.5",
+            "4.18.7",
+            "4.18.8",
+            "4.18.9",
+            "4.19.1",
+            "4.20.3",
+            "4.22.0",
+            "5.2.0",
+            "5.3.0",
+        )
+    },
+    **{version: CANONICAL_SPM_BUNDLE_CONSTRAINTS_FILE for version in ("6.0.0",)},
 }
 VERSION_ENV = {
     "POLICYENGINE_VERSION": POLICYENGINE_VERSION,

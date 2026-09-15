@@ -1,0 +1,6 @@
+# Reviewed calculator selection for the canonical SPM bundles (policyengine
+# 6.0.0 onward), whose manifest binds spm-calculator itself. Pinning it here
+# too keeps the pip-driven bundle install on the reviewed calculator even
+# though pip does not read uv.lock. Historical bundles keep their own
+# selection in bundle-constraints.txt; do not merge the two files.
+spm-calculator==1.0.0

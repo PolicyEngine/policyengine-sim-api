@@ -39,11 +39,9 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
         app.simulation_image.calls.index(command_calls[0])
     )
     constraints = Path(constraint_call[1]).read_text()
+    # 4.19.1 is a historical route: its rebuild keeps the calculator that
+    # bundle was reviewed with, not the canonical one this project now pins.
     assert "spm-calculator==0.3.1" in constraints.splitlines()
-    project = tomllib.loads(
-        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
-    )
-    assert "spm-calculator==0.3.1" in project["project"]["dependencies"]
     # The bundle installs into uv_sync's venv so locked packages and
     # bundled models share one environment.
     assert "--venv /.uv/.venv" in command
@@ -97,24 +95,25 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "version",
+    "version,calculator",
     [
-        "4.18.3",
-        "4.18.5",
-        "4.18.7",
-        "4.18.8",
-        "4.18.9",
-        "4.19.1",
-        "4.20.3",
-        "4.22.0",
-        "5.2.0",
-        "5.3.0",
+        ("4.18.3", "0.3.1"),
+        ("4.18.5", "0.3.1"),
+        ("4.18.7", "0.3.1"),
+        ("4.18.8", "0.3.1"),
+        ("4.18.9", "0.3.1"),
+        ("4.19.1", "0.3.1"),
+        ("4.20.3", "0.3.1"),
+        ("4.22.0", "0.3.1"),
+        ("5.2.0", "0.3.1"),
+        ("5.3.0", "0.3.1"),
+        ("6.0.0", "1.0.0"),
     ],
 )
 def test_bundle_command_passes_constraints_to_child_installer(
-    monkeypatch, tmp_path, version
+    monkeypatch, tmp_path, version, calculator
 ):
-    """Historical bundle rebuilds must inherit the same pip constraint."""
+    """Every reviewed bundle rebuild inherits its own pip constraint."""
     install_fake_modal(monkeypatch)
     monkeypatch.setenv("POLICYENGINE_VERSION", version)
     monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.30.1")
@@ -123,7 +122,7 @@ def test_bundle_command_passes_constraints_to_child_installer(
     sys.modules.pop("src.modal.app", None)
     app = importlib.import_module("src.modal.app")
     constraint_path = tmp_path / "bundle-constraints.txt"
-    constraint_path.write_text("spm-calculator==0.3.1\n")
+    constraint_path.write_text(f"spm-calculator=={calculator}\n")
     monkeypatch.setattr(app, "BUNDLE_CONSTRAINTS_PATH", str(constraint_path))
     executable = tmp_path / "uvx"
     executable.write_text(
@@ -142,7 +141,7 @@ def test_bundle_command_passes_constraints_to_child_installer(
         text=True,
     )
     output = json.loads(result.stdout)
-    assert output["constraints"] == "spm-calculator==0.3.1\n"
+    assert output["constraints"] == f"spm-calculator=={calculator}\n"
     assert output["args"][:6] == [
         "--from",
         f"policyengine=={version}",
@@ -164,6 +163,45 @@ def test_unreviewed_bundle_cannot_inherit_legacy_calculator_constraint(monkeypat
     app = importlib.import_module("src.modal.app")
     with pytest.raises(ValueError, match="reviewed calculator constraint"):
         app.bundle_install_command("unreviewed-future-bundle")
+
+
+def test_canonical_bundle_has_its_own_reviewed_calculator_constraint(monkeypatch):
+    """The canonical SPM migration adds a file; it does not rewrite history.
+
+    ``BUNDLE_CONSTRAINT_FILES`` selects by exact bundle version and the
+    selected file is the only thing pip reads during the bundle install, so
+    a shared file would silently move every historical route's calculator.
+    """
+    install_fake_modal(monkeypatch)
+    monkeypatch.setenv("POLICYENGINE_VERSION", "6.0.0")
+    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.32.5")
+    monkeypatch.setenv("POLICYENGINE_US_VERSION", "2.2.1")
+    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.2")
+    sys.modules.pop("src.modal.app", None)
+    app = importlib.import_module("src.modal.app")
+
+    project_dir = Path(__file__).resolve().parents[1]
+    canonical = project_dir / app.bundle_constraints_file("6.0.0")
+    legacy = project_dir / app.bundle_constraints_file("5.2.0")
+    assert canonical != legacy
+    project = tomllib.loads((project_dir / "pyproject.toml").read_text())
+    calculator_pin = next(
+        dependency
+        for dependency in project["project"]["dependencies"]
+        if dependency.startswith("spm-calculator==")
+    )
+    # The image constraint and the locked project pin are one decision for
+    # the bundle this project deploys.
+    assert calculator_pin in canonical.read_text().splitlines()
+    assert "spm-calculator==0.3.1" in legacy.read_text().splitlines()
+    assert "spm-calculator==0.3.1" not in canonical.read_text().splitlines()
+
+    # The deployed image copies the selected file to the one path pip reads.
+    constraint_call = next(
+        call for call in app.simulation_image.calls if call[0] == "add_local_file"
+    )
+    assert Path(constraint_call[1]) == canonical
+    assert constraint_call[2] == app.BUNDLE_CONSTRAINTS_PATH
 
 
 def _fake_manifest():
