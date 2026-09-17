@@ -10,6 +10,7 @@ from policyengine.provenance import (
     https_dataset_uri,
     materialize_dataset,
 )
+from policyengine.provenance.manifest import resolve_managed_dataset_reference
 from policyengine_simulation_executor import release_bundle as release_bundle_module
 from policyengine_simulation_executor.release_bundle import (
     BUNDLE_RECEIPT_FILENAME,
@@ -126,6 +127,21 @@ def test_resolve_bundle_dataset_name_uses_manifest_default():
         resolve_bundle_dataset_name("uk", None)
         == get_country_release_bundle("uk").default_dataset
     )
+
+
+def test_managed_policyengine_loader_accepts_manifest_names_not_raw_uris():
+    bundle = get_country_release_bundle("us")
+    alternative = next(
+        name for name in bundle.dataset_uris if name != bundle.default_dataset
+    )
+
+    assert resolve_managed_dataset_reference("us") == bundle.default_dataset_uri
+    assert (
+        resolve_managed_dataset_reference("us", alternative)
+        == bundle.dataset_uris[alternative]
+    )
+    with pytest.raises(ValueError, match="Explicit dataset URIs bypass"):
+        resolve_managed_dataset_reference("us", bundle.dataset_uris[alternative])
 
 
 def test_resolve_bundle_dataset_uri_maps_certified_defaults_to_manifest_uris():

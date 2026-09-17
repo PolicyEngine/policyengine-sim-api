@@ -100,6 +100,16 @@ class TestDeterministicBaselineId:
     def test_custom_data_disqualifies(self, collected, params):
         assert self._id(collected, params=params) is None
 
+    def test_explicit_certified_default_qualifies(self, collected):
+        from policyengine_simulation_executor.release_bundle import (
+            get_country_release_bundle,
+        )
+
+        default = get_country_release_bundle("us").default_dataset
+        assert (
+            self._id(collected, params={"scope": "macro", "data": default}) is not None
+        )
+
     def test_missing_region_code_disqualifies(self, collected):
         assert self._id(collected, region_code=None) is None
 

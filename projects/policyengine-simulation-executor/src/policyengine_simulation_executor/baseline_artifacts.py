@@ -50,7 +50,19 @@ def uses_custom_data(params: dict[str, Any]) -> bool:
     and in a warm container the in-process cache (keyed on id alone) would
     then serve default-data output the column guard cannot distinguish.
     """
-    return params.get("data") is not None or params.get("data_version") is not None
+    if params.get("data_version") is not None:
+        return True
+    requested = params.get("data")
+    if requested is None:
+        return False
+    from policyengine_simulation_executor.release_bundle import (
+        get_country_release_bundle,
+    )
+
+    return (
+        requested
+        != get_country_release_bundle(str(params.get("country", "us"))).default_dataset
+    )
 
 
 def qualifying_baseline_identity(

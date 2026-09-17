@@ -7,6 +7,7 @@ No Modal dependencies here.
 """
 
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -212,6 +213,12 @@ def _resolve_dataset_reference_inner(country: str, params: dict[str, Any]) -> st
     requested_data = params.get("data")
     requested_data = requested_data if isinstance(requested_data, str) else None
     requested_data_version = _requested_data_version(params)
+    if requested_data is not None and requested_data_version is None:
+        # The managed loader accepts bundled logical names, not arbitrary
+        # dataset URIs. Leave this selection to policyengine.py.
+        bundle = get_country_release_bundle(country)
+        if requested_data in bundle.dataset_uris:
+            return requested_data
     if requested_data is None and requested_data_version is None:
         return resolve_bundle_dataset_name(country, requested_data)
     return resolve_runtime_bundle_dataset_uri(
@@ -445,6 +452,12 @@ def resolve_data_folder() -> str:
     return os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")
 
 
+def _nondefault_data_folder(country: str, name: str, uri: str) -> str:
+    """Separate managed datasets even if their source filenames have the same stem."""
+    identity = hashlib.sha256(f"{country}:{name}:{uri}".encode()).hexdigest()
+    return f"/tmp/policyengine-alternate-data/{identity}"
+
+
 def _load_dataset(
     params: dict[str, Any],
     *,
@@ -454,30 +467,48 @@ def _load_dataset(
     country = params.get("country", "us").lower()
     year = _parse_year(params)
     country_module = country_module or _country_module(country)
-    dataset_name = (
-        region_resolution.dataset_reference
-        if region_resolution is not None and region_resolution.dataset_reference
-        else _resolve_dataset_reference(country, params)
+    bundle = get_country_release_bundle(country)
+    if params.get("data_version") is not None:
+        raise ValueError("data_version is not supported by the managed dataset loader")
+    # An explicit certified dataset takes precedence over the inherited
+    # national dataset reference of a filtered state or district.
+    if params.get("data") not in (None, bundle.default_dataset):
+        dataset_reference = _resolve_dataset_reference(country, params)
+    elif region_resolution is not None and region_resolution.dataset_reference:
+        dataset_reference = region_resolution.dataset_reference
+    else:
+        dataset_reference = _resolve_dataset_reference(country, params)
+    # Region metadata can contain the certified URI rather than its manifest
+    # name. Translate it back before calling policyengine.py's managed loader.
+    dataset_name = next(
+        (
+            name
+            for name, uri in bundle.dataset_uris.items()
+            if dataset_reference
+            in (
+                name,
+                uri,
+                resolve_runtime_bundle_dataset_uri(country, name, prefer_local=False),
+            )
+        ),
+        dataset_reference,
     )
-    from policyengine_simulation_executor.baseline_artifacts import uses_custom_data
-
     data_folder = resolve_data_folder()
-    # The artifact fetch layer bakes default-revision single-year files
-    # into POLICYENGINE_DATA_FOLDER, and ensure_datasets keys its cache on
-    # a revision-stripped filename stem — a custom dataset or revision
-    # whose stem matches the default would silently read the baked files.
-    # Only pure default requests may use the baked folder. (Region
-    # requests resolve their dataset without the "data" param, so they
-    # keep it.)
-    if uses_custom_data(params):
-        data_folder = "/tmp/policyengine-data"
+    if dataset_name not in bundle.dataset_uris:
+        raise ValueError(
+            f"Unsupported dataset {dataset_reference!r} for country {country!r}; "
+            "choose a name in the certified release manifest"
+        )
+    if dataset_name != bundle.default_dataset:
+        data_folder = _nondefault_data_folder(
+            country, dataset_name, bundle.dataset_uris[dataset_name]
+        )
 
     start = time.monotonic()
-    datasets = country_module.ensure_datasets(
-        datasets=[dataset_name],
-        years=[year],
-        data_folder=data_folder,
-    )
+    load_options = {"years": [year], "data_folder": data_folder}
+    if dataset_name != bundle.default_dataset:
+        load_options["datasets"] = [dataset_name]
+    datasets = country_module.ensure_datasets(**load_options)
     logger.info(
         "Loaded dataset %s year %s from %s in %.1fs",
         dataset_name,
