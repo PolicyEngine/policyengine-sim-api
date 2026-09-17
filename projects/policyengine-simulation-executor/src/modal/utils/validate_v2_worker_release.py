@@ -11,7 +11,9 @@ from uuid import uuid4
 
 import modal
 
+from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_manifest import (
+    ManifestText,
     V2WorkerValidation,
     v2_application_name,
 )
@@ -40,7 +42,7 @@ def _spawn_validation(
 def validate_release(*, environment: str) -> V2WorkerValidation:
     resolved = load_stage12_bundle()
     application_name = v2_application_name(resolved.bundle.policyengine_version)
-    invocation_ids: dict[str, str] = {}
+    invocation_ids: dict[CountryId, ManifestText] = {}
     for country_bundle in resolved.bundle.countries:
         function_name = f"validate_worker_{country_bundle.country}"
         result, invocation_id = _spawn_validation(
