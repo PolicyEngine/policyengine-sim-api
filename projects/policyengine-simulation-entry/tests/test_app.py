@@ -4,8 +4,13 @@ import json
 import logging
 
 import pytest
+from fastapi import HTTPException
 from policyengine_observability import REQUEST_ID_HEADER, current_context
 from policyengine_simulation_contract.json_types import JsonObject
+from policyengine_simulation_contract.stage12_execution import (
+    EvaluationLifecycleStatus,
+    SimulationRole,
+)
 
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
@@ -14,8 +19,18 @@ from policyengine_simulation_entry.backend import (
     BackendTimeout,
     BackendUnavailable,
 )
+from policyengine_simulation_entry.stage12_backend import (
+    TemporaryStage12DispatchFailed,
+    TemporaryStage12UnsupportedRequest,
+)
 
 from conftest import FakeBackend, make_settings
+from stage12_fixtures import (
+    EVALUATION_ID,
+    eligible_payload,
+    evaluation_report,
+    evaluation_simulation,
+)
 
 
 def response(status: int, payload: JsonObject) -> BackendResponse:
@@ -24,6 +39,27 @@ def response(status: int, payload: JsonObject) -> BackendResponse:
         content=json.dumps(payload).encode(),
         headers={"content-type": "application/json", "retry-after": "3"},
     )
+
+
+class TemporaryEvaluationBackend:
+    def __init__(self, *, report=None, simulations=()):
+        self.report = report or evaluation_report()
+        self.simulations = simulations
+        self.submissions = []
+        self.polls = []
+
+    async def dispatch_after_production(self, **_):
+        return None
+
+    async def submit_temporary_report(self, **submission):
+        self.submissions.append(submission)
+        return self.report
+
+    async def get_temporary_report(self, evaluation_id):
+        self.polls.append(evaluation_id)
+        if evaluation_id != self.report.evaluation_id:
+            raise LookupError("missing report")
+        return self.report, self.simulations
 
 
 def test_health_is_local_and_compatible(client, backend):
@@ -74,6 +110,287 @@ def test_comparison_submission_preserves_upstream_response(client, backend):
     assert backend.requests[-1].path == "/simulate/economy/comparison"
 
 
+def test_evaluation_dispatch_receives_a_copy_without_changing_production_response(
+    backend,
+):
+    class EvaluationBackend:
+        def __init__(self):
+            self.calls = []
+
+        async def dispatch_after_production(self, **call):
+            self.calls.append(call)
+
+    evaluation = EvaluationBackend()
+    payload = {
+        "job_id": "fc-123",
+        "status": "submitted",
+        "poll_url": "/jobs/fc-123",
+        "country": "us",
+        "version": "1.0.0",
+        "resolved_app_name": "production-worker",
+        "policyengine_bundle": {"model_version": "1.0.0"},
+    }
+    backend.responses[("POST", "/simulate/economy/comparison")] = response(202, payload)
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        evaluation_backend=evaluation,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/simulate/economy/comparison",
+            json={"country": "us", "scope": "macro", "reform": {}},
+            headers={REQUEST_ID_HEADER: "request-1"},
+        )
+
+    assert result.status_code == 202
+    assert result.json() == payload
+    assert result.headers["x-policyengine-simulation-backend"] == "old_gateway"
+    assert len(evaluation.calls) == 1
+    assert evaluation.calls[0]["request_id"] == "request-1"
+    assert json.loads(evaluation.calls[0]["production_response"]) == payload
+
+
+def test_evaluation_failure_cannot_change_production_response(backend):
+    class FailingEvaluationBackend:
+        async def dispatch_after_production(self, **_):
+            raise RuntimeError("evaluation unavailable")
+
+    payload = {
+        "job_id": "fc-123",
+        "status": "submitted",
+        "poll_url": "/jobs/fc-123",
+        "country": "us",
+        "version": "1.0.0",
+        "resolved_app_name": "production-worker",
+        "policyengine_bundle": {"model_version": "1.0.0"},
+    }
+    backend.responses[("POST", "/simulate/economy/comparison")] = response(202, payload)
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        evaluation_backend=FailingEvaluationBackend(),
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/simulate/economy/comparison",
+            json={"country": "us", "scope": "macro", "reform": {}},
+        )
+
+    assert result.status_code == 202
+    assert result.json() == payload
+
+
+def test_temporary_stage12_submission_returns_polling_identifier(backend):
+    evaluation = TemporaryEvaluationBackend()
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        evaluation_backend=evaluation,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/internal/stage12/reports",
+            json=eligible_payload(),
+            headers={REQUEST_ID_HEADER: "manual-request-1"},
+        )
+
+    assert result.status_code == 202
+    assert result.json() == {
+        "evaluation_id": str(EVALUATION_ID),
+        "status": "running",
+        "poll_url": f"/internal/stage12/reports/{EVALUATION_ID}",
+    }
+    assert evaluation.submissions[0]["request_id"] == "manual-request-1"
+    assert backend.requests == []
+
+
+def test_temporary_stage12_poll_reads_durable_parent_and_children(backend):
+    simulations = (
+        evaluation_simulation(SimulationRole.BASELINE),
+        evaluation_simulation(SimulationRole.REFORM),
+    )
+    evaluation = TemporaryEvaluationBackend(simulations=simulations)
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        evaluation_backend=evaluation,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.get(f"/internal/stage12/reports/{EVALUATION_ID}")
+
+    assert result.status_code == 202
+    assert result.headers["retry-after"] == "5"
+    assert result.json()["report"]["evaluation_id"] == str(EVALUATION_ID)
+    assert [item["role"] for item in result.json()["simulations"]] == [
+        "baseline",
+        "reform",
+    ]
+    assert evaluation.polls == [EVALUATION_ID]
+    assert backend.requests == []
+
+
+def test_temporary_stage12_poll_returns_terminal_metadata_with_200(backend):
+    evaluation = TemporaryEvaluationBackend(
+        report=evaluation_report(status=EvaluationLifecycleStatus.SUCCEEDED)
+    )
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        evaluation_backend=evaluation,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.get(f"/internal/stage12/reports/{EVALUATION_ID}")
+
+    assert result.status_code == 200
+    assert "retry-after" not in result.headers
+    assert result.json()["report"]["aggregate_output_uri"] == (
+        "gs://stage12-private/report.json"
+    )
+
+
+def test_temporary_stage12_routes_are_excluded_from_openapi(backend):
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        evaluation_backend=TemporaryEvaluationBackend(),
+    )
+
+    paths = app.openapi()["paths"]
+
+    assert "/internal/stage12/reports" not in paths
+    assert "/internal/stage12/reports/{evaluation_id}" not in paths
+
+
+def test_temporary_stage12_route_is_unavailable_without_configured_backend(client):
+    result = client.post(
+        "/internal/stage12/reports",
+        json=eligible_payload(),
+    )
+
+    assert result.status_code == 503
+    assert result.json() == {"detail": "Stage 12 direct execution is unavailable."}
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("post", "/internal/stage12/reports", eligible_payload()),
+        ("get", f"/internal/stage12/reports/{EVALUATION_ID}", None),
+    ],
+)
+def test_temporary_stage12_routes_require_existing_authentication(
+    backend,
+    method,
+    path,
+    body,
+):
+    def reject_caller():
+        raise HTTPException(status_code=403)
+
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=reject_caller,
+        evaluation_backend=TemporaryEvaluationBackend(),
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        kwargs = {"json": body} if body is not None else {}
+        result = getattr(test_client, method)(path, **kwargs)
+
+    assert result.status_code == 403
+
+
+def test_temporary_stage12_poll_returns_404_for_unknown_report(backend):
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        evaluation_backend=TemporaryEvaluationBackend(),
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.get(
+            "/internal/stage12/reports/00000000-0000-0000-0000-000000000099"
+        )
+
+    assert result.status_code == 404
+    assert result.json() == {"detail": "Stage 12 report was not found."}
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "expected"),
+    [
+        (
+            TemporaryStage12UnsupportedRequest("unsupported_cliff_calculation"),
+            422,
+            {"reason": "unsupported_cliff_calculation"},
+        ),
+        (
+            TemporaryStage12DispatchFailed(
+                evaluation_report(status=EvaluationLifecycleStatus.FAILED)
+            ),
+            502,
+            {"evaluation_id": str(EVALUATION_ID), "status": "failed"},
+        ),
+    ],
+)
+def test_temporary_stage12_submission_returns_bounded_failures(
+    backend,
+    error,
+    status_code,
+    expected,
+):
+    class FailingTemporaryBackend(TemporaryEvaluationBackend):
+        async def submit_temporary_report(self, **_):
+            raise error
+
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        evaluation_backend=FailingTemporaryBackend(),
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/internal/stage12/reports",
+            json=eligible_payload(),
+        )
+
+    assert result.status_code == status_code
+    for field, value in expected.items():
+        assert result.json()[field] == value
+
+
 def test_job_status_preserves_id_and_status(client, backend):
     backend.responses[("GET", "/jobs/fc-123")] = response(
         202,
@@ -85,6 +402,68 @@ def test_job_status_preserves_id_and_status(client, backend):
     assert result.status_code == 202
     assert result.json() == {"status": "running", "run_id": "run-1"}
     assert backend.requests[-1].path == "/jobs/fc-123"
+
+
+def test_polling_and_budget_window_routes_never_dispatch_stage12_evaluation(backend):
+    class EvaluationBackend:
+        def __init__(self):
+            self.calls = []
+
+        async def dispatch_after_production(self, **call):
+            self.calls.append(call)
+
+    evaluation = EvaluationBackend()
+    backend.responses[("GET", "/jobs/fc-123")] = response(
+        200,
+        {"status": "complete", "result": {"budget": 10}},
+    )
+    backend.responses[("POST", "/simulate/economy/budget-window")] = response(
+        202,
+        {
+            "batch_job_id": "batch-123",
+            "status": "submitted",
+            "poll_url": "/budget-window-jobs/batch-123",
+        },
+    )
+    backend.responses[("GET", "/budget-window-jobs/batch-123")] = response(
+        200,
+        {"status": "complete", "completed_years": ["2026"]},
+    )
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        evaluation_backend=evaluation,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        job = test_client.get("/jobs/fc-123")
+        batch = test_client.post(
+            "/simulate/economy/budget-window",
+            json={
+                "country": "us",
+                "region": "us",
+                "scope": "macro",
+                "reform": {},
+                "start_year": "2026",
+                "window_size": 1,
+            },
+        )
+        batch_poll = test_client.get("/budget-window-jobs/batch-123")
+
+    assert job.json() == {"status": "complete", "result": {"budget": 10}}
+    assert batch.json() == {
+        "batch_job_id": "batch-123",
+        "status": "submitted",
+        "poll_url": "/budget-window-jobs/batch-123",
+    }
+    assert batch_poll.json() == {
+        "status": "complete",
+        "completed_years": ["2026"],
+    }
+    assert evaluation.calls == []
 
 
 def test_job_status_records_structured_backend_telemetry(

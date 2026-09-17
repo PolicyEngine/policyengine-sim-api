@@ -33,13 +33,16 @@ jobs:
     uses: ./.github/workflows/simulation-deploy.reusable.yml
     with:
       release_environment: beta
+      deployment_environment: staging
       modal_environment: staging
       entrypoint_service: policyengine-simulation-entry-staging
-      entrypoint_revision_prefix: beta-
+      entrypoint_revision_prefix: s-
       entrypoint_min_instances: 0
       entrypoint_max_instances: 2
       promote_entrypoint: false
       run_full_integration: true
+      deploy_existing_stack: true
+      deploy_stage12_v2: true
       force_latest: ${{ inputs.force_latest || false }}
       force_recompute: ${{ inputs.force_recompute || false }}
     secrets: inherit
@@ -53,13 +56,18 @@ jobs:
     uses: ./.github/workflows/simulation-deploy.reusable.yml
     with:
       release_environment: prod
+      deployment_environment: production
       modal_environment: main
       entrypoint_service: policyengine-simulation-entry
-      entrypoint_revision_prefix: prod-
+      entrypoint_revision_prefix: p-
       entrypoint_min_instances: 1
       entrypoint_max_instances: 20
       promote_entrypoint: true
       run_full_integration: false
+      deploy_existing_stack: true
+      # Deploy Stage 12 in production while its independent dual-execution
+      # control remains disabled until production qualification is complete.
+      deploy_stage12_v2: true
       force_latest: ${{ inputs.force_latest || false }}
       force_recompute: ${{ inputs.force_recompute || false }}
     secrets: inherit

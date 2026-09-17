@@ -7,7 +7,8 @@ import time
 import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Literal
+from typing import Any, Literal, Protocol
+from uuid import UUID
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
@@ -29,6 +30,11 @@ from policyengine_simulation_contract.gateway_models import (
     VersionsResponse,
 )
 from policyengine_simulation_contract.json_types import JsonObject
+from policyengine_simulation_contract.stage12_execution import (
+    EvaluationLifecycleStatus,
+    EvaluationReportRecord,
+    EvaluationSimulationRecord,
+)
 from policyengine_simulation_observability.observability import (
     configure_process_observability,
     init_simulation_observability,
@@ -49,7 +55,14 @@ from policyengine_simulation_entry.schemas import (
     BackendTelemetryPayload,
     CallerIdentity,
     RequestIdentifiers,
+    TemporaryStage12ReportResponse,
+    TemporaryStage12SubmissionResponse,
 )
+from policyengine_simulation_entry.stage12_backend import (
+    TemporaryStage12DispatchFailed,
+    TemporaryStage12UnsupportedRequest,
+)
+from policyengine_simulation_entry.stage12_dispatch import Stage12CopyDispatcher
 
 logger = logging.getLogger(__name__)
 BACKEND_RESPONSE_HEADER = {
@@ -58,6 +71,28 @@ BACKEND_RESPONSE_HEADER = {
 _json_object_adapter = TypeAdapter(JsonObject)
 type AuthenticationDependency = Callable[[], CallerIdentity | None]
 type ResponseIdentifier = Literal["job_id", "batch_job_id"]
+
+
+class EvaluationBackend(Protocol):
+    async def dispatch_after_production(
+        self,
+        *,
+        request_payload: dict[str, Any],
+        production_response: bytes,
+        request_id: str,
+    ) -> None: ...
+
+    async def submit_temporary_report(
+        self,
+        *,
+        request_payload: dict[str, Any],
+        request_id: str,
+    ) -> EvaluationReportRecord: ...
+
+    async def get_temporary_report(
+        self,
+        evaluation_id: UUID,
+    ) -> tuple[EvaluationReportRecord, tuple[EvaluationSimulationRecord, ...]]: ...
 
 
 def _model_json(model: BaseModel) -> JsonObject:
@@ -90,10 +125,13 @@ def _request_identifiers(request: Request) -> RequestIdentifiers:
     identifiers: RequestIdentifiers = {}
     job_id = request.path_params.get("job_id")
     batch_job_id = request.path_params.get("batch_job_id")
+    evaluation_id = request.path_params.get("evaluation_id")
     if isinstance(job_id, str):
         identifiers["job_id"] = job_id
     if isinstance(batch_job_id, str):
         identifiers["batch_job_id"] = batch_job_id
+    if isinstance(evaluation_id, str):
+        identifiers["evaluation_id"] = evaluation_id
     return identifiers
 
 
@@ -102,20 +140,46 @@ def create_app(
     settings: Settings | None = None,
     backend: SimulationBackend | None = None,
     auth_dependency: AuthenticationDependency | None = None,
+    evaluation_backend: EvaluationBackend | None = None,
 ) -> FastAPI:
     """Build the app with injectable auth/backend seams for hermetic tests."""
 
     runtime_settings = settings or Settings.from_env()
     runtime_backend = backend or OldGatewayBackend(runtime_settings)
     authenticate = auth_dependency or CallerAuthenticator(runtime_settings)
+    runtime_evaluation = evaluation_backend
+    if (
+        runtime_evaluation is None
+        and runtime_settings.stage12_comparison_backend_configured
+    ):
+        from policyengine_simulation_entry.stage12_backend import (
+            Stage12EvaluationBackend,
+        )
+
+        runtime_evaluation = Stage12EvaluationBackend.from_settings(runtime_settings)
+
+    stage12_copy_dispatcher = (
+        Stage12CopyDispatcher(
+            runtime_evaluation,
+            max_in_flight=runtime_settings.stage12_dispatch_max_in_flight,
+            queue_capacity=runtime_settings.stage12_dispatch_queue_capacity,
+            timeout_seconds=runtime_settings.stage12_dispatch_timeout_seconds,
+        )
+        if runtime_evaluation is not None
+        else None
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         runtime_settings.validate()
         await runtime_backend.start()
+        if stage12_copy_dispatcher is not None:
+            await stage12_copy_dispatcher.start()
         try:
             yield
         finally:
+            if stage12_copy_dispatcher is not None:
+                await stage12_copy_dispatcher.close()
             await runtime_backend.close()
 
     app = FastAPI(
@@ -262,6 +326,125 @@ def create_app(
 
     protected = [Depends(authenticate)]
 
+    def temporary_submission_payload(
+        report: EvaluationReportRecord,
+    ) -> TemporaryStage12SubmissionResponse:
+        return TemporaryStage12SubmissionResponse(
+            evaluation_id=report.evaluation_id,
+            status=report.status,
+            poll_url=f"/internal/stage12/reports/{report.evaluation_id}",
+        )
+
+    # TEMPORARY(Stage 12): This operator-only route is deliberately excluded
+    # from OpenAPI. Remove it when Stage 14 provides authoritative v2 report
+    # submission and polling through production report records.
+    @app.post(
+        "/internal/stage12/reports",
+        include_in_schema=False,
+        dependencies=protected,
+    )
+    async def submit_temporary_stage12_report(
+        body: SimulationRequest,
+        request: Request,
+    ) -> Response:
+        evaluation = runtime_evaluation
+        if evaluation is None:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Stage 12 direct execution is unavailable."},
+                headers={"Retry-After": "10"},
+            )
+        try:
+            report = await evaluation.submit_temporary_report(
+                request_payload=_model_json(body),
+                request_id=request.state.request_id,
+            )
+        except TemporaryStage12UnsupportedRequest as error:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "detail": "Stage 12 does not support this request.",
+                    "reason": error.reason,
+                },
+            )
+        except TemporaryStage12DispatchFailed as error:
+            return JSONResponse(
+                status_code=502,
+                content=temporary_submission_payload(error.report).model_dump(
+                    mode="json"
+                ),
+            )
+        except Exception as error:
+            logger.error(
+                "stage12_direct_submission_failed",
+                extra={
+                    "request_id": request.state.request_id,
+                    "error_type": type(error).__name__,
+                },
+            )
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Stage 12 direct execution is unavailable."},
+                headers={"Retry-After": "10"},
+            )
+        return JSONResponse(
+            status_code=202,
+            content=temporary_submission_payload(report).model_dump(mode="json"),
+        )
+
+    # TEMPORARY(Stage 12): Poll temporary PostgreSQL evaluation state only;
+    # never wait on or poll a Modal FunctionCall from this Cloud Run request.
+    @app.get(
+        "/internal/stage12/reports/{evaluation_id}",
+        include_in_schema=False,
+        dependencies=protected,
+    )
+    async def get_temporary_stage12_report(
+        evaluation_id: UUID,
+        request: Request,
+    ) -> Response:
+        evaluation = runtime_evaluation
+        if evaluation is None:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Stage 12 direct execution is unavailable."},
+                headers={"Retry-After": "10"},
+            )
+        try:
+            report, simulations = await evaluation.get_temporary_report(evaluation_id)
+        except LookupError:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "Stage 12 report was not found."},
+            )
+        except Exception as error:
+            logger.error(
+                "stage12_direct_status_failed",
+                extra={
+                    "request_id": request.state.request_id,
+                    "evaluation_id": str(evaluation_id),
+                    "error_type": type(error).__name__,
+                },
+            )
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Stage 12 report status is unavailable."},
+                headers={"Retry-After": "10"},
+            )
+        payload = TemporaryStage12ReportResponse(
+            report=report,
+            simulations=simulations,
+        )
+        running = report.status in {
+            EvaluationLifecycleStatus.PENDING,
+            EvaluationLifecycleStatus.RUNNING,
+        }
+        return JSONResponse(
+            status_code=202 if running else 200,
+            content=payload.model_dump(mode="json"),
+            headers={"Retry-After": "5"} if running else None,
+        )
+
     @app.post(
         "/simulate/economy/comparison",
         summary="Submit Simulation",
@@ -286,13 +469,32 @@ def create_app(
         body: SimulationRequest,
         request: Request,
     ) -> Response:
-        return await forward(
+        request_payload = _model_json(body)
+        response = await forward(
             request,
             "POST",
             "/simulate/economy/comparison",
-            _model_json(body),
+            request_payload,
             response_identifier_key="job_id",
         )
+        if stage12_copy_dispatcher is not None and response.status_code in {200, 202}:
+            # This is a non-blocking admission attempt. Capacity or execution
+            # failures in the temporary Stage 12 copy cannot alter the v1 reply.
+            try:
+                stage12_copy_dispatcher.submit(
+                    request_payload=request_payload,
+                    production_response=bytes(response.body),
+                    request_id=request.state.request_id,
+                )
+            except Exception as error:
+                logger.error(
+                    "stage12_copy_admission_failed",
+                    extra={
+                        "request_id": request.state.request_id,
+                        "error_type": type(error).__name__,
+                    },
+                )
+        return response
 
     @app.post(
         "/simulate/economy/budget-window",

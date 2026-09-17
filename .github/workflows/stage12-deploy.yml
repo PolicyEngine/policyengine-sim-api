@@ -1,0 +1,80 @@
+name: Deploy Stage 12 comparison path
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_environment:
+        description: "Logical environment to provision"
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+      confirm_production:
+        description: "For production only, enter DEPLOY_STAGE12_PRODUCTION"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage12-${{ inputs.deployment_environment }}
+  cancel-in-progress: false
+
+jobs:
+  validate-selection:
+    name: Validate explicit environment selection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require explicit production confirmation
+        if: ${{ inputs.deployment_environment == 'production' }}
+        env:
+          CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
+        run: test "${CONFIRM_PRODUCTION}" = "DEPLOY_STAGE12_PRODUCTION"
+
+  deploy-stage12-staging:
+    name: Deploy only the additional staging resources
+    if: ${{ inputs.deployment_environment == 'staging' }}
+    needs: validate-selection
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/simulation-deploy.reusable.yml
+    with:
+      release_environment: beta
+      deployment_environment: staging
+      modal_environment: staging
+      entrypoint_service: policyengine-simulation-entry-staging
+      entrypoint_revision_prefix: s-
+      entrypoint_min_instances: 0
+      entrypoint_max_instances: 2
+      promote_entrypoint: false
+      run_full_integration: true
+      deploy_existing_stack: false
+      deploy_stage12_v2: true
+    secrets: inherit
+
+  deploy-stage12-production:
+    name: Deploy only the additional production resources
+    if: ${{ inputs.deployment_environment == 'production' }}
+    needs: validate-selection
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/simulation-deploy.reusable.yml
+    with:
+      release_environment: prod
+      deployment_environment: production
+      modal_environment: main
+      entrypoint_service: policyengine-simulation-entry
+      entrypoint_revision_prefix: p-
+      entrypoint_min_instances: 1
+      entrypoint_max_instances: 20
+      promote_entrypoint: true
+      run_full_integration: false
+      deploy_existing_stack: false
+      deploy_stage12_v2: true
+    secrets: inherit

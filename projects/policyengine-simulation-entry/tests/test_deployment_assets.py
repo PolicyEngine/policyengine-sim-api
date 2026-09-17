@@ -7,7 +7,6 @@ import textwrap
 import tomllib
 from pathlib import Path
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 GITIGNORE = REPOSITORY_ROOT / ".gitignore"
 TRAFFIC_SCRIPT = (
@@ -23,6 +22,9 @@ DEPLOY_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy
 REUSABLE_DEPLOY_WORKFLOW = (
     REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
 )
+STAGE12_DEPLOY_WORKFLOW = (
+    REPOSITORY_ROOT / ".github" / "workflows" / "stage12-deploy.yml"
+)
 PUBLISH_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "publish-clients.yml"
 AUTHENTICATED_TESTS = (
     REPOSITORY_ROOT
@@ -36,6 +38,9 @@ DOCKERIGNORE = (
     / "policyengine-simulation-entry"
     / "Dockerfile.dockerignore"
 )
+DOCKERFILE = (
+    REPOSITORY_ROOT / "projects" / "policyengine-simulation-entry" / "Dockerfile"
+)
 
 
 def test_deployment_scripts_have_valid_shell_syntax():
@@ -47,6 +52,7 @@ def test_deployment_scripts_have_valid_shell_syntax():
 def test_deployment_uses_gcloud_workflow_without_terraform():
     deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
     reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    stage12_workflow = STAGE12_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
     assert "gcloud run deploy" in reusable_workflow
     assert "set-cloud-run-simulation-entry-revision.sh" in reusable_workflow
@@ -55,6 +61,7 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert "deploy_gateway:" in reusable_workflow
     assert "deploy_executor:" in reusable_workflow
     assert "update_routing:" in reusable_workflow
+    assert "stage12_v2_ready:" in reusable_workflow
     assert "integration:" in reusable_workflow
     assert "authenticated_test:" in reusable_workflow
     assert "promote_entrypoint:" in reusable_workflow
@@ -66,6 +73,9 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert deploy_workflow.index("beta:") < deploy_workflow.index("prod:")
     assert "release_environment: beta" in deploy_workflow
     assert "release_environment: prod" in deploy_workflow
+    assert "deployment_environment: staging" in deploy_workflow
+    assert "deployment_environment: production" in deploy_workflow
+    assert deploy_workflow.count("deploy_existing_stack: true") == 2
     assert "promote_entrypoint: false" in deploy_workflow
     assert "promote_entrypoint: true" in deploy_workflow
     assert "entrypoint_environment" not in deploy_workflow
@@ -75,9 +85,17 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert "SIMULATION_ENTRYPOINT_PUBLIC_URL" not in reusable_workflow
     assert "staging.simulation.api.policyengine.org" not in deploy_workflow
     assert (
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 8
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 11
     )
-    assert "APP_ENVIRONMENT=${{ inputs.release_environment }}" in reusable_workflow
+    assert "APP_ENVIRONMENT=${{ inputs.deployment_environment }}" in reusable_workflow
+    assert "STAGE12_DISPATCH_MAX_IN_FLIGHT" in reusable_workflow
+    assert "STAGE12_DISPATCH_QUEUE_CAPACITY" in reusable_workflow
+    assert "STAGE12_DISPATCH_TIMEOUT_SECONDS" in reusable_workflow
+    assert (
+        "STAGE12_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
+    )
+    assert "--modal-environment" in reusable_workflow
+    assert "--deployment-environment" in reusable_workflow
     assert "id-token: write" in reusable_workflow
     assert (
         reusable_workflow.count("vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME") == 1
@@ -95,6 +113,17 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
         / "scripts"
         / "configure-cloud-run-simulation-entry-domains.sh"
     ).exists()
+    assert "deploy-stage12-staging:" in stage12_workflow
+    assert "deploy-stage12-production:" in stage12_workflow
+    assert stage12_workflow.count("deploy_existing_stack: false") == 2
+    assert stage12_workflow.count("deploy_stage12_v2: true") == 2
+    assert "release_environment: beta" in stage12_workflow
+    assert "deployment_environment: staging" in stage12_workflow
+    assert "modal_environment: staging" in stage12_workflow
+    assert "release_environment: prod" in stage12_workflow
+    assert "deployment_environment: production" in stage12_workflow
+    assert "modal_environment: main" in stage12_workflow
+    assert "DEPLOY_STAGE12_PRODUCTION" in stage12_workflow
 
 
 def test_cloud_run_revision_tags_are_valid_on_the_first_workflow_run():
@@ -118,6 +147,29 @@ def test_cloud_run_revision_tags_are_valid_on_the_first_workflow_run():
         assert re.fullmatch(r"[a-z][a-z0-9-]*[a-z0-9]", tag)
 
 
+def test_revision_tags_fit_existing_cloud_run_service_names():
+    deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    stage12_workflow = STAGE12_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    deployments = {
+        "policyengine-simulation-entry-staging": "s-",
+        "policyengine-simulation-entry": "p-",
+    }
+
+    for workflow in (deploy_workflow, stage12_workflow):
+        for service, prefix in deployments.items():
+            assert f"entrypoint_service: {service}" in workflow
+            assert f"entrypoint_revision_prefix: {prefix}" in workflow
+            # Reserve seven digits for the monotonically increasing workflow
+            # run number while satisfying Cloud Run's service-plus-tag limit.
+            assert len(service) + len(f"{prefix}9999999") <= 46
+
+
+def test_entrypoint_container_uses_requested_target_platform():
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "$BUILDPLATFORM" not in dockerfile
+
+
 def test_full_stack_promotion_order_is_explicit():
     deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
     reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
@@ -137,6 +189,14 @@ def test_full_stack_promotion_order_is_explicit():
     assert routing_dependencies in reusable_workflow
     assert reusable_workflow.index("\n  update_routing:") < reusable_workflow.index(
         "\n  integration:"
+    )
+    assert (
+        "stage12_v2_ready"
+        in reusable_workflow[
+            reusable_workflow.index("\n  integration:") : reusable_workflow.index(
+                "\n  authenticated_test:"
+            )
+        ]
     )
     assert reusable_workflow.index("\n  integration:") < reusable_workflow.index(
         "\n  authenticated_test:"
@@ -170,6 +230,55 @@ def test_complete_integration_suite_is_configured_for_beta_only():
     assert "run_full_integration:" in reusable_workflow
 
 
+def test_main_deployment_automatically_deploys_stage12_in_both_environments():
+    deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    beta_workflow = deploy_workflow[
+        deploy_workflow.index("  beta:") : deploy_workflow.index("  prod:")
+    ]
+    prod_workflow = deploy_workflow[
+        deploy_workflow.index("  prod:") : deploy_workflow.index("  summary:")
+    ]
+
+    assert "deploy_stage12_v2: true" in beta_workflow
+    assert "deploy_stage12_v2: true" in prod_workflow
+    assert deploy_workflow.count("deploy_stage12_v2: true") == 2
+    assert "deploy_stage12_v2: false" not in deploy_workflow
+
+    prepare_workflow = reusable_workflow[
+        reusable_workflow.index("  prepare:") : reusable_workflow.index(
+            "  deploy_entrypoint:"
+        )
+    ]
+    assert "Initialize Stage 12 parallel execution as disabled" in prepare_workflow
+    control_command = next(
+        line
+        for line in prepare_workflow.splitlines()
+        if "src.modal.utils.set_stage12_dual_execution" in line
+    )
+    assert "--manifest-selection-enabled" not in control_command
+    assert "--economy-enabled" not in control_command
+
+
+def test_stage12_only_deployment_cannot_redeploy_existing_modal_resources():
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    for job_name in ("deploy_gateway", "deploy_executor", "update_routing"):
+        match = re.search(
+            rf"^  {job_name}:\n(?P<body>.*?)(?=^  [a-z0-9_-]+:\n|\Z)",
+            reusable_workflow,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        assert match is not None
+        section = match.group("body")
+        assert "if: ${{ inputs.deploy_existing_stack }}" in section
+
+    stage12_start = reusable_workflow.index("\n  deploy_stage12_v2:")
+    stage12_section = reusable_workflow[stage12_start:]
+    assert "src.modal.utils.update_version_registry" not in stage12_section
+
+
 def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
     script = TRAFFIC_SCRIPT.read_text(encoding="utf-8")
 
@@ -185,8 +294,7 @@ def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
     state_file.write_text("policyengine-simulation-entry-00001-old", encoding="utf-8")
     fake_gcloud = tmp_path / "gcloud"
     fake_gcloud.write_text(
-        textwrap.dedent(
-            """\
+        textwrap.dedent("""\
             #!/usr/bin/env bash
             set -euo pipefail
             case "$1 $2 $3" in
@@ -215,8 +323,7 @@ def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
                 exit 2
                 ;;
             esac
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -270,14 +377,12 @@ def test_traffic_change_refuses_an_intervening_promotion(tmp_path):
     )
     fake_gcloud = tmp_path / "gcloud"
     fake_gcloud.write_text(
-        textwrap.dedent(
-            """\
+        textwrap.dedent("""\
             #!/usr/bin/env bash
             set -euo pipefail
             active="$(cat "${FAKE_GCLOUD_STATE}")"
             printf '{"status":{"traffic":[{"revisionName":"%s","percent":100}]}}\\n' "${active}"
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -321,7 +426,7 @@ def test_container_context_excludes_local_environments_and_unrelated_projects():
     )
 
 
-def test_production_lock_excludes_modal_and_database_runtime_packages():
+def test_production_lock_contains_only_the_required_stage12_runtime_clients():
     lockfile = tomllib.loads(
         (
             REPOSITORY_ROOT / "projects" / "policyengine-simulation-entry" / "uv.lock"
@@ -329,7 +434,8 @@ def test_production_lock_excludes_modal_and_database_runtime_packages():
     )
     resolved_packages = {package["name"] for package in lockfile["package"]}
 
-    for package in ("modal", "policyengine-fastapi", "sqlalchemy", "sqlmodel"):
+    assert {"modal", "psycopg"} <= resolved_packages
+    for package in ("policyengine-fastapi", "sqlalchemy", "sqlmodel"):
         assert package not in resolved_packages
 
 

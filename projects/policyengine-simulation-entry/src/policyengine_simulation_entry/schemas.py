@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from typing import Literal, TypedDict
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+from policyengine_simulation_contract.stage12_execution import (
+    EvaluationLifecycleStatus,
+    EvaluationReportRecord,
+    EvaluationSimulationRecord,
+)
 
 
 class CallerIdentity(BaseModel):
@@ -53,6 +59,7 @@ class RequestIdentifiers(TypedDict, total=False):
 
     job_id: str
     batch_job_id: str
+    evaluation_id: str
 
 
 class BackendTelemetryAttributes(TypedDict, total=False):
@@ -66,3 +73,24 @@ class BackendTelemetryAttributes(TypedDict, total=False):
     job_id: str
     batch_job_id: str
     job_state: BackendJobState
+
+
+# TEMPORARY(Stage 12): Remove these operator-only HTTP models when Stage 14
+# replaces the evaluation tables with authoritative report submission and polling.
+class TemporaryStage12SubmissionResponse(BaseModel):
+    """Acknowledgement for one temporary direct Stage 12 report submission."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    evaluation_id: UUID
+    status: EvaluationLifecycleStatus
+    poll_url: str
+
+
+class TemporaryStage12ReportResponse(BaseModel):
+    """Temporary parent and child execution metadata; never report contents."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    report: EvaluationReportRecord
+    simulations: tuple[EvaluationSimulationRecord, ...]

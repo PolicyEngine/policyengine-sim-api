@@ -6,6 +6,14 @@ import os
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from policyengine_simulation_contract.stage12_manifest import (
+    V1_ROUTING_STATE_NAME,
+    V2_VERSION_MANIFEST_NAME,
+    assert_separate_manifest_names,
+)
+from policyengine_simulation_contract.stage12_control import (
+    V2_DUAL_EXECUTION_CONTROL_NAME,
+)
 
 PRODUCTION_ENVIRONMENTS = frozenset({"main", "prod", "production"})
 MODAL_GATEWAY_HOST_SUFFIX = ".modal.run"
@@ -64,6 +72,17 @@ class Settings:
     old_gateway_auth_client_secret: str
     connect_timeout_seconds: float = 5.0
     request_timeout_seconds: float = 25.0
+    stage12_comparison_backend_configured: bool = False
+    stage12_v2_manifest_name: str = V2_VERSION_MANIFEST_NAME
+    stage12_control_name: str = V2_DUAL_EXECUTION_CONTROL_NAME
+    stage12_v2_manifest_environment: str = ""
+    stage12_v2_worker_version: str | None = None
+    stage12_database_url: str = ""
+    stage12_artifact_bucket: str = ""
+    stage12_retention_days: int = 30
+    stage12_dispatch_max_in_flight: int = 8
+    stage12_dispatch_queue_capacity: int = 32
+    stage12_dispatch_timeout_seconds: float = 15.0
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -92,6 +111,34 @@ class Settings:
             ),
             request_timeout_seconds=float(
                 os.getenv("OLD_GATEWAY_REQUEST_TIMEOUT_SECONDS", "25")
+            ),
+            stage12_comparison_backend_configured=_truthy(
+                os.getenv("STAGE12_COMPARISON_BACKEND_CONFIGURED")
+            ),
+            stage12_v2_manifest_name=os.getenv(
+                "STAGE12_V2_MANIFEST_NAME",
+                V2_VERSION_MANIFEST_NAME,
+            ),
+            stage12_control_name=os.getenv(
+                "STAGE12_CONTROL_NAME",
+                V2_DUAL_EXECUTION_CONTROL_NAME,
+            ),
+            stage12_v2_manifest_environment=os.getenv(
+                "STAGE12_V2_MANIFEST_ENVIRONMENT",
+                "",
+            ),
+            stage12_v2_worker_version=(os.getenv("STAGE12_V2_WORKER_VERSION") or None),
+            stage12_database_url=os.getenv("STAGE12_DATABASE_URL", ""),
+            stage12_artifact_bucket=os.getenv("STAGE12_ARTIFACT_BUCKET", ""),
+            stage12_retention_days=int(os.getenv("STAGE12_RETENTION_DAYS", "30")),
+            stage12_dispatch_max_in_flight=int(
+                os.getenv("STAGE12_DISPATCH_MAX_IN_FLIGHT", "8")
+            ),
+            stage12_dispatch_queue_capacity=int(
+                os.getenv("STAGE12_DISPATCH_QUEUE_CAPACITY", "32")
+            ),
+            stage12_dispatch_timeout_seconds=float(
+                os.getenv("STAGE12_DISPATCH_TIMEOUT_SECONDS", "15")
             ),
         )
 
@@ -153,3 +200,42 @@ class Settings:
             raise ConfigurationError(
                 "OLD_GATEWAY_URL must point to the existing Modal gateway."
             )
+
+        try:
+            assert_separate_manifest_names(
+                v1_name=V1_ROUTING_STATE_NAME,
+                v2_name=self.stage12_v2_manifest_name,
+            )
+        except ValueError as error:
+            raise ConfigurationError(str(error)) from error
+        if self.stage12_retention_days != 30:
+            raise ConfigurationError("STAGE12_RETENTION_DAYS must be exactly 30.")
+        if not 1 <= self.stage12_dispatch_max_in_flight <= 32:
+            raise ConfigurationError(
+                "STAGE12_DISPATCH_MAX_IN_FLIGHT must be between 1 and 32."
+            )
+        if not 1 <= self.stage12_dispatch_queue_capacity <= 1_000:
+            raise ConfigurationError(
+                "STAGE12_DISPATCH_QUEUE_CAPACITY must be between 1 and 1000."
+            )
+        if not 1 <= self.stage12_dispatch_timeout_seconds <= 60:
+            raise ConfigurationError(
+                "STAGE12_DISPATCH_TIMEOUT_SECONDS must be between 1 and 60."
+            )
+        if self.stage12_comparison_backend_configured:
+            if not self.stage12_control_name:
+                raise ConfigurationError("STAGE12_CONTROL_NAME must be non-empty.")
+            required_stage12 = {
+                "STAGE12_V2_MANIFEST_ENVIRONMENT": (
+                    self.stage12_v2_manifest_environment
+                ),
+                "STAGE12_DATABASE_URL": self.stage12_database_url,
+                "STAGE12_ARTIFACT_BUCKET": self.stage12_artifact_bucket,
+            }
+            missing_stage12 = [
+                name for name, value in required_stage12.items() if not value
+            ]
+            if missing_stage12:
+                raise ConfigurationError(
+                    "Dual execution requires: " + ", ".join(missing_stage12) + "."
+                )
