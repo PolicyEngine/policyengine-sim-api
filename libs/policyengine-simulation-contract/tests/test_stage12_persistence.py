@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
-
 from policyengine_simulation_contract.stage12_execution import (
     EvaluationAggregationStatus,
     EvaluationLifecycleStatus,
@@ -20,6 +21,25 @@ from policyengine_simulation_contract.stage12_persistence import (
 )
 
 NOW = datetime(2026, 9, 14, tzinfo=timezone.utc)
+
+
+def test_persistence_contract_imports_without_postgres_extra() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "sys.modules['psycopg'] = None; "
+                "import policyengine_simulation_contract.stage12_persistence"
+            ),
+        ],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def _record() -> EvaluationReportRecord:

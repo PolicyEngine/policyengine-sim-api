@@ -12,10 +12,6 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-import psycopg
-from psycopg.rows import dict_row
-from psycopg.types.json import Jsonb
-
 from policyengine_simulation_contract.stage12_execution import (
     EvaluationAggregationStatus,
     EvaluationLifecycleStatus,
@@ -296,6 +292,8 @@ def _parameters(record: EvaluationReportRecord | EvaluationSimulationRecord) -> 
         if hasattr(value, "value"):
             values[key] = value.value
     if "row_identity_columns" in values and values["row_identity_columns"] is not None:
+        from psycopg.types.json import Jsonb
+
         values["row_identity_columns"] = Jsonb(list(values["row_identity_columns"]))
     return values
 
@@ -343,14 +341,20 @@ class PostgresEvaluationStore:
         self,
         database_url: str,
         *,
-        connect: Callable[..., Any] = psycopg.connect,
+        connect: Callable[..., Any] | None = None,
     ) -> None:
         if not database_url:
             raise ValueError("Stage 12 database URL is required")
+        if connect is None:
+            import psycopg
+
+            connect = psycopg.connect
         self._database_url = database_url
         self._connect = connect
 
     def _connection(self):
+        from psycopg.rows import dict_row
+
         return self._connect(self._database_url, row_factory=dict_row)
 
     def create_or_resolve_report(
