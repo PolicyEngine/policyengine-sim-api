@@ -27,21 +27,15 @@ simulation submission or polling contracts.
 The existing Modal routing service, its versioned executor applications, and
 its v1 routing manifest remain deployed and unchanged throughout Stage 12.
 
-## Cross-repository contract
+## Cross-repository ownership
 
 `PolicyEngine/policyengine-api` is the only schema authority for the temporary
-evaluation tables and the canonical source for the Stage 12 request, artifact,
-and persistence contracts. This repository consumes the generated contract
-identified by:
-
-```text
-https://policyengine.org/contracts/stage-12-worker-v1.json
-```
-
-Compatibility tests must compare this repository's adapters with that
-generated document. This repository must not define SQLModel tables or an
-Alembic migration for the evaluation records, and its runtime must not execute
-DDL.
+evaluation tables. This repository owns the strict runtime request, artifact,
+and persistence models used by the Stage 12 workers. Changes that affect both
+repositories require coordinated review; no generated cross-repository
+contract file is checked in or consumed at runtime. This repository must not
+define SQLModel tables or an Alembic migration for the evaluation records, and
+its runtime must not execute DDL.
 
 ## Release and deployment constraints
 

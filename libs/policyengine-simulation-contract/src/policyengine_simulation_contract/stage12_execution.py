@@ -1,8 +1,4 @@
-"""Versioned Stage 12 report, simulation, and artifact contracts.
-
-The schema owner is PolicyEngine/policyengine-api. These consumer models use
-contract identifier https://policyengine.org/contracts/stage-12-worker-v1.json.
-"""
+"""Versioned Stage 12 report, simulation, and artifact contracts."""
 
 from __future__ import annotations
 
@@ -21,8 +17,6 @@ from pydantic import (
     model_validator,
 )
 
-CONTRACT_ID = "https://policyengine.org/contracts/stage-12-worker-v1.json"
-CONTRACT_VERSION = 1
 ContractText = Annotated[str, Field(min_length=1, max_length=255)]
 Sha256Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 StorageUri = Annotated[
