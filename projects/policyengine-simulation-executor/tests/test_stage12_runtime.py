@@ -746,23 +746,15 @@ def test_comparison_failure_does_not_change_successful_stage12_report() -> None:
     assert artifacts.comparison_writes == []
 
 
-def test_comparison_retry_clears_prior_failure_metadata() -> None:
+def test_repeated_submission_does_not_retry_failed_comparison() -> None:
     store = FakeStore()
-    parent = _automatic_parent().model_copy(
-        update={
-            "comparison_status": ResultComparisonStatus.FAILED,
-            "comparison_completed_at": NOW,
-            "comparison_error_code": "result_comparison_failed",
-            "comparison_error_summary": "TimeoutError",
-        }
-    )
+    parent = _automatic_parent()
     artifacts = FakeArtifacts()
-    result = {"budget": {"total": 100.0}}
-    invoker = ConcurrentInvoker(artifacts, production_result=result)
     context = _context().model_copy(
         update={"production_function_call_id": "production-job-1"}
     )
 
+    first_invoker = ConcurrentInvoker(artifacts, production_result="not-an-object")
     coordinate_report(
         _report().model_dump(mode="json"),
         context.model_dump(mode="json"),
@@ -771,14 +763,39 @@ def test_comparison_retry_clears_prior_failure_metadata() -> None:
         coordinator_invocation_id="coordinator-1",
         store=store,
         artifacts=artifacts,
-        invoker=invoker,
-        aggregator=lambda **_: {"result": result},
+        invoker=first_invoker,
+        aggregator=lambda **_: {"result": {"budget": {"total": 100.0}}},
+    )
+    failed_at = store.parent.comparison_completed_at
+    failed_summary = store.parent.comparison_error_summary
+
+    second_invoker = ConcurrentInvoker(
+        artifacts,
+        production_result={"budget": {"total": 100.0}},
+    )
+    result = coordinate_report(
+        _report().model_dump(mode="json"),
+        context.model_dump(mode="json"),
+        parent.model_dump(mode="json"),
+        application_name=context.modal_application,
+        coordinator_invocation_id="coordinator-2",
+        store=store,
+        artifacts=artifacts,
+        invoker=second_invoker,
+        aggregator=lambda **_: {"result": {"budget": {"total": 100.0}}},
     )
 
-    assert store.parent.comparison_status is ResultComparisonStatus.MATCHED
-    assert store.parent.comparison_error_code is None
-    assert store.parent.comparison_error_summary is None
-    assert store.parent.comparison_output_uri == "gs://private/comparison.json"
+    assert result == {
+        "deduplicated": True,
+        "evaluation_id": str(EVALUATION_ID),
+        "status": "succeeded",
+    }
+    assert second_invoker.events == []
+    assert store.parent.comparison_status is ResultComparisonStatus.FAILED
+    assert store.parent.comparison_completed_at == failed_at
+    assert store.parent.comparison_error_code == "result_comparison_failed"
+    assert store.parent.comparison_error_summary == failed_summary
+    assert artifacts.comparison_writes == []
 
 
 def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None:

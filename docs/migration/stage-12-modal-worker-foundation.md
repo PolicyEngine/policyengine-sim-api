@@ -300,7 +300,11 @@ The receipt does not duplicate either complete result object. Its URI, digest,
 schema version, completion time, and status are written to the temporary parent
 row. Comparison retrieval, calculation, artifact, or persistence failure cannot
 change the already-successful Stage 12 aggregate and cannot affect the existing
-production result. Direct Stage 12-only runs have no production result and keep
+production result. The comparison is attempted once for each Stage 12
+execution. A failed comparison is final for that execution, and ordinary or
+repeated production submissions do not retry it. Any future operator-initiated
+comparison retry requires a separately reviewed entry point and state
+transition. Direct Stage 12-only runs have no production result and keep
 comparison status `not_requested`.
 
 The artifact bucket deletes private Stage 12 objects after 30 days. This

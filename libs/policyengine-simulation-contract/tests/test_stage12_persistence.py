@@ -18,6 +18,7 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationRole,
 )
 from policyengine_simulation_contract.stage12_persistence import (
+    ALLOWED_RESULT_COMPARISON_TRANSITIONS,
     PostgresComparisonStore,
     sql_statements,
 )
@@ -300,6 +301,13 @@ def test_successful_report_accepts_a_separate_result_comparison_update() -> None
     assert result == compared
     assert "comparison_status = %(comparison_status)s" in cursor.calls[1][0]
     assert "status = %(status)s" not in cursor.calls[1][0]
+
+
+def test_failed_result_comparison_cannot_restart_automatically() -> None:
+    assert (
+        ResultComparisonStatus.RUNNING
+        not in ALLOWED_RESULT_COMPARISON_TRANSITIONS[ResultComparisonStatus.FAILED]
+    )
 
 
 def test_attaching_report_invocation_preserves_completed_lifecycle() -> None:
