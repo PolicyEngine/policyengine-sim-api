@@ -344,9 +344,18 @@ def create_app(
                 headers={"Retry-After": "10"},
             )
         try:
-            report = await comparison.submit_temporary_report(
-                request_payload=_model_json(body),
-                request_id=request.state.request_id,
+            report = await asyncio.wait_for(
+                comparison.submit_temporary_report(
+                    request_payload=_model_json(body),
+                    request_id=request.state.request_id,
+                ),
+                timeout=STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            return JSONResponse(
+                status_code=504,
+                content={"detail": "Stage 12 submission acknowledgement timed out."},
+                headers={"Retry-After": "10"},
             )
         except TemporaryStage12UnsupportedRequest as error:
             return JSONResponse(
@@ -381,6 +390,9 @@ def create_app(
         return JSONResponse(
             status_code=202,
             content=temporary_submission_payload(report).model_dump(mode="json"),
+            # The Modal coordinator, rather than Cloud Run, creates the durable
+            # parent row. Give it a brief head start before the first status read.
+            headers={"Retry-After": "1"},
         )
 
     # TEMPORARY(Stage 12): Poll temporary PostgreSQL comparison state only;
@@ -407,6 +419,10 @@ def create_app(
             return JSONResponse(
                 status_code=404,
                 content={"detail": "Stage 12 report was not found."},
+                # A newly acknowledged Modal invocation may not yet have
+                # created its parent row. The same response also covers an
+                # identifier that never existed, so callers must bound retries.
+                headers={"Retry-After": "1"},
             )
         # Reading temporary diagnostic state crosses database and adapter
         # boundaries whose concrete exception types are implementation details.

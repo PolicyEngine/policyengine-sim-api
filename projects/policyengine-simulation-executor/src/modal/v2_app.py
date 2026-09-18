@@ -213,7 +213,18 @@ def run_single_simulation_uk(payload: dict, context: dict) -> dict:
     max_containers=10,
     secrets=worker_secrets,
 )
-def coordinate_report(payload: dict, context: dict) -> dict:
-    from policyengine_simulation_executor.stage12_runtime import coordinate_report
+def coordinate_report(payload: dict, context: dict, parent: dict) -> dict:
+    from policyengine_simulation_executor.stage12_runtime import (
+        coordinate_report as run_report_coordinator,
+    )
 
-    return coordinate_report(payload, context, application_name=APP_NAME)
+    coordinator_invocation_id = modal.current_function_call_id()
+    if coordinator_invocation_id is None:
+        raise RuntimeError("Modal coordinator invocation identifier is unavailable")
+    return run_report_coordinator(
+        payload,
+        context,
+        parent,
+        application_name=APP_NAME,
+        coordinator_invocation_id=coordinator_invocation_id,
+    )

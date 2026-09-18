@@ -130,18 +130,22 @@ unchanged. Only a newly accepted supported production job may create one
 corresponding comparison run; polls, cached results, and repeated submissions
 that resolve the same production job do not create another comparison.
 
-Deployment keeps one environment-specific PostgreSQL runtime role for the
-Simulation Entrypoint, report coordinator, and single-simulation functions.
-`policyengine-api` remains the source of truth for that
-role: it has `SELECT`, `INSERT`, `UPDATE`, and `DELETE` only on the two temporary
-Stage 12 tables, has no schema-migration authority, and participates in no role
-membership. Before deploying, the simulation workflow connects with the actual
-runtime secret, verifies the effective role and table access, exercises all
-four operations with canary rows inside a rolled-back transaction, and rejects
-access to other public tables. It also verifies required Secret Manager access
-and performs a create/read/delete canary in the private artifact bucket using
-the exact Modal service-account credential. The storage canary is deleted in
-the normal path and by exit cleanup after a failure.
+Deployment keeps one environment-specific PostgreSQL runtime credential for
+the Simulation Entrypoint and Modal v2 functions. The Simulation Entrypoint
+uses it only to read status for the temporary operator route. The Modal report
+coordinator performs all parent and child record writes; the single-simulation
+functions return their results to that coordinator and do not write these
+records independently. `policyengine-api` remains the source of truth for the
+database role. It has `SELECT`, `INSERT`, `UPDATE`, and `DELETE` only on the two
+temporary Stage 12 tables, has no schema-migration authority, and participates
+in no role membership. Before deploying, the simulation workflow connects with
+the actual runtime secret, verifies the effective role and table access,
+exercises all four operations with canary rows inside a rolled-back
+transaction, and rejects access to other public tables. It also verifies
+required Secret Manager access and performs a create/read/delete canary in the
+private artifact bucket using the exact Modal service-account credential. The
+storage canary is deleted in the normal path and by exit cleanup after a
+failure.
 
 The current Public API omits `data` for the certified default dataset. The v2
 adapter therefore resolves an absent `data` field to the exact default dataset
@@ -180,14 +184,17 @@ authenticated caller
         v
 Cloud Run Simulation Entrypoint
         | validate request
-        | create temporary parent row
         | resolve separate v2 manifest
-        | call Modal spawn and retain its invocation ID
+        | prepare parent metadata in memory
+        | request a Modal coordinator invocation
+        | wait at most five seconds for Modal's acknowledgement
         |
-        +------> return the legacy physical evaluation_id
+        +------> return the temporary evaluation_id
         |
         v
 Modal report coordinator
+        | atomically create or resolve the temporary parent row
+        | stop if another invocation already owns the same logical run
         |
         +------> baseline single-simulation call
         |
@@ -223,7 +230,8 @@ curl -X POST "${SIMULATION_ENTRYPOINT_URL}/internal/stage12/reports" \
   }'
 ```
 
-An accepted request returns `202` without waiting for the calculations:
+An accepted request returns `202` and `Retry-After: 1` without waiting for the
+calculations or for the coordinator's first database write:
 
 ```json
 {
@@ -235,6 +243,10 @@ An accepted request returns `202` without waiting for the calculations:
 
 Each POST intentionally creates a new execution. After receiving the
 `evaluation_id`, callers use the GET route for all subsequent status checks.
+An immediate first GET can return `404` with `Retry-After: 1` while the Modal
+coordinator is starting and has not created the parent row; callers must bound
+retries because the same status also represents an identifier that does not
+exist.
 While the report is pending or running, GET returns `202` and `Retry-After: 5`;
 completed, failed, incomplete, or skipped states return `200`. The response
 contains the complete temporary parent and child execution metadata, including
@@ -254,11 +266,21 @@ unavailable, and does not change the existing production forwarding
 configuration.
 
 When enabled, a successful production submission causes the Simulation
-Entrypoint to create or resolve the temporary parent record and invoke the
-already-deployed Modal report coordinator. Cloud Run waits only for Modal to
-acknowledge that invocation, for at most five seconds. There is no process-local
-queue. Failure or timeout is recorded and the unchanged production response is
-returned.
+Entrypoint to derive a deterministic temporary evaluation identifier from the
+production job and selected v2 release, prepare the parent metadata in memory,
+and request an invocation of the already-deployed Modal report coordinator.
+Cloud Run performs no Stage 12 database write on this submission path. It waits
+only for Modal to acknowledge the invocation, for at most five seconds. There
+is no process-local queue. An acknowledgement failure or timeout is logged, and
+the unchanged production response is returned.
+
+The Modal report coordinator atomically creates or resolves the parent record
+before starting child work. Repeated production submissions can request more
+than one coordinator invocation, but the deterministic evaluation identifier
+and database uniqueness constraint make them one logical Stage 12 run. A later
+coordinator that finds the run already active or complete exits without
+starting child simulations. Unsupported automatic inputs are logged with a
+bounded reason and are not persisted.
 
 The report coordinator starts baseline and reform as independent Modal calls,
 waits for them, and derives the Stage 12 aggregate. It then restores the

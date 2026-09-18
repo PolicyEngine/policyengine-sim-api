@@ -15,6 +15,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ArtifactMediaType,
     ArtifactReference,
     BundleProvenance,
+    ComparisonReportPersistenceResult,
     ComparisonReportRecord,
     ComparisonRunAggregationStatus,
     ComparisonRunLifecycleStatus,
@@ -121,13 +122,13 @@ def _context() -> Stage12InvocationContext:
 def _parent() -> ComparisonReportRecord:
     return ComparisonReportRecord(
         evaluation_id=EVALUATION_ID,
-        status=ComparisonRunLifecycleStatus.RUNNING,
+        status=ComparisonRunLifecycleStatus.PENDING,
         aggregation_status=ComparisonRunAggregationStatus.NOT_STARTED,
         environment="staging",
         calculation_flow="economy",
         originating_request_id="request-1",
-        production_identity="job-1",
-        incumbent_execution_id="job-1",
+        production_identity=f"direct:{EVALUATION_ID}",
+        incumbent_execution_id=None,
         worker_version="5.2.0",
         modal_application="policyengine-simulation-v2-py5-2-0",
         report_coordinator_callable="coordinate_report",
@@ -141,10 +142,8 @@ def _parent() -> ComparisonReportRecord:
         data_package_name="populace-data",
         data_package_version="0.1.0",
         data_artifact_revision="revision",
-        coordinator_invocation_id="coordinator-1",
         created_at=NOW,
         updated_at=NOW,
-        started_at=NOW,
         retention_expires_at=NOW + timedelta(days=30),
     )
 
@@ -170,14 +169,38 @@ def _child(simulation: SimulationExecutionInput):
     )
 
 
+def _automatic_parent() -> ComparisonReportRecord:
+    return _parent().model_copy(
+        update={
+            "production_identity": "production-job-1",
+            "incumbent_execution_id": "production-job-1",
+            "comparison_status": ResultComparisonStatus.PENDING,
+        }
+    )
+
+
 class FakeStore:
     def __init__(self):
-        self.parent = _parent()
+        self.parent = None
         self.children = {}
         self.lock = Lock()
 
+    def create_or_resolve_report(self, record):
+        with self.lock:
+            if self.parent is None:
+                self.parent = record
+                return ComparisonReportPersistenceResult(
+                    record=record,
+                    created=True,
+                )
+            return ComparisonReportPersistenceResult(
+                record=self.parent,
+                created=False,
+            )
+
     def get_report(self, evaluation_id):
         assert evaluation_id == EVALUATION_ID
+        assert self.parent is not None
         return self.parent
 
     def replace_report(self, record):
@@ -575,15 +598,17 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
             "environment": "production",
             "modal_environment": "main",
             "artifact_prefix": (
-                "stage-12-runs/production/2026/09/"
-                "00000000-0000-0000-0000-000000000001"
+                "stage-12-runs/production/2026/09/00000000-0000-0000-0000-000000000001"
             ),
         }
     )
+    parent = _parent().model_copy(update={"environment": "production"})
     result = coordinate_report(
         _report().model_dump(mode="json"),
         context.model_dump(mode="json"),
+        parent.model_dump(mode="json"),
         application_name=context.modal_application,
+        coordinator_invocation_id="coordinator-1",
         store=store,
         artifacts=artifacts,
         invoker=invoker,
@@ -604,13 +629,51 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
     ]
     assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
     assert store.parent.aggregation_status is ComparisonRunAggregationStatus.SUCCEEDED
+    assert store.parent.coordinator_invocation_id == "coordinator-1"
+
+
+def test_duplicate_coordinator_submission_does_not_start_duplicate_children() -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    context = _context()
+    parent = _parent()
+    first_invoker = ConcurrentInvoker(artifacts)
+
+    coordinate_report(
+        _report().model_dump(mode="json"),
+        context.model_dump(mode="json"),
+        parent.model_dump(mode="json"),
+        application_name=context.modal_application,
+        coordinator_invocation_id="coordinator-1",
+        store=store,
+        artifacts=artifacts,
+        invoker=first_invoker,
+        aggregator=lambda **_: {"result": "complete"},
+    )
+    duplicate_invoker = ConcurrentInvoker(artifacts)
+    duplicate = coordinate_report(
+        _report().model_dump(mode="json"),
+        context.model_dump(mode="json"),
+        parent.model_dump(mode="json"),
+        application_name=context.modal_application,
+        coordinator_invocation_id="coordinator-2",
+        store=store,
+        artifacts=artifacts,
+        invoker=duplicate_invoker,
+        aggregator=lambda **_: {"must": "not run"},
+    )
+
+    assert duplicate == {
+        "deduplicated": True,
+        "evaluation_id": str(EVALUATION_ID),
+        "status": "succeeded",
+    }
+    assert duplicate_invoker.events == []
 
 
 def test_coordinator_compares_automatic_run_after_successful_aggregation() -> None:
     store = FakeStore()
-    store.parent = store.parent.model_copy(
-        update={"comparison_status": ResultComparisonStatus.PENDING}
-    )
+    parent = _automatic_parent()
     artifacts = FakeArtifacts()
     production_result = {"budget": {"total": 100.0, "count": 2}}
     stage12_result = {"budget": {"total": 101.0, "count": 2}}
@@ -625,7 +688,9 @@ def test_coordinator_compares_automatic_run_after_successful_aggregation() -> No
     coordinate_report(
         _report().model_dump(mode="json"),
         context.model_dump(mode="json"),
+        parent.model_dump(mode="json"),
         application_name=context.modal_application,
+        coordinator_invocation_id="coordinator-1",
         store=store,
         artifacts=artifacts,
         invoker=invoker,
@@ -647,9 +712,7 @@ def test_coordinator_compares_automatic_run_after_successful_aggregation() -> No
 
 def test_comparison_failure_does_not_change_successful_stage12_report() -> None:
     store = FakeStore()
-    store.parent = store.parent.model_copy(
-        update={"comparison_status": ResultComparisonStatus.PENDING}
-    )
+    parent = _automatic_parent()
     artifacts = FakeArtifacts()
     invoker = ConcurrentInvoker(artifacts, production_result="not-an-object")
     context = _context().model_copy(
@@ -659,7 +722,9 @@ def test_comparison_failure_does_not_change_successful_stage12_report() -> None:
     coordinate_report(
         _report().model_dump(mode="json"),
         context.model_dump(mode="json"),
+        parent.model_dump(mode="json"),
         application_name=context.modal_application,
+        coordinator_invocation_id="coordinator-1",
         store=store,
         artifacts=artifacts,
         invoker=invoker,
@@ -675,7 +740,7 @@ def test_comparison_failure_does_not_change_successful_stage12_report() -> None:
 
 def test_comparison_retry_clears_prior_failure_metadata() -> None:
     store = FakeStore()
-    store.parent = store.parent.model_copy(
+    parent = _automatic_parent().model_copy(
         update={
             "comparison_status": ResultComparisonStatus.FAILED,
             "comparison_completed_at": NOW,
@@ -693,7 +758,9 @@ def test_comparison_retry_clears_prior_failure_metadata() -> None:
     coordinate_report(
         _report().model_dump(mode="json"),
         context.model_dump(mode="json"),
+        parent.model_dump(mode="json"),
         application_name=context.modal_application,
+        coordinator_invocation_id="coordinator-1",
         store=store,
         artifacts=artifacts,
         invoker=invoker,
@@ -717,7 +784,9 @@ def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None
         coordinate_report(
             _report().model_dump(mode="json"),
             _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
             application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
             store=store,
             artifacts=artifacts,
             invoker=invoker,
@@ -736,6 +805,30 @@ def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None
     assert failed_child.error_summary == "RuntimeError"
 
 
+def test_coordinator_records_failure_when_child_persistence_fails() -> None:
+    class FailingChildStore(FakeStore):
+        def create_or_resolve_simulation(self, record):
+            raise RuntimeError("sensitive database detail")
+
+    store = FailingChildStore()
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=FakeArtifacts(),
+            invoker=ConcurrentInvoker(FakeArtifacts()),
+        )
+
+    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
+    assert store.parent.error_code == "report_coordination_failed"
+    assert store.parent.error_summary == "RuntimeError"
+
+
 def test_coordinator_rejects_incompatible_row_identity() -> None:
     store = FakeStore()
     artifacts = FakeArtifacts()
@@ -745,7 +838,9 @@ def test_coordinator_rejects_incompatible_row_identity() -> None:
         coordinate_report(
             _report().model_dump(mode="json"),
             _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
             application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
             store=store,
             artifacts=artifacts,
             invoker=invoker,
@@ -777,7 +872,9 @@ def test_coordinator_reuses_matching_successful_child() -> None:
     coordinate_report(
         report.model_dump(mode="json"),
         _context().model_dump(mode="json"),
+        _parent().model_dump(mode="json"),
         application_name=_context().modal_application,
+        coordinator_invocation_id="coordinator-1",
         store=store,
         artifacts=artifacts,
         invoker=invoker,
@@ -805,7 +902,9 @@ def test_coordinator_resumes_a_matching_running_child_invocation() -> None:
     coordinate_report(
         report.model_dump(mode="json"),
         _context().model_dump(mode="json"),
+        _parent().model_dump(mode="json"),
         application_name=_context().modal_application,
+        coordinator_invocation_id="coordinator-1",
         store=store,
         artifacts=artifacts,
         invoker=invoker,
@@ -847,7 +946,9 @@ def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
         coordinate_report(
             _report().model_dump(mode="json"),
             _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
             application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
             store=store,
             artifacts=artifacts,
             invoker=invoker,

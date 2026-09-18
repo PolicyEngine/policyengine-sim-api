@@ -15,6 +15,7 @@ import pandas as pd
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     AggregateReportArtifactDescriptor,
+    ComparisonReportPersistenceResult,
     ComparisonReportRecord,
     ComparisonRunAggregationStatus,
     ComparisonRunLifecycleStatus,
@@ -45,6 +46,11 @@ logger = logging.getLogger(__name__)
 
 
 class ComparisonStore(Protocol):
+    def create_or_resolve_report(
+        self,
+        record: ComparisonReportRecord,
+    ) -> ComparisonReportPersistenceResult: ...
+
     def get_report(self, evaluation_id: UUID) -> ComparisonReportRecord: ...
 
     def replace_report(
@@ -719,34 +725,99 @@ def _build_spm_result(
     )
 
 
-def coordinate_report(
-    payload: object,
-    context_payload: object,
+def _validate_submitted_parent(
     *,
-    application_name: str,
-    store: ComparisonStore | None = None,
-    artifacts: Stage12ArtifactStore | None = None,
-    invoker: ChildInvoker | None = None,
-    aggregator: Callable[..., dict[str, Any]] = build_aggregate_report,
-) -> dict[str, Any]:
-    report = ReportExecutionInput.model_validate(payload)
-    context = Stage12InvocationContext.model_validate(context_payload)
-    if application_name != context.modal_application:
-        raise ValueError("report coordinator application differs from dispatch context")
-    if report.baseline.bundle.policyengine_version != context.worker_version:
-        raise ValueError("report worker version differs from dispatch context")
-    if report.baseline.bundle.bundle_manifest_sha256 != context.bundle_manifest_sha256:
-        raise ValueError("report bundle digest differs from dispatch context")
-    runtime_store = store or _runtime_store()
-    artifact_store = artifacts or _artifact_store()
-    child_invoker = invoker or ModalChildInvoker()
-    parent = runtime_store.get_report(report.evaluation_id)
+    report: ReportExecutionInput,
+    context: Stage12InvocationContext,
+    parent: ComparisonReportRecord,
+) -> None:
+    """Reject dispatch metadata that does not describe this exact report."""
+
+    bundle = report.baseline.bundle
+    expected = {
+        "evaluation_id": report.evaluation_id,
+        "environment": context.environment,
+        "originating_request_id": context.request_id,
+        "worker_version": context.worker_version,
+        "modal_application": context.modal_application,
+        "version_manifest_sha256": context.version_manifest_sha256,
+        "policyengine_version": bundle.policyengine_version,
+        "country_package_name": bundle.country_package_name,
+        "country_package_version": bundle.country_package_version,
+        "country": report.baseline.geography.country,
+        "dataset_identity": bundle.dataset.identity,
+        "dataset_uri": bundle.dataset.uri,
+        "data_package_name": bundle.dataset.data_package_name,
+        "data_package_version": bundle.dataset.data_package_version,
+        "data_artifact_revision": bundle.dataset.artifact_revision,
+        "created_at": context.created_at,
+        "retention_expires_at": context.retention_expires_at,
+    }
+    for field, value in expected.items():
+        if getattr(parent, field) != value:
+            raise ValueError(f"submitted parent {field} does not match invocation")
+    if parent.status is not ComparisonRunLifecycleStatus.PENDING:
+        raise ValueError("submitted parent must be pending")
+    if parent.aggregation_status is not ComparisonRunAggregationStatus.NOT_STARTED:
+        raise ValueError("submitted parent aggregation must not be started")
+    if parent.coordinator_invocation_id is not None:
+        raise ValueError("submitted parent must not contain an invocation identifier")
+    production_job_id = context.production_function_call_id
+    if production_job_id is None:
+        if parent.production_identity != f"direct:{report.evaluation_id}":
+            raise ValueError("direct parent identity does not match its report")
+        if parent.incumbent_execution_id is not None:
+            raise ValueError("direct parent must not name a production execution")
+        if parent.comparison_status is not ResultComparisonStatus.NOT_REQUESTED:
+            raise ValueError("direct parent must not request result comparison")
+    elif (
+        parent.production_identity != production_job_id
+        or parent.incumbent_execution_id != production_job_id
+    ):
+        raise ValueError("automatic parent does not match the production execution")
+
+
+def _claim_parent(
+    *,
+    submitted: ComparisonReportRecord,
+    coordinator_invocation_id: str,
+    store: ComparisonStore,
+) -> tuple[ComparisonReportRecord, bool]:
+    """Create the parent in Modal or claim a retry; reject duplicate execution."""
+
     coordinating_at = datetime.now(UTC)
-    parent = runtime_store.replace_report(
+    candidate = submitted.model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.RUNNING,
+            "aggregation_status": ComparisonRunAggregationStatus.RUNNING,
+            "coordinator_invocation_id": coordinator_invocation_id,
+            "error_code": None,
+            "error_summary": None,
+            "started_at": coordinating_at,
+            "updated_at": coordinating_at,
+            "completed_at": None,
+        }
+    )
+    persistence = store.create_or_resolve_report(candidate)
+    parent = persistence.record
+    if persistence.created:
+        return parent, True
+    if parent.evaluation_id != submitted.evaluation_id:
+        raise ValueError(
+            "existing comparison identity has a different report identifier"
+        )
+    if parent.status in {
+        ComparisonRunLifecycleStatus.RUNNING,
+        ComparisonRunLifecycleStatus.SUCCEEDED,
+        ComparisonRunLifecycleStatus.SKIPPED,
+    }:
+        return parent, False
+    claimed = store.replace_report(
         parent.model_copy(
             update={
                 "status": ComparisonRunLifecycleStatus.RUNNING,
                 "aggregation_status": ComparisonRunAggregationStatus.RUNNING,
+                "coordinator_invocation_id": coordinator_invocation_id,
                 "error_code": None,
                 "error_summary": None,
                 "started_at": parent.started_at or coordinating_at,
@@ -755,21 +826,75 @@ def coordinate_report(
             }
         )
     )
+    return claimed, True
+
+
+def coordinate_report(
+    payload: object,
+    context_payload: object,
+    parent_payload: object,
+    *,
+    application_name: str,
+    coordinator_invocation_id: str,
+    store: ComparisonStore | None = None,
+    artifacts: Stage12ArtifactStore | None = None,
+    invoker: ChildInvoker | None = None,
+    aggregator: Callable[..., dict[str, Any]] = build_aggregate_report,
+) -> dict[str, Any]:
+    report = ReportExecutionInput.model_validate(payload)
+    context = Stage12InvocationContext.model_validate(context_payload)
+    submitted_parent = ComparisonReportRecord.model_validate(parent_payload)
+    if application_name != context.modal_application:
+        raise ValueError("report coordinator application differs from dispatch context")
+    if report.baseline.bundle.policyengine_version != context.worker_version:
+        raise ValueError("report worker version differs from dispatch context")
+    if report.baseline.bundle.bundle_manifest_sha256 != context.bundle_manifest_sha256:
+        raise ValueError("report bundle digest differs from dispatch context")
+    _validate_submitted_parent(
+        report=report,
+        context=context,
+        parent=submitted_parent,
+    )
+    runtime_store = store or _runtime_store()
+    artifact_store = artifacts or _artifact_store()
+    child_invoker = invoker or ModalChildInvoker()
+    parent, should_execute = _claim_parent(
+        submitted=submitted_parent,
+        coordinator_invocation_id=coordinator_invocation_id,
+        store=runtime_store,
+    )
+    if not should_execute:
+        return {
+            "deduplicated": True,
+            "evaluation_id": str(parent.evaluation_id),
+            "status": parent.status.value,
+        }
+    context = context.model_copy(
+        update={
+            "artifact_prefix": (
+                f"stage-12-runs/{parent.environment}/"
+                f"{parent.created_at:%Y}/{parent.created_at:%m}/"
+                f"{parent.evaluation_id}"
+            ),
+            "created_at": parent.created_at,
+            "retention_expires_at": parent.retention_expires_at,
+        }
+    )
     function_name = context.simulation_callable
     simulations = (report.baseline, report.reform)
-    children = {
-        simulation.role: runtime_store.create_or_resolve_simulation(
-            _child_record(
-                simulation=simulation,
-                context=context,
-                function_name=function_name,
-            )
-        ).record
-        for simulation in simulations
-    }
     descriptors: dict[str, SimulationArtifactDescriptor] = {}
     calls: dict[str, ChildCall] = {}
     try:
+        children = {
+            simulation.role: runtime_store.create_or_resolve_simulation(
+                _child_record(
+                    simulation=simulation,
+                    context=context,
+                    function_name=function_name,
+                )
+            ).record
+            for simulation in simulations
+        }
         for simulation in simulations:
             child = children[simulation.role]
             if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:

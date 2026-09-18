@@ -287,6 +287,7 @@ def test_temporary_stage12_submission_returns_polling_identifier(backend):
         )
 
     assert result.status_code == 202
+    assert result.headers["retry-after"] == "1"
     assert result.json() == {
         "evaluation_id": str(EVALUATION_ID),
         "status": "running",
@@ -294,6 +295,61 @@ def test_temporary_stage12_submission_returns_polling_identifier(backend):
     }
     assert comparison.submissions[0]["request_id"] == "manual-request-1"
     assert backend.requests == []
+
+
+def test_temporary_stage12_submission_has_a_hard_acknowledgement_timeout(
+    backend,
+    monkeypatch,
+):
+    class BlockingComparisonBackend(TemporaryComparisonBackend):
+        async def submit_temporary_report(self, **submission):
+            self.submissions.append(submission)
+            await asyncio.Event().wait()
+
+    comparison = BlockingComparisonBackend()
+    monkeypatch.setattr(app_module, "STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS", 0.001)
+    app = create_app(
+        settings=automatic_stage12_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/internal/stage12/reports",
+            json=eligible_payload(),
+        )
+
+    assert result.status_code == 504
+    assert result.json() == {"detail": "Stage 12 submission acknowledgement timed out."}
+    assert len(comparison.submissions) == 1
+
+
+def test_temporary_stage12_poll_not_found_has_short_retry_hint(backend):
+    class MissingComparisonBackend(TemporaryComparisonBackend):
+        async def get_temporary_report(self, evaluation_id):
+            self.polls.append(evaluation_id)
+            raise LookupError("not created")
+
+    comparison = MissingComparisonBackend()
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.get(f"/internal/stage12/reports/{EVALUATION_ID}")
+
+    assert result.status_code == 404
+    assert result.headers["retry-after"] == "1"
+    assert result.json() == {"detail": "Stage 12 report was not found."}
 
 
 def test_temporary_stage12_poll_reads_durable_parent_and_children(backend):

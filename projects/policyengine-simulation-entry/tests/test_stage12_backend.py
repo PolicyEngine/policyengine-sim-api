@@ -1,22 +1,24 @@
-"""Tests for direct, durable Stage 12 comparison dispatch."""
+"""Tests for acknowledgement-only Stage 12 dispatch."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 from conftest import make_settings
 from policyengine_simulation_contract.stage12_execution import (
-    ComparisonReportPersistenceResult,
-    ComparisonRunAggregationStatus,
+    ComparisonReportRecord,
     ComparisonRunLifecycleStatus,
 )
 from stage12_fixtures import eligible_payload, worker
 
 from policyengine_simulation_entry import stage12_backend as backend_module
 from policyengine_simulation_entry.stage12_backend import (
+    ModalReportInvoker,
     Stage12ComparisonBackend,
+    TemporaryStage12DispatchFailed,
     TemporaryStage12UnsupportedRequest,
 )
 
@@ -33,17 +35,9 @@ class FakeLoader:
 
 
 class FakeStore:
-    def __init__(self, *, existing=None, conflict=None):
-        self.existing = existing
-        self.conflict = conflict
-        self.current = existing or conflict
-        self.created = []
-        self.replaced = []
+    def __init__(self, *, current: ComparisonReportRecord | None = None):
+        self.current = current
         self.events = []
-
-    def get_report_for_production(self, **identity):
-        self.events.append(("lookup", identity))
-        return self.existing
 
     def get_report(self, evaluation_id):
         self.events.append(("get_report", evaluation_id))
@@ -55,66 +49,24 @@ class FakeStore:
         self.events.append(("list_simulations", evaluation_id))
         return ()
 
-    def create_or_resolve_report(self, record):
-        self.events.append(("create", record.evaluation_id))
-        self.created.append(record)
-        self.current = self.conflict or record
-        return ComparisonReportPersistenceResult(
-            record=self.conflict or record,
-            created=self.conflict is None,
-        )
-
-    def replace_report(self, record):
-        self.events.append(("replace", record.status))
-        self.replaced.append(record)
-        self.current = record
-        return record
-
-    def replace_report_result_comparison(self, record):
-        self.events.append(("replace_comparison", record.comparison_status))
-        self.current = record
-        return record
-
-    def attach_report_invocation(
-        self,
-        evaluation_id,
-        *,
-        expected_placeholder,
-        modal_invocation_id,
-        updated_at,
-    ):
-        self.events.append(("attach", modal_invocation_id))
-        assert self.current.evaluation_id == evaluation_id
-        assert self.current.coordinator_invocation_id == expected_placeholder
-        self.current = self.current.model_copy(
-            update={
-                "coordinator_invocation_id": modal_invocation_id,
-                "updated_at": updated_at,
-            }
-        )
-        return self.current
-
 
 class FakeInvoker:
-    def __init__(self, *, error=None, events=None):
+    def __init__(self, *, error=None):
         self.error = error
         self.calls = []
-        self.events = events
 
     async def spawn(self, **call):
-        if self.events is not None:
-            self.events.append(("spawn", call["worker"].application_name))
         self.calls.append(call)
         if self.error is not None:
             raise self.error
         return "modal-call-1"
 
 
-def _backend(store, invoker):
+def _backend(store, invoker, *, environment="staging", modal_environment="staging"):
     return Stage12ComparisonBackend(
         make_settings(
-            environment="staging",
-            stage12_v2_manifest_environment="staging",
+            environment=environment,
+            stage12_v2_manifest_environment=modal_environment,
         ),
         manifest_loader=FakeLoader(),
         store=store,
@@ -126,9 +78,46 @@ def _response(job_id="job-1") -> bytes:
     return json.dumps({"status": "submitted", "job_id": job_id}).encode()
 
 
-def test_parent_is_durable_before_direct_modal_dispatch() -> None:
+@pytest.mark.asyncio
+async def test_modal_invoker_submits_report_context_and_pending_parent(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    async def spawn_aio(*args):
+        calls.append(args)
+        return SimpleNamespace(object_id="modal-call-1")
+
+    def from_name(*args, **kwargs):
+        assert args == (
+            "policyengine-simulation-v2-py5-2-0",
+            "coordinate_report",
+        )
+        assert kwargs == {"environment_name": "staging"}
+        return SimpleNamespace(spawn=SimpleNamespace(aio=spawn_aio))
+
+    monkeypatch.setattr(backend_module.modal.Function, "from_name", from_name)
+
+    invocation_id = await ModalReportInvoker("staging").spawn(
+        worker=worker(),
+        report_payload={"report": "payload"},
+        context_payload={"context": "payload"},
+        parent_payload={"parent": "payload"},
+    )
+
+    assert invocation_id == "modal-call-1"
+    assert calls == [
+        (
+            {"report": "payload"},
+            {"context": "payload"},
+            {"parent": "payload"},
+        )
+    ]
+
+
+def test_automatic_submission_only_awaits_modal_acknowledgement() -> None:
     store = FakeStore()
-    invoker = FakeInvoker(events=store.events)
+    invoker = FakeInvoker()
 
     asyncio.run(
         _backend(store, invoker).dispatch_after_production(
@@ -138,154 +127,69 @@ def test_parent_is_durable_before_direct_modal_dispatch() -> None:
         )
     )
 
-    operations = [event[0] for event in store.events]
-    assert operations == ["lookup", "create", "replace", "spawn", "attach"]
-    assert store.created[0].status is ComparisonRunLifecycleStatus.PENDING
-    assert store.replaced[0].status is ComparisonRunLifecycleStatus.RUNNING
-    assert store.replaced[0].coordinator_invocation_id.startswith("dispatch-pending-")
-    assert store.current.status is ComparisonRunLifecycleStatus.RUNNING
-    assert store.current.coordinator_invocation_id == "modal-call-1"
-    assert invoker.calls[0]["context_payload"]["request_id"] == "request-1"
-    assert invoker.calls[0]["context_payload"]["production_function_call_id"] == (
-        "job-1"
-    )
-    assert (
-        invoker.calls[0]["context_payload"]["simulation_callable"]
-        == "run_single_simulation_us"
-    )
-    report = invoker.calls[0]["report_payload"]
-    assert report["baseline"]["role"] == "baseline"
-    assert report["reform"]["role"] == "reform"
-
-
-def test_repeated_submission_for_existing_production_job_does_not_dispatch() -> None:
-    existing_store = FakeStore()
-    invoker = FakeInvoker()
-    backend = _backend(existing_store, invoker)
-    asyncio.run(
-        backend.dispatch_after_production(
-            request_payload=eligible_payload(),
-            production_response=_response(),
-            request_id="request-1",
-        )
-    )
-    existing_store.existing = existing_store.created[0]
-    existing_store.created.clear()
-
-    asyncio.run(
-        backend.dispatch_after_production(
-            request_payload=eligible_payload(),
-            production_response=_response(),
-            request_id="request-2",
-        )
-    )
-
-    assert existing_store.created == []
+    assert store.events == []
     assert len(invoker.calls) == 1
+    call = invoker.calls[0]
+    parent = ComparisonReportRecord.model_validate(call["parent_payload"])
+    assert parent.status is ComparisonRunLifecycleStatus.PENDING
+    assert parent.production_identity == "job-1"
+    assert parent.coordinator_invocation_id is None
+    assert call["context_payload"]["request_id"] == "request-1"
+    assert call["context_payload"]["production_function_call_id"] == "job-1"
+    assert call["context_payload"]["simulation_callable"] == (
+        "run_single_simulation_us"
+    )
+    assert call["report_payload"]["baseline"]["role"] == "baseline"
+    assert call["report_payload"]["reform"]["role"] == "reform"
 
 
-def test_failed_dispatch_reuses_parent_version_and_deterministic_children() -> None:
-    store = FakeStore()
+def test_repeated_automatic_submission_uses_one_deterministic_report_identity() -> None:
     invoker = FakeInvoker()
-    loader = FakeLoader()
-    backend = Stage12ComparisonBackend(
-        make_settings(environment="staging"),
-        manifest_loader=loader,
-        store=store,
-        invoker=invoker,
-    )
-    asyncio.run(
-        backend.dispatch_after_production(
-            request_payload=eligible_payload(),
-            production_response=_response(),
-            request_id="request-1",
-        )
-    )
-    first_report = invoker.calls[0]["report_payload"]
-    failed = store.replaced[-1].model_copy(
-        update={
-            "status": ComparisonRunLifecycleStatus.FAILED,
-            "aggregation_status": ComparisonRunAggregationStatus.FAILED,
-            "error_code": "report_coordination_failed",
-            "error_summary": "RuntimeError",
-        }
-    )
-    store.existing = failed
+    backend = _backend(FakeStore(), invoker)
 
-    asyncio.run(
-        backend.dispatch_after_production(
-            request_payload=eligible_payload(),
-            production_response=_response(),
-            request_id="request-2",
+    for request_id in ("request-1", "request-2"):
+        asyncio.run(
+            backend.dispatch_after_production(
+                request_payload=eligible_payload(),
+                production_response=_response(),
+                request_id=request_id,
+            )
         )
-    )
 
-    retried_report = invoker.calls[1]["report_payload"]
-    assert loader.resolved_versions == [None, "5.2.0"]
-    assert retried_report["evaluation_id"] == first_report["evaluation_id"]
+    assert len(invoker.calls) == 2
     assert (
-        retried_report["baseline"]["simulation_execution_id"]
-        == first_report["baseline"]["simulation_execution_id"]
+        invoker.calls[0]["report_payload"]["evaluation_id"]
+        == invoker.calls[1]["report_payload"]["evaluation_id"]
     )
     assert (
-        retried_report["reform"]["simulation_execution_id"]
-        == first_report["reform"]["simulation_execution_id"]
+        invoker.calls[0]["report_payload"]["baseline"]["simulation_execution_id"]
+        == invoker.calls[1]["report_payload"]["baseline"]["simulation_execution_id"]
     )
-    assert invoker.calls[1]["context_payload"]["version_manifest_sha256"] == "c" * 64
-    assert len(store.created) == 1
 
 
-def test_concurrent_create_resolution_does_not_dispatch_a_second_coordinator() -> None:
-    first_store = FakeStore()
-    first_invoker = FakeInvoker()
-    asyncio.run(
-        _backend(first_store, first_invoker).dispatch_after_production(
-            request_payload=eligible_payload(),
-            production_response=_response(),
-            request_id="request-1",
-        )
-    )
-    concurrent = first_store.created[0]
-    store = FakeStore(conflict=concurrent)
+def test_unsupported_automatic_input_does_not_dispatch_or_write() -> None:
+    store = FakeStore()
     invoker = FakeInvoker()
 
     asyncio.run(
         _backend(store, invoker).dispatch_after_production(
-            request_payload=eligible_payload(),
-            production_response=_response(),
-            request_id="request-2",
-        )
-    )
-
-    assert len(store.created) == 1
-    assert store.replaced == []
-    assert invoker.calls == []
-
-
-def test_unsupported_input_records_one_skip_without_dispatch() -> None:
-    store = FakeStore()
-    invoker = FakeInvoker()
-    payload = {**eligible_payload(), "include_cliffs": True}
-
-    asyncio.run(
-        _backend(store, invoker).dispatch_after_production(
-            request_payload=payload,
+            request_payload={**eligible_payload(), "include_cliffs": True},
             production_response=_response(),
             request_id="request-1",
         )
     )
 
-    assert store.created[0].status is ComparisonRunLifecycleStatus.SKIPPED
-    assert store.created[0].error_code == "unsupported_cliff_calculation"
+    assert store.events == []
     assert invoker.calls == []
 
 
-def test_dispatch_failure_is_sanitized_and_persisted() -> None:
+def test_dispatch_failure_is_sanitized_without_database_cleanup() -> None:
     store = FakeStore()
     invoker = FakeInvoker(error=RuntimeError("contains sensitive input"))
 
     with pytest.raises(
-        RuntimeError, match="Stage 12 comparison-run dispatch failed"
+        TemporaryStage12DispatchFailed,
+        match="Stage 12 comparison-run dispatch failed",
     ) as error:
         asyncio.run(
             _backend(store, invoker).dispatch_after_production(
@@ -296,61 +200,69 @@ def test_dispatch_failure_is_sanitized_and_persisted() -> None:
         )
 
     assert "sensitive" not in str(error.value)
-
-    failed = store.replaced[-1]
-    assert failed.status is ComparisonRunLifecycleStatus.FAILED
-    assert failed.error_code == "comparison_dispatch_failed"
-    assert failed.error_summary == "RuntimeError"
-    assert "sensitive" not in failed.error_summary
+    assert error.value.report.status is ComparisonRunLifecycleStatus.FAILED
+    assert error.value.report.error_code == "comparison_dispatch_failed"
+    assert error.value.report.error_summary == "RuntimeError"
+    assert store.events == []
 
 
-def test_temporary_submission_spawns_without_waiting_for_modal_result() -> None:
+@pytest.mark.asyncio
+async def test_dispatch_cancellation_does_not_wait_for_database_cleanup() -> None:
+    class BlockingInvoker(FakeInvoker):
+        async def spawn(self, **call):
+            self.calls.append(call)
+            await asyncio.Event().wait()
+
     store = FakeStore()
-    invoker = FakeInvoker(events=store.events)
-    backend = Stage12ComparisonBackend(
-        make_settings(
-            environment="staging",
-            stage12_v2_manifest_environment="staging",
-        ),
-        manifest_loader=FakeLoader(),
-        store=store,
-        invoker=invoker,
+    backend = _backend(store, BlockingInvoker())
+    task = asyncio.create_task(
+        backend.dispatch_after_production(
+            request_payload=eligible_payload(),
+            production_response=_response(),
+            request_id="request-1",
+        )
     )
+    await asyncio.sleep(0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert store.events == []
+
+
+def test_temporary_submission_spawns_without_database_writes() -> None:
+    store = FakeStore()
+    invoker = FakeInvoker()
 
     report = asyncio.run(
-        backend.submit_temporary_report(
+        _backend(store, invoker).submit_temporary_report(
             request_payload=eligible_payload(),
             request_id="manual-request-1",
         )
     )
 
-    assert [event[0] for event in store.events] == [
-        "create",
-        "replace",
-        "spawn",
-        "attach",
-    ]
+    assert store.events == []
     assert report.status is ComparisonRunLifecycleStatus.RUNNING
     assert report.production_identity == f"direct:{report.evaluation_id}"
     assert report.incumbent_execution_id is None
-    assert invoker.calls[0]["context_payload"]["request_id"] == "manual-request-1"
-    assert invoker.calls[0]["context_payload"]["environment"] == "staging"
-    assert invoker.calls[0]["context_payload"]["modal_environment"] == "staging"
-    assert invoker.calls[0]["context_payload"]["production_function_call_id"] is None
-    assert not hasattr(invoker, "get")
+    assert report.coordinator_invocation_id == "modal-call-1"
+    call = invoker.calls[0]
+    assert call["context_payload"]["request_id"] == "manual-request-1"
+    assert call["context_payload"]["environment"] == "staging"
+    assert call["context_payload"]["modal_environment"] == "staging"
+    assert call["context_payload"]["production_function_call_id"] is None
+    submitted_parent = ComparisonReportRecord.model_validate(call["parent_payload"])
+    assert submitted_parent.status is ComparisonRunLifecycleStatus.PENDING
+    assert submitted_parent.coordinator_invocation_id is None
 
 
 def test_production_context_keeps_logical_and_modal_environments_distinct() -> None:
-    store = FakeStore()
     invoker = FakeInvoker()
-    backend = Stage12ComparisonBackend(
-        make_settings(
-            environment="production",
-            stage12_v2_manifest_environment="main",
-        ),
-        manifest_loader=FakeLoader(),
-        store=store,
-        invoker=invoker,
+    backend = _backend(
+        FakeStore(),
+        invoker,
+        environment="production",
+        modal_environment="main",
     )
 
     report = asyncio.run(
@@ -366,18 +278,17 @@ def test_production_context_keeps_logical_and_modal_environments_distinct() -> N
     assert context["modal_environment"] == "main"
 
 
-def test_each_temporary_submission_creates_a_distinct_report() -> None:
-    first_store = FakeStore()
-    second_store = FakeStore()
+def test_each_temporary_submission_creates_a_distinct_report_identity() -> None:
+    backend = _backend(FakeStore(), FakeInvoker())
 
     first = asyncio.run(
-        _backend(first_store, FakeInvoker()).submit_temporary_report(
+        backend.submit_temporary_report(
             request_payload=eligible_payload(),
             request_id="request-1",
         )
     )
     second = asyncio.run(
-        _backend(second_store, FakeInvoker()).submit_temporary_report(
+        backend.submit_temporary_report(
             request_payload=eligible_payload(),
             request_id="request-2",
         )
@@ -387,12 +298,13 @@ def test_each_temporary_submission_creates_a_distinct_report() -> None:
     assert first.production_identity != second.production_identity
 
 
-def test_temporary_submission_rejects_unsupported_input_without_persistence() -> None:
+def test_temporary_submission_rejects_unsupported_input_without_side_effects() -> None:
     store = FakeStore()
+    invoker = FakeInvoker()
 
     with pytest.raises(TemporaryStage12UnsupportedRequest) as error:
         asyncio.run(
-            _backend(store, FakeInvoker()).submit_temporary_report(
+            _backend(store, invoker).submit_temporary_report(
                 request_payload={**eligible_payload(), "include_cliffs": True},
                 request_id="request-1",
             )
@@ -400,9 +312,10 @@ def test_temporary_submission_rejects_unsupported_input_without_persistence() ->
 
     assert error.value.reason == "unsupported_cliff_calculation"
     assert store.events == []
+    assert invoker.calls == []
 
 
-def test_temporary_status_reads_postgres_state_without_modal_access() -> None:
+def test_temporary_status_reads_coordinator_owned_postgres_state() -> None:
     store = FakeStore()
     invoker = FakeInvoker()
     report = asyncio.run(
@@ -411,7 +324,7 @@ def test_temporary_status_reads_postgres_state_without_modal_access() -> None:
             request_id="request-1",
         )
     )
-    store.events.clear()
+    store.current = report
 
     resolved, simulations = _backend(store, invoker)._get_temporary_report(
         report.evaluation_id
@@ -426,18 +339,19 @@ def test_temporary_status_reads_postgres_state_without_modal_access() -> None:
 
 
 def test_temporary_status_rejects_a_record_from_another_environment() -> None:
-    store = FakeStore()
+    staging_backend = _backend(FakeStore(), FakeInvoker())
     report = asyncio.run(
-        _backend(store, FakeInvoker()).submit_temporary_report(
+        staging_backend.submit_temporary_report(
             request_payload=eligible_payload(),
             request_id="request-1",
         )
     )
-    production_backend = Stage12ComparisonBackend(
-        make_settings(environment="production"),
-        manifest_loader=FakeLoader(),
-        store=store,
-        invoker=FakeInvoker(),
+    store = FakeStore(current=report)
+    production_backend = _backend(
+        store,
+        FakeInvoker(),
+        environment="production",
+        modal_environment="main",
     )
 
     with pytest.raises(LookupError, match="does not exist"):
@@ -445,7 +359,7 @@ def test_temporary_status_rejects_a_record_from_another_environment() -> None:
 
 
 @pytest.mark.asyncio
-async def test_temporary_submission_offloads_synchronous_dispatch(monkeypatch) -> None:
+async def test_temporary_submission_offloads_only_pure_preparation(monkeypatch) -> None:
     backend = _backend(FakeStore(), FakeInvoker())
     calls = []
     original = backend._prepare_temporary_report
@@ -461,13 +375,14 @@ async def test_temporary_submission_offloads_synchronous_dispatch(monkeypatch) -
         request_id="request-1",
     )
 
-    assert calls[0] == (
-        original,
-        (),
-        {
-            "request_payload": eligible_payload(),
-            "request_id": "request-1",
-        },
-    )
-    assert len(calls) == 3
+    assert calls == [
+        (
+            original,
+            (),
+            {
+                "request_payload": eligible_payload(),
+                "request_id": "request-1",
+            },
+        )
+    ]
     assert report.status is ComparisonRunLifecycleStatus.RUNNING
