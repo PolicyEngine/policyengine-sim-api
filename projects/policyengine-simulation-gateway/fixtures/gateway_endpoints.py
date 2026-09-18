@@ -29,6 +29,8 @@ TEST_APP_RELEASE_BUNDLE = {
         "default_dataset_uri": "hf://policyengine/populace-us/populace_us_2024.h5@us-artifact-revision",
         "dataset_uris": {
             "populace_us_2024": "hf://policyengine/populace-us/populace_us_2024.h5@us-artifact-revision",
+            "populace_us_2024_acs_local": "hf://policyengine/populace-us/populace_us_2024_acs_local.h5@us-local-revision",
+            "calibration_diagnostics": "hf://policyengine/populace-us/calibration_diagnostics.json@us-artifact-revision",
         },
     },
     "uk": {
@@ -40,6 +42,7 @@ TEST_APP_RELEASE_BUNDLE = {
         "default_dataset_uri": "hf://policyengine/populace-uk-private/populace_uk_2023.h5@uk-artifact-revision",
         "dataset_uris": {
             "populace_uk_2023": "hf://policyengine/populace-uk-private/populace_uk_2023.h5@uk-artifact-revision",
+            "local_authority_weights": "hf://policyengine/policyengine-uk-data-private/local_authority_weights.h5@uk-artifact-revision",
         },
     },
 }

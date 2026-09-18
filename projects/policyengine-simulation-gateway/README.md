@@ -4,6 +4,15 @@ The stable Modal gateway for the simulation service: routes simulation
 requests to versioned executor apps (`policyengine-simulation-py{X}`) via
 the routing state in `modal.Dict`, and serves the public API contract.
 
+## Dataset selection
+
+The economy comparison and budget-window endpoints use the certified dataset
+from the selected PolicyEngine.py release. They reject request fields `data`
+and `data_version` with HTTP 422, including when either field is null. The
+response still reports the dataset and data version used. Use `region` or
+`region_group` to select a geographic subset; the worker resolves the
+appropriate dataset for that region from its release bundle.
+
 ## Country-version routing
 
 A request that names a country model `version` resolves to the app the

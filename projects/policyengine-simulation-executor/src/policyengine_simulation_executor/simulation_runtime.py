@@ -7,6 +7,7 @@ No Modal dependencies here.
 """
 
 import contextlib
+import hashlib
 import json
 import logging
 import os
@@ -23,7 +24,6 @@ from policyengine_simulation_observability.observability import SegmentName
 from policyengine_simulation_executor.release_bundle import (
     get_country_release_bundle,
     resolve_bundle_dataset_name,
-    resolve_runtime_bundle_dataset_uri,
 )
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
@@ -42,6 +42,15 @@ class RegionResolution:
     code: str
     dataset_reference: str | None = None
     scoping_strategy: Any | None = None
+
+
+@dataclass(frozen=True)
+class DatasetSelection:
+    """One bundle-validated dataset choice shared by loading and artifact reuse."""
+
+    name: str
+    uri: str
+    is_default: bool
 
 
 def _normalize_credentials_blob(creds_json: str) -> str:
@@ -182,44 +191,9 @@ def _normalise_policy(policy: dict[str, Any] | None) -> dict[str, Any] | None:
     return normalised
 
 
-def _split_requested_revision(requested_data: str) -> tuple[str, str | None]:
-    if "@" not in requested_data:
-        return requested_data, None
-    dataset_name, revision = requested_data.rsplit("@", maxsplit=1)
-    if not dataset_name or not revision:
-        raise ValueError(f"Invalid dataset revision reference: {requested_data}")
-    return dataset_name, revision
-
-
-def _requested_data_version(params: dict[str, Any]) -> str | None:
-    data_version = params.get("data_version")
-    if data_version is not None:
-        return str(data_version)
-
-    data = params.get("data")
-    if isinstance(data, str) and "@" in data:
-        _, revision = _split_requested_revision(data)
-        return revision
-    return None
-
-
-def _resolve_dataset_reference(country: str, params: dict[str, Any]) -> str:
+def _resolve_dataset_reference(country: str) -> str:
     with segment(SegmentName.DATASET_RESOLUTION):
-        return _resolve_dataset_reference_inner(country, params)
-
-
-def _resolve_dataset_reference_inner(country: str, params: dict[str, Any]) -> str:
-    requested_data = params.get("data")
-    requested_data = requested_data if isinstance(requested_data, str) else None
-    requested_data_version = _requested_data_version(params)
-    if requested_data is None and requested_data_version is None:
-        return resolve_bundle_dataset_name(country, requested_data)
-    return resolve_runtime_bundle_dataset_uri(
-        country,
-        requested_data,
-        requested_data_version,
-        prefer_local=False,
-    )
+        return resolve_bundle_dataset_name(country, None)
 
 
 def _normalise_region_code(country: str, region: Any) -> str:
@@ -290,10 +264,8 @@ def _region_parent_dataset_reference(
     country_module,
     country: str,
     region,
-    params: dict[str, Any],
 ) -> str:
     parent_code = getattr(region, "parent_code", None)
-    requested_data_version = _requested_data_version(params)
     visited: set[str] = set()
 
     while isinstance(parent_code, str) and parent_code:
@@ -308,13 +280,12 @@ def _region_parent_dataset_reference(
             return runtime_dataset_uri(
                 parent_dataset_path,
                 default_revision=bundle.data_package_version,
-                override_revision=requested_data_version,
                 artifact_revision=bundle.data_artifact_revision,
                 validate_hf=False,
             )
         parent_code = getattr(parent_region, "parent_code", None)
 
-    return _resolve_dataset_reference(country, params)
+    return _resolve_dataset_reference(country)
 
 
 def _reject_unscoped_us_place_region(region_code: str, region) -> None:
@@ -344,7 +315,7 @@ def _resolve_region(
     if region_code == country:
         return RegionResolution(
             code=region_code,
-            dataset_reference=_resolve_dataset_reference(country, params),
+            dataset_reference=_resolve_dataset_reference(country),
         )
 
     region = country_module.model.get_region(region_code)
@@ -356,13 +327,11 @@ def _resolve_region(
         _reject_unscoped_us_place_region(region_code, region)
 
     dataset_path = getattr(region, "dataset_path", None)
-    requested_data_version = _requested_data_version(params)
     if isinstance(dataset_path, str):
         bundle = get_country_release_bundle(country)
         dataset_reference = runtime_dataset_uri(
             dataset_path,
             default_revision=bundle.data_package_version,
-            override_revision=requested_data_version,
             artifact_revision=bundle.data_artifact_revision,
             validate_hf=False,
         )
@@ -371,7 +340,6 @@ def _resolve_region(
             country_module,
             country,
             region,
-            params,
         )
 
     return RegionResolution(
@@ -422,7 +390,7 @@ def _resolve_region_group(
 
     return RegionResolution(
         code="region_group/" + "+".join(sorted(codes)),
-        dataset_reference=_resolve_dataset_reference(country, params),
+        dataset_reference=_resolve_dataset_reference(country),
         scoping_strategy=RegionGroupStrategy(members=members),
     )
 
@@ -445,42 +413,68 @@ def resolve_data_folder() -> str:
     return os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")
 
 
+def _nondefault_data_folder(country: str, name: str, uri: str) -> str:
+    """Separate managed datasets even if their source filenames have the same stem."""
+    identity = hashlib.sha256(f"{country}:{name}:{uri}".encode()).hexdigest()
+    return f"/tmp/policyengine-alternate-data/{identity}"
+
+
+def _resolve_dataset_selection(
+    params: dict[str, Any],
+    *,
+    region_resolution: RegionResolution | None = None,
+) -> DatasetSelection:
+    """Resolve the bundle's regional or default dataset to a managed name."""
+    if "data" in params or "data_version" in params:
+        raise ValueError("Dataset overrides are not supported")
+    country = params.get("country", "us").lower()
+    bundle = get_country_release_bundle(country)
+    if region_resolution is not None and region_resolution.dataset_reference:
+        dataset_reference = region_resolution.dataset_reference
+    else:
+        dataset_reference = bundle.default_dataset
+
+    # Region metadata can contain a URI rather than a managed dataset name.
+    for name, uri in bundle.dataset_uris.items():
+        if dataset_reference == name or dataset_reference == uri:
+            return DatasetSelection(name, uri, name == bundle.default_dataset)
+    for name, uri in bundle.dataset_uris.items():
+        if dataset_reference == runtime_dataset_uri(
+            uri,
+            default_revision=bundle.data_package_version,
+            artifact_revision=bundle.data_artifact_revision,
+            validate_hf=False,
+        ):
+            return DatasetSelection(name, uri, name == bundle.default_dataset)
+    raise ValueError(
+        f"Unsupported dataset {dataset_reference!r} for country {country!r}; "
+        "choose a name in the certified release manifest"
+    )
+
+
 def _load_dataset(
     params: dict[str, Any],
     *,
+    selection: DatasetSelection,
     country_module=None,
-    region_resolution: RegionResolution | None = None,
 ):
     country = params.get("country", "us").lower()
     year = _parse_year(params)
     country_module = country_module or _country_module(country)
-    dataset_name = (
-        region_resolution.dataset_reference
-        if region_resolution is not None and region_resolution.dataset_reference
-        else _resolve_dataset_reference(country, params)
+    data_folder = (
+        resolve_data_folder()
+        if selection.is_default
+        else _nondefault_data_folder(country, selection.name, selection.uri)
     )
-    from policyengine_simulation_executor.baseline_artifacts import uses_custom_data
-
-    data_folder = resolve_data_folder()
-    # The artifact fetch layer bakes default-revision single-year files
-    # into POLICYENGINE_DATA_FOLDER, and ensure_datasets keys its cache on
-    # a revision-stripped filename stem — a custom dataset or revision
-    # whose stem matches the default would silently read the baked files.
-    # Only pure default requests may use the baked folder. (Region
-    # requests resolve their dataset without the "data" param, so they
-    # keep it.)
-    if uses_custom_data(params):
-        data_folder = "/tmp/policyengine-data"
 
     start = time.monotonic()
-    datasets = country_module.ensure_datasets(
-        datasets=[dataset_name],
-        years=[year],
-        data_folder=data_folder,
-    )
+    load_options = {"years": [year], "data_folder": data_folder}
+    if not selection.is_default:
+        load_options["datasets"] = [selection.name]
+    datasets = country_module.ensure_datasets(**load_options)
     logger.info(
         "Loaded dataset %s year %s from %s in %.1fs",
-        dataset_name,
+        selection.name,
         year,
         data_folder,
         time.monotonic() - start,
@@ -492,6 +486,7 @@ def _build_simulation(
     params: dict[str, Any],
     *,
     dataset,
+    dataset_selection: DatasetSelection,
     policy: dict[str, Any] | None,
     scoping_strategy=None,
     region_code: str | None = None,
@@ -513,6 +508,7 @@ def _build_simulation(
     simulation_id = deterministic_baseline_id(
         params,
         country=country,
+        dataset_is_default=dataset_selection.is_default,
         policy=policy,
         region_code=region_code,
         scoping_strategy=scoping_strategy,
@@ -578,11 +574,14 @@ def _run_simulation_impl_core(params: dict) -> dict:
             params=simulation_params,
         )
     set_attribute("region", region_resolution.code)
+    dataset_selection = _resolve_dataset_selection(
+        simulation_params, region_resolution=region_resolution
+    )
     with segment(SegmentName.DATASET_LOAD):
         dataset = _load_dataset(
             simulation_params,
+            selection=dataset_selection,
             country_module=country_module,
-            region_resolution=region_resolution,
         )
     with segment(SegmentName.POLICY_NORMALIZATION):
         baseline_policy = _normalise_policy(simulation_params.get("baseline"))
@@ -593,6 +592,7 @@ def _run_simulation_impl_core(params: dict) -> dict:
         baseline = _build_simulation(
             simulation_params,
             dataset=dataset,
+            dataset_selection=dataset_selection,
             policy=baseline_policy,
             scoping_strategy=region_resolution.scoping_strategy,
             region_code=region_resolution.code,
@@ -601,6 +601,7 @@ def _run_simulation_impl_core(params: dict) -> dict:
         reform = _build_simulation(
             simulation_params,
             dataset=dataset,
+            dataset_selection=dataset_selection,
             policy=reform_policy,
             scoping_strategy=region_resolution.scoping_strategy,
             region_code=region_resolution.code,
@@ -614,7 +615,7 @@ def _run_simulation_impl_core(params: dict) -> dict:
         dataset=dataset,
         baseline=baseline,
         reform=reform,
-        resolved_data_version=_requested_data_version(simulation_params),
+        resolved_data_version=None,
         resolved_region_code=region_resolution.code,
     )
     output = builder.serialize()

@@ -18,7 +18,6 @@ class SimulationOptions(BaseModel):
     country: str
     spm: Optional[SPMSelection] = None
     scope: Optional[str] = None
-    data: Optional[str] = None
     time_period: Optional[str | int] = None
     reform: Optional[dict[str, Any]] = None
     baseline: Optional[dict[str, Any]] = None
@@ -27,7 +26,6 @@ class SimulationOptions(BaseModel):
     title: Optional[str] = None
     include_cliffs: Optional[bool] = None
     model_version: Optional[str] = None
-    data_version: Optional[str] = None
     # Accepted for parity with the gateway contract. The synchronous
     # surface always runs monolithically, so segmented=false is trivially
     # honored and segmented=true has no effect here.

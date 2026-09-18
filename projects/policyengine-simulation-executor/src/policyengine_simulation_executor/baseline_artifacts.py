@@ -41,22 +41,11 @@ OUTCOME_INCOMPLETE = "incomplete"
 OUTCOME_MISS = "miss"
 
 
-def uses_custom_data(params: dict[str, Any]) -> bool:
-    """True when the request asks for non-default data.
-
-    Shared by the qualifying predicate below and ``_load_dataset``'s
-    baked-folder guard: both sites must see the same request facts, or a
-    custom-data request could be given a default-data deterministic id —
-    and in a warm container the in-process cache (keyed on id alone) would
-    then serve default-data output the column guard cannot distinguish.
-    """
-    return params.get("data") is not None or params.get("data_version") is not None
-
-
 def qualifying_baseline_identity(
     params: dict[str, Any],
     *,
     country: str,
+    dataset_is_default: bool,
     policy: Any,
     region_code: Optional[str],
     scoping_strategy: Any,
@@ -65,9 +54,8 @@ def qualifying_baseline_identity(
     """Full artifact identity for a qualifying baseline, else None.
 
     Qualifying means the simulation's bytes are a pure function of the
-    installed version-set: current-law policy, macro scope, default data
-    (custom ``data``/``data_version`` requests resolve different datasets
-    AND live outside the baked folder), and a scope the pipeline produces
+    installed version-set: current-law policy, macro scope, the resolved
+    default dataset, and a scope the pipeline produces
     artifacts for — unscoped national or a region group. Single states stay
     on random ids in v1.
 
@@ -87,7 +75,7 @@ def qualifying_baseline_identity(
         return None
     if str(params.get("scope") or "").lower() != "macro":
         return None
-    if uses_custom_data(params):
+    if not dataset_is_default:
         return None
     if region_code is None:
         return None
@@ -115,6 +103,7 @@ def deterministic_baseline_id(
     params: dict[str, Any],
     *,
     country: str,
+    dataset_is_default: bool,
     policy: Any,
     region_code: Optional[str],
     scoping_strategy: Any,
@@ -130,6 +119,7 @@ def deterministic_baseline_id(
         identity = qualifying_baseline_identity(
             params,
             country=country,
+            dataset_is_default=dataset_is_default,
             policy=policy,
             region_code=region_code,
             scoping_strategy=scoping_strategy,

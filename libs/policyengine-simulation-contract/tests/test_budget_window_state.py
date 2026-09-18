@@ -28,7 +28,6 @@ def test_create_initial_batch_state_builds_queued_years_and_run_id():
         start_year="2026",
         window_size=3,
         max_parallel=2,
-        data="custom_dataset_label",
         scope="macro",
         reform={},
         _telemetry={
@@ -52,7 +51,7 @@ def test_create_initial_batch_state_builds_queued_years_and_run_id():
     assert state.target == "general"
     assert state.years == ["2026", "2027", "2028"]
     assert state.queued_years == ["2026", "2027", "2028"]
-    assert state.request_payload["data"] == "custom_dataset_label"
+    assert "data" not in state.request_payload
     assert state.request_payload["scope"] == "macro"
     assert state.request_payload["reform"] == {}
     assert state.run_id == "batch-run-123"
@@ -223,7 +222,9 @@ def test_mark_child_completed_handles_missing_child_jobs_entry(caplog):
     # were restored but child_jobs wasn't fully repopulated.
     state.running_years = ["2026"]
 
-    with caplog.at_level("WARNING", logger="policyengine_simulation_contract.budget_window_state"):
+    with caplog.at_level(
+        "WARNING", logger="policyengine_simulation_contract.budget_window_state"
+    ):
         mark_child_completed(
             state,
             year="2026",
@@ -259,7 +260,9 @@ def test_mark_child_failed_handles_missing_child_jobs_entry(caplog):
     )
     state.running_years = ["2026"]
 
-    with caplog.at_level("WARNING", logger="policyengine_simulation_contract.budget_window_state"):
+    with caplog.at_level(
+        "WARNING", logger="policyengine_simulation_contract.budget_window_state"
+    ):
         mark_child_failed(state, year="2026", error="boom")
 
     assert state.child_jobs["2026"].status == "failed"

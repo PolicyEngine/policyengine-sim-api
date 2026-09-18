@@ -27,7 +27,10 @@ def _baseline(dataset, *, geography="national", tax_only=False):
     from policyengine_simulation_executor.baseline_artifacts import (
         ArtifactBaselineSimulation,
     )
-    from policyengine_simulation_executor.simulation_runtime import _build_simulation
+    from policyengine_simulation_executor.simulation_runtime import (
+        DatasetSelection,
+        _build_simulation,
+    )
 
     built = _build_simulation(
         {
@@ -38,6 +41,7 @@ def _baseline(dataset, *, geography="national", tax_only=False):
             "spm": {"geography_kind": geography},
         },
         dataset=dataset,
+        dataset_selection=DatasetSelection("bounded-native-test", "native", False),
         policy=None,
         region_code="us",
     )

@@ -566,6 +566,7 @@ def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
         simulation_runtime._build_simulation(
             {"country": "us", "spm": SELECTION},
             dataset="tiny",
+            dataset_selection=simulation_runtime.DatasetSelection("tiny", "tiny", True),
             policy=policy,
             region_code="us",
         )
@@ -586,6 +587,7 @@ def test_identity_errors_do_not_degrade_to_an_unidentified_baseline(monkeypatch)
         baseline_artifacts.deterministic_baseline_id(
             {},
             country="us",
+            dataset_is_default=True,
             policy=None,
             region_code="us",
             scoping_strategy=None,
