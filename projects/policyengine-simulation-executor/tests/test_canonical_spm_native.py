@@ -27,7 +27,10 @@ def test_worker_baseline_reform_national_local_cache_and_receipts(
     native_dataset, tmp_path
 ):
     from policyengine.core.simulation import _cache
-    from policyengine_simulation_executor.simulation_runtime import _build_simulation
+    from policyengine_simulation_executor.simulation_runtime import (
+        DatasetSelection,
+        _build_simulation,
+    )
     from policyengine_simulation_executor.spm import simulation_spm_result
 
     params = {
@@ -37,12 +40,18 @@ def test_worker_baseline_reform_national_local_cache_and_receipts(
         "data": str(tmp_path / "native.h5"),
         "spm": {"geography_kind": "national"},
     }
+    dataset_selection = DatasetSelection("native", str(tmp_path / "native.h5"), False)
     baseline = _build_simulation(
-        params, dataset=native_dataset, policy=None, region_code="us"
+        params,
+        dataset=native_dataset,
+        dataset_selection=dataset_selection,
+        policy=None,
+        region_code="us",
     )
     reform = _build_simulation(
         params,
         dataset=native_dataset,
+        dataset_selection=dataset_selection,
         policy={"gov.irs.credits.ctc.amount.base[0].amount": 3000},
         region_code="us",
     )
@@ -62,7 +71,11 @@ def test_worker_baseline_reform_national_local_cache_and_receipts(
     # Disk replay uses the same identifier, selected config, and actual receipt.
     _cache._cache.clear()
     replay = _build_simulation(
-        params, dataset=native_dataset, policy=None, region_code="us"
+        params,
+        dataset=native_dataset,
+        dataset_selection=dataset_selection,
+        policy=None,
+        region_code="us",
     )
     replay.id = baseline.id
     replay.ensure()
@@ -72,6 +85,7 @@ def test_worker_baseline_reform_national_local_cache_and_receipts(
     local = _build_simulation(
         local_params,
         dataset=native_dataset,
+        dataset_selection=dataset_selection,
         policy=None,
         region_code="us",
     )
@@ -99,7 +113,10 @@ def test_worker_baseline_reform_national_local_cache_and_receipts(
 def test_native_state_only_worker_requires_geography_and_explicit_national_works(
     native_dataset,
 ):
-    from policyengine_simulation_executor.simulation_runtime import _build_simulation
+    from policyengine_simulation_executor.simulation_runtime import (
+        DatasetSelection,
+        _build_simulation,
+    )
     from policyengine_simulation_contract.spm import spm_error_detail
 
     native_dataset.data.household.drop(columns=["county_fips"], inplace=True)
@@ -109,8 +126,13 @@ def test_native_state_only_worker_requires_geography_and_explicit_national_works
         "time_period": "2024",
         "data": "test-only-custom-data",
     }
+    dataset_selection = DatasetSelection("native", "test-only-custom-data", False)
     simulation = _build_simulation(
-        params, dataset=native_dataset, policy=None, region_code="us"
+        params,
+        dataset=native_dataset,
+        dataset_selection=dataset_selection,
+        policy=None,
+        region_code="us",
     )
     with pytest.raises(ValueError) as error:
         simulation.run()
@@ -118,6 +140,7 @@ def test_native_state_only_worker_requires_geography_and_explicit_national_works
     national = _build_simulation(
         {**params, "spm": {"geography_kind": "national"}},
         dataset=native_dataset,
+        dataset_selection=dataset_selection,
         policy=None,
         region_code="us",
     )

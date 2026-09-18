@@ -45,6 +45,15 @@ class RegionResolution:
     scoping_strategy: Any | None = None
 
 
+@dataclass(frozen=True)
+class DatasetSelection:
+    """One bundle-validated dataset choice shared by loading and artifact reuse."""
+
+    name: str
+    uri: str
+    is_default: bool
+
+
 def _normalize_credentials_blob(creds_json: str) -> str:
     """Return the raw JSON blob, decoding the outer escape if present.
 
@@ -458,60 +467,75 @@ def _nondefault_data_folder(country: str, name: str, uri: str) -> str:
     return f"/tmp/policyengine-alternate-data/{identity}"
 
 
+def _resolve_dataset_selection(
+    params: dict[str, Any],
+    *,
+    region_resolution: RegionResolution | None = None,
+) -> DatasetSelection:
+    """Resolve an explicit or region-inherited dataset to a bundled name."""
+    country = params.get("country", "us").lower()
+    bundle = get_country_release_bundle(country)
+    if params.get("data_version") is not None:
+        raise ValueError("data_version is not supported by the managed dataset loader")
+    requested_data = params.get("data")
+    if requested_data not in (None, bundle.default_dataset):
+        # Public requests may select bundled names, not dataset URIs.
+        if (
+            not isinstance(requested_data, str)
+            or requested_data not in bundle.dataset_uris
+        ):
+            raise ValueError(
+                f"Unsupported dataset {requested_data!r} for country {country!r}; "
+                "choose a name in the certified release manifest"
+            )
+        # An explicit name overrides the region's inherited dataset.
+        dataset_reference = requested_data
+    elif region_resolution is not None and region_resolution.dataset_reference:
+        dataset_reference = region_resolution.dataset_reference
+    else:
+        dataset_reference = bundle.default_dataset
+
+    # Region metadata can contain a URI rather than a managed dataset name.
+    for name, uri in bundle.dataset_uris.items():
+        if dataset_reference == name or dataset_reference == uri:
+            return DatasetSelection(name, uri, name == bundle.default_dataset)
+    for name, uri in bundle.dataset_uris.items():
+        if dataset_reference == runtime_dataset_uri(
+            uri,
+            default_revision=bundle.data_package_version,
+            artifact_revision=bundle.data_artifact_revision,
+            validate_hf=False,
+        ):
+            return DatasetSelection(name, uri, name == bundle.default_dataset)
+    raise ValueError(
+        f"Unsupported dataset {dataset_reference!r} for country {country!r}; "
+        "choose a name in the certified release manifest"
+    )
+
+
 def _load_dataset(
     params: dict[str, Any],
     *,
+    selection: DatasetSelection,
     country_module=None,
-    region_resolution: RegionResolution | None = None,
 ):
     country = params.get("country", "us").lower()
     year = _parse_year(params)
     country_module = country_module or _country_module(country)
-    bundle = get_country_release_bundle(country)
-    if params.get("data_version") is not None:
-        raise ValueError("data_version is not supported by the managed dataset loader")
-    # An explicit certified dataset takes precedence over the inherited
-    # national dataset reference of a filtered state or district.
-    if params.get("data") not in (None, bundle.default_dataset):
-        dataset_reference = _resolve_dataset_reference(country, params)
-    elif region_resolution is not None and region_resolution.dataset_reference:
-        dataset_reference = region_resolution.dataset_reference
-    else:
-        dataset_reference = _resolve_dataset_reference(country, params)
-    # Region metadata can contain the certified URI rather than its manifest
-    # name. Translate it back before calling policyengine.py's managed loader.
-    dataset_name = next(
-        (
-            name
-            for name, uri in bundle.dataset_uris.items()
-            if dataset_reference
-            in (
-                name,
-                uri,
-                resolve_runtime_bundle_dataset_uri(country, name, prefer_local=False),
-            )
-        ),
-        dataset_reference,
+    data_folder = (
+        resolve_data_folder()
+        if selection.is_default
+        else _nondefault_data_folder(country, selection.name, selection.uri)
     )
-    data_folder = resolve_data_folder()
-    if dataset_name not in bundle.dataset_uris:
-        raise ValueError(
-            f"Unsupported dataset {dataset_reference!r} for country {country!r}; "
-            "choose a name in the certified release manifest"
-        )
-    if dataset_name != bundle.default_dataset:
-        data_folder = _nondefault_data_folder(
-            country, dataset_name, bundle.dataset_uris[dataset_name]
-        )
 
     start = time.monotonic()
     load_options = {"years": [year], "data_folder": data_folder}
-    if dataset_name != bundle.default_dataset:
-        load_options["datasets"] = [dataset_name]
+    if not selection.is_default:
+        load_options["datasets"] = [selection.name]
     datasets = country_module.ensure_datasets(**load_options)
     logger.info(
         "Loaded dataset %s year %s from %s in %.1fs",
-        dataset_name,
+        selection.name,
         year,
         data_folder,
         time.monotonic() - start,
@@ -523,6 +547,7 @@ def _build_simulation(
     params: dict[str, Any],
     *,
     dataset,
+    dataset_selection: DatasetSelection,
     policy: dict[str, Any] | None,
     scoping_strategy=None,
     region_code: str | None = None,
@@ -544,6 +569,7 @@ def _build_simulation(
     simulation_id = deterministic_baseline_id(
         params,
         country=country,
+        dataset_is_default=dataset_selection.is_default,
         policy=policy,
         region_code=region_code,
         scoping_strategy=scoping_strategy,
@@ -609,11 +635,14 @@ def _run_simulation_impl_core(params: dict) -> dict:
             params=simulation_params,
         )
     set_attribute("region", region_resolution.code)
+    dataset_selection = _resolve_dataset_selection(
+        simulation_params, region_resolution=region_resolution
+    )
     with segment(SegmentName.DATASET_LOAD):
         dataset = _load_dataset(
             simulation_params,
+            selection=dataset_selection,
             country_module=country_module,
-            region_resolution=region_resolution,
         )
     with segment(SegmentName.POLICY_NORMALIZATION):
         baseline_policy = _normalise_policy(simulation_params.get("baseline"))
@@ -624,6 +653,7 @@ def _run_simulation_impl_core(params: dict) -> dict:
         baseline = _build_simulation(
             simulation_params,
             dataset=dataset,
+            dataset_selection=dataset_selection,
             policy=baseline_policy,
             scoping_strategy=region_resolution.scoping_strategy,
             region_code=region_resolution.code,
@@ -632,6 +662,7 @@ def _run_simulation_impl_core(params: dict) -> dict:
         reform = _build_simulation(
             simulation_params,
             dataset=dataset,
+            dataset_selection=dataset_selection,
             policy=reform_policy,
             scoping_strategy=region_resolution.scoping_strategy,
             region_code=region_resolution.code,

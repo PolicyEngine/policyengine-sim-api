@@ -29,6 +29,9 @@ def install_identity_stubs(monkeypatch):
         data_version="1.2.3",
         data_artifact_revision="rev-abc",
         default_dataset="populace_cps",
+        dataset_uris={
+            "populace_cps": "hf://org/repo/populace_cps.h5@rev-abc",
+        },
     )
     receipt_entry = {
         "country": "us",

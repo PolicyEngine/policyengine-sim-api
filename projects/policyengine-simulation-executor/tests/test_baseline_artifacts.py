@@ -57,6 +57,7 @@ class TestDeterministicBaselineId:
         kwargs = dict(
             params={"scope": "macro"},
             country="us",
+            dataset_is_default=True,
             policy=None,
             region_code="us",
             scoping_strategy=None,
@@ -90,25 +91,8 @@ class TestDeterministicBaselineId:
         params = {} if scope is None else {"scope": scope}
         assert self._id(collected, params=params) is None
 
-    @pytest.mark.parametrize(
-        "params",
-        [
-            {"scope": "macro", "data": "other_dataset"},
-            {"scope": "macro", "data_version": "1.2.3"},
-        ],
-    )
-    def test_custom_data_disqualifies(self, collected, params):
-        assert self._id(collected, params=params) is None
-
-    def test_explicit_certified_default_qualifies(self, collected):
-        from policyengine_simulation_executor.release_bundle import (
-            get_country_release_bundle,
-        )
-
-        default = get_country_release_bundle("us").default_dataset
-        assert (
-            self._id(collected, params={"scope": "macro", "data": default}) is not None
-        )
+    def test_nondefault_dataset_disqualifies(self, collected):
+        assert self._id(collected, dataset_is_default=False) is None
 
     def test_missing_region_code_disqualifies(self, collected):
         assert self._id(collected, region_code=None) is None
@@ -134,6 +118,7 @@ class TestDeterministicBaselineId:
             ba.deterministic_baseline_id(
                 {"scope": "macro"},
                 country="us",
+                dataset_is_default=True,
                 policy=None,
                 region_code="us",
                 scoping_strategy=None,
@@ -374,6 +359,7 @@ class TestBuildSimulationSelection:
         sr._build_simulation(
             {"country": "us", "scope": "macro"},
             dataset="dataset",
+            dataset_selection=SimpleNamespace(is_default=True),
             policy=None,
             scoping_strategy=None,
             region_code="us",
@@ -388,6 +374,7 @@ class TestBuildSimulationSelection:
         assert wired.id_kwargs == {
             "params": {"country": "us", "scope": "macro"},
             "country": "us",
+            "dataset_is_default": True,
             "policy": None,
             "region_code": "us",
             "scoping_strategy": None,
@@ -401,6 +388,7 @@ class TestBuildSimulationSelection:
         sr._build_simulation(
             {"country": "us", "scope": "macro"},
             dataset="dataset",
+            dataset_selection=SimpleNamespace(is_default=False),
             policy={"gov.x": 1},
             scoping_strategy=None,
             region_code="us",
@@ -420,6 +408,7 @@ class TestIdentityErrorContract:
         return dict(
             params={"scope": "macro"},
             country="us",
+            dataset_is_default=True,
             policy=None,
             region_code="us",
             scoping_strategy=None,

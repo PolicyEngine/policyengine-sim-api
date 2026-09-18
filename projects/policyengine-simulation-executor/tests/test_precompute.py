@@ -344,7 +344,12 @@ class TestWriterReaderContract:
 
     @pytest.fixture
     def identity_stubs(self, monkeypatch):
-        install_identity_stubs(monkeypatch)
+        from policyengine_simulation_executor import simulation_runtime as sr
+
+        state = install_identity_stubs(monkeypatch)
+        monkeypatch.setattr(
+            sr, "get_country_release_bundle", lambda country: state.bundle
+        )
 
     @pytest.fixture
     def fake_regions(self, monkeypatch):
@@ -382,9 +387,13 @@ class TestWriterReaderContract:
         resolution = sr._resolve_region(
             country_module=sr._country_module("us"), country="us", params=params
         )
+        dataset_selection = sr._resolve_dataset_selection(
+            params, region_resolution=resolution
+        )
         reader_id = deterministic_baseline_id(
             params,
             country="us",
+            dataset_is_default=dataset_selection.is_default,
             policy=None,
             region_code=resolution.code,
             scoping_strategy=resolution.scoping_strategy,
@@ -547,7 +556,9 @@ class TestCohortIdentityGuard:
         monkeypatch.setattr(
             sr,
             "_resolve_region",
-            lambda **kwargs: SimpleNamespace(code="x", scoping_strategy=None),
+            lambda **kwargs: SimpleNamespace(
+                code="x", dataset_reference=None, scoping_strategy=None
+            ),
         )
         monkeypatch.setattr(
             ba, "qualifying_baseline_identity", lambda *args, **kwargs: None
@@ -741,7 +752,7 @@ class TestComputeBaselineImpl:
         monkeypatch.setattr(
             sr,
             "_load_dataset",
-            lambda params, country_module, region_resolution: "dataset",
+            lambda params, country_module, selection: "dataset",
         )
         monkeypatch.setattr(
             sr, "_build_simulation", lambda params, **kwargs: state.baseline
