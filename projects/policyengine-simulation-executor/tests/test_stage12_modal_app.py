@@ -89,7 +89,7 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     assert functions["run_single_simulation_us"]["max_containers"] == 10
     assert functions["run_single_simulation_uk"]["max_containers"] == 10
     assert functions["coordinate_report"]["image"] is module.coordinator_image
-    assert functions["coordinate_report"]["timeout"] == 3600
+    assert functions["coordinate_report"]["timeout"] == 4500
     assert functions["coordinate_report"]["max_containers"] == 10
     assert "asgi_app" not in vars(module)
 

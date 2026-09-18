@@ -208,7 +208,9 @@ def run_single_simulation_uk(payload: dict, context: dict) -> dict:
     image=coordinator_image,
     cpu=2.0,
     memory=8192,
-    timeout=3600,
+    # Allow one 50-minute child-calculation window, the subsequent 15-minute
+    # production-result wait, and bounded aggregation/persistence overhead.
+    timeout=4500,
     retries=0,
     max_containers=10,
     secrets=worker_secrets,
