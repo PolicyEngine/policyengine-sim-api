@@ -55,13 +55,17 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
         )
 
 
-def test_v2_image_retains_the_us_models_exact_spm_support_pin() -> None:
+def test_v2_image_retains_required_runtime_dependencies() -> None:
     project = tomllib.loads(
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
 
     assert (
         "spm-calculator==0.3.1"
+        in project["dependency-groups"]["modal-simulation-image"]
+    )
+    assert (
+        "psycopg[binary]>=3.2,<4"
         in project["dependency-groups"]["modal-simulation-image"]
     )
 
@@ -78,7 +82,6 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
         "run_single_simulation_us",
         "run_single_simulation_uk",
         "coordinate_report",
-        "cleanup_expired_evaluations",
     }
     assert functions["run_single_simulation_us"]["image"] is module.us_worker_image
     assert functions["run_single_simulation_uk"]["image"] is module.uk_worker_image
@@ -86,9 +89,6 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     assert functions["run_single_simulation_uk"]["timeout"] == 3000
     assert functions["coordinate_report"]["image"] is module.coordinator_image
     assert functions["coordinate_report"]["timeout"] == 3600
-    assert functions["cleanup_expired_evaluations"]["schedule"] == {
-        "schedule": "17 * * * *"
-    }
     assert "asgi_app" not in vars(module)
 
 

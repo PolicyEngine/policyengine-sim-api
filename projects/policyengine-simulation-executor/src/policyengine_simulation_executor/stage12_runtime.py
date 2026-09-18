@@ -70,21 +70,6 @@ class EvaluationStore(Protocol):
         updated_at: datetime,
     ) -> EvaluationSimulationRecord: ...
 
-    def list_expired_reports(
-        self,
-        *,
-        expired_before: datetime,
-        limit: int,
-    ) -> tuple[EvaluationReportRecord, ...]: ...
-
-    def delete_expired_report(
-        self,
-        evaluation_id: UUID,
-        *,
-        expired_before: datetime,
-    ) -> bool: ...
-
-
 class ChildCall(Protocol):
     object_id: str
 
@@ -146,43 +131,6 @@ def _runtime_store() -> PostgresEvaluationStore:
 
 def _artifact_store() -> Stage12ArtifactStore:
     return Stage12ArtifactStore(os.environ.get("STAGE12_ARTIFACT_BUCKET", ""))
-
-
-def cleanup_expired_evaluations(
-    *,
-    store: EvaluationStore | None = None,
-    artifacts: Stage12ArtifactStore | None = None,
-    expired_before: datetime | None = None,
-    limit: int = 100,
-) -> dict[str, int]:
-    """Delete private objects before their temporary parent and child rows."""
-
-    runtime_store = store or _runtime_store()
-    artifact_store = artifacts or _artifact_store()
-    cutoff = expired_before or datetime.now(timezone.utc)
-    reports = runtime_store.list_expired_reports(
-        expired_before=cutoff,
-        limit=limit,
-    )
-    objects_deleted = 0
-    reports_deleted = 0
-    for report in reports:
-        prefix = (
-            f"stage-12-evaluation/{report.environment}/"
-            f"{report.created_at:%Y}/{report.created_at:%m}/{report.evaluation_id}"
-        )
-        objects_deleted += artifact_store.delete_evaluation(prefix)
-        reports_deleted += int(
-            runtime_store.delete_expired_report(
-                report.evaluation_id,
-                expired_before=cutoff,
-            )
-        )
-    return {
-        "reports_selected": len(reports),
-        "reports_deleted": reports_deleted,
-        "objects_deleted": objects_deleted,
-    }
 
 
 def simulation_input_sha256(simulation: SimulationExecutionInput) -> str:

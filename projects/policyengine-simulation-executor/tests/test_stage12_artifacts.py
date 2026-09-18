@@ -94,13 +94,6 @@ class FakeObjectStore:
     def read_bytes(self, path):
         return self.values.get(path)
 
-    def delete_prefix(self, prefix):
-        matching = [path for path in self.values if path.startswith(prefix)]
-        for path in matching:
-            del self.values[path]
-        return len(matching)
-
-
 def test_immutable_retry_accepts_identical_bytes_and_rejects_other_bytes() -> None:
     objects = FakeObjectStore()
     store = Stage12ArtifactStore("private-stage12", store=objects)
@@ -121,23 +114,3 @@ def test_aggregate_write_rejects_an_undeclared_payload_shape() -> None:
             prefix="stage-12-evaluation/staging/2026/09/evaluation-1",
             payload={"result": {}},
         )
-
-
-def test_retention_delete_requires_one_complete_evaluation_prefix() -> None:
-    objects = FakeObjectStore()
-    objects.values = {
-        "stage-12-evaluation/staging/2026/09/evaluation-1/input.json": b"one",
-        "stage-12-evaluation/staging/2026/09/evaluation-2/input.json": b"two",
-    }
-    store = Stage12ArtifactStore("private-stage12", store=objects)
-
-    deleted = store.delete_evaluation(
-        "stage-12-evaluation/staging/2026/09/evaluation-1"
-    )
-
-    assert deleted == 1
-    assert list(objects.values) == [
-        "stage-12-evaluation/staging/2026/09/evaluation-2/input.json"
-    ]
-    with pytest.raises(ValueError, match="unbounded"):
-        store.delete_evaluation("stage-12-evaluation/staging")

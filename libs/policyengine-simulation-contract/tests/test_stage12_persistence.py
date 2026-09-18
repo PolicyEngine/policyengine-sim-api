@@ -261,29 +261,6 @@ def test_successful_records_cannot_be_overwritten() -> None:
     assert len(simulation_cursor.calls) == 1
 
 
-def test_retention_selects_a_bounded_batch_and_deletes_by_cutoff() -> None:
-    record = _record()
-    cutoff = NOW + timedelta(days=31)
-    select_cursor = FakeCursor([record.model_dump(mode="python")])
-    delete_cursor = FakeCursor([{"evaluation_id": record.evaluation_id}])
-    cursors = iter((select_cursor, delete_cursor))
-    store = PostgresEvaluationStore(
-        "postgresql://runtime",
-        connect=lambda *_, **__: FakeConnection(next(cursors)),
-    )
-
-    selected = store.list_expired_reports(expired_before=cutoff, limit=100)
-    deleted = store.delete_expired_report(
-        record.evaluation_id,
-        expired_before=cutoff,
-    )
-
-    assert selected == (record,)
-    assert deleted is True
-    assert select_cursor.calls[0][1]["limit"] == 100
-    assert delete_cursor.calls[0][0].startswith("DELETE FROM")
-
-
 def test_attaching_report_invocation_preserves_completed_lifecycle() -> None:
     record = _record().model_copy(
         update={

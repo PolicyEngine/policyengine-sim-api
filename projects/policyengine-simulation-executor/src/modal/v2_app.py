@@ -217,20 +217,3 @@ def coordinate_report(payload: dict, context: dict) -> dict:
     from policyengine_simulation_executor.stage12_runtime import coordinate_report
 
     return coordinate_report(payload, context, application_name=APP_NAME)
-
-
-@app.function(
-    image=coordinator_image,
-    cpu=1.0,
-    memory=1024,
-    timeout=900,
-    retries=0,
-    schedule=modal.Cron("17 * * * *"),
-    secrets=worker_secrets,
-)
-def cleanup_expired_evaluations() -> dict:
-    from policyengine_simulation_executor.stage12_runtime import (
-        cleanup_expired_evaluations,
-    )
-
-    return cleanup_expired_evaluations()

@@ -64,6 +64,10 @@ modal-simulation-image = [
     # on an upstream package keeping it.
     "google-cloud-storage>=2",
     "pyarrow>=20,<24",
+    # The Stage 12 coordinator persists comparison-run state in PostgreSQL.
+    # Include the driver explicitly because this dependency group, rather than
+    # the project's normal dependencies, is installed into Modal images.
+    "psycopg[binary]>=3.2,<4",
 ]
 # The executor's budget-window scheduler tests exercise the gateway app
 # end-to-end; the gateway project rides in as a dev-only path dependency.

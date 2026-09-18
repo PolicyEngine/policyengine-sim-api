@@ -271,21 +271,6 @@ WHERE simulation_execution_id = %(simulation_execution_id)s
   AND modal_invocation_id = %(expected_placeholder)s
 RETURNING {", ".join(SIMULATION_COLUMNS)}
 """.strip()
-REPORT_SELECT_EXPIRED_SQL = f"""
-SELECT {", ".join(REPORT_COLUMNS)}
-FROM {REPORT_TABLE}
-WHERE retention_expires_at <= %(expired_before)s
-ORDER BY retention_expires_at, evaluation_id
-LIMIT %(limit)s
-""".strip()
-REPORT_DELETE_EXPIRED_SQL = f"""
-DELETE FROM {REPORT_TABLE}
-WHERE evaluation_id = %(evaluation_id)s
-  AND retention_expires_at <= %(expired_before)s
-RETURNING evaluation_id
-""".strip()
-
-
 def _parameters(record: EvaluationReportRecord | EvaluationSimulationRecord) -> dict:
     values = record.model_dump(mode="python")
     for key, value in tuple(values.items()):
@@ -593,43 +578,6 @@ class PostgresEvaluationStore:
             raise ValueError("evaluation simulation invocation identity changed")
         return resolved
 
-    def list_expired_reports(
-        self,
-        *,
-        expired_before: datetime,
-        limit: int,
-    ) -> tuple[EvaluationReportRecord, ...]:
-        if expired_before.tzinfo is None:
-            raise ValueError("retention cutoff must include a timezone")
-        if limit < 1 or limit > 1_000:
-            raise ValueError("retention batch limit must be between 1 and 1000")
-        with self._connection() as connection, connection.cursor() as cursor:
-            cursor.execute(
-                REPORT_SELECT_EXPIRED_SQL,
-                {"expired_before": expired_before, "limit": limit},
-            )
-            rows = cursor.fetchall()
-        return tuple(EvaluationReportRecord.model_validate(row) for row in rows)
-
-    def delete_expired_report(
-        self,
-        evaluation_id: UUID,
-        *,
-        expired_before: datetime,
-    ) -> bool:
-        if expired_before.tzinfo is None:
-            raise ValueError("retention cutoff must include a timezone")
-        with self._connection() as connection, connection.cursor() as cursor:
-            cursor.execute(
-                REPORT_DELETE_EXPIRED_SQL,
-                {
-                    "evaluation_id": evaluation_id,
-                    "expired_before": expired_before,
-                },
-            )
-            return cursor.fetchone() is not None
-
-
 def sql_statements() -> Mapping[str, str]:
     """Expose bounded DML for tests and operational review."""
 
@@ -646,6 +594,4 @@ def sql_statements() -> Mapping[str, str]:
         "simulation_update": SIMULATION_UPDATE_SQL,
         "report_attach_invocation": REPORT_ATTACH_INVOCATION_SQL,
         "simulation_attach_invocation": SIMULATION_ATTACH_INVOCATION_SQL,
-        "report_select_expired": REPORT_SELECT_EXPIRED_SQL,
-        "report_delete_expired": REPORT_DELETE_EXPIRED_SQL,
     }

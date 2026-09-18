@@ -41,7 +41,6 @@ from policyengine_simulation_executor.stage12_artifacts import (
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
     _build_spm_result,
-    cleanup_expired_evaluations,
     coordinate_report,
     run_single_simulation,
     simulation_input_sha256,
@@ -225,16 +224,6 @@ class FakeStore:
             self.children[simulation_execution_id] = child
         return child
 
-    def list_expired_reports(self, *, expired_before, limit):
-        assert limit == 100
-        return (self.parent,)
-
-    def delete_expired_report(self, evaluation_id, *, expired_before):
-        assert evaluation_id == self.parent.evaluation_id
-        self.parent_deleted = True
-        return True
-
-
 class FakeArtifacts:
     def __init__(self):
         self.payloads = {}
@@ -291,11 +280,6 @@ class FakeArtifacts:
             content_sha256=digest,
             size_bytes=len(encoded),
         )
-
-    def delete_evaluation(self, prefix):
-        self.deleted_prefix = prefix
-        return 3
-
 
 def _frames(value=100.0):
     return {
@@ -738,22 +722,3 @@ def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
     timed_out_child = store.children[BASELINE_ID]
     assert timed_out_child.status is EvaluationLifecycleStatus.FAILED
     assert timed_out_child.error_summary == "TimeoutError"
-
-
-def test_retention_deletes_artifacts_before_temporary_records() -> None:
-    store = FakeStore()
-    artifacts = FakeArtifacts()
-
-    result = cleanup_expired_evaluations(
-        store=store,
-        artifacts=artifacts,
-        expired_before=NOW + timedelta(days=31),
-    )
-
-    assert result == {
-        "reports_selected": 1,
-        "reports_deleted": 1,
-        "objects_deleted": 3,
-    }
-    assert artifacts.deleted_prefix.endswith(str(EVALUATION_ID))
-    assert store.parent_deleted is True

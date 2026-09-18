@@ -296,8 +296,3 @@ class Stage12ArtifactStore:
         if payload is None:
             raise FileNotFoundError(uri)
         return payload
-
-    def delete_evaluation(self, prefix: str) -> int:
-        if not prefix.startswith("stage-12-evaluation/") or prefix.count("/") < 4:
-            raise ValueError("refusing to delete an unbounded artifact prefix")
-        return self._store.delete_prefix(f"{prefix}/")

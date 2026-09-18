@@ -80,6 +80,12 @@ def validate_country_worker(
 
     runtime_environment = environment if environment is not None else os.environ
     _require_secret_environment(runtime_environment)
+    # Import the same persistence and coordinator modules loaded by a real
+    # report run. This prevents manifest publication when the Modal image is
+    # missing a runtime-only dependency such as the PostgreSQL driver.
+    import_module("psycopg")
+    import_module("policyengine_simulation_contract.stage12_persistence")
+    import_module("policyengine_simulation_executor.stage12_runtime")
     resolved = load_stage12_bundle()
     if resolved.bundle_manifest_sha256 != expected_bundle_manifest_sha256:
         raise RuntimeError(
