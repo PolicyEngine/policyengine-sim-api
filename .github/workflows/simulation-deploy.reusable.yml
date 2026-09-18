@@ -121,14 +121,6 @@ jobs:
         id: versions
         run: .github/scripts/modal-extract-versions.sh projects/policyengine-simulation-executor
 
-      - name: Initialize Stage 12 parallel execution as disabled
-        if: ${{ inputs.deploy_stage12_v2 }}
-        working-directory: projects/policyengine-simulation-executor
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: uv run python -m src.modal.utils.set_stage12_dual_execution --modal-environment "${{ inputs.modal_environment }}" --deployment-environment "${{ inputs.deployment_environment }}"
-
       - name: Synchronize Modal runtime secrets
         if: ${{ inputs.deploy_existing_stack }}
         working-directory: projects/policyengine-simulation-executor
@@ -237,14 +229,14 @@ jobs:
             "OLD_GATEWAY_AUTH_CLIENT_SECRET=${{ vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME }}:latest"
           )
           if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then
-            runtime_env+="@STAGE12_COMPARISON_BACKEND_CONFIGURED=1@STAGE12_V2_MANIFEST_NAME=simulation-api-v2-version-manifest@STAGE12_CONTROL_NAME=simulation-api-v2-dual-execution@STAGE12_V2_MANIFEST_ENVIRONMENT=${{ inputs.modal_environment }}@STAGE12_ARTIFACT_BUCKET=${{ vars.STAGE12_ARTIFACT_BUCKET }}@STAGE12_DISPATCH_MAX_IN_FLIGHT=${{ vars.STAGE12_DISPATCH_MAX_IN_FLIGHT || '8' }}@STAGE12_DISPATCH_QUEUE_CAPACITY=${{ vars.STAGE12_DISPATCH_QUEUE_CAPACITY || '32' }}@STAGE12_DISPATCH_TIMEOUT_SECONDS=${{ vars.STAGE12_DISPATCH_TIMEOUT_SECONDS || '15' }}"
+            runtime_env+="@STAGE12_ENABLED=${{ vars.STAGE12_ENABLED }}@STAGE12_V2_MANIFEST_NAME=simulation-api-v2-version-manifest@STAGE12_V2_MANIFEST_ENVIRONMENT=${{ inputs.modal_environment }}@STAGE12_ARTIFACT_BUCKET=${{ vars.STAGE12_ARTIFACT_BUCKET }}"
             runtime_secrets+=(
               "MODAL_TOKEN_ID=${{ vars.MODAL_TOKEN_ID_SECRET_NAME }}:latest"
               "MODAL_TOKEN_SECRET=${{ vars.MODAL_TOKEN_SECRET_SECRET_NAME }}:latest"
               "STAGE12_DATABASE_URL=${{ vars.STAGE12_DATABASE_URL_SECRET_NAME }}:latest"
             )
           else
-            runtime_env+="@STAGE12_COMPARISON_BACKEND_CONFIGURED=0"
+            runtime_env+="@STAGE12_ENABLED=0"
           fi
           gcloud run deploy "${{ inputs.entrypoint_service }}" \
             --project "${PROJECT_ID}" \

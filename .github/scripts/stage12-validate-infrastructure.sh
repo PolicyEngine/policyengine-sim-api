@@ -137,7 +137,7 @@ CLOUDSDK_CONFIG="${runtime_gcloud_config}" gcloud auth activate-service-account 
   --project "${STAGE12_GCP_PROJECT_ID}" \
   --quiet >/dev/null
 canary_id="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${RANDOM}"
-canary_object="gs://${STAGE12_ARTIFACT_BUCKET}/stage-12-evaluation/_deployment-validation/${STAGE12_ENVIRONMENT}/${canary_id}.txt"
+canary_object="gs://${STAGE12_ARTIFACT_BUCKET}/stage-12-runs/_deployment-validation/${STAGE12_ENVIRONMENT}/${canary_id}.txt"
 printf 'stage12-storage-validation:%s\n' "${canary_id}" >"${canary_source_file}"
 CLOUDSDK_CONFIG="${runtime_gcloud_config}" gcloud storage cp \
   "${canary_source_file}" "${canary_object}" --quiet

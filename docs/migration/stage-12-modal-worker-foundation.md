@@ -11,7 +11,7 @@ simulation submission or polling contracts.
 - The Cloud Run Simulation Entrypoint keeps its current production adapter,
   which forwards submissions and polls to the existing Modal HTTP routing
   service. Responses from that path remain authoritative.
-- A separate evaluation adapter reads only a separately stored v2 version
+- A separate comparison-run adapter reads only a separately stored v2 version
   manifest and invokes separately named v2 Modal functions directly.
 - Invocation context carries both the logical deployment environment used for
   records and artifact paths (`staging` or `production`) and the Modal
@@ -20,7 +20,7 @@ simulation submission or polling contracts.
   records as `main`.
 - One v2 report-coordinator invocation starts baseline and reform as distinct
   single-simulation calls before awaiting either result.
-- The v2 functions write canonical private artifacts and temporary evaluation
+- The v2 functions write canonical private artifacts and temporary comparison
   state. They do not create production simulations, reports, report runs, or
   user associations.
 
@@ -30,12 +30,13 @@ its v1 routing manifest remain deployed and unchanged throughout Stage 12.
 ## Cross-repository ownership
 
 `PolicyEngine/policyengine-api` is the only schema authority for the temporary
-evaluation tables. This repository owns the strict runtime request, artifact,
-and persistence models used by the Stage 12 workers. Changes that affect both
-repositories require coordinated review; no generated cross-repository
-contract file is checked in or consumed at runtime. This repository must not
-define SQLModel tables or an Alembic migration for the evaluation records, and
-its runtime must not execute DDL.
+comparison tables. Their physical `stage12_evaluation_*` names and
+`evaluation_id` column remain unchanged until Stage 14. This repository owns
+the strict runtime request, artifact, and persistence models used by the Stage
+12 workers. Changes that affect both repositories require coordinated review;
+no generated cross-repository contract file is checked in or consumed at
+runtime. This repository must not define SQLModel tables or an Alembic
+migration for the comparison records, and its runtime must not execute DDL.
 
 ## Release and deployment constraints
 
@@ -49,17 +50,17 @@ its runtime must not execute DDL.
   configuration, and in-process cached state must be distinct from v1.
 - Publishing or rejecting either manifest must leave the other manifest and
   its selected applications unchanged.
-- V2 worker object access uses the separate
+- V2 worker object access uses the already-provisioned separate
   `stage12-evaluation-gcp-credentials` Modal secret. The worker application
   does not receive the existing general GCP credential secret.
-- Dual execution is configured as enabled or disabled per flow and environment,
-  defaults to disabled, and never selects only a percentage of eligible jobs.
-- The Cloud Run revision can contain the Stage 12 adapter while the separate
-  `simulation-api-v2-dual-execution` control document remains disabled. The
-  entry service reads that document for each accepted job and fails closed if
-  it is missing or invalid, so operators can stop new evaluation dispatch and
-  v2 manifest selection without redeploying the entry service or changing the
-  production forwarding configuration.
+- `STAGE12_ENABLED` is the only automatic-run setting. Missing or `0` disables
+  automatic runs, `1` enables every supported newly accepted annual
+  society-wide report, and any other value prevents service startup. Changing
+  the setting requires a Cloud Run deployment. There is no percentage,
+  request-bucket, shared runtime-control document, or partial-dataset mode.
+- The separately named Modal application and v2 manifest remain deployed when
+  `STAGE12_ENABLED=0`. The authenticated direct route also remains available
+  whenever the Stage 12 resources are configured.
 
 Any genuinely one-time provisioning sequence must be implemented in a bounded
 disposable script before execution and removed after the resulting state is
@@ -76,11 +77,11 @@ automation or infrastructure configuration:
 | --- | --- |
 | Build and deploy each versioned v2 Modal application | Simulation deployment workflow |
 | Create or update the separate v2 manifest storage object | V2 manifest publisher |
-| Configure the v2 manifest reader and binary flow settings | Cloud Run deployment workflow |
+| Configure the v2 manifest reader and `STAGE12_ENABLED` | Cloud Run deployment workflow |
 | Create the private artifact namespace and its retention policy | Infrastructure configuration |
-| Grant private-object access only to the Modal runtime and evaluation-row DML to the entry and Modal runtimes | Infrastructure configuration |
+| Grant private-object access only to the Modal runtime and comparison-row DML to the entry and Modal runtimes | Infrastructure configuration |
 | Attach named runtime secrets without exposing their values | Simulation deployment workflow |
-| Disable or restore v2 manifest selection and dual execution | Deployment rollback automation |
+| Disable or restore automatic Stage 12 invocation | Cloud Run deployment workflow |
 | Recreate any Stage 12 service or storage resource after loss | The same deployment and infrastructure automation |
 
 When a deployment requests the Stage 12 resources, the ordinary integration
@@ -92,21 +93,21 @@ Every merge to `main` requests the Stage 12 resources in both the `beta` and
 `prod` jobs. Each job validates its pre-provisioned environment-specific
 resources, deploys and validates the separate v2 Modal application, publishes
 the separate v2 manifest, and deploys a Stage 12-configured Cloud Run revision.
-The `prod` job runs only after `beta` succeeds. Each environment's independent
-dual-execution control remains disabled during deployment, so deploying Stage
-12 does not copy production-path submissions until an operator enables the
-approved flow for that environment. Production prerequisites must therefore be
-provisioned and verified before merging; missing production prerequisites are
-a deployment failure, not a reason to omit Stage 12 from the `prod` job.
+The `prod` job runs only after `beta` succeeds. The `beta` and `prod` GitHub
+environments each provide `STAGE12_ENABLED`; both values are initially `0`, so
+deploying Stage 12 does not copy production-path submissions until an operator
+changes the applicable value to `1` and deploys Cloud Run. Production
+prerequisites must therefore be provisioned and verified before merging;
+missing production prerequisites are a deployment failure, not a reason to
+omit Stage 12 from the `prod` job.
 
 This automatic production deployment creates or updates a dormant Stage 12
 runtime: the separate Modal application, v2 manifest, runtime configuration,
 and temporary authenticated direct endpoint are present for later updates and
-qualification. It does not send ordinary production calculations to the Stage
-12 report coordinator or single-simulation workers. The promoted Cloud Run
-revision continues forwarding those calculations to the existing Modal HTTP
-routing service and existing executors while both production control settings
-remain false.
+qualification. With `STAGE12_ENABLED=0`, it does not send ordinary production
+calculations to the Stage 12 report coordinator or single-simulation workers.
+The promoted Cloud Run revision continues forwarding those calculations to the
+existing Modal HTTP routing service and existing executors.
 
 Existing environment, domain, and production-service resources are inputs to
 Stage 12 rather than resources this change provisions. If implementation later
@@ -117,15 +118,15 @@ created state is independently verified.
 
 ## Initial flow
 
-The initial evaluation flow is `POST /simulate/economy/comparison` for reviewed
+The initial comparison flow is `POST /simulate/economy/comparison` for reviewed
 annual society-wide comparison inputs. The production request is forwarded
 unchanged. Only a newly accepted supported production job may create one
-corresponding evaluation report; polls, cached results, and repeated submissions
-that resolve the same production job do not create another evaluation.
+corresponding comparison run; polls, cached results, and repeated submissions
+that resolve the same production job do not create another comparison.
 
 Deployment keeps one environment-specific PostgreSQL runtime role for the
-Simulation Entrypoint, report coordinator, single-simulation functions, and
-retention cleanup. `policyengine-api` remains the source of truth for that
+Simulation Entrypoint, report coordinator, and single-simulation functions.
+`policyengine-api` remains the source of truth for that
 role: it has `SELECT`, `INSERT`, `UPDATE`, and `DELETE` only on the two temporary
 Stage 12 tables, has no schema-migration authority, and participates in no role
 membership. Before deploying, the simulation workflow connects with the actual
@@ -157,9 +158,9 @@ The existing Cloud Run Simulation Entrypoint exposes these operator-only routes:
   child execution metadata.
 
 Both routes enforce the Simulation Entrypoint's existing bearer authentication.
-They are available whenever the Stage 12 backend is configured. Manual direct
-submissions do not consult the automatic dual-execution control, so disabling
-automatic economy copies does not disable these authenticated routes.
+They are available whenever the Stage 12 resources are configured. Manual
+direct submissions do not consult `STAGE12_ENABLED`, so disabling automatic
+runs does not disable these authenticated routes.
 
 The direct submission does not call the existing production computation and
 does not keep a Cloud Run request open while calculations run:
@@ -175,7 +176,7 @@ Cloud Run Simulation Entrypoint
         | resolve separate v2 manifest
         | call Modal spawn and retain its invocation ID
         |
-        +------> return evaluation_id
+        +------> return the legacy physical evaluation_id
         |
         v
 Modal report coordinator
@@ -233,51 +234,45 @@ private artifact references and digests, but never returns artifact contents.
 Cloud Run therefore requires no additional object-storage permission for this
 interface.
 
-## Runtime enablement and rollback
+## Automatic execution, result comparison, and rollback
 
-`STAGE12_DUAL_EXECUTION_ECONOMY=1` installs the evaluation adapter and its
-separate credentials in a Cloud Run revision; it does not by itself start any
-evaluation work. The runtime decision comes from the separately stored
-`simulation-api-v2-dual-execution` document. A missing, malformed, disabled, or
-wrong-environment document stops automatic production-copy dispatch before
-manifest lookup or database access. It does not disable the authenticated
-temporary direct runner described above.
+The deployment workflow passes the environment-specific `STAGE12_ENABLED`
+GitHub variable to Cloud Run. Set the `beta` value to `1` and deploy to enable
+staging after qualification. Set it back to `0` and deploy to stop new
+automatic staging runs. Production uses the same explicit deployment sequence
+with the `prod` variable. Changing this value does not deploy or remove Modal
+workers and does not change the existing production forwarding configuration.
 
-After staging qualification, enable complete economy comparisons with:
+When enabled, a successful production submission causes the Simulation
+Entrypoint to create or resolve the temporary parent record and invoke the
+already-deployed Modal report coordinator. Cloud Run waits only for Modal to
+acknowledge that invocation, for at most five seconds. There is no process-local
+queue. Failure or timeout is recorded and the unchanged production response is
+returned.
 
-```bash
-uv run python -m src.modal.utils.set_stage12_dual_execution \
-  --environment staging \
-  --manifest-selection-enabled \
-  --economy-enabled
-```
+The report coordinator starts baseline and reform as independent Modal calls,
+waits for them, and derives the Stage 12 aggregate. It then restores the
+production Modal function call by the retained production job identifier and
+waits up to five minutes for that production call to finish. It compares both
+complete aggregate result objects exactly. The private
+`reports/comparison.json` receipt contains:
 
-Stop new evaluation dispatch and v2 manifest selection without changing the
-Cloud Run revision or the existing production forwarding path with:
+- the SHA-256 digest of each complete result object;
+- every differing scalar leaf, addressed by JSON Pointer;
+- presence and both values for each difference; and
+- absolute and relative deltas when both values are numeric.
 
-```bash
-uv run python -m src.modal.utils.set_stage12_dual_execution \
-  --environment staging \
-  --no-manifest-selection-enabled \
-  --no-economy-enabled
-```
+The receipt does not duplicate either complete result object. Its URI, digest,
+schema version, completion time, and status are written to the temporary parent
+row. Comparison retrieval, calculation, artifact, or persistence failure cannot
+change the already-successful Stage 12 aggregate and cannot affect the existing
+production result. Direct Stage 12-only runs have no production result and keep
+comparison status `not_requested`.
 
-The same commands require the explicit `production` environment for production
-state. These controls are binary: there is no percentage, request bucket, or
-partial-dataset mode.
-
-Automatic copies use a fixed-size dispatcher in each Cloud Run instance. The
-defaults allow 8 active dispatch attempts and 32 additional waiting requests.
-Each attempt has a 15-second dispatch timeout. Deployments can set
-`STAGE12_DISPATCH_MAX_IN_FLIGHT`, `STAGE12_DISPATCH_QUEUE_CAPACITY`, and
-`STAGE12_DISPATCH_TIMEOUT_SECONDS` to reviewed values within the limits checked
-at startup. When the waiting capacity is exhausted or an attempt times out, the
-service records that Stage 12 failure and leaves the accepted v1 response
-unchanged. Because Python cannot safely terminate a synchronous database or
-Modal client call already running in a thread, a timed-out call retains its
-fixed worker slot until it returns. This prevents abandoned calls from
-accumulating while keeping memory, asynchronous tasks, and active dispatches
-bounded independently of production request concurrency.
+The artifact bucket deletes private Stage 12 objects after 30 days. This
+application registers no periodic cleanup function and does not delete the
+temporary PostgreSQL rows. Those rows remain restricted operational history
+until Stage 14 removes the temporary schema.
 
 Household computation, budget-window computation, public response fields,
 public identifiers, and production persistence are outside this companion
