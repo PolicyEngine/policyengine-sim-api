@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Literal
+from typing import Any, Literal, Protocol
+from uuid import UUID
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, TypeAdapter, ValidationError
 from policyengine_observability import REQUEST_ID_HEADER, record_event
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
@@ -23,16 +24,22 @@ from policyengine_simulation_contract.gateway_models import (
     PingRequest,
     PingResponse,
     ReadinessResponse,
-    SimulationRequest,
     SimulationErrorResponse,
+    SimulationRequest,
     VersionMap,
     VersionsResponse,
 )
 from policyengine_simulation_contract.json_types import JsonObject
+from policyengine_simulation_contract.stage12_execution import (
+    ComparisonReportRecord,
+    ComparisonRunLifecycleStatus,
+    ComparisonSimulationRecord,
+)
 from policyengine_simulation_observability.observability import (
     configure_process_observability,
     init_simulation_observability,
 )
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from starlette.datastructures import MutableHeaders
 
 from policyengine_simulation_entry.auth import CallerAuthenticator
@@ -49,6 +56,12 @@ from policyengine_simulation_entry.schemas import (
     BackendTelemetryPayload,
     CallerIdentity,
     RequestIdentifiers,
+    TemporaryStage12ReportResponse,
+    TemporaryStage12SubmissionResponse,
+)
+from policyengine_simulation_entry.stage12_backend import (
+    TemporaryStage12DispatchFailed,
+    TemporaryStage12UnsupportedRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,6 +71,29 @@ BACKEND_RESPONSE_HEADER = {
 _json_object_adapter = TypeAdapter(JsonObject)
 type AuthenticationDependency = Callable[[], CallerIdentity | None]
 type ResponseIdentifier = Literal["job_id", "batch_job_id"]
+STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS = 5.0
+
+
+class ComparisonBackend(Protocol):
+    async def dispatch_after_production(
+        self,
+        *,
+        request_payload: dict[str, Any],
+        production_response: bytes,
+        request_id: str,
+    ) -> None: ...
+
+    async def submit_temporary_report(
+        self,
+        *,
+        request_payload: dict[str, Any],
+        request_id: str,
+    ) -> ComparisonReportRecord: ...
+
+    async def get_temporary_report(
+        self,
+        evaluation_id: UUID,
+    ) -> tuple[ComparisonReportRecord, tuple[ComparisonSimulationRecord, ...]]: ...
 
 
 def _model_json(model: BaseModel) -> JsonObject:
@@ -90,10 +126,13 @@ def _request_identifiers(request: Request) -> RequestIdentifiers:
     identifiers: RequestIdentifiers = {}
     job_id = request.path_params.get("job_id")
     batch_job_id = request.path_params.get("batch_job_id")
+    evaluation_id = request.path_params.get("evaluation_id")
     if isinstance(job_id, str):
         identifiers["job_id"] = job_id
     if isinstance(batch_job_id, str):
         identifiers["batch_job_id"] = batch_job_id
+    if isinstance(evaluation_id, str):
+        identifiers["evaluation_id"] = evaluation_id
     return identifiers
 
 
@@ -102,12 +141,20 @@ def create_app(
     settings: Settings | None = None,
     backend: SimulationBackend | None = None,
     auth_dependency: AuthenticationDependency | None = None,
+    comparison_backend: ComparisonBackend | None = None,
 ) -> FastAPI:
     """Build the app with injectable auth/backend seams for hermetic tests."""
 
     runtime_settings = settings or Settings.from_env()
     runtime_backend = backend or OldGatewayBackend(runtime_settings)
     authenticate = auth_dependency or CallerAuthenticator(runtime_settings)
+    runtime_comparison = comparison_backend
+    if runtime_comparison is None and runtime_settings.stage12_resources_configured:
+        from policyengine_simulation_entry.stage12_backend import (
+            Stage12ComparisonBackend,
+        )
+
+        runtime_comparison = Stage12ComparisonBackend.from_settings(runtime_settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -262,6 +309,151 @@ def create_app(
 
     protected = [Depends(authenticate)]
 
+    def temporary_submission_payload(
+        report: ComparisonReportRecord,
+    ) -> TemporaryStage12SubmissionResponse:
+        return TemporaryStage12SubmissionResponse(
+            evaluation_id=report.evaluation_id,
+            status=report.status,
+            poll_url=f"/internal/stage12/reports/{report.evaluation_id}",
+        )
+
+    # TEMPORARY(Stage 12): This operator-only route is deliberately excluded
+    # from OpenAPI. Remove it when Stage 14 provides authoritative v2 report
+    # submission and polling through production report records.
+    @app.post(
+        "/internal/stage12/reports",
+        include_in_schema=False,
+        dependencies=protected,
+    )
+    async def submit_temporary_stage12_report(
+        body: SimulationRequest,
+        request: Request,
+    ) -> Response:
+        if not runtime_settings.stage12_enabled:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Stage 12 execution is disabled."},
+                headers={"Retry-After": "10"},
+            )
+        comparison = runtime_comparison
+        if comparison is None:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Stage 12 direct execution is unavailable."},
+                headers={"Retry-After": "10"},
+            )
+        try:
+            report = await asyncio.wait_for(
+                comparison.submit_temporary_report(
+                    request_payload=_model_json(body),
+                    request_id=request.state.request_id,
+                ),
+                timeout=STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            return JSONResponse(
+                status_code=504,
+                content={"detail": "Stage 12 submission acknowledgement timed out."},
+                headers={"Retry-After": "10"},
+            )
+        except TemporaryStage12UnsupportedRequest as error:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "detail": "Stage 12 does not support this request.",
+                    "reason": error.reason,
+                },
+            )
+        except TemporaryStage12DispatchFailed as error:
+            return JSONResponse(
+                status_code=502,
+                content=temporary_submission_payload(error.report).model_dump(
+                    mode="json"
+                ),
+            )
+        # This temporary diagnostic route must convert every integration
+        # failure into an HTTP response rather than crash the application.
+        except Exception as error:  # noqa: BLE001
+            logger.error(
+                "stage12_direct_submission_failed",
+                extra={
+                    "request_id": request.state.request_id,
+                    "error_type": type(error).__name__,
+                },
+            )
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Stage 12 direct execution is unavailable."},
+                headers={"Retry-After": "10"},
+            )
+        return JSONResponse(
+            status_code=202,
+            content=temporary_submission_payload(report).model_dump(mode="json"),
+            # The Modal coordinator, rather than Cloud Run, creates the durable
+            # parent row. Give it a brief head start before the first status read.
+            headers={"Retry-After": "1"},
+        )
+
+    # TEMPORARY(Stage 12): Poll temporary PostgreSQL comparison state only;
+    # never wait on or poll a Modal FunctionCall from this Cloud Run request.
+    @app.get(
+        "/internal/stage12/reports/{evaluation_id}",
+        include_in_schema=False,
+        dependencies=protected,
+    )
+    async def get_temporary_stage12_report(
+        evaluation_id: UUID,
+        request: Request,
+    ) -> Response:
+        comparison = runtime_comparison
+        if comparison is None:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Stage 12 direct execution is unavailable."},
+                headers={"Retry-After": "10"},
+            )
+        try:
+            report, simulations = await comparison.get_temporary_report(evaluation_id)
+        except LookupError:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "Stage 12 report was not found."},
+                # A newly acknowledged Modal invocation may not yet have
+                # created its parent row. The same response also covers an
+                # identifier that never existed, so callers must bound retries.
+                headers={"Retry-After": "1"},
+            )
+        # Reading temporary diagnostic state crosses database and adapter
+        # boundaries whose concrete exception types are implementation details.
+        except Exception as error:  # noqa: BLE001
+            logger.error(
+                "stage12_direct_status_failed",
+                extra={
+                    "request_id": request.state.request_id,
+                    "evaluation_id": str(evaluation_id),
+                    "error_type": type(error).__name__,
+                },
+            )
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Stage 12 report status is unavailable."},
+                headers={"Retry-After": "10"},
+            )
+        payload = TemporaryStage12ReportResponse(
+            report=report,
+            simulations=simulations,
+        )
+        running = report.status in {
+            ComparisonRunLifecycleStatus.PENDING,
+            ComparisonRunLifecycleStatus.RUNNING,
+        }
+        return JSONResponse(
+            status_code=202 if running else 200,
+            content=payload.model_dump(mode="json"),
+            headers={"Retry-After": "5"} if running else None,
+        )
+
     @app.post(
         "/simulate/economy/comparison",
         summary="Submit Simulation",
@@ -286,13 +478,49 @@ def create_app(
         body: SimulationRequest,
         request: Request,
     ) -> Response:
-        return await forward(
+        request_payload = _model_json(body)
+        response = await forward(
             request,
             "POST",
             "/simulate/economy/comparison",
-            _model_json(body),
+            request_payload,
             response_identifier_key="job_id",
         )
+        if (
+            runtime_settings.stage12_enabled
+            and runtime_comparison is not None
+            and response.status_code in {200, 202}
+        ):
+            # Wait only for Modal to acknowledge the already-deployed report
+            # coordinator invocation. Calculation and comparison run later.
+            try:
+                await asyncio.wait_for(
+                    runtime_comparison.dispatch_after_production(
+                        request_payload=request_payload,
+                        production_response=bytes(response.body),
+                        request_id=request.state.request_id,
+                    ),
+                    timeout=STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                logger.error(
+                    "stage12_comparison_dispatch_timed_out",
+                    extra={
+                        "request_id": request.state.request_id,
+                        "timeout_seconds": STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
+                    },
+                )
+            # Automatic Stage 12 work must never change the production v1
+            # response, including for unexpected integration failures.
+            except Exception as error:  # noqa: BLE001
+                logger.error(
+                    "stage12_comparison_dispatch_failed",
+                    extra={
+                        "request_id": request.state.request_id,
+                        "error_type": type(error).__name__,
+                    },
+                )
+        return response
 
     @app.post(
         "/simulate/economy/budget-window",

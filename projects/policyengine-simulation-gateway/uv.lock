@@ -1289,6 +1289,7 @@ name = "policyengine-simulation-contract"
 version = "0.1.0"
 source = { editable = "../../libs/policyengine-simulation-contract" }
 dependencies = [
+    { name = "packaging" },
     { name = "policyengine-simulation-observability" },
     { name = "pydantic" },
 ]
@@ -1303,14 +1304,17 @@ requires-dist = [
     { name = "black", marker = "extra == 'build'", specifier = ">=25.1.0" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.4,<2" },
     { name = "modal", marker = "extra == 'test'", specifier = ">=1.4,<2" },
+    { name = "packaging", specifier = ">=24" },
     { name = "policyengine-simulation-observability", editable = "../../libs/policyengine-simulation-observability" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2,<4" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'test'", specifier = ">=3.2,<4" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyright", marker = "extra == 'build'", specifier = ">=1.1.401" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.25.3" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1" },
 ]
-provides-extras = ["modal", "test", "build"]
+provides-extras = ["modal", "postgres", "test", "build"]
 
 [[package]]
 name = "policyengine-simulation-gateway"

@@ -9,6 +9,7 @@ license = {file = "../../LICENSE"}
 requires-python = ">=3.13"
 dependencies = [
     "pydantic>=2.0",
+    "packaging>=24",
     # gateway_models embeds the TelemetryEnvelope from the observability lib.
     "policyengine-simulation-observability",
 ]
@@ -17,11 +18,15 @@ dependencies = [
 modal = [
     "modal>=1.4,<2",
 ]
+postgres = [
+    "psycopg[binary]>=3.2,<4",
+]
 test = [
     "pytest>=8.3.4",
     "pytest-asyncio>=0.25.3",
     "pytest-cov>=6.1.1",
     "modal>=1.4,<2",
+    "psycopg[binary]>=3.2,<4",
 ]
 build = [
     "pyright>=1.1.401",

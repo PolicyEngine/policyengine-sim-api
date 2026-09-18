@@ -82,6 +82,7 @@ def install_fake_modal(monkeypatch):
     modal.Image = FakeImage
     modal.Secret = FakeSecret
     modal.App = FakeApp
+    modal.Cron = lambda schedule: {"schedule": schedule}
     modal.is_local = lambda: True
     modal.asgi_app = lambda: lambda function: function
     monkeypatch.setitem(sys.modules, "modal", modal)

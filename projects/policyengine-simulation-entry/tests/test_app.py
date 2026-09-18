@@ -1,11 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
 import pytest
+from conftest import FakeBackend, make_settings
+from fastapi import HTTPException
 from policyengine_observability import REQUEST_ID_HEADER, current_context
 from policyengine_simulation_contract.json_types import JsonObject
+from policyengine_simulation_contract.stage12_execution import (
+    ComparisonRunLifecycleStatus,
+    SimulationRole,
+)
+from stage12_fixtures import (
+    EVALUATION_ID,
+    comparison_report,
+    comparison_simulation,
+    eligible_payload,
+)
 
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
@@ -14,8 +27,10 @@ from policyengine_simulation_entry.backend import (
     BackendTimeout,
     BackendUnavailable,
 )
-
-from conftest import FakeBackend, make_settings
+from policyengine_simulation_entry.stage12_backend import (
+    TemporaryStage12DispatchFailed,
+    TemporaryStage12UnsupportedRequest,
+)
 
 
 def response(status: int, payload: JsonObject) -> BackendResponse:
@@ -24,6 +39,36 @@ def response(status: int, payload: JsonObject) -> BackendResponse:
         content=json.dumps(payload).encode(),
         headers={"content-type": "application/json", "retry-after": "3"},
     )
+
+
+def automatic_stage12_settings():
+    return make_settings(
+        stage12_enabled=True,
+        stage12_v2_manifest_environment="staging",
+        stage12_database_url="postgresql://stage12-runtime",
+        stage12_artifact_bucket="policyengine-stage12-staging",
+    )
+
+
+class TemporaryComparisonBackend:
+    def __init__(self, *, report=None, simulations=()):
+        self.report = report or comparison_report()
+        self.simulations = simulations
+        self.submissions = []
+        self.polls = []
+
+    async def dispatch_after_production(self, **_):
+        return None
+
+    async def submit_temporary_report(self, **submission):
+        self.submissions.append(submission)
+        return self.report
+
+    async def get_temporary_report(self, evaluation_id):
+        self.polls.append(evaluation_id)
+        if evaluation_id != self.report.evaluation_id:
+            raise LookupError("missing report")
+        return self.report, self.simulations
 
 
 def test_health_is_local_and_compatible(client, backend):
@@ -74,6 +119,437 @@ def test_comparison_submission_preserves_upstream_response(client, backend):
     assert backend.requests[-1].path == "/simulate/economy/comparison"
 
 
+def test_automatic_comparison_dispatch_preserves_production_response(
+    backend,
+):
+    class ComparisonBackend:
+        def __init__(self):
+            self.calls = []
+
+        async def dispatch_after_production(self, **call):
+            self.calls.append(call)
+
+    comparison = ComparisonBackend()
+    payload = {
+        "job_id": "fc-123",
+        "status": "submitted",
+        "poll_url": "/jobs/fc-123",
+        "country": "us",
+        "version": "1.0.0",
+        "resolved_app_name": "production-worker",
+        "policyengine_bundle": {"model_version": "1.0.0"},
+    }
+    backend.responses[("POST", "/simulate/economy/comparison")] = response(202, payload)
+    app = create_app(
+        settings=automatic_stage12_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/simulate/economy/comparison",
+            json={
+                "country": "us",
+                "scope": "macro",
+                "reform": {},
+                "_telemetry": {
+                    "run_id": "production-run-1",
+                    "process_id": "api-process-1",
+                    "capture_mode": "disabled",
+                },
+            },
+            headers={REQUEST_ID_HEADER: "request-1"},
+        )
+
+    assert result.status_code == 202
+    assert result.json() == payload
+    assert result.headers["x-policyengine-simulation-backend"] == "old_gateway"
+    assert len(comparison.calls) == 1
+    assert comparison.calls[0]["request_id"] == "request-1"
+    assert comparison.calls[0]["request_payload"]["telemetry"]["run_id"] == (
+        "production-run-1"
+    )
+    assert json.loads(comparison.calls[0]["production_response"]) == payload
+
+
+def test_comparison_dispatch_failure_cannot_change_production_response(backend):
+    class FailingComparisonBackend:
+        async def dispatch_after_production(self, **_):
+            raise RuntimeError("comparison unavailable")
+
+    payload = {
+        "job_id": "fc-123",
+        "status": "submitted",
+        "poll_url": "/jobs/fc-123",
+        "country": "us",
+        "version": "1.0.0",
+        "resolved_app_name": "production-worker",
+        "policyengine_bundle": {"model_version": "1.0.0"},
+    }
+    backend.responses[("POST", "/simulate/economy/comparison")] = response(202, payload)
+    app = create_app(
+        settings=automatic_stage12_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=FailingComparisonBackend(),
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/simulate/economy/comparison",
+            json={"country": "us", "scope": "macro", "reform": {}},
+        )
+
+    assert result.status_code == 202
+    assert result.json() == payload
+
+
+def test_comparison_dispatch_timeout_cannot_change_production_response(
+    backend,
+    monkeypatch,
+):
+    class SlowComparisonBackend:
+        async def dispatch_after_production(self, **_):
+            await asyncio.sleep(1)
+
+    payload = {
+        "job_id": "fc-123",
+        "status": "submitted",
+        "poll_url": "/jobs/fc-123",
+        "country": "us",
+        "version": "1.0.0",
+        "resolved_app_name": "production-worker",
+        "policyengine_bundle": {"model_version": "1.0.0"},
+    }
+    backend.responses[("POST", "/simulate/economy/comparison")] = response(202, payload)
+    monkeypatch.setattr(app_module, "STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS", 0.001)
+    app = create_app(
+        settings=automatic_stage12_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=SlowComparisonBackend(),
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/simulate/economy/comparison",
+            json={"country": "us", "scope": "macro", "reform": {}},
+        )
+
+    assert result.status_code == 202
+    assert result.json() == payload
+
+
+def test_disabled_automatic_comparison_never_invokes_configured_backend(backend):
+    class ComparisonBackend:
+        def __init__(self):
+            self.calls = []
+
+        async def dispatch_after_production(self, **call):
+            self.calls.append(call)
+
+    comparison = ComparisonBackend()
+    backend.responses[("POST", "/simulate/economy/comparison")] = response(
+        202,
+        {"job_id": "fc-123", "status": "submitted"},
+    )
+    app = create_app(
+        settings=make_settings(stage12_enabled=False),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/simulate/economy/comparison",
+            json={"country": "us", "scope": "macro", "reform": {}},
+        )
+
+    assert result.status_code == 202
+    assert comparison.calls == []
+
+
+def test_temporary_stage12_submission_returns_polling_identifier(backend):
+    comparison = TemporaryComparisonBackend()
+    app = create_app(
+        settings=automatic_stage12_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/internal/stage12/reports",
+            json=eligible_payload(),
+            headers={REQUEST_ID_HEADER: "manual-request-1"},
+        )
+
+    assert result.status_code == 202
+    assert result.headers["retry-after"] == "1"
+    assert result.json() == {
+        "evaluation_id": str(EVALUATION_ID),
+        "status": "running",
+        "poll_url": f"/internal/stage12/reports/{EVALUATION_ID}",
+    }
+    assert comparison.submissions[0]["request_id"] == "manual-request-1"
+    assert backend.requests == []
+
+
+def test_temporary_stage12_submission_has_a_hard_acknowledgement_timeout(
+    backend,
+    monkeypatch,
+):
+    class BlockingComparisonBackend(TemporaryComparisonBackend):
+        async def submit_temporary_report(self, **submission):
+            self.submissions.append(submission)
+            await asyncio.Event().wait()
+
+    comparison = BlockingComparisonBackend()
+    monkeypatch.setattr(app_module, "STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS", 0.001)
+    app = create_app(
+        settings=automatic_stage12_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/internal/stage12/reports",
+            json=eligible_payload(),
+        )
+
+    assert result.status_code == 504
+    assert result.json() == {"detail": "Stage 12 submission acknowledgement timed out."}
+    assert len(comparison.submissions) == 1
+
+
+def test_temporary_stage12_poll_not_found_has_short_retry_hint(backend):
+    class MissingComparisonBackend(TemporaryComparisonBackend):
+        async def get_temporary_report(self, evaluation_id):
+            self.polls.append(evaluation_id)
+            raise LookupError("not created")
+
+    comparison = MissingComparisonBackend()
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.get(f"/internal/stage12/reports/{EVALUATION_ID}")
+
+    assert result.status_code == 404
+    assert result.headers["retry-after"] == "1"
+    assert result.json() == {"detail": "Stage 12 report was not found."}
+
+
+def test_temporary_stage12_poll_reads_durable_parent_and_children(backend):
+    simulations = (
+        comparison_simulation(SimulationRole.BASELINE),
+        comparison_simulation(SimulationRole.REFORM),
+    )
+    comparison = TemporaryComparisonBackend(simulations=simulations)
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.get(f"/internal/stage12/reports/{EVALUATION_ID}")
+
+    assert result.status_code == 202
+    assert result.headers["retry-after"] == "5"
+    assert result.json()["report"]["evaluation_id"] == str(EVALUATION_ID)
+    assert [item["role"] for item in result.json()["simulations"]] == [
+        "baseline",
+        "reform",
+    ]
+    assert comparison.polls == [EVALUATION_ID]
+    assert backend.requests == []
+
+
+def test_temporary_stage12_poll_returns_terminal_metadata_with_200(backend):
+    comparison = TemporaryComparisonBackend(
+        report=comparison_report(status=ComparisonRunLifecycleStatus.SUCCEEDED)
+    )
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.get(f"/internal/stage12/reports/{EVALUATION_ID}")
+
+    assert result.status_code == 200
+    assert "retry-after" not in result.headers
+    assert result.json()["report"]["aggregate_output_uri"] == (
+        "gs://stage12-private/report.json"
+    )
+
+
+def test_temporary_stage12_routes_are_excluded_from_openapi(backend):
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=TemporaryComparisonBackend(),
+    )
+
+    paths = app.openapi()["paths"]
+
+    assert "/internal/stage12/reports" not in paths
+    assert "/internal/stage12/reports/{evaluation_id}" not in paths
+
+
+def test_temporary_stage12_submission_is_disabled_when_flag_is_zero(backend):
+    comparison = TemporaryComparisonBackend()
+    app = create_app(
+        settings=make_settings(stage12_enabled=False),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/internal/stage12/reports",
+            json=eligible_payload(),
+        )
+
+    assert result.status_code == 503
+    assert result.json() == {"detail": "Stage 12 execution is disabled."}
+    assert comparison.submissions == []
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("post", "/internal/stage12/reports", eligible_payload()),
+        ("get", f"/internal/stage12/reports/{EVALUATION_ID}", None),
+    ],
+)
+def test_temporary_stage12_routes_require_existing_authentication(
+    backend,
+    method,
+    path,
+    body,
+):
+    def reject_caller():
+        raise HTTPException(status_code=403)
+
+    app = create_app(
+        settings=automatic_stage12_settings(),
+        backend=backend,
+        auth_dependency=reject_caller,
+        comparison_backend=TemporaryComparisonBackend(),
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        kwargs = {"json": body} if body is not None else {}
+        result = getattr(test_client, method)(path, **kwargs)
+
+    assert result.status_code == 403
+
+
+def test_temporary_stage12_poll_returns_404_for_unknown_report(backend):
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=TemporaryComparisonBackend(),
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.get(
+            "/internal/stage12/reports/00000000-0000-0000-0000-000000000099"
+        )
+
+    assert result.status_code == 404
+    assert result.json() == {"detail": "Stage 12 report was not found."}
+
+
+@pytest.mark.parametrize(
+    ("error", "status_code", "expected"),
+    [
+        (
+            TemporaryStage12UnsupportedRequest("unsupported_cliff_calculation"),
+            422,
+            {"reason": "unsupported_cliff_calculation"},
+        ),
+        (
+            TemporaryStage12DispatchFailed(
+                comparison_report(status=ComparisonRunLifecycleStatus.FAILED)
+            ),
+            502,
+            {"evaluation_id": str(EVALUATION_ID), "status": "failed"},
+        ),
+    ],
+)
+def test_temporary_stage12_submission_returns_bounded_failures(
+    backend,
+    error,
+    status_code,
+    expected,
+):
+    class FailingTemporaryBackend(TemporaryComparisonBackend):
+        async def submit_temporary_report(self, **_):
+            raise error
+
+    app = create_app(
+        settings=automatic_stage12_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=FailingTemporaryBackend(),
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/internal/stage12/reports",
+            json=eligible_payload(),
+        )
+
+    assert result.status_code == status_code
+    for field, value in expected.items():
+        assert result.json()[field] == value
+
+
 def test_job_status_preserves_id_and_status(client, backend):
     backend.responses[("GET", "/jobs/fc-123")] = response(
         202,
@@ -85,6 +561,68 @@ def test_job_status_preserves_id_and_status(client, backend):
     assert result.status_code == 202
     assert result.json() == {"status": "running", "run_id": "run-1"}
     assert backend.requests[-1].path == "/jobs/fc-123"
+
+
+def test_polling_and_budget_window_routes_never_dispatch_stage12_comparison(backend):
+    class ComparisonBackend:
+        def __init__(self):
+            self.calls = []
+
+        async def dispatch_after_production(self, **call):
+            self.calls.append(call)
+
+    comparison = ComparisonBackend()
+    backend.responses[("GET", "/jobs/fc-123")] = response(
+        200,
+        {"status": "complete", "result": {"budget": 10}},
+    )
+    backend.responses[("POST", "/simulate/economy/budget-window")] = response(
+        202,
+        {
+            "batch_job_id": "batch-123",
+            "status": "submitted",
+            "poll_url": "/budget-window-jobs/batch-123",
+        },
+    )
+    backend.responses[("GET", "/budget-window-jobs/batch-123")] = response(
+        200,
+        {"status": "complete", "completed_years": ["2026"]},
+    )
+    app = create_app(
+        settings=automatic_stage12_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        job = test_client.get("/jobs/fc-123")
+        batch = test_client.post(
+            "/simulate/economy/budget-window",
+            json={
+                "country": "us",
+                "region": "us",
+                "scope": "macro",
+                "reform": {},
+                "start_year": "2026",
+                "window_size": 1,
+            },
+        )
+        batch_poll = test_client.get("/budget-window-jobs/batch-123")
+
+    assert job.json() == {"status": "complete", "result": {"budget": 10}}
+    assert batch.json() == {
+        "batch_job_id": "batch-123",
+        "status": "submitted",
+        "poll_url": "/budget-window-jobs/batch-123",
+    }
+    assert batch_poll.json() == {
+        "status": "complete",
+        "completed_years": ["2026"],
+    }
+    assert comparison.calls == []
 
 
 def test_job_status_records_structured_backend_telemetry(
