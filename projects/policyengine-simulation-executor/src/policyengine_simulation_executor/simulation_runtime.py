@@ -24,7 +24,6 @@ from policyengine_simulation_observability.observability import SegmentName
 from policyengine_simulation_executor.release_bundle import (
     get_country_release_bundle,
     resolve_bundle_dataset_name,
-    resolve_runtime_bundle_dataset_uri,
 )
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
@@ -192,50 +191,9 @@ def _normalise_policy(policy: dict[str, Any] | None) -> dict[str, Any] | None:
     return normalised
 
 
-def _split_requested_revision(requested_data: str) -> tuple[str, str | None]:
-    if "@" not in requested_data:
-        return requested_data, None
-    dataset_name, revision = requested_data.rsplit("@", maxsplit=1)
-    if not dataset_name or not revision:
-        raise ValueError(f"Invalid dataset revision reference: {requested_data}")
-    return dataset_name, revision
-
-
-def _requested_data_version(params: dict[str, Any]) -> str | None:
-    data_version = params.get("data_version")
-    if data_version is not None:
-        return str(data_version)
-
-    data = params.get("data")
-    if isinstance(data, str) and "@" in data:
-        _, revision = _split_requested_revision(data)
-        return revision
-    return None
-
-
-def _resolve_dataset_reference(country: str, params: dict[str, Any]) -> str:
+def _resolve_dataset_reference(country: str) -> str:
     with segment(SegmentName.DATASET_RESOLUTION):
-        return _resolve_dataset_reference_inner(country, params)
-
-
-def _resolve_dataset_reference_inner(country: str, params: dict[str, Any]) -> str:
-    requested_data = params.get("data")
-    requested_data = requested_data if isinstance(requested_data, str) else None
-    requested_data_version = _requested_data_version(params)
-    if requested_data is not None and requested_data_version is None:
-        # The managed loader accepts bundled logical names, not arbitrary
-        # dataset URIs. Leave this selection to policyengine.py.
-        bundle = get_country_release_bundle(country)
-        if requested_data in bundle.dataset_uris:
-            return requested_data
-    if requested_data is None and requested_data_version is None:
-        return resolve_bundle_dataset_name(country, requested_data)
-    return resolve_runtime_bundle_dataset_uri(
-        country,
-        requested_data,
-        requested_data_version,
-        prefer_local=False,
-    )
+        return resolve_bundle_dataset_name(country, None)
 
 
 def _normalise_region_code(country: str, region: Any) -> str:
@@ -306,10 +264,8 @@ def _region_parent_dataset_reference(
     country_module,
     country: str,
     region,
-    params: dict[str, Any],
 ) -> str:
     parent_code = getattr(region, "parent_code", None)
-    requested_data_version = _requested_data_version(params)
     visited: set[str] = set()
 
     while isinstance(parent_code, str) and parent_code:
@@ -324,13 +280,12 @@ def _region_parent_dataset_reference(
             return runtime_dataset_uri(
                 parent_dataset_path,
                 default_revision=bundle.data_package_version,
-                override_revision=requested_data_version,
                 artifact_revision=bundle.data_artifact_revision,
                 validate_hf=False,
             )
         parent_code = getattr(parent_region, "parent_code", None)
 
-    return _resolve_dataset_reference(country, params)
+    return _resolve_dataset_reference(country)
 
 
 def _reject_unscoped_us_place_region(region_code: str, region) -> None:
@@ -360,7 +315,7 @@ def _resolve_region(
     if region_code == country:
         return RegionResolution(
             code=region_code,
-            dataset_reference=_resolve_dataset_reference(country, params),
+            dataset_reference=_resolve_dataset_reference(country),
         )
 
     region = country_module.model.get_region(region_code)
@@ -372,13 +327,11 @@ def _resolve_region(
         _reject_unscoped_us_place_region(region_code, region)
 
     dataset_path = getattr(region, "dataset_path", None)
-    requested_data_version = _requested_data_version(params)
     if isinstance(dataset_path, str):
         bundle = get_country_release_bundle(country)
         dataset_reference = runtime_dataset_uri(
             dataset_path,
             default_revision=bundle.data_package_version,
-            override_revision=requested_data_version,
             artifact_revision=bundle.data_artifact_revision,
             validate_hf=False,
         )
@@ -387,7 +340,6 @@ def _resolve_region(
             country_module,
             country,
             region,
-            params,
         )
 
     return RegionResolution(
@@ -438,7 +390,7 @@ def _resolve_region_group(
 
     return RegionResolution(
         code="region_group/" + "+".join(sorted(codes)),
-        dataset_reference=_resolve_dataset_reference(country, params),
+        dataset_reference=_resolve_dataset_reference(country),
         scoping_strategy=RegionGroupStrategy(members=members),
     )
 
@@ -472,25 +424,12 @@ def _resolve_dataset_selection(
     *,
     region_resolution: RegionResolution | None = None,
 ) -> DatasetSelection:
-    """Resolve an explicit or region-inherited dataset to a bundled name."""
+    """Resolve the bundle's regional or default dataset to a managed name."""
+    if "data" in params or "data_version" in params:
+        raise ValueError("Dataset overrides are not supported")
     country = params.get("country", "us").lower()
     bundle = get_country_release_bundle(country)
-    if params.get("data_version") is not None:
-        raise ValueError("data_version is not supported by the managed dataset loader")
-    requested_data = params.get("data")
-    if requested_data not in (None, bundle.default_dataset):
-        # Public requests may select bundled names, not dataset URIs.
-        if (
-            not isinstance(requested_data, str)
-            or requested_data not in bundle.dataset_uris
-        ):
-            raise ValueError(
-                f"Unsupported dataset {requested_data!r} for country {country!r}; "
-                "choose a name in the certified release manifest"
-            )
-        # An explicit name overrides the region's inherited dataset.
-        dataset_reference = requested_data
-    elif region_resolution is not None and region_resolution.dataset_reference:
+    if region_resolution is not None and region_resolution.dataset_reference:
         dataset_reference = region_resolution.dataset_reference
     else:
         dataset_reference = bundle.default_dataset
@@ -676,7 +615,7 @@ def _run_simulation_impl_core(params: dict) -> dict:
         dataset=dataset,
         baseline=baseline,
         reform=reform,
-        resolved_data_version=_requested_data_version(simulation_params),
+        resolved_data_version=None,
         resolved_region_code=region_resolution.code,
     )
     output = builder.serialize()

@@ -6,20 +6,12 @@ the routing state in `modal.Dict`, and serves the public API contract.
 
 ## Dataset selection
 
-The economy comparison and budget-window endpoints use the certified default
-dataset from the selected PolicyEngine.py release when the request omits
-`data`. Callers can pass the name of another supported population dataset
-only when the selected worker's release bundle contains it. Supporting files
-listed in the bundle, such as weight matrices and diagnostics, are not valid
-population datasets. Passing the default dataset's name has the same effect as
-omitting `data`, including use of prebuilt default data when available.
-
-The endpoints reject unknown names, raw `hf://` and `gs://` references,
-`name@revision` values, and the request field `data_version` with HTTP 400
-before submitting a simulation. The response still reports the data version
-of the selected release. Use `region` or `region_group` to select a geographic
-subset. The public request uses `data`, matching the existing API-to-simulation
-request contract.
+The economy comparison and budget-window endpoints use the certified dataset
+from the selected PolicyEngine.py release. They reject request fields `data`
+and `data_version` with HTTP 422, including when either field is null. The
+response still reports the dataset and data version used. Use `region` or
+`region_group` to select a geographic subset; the worker resolves the
+appropriate dataset for that region from its release bundle.
 
 ## Country-version routing
 

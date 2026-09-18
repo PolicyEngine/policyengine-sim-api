@@ -294,7 +294,6 @@ class SegmentedNationalRunner:
     def _reduce(self, child_results: list[dict], *, country_module) -> dict[str, Any]:
         from policyengine_simulation_executor.simulation_runtime import (
             _parse_year,
-            _requested_data_version,
         )
 
         # The canonical internal-key stripper, plus the opt-out knob.
@@ -307,7 +306,7 @@ class SegmentedNationalRunner:
                 simulation_params=simulation_params,
                 country_module=country_module,
                 year=_parse_year(simulation_params),
-                resolved_data_version=_requested_data_version(simulation_params),
+                resolved_data_version=None,
             )
         output.update(
             combine_spm_results(

@@ -64,18 +64,6 @@ POLICYENGINE_VERSION_DICT_NAME = "simulation-api-policyengine-versions"
 ROUTING_STATE_DICT_NAME = "simulation-api-routing-state"
 ROUTING_STATE_ACTIVE_KEY = "active"
 SUPPORTED_ROUTE_KINDS = ("policyengine", "us", "uk")
-# The bundle also lists weight matrices and other supporting artifacts. Only
-# these population inputs may be explicitly selected for society-wide runs.
-# A name must additionally exist in the selected worker's bundle snapshot.
-SELECTABLE_POPULATION_DATASETS = {
-    "us": {"populace_us_2024_acs_local"},
-    "uk": {
-        "frs_2024_25",
-        "frs_2023_24",
-        "enhanced_frs_2023_24",
-        "populace_uk_2023",
-    },
-}
 
 
 class VersionRoutingState(TypedDict, total=False):
@@ -144,62 +132,15 @@ def _bundle_response_data_version(
     )
 
 
-def _validate_public_dataset(request, route: RouteResolution):
-    """Keep public dataset selection inside the selected worker's release bundle.
-
-    The default-name alias has the same meaning as omission. Removing it from
-    the forwarded request also lets the worker use its prebuilt default files.
-    """
-    if request.data_version is not None:
-        raise ValueError(
-            "data_version is not supported for simulation requests; "
-            "omit data to use the certified default dataset"
-        )
-
-    if request.data is None:
-        return request
-
-    country_bundle = route.bundle_manifest.get(request.country.lower())
-    if not isinstance(country_bundle, dict):
-        raise ValueError(  # noqa: TRY004 - returned as a client request error
-            "Dataset selection requires a worker release manifest"
-        )
-
-    default = country_bundle.get("default_dataset")
-    if request.data == default:
-        return request.model_copy(update={"data": None})
-
-    datasets = country_bundle.get("dataset_uris")
-    if (
-        not isinstance(datasets, dict)
-        or not isinstance(datasets.get(request.data), str)
-        or request.data
-        not in SELECTABLE_POPULATION_DATASETS.get(request.country.lower(), set())
-    ):
-        raise ValueError(
-            f"Unsupported dataset {request.data!r} for country "
-            f"{request.country!r}; use a population dataset in the selected "
-            "release bundle or omit data for the certified default"
-        )
-    return request
-
-
 def _resolve_dataset_uri_from_app_bundle(
     *,
     app_bundle: dict,
     country: str,
-    requested_data: str | None,
 ) -> str | None:
     country_bundle = app_bundle.get(country.lower())
     if not isinstance(country_bundle, dict):
         return None
-    if requested_data is None:
-        dataset_uri = country_bundle.get("default_dataset_uri")
-    else:
-        dataset_uris = country_bundle.get("dataset_uris")
-        dataset_uri = (
-            dataset_uris.get(requested_data) if isinstance(dataset_uris, dict) else None
-        )
+    dataset_uri = country_bundle.get("default_dataset_uri")
     if not isinstance(dataset_uri, str):
         return None
     return runtime_dataset_uri(
@@ -551,18 +492,14 @@ def _resolve_from_legacy_dicts(
 def _build_policyengine_bundle(
     country: str,
     resolution: RouteResolution,
-    payload: dict,
 ) -> PolicyEngineBundle:
     app_bundle = resolution.bundle_manifest
     country_bundle = app_bundle.get(country.lower())
     if not isinstance(country_bundle, dict):
         country_bundle = {}
-    dataset = payload.get("data")
-    requested_dataset = dataset if isinstance(dataset, str) else None
     resolved_dataset = _resolve_dataset_uri_from_app_bundle(
         app_bundle=app_bundle,
         country=country,
-        requested_data=requested_dataset,
     )
     data_version = _bundle_response_data_version(
         country_bundle=country_bundle,
@@ -731,7 +668,6 @@ async def submit_simulation(request: SimulationRequest):
                 request.version,
                 request.policyengine_version,
             )
-            request = _validate_public_dataset(request, route)
     except ValueError as e:
         record_error(e, handled=True, status_code=400, include_stack=False)
         raise HTTPException(status_code=400, detail=str(e))
@@ -755,7 +691,6 @@ async def submit_simulation(request: SimulationRequest):
             bundle = _build_policyengine_bundle(
                 request.country,
                 route,
-                payload,
             )
         _resolve_request_spm(request, bundle, route)
     except (ValueError, HuggingFaceDatasetReferenceError) as exc:
@@ -823,7 +758,6 @@ async def submit_budget_window_batch(request: BudgetWindowBatchRequest):
                 request.version,
                 request.policyengine_version,
             )
-            request = _validate_public_dataset(request, route)
     except ValueError as e:
         record_error(e, handled=True, status_code=400, include_stack=False)
         raise HTTPException(status_code=400, detail=str(e))
@@ -837,7 +771,6 @@ async def submit_budget_window_batch(request: BudgetWindowBatchRequest):
             bundle = _build_policyengine_bundle(
                 request.country,
                 route,
-                request.model_dump(mode="json"),
             )
         _resolve_request_spm(request, bundle, route)
     except (ValueError, HuggingFaceDatasetReferenceError) as exc:

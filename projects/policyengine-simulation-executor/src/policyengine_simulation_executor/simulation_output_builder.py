@@ -239,11 +239,6 @@ class SimulationOutputBuilder:
         with segment(SegmentName.OUTPUT_DATA_VERSION):
             if self.resolved_data_version:
                 return str(self.resolved_data_version)
-            data = self.simulation_params.get("data")
-            if isinstance(data, str) and "@" in data:
-                revision = data.rsplit("@", maxsplit=1)[1]
-                if revision:
-                    return revision
             if self.simulation_params.get("data_version"):
                 return str(self.simulation_params["data_version"])
             metadata = getattr(self.dataset, "metadata", {}) or {}

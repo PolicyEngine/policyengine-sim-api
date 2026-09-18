@@ -1154,19 +1154,10 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
     assert build_calls[1][4] is load_selections[0]
 
 
-def test_resolve_dataset_reference_applies_data_version_to_logical_dataset(
-    monkeypatch,
-):
-    bundle_uri = get_country_release_bundle("us").default_dataset_uri
-    bundle_uri_without_revision = bundle_uri.rsplit("@", maxsplit=1)[0]
+def test_resolve_dataset_reference_uses_bundle_default():
+    bundle = get_country_release_bundle("us")
 
-    assert (
-        _resolve_dataset_reference(
-            "us",
-            {"data": "populace_us_2024", "data_version": "custom-v1"},
-        )
-        == f"{bundle_uri_without_revision}@custom-v1"
-    )
+    assert _resolve_dataset_reference("us") == bundle.default_dataset
 
 
 def test_dataset_selection_identifies_the_actual_bundle_default():
@@ -1176,13 +1167,15 @@ def test_dataset_selection_identifies_the_actual_bundle_default():
     )
 
     omitted = _resolve_dataset_selection({"country": "us"})
-    explicit_default = _resolve_dataset_selection(
-        {"country": "us", "data": bundle.default_dataset}
+    alternate = _resolve_dataset_selection(
+        {"country": "us"},
+        region_resolution=RegionResolution(
+            code="state/ca", dataset_reference=bundle.dataset_uris[nondefault]
+        ),
     )
-    alternate = _resolve_dataset_selection({"country": "us", "data": nondefault})
 
     assert isinstance(omitted, DatasetSelection)
-    assert omitted == explicit_default
+    assert omitted.name == bundle.default_dataset
     assert omitted.is_default
     assert alternate.name == nondefault
     assert not alternate.is_default
@@ -1190,7 +1183,7 @@ def test_dataset_selection_identifies_the_actual_bundle_default():
 
 def test_dataset_selection_rejects_a_bundled_uri_as_public_data():
     bundle = get_country_release_bundle("us")
-    with pytest.raises(ValueError, match="Unsupported dataset"):
+    with pytest.raises(ValueError, match="Dataset overrides are not supported"):
         _resolve_dataset_selection(
             {"country": "us", "data": bundle.default_dataset_uri}
         )
@@ -1271,7 +1264,7 @@ def test_load_dataset_rejects_unmanaged_dataset_requests(
         ensure_calls.append(kwargs)
         return {"dataset": SimpleNamespace()}
 
-    with pytest.raises(ValueError, match="Unsupported dataset|data_version"):
+    with pytest.raises(ValueError, match="Dataset overrides are not supported"):
         _load_dataset(
             {"country": "us", "time_period": "2026", **explicit_data_params},
             country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
@@ -1280,7 +1273,7 @@ def test_load_dataset_rejects_unmanaged_dataset_requests(
     assert ensure_calls == []
 
 
-def test_load_dataset_treats_explicit_default_as_omission(tmp_path, monkeypatch):
+def test_load_dataset_rejects_explicit_default(tmp_path, monkeypatch):
     monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
     ensure_calls = []
 
@@ -1288,15 +1281,16 @@ def test_load_dataset_treats_explicit_default_as_omission(tmp_path, monkeypatch)
         ensure_calls.append(kwargs)
         return {"dataset": SimpleNamespace()}
 
-    _load_dataset(
-        {"country": "us", "time_period": "2026", "data": "populace_us_2024"},
-        country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
-    )
+    with pytest.raises(ValueError, match="Dataset overrides are not supported"):
+        _load_dataset(
+            {"country": "us", "time_period": "2026", "data": "populace_us_2024"},
+            country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+        )
 
-    assert ensure_calls == [{"years": [2026], "data_folder": str(tmp_path)}]
+    assert ensure_calls == []
 
 
-def test_load_dataset_passes_certified_nondefault_name_to_managed_loader(
+def test_load_dataset_passes_region_dataset_name_to_managed_loader(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
@@ -1311,8 +1305,11 @@ def test_load_dataset_passes_certified_nondefault_name_to_managed_loader(
         return {"dataset": SimpleNamespace()}
 
     _load_dataset(
-        {"country": "us", "time_period": "2026", "data": nondefault},
+        {"country": "us", "time_period": "2026"},
         country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+        region_resolution=RegionResolution(
+            code="state/ca", dataset_reference=bundle.dataset_uris[nondefault]
+        ),
     )
 
     assert ensure_calls == [
@@ -1364,7 +1361,7 @@ def test_load_dataset_maps_region_bundle_uri_to_managed_name(
     ]
 
 
-def test_load_dataset_respects_explicit_dataset_for_filtered_region(
+def test_load_dataset_rejects_explicit_dataset_for_filtered_region(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
@@ -1378,24 +1375,17 @@ def test_load_dataset_respects_explicit_dataset_for_filtered_region(
         ensure_calls.append(kwargs)
         return {"dataset": SimpleNamespace()}
 
-    _load_dataset(
-        {"country": "us", "time_period": "2026", "data": nondefault},
-        country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
-        region_resolution=SimpleNamespace(
-            dataset_reference=bundle.default_dataset_uri,
-            scoping_strategy=object(),
-        ),
-    )
-
-    assert ensure_calls == [
-        {
-            "datasets": [nondefault],
-            "years": [2026],
-            "data_folder": _nondefault_data_folder(
-                "us", nondefault, bundle.dataset_uris[nondefault]
+    with pytest.raises(ValueError, match="Dataset overrides are not supported"):
+        _load_dataset(
+            {"country": "us", "time_period": "2026", "data": nondefault},
+            country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+            region_resolution=SimpleNamespace(
+                dataset_reference=bundle.default_dataset_uri,
+                scoping_strategy=object(),
             ),
-        }
-    ]
+        )
+
+    assert ensure_calls == []
 
 
 def test_nondefault_dataset_cache_is_distinct_for_shared_filename_stem():

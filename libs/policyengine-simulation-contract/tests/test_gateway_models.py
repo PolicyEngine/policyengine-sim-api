@@ -182,7 +182,7 @@ class TestSimulationRequest:
 
     def test_simulation_request_accepts_documented_simulation_fields(self):
         """
-        Given the documented simulation fields (reform, region, data, ...)
+        Given the documented simulation fields (reform, region, scope)
         When creating a SimulationRequest
         Then the model accepts and preserves them.
         """
@@ -191,7 +191,6 @@ class TestSimulationRequest:
             "country": "us",
             "region": "enhanced_us",
             "reform": {"some.parameter": {"2024-01-01": True}},
-            "data": "custom_dataset_label",
             "scope": "macro",
         }
 
@@ -203,7 +202,6 @@ class TestSimulationRequest:
         dumped = request.model_dump(exclude_none=True)
         assert dumped["region"] == "enhanced_us"
         assert dumped["reform"] == {"some.parameter": {"2024-01-01": True}}
-        assert dumped["data"] == "custom_dataset_label"
         assert dumped["scope"] == "macro"
 
     def test_simulation_request_accepts_region_group(self):
@@ -251,6 +249,22 @@ class TestSimulationRequest:
             SimulationRequest(country="us", dataset="custom_dataset_label")
         with pytest.raises(ValidationError):
             SimulationRequest(country="us", mystery_flag=True)
+
+    @pytest.mark.parametrize("field", ["data", "data_version"])
+    def test_simulation_request_rejects_dataset_overrides(self, field):
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            SimulationRequest.model_validate({"country": "us", field: None})
+
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            BudgetWindowBatchRequest.model_validate(
+                {
+                    "country": "us",
+                    "region": "us",
+                    "start_year": "2026",
+                    "window_size": 1,
+                    field: "custom_dataset_label",
+                }
+            )
 
     def test_simulation_request_rejects_oversized_payload(self):
         """Payloads that exceed the gateway max should 422 before Pydantic

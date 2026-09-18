@@ -194,13 +194,13 @@ class TestGetAppName:
 class TestSubmitSimulationEndpoint:
     """Tests for POST /simulate/economy/comparison endpoint."""
 
-    def test__given_data_value__then_routes_to_run_simulation(
+    def test__given_data_value__then_rejects_before_spawning(
         self, mock_modal, client: TestClient
     ):
         """
         Given a request with a data value
         When the simulation is submitted
-        Then routes to run_simulation function.
+        Then request validation rejects it with HTTP 422.
         """
         # Given
         mock_modal["dicts"]["simulation-api-us-versions"] = {
@@ -219,11 +219,9 @@ class TestSubmitSimulationEndpoint:
         response = client.post("/simulate/economy/comparison", json=request_body)
 
         # Then
-        assert response.status_code == 200
-        assert mock_modal["func"].last_from_name_call == (
-            "policyengine-simulation-py4-10-0",
-            "run_simulation",
-        )
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["type"] == "extra_forbidden"
+        assert mock_modal["func"].last_payload is None
 
     def test__given_no_data_value__then_routes_to_run_simulation(
         self, mock_modal, client: TestClient
@@ -340,11 +338,11 @@ class TestSubmitSimulationEndpoint:
         assert data["run_id"] == "run-123"
         assert mock_modal["func"].last_payload["_telemetry"]["run_id"] == "run-123"
 
-    def test__given_submission_with_default_alias__then_returns_default_bundle_metadata(
+    def test__given_submission_without_data__then_returns_default_bundle_metadata(
         self, mock_modal, client: TestClient
     ):
         """
-        Given a simulation submission with the certified default dataset name
+        Given a simulation submission without a dataset override
         When the request completes
         Then the response exposes the resolved app and submitted dataset provenance.
         """
@@ -358,7 +356,6 @@ class TestSubmitSimulationEndpoint:
             "country": "us",
             "scope": "macro",
             "reform": {},
-            "data": "populace_us_2024",
         }
 
         # When
@@ -371,7 +368,7 @@ class TestSubmitSimulationEndpoint:
         assert data["policyengine_bundle"] == expected_bundle("us", "1.500.0")
         assert "data" not in mock_modal["func"].last_payload
 
-    def test__given_submission_with_dataset_name__then_bundle_dataset_uses_manifest_uri(
+    def test__given_submission_without_dataset_name__then_bundle_uses_manifest_uri(
         self, mock_modal, client: TestClient
     ):
         mock_modal["dicts"]["simulation-api-us-versions"] = {
@@ -383,7 +380,6 @@ class TestSubmitSimulationEndpoint:
             "country": "us",
             "scope": "macro",
             "reform": {},
-            "data": "populace_us_2024",
         }
 
         response = client.post("/simulate/economy/comparison", json=request_body)
@@ -395,7 +391,7 @@ class TestSubmitSimulationEndpoint:
         )
         assert "data" not in mock_modal["func"].last_payload
 
-    def test__given_bundled_us_overlay__then_forwards_name_to_worker(
+    def test__given_bundled_us_overlay__then_rejects_data_key(
         self, mock_modal, client: TestClient
     ):
         response = client.post(
@@ -408,12 +404,8 @@ class TestSubmitSimulationEndpoint:
             },
         )
 
-        assert response.status_code == 200
-        assert mock_modal["func"].last_payload["data"] == "populace_us_2024_acs_local"
-        assert "dataset" not in mock_modal["func"].last_payload
-        assert response.json()["policyengine_bundle"]["dataset"] == (
-            resolve_test_dataset_uri("us", "populace_us_2024_acs_local")
-        )
+        assert response.status_code == 422
+        assert mock_modal["func"].last_payload is None
 
     def test__given_population_name_missing_from_selected_bundle__then_rejected(
         self, mock_modal, client: TestClient
@@ -434,7 +426,7 @@ class TestSubmitSimulationEndpoint:
             },
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 422
         assert mock_modal["func"].last_payload is None
 
     @pytest.mark.parametrize(
@@ -454,8 +446,8 @@ class TestSubmitSimulationEndpoint:
             },
         )
 
-        assert response.status_code == 400
-        assert "Unsupported dataset" in response.json()["detail"]
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["type"] == "extra_forbidden"
         assert mock_modal["func"].last_payload is None
 
     def test__given_unknown_dataset_field__then_rejected_at_public_boundary(
@@ -497,8 +489,8 @@ class TestSubmitSimulationEndpoint:
             },
         )
 
-        assert response.status_code == 400
-        assert "Unsupported dataset" in response.json()["detail"]
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["type"] == "extra_forbidden"
         assert mock_modal["func"].last_payload is None
 
     def test__given_us_state_region_without_data__then_keeps_contract_and_uses_default_dataset(
@@ -543,8 +535,8 @@ class TestSubmitSimulationEndpoint:
             },
         )
 
-        assert response.status_code == 400
-        assert "Unsupported dataset" in response.json()["detail"]
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["type"] == "extra_forbidden"
         assert mock_modal["func"].last_payload is None
 
     def test__given_submission_with_explicit_uri_revision__then_rejected_before_spawn(
@@ -565,11 +557,11 @@ class TestSubmitSimulationEndpoint:
             },
         )
 
-        assert response.status_code == 400
-        assert "Unsupported dataset" in response.json()["detail"]
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["type"] == "extra_forbidden"
         assert mock_modal["func"].last_payload is None
 
-    def test__given_submission_with_conflicting_data_versions__then_returns_400(
+    def test__given_submission_with_conflicting_data_versions__then_returns_422(
         self, mock_modal, client: TestClient
     ):
         mock_modal["dicts"]["simulation-api-us-versions"] = {
@@ -588,11 +580,11 @@ class TestSubmitSimulationEndpoint:
             },
         )
 
-        assert response.status_code == 400
-        assert "data_version is not supported" in response.json()["detail"]
+        assert response.status_code == 422
+        assert len(response.json()["detail"]) == 2
         assert mock_modal["func"].last_payload is None
 
-    def test__given_submission_with_unmanaged_hf_reference__then_returns_400_before_spawn(
+    def test__given_unmanaged_hf_reference__then_returns_422(
         self, mock_modal, client: TestClient
     ):
         mock_modal["dicts"]["simulation-api-us-versions"] = {
@@ -610,11 +602,11 @@ class TestSubmitSimulationEndpoint:
             },
         )
 
-        assert response.status_code == 400
-        assert "Unsupported dataset" in response.json()["detail"]
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["type"] == "extra_forbidden"
         assert mock_modal["func"].last_payload is None
 
-    def test__given_submission_with_uk_dataset_name__then_bundle_dataset_is_versioned_uri(
+    def test__given_uk_submission_without_data__then_bundle_dataset_is_versioned_uri(
         self, mock_modal, client: TestClient
     ):
         mock_modal["dicts"]["simulation-api-uk-versions"] = {
@@ -626,7 +618,6 @@ class TestSubmitSimulationEndpoint:
             "country": "uk",
             "scope": "macro",
             "reform": {},
-            "data": "populace_uk_2023",
         }
 
         response = client.post("/simulate/economy/comparison", json=request_body)
@@ -765,8 +756,8 @@ class TestSubmitSimulationEndpoint:
 
         response = client.post("/simulate/economy/comparison", json=request_body)
 
-        assert response.status_code == 400
-        assert "data_version is not supported" in response.json()["detail"]
+        assert response.status_code == 422
+        assert len(response.json()["detail"]) == 2
         assert mock_modal["func"].last_payload is None
 
     def test__given_submission_with_unknown_dataset_name__then_rejected_before_spawn(
@@ -786,8 +777,8 @@ class TestSubmitSimulationEndpoint:
 
         response = client.post("/simulate/economy/comparison", json=request_body)
 
-        assert response.status_code == 400
-        assert "Unsupported dataset" in response.json()["detail"]
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["type"] == "extra_forbidden"
         assert mock_modal["func"].last_payload is None
 
     def test__given_submitted_job__then_job_status_includes_bundle_metadata(
@@ -810,7 +801,6 @@ class TestSubmitSimulationEndpoint:
                 "country": "us",
                 "scope": "macro",
                 "reform": {},
-                "data": "populace_us_2024",
             },
         )
 
@@ -1089,7 +1079,7 @@ class TestVersionEndpoints:
 class TestBudgetWindowBatchEndpoints:
     """Tests for budget-window batch gateway endpoints."""
 
-    def test__given_bundled_population_dataset__then_batch_receives_internal_data(
+    def test__given_bundled_population_dataset__then_batch_rejects_data_key(
         self, mock_modal, client: TestClient
     ):
         response = client.post(
@@ -1105,9 +1095,8 @@ class TestBudgetWindowBatchEndpoints:
             },
         )
 
-        assert response.status_code == 200
-        assert mock_modal["func"].last_payload["data"] == "populace_us_2024_acs_local"
-        assert "dataset" not in mock_modal["func"].last_payload
+        assert response.status_code == 422
+        assert mock_modal["func"].last_payload is None
 
     def test__given_bundled_supporting_artifact__then_rejects_before_batch_submission(
         self, mock_modal, client: TestClient
@@ -1125,7 +1114,7 @@ class TestBudgetWindowBatchEndpoints:
             },
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 422
         assert mock_modal["func"].last_payload is None
 
     @pytest.mark.parametrize(
@@ -1152,10 +1141,10 @@ class TestBudgetWindowBatchEndpoints:
             },
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 422
         assert mock_modal["func"].last_payload is None
 
-    def test__given_default_alias__then_parent_batch_omits_dataset(
+    def test__given_no_dataset_override__then_parent_batch_omits_dataset(
         self, mock_modal, client: TestClient
     ):
         response = client.post(
@@ -1167,7 +1156,6 @@ class TestBudgetWindowBatchEndpoints:
                 "reform": {},
                 "start_year": "2026",
                 "window_size": 2,
-                "data": "populace_us_2024",
             },
         )
 

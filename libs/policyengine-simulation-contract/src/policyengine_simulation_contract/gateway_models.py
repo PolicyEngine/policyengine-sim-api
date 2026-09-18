@@ -107,7 +107,6 @@ class GatewayRequestBase(BaseModel):
 
     # Fields forwarded to SimulationOptions on the worker side.
     scope: Optional[str] = None
-    data: Optional[str] = None
     time_period: Optional[str] = None
     reform: Optional[PolicyParameterChanges] = None
     baseline: Optional[PolicyParameterChanges] = None
@@ -115,7 +114,6 @@ class GatewayRequestBase(BaseModel):
     title: Optional[str] = None
     include_cliffs: Optional[bool] = None
     model_version: Optional[str] = None
-    data_version: Optional[str] = None
     # National macro requests run segmented across region groups by default;
     # False forces a monolithic single-process run. Ignored for requests that
     # are not eligible for segmentation (regional, household-scope, UK).
