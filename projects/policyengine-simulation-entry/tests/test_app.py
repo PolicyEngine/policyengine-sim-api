@@ -152,7 +152,16 @@ def test_automatic_comparison_dispatch_preserves_production_response(
     with TestClient(app) as test_client:
         result = test_client.post(
             "/simulate/economy/comparison",
-            json={"country": "us", "scope": "macro", "reform": {}},
+            json={
+                "country": "us",
+                "scope": "macro",
+                "reform": {},
+                "_telemetry": {
+                    "run_id": "production-run-1",
+                    "process_id": "api-process-1",
+                    "capture_mode": "disabled",
+                },
+            },
             headers={REQUEST_ID_HEADER: "request-1"},
         )
 
@@ -161,6 +170,9 @@ def test_automatic_comparison_dispatch_preserves_production_response(
     assert result.headers["x-policyengine-simulation-backend"] == "old_gateway"
     assert len(comparison.calls) == 1
     assert comparison.calls[0]["request_id"] == "request-1"
+    assert comparison.calls[0]["request_payload"]["telemetry"]["run_id"] == (
+        "production-run-1"
+    )
     assert json.loads(comparison.calls[0]["production_response"]) == payload
 
 

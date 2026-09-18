@@ -60,6 +60,12 @@ _ALLOWED_FIELDS = frozenset(
         "policyengine_version",
         "spm",
         "segmented",
+        # The public API submits ``_telemetry`` on every society-wide
+        # calculation. ``SimulationRequest`` normalizes that internal alias to
+        # this field before the Stage 12 adapter sees the payload. It is
+        # correlation metadata, not a calculation option, so eligibility must
+        # accept and then ignore it.
+        "telemetry",
     }
 )
 _AGGREGATES = tuple(ReportAggregate)

@@ -515,11 +515,13 @@ class FutureCall:
 
 
 class ImmediateCall:
-    def __init__(self, object_id, result):
+    def __init__(self, object_id, result, observed_timeouts):
         self.object_id = object_id
         self.result = result
+        self.observed_timeouts = observed_timeouts
 
     def get(self, *, timeout=None):
+        self.observed_timeouts.append(timeout)
         return self.result
 
 
@@ -540,6 +542,7 @@ class ConcurrentInvoker:
         self.events = []
         self.environments = []
         self.production_result = production_result
+        self.production_wait_timeouts = []
 
     def spawn(self, *, simulation, environment, **_):
         parsed = SimulationExecutionInput.model_validate(simulation)
@@ -552,7 +555,11 @@ class ConcurrentInvoker:
     def restore(self, invocation_id):
         if invocation_id == "production-job-1":
             self.events.append("restore:production")
-            return ImmediateCall(invocation_id, self.production_result)
+            return ImmediateCall(
+                invocation_id,
+                self.production_result,
+                self.production_wait_timeouts,
+            )
         role = invocation_id.removeprefix("call-")
         parsed = _simulation(SimulationRole(role))
         self.events.append(f"restore:{role}")
@@ -698,6 +705,7 @@ def test_coordinator_compares_automatic_run_after_successful_aggregation() -> No
     )
 
     assert invoker.events[-1] == "restore:production"
+    assert invoker.production_wait_timeouts == [900]
     assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
     assert store.parent.comparison_status is ResultComparisonStatus.DIFFERENT
     assert store.parent.comparison_output_uri == "gs://private/comparison.json"

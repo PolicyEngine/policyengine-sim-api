@@ -150,7 +150,9 @@ failure.
 The current Public API omits `data` for the certified default dataset. The v2
 adapter therefore resolves an absent `data` field to the exact default dataset
 in the selected `.py` bundle. An explicit `data` value is eligible only when it
-identifies an artifact declared by that same bundle.
+identifies an artifact declared by that same bundle. The request model converts
+the Public API's `_telemetry` field to `telemetry`; the adapter accepts that
+correlation metadata but does not include it in either simulation input.
 
 ## Temporary direct runner endpoint
 
@@ -285,7 +287,7 @@ bounded reason and are not persisted.
 The report coordinator starts baseline and reform as independent Modal calls,
 waits for them, and derives the Stage 12 aggregate. It then restores the
 production Modal function call by the retained production job identifier and
-waits up to five minutes for that production call to finish. It compares both
+waits up to 15 minutes for that production call to finish. It compares both
 complete aggregate result objects exactly. The private
 `reports/comparison.json` receipt contains:
 

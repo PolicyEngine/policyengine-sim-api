@@ -41,7 +41,7 @@ from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.stage12_result_comparison import compare_results
 
 SIMULATION_WAIT_TIMEOUT_SECONDS = 3_000
-PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS = 300
+PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS = 900
 logger = logging.getLogger(__name__)
 
 

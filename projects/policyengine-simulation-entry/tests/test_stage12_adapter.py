@@ -73,6 +73,26 @@ def test_absent_package_versions_resolve_from_the_selected_bundle() -> None:
     assert bundle.country_package_version == "1.764.6"
 
 
+def test_normalized_production_telemetry_does_not_change_eligibility() -> None:
+    payload = eligible_payload()
+    payload["telemetry"] = {
+        "run_id": "production-run-1",
+        "process_id": "api-process-1",
+        "capture_mode": "disabled",
+    }
+
+    result = adapt_annual_comparison(
+        payload,
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert result.report is not None
+    assert result.skip_reason is None
+    assert result.report.baseline.options == {}
+    assert result.report.reform.options == {}
+
+
 @pytest.mark.parametrize(
     ("update", "reason"),
     [
