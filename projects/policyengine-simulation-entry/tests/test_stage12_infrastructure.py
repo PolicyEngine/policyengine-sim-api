@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / ".github/scripts/stage12-validate-infrastructure.sh"
@@ -16,12 +16,14 @@ def test_infrastructure_validation_is_bounded_and_valid_shell() -> None:
         ["bash", "-n", str(SCRIPT)],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     sync_result = subprocess.run(
         ["bash", "-n", str(SYNC_SCRIPT)],
         capture_output=True,
         text=True,
+        check=False,
     )
     assert sync_result.returncode == 0, sync_result.stderr
     source = SCRIPT.read_text(encoding="utf-8")
@@ -40,7 +42,7 @@ def test_infrastructure_validation_is_bounded_and_valid_shell() -> None:
     assert "add-iam-policy-binding" not in source
     assert "gcloud storage cp" in source
     assert "gcloud storage rm" in source
-    assert "stage-12-evaluation/_deployment-validation" in source
+    assert "stage-12-runs/_deployment-validation" in source
     assert "stage12_infrastructure" in source
     assert "get-iam-policy" in source
     assert "STAGE12_DATABASE_ADMIN_URL" not in source
@@ -63,6 +65,7 @@ def test_infrastructure_validation_rejects_missing_configuration() -> None:
         capture_output=True,
         text=True,
         env={},
+        check=False,
     )
     assert result.returncode != 0
     assert "STAGE12_ENVIRONMENT is required" in result.stderr
@@ -74,6 +77,7 @@ def test_modal_secret_sync_rejects_missing_configuration() -> None:
         capture_output=True,
         text=True,
         env={},
+        check=False,
     )
     assert result.returncode != 0
     assert "STAGE12_GCP_PROJECT_ID is required" in result.stderr

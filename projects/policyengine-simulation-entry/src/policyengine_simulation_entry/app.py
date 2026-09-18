@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -12,7 +13,6 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, TypeAdapter, ValidationError
 from policyengine_observability import REQUEST_ID_HEADER, record_event
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
@@ -24,21 +24,22 @@ from policyengine_simulation_contract.gateway_models import (
     PingRequest,
     PingResponse,
     ReadinessResponse,
-    SimulationRequest,
     SimulationErrorResponse,
+    SimulationRequest,
     VersionMap,
     VersionsResponse,
 )
 from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_contract.stage12_execution import (
-    EvaluationLifecycleStatus,
-    EvaluationReportRecord,
-    EvaluationSimulationRecord,
+    ComparisonReportRecord,
+    ComparisonRunLifecycleStatus,
+    ComparisonSimulationRecord,
 )
 from policyengine_simulation_observability.observability import (
     configure_process_observability,
     init_simulation_observability,
 )
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from starlette.datastructures import MutableHeaders
 
 from policyengine_simulation_entry.auth import CallerAuthenticator
@@ -62,7 +63,6 @@ from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12DispatchFailed,
     TemporaryStage12UnsupportedRequest,
 )
-from policyengine_simulation_entry.stage12_dispatch import Stage12CopyDispatcher
 
 logger = logging.getLogger(__name__)
 BACKEND_RESPONSE_HEADER = {
@@ -71,9 +71,10 @@ BACKEND_RESPONSE_HEADER = {
 _json_object_adapter = TypeAdapter(JsonObject)
 type AuthenticationDependency = Callable[[], CallerIdentity | None]
 type ResponseIdentifier = Literal["job_id", "batch_job_id"]
+STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS = 5.0
 
 
-class EvaluationBackend(Protocol):
+class ComparisonBackend(Protocol):
     async def dispatch_after_production(
         self,
         *,
@@ -87,12 +88,12 @@ class EvaluationBackend(Protocol):
         *,
         request_payload: dict[str, Any],
         request_id: str,
-    ) -> EvaluationReportRecord: ...
+    ) -> ComparisonReportRecord: ...
 
     async def get_temporary_report(
         self,
         evaluation_id: UUID,
-    ) -> tuple[EvaluationReportRecord, tuple[EvaluationSimulationRecord, ...]]: ...
+    ) -> tuple[ComparisonReportRecord, tuple[ComparisonSimulationRecord, ...]]: ...
 
 
 def _model_json(model: BaseModel) -> JsonObject:
@@ -140,46 +141,28 @@ def create_app(
     settings: Settings | None = None,
     backend: SimulationBackend | None = None,
     auth_dependency: AuthenticationDependency | None = None,
-    evaluation_backend: EvaluationBackend | None = None,
+    comparison_backend: ComparisonBackend | None = None,
 ) -> FastAPI:
     """Build the app with injectable auth/backend seams for hermetic tests."""
 
     runtime_settings = settings or Settings.from_env()
     runtime_backend = backend or OldGatewayBackend(runtime_settings)
     authenticate = auth_dependency or CallerAuthenticator(runtime_settings)
-    runtime_evaluation = evaluation_backend
-    if (
-        runtime_evaluation is None
-        and runtime_settings.stage12_comparison_backend_configured
-    ):
+    runtime_comparison = comparison_backend
+    if runtime_comparison is None and runtime_settings.stage12_resources_configured:
         from policyengine_simulation_entry.stage12_backend import (
-            Stage12EvaluationBackend,
+            Stage12ComparisonBackend,
         )
 
-        runtime_evaluation = Stage12EvaluationBackend.from_settings(runtime_settings)
-
-    stage12_copy_dispatcher = (
-        Stage12CopyDispatcher(
-            runtime_evaluation,
-            max_in_flight=runtime_settings.stage12_dispatch_max_in_flight,
-            queue_capacity=runtime_settings.stage12_dispatch_queue_capacity,
-            timeout_seconds=runtime_settings.stage12_dispatch_timeout_seconds,
-        )
-        if runtime_evaluation is not None
-        else None
-    )
+        runtime_comparison = Stage12ComparisonBackend.from_settings(runtime_settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         runtime_settings.validate()
         await runtime_backend.start()
-        if stage12_copy_dispatcher is not None:
-            await stage12_copy_dispatcher.start()
         try:
             yield
         finally:
-            if stage12_copy_dispatcher is not None:
-                await stage12_copy_dispatcher.close()
             await runtime_backend.close()
 
     app = FastAPI(
@@ -327,7 +310,7 @@ def create_app(
     protected = [Depends(authenticate)]
 
     def temporary_submission_payload(
-        report: EvaluationReportRecord,
+        report: ComparisonReportRecord,
     ) -> TemporaryStage12SubmissionResponse:
         return TemporaryStage12SubmissionResponse(
             evaluation_id=report.evaluation_id,
@@ -347,15 +330,15 @@ def create_app(
         body: SimulationRequest,
         request: Request,
     ) -> Response:
-        evaluation = runtime_evaluation
-        if evaluation is None:
+        comparison = runtime_comparison
+        if comparison is None:
             return JSONResponse(
                 status_code=503,
                 content={"detail": "Stage 12 direct execution is unavailable."},
                 headers={"Retry-After": "10"},
             )
         try:
-            report = await evaluation.submit_temporary_report(
+            report = await comparison.submit_temporary_report(
                 request_payload=_model_json(body),
                 request_id=request.state.request_id,
             )
@@ -374,7 +357,9 @@ def create_app(
                     mode="json"
                 ),
             )
-        except Exception as error:
+        # This temporary diagnostic route must convert every integration
+        # failure into an HTTP response rather than crash the application.
+        except Exception as error:  # noqa: BLE001
             logger.error(
                 "stage12_direct_submission_failed",
                 extra={
@@ -392,7 +377,7 @@ def create_app(
             content=temporary_submission_payload(report).model_dump(mode="json"),
         )
 
-    # TEMPORARY(Stage 12): Poll temporary PostgreSQL evaluation state only;
+    # TEMPORARY(Stage 12): Poll temporary PostgreSQL comparison state only;
     # never wait on or poll a Modal FunctionCall from this Cloud Run request.
     @app.get(
         "/internal/stage12/reports/{evaluation_id}",
@@ -403,21 +388,23 @@ def create_app(
         evaluation_id: UUID,
         request: Request,
     ) -> Response:
-        evaluation = runtime_evaluation
-        if evaluation is None:
+        comparison = runtime_comparison
+        if comparison is None:
             return JSONResponse(
                 status_code=503,
                 content={"detail": "Stage 12 direct execution is unavailable."},
                 headers={"Retry-After": "10"},
             )
         try:
-            report, simulations = await evaluation.get_temporary_report(evaluation_id)
+            report, simulations = await comparison.get_temporary_report(evaluation_id)
         except LookupError:
             return JSONResponse(
                 status_code=404,
                 content={"detail": "Stage 12 report was not found."},
             )
-        except Exception as error:
+        # Reading temporary diagnostic state crosses database and adapter
+        # boundaries whose concrete exception types are implementation details.
+        except Exception as error:  # noqa: BLE001
             logger.error(
                 "stage12_direct_status_failed",
                 extra={
@@ -436,8 +423,8 @@ def create_app(
             simulations=simulations,
         )
         running = report.status in {
-            EvaluationLifecycleStatus.PENDING,
-            EvaluationLifecycleStatus.RUNNING,
+            ComparisonRunLifecycleStatus.PENDING,
+            ComparisonRunLifecycleStatus.RUNNING,
         }
         return JSONResponse(
             status_code=202 if running else 200,
@@ -477,18 +464,35 @@ def create_app(
             request_payload,
             response_identifier_key="job_id",
         )
-        if stage12_copy_dispatcher is not None and response.status_code in {200, 202}:
-            # This is a non-blocking admission attempt. Capacity or execution
-            # failures in the temporary Stage 12 copy cannot alter the v1 reply.
+        if (
+            runtime_settings.stage12_enabled
+            and runtime_comparison is not None
+            and response.status_code in {200, 202}
+        ):
+            # Wait only for Modal to acknowledge the already-deployed report
+            # coordinator invocation. Calculation and comparison run later.
             try:
-                stage12_copy_dispatcher.submit(
-                    request_payload=request_payload,
-                    production_response=bytes(response.body),
-                    request_id=request.state.request_id,
+                await asyncio.wait_for(
+                    runtime_comparison.dispatch_after_production(
+                        request_payload=request_payload,
+                        production_response=bytes(response.body),
+                        request_id=request.state.request_id,
+                    ),
+                    timeout=STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
                 )
-            except Exception as error:
+            except TimeoutError:
                 logger.error(
-                    "stage12_copy_admission_failed",
+                    "stage12_comparison_dispatch_timed_out",
+                    extra={
+                        "request_id": request.state.request_id,
+                        "timeout_seconds": STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
+                    },
+                )
+            # Automatic Stage 12 work must never change the production v1
+            # response, including for unexpected integration failures.
+            except Exception as error:  # noqa: BLE001
+                logger.error(
+                    "stage12_comparison_dispatch_failed",
                     extra={
                         "request_id": request.state.request_id,
                         "error_type": type(error).__name__,

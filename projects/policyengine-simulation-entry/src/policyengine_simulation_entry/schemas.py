@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import Literal, TypedDict
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
 from policyengine_simulation_contract.stage12_execution import (
-    EvaluationLifecycleStatus,
-    EvaluationReportRecord,
-    EvaluationSimulationRecord,
+    ComparisonReportRecord,
+    ComparisonRunLifecycleStatus,
+    ComparisonSimulationRecord,
 )
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CallerIdentity(BaseModel):
@@ -76,14 +76,14 @@ class BackendTelemetryAttributes(TypedDict, total=False):
 
 
 # TEMPORARY(Stage 12): Remove these operator-only HTTP models when Stage 14
-# replaces the evaluation tables with authoritative report submission and polling.
+# replaces the comparison tables with authoritative report submission and polling.
 class TemporaryStage12SubmissionResponse(BaseModel):
     """Acknowledgement for one temporary direct Stage 12 report submission."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     evaluation_id: UUID
-    status: EvaluationLifecycleStatus
+    status: ComparisonRunLifecycleStatus
     poll_url: str
 
 
@@ -92,5 +92,5 @@ class TemporaryStage12ReportResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    report: EvaluationReportRecord
-    simulations: tuple[EvaluationSimulationRecord, ...]
+    report: ComparisonReportRecord
+    simulations: tuple[ComparisonSimulationRecord, ...]

@@ -1,4 +1,4 @@
-"""DML-only Postgres adapter for temporary Stage 12 evaluation records.
+"""DML-only Postgres adapter for temporary Stage 12 comparison records.
 
 PolicyEngine/policyengine-api owns the SQLModel definitions and Alembic chain.
 This adapter consumes that versioned contract and never creates or alters a
@@ -13,12 +13,13 @@ from typing import Any
 from uuid import UUID
 
 from policyengine_simulation_contract.stage12_execution import (
-    EvaluationAggregationStatus,
-    EvaluationLifecycleStatus,
-    EvaluationReportPersistenceResult,
-    EvaluationReportRecord,
-    EvaluationSimulationPersistenceResult,
-    EvaluationSimulationRecord,
+    ComparisonReportPersistenceResult,
+    ComparisonReportRecord,
+    ComparisonRunAggregationStatus,
+    ComparisonRunLifecycleStatus,
+    ComparisonSimulationPersistenceResult,
+    ComparisonSimulationRecord,
+    ResultComparisonStatus,
 )
 
 REPORT_TABLE = "public.stage12_evaluation_reports"
@@ -26,8 +27,8 @@ SIMULATION_TABLE = "public.stage12_evaluation_simulations"
 REPORT_CONSTRAINT = "uq_stage12_eval_reports_identity"
 SIMULATION_CONSTRAINT = "uq_stage12_eval_simulations_identity"
 
-REPORT_COLUMNS = tuple(EvaluationReportRecord.model_fields)
-SIMULATION_COLUMNS = tuple(EvaluationSimulationRecord.model_fields)
+REPORT_COLUMNS = tuple(ComparisonReportRecord.model_fields)
+SIMULATION_COLUMNS = tuple(ComparisonSimulationRecord.model_fields)
 REPORT_IDENTITY_COLUMNS = (
     "environment",
     "calculation_flow",
@@ -55,6 +56,16 @@ REPORT_MUTABLE_COLUMNS = (
     "started_at",
     "completed_at",
 )
+REPORT_COMPARISON_COLUMNS = (
+    "comparison_status",
+    "comparison_output_uri",
+    "comparison_output_sha256",
+    "comparison_schema_version",
+    "comparison_completed_at",
+    "comparison_error_code",
+    "comparison_error_summary",
+    "updated_at",
+)
 SIMULATION_MUTABLE_COLUMNS = (
     "status",
     "modal_invocation_id",
@@ -72,63 +83,92 @@ SIMULATION_MUTABLE_COLUMNS = (
 )
 
 ALLOWED_LIFECYCLE_TRANSITIONS = {
-    EvaluationLifecycleStatus.PENDING: frozenset(
+    ComparisonRunLifecycleStatus.PENDING: frozenset(
         {
-            EvaluationLifecycleStatus.PENDING,
-            EvaluationLifecycleStatus.RUNNING,
-            EvaluationLifecycleStatus.FAILED,
-            EvaluationLifecycleStatus.SKIPPED,
+            ComparisonRunLifecycleStatus.PENDING,
+            ComparisonRunLifecycleStatus.RUNNING,
+            ComparisonRunLifecycleStatus.FAILED,
+            ComparisonRunLifecycleStatus.SKIPPED,
         }
     ),
-    EvaluationLifecycleStatus.RUNNING: frozenset(
+    ComparisonRunLifecycleStatus.RUNNING: frozenset(
         {
-            EvaluationLifecycleStatus.RUNNING,
-            EvaluationLifecycleStatus.SUCCEEDED,
-            EvaluationLifecycleStatus.FAILED,
-            EvaluationLifecycleStatus.INCOMPLETE,
+            ComparisonRunLifecycleStatus.RUNNING,
+            ComparisonRunLifecycleStatus.SUCCEEDED,
+            ComparisonRunLifecycleStatus.FAILED,
+            ComparisonRunLifecycleStatus.INCOMPLETE,
         }
     ),
-    EvaluationLifecycleStatus.INCOMPLETE: frozenset(
+    ComparisonRunLifecycleStatus.INCOMPLETE: frozenset(
         {
-            EvaluationLifecycleStatus.INCOMPLETE,
-            EvaluationLifecycleStatus.RUNNING,
-            EvaluationLifecycleStatus.FAILED,
+            ComparisonRunLifecycleStatus.INCOMPLETE,
+            ComparisonRunLifecycleStatus.RUNNING,
+            ComparisonRunLifecycleStatus.FAILED,
         }
     ),
-    EvaluationLifecycleStatus.SUCCEEDED: frozenset(
-        {EvaluationLifecycleStatus.SUCCEEDED}
+    ComparisonRunLifecycleStatus.SUCCEEDED: frozenset(
+        {ComparisonRunLifecycleStatus.SUCCEEDED}
     ),
-    EvaluationLifecycleStatus.FAILED: frozenset(
+    ComparisonRunLifecycleStatus.FAILED: frozenset(
         {
-            EvaluationLifecycleStatus.FAILED,
-            EvaluationLifecycleStatus.RUNNING,
+            ComparisonRunLifecycleStatus.FAILED,
+            ComparisonRunLifecycleStatus.RUNNING,
         }
     ),
-    EvaluationLifecycleStatus.SKIPPED: frozenset({EvaluationLifecycleStatus.SKIPPED}),
+    ComparisonRunLifecycleStatus.SKIPPED: frozenset(
+        {ComparisonRunLifecycleStatus.SKIPPED}
+    ),
 }
 ALLOWED_AGGREGATION_TRANSITIONS = {
-    EvaluationAggregationStatus.NOT_STARTED: frozenset(
+    ComparisonRunAggregationStatus.NOT_STARTED: frozenset(
         {
-            EvaluationAggregationStatus.NOT_STARTED,
-            EvaluationAggregationStatus.RUNNING,
-            EvaluationAggregationStatus.FAILED,
+            ComparisonRunAggregationStatus.NOT_STARTED,
+            ComparisonRunAggregationStatus.RUNNING,
+            ComparisonRunAggregationStatus.FAILED,
         }
     ),
-    EvaluationAggregationStatus.RUNNING: frozenset(
+    ComparisonRunAggregationStatus.RUNNING: frozenset(
         {
-            EvaluationAggregationStatus.RUNNING,
-            EvaluationAggregationStatus.SUCCEEDED,
-            EvaluationAggregationStatus.FAILED,
+            ComparisonRunAggregationStatus.RUNNING,
+            ComparisonRunAggregationStatus.SUCCEEDED,
+            ComparisonRunAggregationStatus.FAILED,
         }
     ),
-    EvaluationAggregationStatus.SUCCEEDED: frozenset(
-        {EvaluationAggregationStatus.SUCCEEDED}
+    ComparisonRunAggregationStatus.SUCCEEDED: frozenset(
+        {ComparisonRunAggregationStatus.SUCCEEDED}
     ),
-    EvaluationAggregationStatus.FAILED: frozenset(
+    ComparisonRunAggregationStatus.FAILED: frozenset(
         {
-            EvaluationAggregationStatus.FAILED,
-            EvaluationAggregationStatus.RUNNING,
+            ComparisonRunAggregationStatus.FAILED,
+            ComparisonRunAggregationStatus.RUNNING,
         }
+    ),
+}
+ALLOWED_RESULT_COMPARISON_TRANSITIONS = {
+    ResultComparisonStatus.NOT_REQUESTED: frozenset(
+        {ResultComparisonStatus.NOT_REQUESTED}
+    ),
+    ResultComparisonStatus.PENDING: frozenset(
+        {
+            ResultComparisonStatus.PENDING,
+            ResultComparisonStatus.RUNNING,
+            ResultComparisonStatus.MATCHED,
+            ResultComparisonStatus.DIFFERENT,
+            ResultComparisonStatus.FAILED,
+        }
+    ),
+    ResultComparisonStatus.RUNNING: frozenset(
+        {
+            ResultComparisonStatus.RUNNING,
+            ResultComparisonStatus.MATCHED,
+            ResultComparisonStatus.DIFFERENT,
+            ResultComparisonStatus.FAILED,
+        }
+    ),
+    ResultComparisonStatus.MATCHED: frozenset({ResultComparisonStatus.MATCHED}),
+    ResultComparisonStatus.DIFFERENT: frozenset({ResultComparisonStatus.DIFFERENT}),
+    ResultComparisonStatus.FAILED: frozenset(
+        {ResultComparisonStatus.FAILED, ResultComparisonStatus.RUNNING}
     ),
 }
 
@@ -249,6 +289,12 @@ REPORT_UPDATE_SQL = _update_sql(
     REPORT_MUTABLE_COLUMNS,
     "evaluation_id",
 )
+REPORT_COMPARISON_UPDATE_SQL = _update_sql(
+    REPORT_TABLE,
+    REPORT_COLUMNS,
+    REPORT_COMPARISON_COLUMNS,
+    "evaluation_id",
+)
 SIMULATION_UPDATE_SQL = _update_sql(
     SIMULATION_TABLE,
     SIMULATION_COLUMNS,
@@ -271,7 +317,9 @@ WHERE simulation_execution_id = %(simulation_execution_id)s
   AND modal_invocation_id = %(expected_placeholder)s
 RETURNING {", ".join(SIMULATION_COLUMNS)}
 """.strip()
-def _parameters(record: EvaluationReportRecord | EvaluationSimulationRecord) -> dict:
+
+
+def _parameters(record: ComparisonReportRecord | ComparisonSimulationRecord) -> dict:
     values = record.model_dump(mode="python")
     for key, value in tuple(values.items()):
         if hasattr(value, "value"):
@@ -286,15 +334,15 @@ def _parameters(record: EvaluationReportRecord | EvaluationSimulationRecord) -> 
 def _require_same(existing: object, candidate: object, columns: Iterable[str]) -> None:
     for column in columns:
         if getattr(existing, column) != getattr(candidate, column):
-            raise ValueError(f"evaluation field {column} is immutable")
+            raise ValueError(f"comparison-run field {column} is immutable")
 
 
 def _require_child_matches_parent(
-    parent: EvaluationReportRecord,
-    child: EvaluationSimulationRecord,
+    parent: ComparisonReportRecord,
+    child: ComparisonSimulationRecord,
 ) -> None:
     if child.evaluation_id != parent.evaluation_id:
-        raise ValueError("evaluation child names another parent")
+        raise ValueError("comparison child names another parent")
     for column in (
         "contract_version",
         "worker_version",
@@ -304,12 +352,12 @@ def _require_child_matches_parent(
         "retention_expires_at",
     ):
         if getattr(child, column) != getattr(parent, column):
-            raise ValueError(f"evaluation child {column} does not match its parent")
+            raise ValueError(f"comparison child {column} does not match its parent")
 
 
 def _require_successful_replay(
-    existing: EvaluationReportRecord | EvaluationSimulationRecord,
-    candidate: EvaluationReportRecord | EvaluationSimulationRecord,
+    existing: ComparisonReportRecord | ComparisonSimulationRecord,
+    candidate: ComparisonReportRecord | ComparisonSimulationRecord,
     columns: tuple[str, ...],
 ) -> None:
     _require_same(
@@ -319,7 +367,7 @@ def _require_successful_replay(
     )
 
 
-class PostgresEvaluationStore:
+class PostgresComparisonStore:
     """Write temporary records with no schema-migration capability."""
 
     def __init__(
@@ -344,8 +392,8 @@ class PostgresEvaluationStore:
 
     def create_or_resolve_report(
         self,
-        record: EvaluationReportRecord,
-    ) -> EvaluationReportPersistenceResult:
+        record: ComparisonReportRecord,
+    ) -> ComparisonReportPersistenceResult:
         values = _parameters(record)
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(REPORT_INSERT_SQL, values)
@@ -356,14 +404,14 @@ class PostgresEvaluationStore:
                 row = cursor.fetchone()
             if row is None:
                 raise RuntimeError("report conflict did not resolve to a record")
-            resolved = EvaluationReportRecord.model_validate(row)
+            resolved = ComparisonReportRecord.model_validate(row)
             _require_same(resolved, record, REPORT_IDENTITY_COLUMNS)
-            return EvaluationReportPersistenceResult(record=resolved, created=created)
+            return ComparisonReportPersistenceResult(record=resolved, created=created)
 
     def create_or_resolve_simulation(
         self,
-        record: EvaluationSimulationRecord,
-    ) -> EvaluationSimulationPersistenceResult:
+        record: ComparisonSimulationRecord,
+    ) -> ComparisonSimulationPersistenceResult:
         values = _parameters(record)
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(
@@ -373,10 +421,10 @@ class PostgresEvaluationStore:
             parent_row = cursor.fetchone()
             if parent_row is None:
                 raise LookupError(
-                    f"evaluation report {record.evaluation_id} does not exist"
+                    f"comparison report {record.evaluation_id} does not exist"
                 )
             _require_child_matches_parent(
-                EvaluationReportRecord.model_validate(parent_row),
+                ComparisonReportRecord.model_validate(parent_row),
                 record,
             )
             cursor.execute(SIMULATION_INSERT_SQL, values)
@@ -387,20 +435,20 @@ class PostgresEvaluationStore:
                 row = cursor.fetchone()
             if row is None:
                 raise RuntimeError("simulation conflict did not resolve to a record")
-            resolved = EvaluationSimulationRecord.model_validate(row)
+            resolved = ComparisonSimulationRecord.model_validate(row)
             _require_same(resolved, record, SIMULATION_IDENTITY_COLUMNS)
-            return EvaluationSimulationPersistenceResult(
+            return ComparisonSimulationPersistenceResult(
                 record=resolved,
                 created=created,
             )
 
-    def get_report(self, evaluation_id: UUID) -> EvaluationReportRecord:
+    def get_report(self, evaluation_id: UUID) -> ComparisonReportRecord:
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(REPORT_SELECT_ID_SQL, {"evaluation_id": evaluation_id})
             row = cursor.fetchone()
         if row is None:
-            raise LookupError(f"evaluation report {evaluation_id} does not exist")
-        return EvaluationReportRecord.model_validate(row)
+            raise LookupError(f"comparison report {evaluation_id} does not exist")
+        return ComparisonReportRecord.model_validate(row)
 
     def get_report_for_production(
         self,
@@ -408,7 +456,7 @@ class PostgresEvaluationStore:
         environment: str,
         calculation_flow: str,
         production_identity: str,
-    ) -> EvaluationReportRecord | None:
+    ) -> ComparisonReportRecord | None:
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(
                 REPORT_SELECT_PRODUCTION_SQL,
@@ -419,12 +467,12 @@ class PostgresEvaluationStore:
                 },
             )
             row = cursor.fetchone()
-        return EvaluationReportRecord.model_validate(row) if row is not None else None
+        return ComparisonReportRecord.model_validate(row) if row is not None else None
 
     def get_simulation(
         self,
         simulation_execution_id: UUID,
-    ) -> EvaluationSimulationRecord:
+    ) -> ComparisonSimulationRecord:
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(
                 SIMULATION_SELECT_ID_SQL,
@@ -433,14 +481,14 @@ class PostgresEvaluationStore:
             row = cursor.fetchone()
         if row is None:
             raise LookupError(
-                f"evaluation simulation {simulation_execution_id} does not exist"
+                f"comparison simulation {simulation_execution_id} does not exist"
             )
-        return EvaluationSimulationRecord.model_validate(row)
+        return ComparisonSimulationRecord.model_validate(row)
 
     def list_simulations(
         self,
         evaluation_id: UUID,
-    ) -> tuple[EvaluationSimulationRecord, ...]:
+    ) -> tuple[ComparisonSimulationRecord, ...]:
         """Return the temporary child executions for one Stage 12 report."""
 
         with self._connection() as connection, connection.cursor() as cursor:
@@ -449,21 +497,21 @@ class PostgresEvaluationStore:
                 {"evaluation_id": evaluation_id},
             )
             rows = cursor.fetchall()
-        return tuple(EvaluationSimulationRecord.model_validate(row) for row in rows)
+        return tuple(ComparisonSimulationRecord.model_validate(row) for row in rows)
 
     def replace_report(
         self,
-        record: EvaluationReportRecord,
-    ) -> EvaluationReportRecord:
+        record: ComparisonReportRecord,
+    ) -> ComparisonReportRecord:
         values = _parameters(record)
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(REPORT_SELECT_ID_FOR_UPDATE_SQL, values)
             row = cursor.fetchone()
             if row is None:
                 raise LookupError(
-                    f"evaluation report {record.evaluation_id} does not exist"
+                    f"comparison report {record.evaluation_id} does not exist"
                 )
-            existing = EvaluationReportRecord.model_validate(row)
+            existing = ComparisonReportRecord.model_validate(row)
             _require_same(
                 existing,
                 record,
@@ -480,28 +528,77 @@ class PostgresEvaluationStore:
                 not in ALLOWED_AGGREGATION_TRANSITIONS[existing.aggregation_status]
             ):
                 raise ValueError("invalid report aggregation transition")
-            if existing.status is EvaluationLifecycleStatus.SUCCEEDED:
+            if existing.status is ComparisonRunLifecycleStatus.SUCCEEDED:
                 _require_successful_replay(existing, record, REPORT_COLUMNS)
                 return existing
             cursor.execute(REPORT_UPDATE_SQL, values)
             updated = cursor.fetchone()
             if updated is None:  # pragma: no cover - row remains locked
                 raise RuntimeError("report update returned no record")
-            return EvaluationReportRecord.model_validate(updated)
+            return ComparisonReportRecord.model_validate(updated)
+
+    def replace_report_result_comparison(
+        self,
+        record: ComparisonReportRecord,
+    ) -> ComparisonReportRecord:
+        """Update comparison metadata without changing report lifecycle output."""
+
+        values = _parameters(record)
+        with self._connection() as connection, connection.cursor() as cursor:
+            cursor.execute(REPORT_SELECT_ID_FOR_UPDATE_SQL, values)
+            row = cursor.fetchone()
+            if row is None:
+                raise LookupError(
+                    f"comparison report {record.evaluation_id} does not exist"
+                )
+            existing = ComparisonReportRecord.model_validate(row)
+            _require_same(
+                existing,
+                record,
+                tuple(
+                    column
+                    for column in REPORT_COLUMNS
+                    if column not in REPORT_COMPARISON_COLUMNS
+                ),
+            )
+            if (
+                record.comparison_status
+                not in ALLOWED_RESULT_COMPARISON_TRANSITIONS[existing.comparison_status]
+            ):
+                raise ValueError("invalid result comparison transition")
+            if existing.comparison_status in {
+                ResultComparisonStatus.MATCHED,
+                ResultComparisonStatus.DIFFERENT,
+            }:
+                _require_same(
+                    existing,
+                    record,
+                    tuple(
+                        column
+                        for column in REPORT_COMPARISON_COLUMNS
+                        if column != "updated_at"
+                    ),
+                )
+                return existing
+            cursor.execute(REPORT_COMPARISON_UPDATE_SQL, values)
+            updated = cursor.fetchone()
+            if updated is None:  # pragma: no cover - row remains locked
+                raise RuntimeError("result comparison update returned no record")
+            return ComparisonReportRecord.model_validate(updated)
 
     def replace_simulation(
         self,
-        record: EvaluationSimulationRecord,
-    ) -> EvaluationSimulationRecord:
+        record: ComparisonSimulationRecord,
+    ) -> ComparisonSimulationRecord:
         values = _parameters(record)
         with self._connection() as connection, connection.cursor() as cursor:
             cursor.execute(SIMULATION_SELECT_ID_FOR_UPDATE_SQL, values)
             row = cursor.fetchone()
             if row is None:
                 raise LookupError(
-                    f"evaluation simulation {record.simulation_execution_id} does not exist"
+                    f"comparison simulation {record.simulation_execution_id} does not exist"
                 )
-            existing = EvaluationSimulationRecord.model_validate(row)
+            existing = ComparisonSimulationRecord.model_validate(row)
             _require_same(
                 existing,
                 record,
@@ -513,14 +610,14 @@ class PostgresEvaluationStore:
             )
             if record.status not in ALLOWED_LIFECYCLE_TRANSITIONS[existing.status]:
                 raise ValueError("invalid simulation lifecycle transition")
-            if existing.status is EvaluationLifecycleStatus.SUCCEEDED:
+            if existing.status is ComparisonRunLifecycleStatus.SUCCEEDED:
                 _require_successful_replay(existing, record, SIMULATION_COLUMNS)
                 return existing
             cursor.execute(SIMULATION_UPDATE_SQL, values)
             updated = cursor.fetchone()
             if updated is None:  # pragma: no cover - row remains locked
                 raise RuntimeError("simulation update returned no record")
-            return EvaluationSimulationRecord.model_validate(updated)
+            return ComparisonSimulationRecord.model_validate(updated)
 
     def attach_report_invocation(
         self,
@@ -529,7 +626,7 @@ class PostgresEvaluationStore:
         expected_placeholder: str,
         modal_invocation_id: str,
         updated_at: datetime,
-    ) -> EvaluationReportRecord:
+    ) -> ComparisonReportRecord:
         parameters = {
             "evaluation_id": evaluation_id,
             "expected_placeholder": expected_placeholder,
@@ -543,10 +640,10 @@ class PostgresEvaluationStore:
                 cursor.execute(REPORT_SELECT_ID_SQL, parameters)
                 row = cursor.fetchone()
         if row is None:
-            raise LookupError(f"evaluation report {evaluation_id} does not exist")
-        resolved = EvaluationReportRecord.model_validate(row)
+            raise LookupError(f"comparison report {evaluation_id} does not exist")
+        resolved = ComparisonReportRecord.model_validate(row)
         if resolved.coordinator_invocation_id != modal_invocation_id:
-            raise ValueError("evaluation report invocation identity changed")
+            raise ValueError("comparison report invocation identity changed")
         return resolved
 
     def attach_simulation_invocation(
@@ -556,7 +653,7 @@ class PostgresEvaluationStore:
         expected_placeholder: str,
         modal_invocation_id: str,
         updated_at: datetime,
-    ) -> EvaluationSimulationRecord:
+    ) -> ComparisonSimulationRecord:
         parameters = {
             "simulation_execution_id": simulation_execution_id,
             "expected_placeholder": expected_placeholder,
@@ -571,12 +668,13 @@ class PostgresEvaluationStore:
                 row = cursor.fetchone()
         if row is None:
             raise LookupError(
-                f"evaluation simulation {simulation_execution_id} does not exist"
+                f"comparison simulation {simulation_execution_id} does not exist"
             )
-        resolved = EvaluationSimulationRecord.model_validate(row)
+        resolved = ComparisonSimulationRecord.model_validate(row)
         if resolved.modal_invocation_id != modal_invocation_id:
-            raise ValueError("evaluation simulation invocation identity changed")
+            raise ValueError("comparison simulation invocation identity changed")
         return resolved
+
 
 def sql_statements() -> Mapping[str, str]:
     """Expose bounded DML for tests and operational review."""
@@ -591,6 +689,7 @@ def sql_statements() -> Mapping[str, str]:
         "simulation_select_id": SIMULATION_SELECT_ID_SQL,
         "simulations_select_report": SIMULATIONS_SELECT_REPORT_SQL,
         "report_update": REPORT_UPDATE_SQL,
+        "report_comparison_update": REPORT_COMPARISON_UPDATE_SQL,
         "simulation_update": SIMULATION_UPDATE_SQL,
         "report_attach_invocation": REPORT_ATTACH_INVOCATION_SQL,
         "simulation_attach_invocation": SIMULATION_ATTACH_INVOCATION_SQL,

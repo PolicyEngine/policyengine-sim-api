@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from conftest import make_settings
 
 from policyengine_simulation_entry.config import ConfigurationError
-
-from conftest import make_settings
 
 
 def test_production_refuses_disabled_auth():
@@ -60,29 +59,38 @@ def test_complete_configuration_is_valid():
     make_settings().validate()
 
 
-def test_stage12_comparison_backend_defaults_to_unconfigured(monkeypatch):
+def test_stage12_automatic_execution_defaults_to_disabled(monkeypatch):
     from policyengine_simulation_entry.config import Settings
 
-    monkeypatch.delenv("STAGE12_COMPARISON_BACKEND_CONFIGURED", raising=False)
+    monkeypatch.delenv("STAGE12_ENABLED", raising=False)
     settings = Settings.from_env()
-    assert settings.stage12_comparison_backend_configured is False
-    assert settings.stage12_dispatch_max_in_flight == 8
-    assert settings.stage12_dispatch_queue_capacity == 32
-    assert settings.stage12_dispatch_timeout_seconds == 15
+    assert settings.stage12_enabled is False
+    assert settings.stage12_resources_configured is False
+
+
+@pytest.mark.parametrize("value", ["", "true", "yes", "2", " 1"])
+def test_stage12_enabled_rejects_every_value_other_than_zero_or_one(monkeypatch, value):
+    from policyengine_simulation_entry.config import Settings
+
+    monkeypatch.setenv("STAGE12_ENABLED", value)
+    with pytest.raises(ConfigurationError, match="exactly 0 or 1"):
+        Settings.from_env()
 
 
 def test_enabled_stage12_requires_independent_runtime_configuration():
-    with pytest.raises(ConfigurationError, match="Dual execution requires"):
-        make_settings(stage12_comparison_backend_configured=True).validate()
+    with pytest.raises(ConfigurationError, match="STAGE12_ENABLED=1 requires"):
+        make_settings(stage12_enabled=True).validate()
 
 
 def test_enabled_stage12_accepts_complete_independent_configuration():
-    make_settings(
-        stage12_comparison_backend_configured=True,
+    settings = make_settings(
+        stage12_enabled=True,
         stage12_v2_manifest_environment="staging",
         stage12_database_url="postgresql://stage12-runtime",
         stage12_artifact_bucket="policyengine-stage12-staging",
-    ).validate()
+    )
+    settings.validate()
+    assert settings.stage12_resources_configured is True
 
 
 def test_stage12_manifest_must_not_reuse_v1_storage_name():
@@ -92,33 +100,14 @@ def test_stage12_manifest_must_not_reuse_v1_storage_name():
         ).validate()
 
 
-def test_enabled_stage12_requires_a_runtime_control_name():
-    with pytest.raises(ConfigurationError, match="STAGE12_CONTROL_NAME"):
+def test_partial_stage12_resource_configuration_is_rejected():
+    with pytest.raises(ConfigurationError, match="Stage 12 resources require"):
         make_settings(
-            stage12_comparison_backend_configured=True,
-            stage12_control_name="",
             stage12_v2_manifest_environment="staging",
             stage12_database_url="postgresql://stage12-runtime",
-            stage12_artifact_bucket="policyengine-stage12-staging",
         ).validate()
 
 
 def test_stage12_retention_is_fixed_at_thirty_days():
     with pytest.raises(ConfigurationError, match="exactly 30"):
         make_settings(stage12_retention_days=31).validate()
-
-
-@pytest.mark.parametrize(
-    ("setting", "value", "expected_message"),
-    [
-        ("stage12_dispatch_max_in_flight", 0, "MAX_IN_FLIGHT"),
-        ("stage12_dispatch_max_in_flight", 33, "MAX_IN_FLIGHT"),
-        ("stage12_dispatch_queue_capacity", 0, "QUEUE_CAPACITY"),
-        ("stage12_dispatch_queue_capacity", 1_001, "QUEUE_CAPACITY"),
-        ("stage12_dispatch_timeout_seconds", 0, "TIMEOUT_SECONDS"),
-        ("stage12_dispatch_timeout_seconds", 61, "TIMEOUT_SECONDS"),
-    ],
-)
-def test_stage12_dispatch_limits_are_bounded(setting, value, expected_message):
-    with pytest.raises(ConfigurationError, match=expected_message):
-        make_settings(**{setting: value}).validate()

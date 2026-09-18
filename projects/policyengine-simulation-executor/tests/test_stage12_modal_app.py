@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 import sys
 import tomllib
+from pathlib import Path
 
 import pytest
 
 from fixtures.fake_modal import install_fake_modal
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 

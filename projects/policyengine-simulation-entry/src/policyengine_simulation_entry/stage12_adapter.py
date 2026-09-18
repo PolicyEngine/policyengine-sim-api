@@ -1,4 +1,4 @@
-"""Reviewed annual-comparison adapter for Stage 12 evaluation."""
+"""Reviewed annual-comparison adapter for Stage 12 comparison runs."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import Any, cast
 from uuid import UUID, uuid5
 
+from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     BundleProvenance,
     DatasetArtifactMediaType,
@@ -20,11 +21,10 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationExecutionInput,
     SimulationRole,
 )
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_manifest import V2WorkerVersion
 
 
-class EvaluationSkipReason(StrEnum):
+class ComparisonSkipReason(StrEnum):
     UNSUPPORTED_FLOW = "unsupported_flow"
     UNSUPPORTED_SCOPE = "unsupported_scope"
     UNSUPPORTED_BUDGET_WINDOW = "unsupported_budget_window"
@@ -37,9 +37,9 @@ class EvaluationSkipReason(StrEnum):
 
 
 @dataclass(frozen=True)
-class AdaptedEvaluation:
+class AdaptedComparisonRun:
     report: ReportExecutionInput | None
-    skip_reason: EvaluationSkipReason | None
+    skip_reason: ComparisonSkipReason | None
 
     @property
     def eligible(self) -> bool:
@@ -65,8 +65,8 @@ _ALLOWED_FIELDS = frozenset(
 _AGGREGATES = tuple(ReportAggregate)
 
 
-def _skip(reason: EvaluationSkipReason) -> AdaptedEvaluation:
-    return AdaptedEvaluation(report=None, skip_reason=reason)
+def _skip(reason: ComparisonSkipReason) -> AdaptedComparisonRun:
+    return AdaptedComparisonRun(report=None, skip_reason=reason)
 
 
 def _country_worker(worker: V2WorkerVersion, country: str):
@@ -81,7 +81,7 @@ def adapt_annual_comparison(
     *,
     evaluation_id: UUID,
     worker: V2WorkerVersion,
-) -> AdaptedEvaluation:
+) -> AdaptedComparisonRun:
     """Convert only the reviewed production request shape without guessing."""
 
     if any(
@@ -89,16 +89,16 @@ def adapt_annual_comparison(
         for key, value in payload.items()
         if key not in _ALLOWED_FIELDS
     ):
-        return _skip(EvaluationSkipReason.UNSUPPORTED_OPTIONS)
+        return _skip(ComparisonSkipReason.UNSUPPORTED_OPTIONS)
     if payload.get("scope") != "macro":
-        return _skip(EvaluationSkipReason.UNSUPPORTED_SCOPE)
+        return _skip(ComparisonSkipReason.UNSUPPORTED_SCOPE)
     if payload.get("include_cliffs") is True:
-        return _skip(EvaluationSkipReason.UNSUPPORTED_CLIFF_CALCULATION)
+        return _skip(ComparisonSkipReason.UNSUPPORTED_CLIFF_CALCULATION)
     if payload.get("segmented") not in {None, False}:
-        return _skip(EvaluationSkipReason.UNSUPPORTED_OPTIONS)
+        return _skip(ComparisonSkipReason.UNSUPPORTED_OPTIONS)
     country = payload.get("country")
     if not isinstance(country, str) or _country_worker(worker, country) is None:
-        return _skip(EvaluationSkipReason.UNSUPPORTED_COUNTRY)
+        return _skip(ComparisonSkipReason.UNSUPPORTED_COUNTRY)
     bundle_country = next(
         item for item in worker.bundle.countries if item.country == country
     )
@@ -107,27 +107,27 @@ def adapt_annual_comparison(
         requested_policyengine_version is not None
         and requested_policyengine_version != worker.bundle.policyengine_version
     ):
-        return _skip(EvaluationSkipReason.MISSING_BUNDLE_PROVENANCE)
+        return _skip(ComparisonSkipReason.MISSING_BUNDLE_PROVENANCE)
     requested_country_package_version = payload.get("version")
     if (
         requested_country_package_version is not None
         and requested_country_package_version != bundle_country.country_package_version
     ):
-        return _skip(EvaluationSkipReason.MISSING_BUNDLE_PROVENANCE)
+        return _skip(ComparisonSkipReason.MISSING_BUNDLE_PROVENANCE)
     baseline = payload.get("baseline")
     reform = payload.get("reform")
     if not isinstance(baseline, dict) or not isinstance(reform, dict):
-        return _skip(EvaluationSkipReason.UNSUPPORTED_REQUEST_SHAPE)
+        return _skip(ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE)
     year_text = payload.get("time_period")
     if (
         not isinstance(year_text, str)
         or len(year_text) != 4
         or not year_text.isdecimal()
     ):
-        return _skip(EvaluationSkipReason.UNSUPPORTED_REQUEST_SHAPE)
+        return _skip(ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE)
     region = payload.get("region")
     if not isinstance(region, str) or not region:
-        return _skip(EvaluationSkipReason.UNSUPPORTED_REQUEST_SHAPE)
+        return _skip(ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE)
 
     selected_dataset = next(
         item
@@ -143,7 +143,7 @@ def adapt_annual_comparison(
         f"{selected_dataset.identity}@{selected_dataset.artifact_revision}",
     }
     if requested_dataset not in accepted_dataset_values:
-        return _skip(EvaluationSkipReason.UNSUPPORTED_DATASET)
+        return _skip(ComparisonSkipReason.UNSUPPORTED_DATASET)
 
     dataset = DatasetProvenance(
         identity=selected_dataset.identity,
@@ -187,7 +187,7 @@ def adapt_annual_comparison(
             bundle=provenance,
         )
 
-    return AdaptedEvaluation(
+    return AdaptedComparisonRun(
         report=ReportExecutionInput(
             evaluation_id=evaluation_id,
             baseline=simulation(SimulationRole.BASELINE, baseline),

@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import shlex
-
-import modal
+from pathlib import Path
 
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
+
+import modal
 from policyengine_simulation_executor.stage12_bundle import (
     assert_expected_bundle_values,
     assertion_values,
@@ -57,13 +57,13 @@ gcp_secret = modal.Secret.from_name("stage12-evaluation-gcp-credentials")
 data_secret = modal.Secret.from_name("policyengine-data-credentials")
 hf_secret = modal.Secret.from_name("huggingface-token")
 logfire_secret = modal.Secret.from_name("policyengine-logfire")
-evaluation_runtime_secret = modal.Secret.from_name("stage12-evaluation-runtime")
+comparison_runtime_secret = modal.Secret.from_name("stage12-evaluation-runtime")
 worker_secrets = [
     gcp_secret,
     data_secret,
     hf_secret,
     logfire_secret,
-    evaluation_runtime_secret,
+    comparison_runtime_secret,
 ]
 
 

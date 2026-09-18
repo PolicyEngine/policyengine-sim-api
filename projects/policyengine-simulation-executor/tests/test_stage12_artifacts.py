@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import numpy as np
@@ -11,9 +11,9 @@ import pytest
 
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
+    comparison_run_prefix,
     deserialize_calculation_provenance,
     deserialize_simulation_frames,
-    evaluation_prefix,
     serialize_simulation_frames,
 )
 
@@ -71,13 +71,13 @@ def test_duplicate_entity_identifiers_are_rejected() -> None:
 
 
 def test_private_layout_is_environment_and_date_scoped() -> None:
-    prefix = evaluation_prefix(
+    prefix = comparison_run_prefix(
         environment="staging",
-        created_at=datetime(2026, 9, 14, tzinfo=timezone.utc),
+        created_at=datetime(2026, 9, 14, tzinfo=UTC),
         evaluation_id=UUID("00000000-0000-0000-0000-000000000001"),
     )
     assert prefix == (
-        "stage-12-evaluation/staging/2026/09/00000000-0000-0000-0000-000000000001"
+        "stage-12-runs/staging/2026/09/00000000-0000-0000-0000-000000000001"
     )
 
 
@@ -93,6 +93,7 @@ class FakeObjectStore:
 
     def read_bytes(self, path):
         return self.values.get(path)
+
 
 def test_immutable_retry_accepts_identical_bytes_and_rejects_other_bytes() -> None:
     objects = FakeObjectStore()
@@ -111,6 +112,6 @@ def test_aggregate_write_rejects_an_undeclared_payload_shape() -> None:
 
     with pytest.raises(ValueError, match="evaluation_id"):
         store.write_aggregate(
-            prefix="stage-12-evaluation/staging/2026/09/evaluation-1",
+            prefix="stage-12-runs/staging/2026/09/comparison-run-1",
             payload={"result": {}},
         )

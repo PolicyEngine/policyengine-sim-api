@@ -4,23 +4,25 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
+
 from policyengine_simulation_contract.stage12_execution import (
-    EvaluationAggregationStatus,
-    EvaluationLifecycleStatus,
-    EvaluationReportRecord,
-    EvaluationSimulationRecord,
+    ComparisonReportRecord,
+    ComparisonRunAggregationStatus,
+    ComparisonRunLifecycleStatus,
+    ComparisonSimulationRecord,
+    ResultComparisonStatus,
     SimulationRole,
 )
 from policyengine_simulation_contract.stage12_persistence import (
-    PostgresEvaluationStore,
+    PostgresComparisonStore,
     sql_statements,
 )
 
-NOW = datetime(2026, 9, 14, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 14, tzinfo=UTC)
 
 
 def test_persistence_contract_imports_without_postgres_extra() -> None:
@@ -42,11 +44,11 @@ def test_persistence_contract_imports_without_postgres_extra() -> None:
     assert result.returncode == 0, result.stderr
 
 
-def _record() -> EvaluationReportRecord:
-    return EvaluationReportRecord(
+def _record() -> ComparisonReportRecord:
+    return ComparisonReportRecord(
         evaluation_id=UUID("00000000-0000-0000-0000-000000000001"),
-        status=EvaluationLifecycleStatus.PENDING,
-        aggregation_status=EvaluationAggregationStatus.NOT_STARTED,
+        status=ComparisonRunLifecycleStatus.PENDING,
+        aggregation_status=ComparisonRunAggregationStatus.NOT_STARTED,
         environment="staging",
         calculation_flow="economy",
         originating_request_id="request-1",
@@ -71,9 +73,9 @@ def _record() -> EvaluationReportRecord:
     )
 
 
-def _simulation_record(role: SimulationRole) -> EvaluationSimulationRecord:
+def _simulation_record(role: SimulationRole) -> ComparisonSimulationRecord:
     suffix = 2 if role is SimulationRole.BASELINE else 3
-    return EvaluationSimulationRecord(
+    return ComparisonSimulationRecord(
         simulation_execution_id=UUID(f"00000000-0000-0000-0000-{suffix:012d}"),
         evaluation_id=_record().evaluation_id,
         role=role,
@@ -82,7 +84,7 @@ def _simulation_record(role: SimulationRole) -> EvaluationSimulationRecord:
         modal_application="policyengine-simulation-v2-py5-2-0",
         simulation_callable="run_single_simulation_us",
         version_manifest_sha256="a" * 64,
-        status=EvaluationLifecycleStatus.RUNNING,
+        status=ComparisonRunLifecycleStatus.RUNNING,
         created_at=NOW,
         updated_at=NOW,
         started_at=NOW,
@@ -142,7 +144,7 @@ def test_adapter_contains_only_dml_statements() -> None:
 def test_create_or_resolve_report_returns_inserted_record() -> None:
     record = _record()
     cursor = FakeCursor([record.model_dump(mode="python")])
-    store = PostgresEvaluationStore(
+    store = PostgresComparisonStore(
         "postgresql://runtime",
         connect=lambda *_, **__: FakeConnection(cursor),
     )
@@ -158,7 +160,7 @@ def test_create_or_resolve_report_returns_inserted_record() -> None:
 def test_create_or_resolve_report_reuses_matching_conflict() -> None:
     record = _record()
     cursor = FakeCursor([None, record.model_dump(mode="python")])
-    store = PostgresEvaluationStore(
+    store = PostgresComparisonStore(
         "postgresql://runtime",
         connect=lambda *_, **__: FakeConnection(cursor),
     )
@@ -182,7 +184,7 @@ def test_create_simulation_validates_parent_before_insert() -> None:
             child.model_dump(mode="python"),
         ]
     )
-    store = PostgresEvaluationStore(
+    store = PostgresComparisonStore(
         "postgresql://runtime",
         connect=lambda *_, **__: FakeConnection(cursor),
     )
@@ -203,7 +205,7 @@ def test_create_simulation_rejects_parent_provenance_mismatch() -> None:
         update={"worker_version": "5.3.0"}
     )
     cursor = FakeCursor([parent.model_dump(mode="python")])
-    store = PostgresEvaluationStore(
+    store = PostgresComparisonStore(
         "postgresql://runtime",
         connect=lambda *_, **__: FakeConnection(cursor),
     )
@@ -217,8 +219,8 @@ def test_create_simulation_rejects_parent_provenance_mismatch() -> None:
 def test_successful_records_cannot_be_overwritten() -> None:
     report = _record().model_copy(
         update={
-            "status": EvaluationLifecycleStatus.SUCCEEDED,
-            "aggregation_status": EvaluationAggregationStatus.SUCCEEDED,
+            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
+            "aggregation_status": ComparisonRunAggregationStatus.SUCCEEDED,
             "aggregate_output_uri": "gs://private/report.json",
             "aggregate_output_sha256": "a" * 64,
             "aggregate_schema_version": 1,
@@ -226,13 +228,13 @@ def test_successful_records_cannot_be_overwritten() -> None:
         }
     )
     report_cursor = FakeCursor([report.model_dump(mode="python")])
-    report_store = PostgresEvaluationStore(
+    report_store = PostgresComparisonStore(
         "postgresql://runtime",
         connect=lambda *_, **__: FakeConnection(report_cursor),
     )
     simulation = _simulation_record(SimulationRole.BASELINE).model_copy(
         update={
-            "status": EvaluationLifecycleStatus.SUCCEEDED,
+            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
             "output_uri": "gs://private/baseline.parquet",
             "output_sha256": "a" * 64,
             "output_schema_version": 1,
@@ -243,7 +245,7 @@ def test_successful_records_cannot_be_overwritten() -> None:
         }
     )
     simulation_cursor = FakeCursor([simulation.model_dump(mode="python")])
-    simulation_store = PostgresEvaluationStore(
+    simulation_store = PostgresComparisonStore(
         "postgresql://runtime",
         connect=lambda *_, **__: FakeConnection(simulation_cursor),
     )
@@ -261,11 +263,50 @@ def test_successful_records_cannot_be_overwritten() -> None:
     assert len(simulation_cursor.calls) == 1
 
 
+def test_successful_report_accepts_a_separate_result_comparison_update() -> None:
+    report = _record().model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
+            "aggregation_status": ComparisonRunAggregationStatus.SUCCEEDED,
+            "aggregate_output_uri": "gs://private/report.json",
+            "aggregate_output_sha256": "a" * 64,
+            "aggregate_schema_version": 1,
+            "comparison_status": ResultComparisonStatus.PENDING,
+            "completed_at": NOW,
+        }
+    )
+    compared = report.model_copy(
+        update={
+            "comparison_status": ResultComparisonStatus.DIFFERENT,
+            "comparison_output_uri": "gs://private/comparison.json",
+            "comparison_output_sha256": "b" * 64,
+            "comparison_schema_version": 1,
+            "comparison_completed_at": NOW,
+        }
+    )
+    cursor = FakeCursor(
+        [
+            report.model_dump(mode="python"),
+            compared.model_dump(mode="python"),
+        ]
+    )
+    store = PostgresComparisonStore(
+        "postgresql://runtime",
+        connect=lambda *_, **__: FakeConnection(cursor),
+    )
+
+    result = store.replace_report_result_comparison(compared)
+
+    assert result == compared
+    assert "comparison_status = %(comparison_status)s" in cursor.calls[1][0]
+    assert "status = %(status)s" not in cursor.calls[1][0]
+
+
 def test_attaching_report_invocation_preserves_completed_lifecycle() -> None:
     record = _record().model_copy(
         update={
-            "status": EvaluationLifecycleStatus.SUCCEEDED,
-            "aggregation_status": EvaluationAggregationStatus.SUCCEEDED,
+            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
+            "aggregation_status": ComparisonRunAggregationStatus.SUCCEEDED,
             "coordinator_invocation_id": "modal-call-1",
             "aggregate_output_uri": "gs://private/report.json",
             "aggregate_output_sha256": "a" * 64,
@@ -274,7 +315,7 @@ def test_attaching_report_invocation_preserves_completed_lifecycle() -> None:
         }
     )
     cursor = FakeCursor([record.model_dump(mode="python")])
-    store = PostgresEvaluationStore(
+    store = PostgresComparisonStore(
         "postgresql://runtime",
         connect=lambda *_, **__: FakeConnection(cursor),
     )
@@ -286,7 +327,7 @@ def test_attaching_report_invocation_preserves_completed_lifecycle() -> None:
         updated_at=NOW,
     )
 
-    assert resolved.status is EvaluationLifecycleStatus.SUCCEEDED
+    assert resolved.status is ComparisonRunLifecycleStatus.SUCCEEDED
     assert resolved.coordinator_invocation_id == "modal-call-1"
     assert "coordinator_invocation_id = %(modal_invocation_id)s" in cursor.calls[0][0]
     assert "status =" not in cursor.calls[0][0]
@@ -301,7 +342,7 @@ def test_list_simulations_reads_children_in_database_order() -> None:
             reform.model_dump(mode="python"),
         ]
     )
-    store = PostgresEvaluationStore(
+    store = PostgresComparisonStore(
         "postgresql://runtime",
         connect=lambda *_, **__: FakeConnection(cursor),
     )

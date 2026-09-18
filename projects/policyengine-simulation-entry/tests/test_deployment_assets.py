@@ -88,14 +88,18 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
         reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 11
     )
     assert "APP_ENVIRONMENT=${{ inputs.deployment_environment }}" in reusable_workflow
-    assert "STAGE12_DISPATCH_MAX_IN_FLIGHT" in reusable_workflow
-    assert "STAGE12_DISPATCH_QUEUE_CAPACITY" in reusable_workflow
-    assert "STAGE12_DISPATCH_TIMEOUT_SECONDS" in reusable_workflow
+    assert "STAGE12_ENABLED=${{ vars.STAGE12_ENABLED }}" in reusable_workflow
+    assert "STAGE12_COMPARISON_BACKEND_CONFIGURED" not in reusable_workflow
+    assert "STAGE12_CONTROL_NAME" not in reusable_workflow
+    assert "STAGE12_DISPATCH_MAX_IN_FLIGHT" not in reusable_workflow
+    assert "STAGE12_DISPATCH_QUEUE_CAPACITY" not in reusable_workflow
+    assert "STAGE12_DISPATCH_TIMEOUT_SECONDS" not in reusable_workflow
     assert (
         "STAGE12_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     )
-    assert "--modal-environment" in reusable_workflow
-    assert "--deployment-environment" in reusable_workflow
+    assert "STAGE12_V2_MANIFEST_ENVIRONMENT=${{ inputs.modal_environment }}" in (
+        reusable_workflow
+    )
     assert "id-token: write" in reusable_workflow
     assert (
         reusable_workflow.count("vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME") == 1
@@ -246,19 +250,8 @@ def test_main_deployment_automatically_deploys_stage12_in_both_environments():
     assert deploy_workflow.count("deploy_stage12_v2: true") == 2
     assert "deploy_stage12_v2: false" not in deploy_workflow
 
-    prepare_workflow = reusable_workflow[
-        reusable_workflow.index("  prepare:") : reusable_workflow.index(
-            "  deploy_entrypoint:"
-        )
-    ]
-    assert "Initialize Stage 12 parallel execution as disabled" in prepare_workflow
-    control_command = next(
-        line
-        for line in prepare_workflow.splitlines()
-        if "src.modal.utils.set_stage12_dual_execution" in line
-    )
-    assert "--manifest-selection-enabled" not in control_command
-    assert "--economy-enabled" not in control_command
+    assert "src.modal.utils.set_stage12_dual_execution" not in reusable_workflow
+    assert "STAGE12_ENABLED=${{ vars.STAGE12_ENABLED }}" in reusable_workflow
 
 
 def test_stage12_only_deployment_cannot_redeploy_existing_modal_resources():

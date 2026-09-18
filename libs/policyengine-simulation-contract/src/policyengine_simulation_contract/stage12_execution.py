@@ -18,6 +18,8 @@ from pydantic import (
 )
 
 ContractText = Annotated[str, Field(min_length=1, max_length=255)]
+# ``evaluation_id`` is the already-deployed physical database and wire field
+# for the temporary comparison-run identifier. Stage 14 owns its removal.
 Sha256Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 StorageUri = Annotated[
     str,
@@ -291,6 +293,61 @@ class AggregateReportArtifactPayload(StrictContractModel):
         return value
 
 
+class ResultDifference(StrictContractModel):
+    """One exact aggregate-result difference identified by JSON Pointer."""
+
+    path: Annotated[str, Field(max_length=4096)]
+    production_present: bool
+    stage12_present: bool
+    production_value: JsonValue = None
+    stage12_value: JsonValue = None
+    absolute_delta: float | None = None
+    relative_delta: float | None = None
+
+    @model_validator(mode="after")
+    def validate_presence(self) -> ResultDifference:
+        if not self.production_present and not self.stage12_present:
+            raise ValueError(
+                "a result difference must be present in at least one result"
+            )
+        if not self.production_present and self.production_value is not None:
+            raise ValueError("an absent production value must be null")
+        if not self.stage12_present and self.stage12_value is not None:
+            raise ValueError("an absent Stage 12 value must be null")
+        # A zero production value has no finite relative delta, so an absolute
+        # delta with no relative delta is the only permitted partial pair.
+        if (self.absolute_delta is None) != (self.relative_delta is None) and (
+            self.absolute_delta is None or self.relative_delta is not None
+        ):
+            raise ValueError("numeric deltas must be supplied together")
+        return self
+
+
+class ResultComparisonArtifactPayload(StrictContractModel):
+    """Private comparison receipt without duplicate complete result objects."""
+
+    schema_version: Literal[1] = 1
+    evaluation_id: UUID
+    production_job_id: ContractText
+    compared_at: datetime
+    status: Literal["matched", "different"]
+    production_result_sha256: Sha256Digest
+    stage12_result_sha256: Sha256Digest
+    difference_count: Annotated[int, Field(ge=0)]
+    differences: tuple[ResultDifference, ...]
+
+    @model_validator(mode="after")
+    def validate_differences(self) -> ResultComparisonArtifactPayload:
+        if self.compared_at.tzinfo is None:
+            raise ValueError("comparison timestamp must include a timezone")
+        if self.difference_count != len(self.differences):
+            raise ValueError("difference_count must equal the number of differences")
+        expected_status = "matched" if not self.differences else "different"
+        if self.status != expected_status:
+            raise ValueError("comparison status does not match its differences")
+        return self
+
+
 class Stage12InvocationContext(StrictContractModel):
     contract_version: Literal[1] = 1
     request_id: ContractText
@@ -305,6 +362,10 @@ class Stage12InvocationContext(StrictContractModel):
     version_manifest_sha256: Sha256Digest
     bundle_manifest_sha256: Sha256Digest
     artifact_prefix: Annotated[str, Field(min_length=1, max_length=2048)]
+    # Automatic runs retain the existing Modal function-call identifier so the
+    # coordinator can retrieve the production aggregate after Stage 12 finishes.
+    # Direct Stage 12-only runs have no associated production call.
+    production_function_call_id: ContractText | None = None
     created_at: datetime
     retention_expires_at: datetime
 
@@ -316,20 +377,20 @@ class Stage12InvocationContext(StrictContractModel):
 
 ErrorCode = Annotated[str, Field(min_length=1, max_length=64)]
 ErrorSummary = Annotated[str, Field(min_length=1, max_length=512)]
-MAX_EVALUATION_RETENTION = timedelta(days=30)
+MAX_COMPARISON_RUN_ARTIFACT_RETENTION = timedelta(days=30)
 
 
 def _validate_retention(created_at: datetime, retention_expires_at: datetime) -> None:
     if created_at.tzinfo is None or retention_expires_at.tzinfo is None:
-        raise ValueError("evaluation retention timestamps must include a timezone")
+        raise ValueError("comparison retention timestamps must include a timezone")
     retention = retention_expires_at - created_at
     if retention <= timedelta(0):
-        raise ValueError("evaluation retention must be greater than zero")
-    if retention > MAX_EVALUATION_RETENTION:
-        raise ValueError("evaluation retention must not exceed 30 days")
+        raise ValueError("comparison retention must be greater than zero")
+    if retention > MAX_COMPARISON_RUN_ARTIFACT_RETENTION:
+        raise ValueError("comparison retention must not exceed 30 days")
 
 
-class EvaluationLifecycleStatus(StrEnum):
+class ComparisonRunLifecycleStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -338,20 +399,29 @@ class EvaluationLifecycleStatus(StrEnum):
     SKIPPED = "skipped"
 
 
-class EvaluationAggregationStatus(StrEnum):
+class ComparisonRunAggregationStatus(StrEnum):
     NOT_STARTED = "not_started"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 
 
-class EvaluationReportRecord(StrictContractModel):
+class ResultComparisonStatus(StrEnum):
+    NOT_REQUESTED = "not_requested"
+    PENDING = "pending"
+    RUNNING = "running"
+    MATCHED = "matched"
+    DIFFERENT = "different"
+    FAILED = "failed"
+
+
+class ComparisonReportRecord(StrictContractModel):
     """Complete producer/consumer contract for one temporary parent row."""
 
     contract_version: Literal[1] = 1
     evaluation_id: UUID
-    status: EvaluationLifecycleStatus
-    aggregation_status: EvaluationAggregationStatus
+    status: ComparisonRunLifecycleStatus
+    aggregation_status: ComparisonRunAggregationStatus
     environment: ContractText
     calculation_flow: ContractText
     originating_request_id: ContractText
@@ -376,6 +446,13 @@ class EvaluationReportRecord(StrictContractModel):
     aggregate_output_uri: StorageUri | None = None
     aggregate_output_sha256: Sha256Digest | None = None
     aggregate_schema_version: Annotated[int, Field(ge=1)] | None = None
+    comparison_status: ResultComparisonStatus = ResultComparisonStatus.NOT_REQUESTED
+    comparison_output_uri: StorageUri | None = None
+    comparison_output_sha256: Sha256Digest | None = None
+    comparison_schema_version: Annotated[int, Field(ge=1)] | None = None
+    comparison_completed_at: datetime | None = None
+    comparison_error_code: ErrorCode | None = None
+    comparison_error_summary: ErrorSummary | None = None
     created_at: datetime
     updated_at: datetime
     started_at: datetime | None = None
@@ -383,7 +460,7 @@ class EvaluationReportRecord(StrictContractModel):
     retention_expires_at: datetime
 
     @model_validator(mode="after")
-    def validate_state(self) -> EvaluationReportRecord:
+    def validate_state(self) -> ComparisonReportRecord:
         _validate_retention(self.created_at, self.retention_expires_at)
         output_fields = (
             self.aggregate_output_uri,
@@ -394,8 +471,8 @@ class EvaluationReportRecord(StrictContractModel):
             value is not None for value in output_fields
         ):
             raise ValueError("aggregate output fields must be supplied together")
-        if self.status is EvaluationLifecycleStatus.SUCCEEDED:
-            if self.aggregation_status is not EvaluationAggregationStatus.SUCCEEDED:
+        if self.status is ComparisonRunLifecycleStatus.SUCCEEDED:
+            if self.aggregation_status is not ComparisonRunAggregationStatus.SUCCEEDED:
                 raise ValueError("a successful report requires successful aggregation")
             if not all(value is not None for value in output_fields):
                 raise ValueError("a successful report requires an aggregate output")
@@ -404,16 +481,59 @@ class EvaluationReportRecord(StrictContractModel):
         if (
             self.status
             in {
-                EvaluationLifecycleStatus.FAILED,
-                EvaluationLifecycleStatus.SKIPPED,
+                ComparisonRunLifecycleStatus.FAILED,
+                ComparisonRunLifecycleStatus.SKIPPED,
             }
             and self.error_code is None
         ):
             raise ValueError("a failed or skipped report requires an error_code")
+        comparison_output_fields = (
+            self.comparison_output_uri,
+            self.comparison_output_sha256,
+            self.comparison_schema_version,
+        )
+        if self.comparison_status in {
+            ResultComparisonStatus.NOT_REQUESTED,
+            ResultComparisonStatus.PENDING,
+            ResultComparisonStatus.RUNNING,
+        }:
+            if any(value is not None for value in comparison_output_fields):
+                raise ValueError(
+                    "an incomplete comparison cannot reference an output artifact"
+                )
+            if self.comparison_completed_at is not None:
+                raise ValueError("an incomplete comparison cannot have completed_at")
+            if self.comparison_error_code is not None:
+                raise ValueError("an incomplete comparison cannot have an error_code")
+            if self.comparison_error_summary is not None:
+                raise ValueError(
+                    "an incomplete comparison cannot have an error_summary"
+                )
+        elif self.comparison_status in {
+            ResultComparisonStatus.MATCHED,
+            ResultComparisonStatus.DIFFERENT,
+        }:
+            if not all(value is not None for value in comparison_output_fields):
+                raise ValueError("a completed comparison requires an output artifact")
+            if self.comparison_completed_at is None:
+                raise ValueError("a completed comparison requires completed_at")
+            if self.comparison_error_code is not None:
+                raise ValueError("a completed comparison cannot have an error_code")
+            if self.comparison_error_summary is not None:
+                raise ValueError("a completed comparison cannot have an error_summary")
+        else:
+            if any(value is not None for value in comparison_output_fields):
+                raise ValueError(
+                    "a failed comparison cannot reference an output artifact"
+                )
+            if self.comparison_completed_at is None:
+                raise ValueError("a failed comparison requires completed_at")
+            if self.comparison_error_code is None:
+                raise ValueError("a failed comparison requires an error_code")
         return self
 
 
-class EvaluationSimulationRecord(StrictContractModel):
+class ComparisonSimulationRecord(StrictContractModel):
     """Complete producer/consumer contract for one temporary child row."""
 
     contract_version: Literal[1] = 1
@@ -426,7 +546,7 @@ class EvaluationSimulationRecord(StrictContractModel):
     simulation_callable: ContractText
     version_manifest_sha256: Sha256Digest
     modal_invocation_id: ContractText | None = None
-    status: EvaluationLifecycleStatus
+    status: ComparisonRunLifecycleStatus
     error_code: ErrorCode | None = None
     error_summary: ErrorSummary | None = None
     output_uri: StorageUri | None = None
@@ -442,7 +562,7 @@ class EvaluationSimulationRecord(StrictContractModel):
     retention_expires_at: datetime
 
     @model_validator(mode="after")
-    def validate_state(self) -> EvaluationSimulationRecord:
+    def validate_state(self) -> ComparisonSimulationRecord:
         _validate_retention(self.created_at, self.retention_expires_at)
         output_fields = (
             self.output_uri,
@@ -461,7 +581,7 @@ class EvaluationSimulationRecord(StrictContractModel):
                 raise ValueError("row_identity_columns must not be empty")
             if len(self.row_identity_columns) != len(set(self.row_identity_columns)):
                 raise ValueError("row_identity_columns must be unique")
-        if self.status is EvaluationLifecycleStatus.SUCCEEDED:
+        if self.status is ComparisonRunLifecycleStatus.SUCCEEDED:
             if not all(value is not None for value in output_fields):
                 raise ValueError("a successful simulation requires an output")
             if self.completed_at is None:
@@ -469,8 +589,8 @@ class EvaluationSimulationRecord(StrictContractModel):
         if (
             self.status
             in {
-                EvaluationLifecycleStatus.FAILED,
-                EvaluationLifecycleStatus.SKIPPED,
+                ComparisonRunLifecycleStatus.FAILED,
+                ComparisonRunLifecycleStatus.SKIPPED,
             }
             and self.error_code is None
         ):
@@ -479,12 +599,12 @@ class EvaluationSimulationRecord(StrictContractModel):
 
 
 @dataclass(frozen=True)
-class EvaluationReportPersistenceResult:
-    record: EvaluationReportRecord
+class ComparisonReportPersistenceResult:
+    record: ComparisonReportRecord
     created: bool
 
 
 @dataclass(frozen=True)
-class EvaluationSimulationPersistenceResult:
-    record: EvaluationSimulationRecord
+class ComparisonSimulationPersistenceResult:
+    record: ComparisonSimulationRecord
     created: bool

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from policyengine_simulation_contract.stage12_bundle import (
@@ -10,21 +10,21 @@ from policyengine_simulation_contract.stage12_bundle import (
     Stage12CountryBundle,
     Stage12Dataset,
 )
+from policyengine_simulation_contract.stage12_execution import (
+    ComparisonReportRecord,
+    ComparisonRunAggregationStatus,
+    ComparisonRunLifecycleStatus,
+    ComparisonSimulationRecord,
+    SimulationRole,
+)
 from policyengine_simulation_contract.stage12_manifest import (
     V2CountryWorker,
     V2WorkerValidation,
     V2WorkerVersion,
     v2_application_name,
 )
-from policyengine_simulation_contract.stage12_execution import (
-    EvaluationAggregationStatus,
-    EvaluationLifecycleStatus,
-    EvaluationReportRecord,
-    EvaluationSimulationRecord,
-    SimulationRole,
-)
 
-NOW = datetime(2026, 9, 14, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 14, tzinfo=UTC)
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
@@ -82,7 +82,7 @@ def worker() -> V2WorkerVersion:
             validated=True,
             application_name=application_name,
             bundle_manifest_sha256="b" * 64,
-            validated_at=datetime(2026, 9, 14, tzinfo=timezone.utc),
+            validated_at=datetime(2026, 9, 14, tzinfo=UTC),
             validation_invocation_id="validation-1",
             country_validation_invocation_ids={
                 "us": "validation-us",
@@ -106,15 +106,15 @@ def eligible_payload() -> dict:
     }
 
 
-def evaluation_report(
+def comparison_report(
     *,
-    status: EvaluationLifecycleStatus = EvaluationLifecycleStatus.RUNNING,
+    status: ComparisonRunLifecycleStatus = ComparisonRunLifecycleStatus.RUNNING,
     environment: str = "staging",
-) -> EvaluationReportRecord:
+) -> ComparisonReportRecord:
     values = {
         "evaluation_id": EVALUATION_ID,
         "status": status,
-        "aggregation_status": EvaluationAggregationStatus.RUNNING,
+        "aggregation_status": ComparisonRunAggregationStatus.RUNNING,
         "environment": environment,
         "calculation_flow": "economy",
         "originating_request_id": "request-1",
@@ -139,31 +139,31 @@ def evaluation_report(
         "started_at": NOW,
         "retention_expires_at": NOW + timedelta(days=30),
     }
-    if status is EvaluationLifecycleStatus.SUCCEEDED:
+    if status is ComparisonRunLifecycleStatus.SUCCEEDED:
         values.update(
             {
-                "aggregation_status": EvaluationAggregationStatus.SUCCEEDED,
+                "aggregation_status": ComparisonRunAggregationStatus.SUCCEEDED,
                 "aggregate_output_uri": "gs://stage12-private/report.json",
                 "aggregate_output_sha256": "d" * 64,
                 "aggregate_schema_version": 1,
                 "completed_at": NOW,
             }
         )
-    elif status is EvaluationLifecycleStatus.FAILED:
+    elif status is ComparisonRunLifecycleStatus.FAILED:
         values.update(
             {
-                "aggregation_status": EvaluationAggregationStatus.FAILED,
-                "error_code": "evaluation_dispatch_failed",
+                "aggregation_status": ComparisonRunAggregationStatus.FAILED,
+                "error_code": "comparison_dispatch_failed",
                 "error_summary": "RuntimeError",
                 "completed_at": NOW,
             }
         )
-    return EvaluationReportRecord.model_validate(values)
+    return ComparisonReportRecord.model_validate(values)
 
 
-def evaluation_simulation(role: SimulationRole) -> EvaluationSimulationRecord:
+def comparison_simulation(role: SimulationRole) -> ComparisonSimulationRecord:
     suffix = 2 if role is SimulationRole.BASELINE else 3
-    return EvaluationSimulationRecord(
+    return ComparisonSimulationRecord(
         simulation_execution_id=UUID(f"00000000-0000-0000-0000-{suffix:012d}"),
         evaluation_id=EVALUATION_ID,
         role=role,
@@ -173,7 +173,7 @@ def evaluation_simulation(role: SimulationRole) -> EvaluationSimulationRecord:
         simulation_callable="run_single_simulation_us",
         version_manifest_sha256="c" * 64,
         modal_invocation_id=f"modal-{role.value}",
-        status=EvaluationLifecycleStatus.RUNNING,
+        status=ComparisonRunLifecycleStatus.RUNNING,
         created_at=NOW,
         updated_at=NOW,
         started_at=NOW,

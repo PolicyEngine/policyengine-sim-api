@@ -2,32 +2,34 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
-import os
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 import pandas as pd
-
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     AggregateReportArtifactDescriptor,
-    EvaluationAggregationStatus,
-    EvaluationLifecycleStatus,
-    EvaluationReportRecord,
-    EvaluationSimulationPersistenceResult,
-    EvaluationSimulationRecord,
+    ComparisonReportRecord,
+    ComparisonRunAggregationStatus,
+    ComparisonRunLifecycleStatus,
+    ComparisonSimulationPersistenceResult,
+    ComparisonSimulationRecord,
     ReportExecutionInput,
+    ResultComparisonStatus,
     SimulationArtifactDescriptor,
     SimulationExecutionInput,
     Stage12InvocationContext,
 )
 from policyengine_simulation_contract.stage12_persistence import (
-    PostgresEvaluationStore,
+    PostgresComparisonStore,
 )
+
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
     canonical_json_bytes,
@@ -35,31 +37,38 @@ from policyengine_simulation_executor.stage12_artifacts import (
     deserialize_simulation_frames,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+from policyengine_simulation_executor.stage12_result_comparison import compare_results
 
 SIMULATION_WAIT_TIMEOUT_SECONDS = 3_000
+PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS = 300
+logger = logging.getLogger(__name__)
 
 
-class EvaluationStore(Protocol):
-    def get_report(self, evaluation_id: UUID) -> EvaluationReportRecord: ...
+class ComparisonStore(Protocol):
+    def get_report(self, evaluation_id: UUID) -> ComparisonReportRecord: ...
 
     def replace_report(
-        self, record: EvaluationReportRecord
-    ) -> EvaluationReportRecord: ...
+        self, record: ComparisonReportRecord
+    ) -> ComparisonReportRecord: ...
+
+    def replace_report_result_comparison(
+        self, record: ComparisonReportRecord
+    ) -> ComparisonReportRecord: ...
 
     def create_or_resolve_simulation(
         self,
-        record: EvaluationSimulationRecord,
-    ) -> EvaluationSimulationPersistenceResult: ...
+        record: ComparisonSimulationRecord,
+    ) -> ComparisonSimulationPersistenceResult: ...
 
     def get_simulation(
         self,
         simulation_execution_id: UUID,
-    ) -> EvaluationSimulationRecord: ...
+    ) -> ComparisonSimulationRecord: ...
 
     def replace_simulation(
         self,
-        record: EvaluationSimulationRecord,
-    ) -> EvaluationSimulationRecord: ...
+        record: ComparisonSimulationRecord,
+    ) -> ComparisonSimulationRecord: ...
 
     def attach_simulation_invocation(
         self,
@@ -68,7 +77,8 @@ class EvaluationStore(Protocol):
         expected_placeholder: str,
         modal_invocation_id: str,
         updated_at: datetime,
-    ) -> EvaluationSimulationRecord: ...
+    ) -> ComparisonSimulationRecord: ...
+
 
 class ChildCall(Protocol):
     object_id: str
@@ -125,12 +135,125 @@ class SimulationCalculation:
     calculation_provenance: dict[str, Any] | None = None
 
 
-def _runtime_store() -> PostgresEvaluationStore:
-    return PostgresEvaluationStore(os.environ.get("STAGE12_DATABASE_URL", ""))
+def _runtime_store() -> PostgresComparisonStore:
+    return PostgresComparisonStore(os.environ.get("STAGE12_DATABASE_URL", ""))
 
 
 def _artifact_store() -> Stage12ArtifactStore:
     return Stage12ArtifactStore(os.environ.get("STAGE12_ARTIFACT_BUCKET", ""))
+
+
+def _compare_completed_report(
+    *,
+    parent: ComparisonReportRecord,
+    aggregate: dict[str, Any],
+    context: Stage12InvocationContext,
+    store: ComparisonStore,
+    artifacts: Stage12ArtifactStore,
+    invoker: ChildInvoker,
+) -> None:
+    """Persist an isolated production/Stage 12 comparison after aggregation."""
+
+    production_job_id = context.production_function_call_id
+    if production_job_id is None:
+        return
+    try:
+        comparing_at = datetime.now(UTC)
+        comparing = store.replace_report_result_comparison(
+            parent.model_copy(
+                update={
+                    "comparison_status": ResultComparisonStatus.RUNNING,
+                    "comparison_output_uri": None,
+                    "comparison_output_sha256": None,
+                    "comparison_schema_version": None,
+                    "comparison_completed_at": None,
+                    "comparison_error_code": None,
+                    "comparison_error_summary": None,
+                    "updated_at": comparing_at,
+                }
+            )
+        )
+        production_result = invoker.restore(production_job_id).get(
+            timeout=PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS
+        )
+        comparison = compare_results(
+            evaluation_id=parent.evaluation_id,
+            production_job_id=production_job_id,
+            production_result=production_result,
+            stage12_result=aggregate.get("result"),
+        )
+        comparison_artifact = artifacts.write_comparison(
+            prefix=context.artifact_prefix,
+            payload=comparison.model_dump(mode="json"),
+        )
+        comparison_status = (
+            ResultComparisonStatus.MATCHED
+            if comparison.status == "matched"
+            else ResultComparisonStatus.DIFFERENT
+        )
+        store.replace_report_result_comparison(
+            comparing.model_copy(
+                update={
+                    "comparison_status": comparison_status,
+                    "comparison_output_uri": comparison_artifact.uri,
+                    "comparison_output_sha256": comparison_artifact.content_sha256,
+                    "comparison_schema_version": comparison.schema_version,
+                    "comparison_completed_at": comparison.compared_at,
+                    "updated_at": comparison.compared_at,
+                }
+            )
+        )
+        logger.info(
+            "stage12_result_comparison_completed",
+            extra={
+                "comparison_run_id": str(parent.evaluation_id),
+                "production_job_id": production_job_id,
+                "comparison_status": comparison_status.value,
+                "difference_count": comparison.difference_count,
+                "production_result_sha256": comparison.production_result_sha256,
+                "stage12_result_sha256": comparison.stage12_result_sha256,
+            },
+        )
+    # Result retrieval, validation, artifact storage, and persistence are all
+    # deliberately isolated from the successful Stage 12 calculation.
+    except Exception as error:  # noqa: BLE001
+        failed_at = datetime.now(UTC)
+        try:
+            latest = store.get_report(parent.evaluation_id)
+            if latest.comparison_status not in {
+                ResultComparisonStatus.MATCHED,
+                ResultComparisonStatus.DIFFERENT,
+            }:
+                store.replace_report_result_comparison(
+                    latest.model_copy(
+                        update={
+                            "comparison_status": ResultComparisonStatus.FAILED,
+                            "comparison_output_uri": None,
+                            "comparison_output_sha256": None,
+                            "comparison_schema_version": None,
+                            "comparison_completed_at": failed_at,
+                            "comparison_error_code": "result_comparison_failed",
+                            "comparison_error_summary": type(error).__name__,
+                            "updated_at": failed_at,
+                        }
+                    )
+                )
+        except Exception:
+            logger.exception(
+                "stage12_result_comparison_state_update_failed",
+                extra={
+                    "comparison_run_id": str(parent.evaluation_id),
+                    "production_job_id": production_job_id,
+                },
+            )
+        logger.error(
+            "stage12_result_comparison_failed",
+            extra={
+                "comparison_run_id": str(parent.evaluation_id),
+                "production_job_id": production_job_id,
+                "error_type": type(error).__name__,
+            },
+        )
 
 
 def simulation_input_sha256(simulation: SimulationExecutionInput) -> str:
@@ -154,7 +277,9 @@ def _require_context(
     if simulation.bundle.bundle_manifest_sha256 != context.bundle_manifest_sha256:
         raise ValueError("single-simulation bundle digest does not match its context")
     if str(simulation.evaluation_id) not in context.artifact_prefix:
-        raise ValueError("single-simulation artifact prefix names another evaluation")
+        raise ValueError(
+            "single-simulation artifact prefix names another comparison run"
+        )
     if simulation.requested_output.variables != ("*",):
         raise ValueError(
             "Stage 12 report simulations require the complete output table"
@@ -242,7 +367,7 @@ def calculate_simulation_frames(
         output_data = getattr(getattr(model, "output_dataset", None), "data", None)
         entity_data = getattr(output_data, "entity_data", None)
         if not isinstance(entity_data, Mapping):
-            raise RuntimeError("simulation produced no entity output tables")
+            raise TypeError("simulation produced no entity output tables")
         frames = {entity: pd.DataFrame(frame) for entity, frame in entity_data.items()}
         selection = getattr(model, "spm_config", None)
         calculation_provenance = None
@@ -274,7 +399,7 @@ def run_single_simulation(
     context_payload: object,
     *,
     required_country: CountryId,
-    store: EvaluationStore | None = None,
+    store: ComparisonStore | None = None,
     artifacts: Stage12ArtifactStore | None = None,
     calculator: Callable[
         [SimulationExecutionInput],
@@ -287,12 +412,12 @@ def run_single_simulation(
     runtime_store = store or _runtime_store()
     artifact_store = artifacts or _artifact_store()
     child = runtime_store.get_simulation(simulation.simulation_execution_id)
-    if child.status is EvaluationLifecycleStatus.SUCCEEDED:
+    if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
         return _descriptor_from_child(child, simulation).model_dump(mode="json")
-    started = datetime.now(timezone.utc)
+    started = datetime.now(UTC)
     running = child.model_copy(
         update={
-            "status": EvaluationLifecycleStatus.RUNNING,
+            "status": ComparisonRunLifecycleStatus.RUNNING,
             "started_at": child.started_at or started,
             "updated_at": started,
             "error_code": None,
@@ -318,11 +443,11 @@ def run_single_simulation(
             frames=frames,
             calculation_provenance=calculation_provenance,
         )
-        completed = datetime.now(timezone.utc)
+        completed = datetime.now(UTC)
         runtime_store.replace_simulation(
             running.model_copy(
                 update={
-                    "status": EvaluationLifecycleStatus.SUCCEEDED,
+                    "status": ComparisonRunLifecycleStatus.SUCCEEDED,
                     "output_uri": descriptor.artifact.uri,
                     "output_sha256": descriptor.artifact.content_sha256,
                     "output_schema_version": descriptor.output_schema_version,
@@ -335,12 +460,14 @@ def run_single_simulation(
             )
         )
         return descriptor.model_dump(mode="json")
-    except Exception as error:
-        failed_at = datetime.now(timezone.utc)
+    # Persist any country-package calculation failure before returning a
+    # stable exception to Modal.
+    except Exception as error:  # noqa: BLE001
+        failed_at = datetime.now(UTC)
         runtime_store.replace_simulation(
             running.model_copy(
                 update={
-                    "status": EvaluationLifecycleStatus.FAILED,
+                    "status": ComparisonRunLifecycleStatus.FAILED,
                     "error_code": "simulation_execution_failed",
                     "error_summary": type(error).__name__,
                     "updated_at": failed_at,
@@ -352,7 +479,7 @@ def run_single_simulation(
 
 
 def _descriptor_from_child(
-    child: EvaluationSimulationRecord,
+    child: ComparisonSimulationRecord,
     simulation: SimulationExecutionInput,
 ) -> SimulationArtifactDescriptor:
     output_uri = child.output_uri
@@ -401,8 +528,8 @@ def _child_record(
     simulation: SimulationExecutionInput,
     context: Stage12InvocationContext,
     function_name: str,
-) -> EvaluationSimulationRecord:
-    return EvaluationSimulationRecord(
+) -> ComparisonSimulationRecord:
+    return ComparisonSimulationRecord(
         simulation_execution_id=simulation.simulation_execution_id,
         evaluation_id=simulation.evaluation_id,
         role=simulation.role,
@@ -411,7 +538,7 @@ def _child_record(
         modal_application=context.modal_application,
         simulation_callable=function_name,
         version_manifest_sha256=context.version_manifest_sha256,
-        status=EvaluationLifecycleStatus.PENDING,
+        status=ComparisonRunLifecycleStatus.PENDING,
         created_at=context.created_at,
         updated_at=context.created_at,
         retention_expires_at=context.retention_expires_at,
@@ -429,7 +556,7 @@ def _validate_aligned_outputs(
         baseline.evaluation_id != report.evaluation_id
         or reform.evaluation_id != report.evaluation_id
     ):
-        raise ValueError("simulation artifacts name another evaluation")
+        raise ValueError("simulation artifacts name another comparison run")
     if baseline.bundle != reform.bundle or baseline.bundle != report.baseline.bundle:
         raise ValueError("simulation artifacts have incompatible bundle provenance")
     if baseline.output_schema_version != reform.output_schema_version:
@@ -464,7 +591,7 @@ def _dataset_from_frames(
             data=USYearData(**fields),
             year=year,
             filepath=None,
-            name="stage12-evaluation",
+            name="stage12-comparison",
             description="Retained Stage 12 output",
         )
     from policyengine.tax_benefit_models.uk.datasets import (
@@ -476,7 +603,7 @@ def _dataset_from_frames(
         data=UKYearData(**fields),
         year=year,
         filepath=None,
-        name="stage12-evaluation",
+        name="stage12-comparison",
         description="Retained Stage 12 output",
     )
 
@@ -574,7 +701,7 @@ def _build_spm_result(
         raise ValueError("SPM calculation provenance is missing")
     selection = baseline_provenance.get("spm_config")
     if not isinstance(selection, dict):
-        raise ValueError("SPM calculation selection is invalid")
+        raise TypeError("SPM calculation selection is invalid")
     if selection != reform_provenance.get("spm_config"):
         raise ValueError("SPM calculation selections do not match")
     return combine_spm_results(
@@ -597,7 +724,7 @@ def coordinate_report(
     context_payload: object,
     *,
     application_name: str,
-    store: EvaluationStore | None = None,
+    store: ComparisonStore | None = None,
     artifacts: Stage12ArtifactStore | None = None,
     invoker: ChildInvoker | None = None,
     aggregator: Callable[..., dict[str, Any]] = build_aggregate_report,
@@ -614,12 +741,12 @@ def coordinate_report(
     artifact_store = artifacts or _artifact_store()
     child_invoker = invoker or ModalChildInvoker()
     parent = runtime_store.get_report(report.evaluation_id)
-    coordinating_at = datetime.now(timezone.utc)
+    coordinating_at = datetime.now(UTC)
     parent = runtime_store.replace_report(
         parent.model_copy(
             update={
-                "status": EvaluationLifecycleStatus.RUNNING,
-                "aggregation_status": EvaluationAggregationStatus.RUNNING,
+                "status": ComparisonRunLifecycleStatus.RUNNING,
+                "aggregation_status": ComparisonRunAggregationStatus.RUNNING,
                 "error_code": None,
                 "error_summary": None,
                 "started_at": parent.started_at or coordinating_at,
@@ -645,7 +772,7 @@ def coordinate_report(
     try:
         for simulation in simulations:
             child = children[simulation.role]
-            if child.status is EvaluationLifecycleStatus.SUCCEEDED:
+            if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
                 descriptor = _descriptor_from_child(child, simulation)
                 retained = artifact_store.read(descriptor.artifact.uri)
                 if sha256(retained).hexdigest() != descriptor.artifact.content_sha256:
@@ -663,7 +790,7 @@ def coordinate_report(
                 descriptors[simulation.role.value] = descriptor
                 continue
             if (
-                child.status is EvaluationLifecycleStatus.RUNNING
+                child.status is ComparisonRunLifecycleStatus.RUNNING
                 and child.modal_invocation_id is not None
                 and not child.modal_invocation_id.startswith("dispatch-pending-")
             ):
@@ -671,12 +798,12 @@ def coordinate_report(
                     child.modal_invocation_id
                 )
                 continue
-            dispatching_at = datetime.now(timezone.utc)
+            dispatching_at = datetime.now(UTC)
             dispatch_placeholder = f"dispatch-pending-{uuid4()}"
             runtime_store.replace_simulation(
                 child.model_copy(
                     update={
-                        "status": EvaluationLifecycleStatus.RUNNING,
+                        "status": ComparisonRunLifecycleStatus.RUNNING,
                         "modal_invocation_id": dispatch_placeholder,
                         "started_at": child.started_at or dispatching_at,
                         "updated_at": dispatching_at,
@@ -695,15 +822,15 @@ def coordinate_report(
                     context=context.model_dump(mode="json"),
                 )
             except Exception as error:
-                failed_at = datetime.now(timezone.utc)
+                failed_at = datetime.now(UTC)
                 latest = runtime_store.get_simulation(
                     simulation.simulation_execution_id
                 )
-                if latest.status is not EvaluationLifecycleStatus.SUCCEEDED:
+                if latest.status is not ComparisonRunLifecycleStatus.SUCCEEDED:
                     runtime_store.replace_simulation(
                         latest.model_copy(
                             update={
-                                "status": EvaluationLifecycleStatus.FAILED,
+                                "status": ComparisonRunLifecycleStatus.FAILED,
                                 "error_code": "simulation_dispatch_failed",
                                 "error_summary": type(error).__name__,
                                 "updated_at": failed_at,
@@ -717,7 +844,7 @@ def coordinate_report(
                 simulation.simulation_execution_id,
                 expected_placeholder=dispatch_placeholder,
                 modal_invocation_id=call.object_id,
-                updated_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(UTC),
             )
         # Every required call has been started before the coordinator waits.
         for role, call in calls.items():
@@ -730,12 +857,12 @@ def coordinate_report(
                     item for item in simulations if item.role.value == role
                 )
                 child = runtime_store.get_simulation(simulation.simulation_execution_id)
-                if child.status is not EvaluationLifecycleStatus.SUCCEEDED:
-                    failed_at = datetime.now(timezone.utc)
+                if child.status is not ComparisonRunLifecycleStatus.SUCCEEDED:
+                    failed_at = datetime.now(UTC)
                     runtime_store.replace_simulation(
                         child.model_copy(
                             update={
-                                "status": EvaluationLifecycleStatus.FAILED,
+                                "status": ComparisonRunLifecycleStatus.FAILED,
                                 "error_code": "simulation_invocation_failed",
                                 "error_summary": type(error).__name__,
                                 "updated_at": failed_at,
@@ -771,12 +898,12 @@ def coordinate_report(
             reform_artifact_sha256=reform.artifact.content_sha256,
             bundle=report.baseline.bundle,
         )
-        completed = datetime.now(timezone.utc)
-        runtime_store.replace_report(
+        completed = datetime.now(UTC)
+        completed_parent = runtime_store.replace_report(
             parent.model_copy(
                 update={
-                    "status": EvaluationLifecycleStatus.SUCCEEDED,
-                    "aggregation_status": EvaluationAggregationStatus.SUCCEEDED,
+                    "status": ComparisonRunLifecycleStatus.SUCCEEDED,
+                    "aggregation_status": ComparisonRunAggregationStatus.SUCCEEDED,
                     "aggregate_output_uri": aggregate_artifact.uri,
                     "aggregate_output_sha256": aggregate_artifact.content_sha256,
                     "aggregate_schema_version": descriptor.aggregate_schema_version,
@@ -785,14 +912,24 @@ def coordinate_report(
                 }
             )
         )
+        _compare_completed_report(
+            parent=completed_parent,
+            aggregate=aggregate,
+            context=context,
+            store=runtime_store,
+            artifacts=artifact_store,
+            invoker=child_invoker,
+        )
         return descriptor.model_dump(mode="json")
-    except Exception as error:
-        failed_at = datetime.now(timezone.utc)
+    # Persist any coordinator, child-call, aggregation, or artifact failure
+    # before returning a stable exception to Modal.
+    except Exception as error:  # noqa: BLE001
+        failed_at = datetime.now(UTC)
         runtime_store.replace_report(
             parent.model_copy(
                 update={
-                    "status": EvaluationLifecycleStatus.FAILED,
-                    "aggregation_status": EvaluationAggregationStatus.FAILED,
+                    "status": ComparisonRunLifecycleStatus.FAILED,
+                    "aggregation_status": ComparisonRunAggregationStatus.FAILED,
                     "error_code": "report_coordination_failed",
                     "error_summary": type(error).__name__,
                     "updated_at": failed_at,

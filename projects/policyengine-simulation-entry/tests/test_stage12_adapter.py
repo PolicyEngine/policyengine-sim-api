@@ -5,14 +5,13 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
-
 from policyengine_simulation_contract.stage12_execution import SimulationRole
+from stage12_fixtures import eligible_payload, worker
+
 from policyengine_simulation_entry.stage12_adapter import (
-    EvaluationSkipReason,
+    ComparisonSkipReason,
     adapt_annual_comparison,
 )
-
-from stage12_fixtures import eligible_payload, worker
 
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
 
@@ -77,22 +76,22 @@ def test_absent_package_versions_resolve_from_the_selected_bundle() -> None:
 @pytest.mark.parametrize(
     ("update", "reason"),
     [
-        ({"scope": "household"}, EvaluationSkipReason.UNSUPPORTED_SCOPE),
+        ({"scope": "household"}, ComparisonSkipReason.UNSUPPORTED_SCOPE),
         (
             {"include_cliffs": True},
-            EvaluationSkipReason.UNSUPPORTED_CLIFF_CALCULATION,
+            ComparisonSkipReason.UNSUPPORTED_CLIFF_CALCULATION,
         ),
-        ({"country": "ca"}, EvaluationSkipReason.UNSUPPORTED_COUNTRY),
-        ({"data": "another"}, EvaluationSkipReason.UNSUPPORTED_DATASET),
-        ({"version": "another"}, EvaluationSkipReason.MISSING_BUNDLE_PROVENANCE),
+        ({"country": "ca"}, ComparisonSkipReason.UNSUPPORTED_COUNTRY),
+        ({"data": "another"}, ComparisonSkipReason.UNSUPPORTED_DATASET),
+        ({"version": "another"}, ComparisonSkipReason.MISSING_BUNDLE_PROVENANCE),
         (
             {"policyengine_version": "another"},
-            EvaluationSkipReason.MISSING_BUNDLE_PROVENANCE,
+            ComparisonSkipReason.MISSING_BUNDLE_PROVENANCE,
         ),
-        ({"time_period": "2026-01"}, EvaluationSkipReason.UNSUPPORTED_REQUEST_SHAPE),
-        ({"region": None}, EvaluationSkipReason.UNSUPPORTED_REQUEST_SHAPE),
-        ({"segmented": True}, EvaluationSkipReason.UNSUPPORTED_OPTIONS),
-        ({"region_group": ["state/ca"]}, EvaluationSkipReason.UNSUPPORTED_OPTIONS),
+        ({"time_period": "2026-01"}, ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE),
+        ({"region": None}, ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE),
+        ({"segmented": True}, ComparisonSkipReason.UNSUPPORTED_OPTIONS),
+        ({"region_group": ["state/ca"]}, ComparisonSkipReason.UNSUPPORTED_OPTIONS),
     ],
 )
 def test_adapter_returns_bounded_skip_reason(update, reason) -> None:

@@ -2,38 +2,39 @@
 
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Lock
-import time
 from uuid import UUID, uuid4
 
 import pandas as pd
 import pytest
-
 from policyengine_simulation_contract.stage12_execution import (
     ArtifactMediaType,
     ArtifactReference,
     BundleProvenance,
+    ComparisonReportRecord,
+    ComparisonRunAggregationStatus,
+    ComparisonRunLifecycleStatus,
+    ComparisonSimulationPersistenceResult,
     DatasetArtifactMediaType,
     DatasetArtifactReference,
     DatasetPopulationInput,
     DatasetProvenance,
-    EvaluationAggregationStatus,
-    EvaluationLifecycleStatus,
-    EvaluationReportRecord,
-    EvaluationSimulationPersistenceResult,
     GeographySelection,
     ReportAggregate,
     ReportExecutionInput,
     RequestedSimulationOutput,
+    ResultComparisonStatus,
     RowIdentity,
     SimulationArtifactDescriptor,
     SimulationExecutionInput,
     SimulationRole,
     Stage12InvocationContext,
 )
+
 from policyengine_simulation_executor.stage12_artifacts import (
     canonical_json_bytes,
     serialize_simulation_frames,
@@ -46,7 +47,7 @@ from policyengine_simulation_executor.stage12_runtime import (
     simulation_input_sha256,
 )
 
-NOW = datetime(2026, 9, 15, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 15, tzinfo=UTC)
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
 BASELINE_ID = UUID("00000000-0000-0000-0000-000000000002")
 REFORM_ID = UUID("00000000-0000-0000-0000-000000000003")
@@ -110,18 +111,18 @@ def _context() -> Stage12InvocationContext:
         version_manifest_sha256="b" * 64,
         bundle_manifest_sha256="b" * 64,
         artifact_prefix=(
-            "stage-12-evaluation/staging/2026/09/00000000-0000-0000-0000-000000000001"
+            "stage-12-runs/staging/2026/09/00000000-0000-0000-0000-000000000001"
         ),
         created_at=NOW,
         retention_expires_at=NOW + timedelta(days=30),
     )
 
 
-def _parent() -> EvaluationReportRecord:
-    return EvaluationReportRecord(
+def _parent() -> ComparisonReportRecord:
+    return ComparisonReportRecord(
         evaluation_id=EVALUATION_ID,
-        status=EvaluationLifecycleStatus.RUNNING,
-        aggregation_status=EvaluationAggregationStatus.NOT_STARTED,
+        status=ComparisonRunLifecycleStatus.RUNNING,
+        aggregation_status=ComparisonRunAggregationStatus.NOT_STARTED,
         environment="staging",
         calculation_flow="economy",
         originating_request_id="request-1",
@@ -150,10 +151,10 @@ def _parent() -> EvaluationReportRecord:
 
 def _child(simulation: SimulationExecutionInput):
     from policyengine_simulation_contract.stage12_execution import (
-        EvaluationSimulationRecord,
+        ComparisonSimulationRecord,
     )
 
-    return EvaluationSimulationRecord(
+    return ComparisonSimulationRecord(
         simulation_execution_id=simulation.simulation_execution_id,
         evaluation_id=simulation.evaluation_id,
         role=simulation.role,
@@ -162,7 +163,7 @@ def _child(simulation: SimulationExecutionInput):
         modal_application="policyengine-simulation-v2-py5-2-0",
         simulation_callable="run_single_simulation_us",
         version_manifest_sha256="b" * 64,
-        status=EvaluationLifecycleStatus.PENDING,
+        status=ComparisonRunLifecycleStatus.PENDING,
         created_at=NOW,
         updated_at=NOW,
         retention_expires_at=NOW + timedelta(days=30),
@@ -183,15 +184,19 @@ class FakeStore:
         self.parent = record
         return record
 
+    def replace_report_result_comparison(self, record):
+        self.parent = record
+        return record
+
     def create_or_resolve_simulation(self, record):
         with self.lock:
             existing = self.children.get(record.simulation_execution_id)
             if existing is None:
                 self.children[record.simulation_execution_id] = record
-                return EvaluationSimulationPersistenceResult(
+                return ComparisonSimulationPersistenceResult(
                     record=record, created=True
                 )
-            return EvaluationSimulationPersistenceResult(
+            return ComparisonSimulationPersistenceResult(
                 record=existing,
                 created=False,
             )
@@ -224,10 +229,12 @@ class FakeStore:
             self.children[simulation_execution_id] = child
         return child
 
+
 class FakeArtifacts:
     def __init__(self):
         self.payloads = {}
         self.aggregate_writes = []
+        self.comparison_writes = []
         self.input_writes = []
 
     def write_input(self, *, prefix, simulation):
@@ -281,6 +288,20 @@ class FakeArtifacts:
             size_bytes=len(encoded),
         )
 
+    def write_comparison(self, *, prefix, payload):
+        encoded = canonical_json_bytes(payload)
+        digest = sha256(encoded).hexdigest()
+        uri = "gs://private/comparison.json"
+        self.payloads[uri] = encoded
+        self.comparison_writes.append(payload)
+        return ArtifactReference(
+            uri=uri,
+            media_type=ArtifactMediaType.JSON,
+            content_sha256=digest,
+            size_bytes=len(encoded),
+        )
+
+
 def _frames(value=100.0):
     return {
         "household": pd.DataFrame(
@@ -307,7 +328,7 @@ def test_single_worker_accepts_one_policy_and_persists_one_artifact() -> None:
 
     assert result["role"] == "baseline"
     child = store.children[simulation.simulation_execution_id]
-    assert child.status is EvaluationLifecycleStatus.SUCCEEDED
+    assert child.status is ComparisonRunLifecycleStatus.SUCCEEDED
     assert child.output_uri == result["artifact"]["uri"]
     assert artifacts.input_writes == [
         (_context().artifact_prefix, SimulationRole.BASELINE)
@@ -358,7 +379,7 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
 
     assert "sensitive" not in str(error.value)
     child = store.children[simulation.simulation_execution_id]
-    assert child.status is EvaluationLifecycleStatus.FAILED
+    assert child.status is ComparisonRunLifecycleStatus.FAILED
     assert child.error_code == "simulation_execution_failed"
     assert child.error_summary == "RuntimeError"
 
@@ -470,8 +491,24 @@ class FutureCall:
         return self.future.result(timeout=timeout)
 
 
+class ImmediateCall:
+    def __init__(self, object_id, result):
+        self.object_id = object_id
+        self.result = result
+
+    def get(self, *, timeout=None):
+        return self.result
+
+
 class ConcurrentInvoker:
-    def __init__(self, artifacts, *, fail_role=None, incompatible=False):
+    def __init__(
+        self,
+        artifacts,
+        *,
+        fail_role=None,
+        incompatible=False,
+        production_result=None,
+    ):
         self.artifacts = artifacts
         self.fail_role = fail_role
         self.incompatible = incompatible
@@ -479,6 +516,7 @@ class ConcurrentInvoker:
         self.intervals = {}
         self.events = []
         self.environments = []
+        self.production_result = production_result
 
     def spawn(self, *, simulation, environment, **_):
         parsed = SimulationExecutionInput.model_validate(simulation)
@@ -489,6 +527,9 @@ class ConcurrentInvoker:
         return self._submit(parsed, role)
 
     def restore(self, invocation_id):
+        if invocation_id == "production-job-1":
+            self.events.append("restore:production")
+            return ImmediateCall(invocation_id, self.production_result)
         role = invocation_id.removeprefix("call-")
         parsed = _simulation(SimulationRole(role))
         self.events.append(f"restore:{role}")
@@ -534,7 +575,7 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
             "environment": "production",
             "modal_environment": "main",
             "artifact_prefix": (
-                "stage-12-evaluation/production/2026/09/"
+                "stage-12-runs/production/2026/09/"
                 "00000000-0000-0000-0000-000000000001"
             ),
         }
@@ -561,8 +602,108 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
     assert observed["reform_frames"]["household"]["household_net_income"].tolist() == [
         120.0
     ]
-    assert store.parent.status is EvaluationLifecycleStatus.SUCCEEDED
-    assert store.parent.aggregation_status is EvaluationAggregationStatus.SUCCEEDED
+    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
+    assert store.parent.aggregation_status is ComparisonRunAggregationStatus.SUCCEEDED
+
+
+def test_coordinator_compares_automatic_run_after_successful_aggregation() -> None:
+    store = FakeStore()
+    store.parent = store.parent.model_copy(
+        update={"comparison_status": ResultComparisonStatus.PENDING}
+    )
+    artifacts = FakeArtifacts()
+    production_result = {"budget": {"total": 100.0, "count": 2}}
+    stage12_result = {"budget": {"total": 101.0, "count": 2}}
+    invoker = ConcurrentInvoker(
+        artifacts,
+        production_result=production_result,
+    )
+    context = _context().model_copy(
+        update={"production_function_call_id": "production-job-1"}
+    )
+
+    coordinate_report(
+        _report().model_dump(mode="json"),
+        context.model_dump(mode="json"),
+        application_name=context.modal_application,
+        store=store,
+        artifacts=artifacts,
+        invoker=invoker,
+        aggregator=lambda **_: {"result": stage12_result},
+    )
+
+    assert invoker.events[-1] == "restore:production"
+    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
+    assert store.parent.comparison_status is ResultComparisonStatus.DIFFERENT
+    assert store.parent.comparison_output_uri == "gs://private/comparison.json"
+    receipt = artifacts.comparison_writes[0]
+    assert receipt["difference_count"] == 1
+    assert receipt["differences"][0]["path"] == "/budget/total"
+    assert receipt["differences"][0]["production_value"] == 100.0
+    assert receipt["differences"][0]["stage12_value"] == 101.0
+    assert "production_result" not in receipt
+    assert "stage12_result" not in receipt
+
+
+def test_comparison_failure_does_not_change_successful_stage12_report() -> None:
+    store = FakeStore()
+    store.parent = store.parent.model_copy(
+        update={"comparison_status": ResultComparisonStatus.PENDING}
+    )
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts, production_result="not-an-object")
+    context = _context().model_copy(
+        update={"production_function_call_id": "production-job-1"}
+    )
+
+    coordinate_report(
+        _report().model_dump(mode="json"),
+        context.model_dump(mode="json"),
+        application_name=context.modal_application,
+        store=store,
+        artifacts=artifacts,
+        invoker=invoker,
+        aggregator=lambda **_: {"result": {"budget": 100}},
+    )
+
+    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
+    assert store.parent.aggregation_status is ComparisonRunAggregationStatus.SUCCEEDED
+    assert store.parent.comparison_status is ResultComparisonStatus.FAILED
+    assert store.parent.comparison_error_code == "result_comparison_failed"
+    assert artifacts.comparison_writes == []
+
+
+def test_comparison_retry_clears_prior_failure_metadata() -> None:
+    store = FakeStore()
+    store.parent = store.parent.model_copy(
+        update={
+            "comparison_status": ResultComparisonStatus.FAILED,
+            "comparison_completed_at": NOW,
+            "comparison_error_code": "result_comparison_failed",
+            "comparison_error_summary": "TimeoutError",
+        }
+    )
+    artifacts = FakeArtifacts()
+    result = {"budget": {"total": 100.0}}
+    invoker = ConcurrentInvoker(artifacts, production_result=result)
+    context = _context().model_copy(
+        update={"production_function_call_id": "production-job-1"}
+    )
+
+    coordinate_report(
+        _report().model_dump(mode="json"),
+        context.model_dump(mode="json"),
+        application_name=context.modal_application,
+        store=store,
+        artifacts=artifacts,
+        invoker=invoker,
+        aggregator=lambda **_: {"result": result},
+    )
+
+    assert store.parent.comparison_status is ResultComparisonStatus.MATCHED
+    assert store.parent.comparison_error_code is None
+    assert store.parent.comparison_error_summary is None
+    assert store.parent.comparison_output_uri == "gs://private/comparison.json"
 
 
 def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None:
@@ -586,11 +727,11 @@ def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None
     assert "sensitive" not in str(error.value)
 
     assert artifacts.aggregate_writes == []
-    assert store.parent.status is EvaluationLifecycleStatus.FAILED
+    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_summary == "RuntimeError"
     assert "sensitive" not in store.parent.error_summary
     failed_child = store.children[REFORM_ID]
-    assert failed_child.status is EvaluationLifecycleStatus.FAILED
+    assert failed_child.status is ComparisonRunLifecycleStatus.FAILED
     assert failed_child.error_code == "simulation_invocation_failed"
     assert failed_child.error_summary == "RuntimeError"
 
@@ -620,7 +761,7 @@ def test_coordinator_reuses_matching_successful_child() -> None:
     baseline_descriptor = artifacts.add_simulation(report.baseline)
     baseline = _child(report.baseline).model_copy(
         update={
-            "status": EvaluationLifecycleStatus.SUCCEEDED,
+            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
             "output_uri": baseline_descriptor.artifact.uri,
             "output_sha256": baseline_descriptor.artifact.content_sha256,
             "output_schema_version": 1,
@@ -654,7 +795,7 @@ def test_coordinator_resumes_a_matching_running_child_invocation() -> None:
         report.baseline
     ).model_copy(
         update={
-            "status": EvaluationLifecycleStatus.RUNNING,
+            "status": ComparisonRunLifecycleStatus.RUNNING,
             "modal_invocation_id": "call-baseline",
             "started_at": NOW,
         }
@@ -717,8 +858,8 @@ def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
 
     assert invoker.events == ["spawn:baseline", "spawn:reform"]
     assert artifacts.aggregate_writes == []
-    assert store.parent.status is EvaluationLifecycleStatus.FAILED
+    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_summary == "TimeoutError"
     timed_out_child = store.children[BASELINE_ID]
-    assert timed_out_child.status is EvaluationLifecycleStatus.FAILED
+    assert timed_out_child.status is ComparisonRunLifecycleStatus.FAILED
     assert timed_out_child.error_summary == "TimeoutError"

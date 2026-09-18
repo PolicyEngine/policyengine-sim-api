@@ -1,28 +1,30 @@
-"""Canonical private artifact encoding and paths for Stage 12 evaluation."""
+"""Canonical private artifact encoding and paths for Stage 12 comparison runs."""
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from datetime import datetime
 from hashlib import sha256
 from io import BytesIO
-import json
-from typing import Any, Mapping, cast
+from typing import Any, cast
 from uuid import UUID
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pydantic import JsonValue
-
 from policyengine_simulation_contract.stage12_execution import (
     SIMULATION_PARQUET_PAYLOAD_CONTRACT,
     AggregateReportArtifactPayload,
     ArtifactMediaType,
     ArtifactReference,
+    ResultComparisonArtifactPayload,
     RowIdentity,
     SimulationArtifactDescriptor,
     SimulationExecutionInput,
 )
+from pydantic import JsonValue
+
 from policyengine_simulation_executor.artifact_store import ArtifactStore
 
 SIMULATION_MEDIA_TYPE = ArtifactMediaType.PARQUET.value
@@ -40,7 +42,7 @@ def canonical_json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
-def evaluation_prefix(
+def comparison_run_prefix(
     *,
     environment: str,
     created_at: datetime,
@@ -51,7 +53,7 @@ def evaluation_prefix(
     if created_at.tzinfo is None:
         raise ValueError("Stage 12 artifact timestamp must include a timezone")
     return (
-        f"stage-12-evaluation/{environment}/{created_at:%Y}/{created_at:%m}/"
+        f"stage-12-runs/{environment}/{created_at:%Y}/{created_at:%m}/"
         f"{evaluation_id}"
     )
 
@@ -66,6 +68,10 @@ def simulation_path(*, prefix: str, role: str) -> str:
 
 def aggregate_path(*, prefix: str) -> str:
     return f"{prefix}/reports/aggregate.json"
+
+
+def comparison_path(*, prefix: str) -> str:
+    return f"{prefix}/reports/comparison.json"
 
 
 def _frame_payload(
@@ -189,7 +195,7 @@ def deserialize_calculation_provenance(payload: bytes) -> dict[str, Any] | None:
         return None
     value = json.loads(raw)
     if not isinstance(value, dict):
-        raise ValueError("Stage 12 calculation provenance must be an object")
+        raise TypeError("Stage 12 calculation provenance must be an object")
     return value
 
 
@@ -284,6 +290,19 @@ class Stage12ArtifactStore:
         validated = AggregateReportArtifactPayload.model_validate(payload)
         return self._write_immutable(
             aggregate_path(prefix=prefix),
+            canonical_json_bytes(validated.model_dump(mode="json")),
+            content_type=REPORT_MEDIA_TYPE,
+        )
+
+    def write_comparison(
+        self,
+        *,
+        prefix: str,
+        payload: Mapping[str, Any],
+    ) -> ArtifactReference:
+        validated = ResultComparisonArtifactPayload.model_validate(payload)
+        return self._write_immutable(
+            comparison_path(prefix=prefix),
             canonical_json_bytes(validated.model_dump(mode="json")),
             content_type=REPORT_MEDIA_TYPE,
         )
