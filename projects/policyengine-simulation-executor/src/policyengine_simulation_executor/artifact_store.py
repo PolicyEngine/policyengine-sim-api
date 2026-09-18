@@ -108,15 +108,6 @@ class ArtifactStore:
         except NotFound:
             return None
 
-    def delete_prefix(self, prefix: str) -> int:
-        """Delete every object under one explicit object-name prefix."""
-
-        deleted = 0
-        for blob in self.client.list_blobs(self.bucket_name, prefix=prefix):
-            blob.delete()
-            deleted += 1
-        return deleted
-
     def download_file(self, path: str, local_path: str | Path) -> None:
         destination = Path(local_path)
         destination.parent.mkdir(parents=True, exist_ok=True)

@@ -176,7 +176,7 @@ def validate_worker_uk() -> dict:
     memory=32768,
     timeout=3000,
     retries=0,
-    max_containers=300,
+    max_containers=10,
     secrets=worker_secrets,
 )
 def run_single_simulation_us(payload: dict, context: dict) -> dict:
@@ -193,7 +193,7 @@ def run_single_simulation_us(payload: dict, context: dict) -> dict:
     memory=32768,
     timeout=3000,
     retries=0,
-    max_containers=300,
+    max_containers=10,
     secrets=worker_secrets,
 )
 def run_single_simulation_uk(payload: dict, context: dict) -> dict:
@@ -210,7 +210,7 @@ def run_single_simulation_uk(payload: dict, context: dict) -> dict:
     memory=8192,
     timeout=3600,
     retries=0,
-    max_containers=100,
+    max_containers=10,
     secrets=worker_secrets,
 )
 def coordinate_report(payload: dict, context: dict) -> dict:

@@ -19,6 +19,18 @@ from policyengine_simulation_contract.stage12_persistence import (
 EXPECTED_ROLE_ATTRIBUTES = (False, False, False, False, False, False, True)
 REQUIRED_TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE")
 FORBIDDEN_TABLE_PRIVILEGES = ("TRUNCATE", "REFERENCES", "TRIGGER")
+REQUIRED_COMPARISON_REPORT_COLUMNS = frozenset(
+    {
+        "comparison_status",
+        "comparison_output_uri",
+        "comparison_output_sha256",
+        "comparison_schema_version",
+        "comparison_completed_at",
+        "comparison_error_code",
+        "comparison_error_summary",
+    }
+)
+COMPARISON_STATUS_DATABASE_TYPE = "v2_stage12_result_comparison_status"
 
 
 class Stage12RuntimeAccessError(RuntimeError):
@@ -29,6 +41,34 @@ def _require_one_row(cursor: Any, operation: str) -> None:
     if cursor.rowcount != 1:
         raise Stage12RuntimeAccessError(
             f"Stage 12 runtime {operation} did not affect exactly one canary row"
+        )
+
+
+def _require_comparison_migration(cursor: Any) -> None:
+    """Confirm the configured database has the Stage 12 comparison schema."""
+
+    cursor.execute(
+        """
+        SELECT column_name, udt_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'stage12_evaluation_reports'
+          AND column_name = ANY(%s)
+        ORDER BY column_name
+        """,
+        (sorted(REQUIRED_COMPARISON_REPORT_COLUMNS),),
+    )
+    column_types = dict(cursor.fetchall())
+    missing = REQUIRED_COMPARISON_REPORT_COLUMNS - column_types.keys()
+    if missing:
+        raise Stage12RuntimeAccessError(
+            "Stage 12 comparison Alembic migration is not applied; "
+            f"missing report columns: {', '.join(sorted(missing))}"
+        )
+    if column_types["comparison_status"] != COMPARISON_STATUS_DATABASE_TYPE:
+        raise Stage12RuntimeAccessError(
+            "Stage 12 comparison Alembic migration has an unexpected "
+            "comparison_status database type"
         )
 
 
@@ -45,6 +85,7 @@ def _exercise_runtime_dml(cursor: Any, *, environment: str) -> None:
         f"""
         INSERT INTO {REPORT_TABLE} (
             evaluation_id, contract_version, status, aggregation_status,
+            comparison_status,
             environment, calculation_flow, originating_request_id,
             production_identity, worker_version, modal_application,
             report_coordinator_callable, version_manifest_sha256,
@@ -53,7 +94,8 @@ def _exercise_runtime_dml(cursor: Any, *, environment: str) -> None:
             data_package_name, data_package_version, data_artifact_revision,
             created_at, updated_at, retention_expires_at
         ) VALUES (
-            %s, 1, 'pending', 'not_started', %s, 'infrastructure_validation',
+            %s, 1, 'pending', 'not_started', 'pending', %s,
+            'infrastructure_validation',
             %s, %s, 'validation', 'stage12-infrastructure-validation',
             'coordinate_report', %s, 'validation', 'policyengine-validation',
             'validation', 'us', 'validation', 'hf://validation/dataset@revision',
@@ -73,23 +115,27 @@ def _exercise_runtime_dml(cursor: Any, *, environment: str) -> None:
     )
     _require_one_row(cursor, "report INSERT")
     cursor.execute(
-        f"SELECT evaluation_id FROM {REPORT_TABLE} WHERE evaluation_id = %s",
+        f"""
+        SELECT evaluation_id, comparison_status
+        FROM {REPORT_TABLE}
+        WHERE evaluation_id = %s
+        """,
         (evaluation_id,),
     )
-    if cursor.fetchone() != (evaluation_id,):
+    if cursor.fetchone() != (evaluation_id, "pending"):
         raise Stage12RuntimeAccessError(
             "Stage 12 runtime could not SELECT its canary report"
         )
     cursor.execute(
         f"""
         UPDATE {REPORT_TABLE}
-        SET updated_at = %s
+        SET comparison_status = 'running', updated_at = %s
         WHERE evaluation_id = %s
-        RETURNING evaluation_id
+        RETURNING evaluation_id, comparison_status
         """,
         (datetime.now(timezone.utc), evaluation_id),
     )
-    if cursor.fetchone() != (evaluation_id,):
+    if cursor.fetchone() != (evaluation_id, "running"):
         raise Stage12RuntimeAccessError(
             "Stage 12 runtime could not UPDATE its canary report"
         )
@@ -266,6 +312,7 @@ def verify_runtime_database(
                     raise Stage12RuntimeAccessError(
                         "Stage 12 runtime has data access outside its temporary tables"
                     )
+                _require_comparison_migration(cursor)
                 _exercise_runtime_dml(cursor, environment=environment)
             connection.rollback()
     except Stage12RuntimeAccessError:

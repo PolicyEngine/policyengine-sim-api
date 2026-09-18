@@ -271,7 +271,7 @@ def test_disabled_automatic_comparison_never_invokes_configured_backend(backend)
 def test_temporary_stage12_submission_returns_polling_identifier(backend):
     comparison = TemporaryComparisonBackend()
     app = create_app(
-        settings=make_settings(),
+        settings=automatic_stage12_settings(),
         backend=backend,
         auth_dependency=lambda: None,
         comparison_backend=comparison,
@@ -362,14 +362,26 @@ def test_temporary_stage12_routes_are_excluded_from_openapi(backend):
     assert "/internal/stage12/reports/{evaluation_id}" not in paths
 
 
-def test_temporary_stage12_route_is_unavailable_without_configured_backend(client):
-    result = client.post(
-        "/internal/stage12/reports",
-        json=eligible_payload(),
+def test_temporary_stage12_submission_is_disabled_when_flag_is_zero(backend):
+    comparison = TemporaryComparisonBackend()
+    app = create_app(
+        settings=make_settings(stage12_enabled=False),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
     )
 
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post(
+            "/internal/stage12/reports",
+            json=eligible_payload(),
+        )
+
     assert result.status_code == 503
-    assert result.json() == {"detail": "Stage 12 direct execution is unavailable."}
+    assert result.json() == {"detail": "Stage 12 execution is disabled."}
+    assert comparison.submissions == []
 
 
 @pytest.mark.parametrize(
@@ -389,7 +401,7 @@ def test_temporary_stage12_routes_require_existing_authentication(
         raise HTTPException(status_code=403)
 
     app = create_app(
-        settings=make_settings(),
+        settings=automatic_stage12_settings(),
         backend=backend,
         auth_dependency=reject_caller,
         comparison_backend=TemporaryComparisonBackend(),
@@ -451,7 +463,7 @@ def test_temporary_stage12_submission_returns_bounded_failures(
             raise error
 
     app = create_app(
-        settings=make_settings(),
+        settings=automatic_stage12_settings(),
         backend=backend,
         auth_dependency=lambda: None,
         comparison_backend=FailingTemporaryBackend(),

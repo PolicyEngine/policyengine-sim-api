@@ -330,6 +330,12 @@ def create_app(
         body: SimulationRequest,
         request: Request,
     ) -> Response:
+        if not runtime_settings.stage12_enabled:
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Stage 12 execution is disabled."},
+                headers={"Retry-After": "10"},
+            )
         comparison = runtime_comparison
         if comparison is None:
             return JSONResponse(

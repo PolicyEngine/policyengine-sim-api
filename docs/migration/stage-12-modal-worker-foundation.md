@@ -20,6 +20,9 @@ simulation submission or polling contracts.
   records as `main`.
 - One v2 report-coordinator invocation starts baseline and reform as distinct
   single-simulation calls before awaiting either result.
+- Each country-specific single-simulation function and the report-coordinator
+  function has a Modal `max_containers` value of 10. This is a per-function
+  limit; the functions do not share one application-wide container quota.
 - The v2 functions write canonical private artifacts and temporary comparison
   state. They do not create production simulations, reports, report runs, or
   user associations.
@@ -53,14 +56,16 @@ migration for the comparison records, and its runtime must not execute DDL.
 - V2 worker object access uses the already-provisioned separate
   `stage12-evaluation-gcp-credentials` Modal secret. The worker application
   does not receive the existing general GCP credential secret.
-- `STAGE12_ENABLED` is the only automatic-run setting. Missing or `0` disables
-  automatic runs, `1` enables every supported newly accepted annual
-  society-wide report, and any other value prevents service startup. Changing
-  the setting requires a Cloud Run deployment. There is no percentage,
-  request-bucket, shared runtime-control document, or partial-dataset mode.
+- `STAGE12_ENABLED` is the only Stage 12 execution setting. Missing or `0`
+  disables automatic runs and rejects new direct Stage 12 submissions. `1`
+  enables every supported newly accepted annual society-wide report and the
+  authenticated direct submission route. Any other value prevents service
+  startup. Changing the setting requires a Cloud Run deployment. There is no
+  percentage, request-bucket, shared runtime-control document, or
+  partial-dataset mode.
 - The separately named Modal application and v2 manifest remain deployed when
-  `STAGE12_ENABLED=0`. The authenticated direct route also remains available
-  whenever the Stage 12 resources are configured.
+  `STAGE12_ENABLED=0`. The authenticated status route remains available for
+  inspecting existing runs whenever the Stage 12 resources are configured.
 
 Any genuinely one-time provisioning sequence must be implemented in a bounded
 disposable script before execution and removed after the resulting state is
@@ -105,7 +110,8 @@ This automatic production deployment creates or updates a dormant Stage 12
 runtime: the separate Modal application, v2 manifest, runtime configuration,
 and temporary authenticated direct endpoint are present for later updates and
 qualification. With `STAGE12_ENABLED=0`, it does not send ordinary production
-calculations to the Stage 12 report coordinator or single-simulation workers.
+calculations to the Stage 12 report coordinator or single-simulation workers,
+and it rejects new direct Stage 12 submissions.
 The promoted Cloud Run revision continues forwarding those calculations to the
 existing Modal HTTP routing service and existing executors.
 
@@ -158,9 +164,11 @@ The existing Cloud Run Simulation Entrypoint exposes these operator-only routes:
   child execution metadata.
 
 Both routes enforce the Simulation Entrypoint's existing bearer authentication.
-They are available whenever the Stage 12 resources are configured. Manual
-direct submissions do not consult `STAGE12_ENABLED`, so disabling automatic
-runs does not disable these authenticated routes.
+`POST /internal/stage12/reports` accepts new work only when
+`STAGE12_ENABLED=1`; with a missing or zero value it returns HTTP 503 without
+creating a parent record or invoking Modal. The status route remains available
+whenever the Stage 12 resources are configured so authorized operators can
+inspect runs that were already submitted.
 
 The direct submission does not call the existing production computation and
 does not keep a Cloud Run request open while calculations run:
@@ -239,9 +247,11 @@ interface.
 The deployment workflow passes the environment-specific `STAGE12_ENABLED`
 GitHub variable to Cloud Run. Set the `beta` value to `1` and deploy to enable
 staging after qualification. Set it back to `0` and deploy to stop new
-automatic staging runs. Production uses the same explicit deployment sequence
-with the `prod` variable. Changing this value does not deploy or remove Modal
-workers and does not change the existing production forwarding configuration.
+automatic and direct staging runs. Production uses the same explicit
+deployment sequence with the `prod` variable. Changing this value does not
+deploy or remove Modal workers, does not make existing run metadata
+unavailable, and does not change the existing production forwarding
+configuration.
 
 When enabled, a successful production submission causes the Simulation
 Entrypoint to create or resolve the temporary parent record and invoke the
