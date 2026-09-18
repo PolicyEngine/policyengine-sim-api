@@ -53,8 +53,7 @@ def comparison_run_prefix(
     if created_at.tzinfo is None:
         raise ValueError("Stage 12 artifact timestamp must include a timezone")
     return (
-        f"stage-12-runs/{environment}/{created_at:%Y}/{created_at:%m}/"
-        f"{evaluation_id}"
+        f"stage-12-runs/{environment}/{created_at:%Y}/{created_at:%m}/{evaluation_id}"
     )
 
 
