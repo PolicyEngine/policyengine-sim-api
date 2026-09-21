@@ -326,7 +326,11 @@ class TestBuildSimulationSelection:
         from policyengine_simulation_executor import simulation_runtime as sr
 
         recorded = SimpleNamespace(
-            artifact_kwargs=None, plain_kwargs=None, id=None, id_kwargs=None
+            artifact_kwargs=None,
+            plain_kwargs=None,
+            id=None,
+            id_kwargs=None,
+            capability=None,
         )
 
         class FakeArtifactSimulation:
@@ -337,8 +341,21 @@ class TestBuildSimulationSelection:
             def __init__(self, **kwargs):
                 recorded.plain_kwargs = kwargs
 
+        # Replacing the wrapper's ``Simulation`` is what makes the class
+        # choice observable, but it is also the class the canonical
+        # capability derivation inspects. Read the installed capability
+        # first and serve that answer, so this fixture fakes only the class
+        # choice and the resolved selection stays the certified one.
+        from policyengine_simulation_executor import spm as executor_spm
+
+        installed_capability = executor_spm.runtime_spm_capability()
+
         monkeypatch.setattr(ba, "ArtifactBaselineSimulation", FakeArtifactSimulation)
         monkeypatch.setattr(policyengine_core, "Simulation", FakePlainSimulation)
+        monkeypatch.setattr(
+            executor_spm, "runtime_spm_capability", lambda: installed_capability
+        )
+        recorded.capability = installed_capability
         monkeypatch.setattr(
             sr,
             "_country_module",
@@ -367,12 +384,21 @@ class TestBuildSimulationSelection:
         assert wired.plain_kwargs is None
         assert wired.artifact_kwargs["id"] == "bl1-deadbeefdeadbeef"
         assert wired.artifact_kwargs["dataset"] == "dataset"
+        # A canonical bundle resolves a certified selection for a request
+        # that named none, and the simulation is built carrying it.
+        assert wired.artifact_kwargs["spm"] == (wired.capability.defaults.model_dump())
         # The predicate must see the request's own facts. A wiring
         # regression (e.g. policy=None passed unconditionally) would hand
         # a REFORM simulation the baseline's deterministic id — and
         # ensure() would then serve the baseline artifact as the reform.
         assert wired.id_kwargs == {
-            "params": {"country": "us", "scope": "macro"},
+            # The resolved selection is merged in before the id is derived,
+            # so two selections cannot share one deterministic baseline id.
+            "params": {
+                "country": "us",
+                "scope": "macro",
+                "spm": wired.capability.defaults.model_dump(),
+            },
             "country": "us",
             "dataset_is_default": True,
             "policy": None,
@@ -464,6 +490,13 @@ class DiskModelVersion:
     """Duck model version reusing the REAL load/save implementations, so
     these tests exercise genuine h5 files on disk — including the exception
     type a missing artifact raises — without loading the US tax system."""
+
+    # ``MicrosimulationModelVersion`` declares this as a ClassVar and the
+    # canonical implementation branches on it: the US arm reads and writes an
+    # SPM receipt inside the h5. These cases are about the artifact guard's
+    # hit/miss decisions on real files, so the duck stays a non-US model
+    # version and that arm is the native lane's subject.
+    country_code = ""
 
     def __init__(self):
         from policyengine.tax_benefit_models.us.datasets import PolicyEngineUSDataset
@@ -633,9 +666,13 @@ class SPMWrapperSimulation(Simulation):
     The wrapper the canonical bundle installs adds an ``spm`` field, an
     ``spm_config`` holding the selection an artifact was built under, and an
     ``spm_provenance()`` calculation receipt; it restores that metadata on a
-    load or a cache hit. The ``policyengine`` this project pins has none of
-    it, which is why ``ensure()``'s receipt validation was reachable only
-    from the SPM_NATIVE_SMOKE_SOURCE-gated tests.
+    load or a cache hit. This project now pins that wrapper, so the surface
+    is real -- ``test_the_double_matches_the_installed_wrapper_surface``
+    below checks the double against it and no longer skips. The double
+    survives the pin because these cases drive ``ensure()``'s decisions from
+    fixtures rather than from a model: it is what lets a test say what a
+    load or a cache hit restored, including states a correct wrapper never
+    produces.
 
     This double reproduces that surface's *shape and restore timing*, which
     is all the guard depends on. It is deliberately more permissive than the
@@ -650,17 +687,39 @@ class SPMWrapperSimulation(Simulation):
     selections. Those three are the native suite's claims; hermetic green
     here is not wrapper conformance.
 
-    ``storage_id`` is a plain field rather than a property derived from the
-    selection, so it stays put while a load rewrites ``spm`` — the double
-    makes no claim about how the wrapper computes it, only that the artifact
-    class keys the process cache on it.
+    ``storage_id`` here is settable rather than derived from the selection,
+    so it stays put while a load rewrites ``spm`` — the double makes no
+    claim about how the wrapper computes it, only that the artifact class
+    keys the process cache on it. ``test_artifact_keys`` is where the
+    derivation itself is checked against the installed wrapper.
     """
 
     spm: dict | None = None
-    spm_config: dict | None = None
     spm_receipt: dict | None = None
-    storage_id: str = ""
+    # ``spm_config`` and ``storage_id`` are properties on the canonical
+    # wrapper, and a property on a base class wins over a field declared
+    # here. The double keeps them settable — it exists to control what a
+    # load or a cache hit restores — so it overrides the properties rather
+    # than shadowing them with fields.
+    _spm_config: dict | None = PrivateAttr(default=None)
+    _storage_id: str = PrivateAttr(default="")
     _provenance_reads: list = PrivateAttr(default_factory=list)
+
+    @property
+    def spm_config(self) -> dict | None:
+        return self._spm_config
+
+    @spm_config.setter
+    def spm_config(self, value: dict | None) -> None:
+        self._spm_config = value
+
+    @property
+    def storage_id(self) -> str:
+        return self._storage_id
+
+    @storage_id.setter
+    def storage_id(self, value: str) -> None:
+        self._storage_id = value
 
     def spm_provenance(self):
         self._provenance_reads.append(deepcopy(self.spm_config))
@@ -726,9 +785,8 @@ def _make_spm_sim(
     model_version, *, spm=None, sim_id="bl1-spm", storage_id=None, year=2026
 ):
     selection = SPM_SELECTION if spm is None else spm
-    return CanonicalSPMSimulation.model_construct(
+    simulation = CanonicalSPMSimulation.model_construct(
         id=sim_id,
-        storage_id=storage_id or f"{sim_id}-{selection['scenario']}",
         dataset=SimpleNamespace(year=year),
         tax_benefit_model_version=model_version,
         policy=None,
@@ -737,13 +795,15 @@ def _make_spm_sim(
         extra_variables={},
         output_dataset=None,
         spm=deepcopy(SPM_SELECTION) if spm is None else deepcopy(spm),
-        # The wrapper carries the selection it was configured with from
-        # construction; a load or cache hit then overwrites it with whatever
-        # the artifact was built under, which is exactly what the guard in
-        # ``ensure()`` compares against the pre-load value.
-        spm_config=deepcopy(SPM_SELECTION) if spm is None else deepcopy(spm),
         spm_receipt=None,
     )
+    simulation.storage_id = storage_id or f"{sim_id}-{selection['scenario']}"
+    # The wrapper carries the selection it was configured with from
+    # construction; a load or cache hit then overwrites it with whatever
+    # the artifact was built under, which is exactly what the guard in
+    # ``ensure()`` compares against the pre-load value.
+    simulation.spm_config = deepcopy(SPM_SELECTION) if spm is None else deepcopy(spm)
+    return simulation
 
 
 class TestEnsureValidatesSPMReceipts:

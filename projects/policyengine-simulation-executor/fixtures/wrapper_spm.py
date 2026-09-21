@@ -1,16 +1,19 @@
-"""The canonical wrapper's ``storage_id``, transcribed for hermetic tests.
+"""The canonical wrapper's ``storage_id``, transcribed as a second derivation.
 
-The executor pins a pre-canonical ``policyengine``: its ``Simulation`` has
-no ``spm`` field and no ``storage_id``, so hermetic CI cannot import the
-property that names every canonical baseline artifact. Precompute plans a
-store path from ``BaselineArtifactIdentity.storage_id`` and the
-in-container worker aborts when the wrapper's value disagrees, so the two
-derivations have to be one identifier reached down two paths.
-
+Precompute plans a store path from ``BaselineArtifactIdentity.storage_id``
+and the in-container worker aborts when the wrapper's own value disagrees,
+so the two derivations have to be one identifier reached down two paths.
 This is that second path, copied out of the SPM-capable wrapper so the
 key-discipline tests and the precompute writer==reader tests state it once.
-It proves our side has not drifted from the contract we read; it is not the
-wrapper, and only the SPM_NATIVE_SMOKE_SOURCE-gated suites run against one.
+
+It was written when the executor pinned a pre-canonical ``policyengine``
+whose ``Simulation`` had neither an ``spm`` field nor a ``storage_id``. The
+executor now pins an SPM-capable wrapper, so
+``installed_wrapper_has_storage_id()`` is True and
+``TestWrapperStorageIdAgreement`` checks the real property directly. The
+transcription stays because asking the wrapper for both sides of an
+agreement proves nothing; retiring it means replacing it with some other
+independent statement of the format, not with the wrapper itself.
 
 ``policyengine/core/simulation.py``::
 
@@ -50,7 +53,11 @@ def wrapper_storage_id(simulation_id: str, spm_config: dict | None) -> str:
 
 
 def installed_wrapper_has_storage_id() -> bool:
-    """True once an SPM-capable wrapper is pinned and this file can retire."""
+    """Whether the installed wrapper exposes the property at all.
+
+    True since the canonical bundle pin; the gate is kept so the suite
+    still reports honestly on a wrapper that lacks it.
+    """
     from policyengine.core import Simulation
 
     return hasattr(Simulation, "storage_id")
