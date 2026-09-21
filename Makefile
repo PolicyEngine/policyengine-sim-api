@@ -82,7 +82,8 @@ test:
 		projects/policyengine-simulation-entry \
 		projects/policyengine-simulation-gateway \
 		libs/policyengine-simulation-contract \
-		libs/policyengine-simulation-observability; do \
+		libs/policyengine-simulation-observability \
+		libs/policyengine-stage12-client; do \
 		echo "Testing $$proj..."; \
 		(cd "$$proj" && uv sync --extra test && uv run pytest tests/ -v) || exit 1; \
 	done

@@ -23,9 +23,10 @@ simulation submission or polling contracts.
 - Each country-specific single-simulation function and the report-coordinator
   function has a Modal `max_containers` value of 10. This is a per-function
   limit; the functions do not share one application-wide container quota.
-- The v2 functions write canonical private artifacts and temporary comparison
-  state. They do not create production simulations, reports, report runs, or
-  user associations.
+- The v2 functions write canonical private artifacts and send temporary
+  comparison-state operations to an authenticated internal PolicyEngine API
+  service. They do not connect to PostgreSQL and do not create production
+  simulations, reports, report runs, or user associations.
 
 The existing Modal routing service, its versioned executor applications, and
 its v1 routing manifest remain deployed and unchanged throughout Stage 12.
@@ -35,11 +36,13 @@ its v1 routing manifest remain deployed and unchanged throughout Stage 12.
 `PolicyEngine/policyengine-api` is the only schema authority for the temporary
 comparison tables. Their physical `stage12_evaluation_*` names and
 `evaluation_id` column remain unchanged until Stage 14. This repository owns
-the strict runtime request, artifact, and persistence models used by the Stage
-12 workers. Changes that affect both repositories require coordinated review;
+the strict runtime request, artifact, and data-transfer models used by the
+Stage 12 workers. Changes that affect both repositories require coordinated review;
 no generated cross-repository contract file is checked in or consumed at
 runtime. This repository must not define SQLModel tables or an Alembic
-migration for the comparison records, and its runtime must not execute DDL.
+migration for the comparison records, must not contain SQL for those records,
+and must not receive a database credential. All reads and writes go through
+the API repository's canonical SQLModel services.
 
 ## Release and deployment constraints
 
@@ -56,6 +59,11 @@ migration for the comparison records, and its runtime must not execute DDL.
 - V2 worker object access uses the already-provisioned separate
   `stage12-evaluation-gcp-credentials` Modal secret. The worker application
   does not receive the existing general GCP credential secret.
+- `STAGE12_PERSISTENCE_API_URL` selects the environment's deployed
+  PolicyEngine API origin. It is a non-secret HTTPS origin, not a database
+  connection string. Cloud Run uses its attached runtime service account and
+  Modal uses `stage12-evaluation-gcp-credentials` to mint identity tokens for
+  that API; neither service receives a PostgreSQL credential.
 - `STAGE12_ENABLED` is the only Stage 12 execution setting. Missing or `0`
   disables automatic runs and rejects new direct Stage 12 submissions. `1`
   enables every supported newly accepted annual society-wide report and the
@@ -84,7 +92,9 @@ automation or infrastructure configuration:
 | Create or update the separate v2 manifest storage object | V2 manifest publisher |
 | Configure the v2 manifest reader and `STAGE12_ENABLED` | Cloud Run deployment workflow |
 | Create the private artifact namespace and its retention policy | Infrastructure configuration |
-| Ensure the existing API v2 runtime identity has comparison-row DML and grant private-object access only to the Modal runtime | Infrastructure configuration |
+| Ensure the existing API v2 runtime identity has comparison-row database access | API infrastructure configuration |
+| Configure the authenticated API persistence origin and permitted simulation service accounts | API and simulation deployment configuration |
+| Grant private-object access only to the Modal runtime | Infrastructure configuration |
 | Attach named runtime secrets without exposing their values | Simulation deployment workflow |
 | Disable or restore automatic Stage 12 invocation | Cloud Run deployment workflow |
 | Recreate any Stage 12 service or storage resource after loss | The same deployment and infrastructure automation |
@@ -130,23 +140,23 @@ unchanged. Only a newly accepted supported production job may create one
 corresponding comparison run; polls, cached results, and repeated submissions
 that resolve the same production job do not create another comparison.
 
-Deployment reuses each environment's existing `policyengine_v2_runtime`
-PostgreSQL credential for the Simulation Entrypoint and Modal v2 functions; it
-does not create a Stage 12-specific database role. The Simulation Entrypoint
-uses the credential only to read status for the temporary operator route. The
-Modal report coordinator performs all parent and child record writes; the
-single-simulation functions return their results to that coordinator and do
-not write these records independently. The shared runtime identity retains its
-legitimate access to other API v2 tables and receives `SELECT`, `INSERT`,
-`UPDATE`, and `DELETE` on the two temporary Stage 12 tables. Before deploying,
-the simulation workflow authenticates with the shared credential, verifies
-the exact runtime role and required table operations, rejects schema creation
-and stronger operations on the temporary tables, and exercises all four data
-operations with canary rows inside a rolled-back transaction. It also verifies
-required Secret Manager access and performs a create/read/delete canary in the
-private artifact bucket using the exact Modal service-account credential. The
-storage canary is deleted in the normal path and by exit cleanup after a
-failure.
+The PolicyEngine API alone uses each environment's existing
+`policyengine_v2_runtime` PostgreSQL credential. Its canonical SQLModel
+connectors perform all temporary parent and child reads and writes. The
+Simulation Entrypoint and Modal report coordinator call hidden internal API
+routes with Google-signed service-account identity tokens for the fixed
+`https://policyengine.org/internal/stage12-persistence` audience. The API
+verifies the token audience and exact environment-specific caller account. The
+single-simulation functions return their results to the coordinator and do not
+write these records independently.
+
+Before deploying, the simulation workflow uses the exact Modal service-account
+credential to obtain an identity token and confirms that an authenticated read
+of a nonexistent comparison record receives HTTP 404. It also verifies required
+Secret Manager access and performs a create/read/delete canary in the private
+artifact bucket. The storage canary is deleted in the normal path and by exit
+cleanup after a failure. Neither the Simulation Entrypoint nor the Modal runtime
+receives or validates a PostgreSQL URL.
 
 The current Public API omits `data` for the certified default dataset. The v2
 adapter therefore resolves an absent `data` field to the exact default dataset
@@ -209,12 +219,17 @@ authenticated caller
         |
         | GET /internal/stage12/reports/{evaluation_id}
         v
-Cloud Run reads temporary PostgreSQL state only
+Cloud Run Simulation Entrypoint
+        |
+        | authenticated internal HTTP request
+        v
+PolicyEngine API reads temporary PostgreSQL state
 ```
 
 The Modal report coordinator waits for the child Modal calls. Cloud Run does
 not poll a Modal `FunctionCall`; the client polls Cloud Run, and Cloud Run reads
-the durable PostgreSQL records.
+the durable state through the PolicyEngine API. Only the PolicyEngine API
+connects to PostgreSQL.
 
 Example submission:
 
@@ -272,15 +287,16 @@ When enabled, a successful production submission causes the Simulation
 Entrypoint to derive a deterministic temporary evaluation identifier from the
 production job and selected v2 release, prepare the parent metadata in memory,
 and request an invocation of the already-deployed Modal report coordinator.
-Cloud Run performs no Stage 12 database write on this submission path. It waits
+Cloud Run performs no Stage 12 persistence write on this submission path. It waits
 only for Modal to acknowledge the invocation, for at most five seconds. There
 is no process-local queue. An acknowledgement failure or timeout is logged, and
 the unchanged production response is returned.
 
-The Modal report coordinator atomically creates or resolves the parent record
-before starting child work. Repeated production submissions can request more
-than one coordinator invocation, but the deterministic evaluation identifier
-and database uniqueness constraint make them one logical Stage 12 run. A later
+The Modal report coordinator asks the API's canonical service to atomically
+create or resolve the parent record before starting child work. Repeated
+production submissions can request more than one coordinator invocation, but
+the deterministic evaluation identifier and database uniqueness constraint
+make them one logical Stage 12 run. A later
 coordinator that finds the run already active or complete exits without
 starting child simulations. Unsupported automatic inputs are logged with a
 bounded reason and are not persisted.

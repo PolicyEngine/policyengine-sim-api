@@ -27,8 +27,9 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationExecutionInput,
     Stage12InvocationContext,
 )
-from policyengine_simulation_contract.stage12_persistence import (
-    PostgresComparisonStore,
+from policyengine_stage12_client import (
+    GoogleIdentityTokenProvider,
+    Stage12PersistenceClient,
 )
 
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -141,8 +142,11 @@ class SimulationCalculation:
     calculation_provenance: dict[str, Any] | None = None
 
 
-def _runtime_store() -> PostgresComparisonStore:
-    return PostgresComparisonStore(os.environ.get("STAGE12_DATABASE_URL", ""))
+def _runtime_store() -> Stage12PersistenceClient:
+    return Stage12PersistenceClient(
+        os.environ.get("STAGE12_PERSISTENCE_API_URL", ""),
+        token_provider=GoogleIdentityTokenProvider(),
+    )
 
 
 def _artifact_store() -> Stage12ArtifactStore:

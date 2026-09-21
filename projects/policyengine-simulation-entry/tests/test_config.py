@@ -86,7 +86,7 @@ def test_enabled_stage12_accepts_complete_independent_configuration():
     settings = make_settings(
         stage12_enabled=True,
         stage12_v2_manifest_environment="staging",
-        stage12_database_url="postgresql://stage12-runtime",
+        stage12_persistence_api_url="https://api.example",
         stage12_artifact_bucket="policyengine-stage12-staging",
     )
     settings.validate()
@@ -104,7 +104,7 @@ def test_partial_stage12_resource_configuration_is_rejected():
     with pytest.raises(ConfigurationError, match="Stage 12 resources require"):
         make_settings(
             stage12_v2_manifest_environment="staging",
-            stage12_database_url="postgresql://stage12-runtime",
+            stage12_persistence_api_url="https://api.example",
         ).validate()
 
 

@@ -19,6 +19,7 @@ jobs:
           - projects/policyengine-simulation-gateway
           - libs/policyengine-simulation-contract
           - libs/policyengine-simulation-observability
+          - libs/policyengine-stage12-client
 
     steps:
     - uses: actions/checkout@v6

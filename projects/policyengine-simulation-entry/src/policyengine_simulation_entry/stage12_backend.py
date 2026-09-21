@@ -24,8 +24,9 @@ from policyengine_simulation_contract.stage12_manifest import (
     V2ManifestLoader,
     V2WorkerVersion,
 )
-from policyengine_simulation_contract.stage12_persistence import (
-    PostgresComparisonStore,
+from policyengine_stage12_client import (
+    GoogleIdentityTokenProvider,
+    Stage12PersistenceClient,
 )
 
 from policyengine_simulation_entry.config import Settings
@@ -39,7 +40,7 @@ AUTOMATIC_REPORT_NAMESPACE = uuid5(
 
 
 class ComparisonStore(Protocol):
-    """Read-only database access retained for the temporary status route."""
+    """Read temporary comparison state through the API-owned service."""
 
     def get_report(self, evaluation_id: UUID) -> ComparisonReportRecord: ...
 
@@ -142,7 +143,10 @@ class Stage12ComparisonBackend:
         return cls(
             settings,
             manifest_loader=V2ManifestLoader(manifest_store),
-            store=PostgresComparisonStore(settings.stage12_database_url),
+            store=Stage12PersistenceClient(
+                settings.stage12_persistence_api_url,
+                token_provider=GoogleIdentityTokenProvider(),
+            ),
             invoker=ModalReportInvoker(settings.stage12_v2_manifest_environment),
         )
 

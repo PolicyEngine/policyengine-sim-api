@@ -395,8 +395,9 @@ def create_app(
             headers={"Retry-After": "1"},
         )
 
-    # TEMPORARY(Stage 12): Poll temporary PostgreSQL comparison state only;
-    # never wait on or poll a Modal FunctionCall from this Cloud Run request.
+    # TEMPORARY(Stage 12): Read temporary comparison state through the
+    # API-owned persistence service; never wait on or poll a Modal FunctionCall
+    # from this Cloud Run request.
     @app.get(
         "/internal/stage12/reports/{evaluation_id}",
         include_in_schema=False,
@@ -424,8 +425,8 @@ def create_app(
                 # identifier that never existed, so callers must bound retries.
                 headers={"Retry-After": "1"},
             )
-        # Reading temporary diagnostic state crosses database and adapter
-        # boundaries whose concrete exception types are implementation details.
+        # Reading temporary diagnostic state crosses an internal HTTP boundary
+        # whose concrete exception types are implementation details.
         except Exception as error:  # noqa: BLE001
             logger.error(
                 "stage12_direct_status_failed",

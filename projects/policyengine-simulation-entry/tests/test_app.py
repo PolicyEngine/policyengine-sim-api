@@ -45,7 +45,7 @@ def automatic_stage12_settings():
     return make_settings(
         stage12_enabled=True,
         stage12_v2_manifest_environment="staging",
-        stage12_database_url="postgresql://stage12-runtime",
+        stage12_persistence_api_url="https://api.example",
         stage12_artifact_bucket="policyengine-stage12-staging",
     )
 
