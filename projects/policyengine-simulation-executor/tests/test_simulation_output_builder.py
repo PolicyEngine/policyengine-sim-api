@@ -34,11 +34,18 @@ from policyengine_simulation_executor.release_bundle import (
     resolve_runtime_bundle_dataset_uri,
 )
 from policyengine_simulation_observability.observability import SegmentName
-from policyengine_simulation_executor.simulation_runtime import RegionResolution
-from policyengine_simulation_executor.simulation_runtime import _load_dataset
+from policyengine_simulation_executor.simulation_runtime import (
+    DatasetSelection,
+    RegionResolution,
+)
+from policyengine_simulation_executor.simulation_runtime import (
+    _load_dataset as _load_selected_dataset,
+)
+from policyengine_simulation_executor.simulation_runtime import _nondefault_data_folder
 from policyengine_simulation_executor.simulation_runtime import _normalise_policy
 from policyengine_simulation_executor.simulation_runtime import (
     _resolve_dataset_reference,
+    _resolve_dataset_selection,
 )
 from policyengine_simulation_executor.simulation_runtime import _resolve_region
 from policyengine_simulation_executor.simulation_runtime import (
@@ -70,6 +77,14 @@ from policyengine_simulation_executor.simulation_output_geographic import (
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
 )
+
+
+def _load_dataset(params, *, country_module=None, region_resolution=None):
+    """Exercise dataset resolution and loading together in direct loader tests."""
+    selection = _resolve_dataset_selection(params, region_resolution=region_resolution)
+    return _load_selected_dataset(
+        params, country_module=country_module, selection=selection
+    )
 
 
 class _FakeOutputDataset:
@@ -453,7 +468,13 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
     build_calls = []
 
     def fake_build_simulation(
-        params, *, dataset, policy, scoping_strategy=None, region_code=None
+        params,
+        *,
+        dataset,
+        dataset_selection,
+        policy,
+        scoping_strategy=None,
+        region_code=None,
     ):
         build_calls.append((params, dataset, policy, scoping_strategy, region_code))
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
@@ -478,13 +499,13 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
         "policyengine_simulation_executor.simulation_runtime._resolve_region",
         lambda **kwargs: RegionResolution(
             code="us",
-            dataset_reference="mock-dataset",
+            dataset_reference=None,
             scoping_strategy="mock-scoping",
         ),
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
-        lambda params, country_module, region_resolution: dataset,
+        lambda params, country_module, selection: dataset,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
@@ -574,7 +595,13 @@ def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
     build_count = [0]
 
     def fake_build_simulation(
-        params, *, dataset, policy, scoping_strategy=None, region_code=None
+        params,
+        *,
+        dataset,
+        dataset_selection,
+        policy,
+        scoping_strategy=None,
+        region_code=None,
     ):
         build_count[0] += 1
         return simulations["baseline"] if build_count[0] == 1 else simulations["reform"]
@@ -603,13 +630,13 @@ def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
         "policyengine_simulation_executor.simulation_runtime._resolve_region",
         lambda **kwargs: RegionResolution(
             code="us",
-            dataset_reference="mock-dataset",
+            dataset_reference=None,
             scoping_strategy="mock-scoping",
         ),
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
-        lambda params, country_module, region_resolution: dataset,
+        lambda params, country_module, selection: dataset,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
@@ -980,7 +1007,13 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
         return country_module
 
     def fake_build_simulation(
-        params, *, dataset, policy, scoping_strategy=None, region_code=None
+        params,
+        *,
+        dataset,
+        dataset_selection,
+        policy,
+        scoping_strategy=None,
+        region_code=None,
     ):
         build_calls.append((params, dataset, policy, scoping_strategy))
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
@@ -998,11 +1031,11 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._resolve_region",
-        lambda **kwargs: RegionResolution(code="us", dataset_reference="dataset"),
+        lambda **kwargs: RegionResolution(code="us", dataset_reference=None),
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
-        lambda params, country_module, region_resolution: dataset,
+        lambda params, country_module, selection: dataset,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
@@ -1052,16 +1085,29 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
     scoping_strategy = object()
     region_resolution = RegionResolution(
         code="state/ut",
-        dataset_reference="dataset",
+        dataset_reference=None,
         scoping_strategy=scoping_strategy,
     )
     build_calls = []
+    load_selections = []
 
     def fake_build_simulation(
-        params, *, dataset, policy, scoping_strategy=None, region_code=None
+        params,
+        *,
+        dataset,
+        dataset_selection,
+        policy,
+        scoping_strategy=None,
+        region_code=None,
     ):
-        build_calls.append((params, dataset, policy, scoping_strategy))
+        build_calls.append(
+            (params, dataset, policy, scoping_strategy, dataset_selection)
+        )
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
+
+    def fake_load_dataset(params, *, country_module, selection):
+        load_selections.append(selection)
+        return dataset
 
     class FakeSimulationOutputBuilder:
         def __init__(self, **kwargs):
@@ -1080,7 +1126,7 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
-        lambda params, country_module, region_resolution: dataset,
+        fake_load_dataset,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
@@ -1103,25 +1149,48 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
     assert result == CURRENT_SINGLE_YEAR_MACRO_RESULT
     assert build_calls[0][3] is scoping_strategy
     assert build_calls[1][3] is scoping_strategy
+    assert len(load_selections) == 1
+    assert build_calls[0][4] is load_selections[0]
+    assert build_calls[1][4] is load_selections[0]
 
 
-def test_resolve_dataset_reference_applies_data_version_to_logical_dataset(
-    monkeypatch,
-):
-    bundle_uri = get_country_release_bundle("us").default_dataset_uri
-    bundle_uri_without_revision = bundle_uri.rsplit("@", maxsplit=1)[0]
+def test_resolve_dataset_reference_uses_bundle_default():
+    bundle = get_country_release_bundle("us")
 
-    assert (
-        _resolve_dataset_reference(
-            "us",
-            {"data": "populace_us_2024", "data_version": "custom-v1"},
-        )
-        == f"{bundle_uri_without_revision}@custom-v1"
+    assert _resolve_dataset_reference("us") == bundle.default_dataset
+
+
+def test_dataset_selection_identifies_the_actual_bundle_default():
+    bundle = get_country_release_bundle("us")
+    nondefault = next(
+        name for name in bundle.dataset_uris if name != bundle.default_dataset
     )
+
+    omitted = _resolve_dataset_selection({"country": "us"})
+    alternate = _resolve_dataset_selection(
+        {"country": "us"},
+        region_resolution=RegionResolution(
+            code="state/ca", dataset_reference=bundle.dataset_uris[nondefault]
+        ),
+    )
+
+    assert isinstance(omitted, DatasetSelection)
+    assert omitted.name == bundle.default_dataset
+    assert omitted.is_default
+    assert alternate.name == nondefault
+    assert not alternate.is_default
+
+
+def test_dataset_selection_rejects_a_bundled_uri_as_public_data():
+    bundle = get_country_release_bundle("us")
+    with pytest.raises(ValueError, match="Dataset overrides are not supported"):
+        _resolve_dataset_selection(
+            {"country": "us", "data": bundle.default_dataset_uri}
+        )
 
 
 @pytest.mark.parametrize("country", ["us", "uk"])
-def test_load_dataset_passes_bundle_default_name_to_country_loader_with_receipt(
+def test_load_dataset_delegates_default_selection_to_country_loader_with_receipt(
     country,
     tmp_path,
     monkeypatch,
@@ -1168,28 +1237,21 @@ def test_load_dataset_passes_bundle_default_name_to_country_loader_with_receipt(
 
     assert ensure_calls == [
         {
-            "datasets": [bundle.default_dataset],
             "years": [2026],
             "data_folder": str(tmp_path),
         }
     ]
 
 
-# Locks the guard that keeps every non-default dataset request away from the
-# baked default-revision single-year files in POLICYENGINE_DATA_FOLDER.
-# ensure_datasets keys its cache on a revision-stripped filename stem, so
-# even an explicit dataset name or foreign URI can collide with the baked
-# default (e.g. hf://other/repo/populace_us_2024.h5).
 @pytest.mark.parametrize(
     "explicit_data_params",
     [
         {"data_version": "custom-v1"},
         {"data": "populace_us_2024@custom-v1"},
-        {"data": "populace_us_2024"},
         {"data": "hf://other-org/other-repo/populace_us_2024.h5"},
     ],
 )
-def test_load_dataset_bypasses_baked_folder_for_explicit_dataset_requests(
+def test_load_dataset_rejects_unmanaged_dataset_requests(
     explicit_data_params,
     tmp_path,
     monkeypatch,
@@ -1202,13 +1264,139 @@ def test_load_dataset_bypasses_baked_folder_for_explicit_dataset_requests(
         ensure_calls.append(kwargs)
         return {"dataset": SimpleNamespace()}
 
+    with pytest.raises(ValueError, match="Dataset overrides are not supported"):
+        _load_dataset(
+            {"country": "us", "time_period": "2026", **explicit_data_params},
+            country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+        )
+
+    assert ensure_calls == []
+
+
+def test_load_dataset_rejects_explicit_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
+    ensure_calls = []
+
+    def ensure_datasets(**kwargs):
+        ensure_calls.append(kwargs)
+        return {"dataset": SimpleNamespace()}
+
+    with pytest.raises(ValueError, match="Dataset overrides are not supported"):
+        _load_dataset(
+            {"country": "us", "time_period": "2026", "data": "populace_us_2024"},
+            country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+        )
+
+    assert ensure_calls == []
+
+
+def test_load_dataset_passes_region_dataset_name_to_managed_loader(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
+    bundle = get_country_release_bundle("us")
+    nondefault = next(
+        name for name in bundle.dataset_uris if name != bundle.default_dataset
+    )
+    ensure_calls = []
+
+    def ensure_datasets(**kwargs):
+        ensure_calls.append(kwargs)
+        return {"dataset": SimpleNamespace()}
+
     _load_dataset(
-        {"country": "us", "time_period": "2026", **explicit_data_params},
+        {"country": "us", "time_period": "2026"},
         country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+        region_resolution=RegionResolution(
+            code="state/ca", dataset_reference=bundle.dataset_uris[nondefault]
+        ),
     )
 
-    assert len(ensure_calls) == 1
-    assert ensure_calls[0]["data_folder"] == "/tmp/policyengine-data"
+    assert ensure_calls == [
+        {
+            "datasets": [nondefault],
+            "years": [2026],
+            "data_folder": _nondefault_data_folder(
+                "us", nondefault, bundle.dataset_uris[nondefault]
+            ),
+        }
+    ]
+
+
+@pytest.mark.parametrize("use_default", [True, False])
+def test_load_dataset_maps_region_bundle_uri_to_managed_name(
+    use_default, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
+    bundle = get_country_release_bundle("us")
+    name = (
+        bundle.default_dataset
+        if use_default
+        else next(
+            name for name in bundle.dataset_uris if name != bundle.default_dataset
+        )
+    )
+    ensure_calls = []
+
+    def ensure_datasets(**kwargs):
+        ensure_calls.append(kwargs)
+        return {"dataset": SimpleNamespace()}
+
+    _load_dataset(
+        {"country": "us", "time_period": "2026"},
+        country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+        region_resolution=SimpleNamespace(dataset_reference=bundle.dataset_uris[name]),
+    )
+
+    assert ensure_calls == [
+        {
+            **({} if use_default else {"datasets": [name]}),
+            "years": [2026],
+            "data_folder": (
+                str(tmp_path)
+                if use_default
+                else _nondefault_data_folder("us", name, bundle.dataset_uris[name])
+            ),
+        }
+    ]
+
+
+def test_load_dataset_rejects_explicit_dataset_for_filtered_region(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
+    bundle = get_country_release_bundle("us")
+    nondefault = next(
+        name for name in bundle.dataset_uris if name != bundle.default_dataset
+    )
+    ensure_calls = []
+
+    def ensure_datasets(**kwargs):
+        ensure_calls.append(kwargs)
+        return {"dataset": SimpleNamespace()}
+
+    with pytest.raises(ValueError, match="Dataset overrides are not supported"):
+        _load_dataset(
+            {"country": "us", "time_period": "2026", "data": nondefault},
+            country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+            region_resolution=SimpleNamespace(
+                dataset_reference=bundle.default_dataset_uri,
+                scoping_strategy=object(),
+            ),
+        )
+
+    assert ensure_calls == []
+
+
+def test_nondefault_dataset_cache_is_distinct_for_shared_filename_stem():
+    first = _nondefault_data_folder(
+        "us", "certified_a", "hf://policyengine/a/shared.h5@revision-a"
+    )
+    second = _nondefault_data_folder(
+        "us", "certified_b", "hf://policyengine/b/shared.h5@revision-b"
+    )
+
+    assert first != second
 
 
 def test_load_dataset_uses_baked_folder_for_default_requests(

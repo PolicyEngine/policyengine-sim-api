@@ -50,10 +50,7 @@ from policyengine_simulation_gateway.responses import (
     failed_job_response,
     running_job_response,
 )
-from policyengine_simulation_contract.dataset_uri import (
-    runtime_dataset_uri,
-    select_dataset_revision,
-)
+from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 from policyengine_simulation_contract.hf_dataset import (
     HuggingFaceDatasetReferenceError,
 )
@@ -102,15 +99,6 @@ def _record_not_found(message: str) -> None:
     )
 
 
-def _split_requested_revision(requested_data: str) -> tuple[str, str | None]:
-    if "@" not in requested_data:
-        return requested_data, None
-    dataset_name, revision = requested_data.rsplit("@", maxsplit=1)
-    if not dataset_name or not revision:
-        raise ValueError(f"Invalid dataset revision reference: {requested_data}")
-    return dataset_name, revision
-
-
 def _country_bundle_data_version(country_bundle: dict) -> str | None:
     data_version = country_bundle.get("data_version")
     return data_version if isinstance(data_version, str) else None
@@ -128,55 +116,19 @@ def _country_bundle_data_artifact_revision(country_bundle: dict) -> str | None:
     return artifact_revision if isinstance(artifact_revision, str) else None
 
 
-def _without_revision(dataset_uri: str) -> str:
-    return _split_requested_revision(dataset_uri)[0]
-
-
 def _revision_from_dataset_uri(dataset_uri: str | None) -> str | None:
     if not isinstance(dataset_uri, str) or "@" not in dataset_uri:
         return None
-    _, revision = _split_requested_revision(dataset_uri)
-    return revision
+    return dataset_uri.rsplit("@", maxsplit=1)[1]
 
 
 def _bundle_response_data_version(
     *,
     country_bundle: dict,
-    requested_dataset: str | None,
-    requested_data_version: str | None,
     resolved_dataset: str | None,
 ) -> str | None:
-    if requested_data_version is not None:
-        return requested_data_version
-    if _revision_from_dataset_uri(requested_dataset) is not None:
-        return _revision_from_dataset_uri(resolved_dataset)
-    data_version = country_bundle.get("data_version")
-    if isinstance(data_version, str):
-        return data_version
-    return _revision_from_dataset_uri(resolved_dataset)
-
-
-def _bundle_certified_hf_uri_roots(country_bundle: dict) -> set[str]:
-    roots: set[str] = set()
-    default_uri = country_bundle.get("default_dataset_uri")
-    if isinstance(default_uri, str) and default_uri.startswith("hf://"):
-        roots.add(_without_revision(default_uri))
-
-    for key in ("dataset_uris", "dataset_aliases"):
-        values = country_bundle.get(key)
-        if not isinstance(values, dict):
-            continue
-        for value in values.values():
-            if isinstance(value, str) and value.startswith("hf://"):
-                roots.add(_without_revision(value))
-    return roots
-
-
-def _is_bundle_certified_hf_uri(country_bundle: dict, dataset_uri: str) -> bool:
-    if not dataset_uri.startswith("hf://"):
-        return False
-    return _without_revision(dataset_uri) in _bundle_certified_hf_uri_roots(
-        country_bundle
+    return _country_bundle_data_version(country_bundle) or _revision_from_dataset_uri(
+        resolved_dataset
     )
 
 
@@ -184,102 +136,17 @@ def _resolve_dataset_uri_from_app_bundle(
     *,
     app_bundle: dict,
     country: str,
-    requested_data: str | None,
-    requested_data_version: str | None = None,
 ) -> str | None:
     country_bundle = app_bundle.get(country.lower())
-
-    if requested_data is None:
-        if not isinstance(country_bundle, dict):
-            return None
-        default_uri = country_bundle.get("default_dataset_uri")
-        if not isinstance(default_uri, str):
-            return None
-        return runtime_dataset_uri(
-            default_uri,
-            default_revision=_country_bundle_data_package_version(country_bundle),
-            override_revision=requested_data_version,
-            artifact_revision=_country_bundle_data_artifact_revision(country_bundle),
-            validate_hf=False,
-        )
-
-    requested_without_revision, requested_revision = _split_requested_revision(
-        requested_data
-    )
-    revision = select_dataset_revision(
-        requested_revision=requested_revision,
-        requested_data_version=requested_data_version,
-    )
-    bundle_data_package_version = (
-        _country_bundle_data_package_version(country_bundle)
-        if isinstance(country_bundle, dict)
-        else None
-    )
-    artifact_revision = (
-        _country_bundle_data_artifact_revision(country_bundle)
-        if isinstance(country_bundle, dict)
-        else None
-    )
-
-    if "://" in requested_without_revision:
-        runtime_input = (
-            requested_data
-            if requested_revision is not None and requested_data_version is None
-            else requested_without_revision
-        )
-        if requested_without_revision.startswith("hf://"):
-            validate_hf = not (
-                isinstance(country_bundle, dict)
-                and _is_bundle_certified_hf_uri(
-                    country_bundle, requested_without_revision
-                )
-            )
-            return runtime_dataset_uri(
-                runtime_input,
-                default_revision=bundle_data_package_version,
-                override_revision=(
-                    revision if requested_data_version is not None else None
-                ),
-                artifact_revision=artifact_revision,
-                validate_hf=validate_hf,
-            )
-        if requested_without_revision.startswith("gs://"):
-            return runtime_dataset_uri(
-                runtime_input,
-                default_revision=revision,
-            )
-        return requested_data
-
     if not isinstance(country_bundle, dict):
-        return requested_data
-
-    # Older Modal snapshots may contain aliases. Newly published bundle snapshots
-    # resolve direct .py dataset names through dataset_uris instead.
-    aliases = country_bundle.get("dataset_aliases")
-    if not isinstance(aliases, dict):
-        aliases = {}
-    dataset_name = aliases.get(requested_without_revision, requested_without_revision)
-
-    if "://" in dataset_name:
-        return runtime_dataset_uri(
-            dataset_name,
-            default_revision=bundle_data_package_version,
-            override_revision=revision,
-            artifact_revision=artifact_revision,
-            validate_hf=not _is_bundle_certified_hf_uri(country_bundle, dataset_name),
-        )
-
-    dataset_uris = country_bundle.get("dataset_uris")
-    if not isinstance(dataset_uris, dict):
-        return requested_data
-    dataset_uri = dataset_uris.get(dataset_name)
+        return None
+    dataset_uri = country_bundle.get("default_dataset_uri")
     if not isinstance(dataset_uri, str):
-        return requested_data
+        return None
     return runtime_dataset_uri(
         dataset_uri,
-        default_revision=bundle_data_package_version,
-        override_revision=revision,
-        artifact_revision=artifact_revision,
+        default_revision=_country_bundle_data_package_version(country_bundle),
+        artifact_revision=_country_bundle_data_artifact_revision(country_bundle),
         validate_hf=False,
     )
 
@@ -625,28 +492,17 @@ def _resolve_from_legacy_dicts(
 def _build_policyengine_bundle(
     country: str,
     resolution: RouteResolution,
-    payload: dict,
 ) -> PolicyEngineBundle:
     app_bundle = resolution.bundle_manifest
     country_bundle = app_bundle.get(country.lower())
     if not isinstance(country_bundle, dict):
         country_bundle = {}
-    dataset = payload.get("data")
-    requested_data_version = payload.get("data_version")
-    requested_dataset = dataset if isinstance(dataset, str) else None
-    requested_data_version = (
-        requested_data_version if isinstance(requested_data_version, str) else None
-    )
     resolved_dataset = _resolve_dataset_uri_from_app_bundle(
         app_bundle=app_bundle,
         country=country,
-        requested_data=requested_dataset,
-        requested_data_version=requested_data_version,
     )
     data_version = _bundle_response_data_version(
         country_bundle=country_bundle,
-        requested_dataset=requested_dataset,
-        requested_data_version=requested_data_version,
         resolved_dataset=resolved_dataset,
     )
     model_version = country_bundle.get("model_version") or resolution.response_version
@@ -835,7 +691,6 @@ async def submit_simulation(request: SimulationRequest):
             bundle = _build_policyengine_bundle(
                 request.country,
                 route,
-                payload,
             )
         _resolve_request_spm(request, bundle, route)
     except (ValueError, HuggingFaceDatasetReferenceError) as exc:
@@ -916,7 +771,6 @@ async def submit_budget_window_batch(request: BudgetWindowBatchRequest):
             bundle = _build_policyengine_bundle(
                 request.country,
                 route,
-                request.model_dump(mode="json"),
             )
         _resolve_request_spm(request, bundle, route)
     except (ValueError, HuggingFaceDatasetReferenceError) as exc:

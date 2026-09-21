@@ -522,17 +522,6 @@
             ],
             "title": "Scope"
           },
-          "data": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Data"
-          },
           "time_period": {
             "anyOf": [
               {
@@ -610,17 +599,6 @@
               }
             ],
             "title": "Model Version"
-          },
-          "data_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Data Version"
           },
           "segmented": {
             "anyOf": [
@@ -2070,17 +2048,6 @@
             ],
             "title": "Scope"
           },
-          "data": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Data"
-          },
           "time_period": {
             "anyOf": [
               {
@@ -2158,17 +2125,6 @@
               }
             ],
             "title": "Model Version"
-          },
-          "data_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Data Version"
           },
           "segmented": {
             "anyOf": [

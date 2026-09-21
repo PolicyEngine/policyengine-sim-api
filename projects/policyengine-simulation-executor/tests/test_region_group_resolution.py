@@ -3,12 +3,12 @@
 from unittest.mock import MagicMock
 
 import pytest
-
 from policyengine.core.scoping_strategy import (
     RegionGroupStrategy,
     RowFilterStrategy,
     WeightReplacementStrategy,
 )
+
 from policyengine_simulation_executor import simulation_runtime as sr
 from policyengine_simulation_executor.simulation_output_geographic import (
     _should_build_us_congressional_district_impact as gate,
@@ -34,7 +34,7 @@ def _state(fips):
 class TestResolveRegionGroup:
     def test__builds_region_group_strategy_from_members(self, monkeypatch):
         monkeypatch.setattr(
-            sr, "_resolve_dataset_reference", lambda c, p: "us-national"
+            sr, "_resolve_dataset_reference", lambda _country: "us-national"
         )
         cm = _country_module(
             {"state/hi": _region_with(_state(15)), "state/ia": _region_with(_state(19))}
@@ -50,7 +50,7 @@ class TestResolveRegionGroup:
         assert res.dataset_reference == "us-national"
 
     def test__code_is_member_order_independent(self, monkeypatch):
-        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda c, p: "x")
+        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda _country: "x")
         cm = _country_module(
             {"state/hi": _region_with(_state(15)), "state/ia": _region_with(_state(19))}
         )
@@ -67,7 +67,7 @@ class TestResolveRegionGroup:
         assert a.code == b.code
 
     def test__rejects_unknown_member(self, monkeypatch):
-        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda c, p: "x")
+        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda _country: "x")
         cm = _country_module({})  # get_region returns None
         with pytest.raises(ValueError, match="Unsupported"):
             sr._resolve_region_group(
@@ -75,7 +75,7 @@ class TestResolveRegionGroup:
             )
 
     def test__rejects_weight_replacement_member(self, monkeypatch):
-        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda c, p: "x")
+        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda _country: "x")
         weight_replacement = WeightReplacementStrategy(
             weight_matrix_bucket="b",
             weight_matrix_key="k",
@@ -91,7 +91,7 @@ class TestResolveRegionGroup:
             )
 
     def test__requires_nonempty_group(self, monkeypatch):
-        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda c, p: "x")
+        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda _country: "x")
         cm = _country_module({})
         with pytest.raises(ValueError, match="at least one"):
             sr._resolve_region_group(
@@ -99,7 +99,7 @@ class TestResolveRegionGroup:
             )
 
     def test__resolve_region_dispatches_to_group(self, monkeypatch):
-        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda c, p: "x")
+        monkeypatch.setattr(sr, "_resolve_dataset_reference", lambda _country: "x")
         cm = _country_module({"state/hi": _region_with(_state(15))})
         res = sr._resolve_region(
             country_module=cm, country="us", params={"region_group": ["state/hi"]}

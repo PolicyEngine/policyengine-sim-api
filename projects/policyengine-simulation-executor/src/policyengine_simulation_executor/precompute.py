@@ -110,11 +110,16 @@ def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
     from policyengine_simulation_executor.baseline_artifacts import (
         qualifying_baseline_identity,
     )
+    from policyengine_simulation_executor.simulation_runtime import (
+        _resolve_dataset_selection,
+    )
 
     params, _, resolution = _cohort_resolution(year, group)
+    dataset_selection = _resolve_dataset_selection(params, region_resolution=resolution)
     identity = qualifying_baseline_identity(
         params,
         country=PRECOMPUTE_COUNTRY,
+        dataset_is_default=dataset_selection.is_default,
         policy=None,
         region_code=resolution.code,
         scoping_strategy=resolution.scoping_strategy,
@@ -280,6 +285,7 @@ def _prepare_cohort_baseline(bucket: str, expected: BaselinePlanEntry):
     from policyengine_simulation_executor.simulation_runtime import (
         _build_simulation,
         _load_dataset,
+        _resolve_dataset_selection,
         resolve_data_folder,
     )
 
@@ -294,12 +300,14 @@ def _prepare_cohort_baseline(bucket: str, expected: BaselinePlanEntry):
     params, country_module, resolution = _cohort_resolution(
         expected.year, expected.group
     )
+    dataset_selection = _resolve_dataset_selection(params, region_resolution=resolution)
     dataset = _load_dataset(
-        params, country_module=country_module, region_resolution=resolution
+        params, country_module=country_module, selection=dataset_selection
     )
     baseline = _build_simulation(
         params,
         dataset=dataset,
+        dataset_selection=dataset_selection,
         policy=None,
         scoping_strategy=resolution.scoping_strategy,
         region_code=resolution.code,
