@@ -2,9 +2,13 @@ name: Update dependencies
 
 on:
   schedule:
-    # Run every 15 minutes
-    - cron: '*/15 * * * *'
+    # Run daily at 06:00 UTC
+    - cron: '0 6 * * *'
   workflow_dispatch:  # Allow manual triggering
+
+concurrency:
+  group: update-dependencies
+  cancel-in-progress: false
 
 jobs:
   update-dependencies:
@@ -25,9 +29,9 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v6
-        # Checkout main branch
         with:
           ref: main
+          fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
       
       - name: Install uv
@@ -37,6 +41,36 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+
+      - name: Prepare update branch
+        id: branch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git config --global user.name "policyengine-auto"
+          git config --global user.email "policyengine-auto@users.noreply.github.com"
+
+          open_pr=$(gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --base main \
+            --head update-dependencies \
+            --state open \
+            --json number \
+            --jq '.[0].number // empty')
+
+          if [[ -n "$open_pr" ]]; then
+            echo "has_open_pr=true" >> "$GITHUB_OUTPUT"
+            git fetch origin update-dependencies
+            git checkout -B update-dependencies origin/update-dependencies
+
+            # Preserve the open PR's commits while incorporating current main.
+            # Prefer main's version of a conflict because the generation and
+            # relocking steps below recreate the dependency-update changes.
+            git merge --no-edit -X theirs origin/main
+          else
+            echo "has_open_pr=false" >> "$GITHUB_OUTPUT"
+            git checkout -B update-dependencies origin/main
+          fi
       
       - name: Generate API clients
         run: |
@@ -44,40 +78,47 @@ jobs:
           ./scripts/generate-clients.sh
       
       - name: Update dependencies
-        id: update
         run: |
-          # Run the update command
+          # Runs `uv lock --upgrade` in every library and project.
           make update
-          
-          # Check if there are changes
+
+      - name: Commit and push update
+        id: push
+        run: |
+          changes_detected=false
           if [[ -z $(git status --porcelain) ]]; then
             echo "No changes detected"
-            echo "changes_detected=false" >> $GITHUB_OUTPUT
           else
             echo "Changes detected"
-            echo "changes_detected=true" >> $GITHUB_OUTPUT
+            git add .
+            git commit -m "Update dependencies ($(date -u +%Y-%m-%d))"
+            changes_detected=true
           fi
-      
+
+          branch_pushed=false
+          if [[ "${{ steps.branch.outputs.has_open_pr }}" == "true" ]]; then
+            commits_to_push=$(git rev-list --count origin/update-dependencies..HEAD)
+            if [[ "$commits_to_push" -gt 0 ]]; then
+              git push origin HEAD:update-dependencies
+              branch_pushed=true
+            fi
+          elif [[ "$changes_detected" == "true" ]]; then
+            # No open PR owns this branch, so replacing a stale remote branch
+            # cannot rewrite active review history.
+            git push --force-with-lease origin HEAD:update-dependencies
+            branch_pushed=true
+          fi
+
+          echo "branch_pushed=$branch_pushed" >> "$GITHUB_OUTPUT"
+
       - name: Create pull request
-        if: steps.update.outputs.changes_detected == 'true'
-        run: |
-          git config --global user.name "policyengine-auto"
-          git config --global user.email "policyengine-auto@users.noreply.github.com"
-          
-          git checkout -b update-dependencies
-          git add .
-          git commit -m "Update dependencies"
-          git push origin update-dependencies --force
-          
-          # Try to create PR, ignore if it already exists
-          gh pr create \
-            --title "Update dependencies" \
-            --body "Automated dependency updates
-
-          This PR was automatically created by the dependency update workflow.
-
-          Last updated: $(date)" \
-            --base main \
-            --head update-dependencies || echo "PR may already exist, continuing..."
+        if: steps.branch.outputs.has_open_pr == 'false' && steps.push.outputs.branch_pushed == 'true'
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Update dependencies" \
+            --body "Automated daily dependency updates. Subsequent runs append commits to this branch while the pull request remains open." \
+            --base main \
+            --head update-dependencies
