@@ -223,37 +223,25 @@ jobs:
           IMAGE: ${{ steps.image.outputs.uri }}
           TAG: ${{ steps.metadata.outputs.tag }}
           DEPLOY_STAGE12_V2: ${{ inputs.deploy_stage12_v2 }}
-        run: |
-          runtime_env="^@^APP_ENVIRONMENT=${{ inputs.deployment_environment }}@SIMULATION_ENTRYPOINT_AUTH_REQUIRED=1@SIMULATION_ENTRYPOINT_AUTH_ISSUER=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}@SIMULATION_ENTRYPOINT_AUTH_AUDIENCE=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}@OLD_GATEWAY_URL=${{ secrets.OLD_GATEWAY_URL }}@OLD_GATEWAY_AUTH_ISSUER=${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}@OLD_GATEWAY_AUTH_AUDIENCE=${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}@OLD_GATEWAY_AUTH_CLIENT_ID=${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}"
-          runtime_secrets=(
-            "OLD_GATEWAY_AUTH_CLIENT_SECRET=${{ vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME }}:latest"
-          )
-          if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then
-            runtime_env+="@STAGE12_ENABLED=${{ vars.STAGE12_ENABLED }}@STAGE12_V2_MANIFEST_NAME=simulation-api-v2-version-manifest@STAGE12_V2_MANIFEST_ENVIRONMENT=${{ inputs.modal_environment }}@STAGE12_ARTIFACT_BUCKET=${{ vars.STAGE12_ARTIFACT_BUCKET }}"
-            runtime_secrets+=(
-              "MODAL_TOKEN_ID=${{ vars.MODAL_TOKEN_ID_SECRET_NAME }}:latest"
-              "MODAL_TOKEN_SECRET=${{ vars.MODAL_TOKEN_SECRET_SECRET_NAME }}:latest"
-              "STAGE12_DATABASE_URL=${{ vars.STAGE12_DATABASE_URL_SECRET_NAME }}:latest"
-            )
-          else
-            runtime_env+="@STAGE12_ENABLED=0"
-          fi
-          gcloud run deploy "${{ inputs.entrypoint_service }}" \
-            --project "${PROJECT_ID}" \
-            --region "${REGION}" \
-            --image "${IMAGE}" \
-            --tag "${TAG}" \
-            --no-traffic \
-            --allow-unauthenticated \
-            --service-account "${{ vars.SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT }}" \
-            --set-env-vars "${runtime_env}" \
-            --set-secrets "$(IFS=,; echo "${runtime_secrets[*]}")" \
-            --cpu 1 \
-            --memory 512Mi \
-            --concurrency 80 \
-            --timeout 60 \
-            --min-instances "${{ inputs.entrypoint_min_instances }}" \
-            --max-instances "${{ inputs.entrypoint_max_instances }}"
+          APP_ENVIRONMENT: ${{ inputs.deployment_environment }}
+          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
+          ENTRYPOINT_SERVICE: ${{ inputs.entrypoint_service }}
+          ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT: ${{ vars.SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT }}
+          ENTRYPOINT_MIN_INSTANCES: ${{ inputs.entrypoint_min_instances }}
+          ENTRYPOINT_MAX_INSTANCES: ${{ inputs.entrypoint_max_instances }}
+          SIMULATION_ENTRYPOINT_AUTH_ISSUER_VALUE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+          SIMULATION_ENTRYPOINT_AUTH_AUDIENCE_VALUE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+          OLD_GATEWAY_URL_VALUE: ${{ secrets.OLD_GATEWAY_URL }}
+          OLD_GATEWAY_AUTH_ISSUER_VALUE: ${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}
+          OLD_GATEWAY_AUTH_AUDIENCE_VALUE: ${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}
+          OLD_GATEWAY_AUTH_CLIENT_ID_VALUE: ${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}
+          OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME: ${{ vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME }}
+          STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}
+          STAGE12_ARTIFACT_BUCKET_VALUE: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
+          MODAL_TOKEN_ID_SECRET_NAME: ${{ vars.MODAL_TOKEN_ID_SECRET_NAME }}
+          MODAL_TOKEN_SECRET_SECRET_NAME: ${{ vars.MODAL_TOKEN_SECRET_SECRET_NAME }}
+          STAGE12_DATABASE_URL_SECRET_NAME: ${{ vars.STAGE12_DATABASE_URL_SECRET_NAME }}
+        run: .github/scripts/deploy-cloud-run-simulation-entry.sh
 
       - name: Resolve exact candidate metadata
         id: candidate

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 import textwrap
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 GITIGNORE = REPOSITORY_ROOT / ".gitignore"
@@ -20,6 +22,9 @@ SMOKE_SCRIPT = (
 )
 STAGE12_VALIDATION_SCRIPT = (
     REPOSITORY_ROOT / ".github" / "scripts" / "stage12-validate-infrastructure.sh"
+)
+CLOUD_RUN_DEPLOY_SCRIPT = (
+    REPOSITORY_ROOT / ".github" / "scripts" / "deploy-cloud-run-simulation-entry.sh"
 )
 DEPLOY_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.yml"
 REUSABLE_DEPLOY_WORKFLOW = (
@@ -49,7 +54,9 @@ DOCKERFILE = (
 def test_deployment_scripts_have_valid_shell_syntax():
     subprocess.run(["bash", "-n", TRAFFIC_SCRIPT], check=True)
     subprocess.run(["bash", "-n", SMOKE_SCRIPT], check=True)
+    subprocess.run(["bash", "-n", CLOUD_RUN_DEPLOY_SCRIPT], check=True)
     assert os.access(SMOKE_SCRIPT, os.X_OK)
+    assert os.access(CLOUD_RUN_DEPLOY_SCRIPT, os.X_OK)
 
 
 def test_stage12_deployment_uses_the_shared_v2_runtime_database_role():
@@ -63,8 +70,10 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
     reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
     stage12_workflow = STAGE12_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    cloud_run_deploy_script = CLOUD_RUN_DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
-    assert "gcloud run deploy" in reusable_workflow
+    assert "deploy-cloud-run-simulation-entry.sh" in reusable_workflow
+    assert "gcloud run deploy" in cloud_run_deploy_script
     assert "set-cloud-run-simulation-entry-revision.sh" in reusable_workflow
     assert "terraform" not in reusable_workflow.lower()
     assert "deploy_entrypoint:" in reusable_workflow
@@ -97,8 +106,8 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert (
         reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 11
     )
-    assert "APP_ENVIRONMENT=${{ inputs.deployment_environment }}" in reusable_workflow
-    assert "STAGE12_ENABLED=${{ vars.STAGE12_ENABLED }}" in reusable_workflow
+    assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
+    assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow
     assert "STAGE12_COMPARISON_BACKEND_CONFIGURED" not in reusable_workflow
     assert "STAGE12_CONTROL_NAME" not in reusable_workflow
     assert "STAGE12_DISPATCH_MAX_IN_FLIGHT" not in reusable_workflow
@@ -107,9 +116,7 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert (
         "STAGE12_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     )
-    assert "STAGE12_V2_MANIFEST_ENVIRONMENT=${{ inputs.modal_environment }}" in (
-        reusable_workflow
-    )
+    assert "MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}" in reusable_workflow
     assert "id-token: write" in reusable_workflow
     assert (
         reusable_workflow.count("vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME") == 1
@@ -138,6 +145,121 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert "deployment_environment: production" in stage12_workflow
     assert "modal_environment: main" in stage12_workflow
     assert "DEPLOY_STAGE12_PRODUCTION" in stage12_workflow
+
+
+def test_cloud_run_deployment_does_not_interpolate_github_values_in_shell():
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    deployment_script = CLOUD_RUN_DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    step_start = reusable_workflow.index(
+        "      - name: Deploy Cloud Run entrypoint candidate"
+    )
+    step_end = reusable_workflow.index(
+        "\n      - name: Resolve exact candidate metadata", step_start
+    )
+    deployment_step = reusable_workflow[step_start:step_end]
+    run_block = deployment_step[deployment_step.index("\n        run:") :]
+
+    assert "${{" not in run_block
+    assert ".github/scripts/deploy-cloud-run-simulation-entry.sh" in run_block
+    assert "--env-vars-file" in deployment_script
+    assert "--set-env-vars" not in deployment_script
+    assert "gcloud secrets versions list" in deployment_script
+    assert ":latest" not in deployment_script
+
+
+def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            if [[ "$1 $2 $3" == "secrets versions list" ]]; then
+              printf '%s\n' 1 3 2
+              exit 0
+            fi
+
+            if [[ "$1 $2" == "run deploy" ]]; then
+              printf '%s\n' "$@" > "${GCLOUD_ARGUMENTS_CAPTURE}"
+              while (($#)); do
+                if [[ "$1" == "--env-vars-file" ]]; then
+                  cp "$2" "${GCLOUD_ENV_FILE_CAPTURE}"
+                  exit 0
+                fi
+                shift
+              done
+            fi
+
+            printf 'unexpected gcloud invocation\n' >&2
+            exit 1
+            """
+        ),
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    arguments_capture = tmp_path / "gcloud-arguments.txt"
+    env_capture = tmp_path / "runtime-environment.json"
+    command_environment = os.environ | {
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "RUNNER_TEMP": str(tmp_path),
+        "GCLOUD_ARGUMENTS_CAPTURE": str(arguments_capture),
+        "GCLOUD_ENV_FILE_CAPTURE": str(env_capture),
+        "PROJECT_ID": "policyengine-staging",
+        "REGION": "us-central1",
+        "IMAGE": "us-central1-docker.pkg.dev/project/repository/image:sha",
+        "TAG": "s-123",
+        "DEPLOY_STAGE12_V2": "true",
+        "APP_ENVIRONMENT": "staging",
+        "MODAL_ENVIRONMENT": "staging",
+        "ENTRYPOINT_SERVICE": "policyengine-simulation-entry-staging",
+        "ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT": (
+            "simulation-entry@policyengine-staging.iam.gserviceaccount.com"
+        ),
+        "ENTRYPOINT_MIN_INSTANCES": "0",
+        "ENTRYPOINT_MAX_INSTANCES": "10",
+        "SIMULATION_ENTRYPOINT_AUTH_ISSUER_VALUE": (
+            "https://issuer.example/path?literal=$(not-a-command)"
+        ),
+        "SIMULATION_ENTRYPOINT_AUTH_AUDIENCE_VALUE": "simulation-api",
+        "OLD_GATEWAY_URL_VALUE": "https://legacy.example",
+        "OLD_GATEWAY_AUTH_ISSUER_VALUE": "https://issuer.example",
+        "OLD_GATEWAY_AUTH_AUDIENCE_VALUE": "legacy-api",
+        "OLD_GATEWAY_AUTH_CLIENT_ID_VALUE": "entrypoint-client",
+        "OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME": "old-client-secret",
+        "STAGE12_ENABLED_VALUE": "0",
+        "STAGE12_ARTIFACT_BUCKET_VALUE": "policyengine-stage12-staging",
+        "MODAL_TOKEN_ID_SECRET_NAME": "modal-token-id",
+        "MODAL_TOKEN_SECRET_SECRET_NAME": "modal-token-secret",
+        "STAGE12_DATABASE_URL_SECRET_NAME": (
+            "projects/123456789/secrets/stage12-database-url"
+        ),
+    }
+
+    subprocess.run(
+        [CLOUD_RUN_DEPLOY_SCRIPT],
+        check=True,
+        env=command_environment,
+    )
+
+    runtime_environment = json.loads(env_capture.read_text(encoding="utf-8"))
+    assert runtime_environment["SIMULATION_ENTRYPOINT_AUTH_ISSUER"] == (
+        "https://issuer.example/path?literal=$(not-a-command)"
+    )
+    assert runtime_environment["STAGE12_ENABLED"] == "0"
+    assert runtime_environment["STAGE12_V2_MANIFEST_ENVIRONMENT"] == "staging"
+    arguments = arguments_capture.read_text(encoding="utf-8").splitlines()
+    secrets_argument = arguments[arguments.index("--set-secrets") + 1]
+    assert secrets_argument == (
+        "OLD_GATEWAY_AUTH_CLIENT_SECRET=old-client-secret:3,"
+        "MODAL_TOKEN_ID=modal-token-id:3,"
+        "MODAL_TOKEN_SECRET=modal-token-secret:3,"
+        "STAGE12_DATABASE_URL="
+        "projects/123456789/secrets/stage12-database-url:3"
+    )
+    assert ":latest" not in secrets_argument
 
 
 def test_cloud_run_revision_tags_are_valid_on_the_first_workflow_run():
@@ -261,7 +383,7 @@ def test_main_deployment_automatically_deploys_stage12_in_both_environments():
     assert "deploy_stage12_v2: false" not in deploy_workflow
 
     assert "src.modal.utils.set_stage12_dual_execution" not in reusable_workflow
-    assert "STAGE12_ENABLED=${{ vars.STAGE12_ENABLED }}" in reusable_workflow
+    assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow
 
 
 def test_stage12_only_deployment_cannot_redeploy_existing_modal_resources():
