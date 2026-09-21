@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Synchronize restricted GCP resources into the Stage 12 Modal environment.
+# Synchronize Stage 12 GCP resources into the Modal environment.
 
 set -euo pipefail
 set +x

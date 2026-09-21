@@ -84,7 +84,7 @@ automation or infrastructure configuration:
 | Create or update the separate v2 manifest storage object | V2 manifest publisher |
 | Configure the v2 manifest reader and `STAGE12_ENABLED` | Cloud Run deployment workflow |
 | Create the private artifact namespace and its retention policy | Infrastructure configuration |
-| Grant private-object access only to the Modal runtime and comparison-row DML to the entry and Modal runtimes | Infrastructure configuration |
+| Ensure the existing API v2 runtime identity has comparison-row DML and grant private-object access only to the Modal runtime | Infrastructure configuration |
 | Attach named runtime secrets without exposing their values | Simulation deployment workflow |
 | Disable or restore automatic Stage 12 invocation | Cloud Run deployment workflow |
 | Recreate any Stage 12 service or storage resource after loss | The same deployment and infrastructure automation |
@@ -130,18 +130,19 @@ unchanged. Only a newly accepted supported production job may create one
 corresponding comparison run; polls, cached results, and repeated submissions
 that resolve the same production job do not create another comparison.
 
-Deployment keeps one environment-specific PostgreSQL runtime credential for
-the Simulation Entrypoint and Modal v2 functions. The Simulation Entrypoint
-uses it only to read status for the temporary operator route. The Modal report
-coordinator performs all parent and child record writes; the single-simulation
-functions return their results to that coordinator and do not write these
-records independently. `policyengine-api` remains the source of truth for the
-database role. It has `SELECT`, `INSERT`, `UPDATE`, and `DELETE` only on the two
-temporary Stage 12 tables, has no schema-migration authority, and participates
-in no role membership. Before deploying, the simulation workflow connects with
-the actual runtime secret, verifies the effective role and table access,
-exercises all four operations with canary rows inside a rolled-back
-transaction, and rejects access to other public tables. It also verifies
+Deployment reuses each environment's existing `policyengine_v2_runtime`
+PostgreSQL credential for the Simulation Entrypoint and Modal v2 functions; it
+does not create a Stage 12-specific database role. The Simulation Entrypoint
+uses the credential only to read status for the temporary operator route. The
+Modal report coordinator performs all parent and child record writes; the
+single-simulation functions return their results to that coordinator and do
+not write these records independently. The shared runtime identity retains its
+legitimate access to other API v2 tables and receives `SELECT`, `INSERT`,
+`UPDATE`, and `DELETE` on the two temporary Stage 12 tables. Before deploying,
+the simulation workflow authenticates with the shared credential, verifies
+the exact runtime role and required table operations, rejects schema creation
+and stronger operations on the temporary tables, and exercises all four data
+operations with canary rows inside a rolled-back transaction. It also verifies
 required Secret Manager access and performs a create/read/delete canary in the
 private artifact bucket using the exact Modal service-account credential. The
 storage canary is deleted in the normal path and by exit cleanup after a

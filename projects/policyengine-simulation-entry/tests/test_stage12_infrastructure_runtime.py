@@ -5,12 +5,11 @@ from uuid import UUID
 import pytest
 
 from policyengine_simulation_entry.stage12_infrastructure import (
-    EXPECTED_ROLE_ATTRIBUTES,
     Stage12RuntimeAccessError,
     verify_runtime_database,
 )
 
-EXPECTED_ROLE = "policyengine_stage12_staging"
+EXPECTED_ROLE = "policyengine_v2_runtime"
 REQUIRED_COMPARISON_COLUMNS = {
     "comparison_status",
     "comparison_output_uri",
@@ -26,12 +25,10 @@ class FakeCursor:
     def __init__(
         self,
         *,
-        memberships=(),
-        unexpected_tables=(),
+        current_role=EXPECTED_ROLE,
         comparison_columns=REQUIRED_COMPARISON_COLUMNS,
     ) -> None:
-        self.memberships = list(memberships)
-        self.unexpected_tables = list(unexpected_tables)
+        self.current_role = current_role
         self.comparison_columns = {
             column: (
                 "v2_stage12_result_comparison_status"
@@ -55,17 +52,11 @@ class FakeCursor:
         self.calls.append((normalized, parameters))
         self.rowcount = -1
         if normalized == "SELECT current_user":
-            self.rows = [(EXPECTED_ROLE,)]
-        elif "SELECT rolsuper" in normalized:
-            self.rows = [EXPECTED_ROLE_ATTRIBUTES]
-        elif "FROM pg_auth_members" in normalized:
-            self.rows = list(self.memberships)
+            self.rows = [(self.current_role,)]
         elif "has_schema_privilege" in normalized:
             self.rows = [(parameters[0] == "USAGE",)]
         elif "has_table_privilege" in normalized and "FROM pg_tables" not in normalized:
             self.rows = [(parameters[1] in {"SELECT", "INSERT", "UPDATE", "DELETE"},)]
-        elif "FROM pg_tables" in normalized:
-            self.rows = [(table,) for table in self.unexpected_tables]
         elif "FROM information_schema.columns" in normalized:
             self.rows = list(self.comparison_columns.items())
         elif normalized.startswith("INSERT INTO"):
@@ -75,7 +66,7 @@ class FakeCursor:
             self.rows = [(parameters[0], "pending")]
         elif normalized.startswith("SELECT simulation_execution_id"):
             self.rows = [(parameters[0],)]
-        elif normalized.startswith("UPDATE") or normalized.startswith("DELETE"):
+        elif normalized.startswith(("UPDATE", "DELETE")):
             identifier = (
                 parameters[-1] if normalized.startswith("UPDATE") else parameters[0]
             )
@@ -138,42 +129,39 @@ def test_runtime_verification_exercises_required_dml_and_rolls_back() -> None:
         for statement, _ in cursor.calls
     )
     assert any(
-        call[1]
-        and isinstance(call[1][0], list)
-        and call[1][0]
-        == [
-            "public.stage12_evaluation_reports",
-            "public.stage12_evaluation_simulations",
-        ]
-        for call in cursor.calls
-    )
-    assert any(
         isinstance(parameter, UUID)
         for _, parameters in cursor.calls
         if parameters
         for parameter in parameters
         if not isinstance(parameter, list)
     )
+    assert not any("SELECT rolsuper" in statement for statement, _ in cursor.calls)
+    assert not any("FROM pg_auth_members" in statement for statement, _ in cursor.calls)
+    assert not any("FROM pg_tables" in statement for statement, _ in cursor.calls)
 
 
-def test_runtime_verification_rejects_any_role_membership() -> None:
-    connection = FakeConnection(
-        FakeCursor(memberships=[("unexpected_parent", EXPECTED_ROLE)])
+def test_runtime_verification_accepts_sqlalchemy_psycopg_url() -> None:
+    connection = FakeConnection(FakeCursor())
+    connected_urls = []
+
+    def connect(url, **_):
+        connected_urls.append(url)
+        return connection
+
+    verify_runtime_database(
+        "postgresql+psycopg://runtime",
+        expected_role=EXPECTED_ROLE,
+        environment="staging",
+        connect=connect,
     )
 
-    with pytest.raises(Stage12RuntimeAccessError, match="role membership"):
-        verify_runtime_database(
-            "postgresql://runtime",
-            expected_role=EXPECTED_ROLE,
-            environment="staging",
-            connect=lambda *_, **__: connection,
-        )
+    assert connected_urls == ["postgresql://runtime"]
 
 
-def test_runtime_verification_rejects_other_table_access() -> None:
-    connection = FakeConnection(FakeCursor(unexpected_tables=["reports"]))
+def test_runtime_verification_requires_shared_v2_runtime_role() -> None:
+    connection = FakeConnection(FakeCursor(current_role="policyengine_stage12_staging"))
 
-    with pytest.raises(Stage12RuntimeAccessError, match="outside its temporary tables"):
+    with pytest.raises(Stage12RuntimeAccessError, match="unexpected role"):
         verify_runtime_database(
             "postgresql://runtime",
             expected_role=EXPECTED_ROLE,

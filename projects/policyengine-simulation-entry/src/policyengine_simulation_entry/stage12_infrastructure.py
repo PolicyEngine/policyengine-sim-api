@@ -1,22 +1,20 @@
-"""Live verification for the restricted Stage 12 PostgreSQL credential."""
+"""Live verification of Stage 12 access through the shared API v2 credential."""
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import psycopg
-
 from policyengine_simulation_contract.stage12_persistence import (
     REPORT_TABLE,
     SIMULATION_TABLE,
 )
 
-EXPECTED_ROLE_ATTRIBUTES = (False, False, False, False, False, False, True)
 REQUIRED_TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE")
 FORBIDDEN_TABLE_PRIVILEGES = ("TRUNCATE", "REFERENCES", "TRIGGER")
 REQUIRED_COMPARISON_REPORT_COLUMNS = frozenset(
@@ -77,7 +75,7 @@ def _exercise_runtime_dml(cursor: Any, *, environment: str) -> None:
 
     evaluation_id = uuid4()
     simulation_execution_id = uuid4()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     retention_expires_at = now + timedelta(days=1)
     digest = "0" * 64
 
@@ -133,7 +131,7 @@ def _exercise_runtime_dml(cursor: Any, *, environment: str) -> None:
         WHERE evaluation_id = %s
         RETURNING evaluation_id, comparison_status
         """,
-        (datetime.now(timezone.utc), evaluation_id),
+        (datetime.now(UTC), evaluation_id),
     )
     if cursor.fetchone() != (evaluation_id, "running"):
         raise Stage12RuntimeAccessError(
@@ -183,7 +181,7 @@ def _exercise_runtime_dml(cursor: Any, *, environment: str) -> None:
         WHERE simulation_execution_id = %s
         RETURNING simulation_execution_id
         """,
-        (datetime.now(timezone.utc), simulation_execution_id),
+        (datetime.now(UTC), simulation_execution_id),
     )
     if cursor.fetchone() != (simulation_execution_id,):
         raise Stage12RuntimeAccessError(
@@ -228,41 +226,18 @@ def verify_runtime_database(
         raise Stage12RuntimeAccessError("Stage 12 database URL is empty")
     if environment not in {"staging", "production"}:
         raise Stage12RuntimeAccessError("environment must be staging or production")
+    psycopg_url = database_url.replace(
+        "postgresql+psycopg://",
+        "postgresql://",
+        1,
+    )
     try:
-        with connect(database_url, connect_timeout=10) as connection:
+        with connect(psycopg_url, connect_timeout=10) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT current_user")
                 if cursor.fetchone() != (expected_role,):
                     raise Stage12RuntimeAccessError(
                         "Stage 12 credential authenticated as an unexpected role"
-                    )
-                cursor.execute(
-                    """
-                    SELECT rolsuper, rolcreaterole, rolcreatedb, rolinherit,
-                           rolreplication, rolbypassrls, rolcanlogin
-                    FROM pg_roles
-                    WHERE rolname = current_user
-                    """
-                )
-                if cursor.fetchone() != EXPECTED_ROLE_ATTRIBUTES:
-                    raise Stage12RuntimeAccessError(
-                        "Stage 12 runtime role has unsafe role attributes"
-                    )
-                cursor.execute(
-                    """
-                    SELECT granted_role.rolname, member_role.rolname
-                    FROM pg_auth_members AS membership
-                    JOIN pg_roles AS granted_role
-                      ON granted_role.oid = membership.roleid
-                    JOIN pg_roles AS member_role
-                      ON member_role.oid = membership.member
-                    WHERE granted_role.rolname = current_user
-                       OR member_role.rolname = current_user
-                    """
-                )
-                if cursor.fetchall():
-                    raise Stage12RuntimeAccessError(
-                        "Stage 12 runtime role participates in role membership"
                     )
                 for privilege, expected in (("USAGE", True), ("CREATE", False)):
                     cursor.execute(
@@ -292,26 +267,6 @@ def verify_runtime_database(
                             raise Stage12RuntimeAccessError(
                                 f"Stage 12 runtime unexpectedly has {privilege} on {table}"
                             )
-                cursor.execute(
-                    """
-                    SELECT tablename
-                    FROM pg_tables
-                    WHERE schemaname = 'public'
-                      AND ('public.' || tablename) <> ALL(%s)
-                      AND (
-                        has_table_privilege(current_user, 'public.' || tablename, 'SELECT')
-                        OR has_table_privilege(current_user, 'public.' || tablename, 'INSERT')
-                        OR has_table_privilege(current_user, 'public.' || tablename, 'UPDATE')
-                        OR has_table_privilege(current_user, 'public.' || tablename, 'DELETE')
-                      )
-                    ORDER BY tablename
-                    """,
-                    ([REPORT_TABLE, SIMULATION_TABLE],),
-                )
-                if cursor.fetchall():
-                    raise Stage12RuntimeAccessError(
-                        "Stage 12 runtime has data access outside its temporary tables"
-                    )
                 _require_comparison_migration(cursor)
                 _exercise_runtime_dml(cursor, environment=environment)
             connection.rollback()
@@ -343,7 +298,7 @@ def main() -> None:
     except Stage12RuntimeAccessError as error:
         raise SystemExit(str(error)) from None
     print(
-        "Stage 12 runtime database access verified: "
+        "Shared API v2 runtime database access verified for Stage 12: "
         f"environment={args.environment}, role={args.expected_role}"
     )
 

@@ -18,6 +18,9 @@ TRAFFIC_SCRIPT = (
 SMOKE_SCRIPT = (
     REPOSITORY_ROOT / ".github" / "scripts" / "cloud-run-simulation-entry-smoke.sh"
 )
+STAGE12_VALIDATION_SCRIPT = (
+    REPOSITORY_ROOT / ".github" / "scripts" / "stage12-validate-infrastructure.sh"
+)
 DEPLOY_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.yml"
 REUSABLE_DEPLOY_WORKFLOW = (
     REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
@@ -47,6 +50,13 @@ def test_deployment_scripts_have_valid_shell_syntax():
     subprocess.run(["bash", "-n", TRAFFIC_SCRIPT], check=True)
     subprocess.run(["bash", "-n", SMOKE_SCRIPT], check=True)
     assert os.access(SMOKE_SCRIPT, os.X_OK)
+
+
+def test_stage12_deployment_uses_the_shared_v2_runtime_database_role():
+    validation_script = STAGE12_VALIDATION_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'expected_role="policyengine_v2_runtime"' in validation_script
+    assert "policyengine_stage12_" not in validation_script
 
 
 def test_deployment_uses_gcloud_workflow_without_terraform():

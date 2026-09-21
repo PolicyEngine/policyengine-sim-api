@@ -85,10 +85,10 @@ gcloud secrets versions access latest \
   --secret "${STAGE12_GCP_CREDENTIALS_SECRET_NAME}" \
   --project "${STAGE12_GCP_PROJECT_ID}" >"${credentials_file}"
 
-expected_role="policyengine_stage12_${STAGE12_ENVIRONMENT}"
+expected_role="policyengine_v2_runtime"
 database_url="$(<"${database_url_file}")"
 if [[ "${database_url}" != postgresql://${expected_role}.*@*.pooler.supabase.com:5432/postgres\?sslmode=require ]]; then
-  echo "Restricted Stage 12 database URL identifies an unexpected target" >&2
+  echo "Shared API v2 runtime database URL identifies an unexpected target" >&2
   exit 1
 fi
 jq -e --arg expected "${STAGE12_MODAL_SERVICE_ACCOUNT}" \
