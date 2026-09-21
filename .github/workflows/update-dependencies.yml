@@ -2,9 +2,14 @@ name: Update dependencies
 
 on:
   schedule:
-    # Run every 15 minutes
-    - cron: '*/15 * * * *'
+    # Run daily at 3:00 PM US Eastern time.
+    - cron: '0 15 * * *'
+      timezone: 'America/New_York'
   workflow_dispatch:  # Allow manual triggering
+
+concurrency:
+  group: update-dependencies
+  cancel-in-progress: false
 
 jobs:
   update-dependencies:
@@ -25,9 +30,9 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v6
-        # Checkout main branch
         with:
           ref: main
+          fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
       
       - name: Install uv
@@ -37,47 +42,27 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+
+      - name: Prepare update branch
+        id: branch
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: .github/scripts/dependency-update-prepare-branch.sh
       
       - name: Generate API clients
-        run: |
-          # Generate clients with correct naming before updating dependencies
-          ./scripts/generate-clients.sh
+        run: ./scripts/generate-clients.sh
       
       - name: Update dependencies
-        id: update
-        run: |
-          # Run the update command
-          make update
-          
-          # Check if there are changes
-          if [[ -z $(git status --porcelain) ]]; then
-            echo "No changes detected"
-            echo "changes_detected=false" >> $GITHUB_OUTPUT
-          else
-            echo "Changes detected"
-            echo "changes_detected=true" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Create pull request
-        if: steps.update.outputs.changes_detected == 'true'
-        run: |
-          git config --global user.name "policyengine-auto"
-          git config --global user.email "policyengine-auto@users.noreply.github.com"
-          
-          git checkout -b update-dependencies
-          git add .
-          git commit -m "Update dependencies"
-          git push origin update-dependencies --force
-          
-          # Try to create PR, ignore if it already exists
-          gh pr create \
-            --title "Update dependencies" \
-            --body "Automated dependency updates
+        run: make update
 
-          This PR was automatically created by the dependency update workflow.
-
-          Last updated: $(date)" \
-            --base main \
-            --head update-dependencies || echo "PR may already exist, continuing..."
+      - name: Commit and push update
+        id: push
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          HAS_OPEN_PR: ${{ steps.branch.outputs.has_open_pr }}
+        run: .github/scripts/dependency-update-commit-and-push.sh
+
+      - name: Create pull request
+        if: steps.branch.outputs.has_open_pr == 'false' && steps.push.outputs.branch_pushed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: .github/scripts/dependency-update-create-pr.sh
