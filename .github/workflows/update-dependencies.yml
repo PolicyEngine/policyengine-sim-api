@@ -47,79 +47,22 @@ jobs:
         id: branch
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          git config --global user.name "policyengine-auto"
-          git config --global user.email "policyengine-auto@users.noreply.github.com"
-
-          open_pr=$(gh pr list \
-            --repo "$GITHUB_REPOSITORY" \
-            --base main \
-            --head update-dependencies \
-            --state open \
-            --json number \
-            --jq '.[0].number // empty')
-
-          if [[ -n "$open_pr" ]]; then
-            echo "has_open_pr=true" >> "$GITHUB_OUTPUT"
-            git fetch origin update-dependencies
-            git checkout -B update-dependencies origin/update-dependencies
-
-            # Preserve the open PR's commits while incorporating current main.
-            # Prefer main's version of a conflict because the generation and
-            # relocking steps below recreate the dependency-update changes.
-            git merge --no-edit -X theirs origin/main
-          else
-            echo "has_open_pr=false" >> "$GITHUB_OUTPUT"
-            git checkout -B update-dependencies origin/main
-          fi
+        run: .github/scripts/dependency-update-prepare-branch.sh
       
       - name: Generate API clients
-        run: |
-          # Generate clients with correct naming before updating dependencies
-          ./scripts/generate-clients.sh
+        run: ./scripts/generate-clients.sh
       
       - name: Update dependencies
-        run: |
-          # Runs `uv lock --upgrade` in every library and project.
-          make update
+        run: make update
 
       - name: Commit and push update
         id: push
-        run: |
-          changes_detected=false
-          if [[ -z $(git status --porcelain) ]]; then
-            echo "No changes detected"
-          else
-            echo "Changes detected"
-            git add .
-            git commit -m "Update dependencies ($(date -u +%Y-%m-%d))"
-            changes_detected=true
-          fi
-
-          branch_pushed=false
-          if [[ "${{ steps.branch.outputs.has_open_pr }}" == "true" ]]; then
-            commits_to_push=$(git rev-list --count origin/update-dependencies..HEAD)
-            if [[ "$commits_to_push" -gt 0 ]]; then
-              git push origin HEAD:update-dependencies
-              branch_pushed=true
-            fi
-          elif [[ "$changes_detected" == "true" ]]; then
-            # No open PR owns this branch, so replacing a stale remote branch
-            # cannot rewrite active review history.
-            git push --force-with-lease origin HEAD:update-dependencies
-            branch_pushed=true
-          fi
-
-          echo "branch_pushed=$branch_pushed" >> "$GITHUB_OUTPUT"
+        env:
+          HAS_OPEN_PR: ${{ steps.branch.outputs.has_open_pr }}
+        run: .github/scripts/dependency-update-commit-and-push.sh
 
       - name: Create pull request
         if: steps.branch.outputs.has_open_pr == 'false' && steps.push.outputs.branch_pushed == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          gh pr create \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Update dependencies" \
-            --body "Automated daily dependency updates. Subsequent runs append commits to this branch while the pull request remains open." \
-            --base main \
-            --head update-dependencies
+        run: .github/scripts/dependency-update-create-pr.sh
