@@ -379,6 +379,8 @@ class PostgresComparisonStore:
     ) -> None:
         if not database_url:
             raise ValueError("Stage 12 database URL is required")
+        if not database_url.startswith("postgresql://"):
+            raise ValueError("Stage 12 database URL must use postgresql://")
         if connect is None:
             import psycopg
 

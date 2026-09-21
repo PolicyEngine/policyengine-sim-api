@@ -142,6 +142,11 @@ def test_adapter_contains_only_dml_statements() -> None:
         assert "TRUNCATE " not in upper
 
 
+def test_postgres_store_rejects_sqlalchemy_psycopg_url() -> None:
+    with pytest.raises(ValueError, match="must use postgresql://"):
+        PostgresComparisonStore("postgresql+psycopg://runtime")
+
+
 def test_create_or_resolve_report_returns_inserted_record() -> None:
     record = _record()
     cursor = FakeCursor([record.model_dump(mode="python")])

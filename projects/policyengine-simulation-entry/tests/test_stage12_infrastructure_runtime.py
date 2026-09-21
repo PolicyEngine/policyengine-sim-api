@@ -140,22 +140,16 @@ def test_runtime_verification_exercises_required_dml_and_rolls_back() -> None:
     assert not any("FROM pg_tables" in statement for statement, _ in cursor.calls)
 
 
-def test_runtime_verification_accepts_sqlalchemy_psycopg_url() -> None:
-    connection = FakeConnection(FakeCursor())
-    connected_urls = []
-
-    def connect(url, **_):
-        connected_urls.append(url)
-        return connection
-
-    verify_runtime_database(
-        "postgresql+psycopg://runtime",
-        expected_role=EXPECTED_ROLE,
-        environment="staging",
-        connect=connect,
-    )
-
-    assert connected_urls == ["postgresql://runtime"]
+def test_runtime_verification_rejects_sqlalchemy_psycopg_url() -> None:
+    with pytest.raises(Stage12RuntimeAccessError, match="must use postgresql://"):
+        verify_runtime_database(
+            "postgresql+psycopg://runtime",
+            expected_role=EXPECTED_ROLE,
+            environment="staging",
+            connect=lambda *_args, **_kwargs: pytest.fail(
+                "invalid URL must be rejected before connecting"
+            ),
+        )
 
 
 def test_runtime_verification_requires_shared_v2_runtime_role() -> None:

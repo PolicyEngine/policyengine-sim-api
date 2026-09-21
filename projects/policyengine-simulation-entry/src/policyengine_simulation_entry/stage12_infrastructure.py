@@ -224,15 +224,12 @@ def verify_runtime_database(
 
     if not database_url:
         raise Stage12RuntimeAccessError("Stage 12 database URL is empty")
+    if not database_url.startswith("postgresql://"):
+        raise Stage12RuntimeAccessError("Stage 12 database URL must use postgresql://")
     if environment not in {"staging", "production"}:
         raise Stage12RuntimeAccessError("environment must be staging or production")
-    psycopg_url = database_url.replace(
-        "postgresql+psycopg://",
-        "postgresql://",
-        1,
-    )
     try:
-        with connect(psycopg_url, connect_timeout=10) as connection:
+        with connect(database_url, connect_timeout=10) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT current_user")
                 if cursor.fetchone() != (expected_role,):
