@@ -65,9 +65,19 @@ canary_source_file="$(mktemp)"
 canary_download_file="$(mktemp)"
 runtime_gcloud_config="$(mktemp -d)"
 canary_object=""
+runtime_gcloud() {
+  # The GitHub auth action exports credentials for the deployment identity.
+  # Remove them only here so the activated Modal worker account controls this check.
+  env \
+    -u CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE \
+    -u GOOGLE_APPLICATION_CREDENTIALS \
+    -u GOOGLE_GHA_CREDS_PATH \
+    CLOUDSDK_CONFIG="${runtime_gcloud_config}" \
+    gcloud "$@"
+}
 cleanup() {
   if [[ -n "${canary_object}" ]]; then
-    CLOUDSDK_CONFIG="${runtime_gcloud_config}" gcloud storage rm \
+    runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage rm \
       "${canary_object}" --quiet >/dev/null 2>&1 || true
   fi
   rm -f \
@@ -134,7 +144,7 @@ uv run --project projects/policyengine-simulation-entry \
   --expected-role "${expected_role}" \
   --environment "${STAGE12_ENVIRONMENT}"
 
-CLOUDSDK_CONFIG="${runtime_gcloud_config}" gcloud auth activate-service-account \
+runtime_gcloud auth activate-service-account \
   "${STAGE12_MODAL_SERVICE_ACCOUNT}" \
   --key-file "${credentials_file}" \
   --project "${STAGE12_GCP_PROJECT_ID}" \
@@ -142,12 +152,12 @@ CLOUDSDK_CONFIG="${runtime_gcloud_config}" gcloud auth activate-service-account 
 canary_id="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${RANDOM}"
 canary_object="gs://${STAGE12_ARTIFACT_BUCKET}/stage-12-runs/_deployment-validation/${STAGE12_ENVIRONMENT}/${canary_id}.txt"
 printf 'stage12-storage-validation:%s\n' "${canary_id}" >"${canary_source_file}"
-CLOUDSDK_CONFIG="${runtime_gcloud_config}" gcloud storage cp \
+runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage cp \
   "${canary_source_file}" "${canary_object}" --quiet
-CLOUDSDK_CONFIG="${runtime_gcloud_config}" gcloud storage cp \
+runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage cp \
   "${canary_object}" "${canary_download_file}" --quiet
 cmp "${canary_source_file}" "${canary_download_file}"
-CLOUDSDK_CONFIG="${runtime_gcloud_config}" gcloud storage rm \
+runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage rm \
   "${canary_object}" --quiet
 canary_object=""
 
