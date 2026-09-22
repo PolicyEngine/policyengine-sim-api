@@ -87,7 +87,10 @@ gcloud secrets versions access latest \
 
 expected_role="policyengine_v2_runtime"
 database_url="$(<"${database_url_file}")"
-if [[ ! "${database_url}" =~ ^postgresql://${expected_role}:[^@[:space:]]+@[^/:[:space:]]+\.pooler\.supabase\.com:5432/postgres\?sslmode=require$ ]]; then
+# Supabase's session pooler appends the 20-character project reference to the
+# PostgreSQL role in the URL. PostgreSQL still authenticates the connection as
+# the exact role above; the live current_user check below verifies that fact.
+if [[ ! "${database_url}" =~ ^postgresql://${expected_role}\.[a-z0-9]{20}:[^@[:space:]]+@[^/:[:space:]]+\.pooler\.supabase\.com:5432/postgres\?sslmode=require$ ]]; then
   echo "Shared API v2 runtime database URL identifies an unexpected target" >&2
   exit 1
 fi

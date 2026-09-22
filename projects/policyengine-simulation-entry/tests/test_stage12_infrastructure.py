@@ -32,6 +32,7 @@ def test_infrastructure_validation_is_bounded_and_valid_shell() -> None:
     assert "Pre-provisioned Stage 12 database, secret, and storage access" in source
     assert "STAGE12_DATABASE_URL_SECRET_NAME" in source
     assert "policyengine_v2_runtime" in source
+    assert r"${expected_role}\.[a-z0-9]{20}" in source
     assert "stage12_infrastructure" in source
     assert "gcloud secrets versions list" in source
     assert "gcloud secrets versions access" in source
