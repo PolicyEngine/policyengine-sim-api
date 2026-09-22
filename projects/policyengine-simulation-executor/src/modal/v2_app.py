@@ -125,7 +125,7 @@ def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:
             "policyengine_simulation_executor",
             "policyengine_simulation_observability",
             "policyengine_simulation_contract",
-            "policyengine_stage12_client",
+            "policyengine_stage12_persistence",
             copy=True,
         )
     )

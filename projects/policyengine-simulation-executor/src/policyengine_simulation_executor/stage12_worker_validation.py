@@ -23,7 +23,7 @@ REQUIRED_SECRET_ALTERNATIVES = (
         "GCP_CREDENTIALS_JSON",
         "GOOGLE_APPLICATION_CREDENTIALS",
     ),
-    ("STAGE12_PERSISTENCE_API_URL",),
+    ("STAGE12_DATABASE_URL",),
     ("STAGE12_ARTIFACT_BUCKET",),
 )
 
@@ -80,9 +80,9 @@ def validate_country_worker(
 
     runtime_environment = environment if environment is not None else os.environ
     _require_secret_environment(runtime_environment)
-    # Import the same HTTP persistence client and coordinator modules loaded by
-    # a real report run before publishing the manifest.
-    import_module("policyengine_stage12_client")
+    # Import the same typed persistence package and coordinator modules loaded
+    # by a real report run before publishing the manifest.
+    import_module("policyengine_stage12_persistence")
     import_module("policyengine_simulation_executor.stage12_runtime")
     resolved = load_stage12_bundle()
     if resolved.bundle_manifest_sha256 != expected_bundle_manifest_sha256:

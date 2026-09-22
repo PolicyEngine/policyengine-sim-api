@@ -16,7 +16,7 @@ def _environment() -> dict[str, str]:
     return {
         "HF_TOKEN": "test-token",
         "GOOGLE_APPLICATION_CREDENTIALS_JSON": "{}",
-        "STAGE12_PERSISTENCE_API_URL": "https://api.example",
+        "STAGE12_DATABASE_URL": "postgresql://runtime:secret@db.example/postgres",
         "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
     }
 
@@ -68,23 +68,23 @@ def test_validation_rejects_digest_mismatch_before_dataset_access() -> None:
     [
         {
             "GOOGLE_APPLICATION_CREDENTIALS_JSON": "{}",
-            "STAGE12_PERSISTENCE_API_URL": "https://api.example",
+            "STAGE12_DATABASE_URL": "postgresql://runtime:secret@db.example/postgres",
             "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
         },
         {
             "HF_TOKEN": "test-token",
-            "STAGE12_PERSISTENCE_API_URL": "https://api.example",
-            "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
-        },
-        {
-            "HF_TOKEN": "test-token",
-            "GOOGLE_APPLICATION_CREDENTIALS_JSON": "{}",
+            "STAGE12_DATABASE_URL": "postgresql://runtime:secret@db.example/postgres",
             "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
         },
         {
             "HF_TOKEN": "test-token",
             "GOOGLE_APPLICATION_CREDENTIALS_JSON": "{}",
-            "STAGE12_PERSISTENCE_API_URL": "https://api.example",
+            "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
+        },
+        {
+            "HF_TOKEN": "test-token",
+            "GOOGLE_APPLICATION_CREDENTIALS_JSON": "{}",
+            "STAGE12_DATABASE_URL": "postgresql://runtime:secret@db.example/postgres",
         },
     ],
 )

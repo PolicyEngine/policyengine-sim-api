@@ -116,9 +116,9 @@ if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then
   stage12_variables=(
     STAGE12_ENABLED_VALUE
     STAGE12_ARTIFACT_BUCKET_VALUE
-    STAGE12_PERSISTENCE_API_URL_VALUE
     MODAL_TOKEN_ID_SECRET_NAME
     MODAL_TOKEN_SECRET_SECRET_NAME
+    STAGE12_DATABASE_URL_SECRET_NAME
   )
   for variable_name in "${stage12_variables[@]}"; do
     require_environment_variable "${variable_name}"
@@ -127,12 +127,12 @@ if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then
     || fail "STAGE12_ENABLED_VALUE must be 0 or 1"
   [[ "${STAGE12_ARTIFACT_BUCKET_VALUE}" =~ ^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$ ]] \
     || fail "STAGE12_ARTIFACT_BUCKET_VALUE is invalid"
-  [[ "${STAGE12_PERSISTENCE_API_URL_VALUE}" =~ ^https://[^/?#]+/?$ ]] \
-    || fail "STAGE12_PERSISTENCE_API_URL_VALUE must be an HTTPS origin"
+  validate_secret_reference "${STAGE12_DATABASE_URL_SECRET_NAME}"
 
   runtime_secrets+=(
     "MODAL_TOKEN_ID=$(resolve_secret_reference "${MODAL_TOKEN_ID_SECRET_NAME}")"
     "MODAL_TOKEN_SECRET=$(resolve_secret_reference "${MODAL_TOKEN_SECRET_SECRET_NAME}")"
+    "STAGE12_DATABASE_URL=$(resolve_secret_reference "${STAGE12_DATABASE_URL_SECRET_NAME}")"
   )
 fi
 
@@ -155,8 +155,7 @@ jq -n '
   + if env.DEPLOY_STAGE12_V2 == "true" then {
       STAGE12_V2_MANIFEST_NAME: "simulation-api-v2-version-manifest",
       STAGE12_V2_MANIFEST_ENVIRONMENT: env.MODAL_ENVIRONMENT,
-      STAGE12_ARTIFACT_BUCKET: env.STAGE12_ARTIFACT_BUCKET_VALUE,
-      STAGE12_PERSISTENCE_API_URL: env.STAGE12_PERSISTENCE_API_URL_VALUE
+      STAGE12_ARTIFACT_BUCKET: env.STAGE12_ARTIFACT_BUCKET_VALUE
     } else {} end
 ' > "${runtime_environment_file}"
 

@@ -51,7 +51,7 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
             "policyengine_simulation_executor",
             "policyengine_simulation_observability",
             "policyengine_simulation_contract",
-            "policyengine_stage12_client",
+            "policyengine_stage12_persistence",
         )
 
 
@@ -64,11 +64,11 @@ def test_v2_image_retains_required_runtime_dependencies() -> None:
         "spm-calculator==0.3.1"
         in project["dependency-groups"]["modal-simulation-image"]
     )
+    assert "sqlalchemy>=2,<3" in project["dependency-groups"]["modal-simulation-image"]
     assert (
-        "google-auth[requests]>=2,<3"
+        "psycopg[binary]>=3.2,<4"
         in project["dependency-groups"]["modal-simulation-image"]
     )
-    assert "httpx>=0.28,<1" in project["dependency-groups"]["modal-simulation-image"]
 
 
 def test_v2_app_declares_validation_workers_and_non_http_coordinator(

@@ -59,15 +59,17 @@ def test_deployment_scripts_have_valid_shell_syntax():
     assert os.access(CLOUD_RUN_DEPLOY_SCRIPT, os.X_OK)
 
 
-def test_stage12_deployment_uses_the_api_owned_persistence_service():
+def test_stage12_deployment_uses_the_api_owned_schema_directly():
     validation_script = STAGE12_VALIDATION_SCRIPT.read_text(encoding="utf-8")
 
-    assert "STAGE12_PERSISTENCE_API_URL" in validation_script
-    assert "STAGE12_DATABASE_URL" not in validation_script
-    assert "psycopg" not in validation_script
+    assert "STAGE12_DATABASE_URL_SECRET_NAME" in validation_script
+    assert "policyengine_v2_runtime" in validation_script
+    assert "stage12_infrastructure" in validation_script
+    assert "STAGE12_PERSISTENCE_API_URL" not in validation_script
+    assert "curl" not in validation_script
 
 
-def test_stage12_runtime_contains_no_direct_database_adapter_or_credential() -> None:
+def test_stage12_runtime_uses_typed_dml_without_raw_sql_or_schema_changes() -> None:
     removed_adapter = (
         REPOSITORY_ROOT
         / "libs"
@@ -78,20 +80,24 @@ def test_stage12_runtime_contains_no_direct_database_adapter_or_credential() -> 
     )
     assert not removed_adapter.exists()
 
-    inspected_paths = (
-        REPOSITORY_ROOT / ".github" / "scripts",
-        REPOSITORY_ROOT / ".github" / "workflows",
-        REPOSITORY_ROOT / "libs" / "policyengine-stage12-client" / "src",
-        REPOSITORY_ROOT / "projects" / "policyengine-simulation-entry" / "src",
-        REPOSITORY_ROOT / "projects" / "policyengine-simulation-executor" / "src",
+    removed_client = REPOSITORY_ROOT / "libs" / "policyengine-stage12-client"
+    assert not removed_client.exists()
+    persistence_source = (
+        REPOSITORY_ROOT
+        / "libs"
+        / "policyengine-stage12-persistence"
+        / "src"
+        / "policyengine_stage12_persistence"
     )
-    for root in inspected_paths:
-        for path in root.rglob("*"):
-            if path.suffix not in {".py", ".sh", ".yml", ".yaml"}:
-                continue
-            source = path.read_text(encoding="utf-8")
-            assert "STAGE12_DATABASE_URL" not in source, path
-            assert "PostgresComparisonStore" not in source, path
+    sources = "\n".join(
+        path.read_text(encoding="utf-8") for path in persistence_source.glob("*.py")
+    )
+    assert "sqlalchemy" in sources
+    assert "STAGE12_DATABASE_URL" not in sources
+    assert "text(" not in sources
+    assert "exec_driver_sql" not in sources
+    assert ".cursor(" not in sources
+    assert "create_all(" not in sources
 
 
 def test_deployment_uses_gcloud_workflow_without_terraform():
@@ -259,7 +265,7 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
         "OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME": "old-client-secret",
         "STAGE12_ENABLED_VALUE": "0",
         "STAGE12_ARTIFACT_BUCKET_VALUE": "policyengine-stage12-staging",
-        "STAGE12_PERSISTENCE_API_URL_VALUE": "https://api.example",
+        "STAGE12_DATABASE_URL_SECRET_NAME": "stage12-staging-database-url",
         "MODAL_TOKEN_ID_SECRET_NAME": "modal-token-id",
         "MODAL_TOKEN_SECRET_SECRET_NAME": "modal-token-secret",
     }
@@ -276,13 +282,14 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
     )
     assert runtime_environment["STAGE12_ENABLED"] == "0"
     assert runtime_environment["STAGE12_V2_MANIFEST_ENVIRONMENT"] == "staging"
-    assert runtime_environment["STAGE12_PERSISTENCE_API_URL"] == ("https://api.example")
+    assert "STAGE12_DATABASE_URL" not in runtime_environment
     arguments = arguments_capture.read_text(encoding="utf-8").splitlines()
     secrets_argument = arguments[arguments.index("--set-secrets") + 1]
     assert secrets_argument == (
         "OLD_GATEWAY_AUTH_CLIENT_SECRET=old-client-secret:3,"
         "MODAL_TOKEN_ID=modal-token-id:3,"
-        "MODAL_TOKEN_SECRET=modal-token-secret:3"
+        "MODAL_TOKEN_SECRET=modal-token-secret:3,"
+        "STAGE12_DATABASE_URL=stage12-staging-database-url:3"
     )
     assert ":latest" not in secrets_argument
 
@@ -576,7 +583,7 @@ def test_container_context_excludes_local_environments_and_unrelated_projects():
     )
 
 
-def test_production_lock_contains_only_the_required_stage12_runtime_clients():
+def test_production_lock_contains_the_direct_stage12_database_runtime():
     lockfile = tomllib.loads(
         (
             REPOSITORY_ROOT / "projects" / "policyengine-simulation-entry" / "uv.lock"
@@ -584,11 +591,14 @@ def test_production_lock_contains_only_the_required_stage12_runtime_clients():
     )
     resolved_packages = {package["name"] for package in lockfile["package"]}
 
-    assert {"google-auth", "httpx", "modal", "policyengine-stage12-client"} <= (
-        resolved_packages
-    )
-    assert "psycopg" not in resolved_packages
-    for package in ("policyengine-fastapi", "sqlalchemy", "sqlmodel"):
+    assert {
+        "httpx",
+        "modal",
+        "policyengine-stage12-persistence",
+        "psycopg",
+        "sqlalchemy",
+    } <= resolved_packages
+    for package in ("policyengine-fastapi", "sqlmodel"):
         assert package not in resolved_packages
 
 

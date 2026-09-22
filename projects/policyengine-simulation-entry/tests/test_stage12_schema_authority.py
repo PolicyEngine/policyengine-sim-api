@@ -7,6 +7,7 @@ import re
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_SOURCE_ROOTS = (
+    REPOSITORY_ROOT / "libs/policyengine-stage12-persistence/src",
     REPOSITORY_ROOT / "projects/policyengine-simulation-entry/src",
     REPOSITORY_ROOT / "projects/policyengine-simulation-executor/src",
 )

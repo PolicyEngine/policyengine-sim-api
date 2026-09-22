@@ -6,9 +6,9 @@ set +x
 
 modal_environment="${1:?Modal environment is required}"
 : "${STAGE12_GCP_PROJECT_ID:?STAGE12_GCP_PROJECT_ID is required}"
+: "${STAGE12_DATABASE_URL_SECRET_NAME:?STAGE12_DATABASE_URL_SECRET_NAME is required}"
 : "${STAGE12_GCP_CREDENTIALS_SECRET_NAME:?STAGE12_GCP_CREDENTIALS_SECRET_NAME is required}"
 : "${STAGE12_ARTIFACT_BUCKET:?STAGE12_ARTIFACT_BUCKET is required}"
-: "${STAGE12_PERSISTENCE_API_URL:?STAGE12_PERSISTENCE_API_URL is required}"
 : "${MODAL_TOKEN_ID:?MODAL_TOKEN_ID is required}"
 : "${MODAL_TOKEN_SECRET:?MODAL_TOKEN_SECRET is required}"
 
@@ -17,19 +17,24 @@ if [[ ! "${modal_environment}" =~ ^(staging|main)$ ]]; then
   exit 1
 fi
 
+database_url_file="$(mktemp)"
 credentials_file="$(mktemp)"
 runtime_modal_file="$(mktemp)"
 credentials_modal_file="$(mktemp)"
-trap 'rm -f "${credentials_file}" "${runtime_modal_file}" "${credentials_modal_file}"' EXIT
+trap 'rm -f "${database_url_file}" "${credentials_file}" "${runtime_modal_file}" "${credentials_modal_file}"' EXIT
+
+gcloud secrets versions access latest \
+  --secret "${STAGE12_DATABASE_URL_SECRET_NAME}" \
+  --project "${STAGE12_GCP_PROJECT_ID}" >"${database_url_file}"
 
 gcloud secrets versions access latest \
   --secret "${STAGE12_GCP_CREDENTIALS_SECRET_NAME}" \
   --project "${STAGE12_GCP_PROJECT_ID}" >"${credentials_file}"
 
 jq -n \
+  --rawfile database_url "${database_url_file}" \
   --arg artifact_bucket "${STAGE12_ARTIFACT_BUCKET}" \
-  --arg persistence_api_url "${STAGE12_PERSISTENCE_API_URL}" \
-  '{STAGE12_ARTIFACT_BUCKET: $artifact_bucket, STAGE12_PERSISTENCE_API_URL: $persistence_api_url}' \
+  '{STAGE12_DATABASE_URL: ($database_url | rtrimstr("\n")), STAGE12_ARTIFACT_BUCKET: $artifact_bucket}' \
   >"${runtime_modal_file}"
 jq -n \
   --rawfile credentials "${credentials_file}" \

@@ -81,7 +81,7 @@ class Settings:
     stage12_v2_manifest_name: str = V2_VERSION_MANIFEST_NAME
     stage12_v2_manifest_environment: str = ""
     stage12_v2_worker_version: str | None = None
-    stage12_persistence_api_url: str = ""
+    stage12_database_url: str = ""
     stage12_artifact_bucket: str = ""
     stage12_retention_days: int = 30
 
@@ -123,9 +123,7 @@ class Settings:
                 "",
             ),
             stage12_v2_worker_version=(os.getenv("STAGE12_V2_WORKER_VERSION") or None),
-            stage12_persistence_api_url=os.getenv(
-                "STAGE12_PERSISTENCE_API_URL", ""
-            ).rstrip("/"),
+            stage12_database_url=os.getenv("STAGE12_DATABASE_URL", ""),
             stage12_artifact_bucket=os.getenv("STAGE12_ARTIFACT_BUCKET", ""),
             stage12_retention_days=int(os.getenv("STAGE12_RETENTION_DAYS", "30")),
         )
@@ -139,7 +137,7 @@ class Settings:
         return all(
             (
                 self.stage12_v2_manifest_environment,
-                self.stage12_persistence_api_url,
+                self.stage12_database_url,
                 self.stage12_artifact_bucket,
             )
         )
@@ -210,7 +208,7 @@ class Settings:
             raise ConfigurationError("STAGE12_RETENTION_DAYS must be exactly 30.")
         required_stage12 = {
             "STAGE12_V2_MANIFEST_ENVIRONMENT": self.stage12_v2_manifest_environment,
-            "STAGE12_PERSISTENCE_API_URL": self.stage12_persistence_api_url,
+            "STAGE12_DATABASE_URL": self.stage12_database_url,
             "STAGE12_ARTIFACT_BUCKET": self.stage12_artifact_bucket,
         }
         configured_count = sum(bool(value) for value in required_stage12.values())
@@ -223,12 +221,12 @@ class Settings:
             )
         if self.stage12_enabled and not self.stage12_resources_configured:
             raise ConfigurationError(
-                "STAGE12_ENABLED=1 requires the Stage 12 manifest, persistence "
-                "API, and artifact resources."
+                "STAGE12_ENABLED=1 requires the Stage 12 manifest, database, "
+                "and artifact resources."
             )
-        if self.stage12_persistence_api_url:
-            _validate_https_url(
-                "STAGE12_PERSISTENCE_API_URL",
-                self.stage12_persistence_api_url,
-                allow_path=False,
+        if self.stage12_database_url and not self.stage12_database_url.startswith(
+            "postgresql://"
+        ):
+            raise ConfigurationError(
+                "STAGE12_DATABASE_URL must use the canonical postgresql:// scheme."
             )

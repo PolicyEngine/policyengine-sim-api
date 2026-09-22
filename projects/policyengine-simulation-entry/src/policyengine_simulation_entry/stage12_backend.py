@@ -24,10 +24,7 @@ from policyengine_simulation_contract.stage12_manifest import (
     V2ManifestLoader,
     V2WorkerVersion,
 )
-from policyengine_stage12_client import (
-    GoogleIdentityTokenProvider,
-    Stage12PersistenceClient,
-)
+from policyengine_stage12_persistence import Stage12PersistenceStore
 
 from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.stage12_adapter import adapt_annual_comparison
@@ -40,7 +37,7 @@ AUTOMATIC_REPORT_NAMESPACE = uuid5(
 
 
 class ComparisonStore(Protocol):
-    """Read temporary comparison state through the API-owned service."""
+    """Read temporary comparison state from the API-owned schema."""
 
     def get_report(self, evaluation_id: UUID) -> ComparisonReportRecord: ...
 
@@ -143,10 +140,7 @@ class Stage12ComparisonBackend:
         return cls(
             settings,
             manifest_loader=V2ManifestLoader(manifest_store),
-            store=Stage12PersistenceClient(
-                settings.stage12_persistence_api_url,
-                token_provider=GoogleIdentityTokenProvider(),
-            ),
+            store=Stage12PersistenceStore(settings.stage12_database_url),
             invoker=ModalReportInvoker(settings.stage12_v2_manifest_environment),
         )
 
