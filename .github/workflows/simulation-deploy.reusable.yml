@@ -480,6 +480,9 @@ jobs:
     needs: [prepare, configure_stage12_v2]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
+    permissions:
+      contents: read
+      id-token: write
     outputs:
       application_name: ${{ steps.application.outputs.name }}
       validation_file: ${{ steps.validation.outputs.file }}
