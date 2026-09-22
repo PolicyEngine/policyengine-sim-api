@@ -43,8 +43,8 @@ def test_infrastructure_validation_is_bounded_and_valid_shell() -> None:
     assert "gcloud storage buckets create" not in source
     assert "gcloud storage buckets update" not in source
     assert "add-iam-policy-binding" not in source
-    assert "gcloud storage cp" in source
-    assert "gcloud storage rm" in source
+    assert "storage cp" in source
+    assert "storage rm" in source
     assert "stage-12-runs/_deployment-validation" in source
     assert "get-iam-policy" in source
     assert "STAGE12_DATABASE_ADMIN_URL" not in source
@@ -70,6 +70,25 @@ def test_infrastructure_validation_rejects_missing_configuration() -> None:
     )
     assert result.returncode != 0
     assert "STAGE12_ENVIRONMENT is required" in result.stderr
+
+
+def test_storage_validation_uses_only_the_modal_worker_credentials() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    helper_start = source.index("runtime_gcloud()")
+    helper_end = source.index("\n}\n", helper_start)
+    helper = source[helper_start:helper_end]
+
+    for inherited_variable in (
+        "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "GOOGLE_GHA_CREDS_PATH",
+    ):
+        assert f"-u {inherited_variable}" in helper
+
+    assert "runtime_gcloud auth activate-service-account" in source
+    modal_account = '--account="${STAGE12_MODAL_SERVICE_ACCOUNT}"'
+    assert source.count(f"runtime_gcloud {modal_account} storage cp") == 2
+    assert source.count(f"runtime_gcloud {modal_account} storage rm") == 2
 
 
 def test_modal_secret_sync_rejects_missing_configuration() -> None:
