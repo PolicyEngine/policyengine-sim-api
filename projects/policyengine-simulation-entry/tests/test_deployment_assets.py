@@ -418,6 +418,20 @@ def test_main_deployment_automatically_deploys_stage12_in_both_environments():
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow
 
 
+def test_stage12_worker_deployment_can_request_a_google_oidc_token():
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    match = re.search(
+        r"^  deploy_stage12_v2:\n(?P<body>.*?)(?=^  [a-z0-9_-]+:\n|\Z)",
+        reusable_workflow,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+
+    assert match is not None
+    section = match.group("body")
+    assert "permissions:\n      contents: read\n      id-token: write" in section
+    assert "google-github-actions/auth@v2" in section
+
+
 def test_stage12_only_deployment_cannot_redeploy_existing_modal_resources():
     reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
