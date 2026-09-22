@@ -84,6 +84,30 @@ class ArtifactStore:
             return False
         return True
 
+    def upload_bytes(
+        self,
+        path: str,
+        payload: bytes,
+        *,
+        content_type: str,
+    ) -> bool:
+        """Write immutable bytes and report whether this call created them."""
+        try:
+            self._blob(path).upload_from_string(
+                payload,
+                content_type=content_type,
+                if_generation_match=0,
+            )
+        except PreconditionFailed:
+            return False
+        return True
+
+    def read_bytes(self, path: str) -> bytes | None:
+        try:
+            return self._blob(path).download_as_bytes()
+        except NotFound:
+            return None
+
     def download_file(self, path: str, local_path: str | Path) -> None:
         destination = Path(local_path)
         destination.parent.mkdir(parents=True, exist_ok=True)

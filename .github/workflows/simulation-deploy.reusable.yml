@@ -7,6 +7,10 @@ on:
         required: true
         type: string
         description: "GitHub environment for Modal deployment secrets"
+      deployment_environment:
+        required: true
+        type: string
+        description: "Logical deployment environment: staging or production"
       modal_environment:
         required: true
         type: string
@@ -33,6 +37,11 @@ on:
         required: true
         type: boolean
         description: "Run the complete calculation suite in this environment"
+      deploy_existing_stack:
+        required: false
+        default: true
+        type: boolean
+        description: "Deploy the existing Modal routing service, executor, and v1 manifest"
       force_latest:
         required: false
         default: false
@@ -43,6 +52,11 @@ on:
         default: false
         type: boolean
         description: "Recompute artifacts even when the store already has them"
+      deploy_stage12_v2:
+        required: false
+        default: false
+        type: boolean
+        description: "Deploy and publish the additional Stage 12 v2 workers"
     outputs:
       simulation_api_url:
         description: "Tagged Cloud Run candidate URL qualified by this deployment"
@@ -108,6 +122,7 @@ jobs:
         run: .github/scripts/modal-extract-versions.sh projects/policyengine-simulation-executor
 
       - name: Synchronize Modal runtime secrets
+        if: ${{ inputs.deploy_existing_stack }}
         working-directory: projects/policyengine-simulation-executor
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
@@ -124,7 +139,8 @@ jobs:
 
   deploy_entrypoint:
     name: Deploy and unit test Cloud Run entrypoint
-    needs: prepare
+    if: ${{ always() && needs.prepare.result == 'success' && ((inputs.deploy_stage12_v2 && needs.configure_stage12_v2.result == 'success') || (!inputs.deploy_stage12_v2 && needs.configure_stage12_v2.result == 'skipped')) }}
+    needs: [prepare, configure_stage12_v2]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
     permissions:
@@ -206,23 +222,26 @@ jobs:
         env:
           IMAGE: ${{ steps.image.outputs.uri }}
           TAG: ${{ steps.metadata.outputs.tag }}
-        run: |
-          gcloud run deploy "${{ inputs.entrypoint_service }}" \
-            --project "${PROJECT_ID}" \
-            --region "${REGION}" \
-            --image "${IMAGE}" \
-            --tag "${TAG}" \
-            --no-traffic \
-            --allow-unauthenticated \
-            --service-account "${{ vars.SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT }}" \
-            --set-env-vars "^@^APP_ENVIRONMENT=${{ inputs.release_environment }}@SIMULATION_ENTRYPOINT_AUTH_REQUIRED=1@SIMULATION_ENTRYPOINT_AUTH_ISSUER=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}@SIMULATION_ENTRYPOINT_AUTH_AUDIENCE=${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}@OLD_GATEWAY_URL=${{ secrets.OLD_GATEWAY_URL }}@OLD_GATEWAY_AUTH_ISSUER=${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}@OLD_GATEWAY_AUTH_AUDIENCE=${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}@OLD_GATEWAY_AUTH_CLIENT_ID=${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}" \
-            --set-secrets "OLD_GATEWAY_AUTH_CLIENT_SECRET=${{ vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME }}:latest" \
-            --cpu 1 \
-            --memory 512Mi \
-            --concurrency 80 \
-            --timeout 60 \
-            --min-instances "${{ inputs.entrypoint_min_instances }}" \
-            --max-instances "${{ inputs.entrypoint_max_instances }}"
+          DEPLOY_STAGE12_V2: ${{ inputs.deploy_stage12_v2 }}
+          APP_ENVIRONMENT: ${{ inputs.deployment_environment }}
+          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
+          ENTRYPOINT_SERVICE: ${{ inputs.entrypoint_service }}
+          ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT: ${{ vars.SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT }}
+          ENTRYPOINT_MIN_INSTANCES: ${{ inputs.entrypoint_min_instances }}
+          ENTRYPOINT_MAX_INSTANCES: ${{ inputs.entrypoint_max_instances }}
+          SIMULATION_ENTRYPOINT_AUTH_ISSUER_VALUE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+          SIMULATION_ENTRYPOINT_AUTH_AUDIENCE_VALUE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+          OLD_GATEWAY_URL_VALUE: ${{ secrets.OLD_GATEWAY_URL }}
+          OLD_GATEWAY_AUTH_ISSUER_VALUE: ${{ secrets.OLD_GATEWAY_AUTH_ISSUER }}
+          OLD_GATEWAY_AUTH_AUDIENCE_VALUE: ${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}
+          OLD_GATEWAY_AUTH_CLIENT_ID_VALUE: ${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}
+          OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME: ${{ vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME }}
+          STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}
+          STAGE12_ARTIFACT_BUCKET_VALUE: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
+          STAGE12_DATABASE_URL_SECRET_NAME: ${{ vars.STAGE12_DATABASE_URL_SECRET_NAME }}
+          MODAL_TOKEN_ID_SECRET_NAME: ${{ vars.MODAL_TOKEN_ID_SECRET_NAME }}
+          MODAL_TOKEN_SECRET_SECRET_NAME: ${{ vars.MODAL_TOKEN_SECRET_SECRET_NAME }}
+        run: .github/scripts/deploy-cloud-run-simulation-entry.sh
 
       - name: Resolve exact candidate metadata
         id: candidate
@@ -272,6 +291,7 @@ jobs:
 
   deploy_gateway:
     name: Deploy and unit test Modal gateway
+    if: ${{ inputs.deploy_existing_stack }}
     needs: prepare
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
@@ -314,6 +334,7 @@ jobs:
 
   deploy_executor:
     name: Deploy and unit test Modal executor
+    if: ${{ inputs.deploy_existing_stack }}
     needs: prepare
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
@@ -370,6 +391,7 @@ jobs:
 
   update_routing:
     name: Publish routing after all services pass
+    if: ${{ inputs.deploy_existing_stack }}
     needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
@@ -409,9 +431,209 @@ jobs:
           fi
           uv run python -m src.modal.utils.update_version_registry "${args[@]}"
 
+  configure_stage12_v2:
+    name: Validate pre-provisioned Stage 12 runtime access
+    if: ${{ inputs.deploy_stage12_v2 }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install Stage 12 infrastructure validation dependencies
+        working-directory: projects/policyengine-simulation-entry
+        run: uv sync --frozen
+
+      - name: Validate pre-provisioned Stage 12 deployment resources
+        env:
+          STAGE12_ENVIRONMENT: ${{ inputs.deployment_environment }}
+          STAGE12_GCP_PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
+          STAGE12_ARTIFACT_BUCKET: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
+          STAGE12_ENTRYPOINT_SERVICE_ACCOUNT: ${{ vars.SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT }}
+          STAGE12_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_DEPLOY_SERVICE_ACCOUNT }}
+          STAGE12_MODAL_SERVICE_ACCOUNT: ${{ vars.STAGE12_MODAL_SERVICE_ACCOUNT }}
+          STAGE12_MODAL_TOKEN_ID_SECRET_NAME: ${{ vars.MODAL_TOKEN_ID_SECRET_NAME }}
+          STAGE12_MODAL_TOKEN_SECRET_SECRET_NAME: ${{ vars.MODAL_TOKEN_SECRET_SECRET_NAME }}
+          STAGE12_GCP_CREDENTIALS_SECRET_NAME: ${{ vars.STAGE12_GCP_CREDENTIALS_SECRET_NAME }}
+          STAGE12_DATABASE_URL_SECRET_NAME: ${{ vars.STAGE12_DATABASE_URL_SECRET_NAME }}
+        run: bash .github/scripts/stage12-validate-infrastructure.sh
+
+  deploy_stage12_v2:
+    name: Deploy and validate separate Stage 12 v2 workers
+    if: ${{ inputs.deploy_stage12_v2 }}
+    needs: [prepare, configure_stage12_v2]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    outputs:
+      application_name: ${{ steps.application.outputs.name }}
+      validation_file: ${{ steps.validation.outputs.file }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install Stage 12 deployment dependencies
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --extra test --frozen
+
+      - name: Validate the packaged PolicyEngine.py bundle
+        working-directory: projects/policyengine-simulation-executor
+        run: |
+          uv run python -m src.modal.utils.extract_stage12_bundle \
+            --expect "policyengine_version=${{ needs.prepare.outputs.policyengine_version }}" \
+            --expect "countries.us.country_package_version=${{ needs.prepare.outputs.us_version }}" \
+            --expect "countries.uk.country_package_version=${{ needs.prepare.outputs.uk_version }}" \
+            --output stage12-bundle.json
+
+      - name: Select the bundle-derived v2 application name
+        id: application
+        working-directory: projects/policyengine-simulation-executor
+        run: |
+          name="$(uv run python -c 'from policyengine_simulation_contract.stage12_manifest import v2_application_name; from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle; print(v2_application_name(load_stage12_bundle().bundle.policyengine_version))')"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+
+      - name: Synchronize the separate Stage 12 runtime secret
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          STAGE12_ARTIFACT_BUCKET: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
+          STAGE12_DATABASE_URL_SECRET_NAME: ${{ vars.STAGE12_DATABASE_URL_SECRET_NAME }}
+          STAGE12_GCP_PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
+          STAGE12_GCP_CREDENTIALS_SECRET_NAME: ${{ vars.STAGE12_GCP_CREDENTIALS_SECRET_NAME }}
+        run: ../../.github/scripts/stage12-sync-modal-secrets.sh "${{ inputs.modal_environment }}"
+
+      - name: Deploy the additional versioned v2 Modal application
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_APP_NAME: ${{ steps.application.outputs.name }}
+          STAGE12_EXPECT_POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
+          STAGE12_EXPECT_US_VERSION: ${{ needs.prepare.outputs.us_version }}
+          STAGE12_EXPECT_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
+          STAGE12_ARTIFACT_BUCKET: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
+        run: uv run modal deploy --env="${{ inputs.modal_environment }}" src/modal/v2_app.py
+
+      - name: Validate installed bundles, secrets, datasets, and calculations
+        id: validation
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          output="${RUNNER_TEMP}/stage12-worker-validation.json"
+          uv run python -m src.modal.utils.validate_v2_worker_release \
+            --environment "${{ inputs.modal_environment }}" \
+            --output "${output}"
+          echo "file=${output}" >> "$GITHUB_OUTPUT"
+
+      - name: Retain worker validation for manifest publication
+        uses: actions/upload-artifact@v7
+        with:
+          name: stage12-worker-validation-${{ inputs.release_environment }}
+          path: ${{ steps.validation.outputs.file }}
+          if-no-files-found: error
+
+  publish_stage12_v2_manifest:
+    name: Publish separate Stage 12 v2 version manifest
+    if: ${{ inputs.deploy_stage12_v2 }}
+    needs: [prepare, deploy_stage12_v2]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install Stage 12 manifest publisher dependencies
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --frozen
+
+      - name: Download validated worker result
+        uses: actions/download-artifact@v8
+        with:
+          name: stage12-worker-validation-${{ inputs.release_environment }}
+          path: ${{ runner.temp }}/stage12-worker-validation
+
+      - name: Publish only the separate v2 manifest
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          uv run python -m src.modal.utils.update_v2_version_manifest \
+            --environment "${{ inputs.modal_environment }}" \
+            --manifest-name simulation-api-v2-version-manifest \
+            --validation-file "${RUNNER_TEMP}/stage12-worker-validation/stage12-worker-validation.json"
+
+  stage12_v2_ready:
+    name: Require requested Stage 12 v2 deployment to succeed
+    if: ${{ always() }}
+    needs:
+      [configure_stage12_v2, deploy_stage12_v2, publish_stage12_v2_manifest]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Stage 12 deployment result
+        env:
+          REQUESTED: ${{ inputs.deploy_stage12_v2 }}
+          CONFIGURATION_RESULT: ${{ needs.configure_stage12_v2.result }}
+          DEPLOYMENT_RESULT: ${{ needs.deploy_stage12_v2.result }}
+          PUBLICATION_RESULT: ${{ needs.publish_stage12_v2_manifest.result }}
+        run: |
+          if [[ "${REQUESTED}" != "true" ]]; then
+            test "${CONFIGURATION_RESULT}" = "skipped"
+            test "${DEPLOYMENT_RESULT}" = "skipped"
+            test "${PUBLICATION_RESULT}" = "skipped"
+            exit 0
+          fi
+          test "${CONFIGURATION_RESULT}" = "success"
+          test "${DEPLOYMENT_RESULT}" = "success"
+          test "${PUBLICATION_RESULT}" = "success"
+
   integration:
     name: Verify deployed three-service stack
-    needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor, update_routing]
+    if: ${{ always() && needs.prepare.result == 'success' && needs.deploy_entrypoint.result == 'success' && needs.stage12_v2_ready.result == 'success' && ((inputs.deploy_existing_stack && needs.deploy_gateway.result == 'success' && needs.deploy_executor.result == 'success' && needs.update_routing.result == 'success') || (!inputs.deploy_existing_stack && needs.deploy_gateway.result == 'skipped' && needs.deploy_executor.result == 'skipped' && needs.update_routing.result == 'skipped')) }}
+    needs:
+      [
+        prepare,
+        deploy_entrypoint,
+        deploy_gateway,
+        deploy_executor,
+        update_routing,
+        stage12_v2_ready,
+      ]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
     steps:
@@ -441,6 +663,7 @@ jobs:
         run: .github/scripts/simulation-run-integ-tests.sh "${{ inputs.release_environment }}" "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.prepare.outputs.us_version }}" "${{ needs.prepare.outputs.uk_version }}"
 
       - name: Record deployment marker
+        if: ${{ inputs.deploy_existing_stack }}
         working-directory: projects/policyengine-simulation-executor
         env:
           POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}

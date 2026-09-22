@@ -6,6 +6,11 @@ import os
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from policyengine_simulation_contract.stage12_manifest import (
+    V1_ROUTING_STATE_NAME,
+    V2_VERSION_MANIFEST_NAME,
+    assert_separate_manifest_names,
+)
 
 PRODUCTION_ENVIRONMENTS = frozenset({"main", "prod", "production"})
 MODAL_GATEWAY_HOST_SUFFIX = ".modal.run"
@@ -19,6 +24,14 @@ def _truthy(value: str | None, *, default: bool = False) -> bool:
     if value is None:
         return default
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _stage12_enabled(value: str | None) -> bool:
+    if value is None or value == "0":
+        return False
+    if value == "1":
+        return True
+    raise ConfigurationError("STAGE12_ENABLED must be exactly 0 or 1.")
 
 
 def _normalized_issuer(value: str) -> str:
@@ -64,9 +77,16 @@ class Settings:
     old_gateway_auth_client_secret: str
     connect_timeout_seconds: float = 5.0
     request_timeout_seconds: float = 25.0
+    stage12_enabled: bool = False
+    stage12_v2_manifest_name: str = V2_VERSION_MANIFEST_NAME
+    stage12_v2_manifest_environment: str = ""
+    stage12_v2_worker_version: str | None = None
+    stage12_database_url: str = ""
+    stage12_artifact_bucket: str = ""
+    stage12_retention_days: int = 30
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         return cls(
             environment=os.getenv("APP_ENVIRONMENT", "local").lower(),
             revision=os.getenv("K_REVISION", ""),
@@ -93,11 +113,34 @@ class Settings:
             request_timeout_seconds=float(
                 os.getenv("OLD_GATEWAY_REQUEST_TIMEOUT_SECONDS", "25")
             ),
+            stage12_enabled=_stage12_enabled(os.getenv("STAGE12_ENABLED")),
+            stage12_v2_manifest_name=os.getenv(
+                "STAGE12_V2_MANIFEST_NAME",
+                V2_VERSION_MANIFEST_NAME,
+            ),
+            stage12_v2_manifest_environment=os.getenv(
+                "STAGE12_V2_MANIFEST_ENVIRONMENT",
+                "",
+            ),
+            stage12_v2_worker_version=(os.getenv("STAGE12_V2_WORKER_VERSION") or None),
+            stage12_database_url=os.getenv("STAGE12_DATABASE_URL", ""),
+            stage12_artifact_bucket=os.getenv("STAGE12_ARTIFACT_BUCKET", ""),
+            stage12_retention_days=int(os.getenv("STAGE12_RETENTION_DAYS", "30")),
         )
 
     @property
     def production(self) -> bool:
         return self.environment in PRODUCTION_ENVIRONMENTS
+
+    @property
+    def stage12_resources_configured(self) -> bool:
+        return all(
+            (
+                self.stage12_v2_manifest_environment,
+                self.stage12_database_url,
+                self.stage12_artifact_bucket,
+            )
+        )
 
     def validate(self) -> None:
         if self.production and not self.auth_required:
@@ -152,4 +195,38 @@ class Settings:
         ):
             raise ConfigurationError(
                 "OLD_GATEWAY_URL must point to the existing Modal gateway."
+            )
+
+        try:
+            assert_separate_manifest_names(
+                v1_name=V1_ROUTING_STATE_NAME,
+                v2_name=self.stage12_v2_manifest_name,
+            )
+        except ValueError as error:
+            raise ConfigurationError(str(error)) from error
+        if self.stage12_retention_days != 30:
+            raise ConfigurationError("STAGE12_RETENTION_DAYS must be exactly 30.")
+        required_stage12 = {
+            "STAGE12_V2_MANIFEST_ENVIRONMENT": self.stage12_v2_manifest_environment,
+            "STAGE12_DATABASE_URL": self.stage12_database_url,
+            "STAGE12_ARTIFACT_BUCKET": self.stage12_artifact_bucket,
+        }
+        configured_count = sum(bool(value) for value in required_stage12.values())
+        if configured_count not in {0, len(required_stage12)}:
+            missing_stage12 = [
+                name for name, value in required_stage12.items() if not value
+            ]
+            raise ConfigurationError(
+                "Stage 12 resources require: " + ", ".join(missing_stage12) + "."
+            )
+        if self.stage12_enabled and not self.stage12_resources_configured:
+            raise ConfigurationError(
+                "STAGE12_ENABLED=1 requires the Stage 12 manifest, database, "
+                "and artifact resources."
+            )
+        if self.stage12_database_url and not self.stage12_database_url.startswith(
+            "postgresql://"
+        ):
+            raise ConfigurationError(
+                "STAGE12_DATABASE_URL must use the canonical postgresql:// scheme."
             )
