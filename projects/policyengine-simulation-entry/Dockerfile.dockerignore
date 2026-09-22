@@ -13,6 +13,8 @@ libs/*
 !libs/policyengine-simulation-contract/**
 !libs/policyengine-simulation-observability/
 !libs/policyengine-simulation-observability/**
+!libs/policyengine-stage12-persistence/
+!libs/policyengine-stage12-persistence/**
 libs/**/tests
 
 # Keep these after the negated project/library rules so local build artifacts

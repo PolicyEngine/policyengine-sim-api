@@ -18,6 +18,7 @@ dependencies = [
     "policyengine-fastapi",
     "policyengine-simulation-observability",
     "policyengine-simulation-contract[modal]",
+    "policyengine-stage12-persistence",
     "policyengine==5.2.0",
     "policyengine-core==3.30.1",
     "policyengine-uk==2.90.2",
@@ -30,6 +31,7 @@ dependencies = [
     # Imported directly by the artifact store client; do not rely on the
     # transitive pin via policyengine.
     "google-cloud-storage>=2",
+    "pyarrow>=20,<24",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -54,10 +56,19 @@ modal-simulation-image = [
     # but does not declare it (see issue #602).
     "importlib-metadata>=8",
     "policyengine-observability[fastapi]>=1.3.0,<2",
+    # policyengine-us 1.764.6 imports spm_calculator.forecast, which was
+    # removed from later releases still allowed by its broad requirement.
+    "spm-calculator==0.3.1",
     # The artifact fetch layer and store client read GCS. The lib is also a
     # transitive dependency of policyengine, but the image must not depend
     # on an upstream package keeping it.
     "google-cloud-storage>=2",
+    "pyarrow>=20,<24",
+    # The Stage 12 coordinator and child functions use typed SQLAlchemy Core
+    # DML against the API-owned temporary tables. These dependencies are
+    # explicit because only this group is installed in Modal.
+    "sqlalchemy>=2,<3",
+    "psycopg[binary]>=3.2,<4",
 ]
 # The executor's budget-window scheduler tests exercise the gateway app
 # end-to-end; the gateway project rides in as a dev-only path dependency.
@@ -69,6 +80,7 @@ dev = [
 policyengine-fastapi = { path = "../../libs/policyengine-fastapi", editable = true }
 policyengine-simulation-observability = { path = "../../libs/policyengine-simulation-observability", editable = true }
 policyengine-simulation-contract = { path = "../../libs/policyengine-simulation-contract", editable = true }
+policyengine-stage12-persistence = { path = "../../libs/policyengine-stage12-persistence", editable = true }
 policyengine-simulation-gateway = { path = "../policyengine-simulation-gateway", editable = true }
 
 [project.optional-dependencies]
