@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import json
+from copy import deepcopy
 from pathlib import Path
 
-from policyengine.bundle import get_current_bundle
 import pytest
+from policyengine.bundle import get_current_bundle
 
 from policyengine_simulation_executor.stage12_bundle import (
     Stage12BundleError,
@@ -115,6 +115,9 @@ def test_stage12_extractor_does_not_inspect_installed_distribution_versions() ->
 
     source = stage12_bundle.__file__
     assert source is not None
-    text = Path(source).read_text(encoding="utf-8")
+    package = Path(source).parent
+    text = "\n".join(
+        module.read_text(encoding="utf-8") for module in sorted(package.glob("*.py"))
+    )
     assert "importlib.metadata" not in text
     assert "pkg_resources" not in text

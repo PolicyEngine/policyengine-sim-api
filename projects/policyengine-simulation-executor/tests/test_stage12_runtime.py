@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -332,6 +333,80 @@ def _frames(value=100.0):
         ),
         "person": pd.DataFrame({"person_id": [1], "household_id": [1], "age": [40]}),
     }
+
+
+def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> None:
+    from policyengine_simulation_executor import simulation_runtime
+    from policyengine_simulation_executor.stage12_runtime import simulation as worker
+
+    country_module = object()
+    region = type("Region", (), {"code": "us", "scoping_strategy": None})()
+    selection = object()
+    dataset = object()
+    received: dict[str, object] = {}
+
+    class Model:
+        spm_config = None
+        output_dataset = type(
+            "OutputDataset",
+            (),
+            {"data": type("OutputData", (), {"entity_data": _frames()})()},
+        )()
+
+        def ensure(self) -> None:
+            received["ensured"] = True
+
+    monkeypatch.setattr(worker, "_require_installed_bundle", lambda _: None)
+    monkeypatch.setattr(
+        simulation_runtime,
+        "setup_gcp_credentials",
+        lambda: nullcontext(),
+    )
+    monkeypatch.setattr(
+        simulation_runtime,
+        "_country_module",
+        lambda country: country_module,
+    )
+    monkeypatch.setattr(
+        simulation_runtime,
+        "_resolve_region",
+        lambda **kwargs: region,
+    )
+
+    def resolve_dataset(params, *, region_resolution):
+        received["params"] = params
+        received["region"] = region_resolution
+        return selection
+
+    def load_dataset(params, *, selection, country_module):
+        received["load_selection"] = selection
+        received["load_country_module"] = country_module
+        return dataset
+
+    def build_simulation(params, *, dataset, dataset_selection, **kwargs):
+        received["build_dataset"] = dataset
+        received["build_selection"] = dataset_selection
+        return Model()
+
+    monkeypatch.setattr(
+        simulation_runtime,
+        "_resolve_dataset_selection",
+        resolve_dataset,
+    )
+    monkeypatch.setattr(simulation_runtime, "_load_dataset", load_dataset)
+    monkeypatch.setattr(simulation_runtime, "_build_simulation", build_simulation)
+
+    result = worker.calculate_simulation_frames(_simulation(SimulationRole.BASELINE))
+
+    assert "data" not in received["params"]
+    assert "data_version" not in received["params"]
+    assert received["region"] is region
+    assert received["load_selection"] is selection
+    assert received["load_country_module"] is country_module
+    assert received["build_dataset"] is dataset
+    assert received["build_selection"] is selection
+    assert received["ensured"] is True
+    assert set(result.frames) == {"household", "person"}
 
 
 def test_single_worker_accepts_one_policy_and_persists_one_artifact() -> None:
