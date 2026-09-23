@@ -3,3 +3,4 @@
     fixed:
       - Resolved PolicyEngine-managed regional datasets using bundled data versions instead of release-manifest commit hashes when loading from GCS
       - Added a Modal app-release bundle backfill for missing data artifact revisions
+      - Ensured Stage 12-only deployments run authenticated candidate tests and verify every required deployment phase before reporting success
