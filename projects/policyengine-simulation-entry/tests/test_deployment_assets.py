@@ -382,6 +382,61 @@ def test_full_stack_promotion_order_is_explicit():
     assert "skip_beta" not in deploy_workflow
 
 
+def test_stage12_only_deployment_runs_candidate_tests_and_requested_promotion():
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    authenticated_test = re.search(
+        r"^  authenticated_test:\n(?P<body>.*?)(?=^  [a-z0-9_-]+:\n|\Z)",
+        reusable_workflow,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert authenticated_test is not None
+    authenticated_test_body = authenticated_test.group("body")
+    assert "!cancelled()" in authenticated_test_body
+    assert "needs.deploy_entrypoint.result == 'success'" in authenticated_test_body
+    assert "needs.integration.result == 'success'" in authenticated_test_body
+
+    promotion = re.search(
+        r"^  promote_entrypoint:\n(?P<body>.*?)(?=^  [a-z0-9_-]+:\n|\Z)",
+        reusable_workflow,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert promotion is not None
+    promotion_body = promotion.group("body")
+    assert "!cancelled()" in promotion_body
+    assert "inputs.promote_entrypoint" in promotion_body
+    assert "needs.deploy_entrypoint.result == 'success'" in promotion_body
+    assert "needs.authenticated_test.result == 'success'" in promotion_body
+
+
+def test_reusable_deployment_rejects_unexpected_skipped_phases():
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    completion = re.search(
+        r"^  deployment_ready:\n(?P<body>.*?)(?=^  [a-z0-9_-]+:\n|\Z)",
+        reusable_workflow,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+
+    assert completion is not None
+    completion_body = completion.group("body")
+    assert "if: ${{ !cancelled() }}" in completion_body
+    for dependency in (
+        "deploy_entrypoint",
+        "integration",
+        "authenticated_test",
+        "promote_entrypoint",
+    ):
+        assert dependency in completion_body
+    for expected_result in (
+        'test "${ENTRYPOINT_RESULT}" = "success"',
+        'test "${INTEGRATION_RESULT}" = "success"',
+        'test "${AUTHENTICATED_TEST_RESULT}" = "success"',
+        'test "${PROMOTION_RESULT}" = "success"',
+        'test "${PROMOTION_RESULT}" = "skipped"',
+    ):
+        assert expected_result in completion_body
+
+
 def test_complete_integration_suite_is_configured_for_beta_only():
     deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
     reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")

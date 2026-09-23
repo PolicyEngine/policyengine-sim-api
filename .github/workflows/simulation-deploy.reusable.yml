@@ -680,6 +680,15 @@ jobs:
 
   authenticated_test:
     name: Run authenticated deployment tests
+    # Stage 12-only deployments intentionally skip the existing v1 Modal jobs.
+    # Use an explicit status function and direct result checks so those expected
+    # upstream skips do not suppress authenticated candidate testing.
+    if: >-
+      ${{
+        !cancelled() &&
+        needs.deploy_entrypoint.result == 'success' &&
+        needs.integration.result == 'success'
+      }}
     needs: [deploy_entrypoint, integration]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
@@ -708,7 +717,15 @@ jobs:
 
   promote_entrypoint:
     name: Promote and verify Cloud Run entrypoint
-    if: ${{ inputs.promote_entrypoint }}
+    # Require the exact candidate and its authenticated tests to succeed while
+    # overriding propagation from intentionally skipped existing-stack jobs.
+    if: >-
+      ${{
+        !cancelled() &&
+        inputs.promote_entrypoint &&
+        needs.deploy_entrypoint.result == 'success' &&
+        needs.authenticated_test.result == 'success'
+      }}
     needs: [deploy_entrypoint, authenticated_test]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
@@ -790,3 +807,28 @@ jobs:
           SIMULATION_ENTRYPOINT_TARGET_REVISION: ${{ env.PREVIOUS_REVISION }}
           SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION: ${{ env.TARGET_REVISION }}
         run: .github/scripts/set-cloud-run-simulation-entry-revision.sh
+
+  deployment_ready:
+    name: Require requested deployment to complete
+    # Run after failures and expected skips so a required skipped phase cannot
+    # make the reusable workflow report a successful partial deployment.
+    if: ${{ !cancelled() }}
+    needs: [deploy_entrypoint, integration, authenticated_test, promote_entrypoint]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check deployment result
+        env:
+          PROMOTION_REQUESTED: ${{ inputs.promote_entrypoint }}
+          ENTRYPOINT_RESULT: ${{ needs.deploy_entrypoint.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+          AUTHENTICATED_TEST_RESULT: ${{ needs.authenticated_test.result }}
+          PROMOTION_RESULT: ${{ needs.promote_entrypoint.result }}
+        run: |
+          test "${ENTRYPOINT_RESULT}" = "success"
+          test "${INTEGRATION_RESULT}" = "success"
+          test "${AUTHENTICATED_TEST_RESULT}" = "success"
+          if [[ "${PROMOTION_REQUESTED}" = "true" ]]; then
+            test "${PROMOTION_RESULT}" = "success"
+          else
+            test "${PROMOTION_RESULT}" = "skipped"
+          fi
