@@ -31,7 +31,6 @@ def test_create_initial_batch_state_builds_queued_years_and_observability_id():
         scope="macro",
         reform={},
         _telemetry={
-            "observability_id": "batch-run-123",
             "submission_claim_id": "proc-123",
             "capture_mode": "disabled",
         },
@@ -43,6 +42,7 @@ def test_create_initial_batch_state_builds_queued_years_and_observability_id():
         resolved_version="1.500.0",
         resolved_app_name="policyengine-simulation-py4-10-0",
         bundle=PolicyEngineBundle(model_version="1.500.0"),
+        observability_id="00000000-0000-4000-8000-000000000001",
     )
 
     assert state.batch_job_id == "fc-parent-123"
@@ -54,7 +54,7 @@ def test_create_initial_batch_state_builds_queued_years_and_observability_id():
     assert "data" not in state.request_payload
     assert state.request_payload["scope"] == "macro"
     assert state.request_payload["reform"] == {}
-    assert state.observability_id == "batch-run-123"
+    assert state.observability_id == "00000000-0000-4000-8000-000000000001"
 
 
 def test_build_batch_status_response_computes_progress_from_completed_years():

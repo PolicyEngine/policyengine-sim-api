@@ -566,9 +566,8 @@ def _run_simulation_impl_core(
         simulation_params["spm"] = selection
 
     logger.info(
-        "Starting simulation for country=%s observability_id=%s submission_claim_id=%s",
+        "Starting simulation for country=%s submission_claim_id=%s",
         simulation_params.get("country", "unknown"),
-        getattr(telemetry, "observability_id", None),
         getattr(telemetry, "submission_claim_id", None),
     )
     if metadata:
@@ -678,7 +677,6 @@ def _set_runtime_attributes(
         country=country,
         scope=simulation_params.get("scope"),
         simulation_year=_parse_year(simulation_params),
-        observability_id=getattr(telemetry, "observability_id", None),
         submission_claim_id=getattr(telemetry, "submission_claim_id", None),
         geography_code=getattr(telemetry, "geography_code", None),
         geography_type=getattr(telemetry, "geography_type", None),

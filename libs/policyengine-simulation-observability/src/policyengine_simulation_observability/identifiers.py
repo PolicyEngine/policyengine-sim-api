@@ -14,6 +14,12 @@ def generate_observability_id() -> str:
     return str(uuid4())
 
 
+def resolve_observability_id(value: Any) -> str:
+    """Use a valid caller value or create a new diagnostic identifier."""
+
+    return normalize_observability_id(value) or generate_observability_id()
+
+
 def normalize_observability_id(value: Any) -> str | None:
     """Return a canonical UUID string or ``None`` for malformed input.
 

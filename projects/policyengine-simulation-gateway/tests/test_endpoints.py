@@ -17,6 +17,10 @@ from fixtures.gateway_endpoints import (
     resolve_test_dataset_uri,
 )
 from policyengine_simulation_contract.hf_dataset import HuggingFaceDatasetReferenceError
+from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
+
+
+OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000001"
 
 
 def expected_bundle(
@@ -286,10 +290,13 @@ class TestSubmitSimulationEndpoint:
         assert data["job_id"] == "mock-job-id-123"
         assert data["poll_url"] == "/jobs/mock-job-id-123"
         assert data["status"] == "submitted"
-        generated_observability_id = data["observability_id"]
+        assert "observability_id" not in data
+        generated_observability_id = response.headers[OBSERVABILITY_ID_HEADER]
         assert str(UUID(generated_observability_id)) == generated_observability_id
         assert (
-            mock_modal["func"].last_payload["_telemetry"]["observability_id"]
+            mock_modal["func"].last_payload["_observability_context"][
+                "observability_id"
+            ]
             == generated_observability_id
         )
 
@@ -314,13 +321,45 @@ class TestSubmitSimulationEndpoint:
         assert response.status_code == 200
         assert mock_modal["func"].last_payload["include_cliffs"] is True
 
-    def test__given_submission_with_telemetry__then_preserves_observability_id(
+    @pytest.mark.parametrize(
+        "field",
+        ["observability_id", "run_id", "process_id", "request_id", "traceparent"],
+    )
+    def test__given_identity_in_body_telemetry__then_uses_only_header(
+        self, field: str, mock_modal, client: TestClient
+    ):
+        mock_modal["dicts"]["simulation-api-us-versions"] = {
+            "latest": "1.500.0",
+            "1.500.0": "policyengine-simulation-py4-10-0",
+        }
+        response = client.post(
+            "/simulate/economy/comparison",
+            json={
+                "country": "us",
+                "scope": "macro",
+                "reform": {},
+                "_telemetry": {
+                    field: "identifier",
+                    "submission_claim_id": "claim-123",
+                },
+            },
+            headers={OBSERVABILITY_ID_HEADER: OBSERVABILITY_ID},
+        )
+
+        assert response.status_code == 200
+        assert response.headers[OBSERVABILITY_ID_HEADER] == OBSERVABILITY_ID
+        spawned = mock_modal["func"].last_payload
+        assert field not in spawned["_telemetry"]
+        assert spawned["_telemetry"]["submission_claim_id"] == "claim-123"
+        assert spawned["_observability_context"]["observability_id"] == OBSERVABILITY_ID
+
+    def test__given_submission_header__then_propagates_observability_id(
         self, mock_modal, client: TestClient
     ):
         """
-        Given a simulation submission with internal telemetry metadata
+        Given a simulation submission with the diagnostic identifier header
         When the request completes
-        Then the spawned payload preserves telemetry and the response echoes observability_id.
+        Then the Modal context and response header preserve the identifier.
         """
         mock_modal["dicts"]["simulation-api-us-versions"] = {
             "latest": "1.500.0",
@@ -332,21 +371,28 @@ class TestSubmitSimulationEndpoint:
             "scope": "macro",
             "reform": {},
             "_telemetry": {
-                "observability_id": "run-123",
                 "submission_claim_id": "proc-123",
                 "capture_mode": "disabled",
             },
         }
 
-        response = client.post("/simulate/economy/comparison", json=request_body)
+        response = client.post(
+            "/simulate/economy/comparison",
+            json=request_body,
+            headers={OBSERVABILITY_ID_HEADER: OBSERVABILITY_ID},
+        )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["observability_id"] == "run-123"
+        assert "observability_id" not in data
+        assert response.headers[OBSERVABILITY_ID_HEADER] == OBSERVABILITY_ID
         assert (
-            mock_modal["func"].last_payload["_telemetry"]["observability_id"]
-            == "run-123"
+            mock_modal["func"].last_payload["_observability_context"][
+                "observability_id"
+            ]
+            == OBSERVABILITY_ID
         )
+        assert "observability_id" not in mock_modal["func"].last_payload["_telemetry"]
 
     def test__given_submission_without_data__then_returns_default_bundle_metadata(
         self, mock_modal, client: TestClient
@@ -821,11 +867,15 @@ class TestSubmitSimulationEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "complete"
-        assert data["observability_id"] == submit_response.json()["observability_id"]
+        assert "observability_id" not in data
+        assert (
+            response.headers[OBSERVABILITY_ID_HEADER]
+            == (submit_response.headers[OBSERVABILITY_ID_HEADER])
+        )
         assert data["resolved_app_name"] == "policyengine-simulation-py4-10-0"
         assert data["policyengine_bundle"] == expected_bundle("us", "1.500.0")
 
-    def test__given_submitted_job_with_telemetry__then_polling_echoes_observability_id(
+    def test__given_submitted_job_with_header__then_polling_echoes_header(
         self, mock_modal, client: TestClient
     ):
         mock_modal["dicts"]["simulation-api-us-versions"] = {
@@ -840,17 +890,18 @@ class TestSubmitSimulationEndpoint:
                 "scope": "macro",
                 "reform": {},
                 "_telemetry": {
-                    "observability_id": "run-123",
                     "submission_claim_id": "proc-123",
                     "capture_mode": "disabled",
                 },
             },
+            headers={OBSERVABILITY_ID_HEADER: OBSERVABILITY_ID},
         )
 
         response = client.get(f"/jobs/{submit_response.json()['job_id']}")
 
         assert response.status_code == 200
-        assert response.json()["observability_id"] == "run-123"
+        assert "observability_id" not in response.json()
+        assert response.headers[OBSERVABILITY_ID_HEADER] == OBSERVABILITY_ID
 
     def test__given_unknown_job_id__then_polling_returns_404(
         self, mock_modal, client: TestClient, monkeypatch
@@ -1193,7 +1244,8 @@ class TestBudgetWindowBatchEndpoints:
             "run_budget_window_batch",
         )
         data = response.json()
-        generated_observability_id = data.pop("observability_id")
+        assert "observability_id" not in data
+        generated_observability_id = response.headers[OBSERVABILITY_ID_HEADER]
         assert str(UUID(generated_observability_id)) == generated_observability_id
         assert data == {
             "batch_job_id": "mock-batch-job-id-123",
@@ -1336,11 +1388,11 @@ class TestBudgetWindowBatchEndpoints:
                 "window_size": 3,
                 "max_parallel": 2,
                 "_telemetry": {
-                    "observability_id": "batch-run-123",
                     "submission_claim_id": "proc-123",
                     "capture_mode": "disabled",
                 },
             },
+            headers={OBSERVABILITY_ID_HEADER: OBSERVABILITY_ID},
         )
 
         response = client.get(
@@ -1360,8 +1412,8 @@ class TestBudgetWindowBatchEndpoints:
             "error": None,
             "resolved_app_name": "policyengine-simulation-py4-10-0",
             "policyengine_bundle": expected_bundle("us", "1.500.0"),
-            "observability_id": "batch-run-123",
         }
+        assert response.headers[OBSERVABILITY_ID_HEADER] == OBSERVABILITY_ID
 
     def test__given_batch_state__then_poll_returns_completed_response(
         self, mock_modal, client: TestClient
@@ -1431,7 +1483,7 @@ class TestBudgetWindowBatchEndpoints:
                 error=None,
                 created_at="2026-01-01T00:00:00+00:00",
                 updated_at="2026-01-01T00:00:01+00:00",
-                observability_id="batch-run-123",
+                observability_id=OBSERVABILITY_ID,
             )
         )
 
@@ -1440,7 +1492,8 @@ class TestBudgetWindowBatchEndpoints:
         assert response.status_code == 200
         assert response.json()["status"] == "complete"
         assert response.json()["result"]["totals"]["budgetaryImpact"] == 32
-        assert response.json()["observability_id"] == "batch-run-123"
+        assert "observability_id" not in response.json()
+        assert response.headers[OBSERVABILITY_ID_HEADER] == OBSERVABILITY_ID
 
     def test__given_non_integer_start_year__then_budget_window_submit_returns_422(
         self, mock_modal, client: TestClient

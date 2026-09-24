@@ -84,6 +84,9 @@ def web_app():
         enforce_production_auth_guard,
     )
     from policyengine_simulation_gateway.endpoints import router
+    from policyengine_simulation_gateway.correlation import (
+        install_observability_id_middleware,
+    )
 
     api = FastAPI(
         title="PolicyEngine Simulation Gateway",
@@ -97,6 +100,7 @@ def web_app():
         platform="modal",
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
+    install_observability_id_middleware(api)
     api.add_event_handler("shutdown", runtime.shutdown)
 
     # Startup guard: crash the container if GATEWAY_AUTH_DISABLED is set in

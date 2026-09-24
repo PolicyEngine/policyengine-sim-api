@@ -85,10 +85,7 @@ def create_initial_batch_state(
         error=None,
         created_at=now,
         updated_at=now,
-        observability_id=(
-            observability_id
-            or (request.telemetry.observability_id if request.telemetry else None)
-        ),
+        observability_id=observability_id,
     )
 
 
@@ -261,5 +258,4 @@ def build_batch_status_response(
         errors=state.errors,
         resolved_app_name=state.resolved_app_name,
         policyengine_bundle=state.policyengine_bundle,
-        observability_id=state.observability_id,
     )

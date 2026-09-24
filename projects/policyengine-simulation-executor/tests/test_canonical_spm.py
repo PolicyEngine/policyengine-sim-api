@@ -832,7 +832,6 @@ def test_as_of_presence_survives_budget_parent(date_fields, expected_as_of):
         resolved_version="test",
         resolved_app_name="test",
         bundle=bundle,
-        observability_id="00000000-0000-4000-8000-000000000001",
     )
     assert parent["spm"] == selection
 

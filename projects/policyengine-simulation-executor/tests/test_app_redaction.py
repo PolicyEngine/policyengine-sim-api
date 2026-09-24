@@ -13,7 +13,8 @@ def test_redact_params_strips_signed_urls_and_reform_bodies():
         "data": "https://storage.googleapis.com/bucket/key?token=SECRET&expiry=123",
         "reform": {"gov.irs.income.bracket[2].rate": {"2024-01-01": 0.45}},
         "baseline": {"gov.irs.income.bracket[2].rate": {"2023-01-01": 0.43}},
-        "_telemetry": {"observability_id": "run-123", "submission_claim_id": "p-1"},
+        "_telemetry": {"submission_claim_id": "p-1"},
+        "_observability_context": {"observability_id": "run-123"},
         "_metadata": {"resolved_app_name": "policyengine-simulation-us1-500"},
     }
 
@@ -22,10 +23,8 @@ def test_redact_params_strips_signed_urls_and_reform_bodies():
     # Routing context is preserved.
     assert redacted["country"] == "us"
     assert redacted["scope"] == "macro"
-    # Correlation id is preserved, but the rest of the telemetry envelope
-    # is not.
-    assert redacted["observability_id"] == "run-123"
     assert "_telemetry" not in redacted
+    assert "_observability_context" not in redacted
     assert "_metadata" not in redacted
 
     # Sensitive fields are stripped entirely.
@@ -47,7 +46,7 @@ def test_redact_params_strips_all_underscore_prefixed_keys():
         "scope": "macro",
         "region_group": ["state/hi", "state/ia"],
         "_emit_microdata": True,
-        "_telemetry": {"observability_id": "run-9"},
+        "_observability_context": {"observability_id": "run-9"},
         "_metadata": {"resolved_app_name": "x"},
     }
 
@@ -55,7 +54,6 @@ def test_redact_params_strips_all_underscore_prefixed_keys():
 
     assert redacted["country"] == "us"
     assert redacted["region_group"] == ["state/hi", "state/ia"]
-    assert redacted["observability_id"] == "run-9"
     # No underscore-prefixed key survives — this is what the backend forbids.
     assert not any(key.startswith("_") for key in redacted)
 
