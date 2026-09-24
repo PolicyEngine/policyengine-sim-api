@@ -6,11 +6,10 @@ simulation requests.
 """
 
 from copy import deepcopy
+from uuid import UUID
 
 import pytest
-from uuid import UUID
 from fastapi.testclient import TestClient
-
 from fixtures.gateway_endpoints import (
     TEST_APP_RELEASE_BUNDLE,
     TEST_ROUTING_STATE,
@@ -18,7 +17,6 @@ from fixtures.gateway_endpoints import (
 )
 from policyengine_simulation_contract.hf_dataset import HuggingFaceDatasetReferenceError
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
-
 
 OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000001"
 
@@ -323,7 +321,7 @@ class TestSubmitSimulationEndpoint:
 
     @pytest.mark.parametrize(
         "field",
-        ["observability_id", "run_id", "process_id", "request_id", "traceparent"],
+        ["observability_id", "run_id", "request_id", "traceparent"],
     )
     def test__given_identity_in_body_telemetry__then_uses_only_header(
         self, field: str, mock_modal, client: TestClient
@@ -352,6 +350,30 @@ class TestSubmitSimulationEndpoint:
         assert field not in spawned["_telemetry"]
         assert spawned["_telemetry"]["submission_claim_id"] == "claim-123"
         assert spawned["_observability_context"]["observability_id"] == OBSERVABILITY_ID
+
+    def test__given_legacy_process_id__then_maps_submission_claim_id(
+        self, mock_modal, client: TestClient
+    ):
+        mock_modal["dicts"]["simulation-api-us-versions"] = {
+            "latest": "1.500.0",
+            "1.500.0": "policyengine-simulation-py4-10-0",
+        }
+        response = client.post(
+            "/simulate/economy/comparison",
+            json={
+                "country": "us",
+                "scope": "macro",
+                "reform": {},
+                "_telemetry": {"process_id": "legacy-claim-123"},
+            },
+            headers={OBSERVABILITY_ID_HEADER: OBSERVABILITY_ID},
+        )
+
+        assert response.status_code == 200
+        assert (
+            mock_modal["func"].last_payload["_telemetry"]["submission_claim_id"]
+            == "legacy-claim-123"
+        )
 
     def test__given_submission_header__then_propagates_observability_id(
         self, mock_modal, client: TestClient

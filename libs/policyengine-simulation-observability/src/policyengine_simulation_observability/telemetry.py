@@ -17,10 +17,9 @@ from policyengine_simulation_observability.identifiers import (
     normalize_observability_id,
 )
 
-
 CaptureMode = Literal["disabled", "failures", "threshold", "sampled", "always"]
 NONCANONICAL_CONTEXT_FIELDS = frozenset(
-    {"observability_id", "run_id", "process_id", "request_id", "traceparent"}
+    {"observability_id", "run_id", "request_id", "traceparent"}
 )
 
 
@@ -70,9 +69,15 @@ class TelemetryEnvelope(BaseModel):
 
         if not isinstance(value, dict):
             return value
+        normalized = dict(value)
+        # LEGACY COMPATIBILITY: API v1 sent submission_claim_id as process_id.
+        # Remove this mapping after the API v1 deployment and rollback period.
+        legacy_process_id = normalized.pop("process_id", None)
+        if "submission_claim_id" not in normalized and legacy_process_id is not None:
+            normalized["submission_claim_id"] = legacy_process_id
         return {
             key: item
-            for key, item in value.items()
+            for key, item in normalized.items()
             if key not in NONCANONICAL_CONTEXT_FIELDS
         }
 

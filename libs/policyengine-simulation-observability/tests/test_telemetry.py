@@ -1,5 +1,4 @@
 import pytest
-
 from policyengine_simulation_observability.telemetry import (
     TelemetryEnvelope,
     apply_remote_context,
@@ -130,7 +129,7 @@ def test_split_internal_payload__drops_malformed_telemetry_without_failing_work(
 
 
 @pytest.mark.parametrize(
-    "field", ["observability_id", "run_id", "process_id", "request_id", "traceparent"]
+    "field", ["observability_id", "run_id", "request_id", "traceparent"]
 )
 def test_telemetry_discards_noncanonical_context_fields(field):
     telemetry = TelemetryEnvelope.model_validate(
@@ -139,3 +138,21 @@ def test_telemetry_discards_noncanonical_context_fields(field):
 
     assert telemetry.submission_claim_id == "claim-123"
     assert field not in telemetry.model_dump()
+
+
+def test_telemetry_maps_legacy_process_id_to_submission_claim_id():
+    telemetry = TelemetryEnvelope.model_validate({"process_id": "legacy-claim-123"})
+
+    assert telemetry.submission_claim_id == "legacy-claim-123"
+    assert "process_id" not in telemetry.model_dump()
+
+
+def test_telemetry_prefers_canonical_submission_claim_id_over_legacy_value():
+    telemetry = TelemetryEnvelope.model_validate(
+        {
+            "process_id": "legacy-claim-123",
+            "submission_claim_id": "canonical-claim-456",
+        }
+    )
+
+    assert telemetry.submission_claim_id == "canonical-claim-456"
