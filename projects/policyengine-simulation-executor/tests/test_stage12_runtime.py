@@ -25,16 +25,20 @@ from policyengine_simulation_contract.stage12_execution import (
     DatasetArtifactReference,
     DatasetPopulationInput,
     DatasetProvenance,
+    EntityOutputPlan,
     GeographySelection,
+    PlannedSimulationExecutionInput,
     ReportAggregate,
     ReportExecutionInput,
-    RequestedSimulationOutput,
+    ReportOutputRequirements,
     ResultComparisonStatus,
     RowIdentity,
     SimulationArtifactDescriptor,
     SimulationExecutionInput,
     SimulationRole,
     Stage12InvocationContext,
+    Stage12OutputPlan,
+    stage12_output_plan_sha256,
 )
 
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -44,7 +48,8 @@ from policyengine_simulation_executor.stage12_artifacts import (
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
     _build_spm_result,
-    coordinate_report,
+    build_aggregate_report,
+    coordinate_report as coordinate_report_impl,
     run_single_simulation,
     simulation_input_sha256,
 )
@@ -88,8 +93,37 @@ def _simulation(role: SimulationRole) -> SimulationExecutionInput:
         ),
         year=2026,
         geography=GeographySelection(country="us", region="us"),
-        requested_output=RequestedSimulationOutput(variables=("*",)),
         bundle=_bundle(),
+    )
+
+
+def _output_plan() -> Stage12OutputPlan:
+    return Stage12OutputPlan(
+        country="us",
+        requirements=ReportOutputRequirements(
+            aggregates=tuple(ReportAggregate),
+            include_cliff_impacts=False,
+            labor_supply_response_active=False,
+        ),
+        entities=(
+            EntityOutputPlan(
+                entity="household",
+                materialized_variables=("household_id", "household_net_income"),
+            ),
+            EntityOutputPlan(
+                entity="person",
+                materialized_variables=("age", "household_id", "person_id"),
+            ),
+        ),
+    )
+
+
+def _planned_simulation(role: SimulationRole) -> PlannedSimulationExecutionInput:
+    return PlannedSimulationExecutionInput.model_validate(
+        {
+            **_simulation(role).model_dump(mode="json"),
+            "output_plan": _output_plan().model_dump(mode="json"),
+        }
     )
 
 
@@ -98,8 +132,13 @@ def _report() -> ReportExecutionInput:
         evaluation_id=EVALUATION_ID,
         baseline=_simulation(SimulationRole.BASELINE),
         reform=_simulation(SimulationRole.REFORM),
-        requested_aggregates=(ReportAggregate.BUDGET,),
+        requested_aggregates=tuple(ReportAggregate),
     )
+
+
+def coordinate_report(*args, **kwargs):
+    kwargs.setdefault("output_plan_resolver", lambda _: _output_plan())
+    return coordinate_report_impl(*args, **kwargs)
 
 
 def _context() -> Stage12InvocationContext:
@@ -279,6 +318,7 @@ class FakeArtifacts:
                 content_sha256=digest,
                 size_bytes=len(payload),
             ),
+            output_plan_sha256=stage12_output_plan_sha256(_output_plan()),
             row_identity=row_identity,
             bundle=simulation.bundle,
         )
@@ -345,8 +385,14 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
     dataset = object()
     received: dict[str, object] = {}
 
+    class ModelVersion:
+        def resolve_entity_variables(self, _simulation):
+            return {entity: list(frame.columns) for entity, frame in _frames().items()}
+
     class Model:
         spm_config = None
+        extra_variables = {}
+        tax_benefit_model_version = ModelVersion()
         output_dataset = type(
             "OutputDataset",
             (),
@@ -355,6 +401,7 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
 
         def ensure(self) -> None:
             received["ensured"] = True
+            received["extras_at_ensure"] = self.extra_variables.copy()
 
     monkeypatch.setattr(worker, "_require_installed_bundle", lambda _: None)
     monkeypatch.setattr(
@@ -396,7 +443,9 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
     monkeypatch.setattr(simulation_runtime, "_load_dataset", load_dataset)
     monkeypatch.setattr(simulation_runtime, "_build_simulation", build_simulation)
 
-    result = worker.calculate_simulation_frames(_simulation(SimulationRole.BASELINE))
+    result = worker.calculate_simulation_frames(
+        _planned_simulation(SimulationRole.BASELINE)
+    )
 
     assert "data" not in received["params"]
     assert "data_version" not in received["params"]
@@ -406,12 +455,13 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
     assert received["build_dataset"] is dataset
     assert received["build_selection"] is selection
     assert received["ensured"] is True
+    assert received["extras_at_ensure"] == {"household": [], "person": []}
     assert set(result.frames) == {"household", "person"}
 
 
 def test_single_worker_accepts_one_policy_and_persists_one_artifact() -> None:
     store = FakeStore()
-    simulation = _simulation(SimulationRole.BASELINE)
+    simulation = _planned_simulation(SimulationRole.BASELINE)
     store.children[simulation.simulation_execution_id] = _child(simulation)
     artifacts = FakeArtifacts()
 
@@ -435,7 +485,7 @@ def test_single_worker_accepts_one_policy_and_persists_one_artifact() -> None:
 
 def test_single_worker_retains_detached_calculation_provenance() -> None:
     store = FakeStore()
-    simulation = _simulation(SimulationRole.BASELINE)
+    simulation = _planned_simulation(SimulationRole.BASELINE)
     store.children[simulation.simulation_execution_id] = _child(simulation)
     artifacts = FakeArtifacts()
     provenance = {"receipt": {"version": 1}}
@@ -457,7 +507,7 @@ def test_single_worker_retains_detached_calculation_provenance() -> None:
 
 def test_single_worker_exposes_only_a_bounded_failure() -> None:
     store = FakeStore()
-    simulation = _simulation(SimulationRole.BASELINE)
+    simulation = _planned_simulation(SimulationRole.BASELINE)
     store.children[simulation.simulation_execution_id] = _child(simulation)
 
     def fail(_simulation):
@@ -480,6 +530,28 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
     assert child.status is ComparisonRunLifecycleStatus.FAILED
     assert child.error_code == "simulation_execution_failed"
     assert child.error_summary == "RuntimeError"
+
+
+def test_single_worker_rejects_frames_that_do_not_satisfy_the_output_plan() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    frames = _frames()
+    frames["person"] = frames["person"].drop(columns=["age"])
+
+    with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=lambda _: frames,
+        )
+
+    assert store.children[simulation.simulation_execution_id].status is (
+        ComparisonRunLifecycleStatus.FAILED
+    )
 
 
 def test_aggregate_combines_detached_spm_receipts() -> None:
@@ -552,8 +624,71 @@ def test_aggregate_combines_detached_spm_receipts() -> None:
     assert len(result["spm_provenance"]["reform"]) == 1
 
 
+def test_aggregate_stand_ins_preserve_policy_and_cliff_options(monkeypatch) -> None:
+    from policyengine.outputs import labor_supply_response_is_active
+    from policyengine_simulation_executor import simulation_output_builder
+
+    report = _report()
+    options = {"include_cliffs": True}
+    report = report.model_copy(
+        update={
+            "baseline": report.baseline.model_copy(update={"options": options}),
+            "reform": report.reform.model_copy(
+                update={
+                    "options": options,
+                    "policy": {
+                        "gov.simulation.labor_supply_responses.elasticities.income": 0.1
+                    },
+                }
+            ),
+        }
+    )
+    frames = {
+        entity: pd.DataFrame({f"{entity}_id": [1]})
+        for entity in (
+            "person",
+            "marital_unit",
+            "family",
+            "spm_unit",
+            "tax_unit",
+            "household",
+        )
+    }
+    observed = {}
+
+    class CapturingBuilder:
+        def __init__(self, **values):
+            observed.update(values)
+
+        def serialize(self):
+            return {"captured": True}
+
+    monkeypatch.setattr(
+        simulation_output_builder,
+        "SimulationOutputBuilder",
+        CapturingBuilder,
+    )
+    artifacts = FakeArtifacts()
+
+    result = build_aggregate_report(
+        report=report,
+        baseline_frames=frames,
+        reform_frames=frames,
+        baseline_descriptor=artifacts.add_simulation(report.baseline),
+        reform_descriptor=artifacts.add_simulation(report.reform),
+    )
+
+    assert result["result"] == {"captured": True}
+    assert observed["simulation_params"]["include_cliffs"] is True
+    assert labor_supply_response_is_active(
+        observed["baseline"],
+        observed["reform"],
+        country_code="us",
+    )
+
+
 def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:
-    payload = _simulation(SimulationRole.BASELINE).model_dump(mode="json")
+    payload = _planned_simulation(SimulationRole.BASELINE).model_dump(mode="json")
     payload["baseline"] = {}
     payload["reform"] = {}
 
@@ -607,23 +742,29 @@ class ConcurrentInvoker:
         *,
         fail_role=None,
         incompatible=False,
+        wrong_plan_digest=False,
+        missing_column=False,
         production_result=None,
     ):
         self.artifacts = artifacts
         self.fail_role = fail_role
         self.incompatible = incompatible
+        self.wrong_plan_digest = wrong_plan_digest
+        self.missing_column = missing_column
         self.executor = ThreadPoolExecutor(max_workers=2)
         self.intervals = {}
         self.events = []
         self.environments = []
         self.production_result = production_result
         self.production_wait_timeouts = []
+        self.output_plans = []
 
     def spawn(self, *, simulation, environment, **_):
-        parsed = SimulationExecutionInput.model_validate(simulation)
+        parsed = PlannedSimulationExecutionInput.model_validate(simulation)
         role = parsed.role.value
         self.events.append(f"spawn:{role}")
         self.environments.append(environment)
+        self.output_plans.append(parsed.output_plan)
 
         return self._submit(parsed, role)
 
@@ -636,7 +777,7 @@ class ConcurrentInvoker:
                 self.production_wait_timeouts,
             )
         role = invocation_id.removeprefix("call-")
-        parsed = _simulation(SimulationRole(role))
+        parsed = _planned_simulation(SimulationRole(role))
         self.events.append(f"restore:{role}")
         return self._submit(parsed, role)
 
@@ -648,6 +789,10 @@ class ConcurrentInvoker:
             if role == self.fail_role:
                 raise RuntimeError("child failed with sensitive values")
             frames = _frames(100.0 if role == "baseline" else 120.0)
+            if self.missing_column and role == "reform":
+                frames["household"] = frames["household"].drop(
+                    columns=["household_net_income"]
+                )
             descriptor = self.artifacts.add_simulation(parsed, frames)
             if self.incompatible and role == "reform":
                 descriptor = descriptor.model_copy(
@@ -658,6 +803,10 @@ class ConcurrentInvoker:
                             identity_sha256="f" * 64,
                         )
                     }
+                )
+            if self.wrong_plan_digest and role == "reform":
+                descriptor = descriptor.model_copy(
+                    update={"output_plan_sha256": "f" * 64}
                 )
             self.intervals[role] = (started, time.monotonic())
             return descriptor.model_dump(mode="json")
@@ -685,7 +834,13 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
         }
     )
     parent = _parent().model_copy(update={"environment": "production"})
-    result = coordinate_report(
+    resolver_calls = []
+
+    def resolver(report):
+        resolver_calls.append(report.evaluation_id)
+        return _output_plan()
+
+    result = coordinate_report_impl(
         _report().model_dump(mode="json"),
         context.model_dump(mode="json"),
         parent.model_dump(mode="json"),
@@ -695,10 +850,13 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
         artifacts=artifacts,
         invoker=invoker,
         aggregator=aggregate,
+        output_plan_resolver=resolver,
     )
 
     assert invoker.events == ["spawn:baseline", "spawn:reform"]
     assert invoker.environments == ["main", "main"]
+    assert resolver_calls == [EVALUATION_ID]
+    assert invoker.output_plans == [_output_plan(), _output_plan()]
     latest_start = max(interval[0] for interval in invoker.intervals.values())
     earliest_end = min(interval[1] for interval in invoker.intervals.values())
     assert latest_start < earliest_end
@@ -905,6 +1063,36 @@ def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None
     assert failed_child.error_summary == "RuntimeError"
 
 
+@pytest.mark.parametrize(
+    "invoker",
+    [
+        lambda artifacts: ConcurrentInvoker(artifacts, wrong_plan_digest=True),
+        lambda artifacts: ConcurrentInvoker(artifacts, missing_column=True),
+    ],
+)
+def test_coordinator_rejects_artifacts_that_do_not_satisfy_the_shared_plan(
+    invoker,
+) -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=invoker(artifacts),
+            aggregator=lambda **_: {"must": "not run"},
+        )
+
+    assert artifacts.aggregate_writes == []
+    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
+
+
 def test_coordinator_records_failure_when_child_persistence_fails() -> None:
     class FailingChildStore(FakeStore):
         def create_or_resolve_simulation(self, record):
@@ -1027,7 +1215,7 @@ class TimeoutInvoker:
         self.events = []
 
     def spawn(self, *, simulation, **_):
-        role = SimulationExecutionInput.model_validate(simulation).role.value
+        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
         self.events.append(f"spawn:{role}")
         return TimeoutCall(f"call-{role}")
 

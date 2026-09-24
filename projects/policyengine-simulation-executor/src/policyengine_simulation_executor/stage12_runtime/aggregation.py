@@ -10,11 +10,15 @@ from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
     SimulationArtifactDescriptor,
+    Stage12OutputPlan,
+    stage12_output_plan_sha256,
 )
+from pydantic import JsonValue
 
 
 def validate_aligned_outputs(
     report: ReportExecutionInput,
+    output_plan: Stage12OutputPlan,
     baseline: SimulationArtifactDescriptor,
     reform: SimulationArtifactDescriptor,
 ) -> None:
@@ -29,6 +33,12 @@ def validate_aligned_outputs(
         raise ValueError("simulation artifacts have incompatible bundle provenance")
     if baseline.output_schema_version != reform.output_schema_version:
         raise ValueError("simulation artifacts use incompatible output schemas")
+    expected_plan_sha256 = stage12_output_plan_sha256(output_plan)
+    if (
+        baseline.output_plan_sha256 != expected_plan_sha256
+        or reform.output_plan_sha256 != expected_plan_sha256
+    ):
+        raise ValueError("simulation artifacts do not satisfy the report output plan")
     if baseline.row_identity != reform.row_identity:
         raise ValueError("simulation artifacts have incompatible stable row identities")
 
@@ -90,7 +100,10 @@ def build_aggregate_report(
     from policyengine_simulation_executor.simulation_output_builder import (
         SimulationOutputBuilder,
     )
-    from policyengine_simulation_executor.simulation_runtime import _country_module
+    from policyengine_simulation_executor.simulation_runtime import (
+        _country_module,
+        _normalise_policy,
+    )
 
     country = report.baseline.geography.country
     country_module = _country_module(country)
@@ -107,11 +120,11 @@ def build_aggregate_report(
         ),
     }
 
-    def stand_in(dataset):
+    def stand_in(dataset, policy: dict[str, JsonValue]):
         simulation = PrecomputedSimulation(
             dataset=dataset,
             tax_benefit_model_version=country_module.model,
-            policy=None,
+            policy=_normalise_policy(policy),
         )
         simulation.output_dataset = dataset
         return simulation
@@ -130,8 +143,8 @@ def build_aggregate_report(
         simulation_params=params,
         country_module=country_module,
         dataset=datasets["baseline"],
-        baseline=stand_in(datasets["baseline"]),
-        reform=stand_in(datasets["reform"]),
+        baseline=stand_in(datasets["baseline"], report.baseline.policy),
+        reform=stand_in(datasets["reform"], report.reform.policy),
         resolved_data_version=report.baseline.bundle.dataset.artifact_revision,
         resolved_region_code=report.baseline.geography.region,
     ).serialize()
