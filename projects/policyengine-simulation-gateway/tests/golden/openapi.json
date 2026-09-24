@@ -763,17 +763,6 @@
                 "type": "null"
               }
             ]
-          },
-          "observability_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Observability Id"
           }
         },
         "type": "object",
@@ -812,17 +801,6 @@
           },
           "policyengine_bundle": {
             "$ref": "#/components/schemas/PolicyEngineBundle"
-          },
-          "observability_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Observability Id"
           }
         },
         "type": "object",
@@ -1343,17 +1321,6 @@
                 "type": "null"
               }
             ]
-          },
-          "observability_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Observability Id"
           }
         },
         "type": "object",
@@ -1392,17 +1359,6 @@
           },
           "policyengine_bundle": {
             "$ref": "#/components/schemas/PolicyEngineBundle"
-          },
-          "observability_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Observability Id"
           }
         },
         "type": "object",
@@ -2314,17 +2270,6 @@
       },
       "TelemetryEnvelope": {
         "properties": {
-          "observability_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Observability Id"
-          },
           "submission_claim_id": {
             "anyOf": [
               {

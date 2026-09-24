@@ -11,6 +11,9 @@ from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
 from policyengine_simulation_gateway.auth import require_auth
+from policyengine_simulation_gateway.correlation import (
+    install_observability_id_middleware,
+)
 from policyengine_simulation_gateway.endpoints import router
 
 
@@ -34,6 +37,7 @@ def create_gateway_app(*, authenticate: bool = True) -> FastAPI:
         platform="local",
         environment="test",
     )
+    install_observability_id_middleware(app)
     app.add_event_handler("shutdown", runtime.shutdown)
     app.include_router(router)
     if authenticate:

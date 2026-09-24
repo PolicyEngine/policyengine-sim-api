@@ -24,27 +24,19 @@ def redact_params_for_logging(params) -> dict:
     corresponds to, but strip any field that may contain URLs with signed
     credentials or arbitrarily large user-submitted parameter trees.
 
-    Underscore-prefixed keys (``_telemetry``, ``_metadata``,
+    Underscore-prefixed keys (``_telemetry``, ``_observability_context``, ``_metadata``,
     ``_emit_microdata``, and any future internal flag) are dropped: they are
     internal control/routing fields, and observability backends reject
     attribute keys that start with an underscore — so leaking one crashes
-    the span rather than merely over-logging. Correlation ids are surfaced
-    explicitly below. Non-dict inputs return an empty dict so callers can
-    splat the result into operation attributes without additional guards.
+    the span rather than merely over-logging. Non-dict inputs return an empty
+    dict so callers can splat the result into operation attributes without
+    additional guards.
     """
 
     if not isinstance(params, dict):
         return {}
-    redacted = {
+    return {
         key: value
         for key, value in params.items()
         if key not in SENSITIVE_PARAM_KEYS and not key.startswith("_")
     }
-    # Surface only the correlation/run ids from telemetry, not the whole
-    # envelope.
-    telemetry = params.get("_telemetry")
-    if isinstance(telemetry, dict):
-        observability_id = telemetry.get("observability_id")
-        if observability_id is not None:
-            redacted["observability_id"] = observability_id
-    return redacted

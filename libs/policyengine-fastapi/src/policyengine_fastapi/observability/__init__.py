@@ -15,7 +15,6 @@ from .contracts import (
     SimulationCompositeTraceResponse as SimulationCompositeTraceResponse,
     SimulationLifecycleEvent as SimulationLifecycleEvent,
     SimulationRunSummary as SimulationRunSummary,
-    SimulationTelemetryEnvelope as SimulationTelemetryEnvelope,
     SimulationTimelineEntry as SimulationTimelineEntry,
     TracerArtifactManifest as TracerArtifactManifest,
     VersionStageMetricResponse as VersionStageMetricResponse,

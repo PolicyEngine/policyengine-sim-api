@@ -118,9 +118,9 @@ class TestBuildGroupChildPayload:
 
     def test__reattaches_telemetry_only_when_present(self):
         with_telemetry = sn.build_group_child_payload(
-            {**NATIONAL, "_telemetry": {"observability_id": "r1"}}, ["state/ca"]
+            {**NATIONAL, "_telemetry": {"submission_claim_id": "p1"}}, ["state/ca"]
         )
-        assert with_telemetry["_telemetry"] == {"observability_id": "r1"}
+        assert with_telemetry["_telemetry"] == {"submission_claim_id": "p1"}
         without = sn.build_group_child_payload(dict(NATIONAL), ["state/ca"])
         assert "_telemetry" not in without
 
@@ -322,7 +322,7 @@ class TestSegmentedNationalRunner:
         params = {
             **NATIONAL,
             "segmented": True,
-            "_telemetry": {"observability_id": "r"},
+            "_telemetry": {"submission_claim_id": "p"},
         }
         runner = _runner(FakeModal(_twenty_calls()), params=params)
         assert runner.run() == {"budget": {}}

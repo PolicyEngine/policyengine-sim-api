@@ -41,8 +41,7 @@ from policyengine_simulation_observability.observability import (
 )
 from policyengine_simulation_observability.identifiers import (
     OBSERVABILITY_ID_HEADER,
-    generate_observability_id,
-    normalize_observability_id,
+    resolve_observability_id,
 )
 from starlette.datastructures import MutableHeaders
 
@@ -194,9 +193,8 @@ def create_app(
     async def request_context(request: Request, call_next):
         headers = MutableHeaders(scope=request.scope)
         request_id = headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())
-        observability_id = (
-            normalize_observability_id(headers.get(OBSERVABILITY_ID_HEADER))
-            or generate_observability_id()
+        observability_id = resolve_observability_id(
+            headers.get(OBSERVABILITY_ID_HEADER)
         )
         headers[REQUEST_ID_HEADER] = request_id
         headers[OBSERVABILITY_ID_HEADER] = observability_id

@@ -20,7 +20,6 @@ def _build_parent_payload():
         scope="macro",
         reform={},
         _telemetry={
-            "observability_id": "batch-run-123",
             "submission_claim_id": "proc-123",
             "capture_mode": "disabled",
         },
@@ -50,7 +49,7 @@ def test_build_batch_context_extracts_request_and_metadata():
     assert context.request.window_size == 3
     assert context.request.max_parallel == 2
     assert context.request.telemetry is not None
-    assert context.request.telemetry.observability_id == "batch-run-123"
+    assert context.request.telemetry.submission_claim_id == "proc-123"
     assert context.resolved_version == "1.500.0"
     assert context.resolved_app_name == "policyengine-simulation-py4-10-0"
     assert context.bundle == PolicyEngineBundle(model_version="1.500.0")

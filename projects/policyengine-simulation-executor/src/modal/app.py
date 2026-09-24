@@ -19,7 +19,7 @@ from policyengine_simulation_observability.observability import (
     init_process_observability,
     modal_image_environment,
 )
-from policyengine_simulation_observability.telemetry import remote_context
+from policyengine_simulation_observability.telemetry import apply_remote_context
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     BUDGET_WINDOW_STAGES,
@@ -333,9 +333,8 @@ def run_simulation(params: dict) -> dict:
     # We deliberately avoid sending full ``params`` or ``result`` blobs to
     # observability: they can embed signed URLs, reform
     # parameter trees with sensitive policy details, or result payloads
-    # large enough to blow attribute budgets. The redacted summary keeps
-    # correlation traceability via observability_id while leaving the heavy payload
-    # in memory.
+    # large enough to blow attribute budgets. Correlation fields come from
+    # the validated remote context while the heavy payload stays in memory.
     redacted_params = {
         **redact_params_for_logging(params),
         "modal_app_name": APP_NAME,
@@ -343,10 +342,11 @@ def run_simulation(params: dict) -> dict:
         "modal_function_name": "run_simulation",
     }
     try:
+        propagated = apply_remote_context(runtime, params)
         with runtime.operation(
             ANNUAL_IMPACT_STAGES.name(Stage.ANNUAL_EXECUTION),
             attributes=redacted_params,
-            remote_context=remote_context(params),
+            remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
             from src.modal.segmented_national import dispatch_run_simulation
@@ -390,10 +390,11 @@ def run_simulation_segment(params: dict) -> dict:
         "modal_function_name": "run_simulation_segment",
     }
     try:
+        propagated = apply_remote_context(runtime, params)
         with runtime.operation(
             SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_EXECUTION),
             attributes=redacted_params,
-            remote_context=remote_context(params),
+            remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
             from policyengine_simulation_executor.simulation_runtime import (
@@ -425,10 +426,11 @@ def run_budget_window_batch(params: dict) -> dict:
         "modal_function_name": "run_budget_window_batch",
     }
     try:
+        propagated = apply_remote_context(runtime, params)
         with runtime.operation(
             BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_EXECUTION),
             attributes=redacted_params,
-            remote_context=remote_context(params),
+            remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
             from src.modal.budget_window_batch import run_budget_window_batch_impl

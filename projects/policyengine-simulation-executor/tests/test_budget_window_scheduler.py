@@ -253,7 +253,6 @@ def test_budget_window_submit_and_poll_exercise_gateway_worker_seams(
             "window_size": 3,
             "max_parallel": 2,
             "_telemetry": {
-                "observability_id": "batch-run-123",
                 "submission_claim_id": "proc-123",
                 "capture_mode": "disabled",
             },

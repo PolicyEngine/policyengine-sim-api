@@ -12,7 +12,6 @@ import os
 import shlex
 from pathlib import Path
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_observability.observability import (
@@ -25,7 +24,7 @@ from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
     Stage,
 )
-from policyengine_simulation_observability.telemetry import remote_context
+from policyengine_simulation_observability.telemetry import apply_remote_context
 
 import modal
 from policyengine_simulation_executor.stage12_bundle import (
@@ -75,18 +74,6 @@ worker_secrets = [
     hf_secret,
     comparison_runtime_secret,
 ]
-
-
-def _stage12_remote_context(
-    runtime: ObservabilityRuntime,
-    observability_context: dict | None,
-) -> dict[str, str] | None:
-    propagated = remote_context({"_observability_context": observability_context})
-    if propagated is not None:
-        observability_id = propagated.get("observability_id")
-        if observability_id is not None:
-            runtime.set_context(observability_id=observability_id)
-    return propagated
 
 
 def _country_bundle(country: CountryId):
@@ -219,7 +206,9 @@ def run_single_simulation_us(
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
     try:
-        propagated = _stage12_remote_context(runtime, observability_context)
+        propagated = apply_remote_context(
+            runtime, {"_observability_context": observability_context}
+        )
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
@@ -263,7 +252,9 @@ def run_single_simulation_uk(
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
     try:
-        propagated = _stage12_remote_context(runtime, observability_context)
+        propagated = apply_remote_context(
+            runtime, {"_observability_context": observability_context}
+        )
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
@@ -318,7 +309,9 @@ def coordinate_report(
         else STAGE12_CANONICAL_REPORT_STAGES
     )
     try:
-        propagated = _stage12_remote_context(runtime, observability_context)
+        propagated = apply_remote_context(
+            runtime, {"_observability_context": observability_context}
+        )
         with runtime.operation(
             stage_plan.name(Stage.STAGE12_COORDINATOR_EXECUTION),
             attributes={

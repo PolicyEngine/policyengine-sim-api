@@ -7,7 +7,6 @@ from policyengine_fastapi.observability import (
     SimulationLifecycleEvent,
     SimulationRunSummary,
     SimulationStage,
-    SimulationTelemetryEnvelope,
     SimulationTimelineEntry,
     TracerArtifactManifest,
     TracerCaptureMode,
@@ -107,15 +106,6 @@ def test_contract_models__serialize_expected_shapes():
     assert dumped_version_metrics["versions"] == []
 
 
-def test_telemetry_envelope__serializes_expected_defaults():
-    envelope = SimulationTelemetryEnvelope(observability_id="run-123")
-
-    dumped = envelope.model_dump(mode="json")
-
-    assert dumped["observability_id"] == "run-123"
-    assert dumped["capture_mode"] == "disabled"
-
-
 def test_contract_models__reject_extra_fields():
     try:
         SimulationLifecycleEvent(
@@ -131,15 +121,6 @@ def test_contract_models__reject_extra_fields():
         assert "unexpected" in str(error)
     else:
         raise AssertionError("Expected extra field validation to fail")
-
-
-def test_contract_models__reject_invalid_enum_values():
-    try:
-        SimulationTelemetryEnvelope(observability_id="run-123", capture_mode="bad-mode")
-    except ValidationError as error:
-        assert "capture_mode" in str(error)
-    else:
-        raise AssertionError("Expected invalid enum validation to fail")
 
 
 def test_noop_observability__accepts_calls_without_side_effects():

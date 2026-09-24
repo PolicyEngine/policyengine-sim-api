@@ -54,19 +54,6 @@ class TracerArtifactManifest(CorrelatedRunFields):
     generated_at: datetime
 
 
-class SimulationTelemetryEnvelope(ObservabilityModel):
-    observability_id: str
-    submission_claim_id: str | None = None
-    request_id: str | None = None
-    traceparent: str | None = None
-    requested_at: datetime | None = None
-    simulation_kind: str | None = None
-    geography_code: str | None = None
-    geography_type: str | None = None
-    config_hash: str | None = None
-    capture_mode: TracerCaptureMode = TracerCaptureMode.DISABLED
-
-
 class SimulationRunSummary(CorrelatedRunFields):
     status: str
     requested_at: datetime | None = None

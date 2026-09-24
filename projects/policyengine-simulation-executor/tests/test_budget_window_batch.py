@@ -153,7 +153,6 @@ def _build_parent_payload(*, window_size: int = 3):
         scope="macro",
         reform={},
         _telemetry={
-            "observability_id": "batch-run-123",
             "submission_claim_id": "proc-123",
             "capture_mode": "disabled",
         },

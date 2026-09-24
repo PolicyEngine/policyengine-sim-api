@@ -180,26 +180,23 @@ class TestSimulationRequest:
         assert request.version is None
         assert request.policyengine_version == "4.10.0"
 
-    def test_simulation_request_accepts_current_production_api_telemetry(self):
+    @pytest.mark.parametrize(
+        "field",
+        ["observability_id", "run_id", "process_id", "request_id", "traceparent"],
+    )
+    def test_simulation_request_discards_noncanonical_context_fields(self, field):
         request = SimulationRequest(
             country="us",
             _telemetry={
-                "run_id": "00000000-0000-4000-8000-000000000001",
-                "process_id": "job-123",
-                "request_id": "request-123",
-                "traceparent": (
-                    "00-11111111111111111111111111111111-2222222222222222-01"
-                ),
+                field: "identifier",
+                "submission_claim_id": "claim-123",
                 "capture_mode": "disabled",
             },
         )
 
         assert request.telemetry is not None
-        assert (
-            request.telemetry.observability_id
-            == "00000000-0000-4000-8000-000000000001"
-        )
-        assert request.telemetry.submission_claim_id == "job-123"
+        assert request.telemetry.submission_claim_id == "claim-123"
+        assert field not in request.telemetry.model_dump()
 
     def test_simulation_request_accepts_documented_simulation_fields(self):
         """
@@ -324,14 +321,12 @@ class TestSimulationRequest:
         request = SimulationRequest(
             country="us",
             _telemetry={
-                "observability_id": "run-123",
                 "submission_claim_id": "proc-123",
                 "capture_mode": "disabled",
             },
         )
 
         assert request.telemetry is not None
-        assert request.telemetry.observability_id == "run-123"
         assert request.telemetry.submission_claim_id == "proc-123"
 
 
@@ -572,14 +567,13 @@ class TestBudgetWindowBatchRequest:
             start_year="2026",
             window_size=10,
             _telemetry={
-                "observability_id": "batch-run-123",
                 "submission_claim_id": "proc-123",
                 "capture_mode": "disabled",
             },
         )
 
         assert request.telemetry is not None
-        assert request.telemetry.observability_id == "batch-run-123"
+        assert request.telemetry.submission_claim_id == "proc-123"
 
 
 class TestBudgetWindowBatchSubmitResponse:
@@ -597,7 +591,6 @@ class TestBudgetWindowBatchSubmitResponse:
                 "model_version": "1.500.0",
                 "dataset": "default",
             },
-            observability_id="batch-run-123",
         )
 
         assert response.model_dump(mode="json") == {
@@ -614,7 +607,6 @@ class TestBudgetWindowBatchSubmitResponse:
                 "spm": None,
                 "dataset": "default",
             },
-            "observability_id": "batch-run-123",
         }
 
 

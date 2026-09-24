@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Optional, TypedDict
 
 import modal
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from policyengine_observability import ObservabilityRuntime
 
 from policyengine_simulation_contract.budget_window_state import (
@@ -28,8 +28,8 @@ from policyengine_simulation_contract.spm import (
 from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_observability.identifiers import (
     OBSERVABILITY_ID_HEADER,
-    generate_observability_id,
     normalize_observability_id,
+    resolve_observability_id,
 )
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
@@ -593,17 +593,26 @@ def _serialize_job_metadata(
     }
 
 
-def _request_observability_id(
-    request: SimulationRequest | BudgetWindowBatchRequest,
-    http_request: Request,
-) -> str:
-    supplied = request.telemetry.observability_id if request.telemetry else None
-    if isinstance(supplied, str) and supplied:
-        return supplied
-    return (
-        normalize_observability_id(http_request.headers.get(OBSERVABILITY_ID_HEADER))
-        or generate_observability_id()
+def _request_observability_id(http_request: Request) -> str:
+    return resolve_observability_id(
+        getattr(http_request.state, "observability_id", None)
+        or http_request.headers.get(OBSERVABILITY_ID_HEADER)
     )
+
+
+def _observability_headers(observability_id: str | None) -> dict[str, str] | None:
+    normalized = normalize_observability_id(observability_id)
+    if normalized is None:
+        return None
+    return {OBSERVABILITY_ID_HEADER: normalized}
+
+
+def _public_job_metadata(job_metadata: dict | None) -> dict:
+    if not isinstance(job_metadata, dict):
+        return {}
+    return {
+        key: value for key, value in job_metadata.items() if key != "observability_id"
+    }
 
 
 def _build_budget_window_parent_payload(
@@ -612,7 +621,6 @@ def _build_budget_window_parent_payload(
     resolved_version: str,
     resolved_app_name: str,
     bundle: PolicyEngineBundle,
-    observability_id: str,
 ) -> dict:
     payload = request.model_dump(
         exclude={"version", "policyengine_version", "telemetry"},
@@ -622,13 +630,8 @@ def _build_budget_window_parent_payload(
     if request.spm is not None:
         payload["spm"] = request.spm.model_dump(mode="json")
     payload["version"] = resolved_version
-    telemetry = (
-        request.telemetry.model_dump(mode="json")
-        if request.telemetry is not None
-        else {}
-    )
-    telemetry["observability_id"] = observability_id
-    payload["_telemetry"] = telemetry
+    if request.telemetry is not None:
+        payload["_telemetry"] = request.telemetry.model_dump(mode="json")
     payload["_metadata"] = {
         "resolved_version": resolved_version,
         "resolved_app_name": resolved_app_name,
@@ -678,6 +681,7 @@ def get_app_name(country: str, version: Optional[str]) -> tuple[str, str]:
 async def submit_simulation(
     request: SimulationRequest,
     http_request: Request,
+    response: Response,
 ):
     """
     Submit a simulation job.
@@ -687,7 +691,8 @@ async def submit_simulation(
     Returns immediately with job_id for polling.
     """
     runtime = _runtime(http_request)
-    observability_id = _request_observability_id(request, http_request)
+    observability_id = _request_observability_id(http_request)
+    response.headers[OBSERVABILITY_ID_HEADER] = observability_id
     runtime.set_context(
         country=request.country,
         scope=request.scope,
@@ -716,13 +721,8 @@ async def submit_simulation(
             mode="json",
             exclude_none=True,
         )
-    telemetry = (
-        request.telemetry.model_dump(mode="json")
-        if request.telemetry is not None
-        else {}
-    )
-    telemetry["observability_id"] = observability_id
-    payload["_telemetry"] = telemetry
+    if request.telemetry is not None:
+        payload["_telemetry"] = request.telemetry.model_dump(mode="json")
 
     try:
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.POLICYENGINE_BUNDLE)):
@@ -735,7 +735,9 @@ async def submit_simulation(
         detail = spm_error_detail(exc)
         if detail:
             return failed_job_response(
-                error=detail.message, errors=[detail.model_dump()]
+                error=detail.message,
+                errors=[detail.model_dump()],
+                headers=_observability_headers(observability_id),
             )
         runtime.record_exception(exc, handled=True, status_code=400)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -774,7 +776,6 @@ async def submit_simulation(
             version=route.response_version,
             resolved_app_name=route.app_name,
             policyengine_bundle=bundle,
-            observability_id=observability_id,
         )
 
 
@@ -787,12 +788,14 @@ async def submit_simulation(
 async def submit_budget_window_batch(
     request: BudgetWindowBatchRequest,
     http_request: Request,
+    response: Response,
 ):
     """
     Submit a budget-window batch job.
     """
     runtime = _runtime(http_request)
-    observability_id = _request_observability_id(request, http_request)
+    observability_id = _request_observability_id(http_request)
+    response.headers[OBSERVABILITY_ID_HEADER] = observability_id
     runtime.set_context(
         country=request.country,
         observability_id=observability_id,
@@ -825,7 +828,9 @@ async def submit_budget_window_batch(
         detail = spm_error_detail(exc)
         if detail:
             return failed_job_response(
-                error=detail.message, errors=[detail.model_dump()]
+                error=detail.message,
+                errors=[detail.model_dump()],
+                headers=_observability_headers(observability_id),
             )
         runtime.record_exception(exc, handled=True, status_code=400)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -835,7 +840,6 @@ async def submit_budget_window_batch(
             resolved_version=route.response_version,
             resolved_app_name=route.app_name,
             bundle=bundle,
-            observability_id=observability_id,
         )
 
     # Lazy handle + spawn together: the RPC cost lands in ``spawn``.
@@ -866,7 +870,6 @@ async def submit_budget_window_batch(
             version=route.response_version,
             resolved_app_name=route.app_name,
             policyengine_bundle=bundle,
-            observability_id=seed_state.observability_id,
         )
 
 
@@ -876,7 +879,7 @@ async def submit_budget_window_batch(
     response_model_exclude_none=True,
     dependencies=[Depends(require_auth)],
 )
-async def get_job_status(job_id: str, request: Request):
+async def get_job_status(job_id: str, request: Request, response: Response):
     """
     Poll for job status.
 
@@ -893,7 +896,12 @@ async def get_job_status(job_id: str, request: Request):
     if job_metadata is None:
         _record_not_found(runtime, f"Job not found: {job_id}")
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
-    runtime.set_context(observability_id=job_metadata.get("observability_id"))
+    observability_id = normalize_observability_id(job_metadata.get("observability_id"))
+    runtime.set_context(observability_id=observability_id)
+    if observability_id is not None:
+        response.headers[OBSERVABILITY_ID_HEADER] = observability_id
+    public_metadata = _public_job_metadata(job_metadata)
+    response_headers = _observability_headers(observability_id)
 
     try:
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)):
@@ -910,11 +918,11 @@ async def get_job_status(job_id: str, request: Request):
             result = call.get(timeout=0)
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
             return JobStatusResponse(
-                status="complete", result=result, **(job_metadata or {})
+                status="complete", result=result, **public_metadata
             )
     except TimeoutError:
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
-            return running_job_response(job_metadata)
+            return running_job_response(public_metadata, headers=response_headers)
     except Exception as exc:
         if _is_modal_job_not_found(exc):
             runtime.record_exception(exc, handled=True, status_code=404)
@@ -924,7 +932,8 @@ async def get_job_status(job_id: str, request: Request):
             return failed_job_response(
                 error=detail.message,
                 errors=[detail.model_dump()],
-                job_metadata=job_metadata,
+                job_metadata=public_metadata,
+                headers=response_headers,
             )
         redacted = log_and_redact_exception(
             exc,
@@ -933,7 +942,11 @@ async def get_job_status(job_id: str, request: Request):
             context={"job_id": job_id},
         )
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
-            return failed_job_response(error=redacted, job_metadata=job_metadata)
+            return failed_job_response(
+                error=redacted,
+                job_metadata=public_metadata,
+                headers=response_headers,
+            )
 
 
 @router.get(
@@ -942,7 +955,11 @@ async def get_job_status(job_id: str, request: Request):
     response_model_exclude_none=True,
     dependencies=[Depends(require_auth)],
 )
-async def get_budget_window_job_status(batch_job_id: str, request: Request):
+async def get_budget_window_job_status(
+    batch_job_id: str,
+    request: Request,
+    response: Response,
+):
     """
     Poll for budget-window batch status.
     """
@@ -952,10 +969,15 @@ async def get_budget_window_job_status(batch_job_id: str, request: Request):
         state = get_batch_job_state(batch_job_id)
     if state is not None:
         runtime.set_context(observability_id=state.observability_id)
+        response_headers = _observability_headers(state.observability_id)
+        if response_headers is not None:
+            response.headers.update(response_headers)
         with runtime.span(
             BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
         ):
-            return batch_status_response(build_batch_status_response(state))
+            return batch_status_response(
+                build_batch_status_response(state), headers=response_headers
+            )
 
     with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)):
         seed_state = get_batch_job_seed(batch_job_id)
@@ -965,6 +987,9 @@ async def get_budget_window_job_status(batch_job_id: str, request: Request):
             status_code=404, detail=f"Budget-window job not found: {batch_job_id}"
         )
     runtime.set_context(observability_id=seed_state.observability_id)
+    response_headers = _observability_headers(seed_state.observability_id)
+    if response_headers is not None:
+        response.headers.update(response_headers)
 
     try:
         with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)):
@@ -991,7 +1016,9 @@ async def get_budget_window_job_status(batch_job_id: str, request: Request):
         with runtime.span(
             BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
         ):
-            return batch_status_response(build_batch_status_response(seed_state))
+            return batch_status_response(
+                build_batch_status_response(seed_state), headers=response_headers
+            )
 
     try:
         with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)):
@@ -1000,7 +1027,9 @@ async def get_budget_window_job_status(batch_job_id: str, request: Request):
         with runtime.span(
             BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
         ):
-            return batch_status_response(build_batch_status_response(seed_state))
+            return batch_status_response(
+                build_batch_status_response(seed_state), headers=response_headers
+            )
     except Exception as exc:
         # Persist the failure so subsequent polls don't resurrect the
         # "submitted" status from the seed store (#448). We deliberately
@@ -1026,14 +1055,16 @@ async def get_budget_window_job_status(batch_job_id: str, request: Request):
         with runtime.span(
             BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
         ):
-            return batch_status_response(build_batch_status_response(seed_state))
+            return batch_status_response(
+                build_batch_status_response(seed_state), headers=response_headers
+            )
 
     with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_RESULT_PARSE)):
-        response = BudgetWindowBatchStatusResponse.model_validate(result)
+        status_response = BudgetWindowBatchStatusResponse.model_validate(result)
     with runtime.span(
         BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
     ):
-        return batch_status_response(response)
+        return batch_status_response(status_response, headers=response_headers)
 
 
 @router.get("/versions", response_model=VersionsResponse)

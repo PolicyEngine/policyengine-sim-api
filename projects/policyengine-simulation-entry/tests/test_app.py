@@ -35,11 +35,20 @@ from policyengine_simulation_entry.stage12_backend import (
 )
 
 
-def response(status: int, payload: JsonObject) -> BackendResponse:
+def response(
+    status: int,
+    payload: JsonObject,
+    *,
+    headers: dict[str, str] | None = None,
+) -> BackendResponse:
     return BackendResponse(
         status_code=status,
         content=json.dumps(payload).encode(),
-        headers={"content-type": "application/json", "retry-after": "3"},
+        headers={
+            "content-type": "application/json",
+            "retry-after": "3",
+            **(headers or {}),
+        },
     )
 
 
@@ -154,6 +163,7 @@ def test_automatic_comparison_dispatch_preserves_production_response(
 
     from fastapi.testclient import TestClient
 
+    observability_id = "00000000-0000-4000-8000-000000000001"
     with TestClient(app) as test_client:
         result = test_client.post(
             "/simulate/economy/comparison",
@@ -162,12 +172,14 @@ def test_automatic_comparison_dispatch_preserves_production_response(
                 "scope": "macro",
                 "reform": {},
                 "_telemetry": {
-                    "observability_id": "production-run-1",
                     "submission_claim_id": "api-process-1",
                     "capture_mode": "disabled",
                 },
             },
-            headers={REQUEST_ID_HEADER: "request-1"},
+            headers={
+                REQUEST_ID_HEADER: "request-1",
+                OBSERVABILITY_ID_HEADER: observability_id,
+            },
         )
 
     assert result.status_code == 202
@@ -175,9 +187,8 @@ def test_automatic_comparison_dispatch_preserves_production_response(
     assert result.headers["x-policyengine-simulation-backend"] == "old_gateway"
     assert len(comparison.calls) == 1
     assert comparison.calls[0]["request_id"] == "request-1"
-    assert comparison.calls[0]["request_payload"]["telemetry"]["observability_id"] == (
-        "production-run-1"
-    )
+    assert comparison.calls[0]["observability_id"] == observability_id
+    assert "observability_id" not in comparison.calls[0]["request_payload"]["telemetry"]
     assert json.loads(comparison.calls[0]["production_response"]) == payload
 
 
@@ -568,15 +579,18 @@ def test_temporary_stage12_submission_returns_bounded_failures(
 
 
 def test_job_status_preserves_id_and_status(client, backend):
+    observability_id = "00000000-0000-4000-8000-000000000001"
     backend.responses[("GET", "/jobs/fc-123")] = response(
         202,
-        {"status": "running", "observability_id": "run-1"},
+        {"status": "running"},
+        headers={OBSERVABILITY_ID_HEADER: observability_id},
     )
 
     result = client.get("/jobs/fc-123")
 
     assert result.status_code == 202
-    assert result.json() == {"status": "running", "observability_id": "run-1"}
+    assert result.json() == {"status": "running"}
+    assert result.headers[OBSERVABILITY_ID_HEADER] == observability_id
     assert backend.requests[-1].path == "/jobs/fc-123"
 
 

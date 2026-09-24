@@ -1,8 +1,8 @@
 import pytest
-from pydantic import ValidationError
 
 from policyengine_simulation_observability.telemetry import (
     TelemetryEnvelope,
+    apply_remote_context,
     remote_context,
     split_internal_payload,
 )
@@ -14,7 +14,6 @@ def test_split_internal_payload__removes_internal_fields():
         "scope": "macro",
         "_metadata": {"submission_claim_id": "proc-123"},
         "_telemetry": {
-            "observability_id": "run-123",
             "submission_claim_id": "proc-123",
             "capture_mode": "disabled",
         },
@@ -32,7 +31,6 @@ def test_split_internal_payload__removes_internal_fields():
     assert "_observability_context" not in simulation_params
     assert simulation_params == {"country": "us", "scope": "macro"}
     assert telemetry == TelemetryEnvelope(
-        observability_id="run-123",
         submission_claim_id="proc-123",
         capture_mode="disabled",
     )
@@ -64,12 +62,47 @@ def test_remote_context_rejects_malformed_or_extra_values():
             {
                 "_observability_context": {
                     "captured_at": "2026-09-22T00:00:00Z",
+                    "observability_id": "not-a-uuid",
+                }
+            }
+        )
+        is None
+    )
+    assert (
+        remote_context(
+            {
+                "_observability_context": {
+                    "captured_at": "2026-09-22T00:00:00Z",
                     "household": {"people": {}},
                 }
             }
         )
         is None
     )
+
+
+def test_apply_remote_context_sets_the_runtime_diagnostic_identifier():
+    class Runtime:
+        def __init__(self):
+            self.context = {}
+
+        def set_context(self, **values):
+            self.context.update(values)
+
+    runtime = Runtime()
+    params = {
+        "_observability_context": {
+            "captured_at": "2026-09-22T00:00:00Z",
+            "observability_id": "00000000-0000-4000-8000-000000000001",
+        }
+    }
+
+    propagated = apply_remote_context(runtime, params)
+
+    assert propagated is not None
+    assert runtime.context == {
+        "observability_id": "00000000-0000-4000-8000-000000000001"
+    }
 
 
 def test_split_internal_payload__tolerates_missing_internal_fields():
@@ -96,37 +129,13 @@ def test_split_internal_payload__drops_malformed_telemetry_without_failing_work(
     assert metadata is None
 
 
-def test_split_internal_payload__normalizes_current_production_api_telemetry():
-    payload = {
-        "country": "us",
-        "scope": "macro",
-        "_telemetry": {
-            "run_id": "00000000-0000-4000-8000-000000000001",
-            "process_id": "job-123",
-            "request_id": "request-123",
-            "traceparent": (
-                "00-11111111111111111111111111111111-2222222222222222-01"
-            ),
-            "capture_mode": "disabled",
-        },
-    }
-
-    simulation_params, telemetry, metadata = split_internal_payload(payload)
-
-    assert simulation_params == {"country": "us", "scope": "macro"}
-    assert telemetry == TelemetryEnvelope(
-        observability_id="00000000-0000-4000-8000-000000000001",
-        submission_claim_id="job-123",
-        capture_mode="disabled",
+@pytest.mark.parametrize(
+    "field", ["observability_id", "run_id", "process_id", "request_id", "traceparent"]
+)
+def test_telemetry_discards_noncanonical_context_fields(field):
+    telemetry = TelemetryEnvelope.model_validate(
+        {field: "identifier", "submission_claim_id": "claim-123"}
     )
-    assert metadata is None
 
-
-def test_telemetry_rejects_conflicting_previous_and_current_identifiers():
-    with pytest.raises(ValidationError, match="run_id and observability_id must match"):
-        TelemetryEnvelope.model_validate(
-            {
-                "run_id": "00000000-0000-4000-8000-000000000001",
-                "observability_id": "00000000-0000-4000-8000-000000000002",
-            }
-        )
+    assert telemetry.submission_claim_id == "claim-123"
+    assert field not in telemetry.model_dump()
