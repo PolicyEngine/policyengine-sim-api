@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from importlib.metadata import PackageNotFoundError, version
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import FastAPI
 from policyengine_observability import (
@@ -18,6 +19,12 @@ from policyengine_observability import (
     StdoutLogDestination,
     configure,
     instrument_fastapi,
+)
+from starlette.datastructures import Headers
+
+from policyengine_simulation_observability.identifiers import (
+    OBSERVABILITY_ID_HEADER,
+    normalize_observability_id,
 )
 
 Platform = Literal["google_cloud_run", "modal", "local", "other"]
@@ -97,6 +104,31 @@ SIMULATION_ATTRIBUTE_KEYS = frozenset(
 )
 
 DISPATCH_ATTRIBUTE_KEYS = frozenset({"job_id", "observability_id", "simulation_id"})
+
+
+class _RuntimeObservabilityIdMiddleware:
+    """Attach the transport identifier after request tracing has started."""
+
+    def __init__(self, app: Any, *, runtime: ObservabilityRuntime) -> None:
+        self.app = app
+        self.runtime = runtime
+
+    async def __call__(
+        self,
+        scope: dict[str, Any],
+        receive: Callable[[], Awaitable[dict[str, Any]]],
+        send: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        if scope.get("type") == "http":
+            observability_id = normalize_observability_id(
+                Headers(scope=scope).get(OBSERVABILITY_ID_HEADER)
+            )
+            if observability_id is not None:
+                try:
+                    self.runtime.set_context(observability_id=observability_id)
+                except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+                    pass
+        await self.app(scope, receive, send)
 
 
 def modal_image_environment() -> dict[str, str]:
@@ -189,6 +221,12 @@ def init_simulation_observability(
         environment=environment,
         service_version=service_version,
     )
+    # FastAPI applies the most recently registered middleware first. Install
+    # this context layer before the lifecycle integration so it executes after
+    # begin_request has created the request-local runtime state. Application
+    # correlation middleware may then be registered outside both layers and
+    # normalize the header before either observability layer reads it.
+    app.add_middleware(_RuntimeObservabilityIdMiddleware, runtime=runtime)
     return instrument_fastapi(app, runtime)
 
 

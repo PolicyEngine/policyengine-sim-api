@@ -13,7 +13,6 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, TypeAdapter, ValidationError
 from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
@@ -36,13 +35,14 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     ComparisonSimulationRecord,
 )
-from policyengine_simulation_observability.observability import (
-    init_simulation_observability,
-)
 from policyengine_simulation_observability.identifiers import (
     OBSERVABILITY_ID_HEADER,
     resolve_observability_id,
 )
+from policyengine_simulation_observability.observability import (
+    init_simulation_observability,
+)
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from starlette.datastructures import MutableHeaders
 
 from policyengine_simulation_entry.auth import CallerAuthenticator
@@ -201,13 +201,6 @@ def create_app(
         request.state.request_id = request_id
         request.state.observability_id = observability_id
         try:
-            runtime.set_context(
-                request_id=request_id,
-                observability_id=observability_id,
-            )
-        except Exception:
-            pass
-        try:
             response = await call_next(request)
         except Exception:
             logger.exception(
@@ -231,10 +224,6 @@ def create_app(
             response.headers["X-PolicyEngine-Simulation-Revision"] = (
                 runtime_settings.revision
             )
-        try:
-            runtime.set_context(backend="old_gateway", **_request_identifiers(request))
-        except Exception:
-            pass
         return response
 
     async def forward(
@@ -249,6 +238,10 @@ def create_app(
         backend_started = time.monotonic()
         route = _route_template(request)
         event_identifiers: RequestIdentifiers = identifiers or {}
+        try:
+            runtime.set_context(backend="old_gateway", **event_identifiers)
+        except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+            pass
         try:
             result = await runtime_backend.request(
                 method,
@@ -474,7 +467,7 @@ def create_app(
             response_headers[OBSERVABILITY_ID_HEADER] = report.observability_id
             try:
                 runtime.set_context(observability_id=report.observability_id)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
                 pass
         return JSONResponse(
             status_code=202 if running else 200,

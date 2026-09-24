@@ -14,14 +14,6 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     SimulationRole,
 )
-from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
-from stage12_fixtures import (
-    EVALUATION_ID,
-    comparison_report,
-    comparison_simulation,
-    eligible_payload,
-)
-
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.backend import (
@@ -32,6 +24,13 @@ from policyengine_simulation_entry.backend import (
 from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12DispatchFailed,
     TemporaryStage12UnsupportedRequest,
+)
+from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
+from stage12_fixtures import (
+    EVALUATION_ID,
+    comparison_report,
+    comparison_simulation,
+    eligible_payload,
 )
 
 
@@ -741,6 +740,37 @@ def test_request_id_is_propagated_logged_and_returned(
     assert result.headers[REQUEST_ID_HEADER] == "request-123"
     assert "x-request-id" not in result.headers
     assert backend.requests[-1].request_id == "request-123"
+
+
+def test_request_identifiers_are_attached_to_the_active_observability_context(
+    backend,
+):
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+    )
+    runtime = app.state.policyengine_observability
+
+    @app.get("/_test/runtime-context")
+    def runtime_context():
+        return runtime.capture_context()
+
+    from fastapi.testclient import TestClient
+
+    observability_id = "00000000-0000-4000-8000-000000000001"
+    with TestClient(app) as test_client:
+        result = test_client.get(
+            "/_test/runtime-context",
+            headers={
+                REQUEST_ID_HEADER: "request-123",
+                OBSERVABILITY_ID_HEADER: observability_id,
+            },
+        )
+
+    assert result.status_code == 200
+    assert result.json()["request_id"] == "request-123"
+    assert result.json()["observability_id"] == observability_id
 
 
 def test_x_request_id_is_not_an_alias(client, backend):
