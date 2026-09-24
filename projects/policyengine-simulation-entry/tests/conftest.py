@@ -38,6 +38,7 @@ class BackendRequest:
     path: str
     json_body: JsonObject | None
     request_id: str | None
+    observability_id: str | None
 
 
 class FakeBackend:
@@ -63,6 +64,7 @@ class FakeBackend:
         *,
         json_body: JsonObject | None = None,
         request_id: str | None = None,
+        observability_id: str | None = None,
     ) -> BackendResponse:
         self.requests.append(
             BackendRequest(
@@ -70,6 +72,7 @@ class FakeBackend:
                 path=path,
                 json_body=json_body,
                 request_id=request_id,
+                observability_id=observability_id,
             )
         )
         return self.responses.get(

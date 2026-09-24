@@ -21,7 +21,7 @@ from .contracts import (
     VersionStageMetricResponse as VersionStageMetricResponse,
 )
 from .correlation import (
-    generate_run_id as generate_run_id,
+    generate_observability_id as generate_observability_id,
     stable_config_hash as stable_config_hash,
 )
 from .emitters import (

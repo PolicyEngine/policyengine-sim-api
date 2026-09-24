@@ -14,6 +14,17 @@ from pathlib import Path
 
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
+from policyengine_simulation_observability.observability import (
+    init_process_observability,
+    modal_image_environment,
+)
+from policyengine_simulation_observability.stages import (
+    STAGE12_CANONICAL_REPORT_STAGES,
+    STAGE12_SHADOW_REPORT_STAGES,
+    STAGE12_SIMULATION_STAGES,
+    Stage,
+)
+from policyengine_simulation_observability.telemetry import remote_context
 
 import modal
 from policyengine_simulation_executor.stage12_bundle import (
@@ -56,13 +67,11 @@ app = modal.App(APP_NAME)
 gcp_secret = modal.Secret.from_name("stage12-evaluation-gcp-credentials")
 data_secret = modal.Secret.from_name("policyengine-data-credentials")
 hf_secret = modal.Secret.from_name("huggingface-token")
-logfire_secret = modal.Secret.from_name("policyengine-logfire")
 comparison_runtime_secret = modal.Secret.from_name("stage12-evaluation-runtime")
 worker_secrets = [
     gcp_secret,
     data_secret,
     hf_secret,
-    logfire_secret,
     comparison_runtime_secret,
 ]
 
@@ -109,6 +118,7 @@ def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:
         )
         .env(
             {
+                **modal_image_environment(),
                 "POLICYENGINE_DATA_FOLDER": STAGE12_DATA_DIR,
                 "STAGE12_BUNDLE_MANIFEST_SHA256": (
                     RESOLVED_BUNDLE.bundle_manifest_sha256
@@ -180,12 +190,34 @@ def validate_worker_uk() -> dict:
     max_containers=10,
     secrets=worker_secrets,
 )
-def run_single_simulation_us(payload: dict, context: dict) -> dict:
+def run_single_simulation_us(
+    payload: dict,
+    context: dict,
+    observability_context: dict | None = None,
+) -> dict:
     from policyengine_simulation_executor.stage12_runtime import (
         run_single_simulation,
     )
 
-    return run_single_simulation(payload, context, required_country="us")
+    runtime = init_process_observability(
+        service_name="policyengine-stage12-us-worker",
+        service_role="stage12_simulation_worker",
+        platform="modal",
+        environment=os.getenv("MODAL_ENVIRONMENT", "local"),
+    )
+    with runtime.operation(
+        STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
+        attributes={"runner_name": "stage12", "simulation_role": payload.get("role")},
+        remote_context=remote_context(
+            {"_observability_context": observability_context}
+        ),
+    ):
+        return run_single_simulation(
+            payload,
+            context,
+            required_country="us",
+            runtime=runtime,
+        )
 
 
 @app.function(
@@ -197,12 +229,34 @@ def run_single_simulation_us(payload: dict, context: dict) -> dict:
     max_containers=10,
     secrets=worker_secrets,
 )
-def run_single_simulation_uk(payload: dict, context: dict) -> dict:
+def run_single_simulation_uk(
+    payload: dict,
+    context: dict,
+    observability_context: dict | None = None,
+) -> dict:
     from policyengine_simulation_executor.stage12_runtime import (
         run_single_simulation,
     )
 
-    return run_single_simulation(payload, context, required_country="uk")
+    runtime = init_process_observability(
+        service_name="policyengine-stage12-uk-worker",
+        service_role="stage12_simulation_worker",
+        platform="modal",
+        environment=os.getenv("MODAL_ENVIRONMENT", "local"),
+    )
+    with runtime.operation(
+        STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
+        attributes={"runner_name": "stage12", "simulation_role": payload.get("role")},
+        remote_context=remote_context(
+            {"_observability_context": observability_context}
+        ),
+    ):
+        return run_single_simulation(
+            payload,
+            context,
+            required_country="uk",
+            runtime=runtime,
+        )
 
 
 @app.function(
@@ -216,7 +270,12 @@ def run_single_simulation_uk(payload: dict, context: dict) -> dict:
     max_containers=10,
     secrets=worker_secrets,
 )
-def coordinate_report(payload: dict, context: dict, parent: dict) -> dict:
+def coordinate_report(
+    payload: dict,
+    context: dict,
+    parent: dict,
+    observability_context: dict | None = None,
+) -> dict:
     from policyengine_simulation_executor.stage12_runtime import (
         coordinate_report as run_report_coordinator,
     )
@@ -224,10 +283,36 @@ def coordinate_report(payload: dict, context: dict, parent: dict) -> dict:
     coordinator_invocation_id = modal.current_function_call_id()
     if coordinator_invocation_id is None:
         raise RuntimeError("Modal coordinator invocation identifier is unavailable")
-    return run_report_coordinator(
-        payload,
-        context,
-        parent,
-        application_name=APP_NAME,
-        coordinator_invocation_id=coordinator_invocation_id,
+    runtime = init_process_observability(
+        service_name="policyengine-stage12-coordinator",
+        service_role="stage12_report_coordinator",
+        platform="modal",
+        environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
+    stage_plan = (
+        STAGE12_SHADOW_REPORT_STAGES
+        if context.get("production_function_call_id")
+        else STAGE12_CANONICAL_REPORT_STAGES
+    )
+    with runtime.operation(
+        stage_plan.name(Stage.STAGE12_COORDINATOR_EXECUTION),
+        attributes={
+            "runner_name": "stage12",
+            "execution_mode": (
+                "shadow"
+                if context.get("production_function_call_id")
+                else "authoritative"
+            ),
+        },
+        remote_context=remote_context(
+            {"_observability_context": observability_context}
+        ),
+    ):
+        return run_report_coordinator(
+            payload,
+            context,
+            parent,
+            application_name=APP_NAME,
+            coordinator_invocation_id=coordinator_invocation_id,
+            runtime=runtime,
+        )

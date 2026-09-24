@@ -7,11 +7,10 @@ internet. Instead, we record the full exception server-side, then return the
 caller a stable generic message plus a correlation id they can cite to
 support.
 
-The stdlib logger is the guaranteed server-side sink: it always fires, so the
-correlation id in the caller-facing message always maps to a log line with the
-full message and stack trace. ``policyengine-observability`` and legacy
-Logfire (kept while we evaluate replacing it) are best-effort on top — both
-silently no-op when their runtime is disabled or unconfigured.
+The standard library logger is the guaranteed server-side sink: it always
+fires, so the correlation id in the caller-facing message maps to a log line
+with the full message and stack trace. The shared observability runtime also
+records a bounded structured event on a best-effort basis.
 
 Two helpers live here:
 
@@ -27,19 +26,9 @@ import logging
 import uuid
 from typing import Any
 
-from policyengine_observability import record_error, record_event
-from policyengine_simulation_observability.logfire_legacy import (
-    legacy_logfire_attributes,
-    logfire_is_configured,
-)
+from policyengine_observability import ObservabilityRuntime
 
 logger = logging.getLogger(__name__)
-
-
-try:
-    import logfire as _logfire  # type: ignore
-except Exception:  # pragma: no cover - logfire optional locally
-    _logfire = None
 
 
 GENERIC_JOB_FAILURE_MESSAGE = "Simulation failed"
@@ -52,6 +41,7 @@ def make_correlation_id() -> str:
 def log_and_redact_exception(
     exc: BaseException,
     *,
+    runtime: ObservabilityRuntime,
     scope: str,
     context: dict[str, Any] | None = None,
 ) -> str:
@@ -69,15 +59,12 @@ def log_and_redact_exception(
         "correlation_id": correlation_id,
         "scope": scope,
         "error_type": type(exc).__name__,
-        **legacy_logfire_attributes(),
     }
     if context:
         payload.update(context)
 
-    # Guaranteed sink. record_error/record_event silently no-op when the
-    # observability runtime is disabled or unconfigured (they never raise),
-    # so this stdlib line is what makes the correlation id in the caller's
-    # message always resolvable to a full message + stack server-side.
+    # This local record keeps the correlation id resolvable even if every
+    # remote exporter is unavailable.
     try:
         logger.error(
             "Gateway %s failed (correlation_id=%s)",
@@ -95,21 +82,13 @@ def log_and_redact_exception(
         )
 
     try:
-        record_error(exc, handled=True, status_code=500)
-        record_event(
+        if isinstance(exc, Exception):
+            runtime.record_exception(exc, handled=True, status_code=500)
+        runtime.event(
             "gateway_error_redacted",
-            **payload,
+            attributes=payload,
         )
     except Exception:  # pragma: no cover - defensive, never raise from logger
         pass
-
-    if logfire_is_configured():
-        try:
-            _logfire.exception(  # type: ignore[union-attr]
-                "Gateway {scope} failed",
-                **payload,
-            )
-        except Exception:  # pragma: no cover - defensive, never raise from logger
-            pass
 
     return f"{GENERIC_JOB_FAILURE_MESSAGE} (correlation_id={correlation_id})"

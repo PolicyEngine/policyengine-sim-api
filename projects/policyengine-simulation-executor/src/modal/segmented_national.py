@@ -25,7 +25,7 @@ import time
 from typing import Any
 
 import modal
-from policyengine_observability import segment, set_attribute
+from policyengine_observability import ObservabilityRuntime
 
 from policyengine_simulation_executor.national_partition import (
     national_region_groups,
@@ -39,7 +39,10 @@ from policyengine_simulation_contract.spm import (
     combine_spm_results,
 )
 from policyengine_simulation_observability.errors import log_and_redact_exception
-from policyengine_simulation_observability.observability import SegmentName
+from policyengine_simulation_observability.stages import (
+    SEGMENTED_NATIONAL_STAGES,
+    Stage,
+)
 from policyengine_simulation_observability.telemetry import split_internal_payload
 from src.modal.fanout import build_child_payload, next_backoff
 
@@ -138,12 +141,14 @@ class SegmentedNationalRunner:
         params: dict[str, Any],
         *,
         app_name: str,
+        runtime: ObservabilityRuntime,
         modal_module=None,
         poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
         poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
     ):
         self.params = params
         self.app_name = app_name
+        self.runtime = runtime
         self.modal = modal if modal_module is None else modal_module
         self.poll_interval_initial_seconds = poll_interval_seconds
         self.poll_interval_max_seconds = poll_interval_max_seconds
@@ -154,12 +159,14 @@ class SegmentedNationalRunner:
         self.groups = groups
         # Lazy handle, no RPC until first spawn (budget-window precedent).
         self.child_func = self.modal.Function.from_name(app_name, SEGMENT_FUNCTION_NAME)
-        set_attribute("national_execution", "segmented")
-        set_attribute("segmented_group_count", len(self.groups))
-        set_attribute("country", self.country)
-        set_attribute("region", self.country)
+        self.runtime.set_context(
+            national_execution="segmented",
+            segmented_group_count=len(self.groups),
+            country=self.country,
+            region=self.country,
+        )
         if params.get("time_period"):
-            set_attribute("simulation_year", str(params["time_period"]))
+            self.runtime.set_context(simulation_year=str(params["time_period"]))
 
     def run(self) -> dict[str, Any]:
         country_module = self._country_module()
@@ -199,7 +206,7 @@ class SegmentedNationalRunner:
                 "US_NATIONAL_REGION_GROUPS with a measured partition.",
                 uncovered,
             )
-            set_attribute("partition_uncovered_regions", ",".join(uncovered))
+            self.runtime.set_context(partition_uncovered_regions=",".join(uncovered))
             self.groups[-1] = list(self.groups[-1]) + uncovered
 
     def _spawn_all_children(self) -> list[tuple[list[str], Any]]:
@@ -207,9 +214,12 @@ class SegmentedNationalRunner:
         try:
             for group in self.groups:
                 payload = build_group_child_payload(self.params, group)
-                with segment(
-                    SegmentName.SEGMENTED_NATIONAL_CHILD_SPAWN,
-                    region_group="+".join(group),
+                payload["_observability_context"] = self.runtime.capture_context()
+                with self.runtime.span(
+                    SEGMENTED_NATIONAL_STAGES.name(
+                        Stage.SEGMENTED_NATIONAL_CHILD_SPAWN
+                    ),
+                    attributes={"region_group": "+".join(group)},
                 ):
                     call = self.child_func.spawn(payload)
                 handles.append((group, call))
@@ -258,6 +268,7 @@ class SegmentedNationalRunner:
                         continue
                     redacted = log_and_redact_exception(
                         exc,
+                        runtime=self.runtime,
                         scope="segmented_national_child",
                         context={"region_group": "+".join(group)},
                     )
@@ -270,8 +281,8 @@ class SegmentedNationalRunner:
                 poll_errors.pop(index, None)
                 progress_made = True
             # Bounded aggregate instead of one segment per probe (see the
-            # SegmentName NOTE about long poll loops).
-            set_attribute("segmented_poll_count", poll_count)
+            # Stage registry note about long poll loops).
+            self.runtime.set_context(segmented_poll_count=poll_count)
             if pending and not progress_made:
                 time.sleep(current_sleep)
                 current_sleep = next_backoff(
@@ -299,7 +310,9 @@ class SegmentedNationalRunner:
         # The canonical internal-key stripper, plus the opt-out knob.
         simulation_params, _, _ = split_internal_payload(self.params)
         simulation_params.pop("segmented", None)
-        with segment(SegmentName.SEGMENTED_NATIONAL_REDUCE):
+        with self.runtime.span(
+            SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_REDUCE)
+        ):
             output = build_national_output(
                 child_results,
                 country=self.country,
@@ -307,6 +320,7 @@ class SegmentedNationalRunner:
                 country_module=country_module,
                 year=_parse_year(simulation_params),
                 resolved_data_version=None,
+                runtime=self.runtime,
             )
         output.update(
             combine_spm_results(
@@ -317,17 +331,26 @@ class SegmentedNationalRunner:
         )
         for key in ("model_version", "data_version"):
             if output.get(key):
-                set_attribute(key, str(output[key]))
+                self.runtime.set_context(**{key: str(output[key])})
         return output
 
 
 def run_segmented_national_impl(
-    params: dict[str, Any], *, app_name: str
+    params: dict[str, Any], *, app_name: str, runtime: ObservabilityRuntime
 ) -> dict[str, Any]:
-    return SegmentedNationalRunner(params, app_name=app_name).run()
+    return SegmentedNationalRunner(
+        params,
+        app_name=app_name,
+        runtime=runtime,
+    ).run()
 
 
-def dispatch_run_simulation(params: dict[str, Any], *, app_name: str) -> dict[str, Any]:
+def dispatch_run_simulation(
+    params: dict[str, Any],
+    *,
+    app_name: str,
+    runtime: ObservabilityRuntime,
+) -> dict[str, Any]:
     """The run_simulation entrypoint's routing: segmented national fan-out
     for eligible requests, the monolithic path for everything else."""
     from policyengine_simulation_executor.spm import normalize_runtime_spm
@@ -336,7 +359,11 @@ def dispatch_run_simulation(params: dict[str, Any], *, app_name: str) -> dict[st
     if selection is not None:
         params = {**params, "spm": selection}
     if should_run_segmented_national(params):
-        return run_segmented_national_impl(params, app_name=app_name)
+        return run_segmented_national_impl(
+            params,
+            app_name=app_name,
+            runtime=runtime,
+        )
 
     from policyengine_simulation_executor.simulation_runtime import (
         run_simulation_impl,
@@ -345,5 +372,5 @@ def dispatch_run_simulation(params: dict[str, Any], *, app_name: str) -> dict[st
     # Only label runs that are actually national-shaped: children, regional,
     # and UK requests must not pollute the segmented-vs-monolithic metric.
     if is_plain_national_macro(params):
-        set_attribute("national_execution", "monolithic")
-    return run_simulation_impl(params)
+        runtime.set_context(national_execution="monolithic")
+    return run_simulation_impl(params, runtime=runtime)

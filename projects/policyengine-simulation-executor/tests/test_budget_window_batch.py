@@ -153,8 +153,8 @@ def _build_parent_payload(*, window_size: int = 3):
         scope="macro",
         reform={},
         _telemetry={
-            "run_id": "batch-run-123",
-            "process_id": "proc-123",
+            "observability_id": "batch-run-123",
+            "submission_claim_id": "proc-123",
             "capture_mode": "disabled",
         },
     )
@@ -184,6 +184,7 @@ def _seed_parent_batch(request: BudgetWindowBatchRequest, batch_job_id: str):
 
 def test_run_budget_window_batch_impl_completes_and_respects_max_parallel(
     mock_batch_modal,
+    observability_runtime,
 ):
     request, payload = _build_parent_payload()
     _seed_parent_batch(request, mock_batch_modal["parent_call_id"])
@@ -230,7 +231,7 @@ def test_run_budget_window_batch_impl_completes_and_respects_max_parallel(
         ("policyengine-simulation-py4-10-0", "run_simulation")
     ] = run_simulation
 
-    result = run_budget_window_batch_impl(payload)
+    result = run_budget_window_batch_impl(payload, runtime=observability_runtime)
     state = state_module.get_batch_job_state(mock_batch_modal["parent_call_id"])
 
     assert tracker.max_active == 2
@@ -246,7 +247,9 @@ def test_run_budget_window_batch_impl_completes_and_respects_max_parallel(
     assert state.result.totals.budgetaryImpact == 51
 
 
-def test_run_budget_window_batch_impl_marks_failure(mock_batch_modal):
+def test_run_budget_window_batch_impl_marks_failure(
+    mock_batch_modal, observability_runtime
+):
     request, payload = _build_parent_payload(window_size=2)
     _seed_parent_batch(request, mock_batch_modal["parent_call_id"])
 
@@ -272,7 +275,7 @@ def test_run_budget_window_batch_impl_marks_failure(mock_batch_modal):
         ("policyengine-simulation-py4-10-0", "run_simulation")
     ] = run_simulation
 
-    result = run_budget_window_batch_impl(payload)
+    result = run_budget_window_batch_impl(payload, runtime=observability_runtime)
     state = state_module.get_batch_job_state(mock_batch_modal["parent_call_id"])
 
     assert result["status"] == "failed"
@@ -292,7 +295,7 @@ def test_run_budget_window_batch_impl_marks_failure(mock_batch_modal):
 
 
 def test_scheduler_sleep_exponentially_backs_off_then_resets_on_progress(
-    monkeypatch, mock_batch_modal
+    monkeypatch, mock_batch_modal, observability_runtime
 ):
     """When every poll sees nothing resolve the runner should sleep with
     increasing intervals, capped at the configured max. Any progress in a
@@ -339,6 +342,7 @@ def test_scheduler_sleep_exponentially_backs_off_then_resets_on_progress(
             bundle=PolicyEngineBundle(model_version="1.500.0"),
             raw_params=payload,
         ),
+        runtime=observability_runtime,
         poll_interval_seconds=0.5,
         poll_interval_max_seconds=4.0,
         poll_interval_backoff_factor=2.0,
@@ -350,7 +354,9 @@ def test_scheduler_sleep_exponentially_backs_off_then_resets_on_progress(
     assert sleeps == [0.5, 1.0, 2.0, 4.0]
 
 
-def test_scheduler_publishes_bounded_poll_aggregates(monkeypatch, mock_batch_modal):
+def test_scheduler_publishes_bounded_poll_aggregates(
+    monkeypatch, mock_batch_modal, observability_runtime
+):
     """Poll/sleep telemetry must be published as overwriting aggregate
     attributes, not one segment per probe: segments append nodes to the
     operation's in-memory segment tree, so a near-timeout batch polling for
@@ -387,9 +393,9 @@ def test_scheduler_publishes_bounded_poll_aggregates(monkeypatch, mock_batch_mod
     monkeypatch.setattr(scheduler_module.time, "sleep", lambda _: None)
     attributes: dict[str, object] = {}
     monkeypatch.setattr(
-        scheduler_module,
-        "set_attribute",
-        lambda key, value: attributes.__setitem__(key, value),
+        observability_runtime,
+        "set_context",
+        lambda **values: attributes.update(values),
     )
 
     runner = scheduler_module.BudgetWindowBatchRunner(
@@ -401,6 +407,7 @@ def test_scheduler_publishes_bounded_poll_aggregates(monkeypatch, mock_batch_mod
             bundle=PolicyEngineBundle(model_version="1.500.0"),
             raw_params=payload,
         ),
+        runtime=observability_runtime,
         poll_interval_seconds=0.5,
         poll_interval_max_seconds=4.0,
         poll_interval_backoff_factor=2.0,
@@ -418,6 +425,7 @@ def test_scheduler_publishes_bounded_poll_aggregates(monkeypatch, mock_batch_mod
 
 def test_run_budget_window_batch_impl_fails_on_malformed_child_result(
     mock_batch_modal,
+    observability_runtime,
 ):
     request, payload = _build_parent_payload(window_size=1)
     _seed_parent_batch(request, mock_batch_modal["parent_call_id"])
@@ -442,7 +450,7 @@ def test_run_budget_window_batch_impl_fails_on_malformed_child_result(
         ("policyengine-simulation-py4-10-0", "run_simulation")
     ] = run_simulation
 
-    result = run_budget_window_batch_impl(payload)
+    result = run_budget_window_batch_impl(payload, runtime=observability_runtime)
     state = state_module.get_batch_job_state(mock_batch_modal["parent_call_id"])
 
     assert result["status"] == "failed"

@@ -51,9 +51,7 @@ class TestExtractOutputMicrodata:
     def test__carries_source_dtypes_per_side_and_entity(self):
         out = extract_output_microdata(_fake_sim(100.0), _fake_sim(120.0))
         for side in ("baseline", "reform"):
-            assert (
-                out["dtypes"][side]["household"]["household_net_income"] == "float32"
-            )
+            assert out["dtypes"][side]["household"]["household_net_income"] == "float32"
             assert "person_id" in out["dtypes"][side]["person"]
 
 

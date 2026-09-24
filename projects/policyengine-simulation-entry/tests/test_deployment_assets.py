@@ -263,6 +263,10 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
         "OLD_GATEWAY_AUTH_AUDIENCE_VALUE": "legacy-api",
         "OLD_GATEWAY_AUTH_CLIENT_ID_VALUE": "entrypoint-client",
         "OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME": "old-client-secret",
+        "OBSERVABILITY_SERVICE_NAMESPACE": "policyengine.simulation-entry",
+        "OBSERVABILITY_TRACE_PROJECT_ID": "policyengine-observability",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://collector.example",
+        "POLICYENGINE_OTEL_GOOGLE_AUDIENCE": "https://collector.example",
         "STAGE12_ENABLED_VALUE": "0",
         "STAGE12_ARTIFACT_BUCKET_VALUE": "policyengine-stage12-staging",
         "STAGE12_DATABASE_URL_SECRET_NAME": "stage12-staging-database-url",
@@ -282,6 +286,18 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
     )
     assert runtime_environment["STAGE12_ENABLED"] == "0"
     assert runtime_environment["STAGE12_V2_MANIFEST_ENVIRONMENT"] == "staging"
+    assert runtime_environment["OBSERVABILITY_SERVICE_NAMESPACE"] == (
+        "policyengine.simulation-entry"
+    )
+    assert runtime_environment["OBSERVABILITY_TRACE_PROJECT_ID"] == (
+        "policyengine-observability"
+    )
+    assert runtime_environment["OTEL_EXPORTER_OTLP_ENDPOINT"] == (
+        "https://collector.example"
+    )
+    assert runtime_environment["POLICYENGINE_OTEL_GOOGLE_AUDIENCE"] == (
+        "https://collector.example"
+    )
     assert "STAGE12_DATABASE_URL" not in runtime_environment
     arguments = arguments_capture.read_text(encoding="utf-8").splitlines()
     secrets_argument = arguments[arguments.index("--set-secrets") + 1]
@@ -355,6 +371,12 @@ def test_full_stack_promotion_order_is_explicit():
         "needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor]"
     )
     assert routing_dependencies in reusable_workflow
+    gateway_job = reusable_workflow[
+        reusable_workflow.index("\n  deploy_gateway:") : reusable_workflow.index(
+            "\n  deploy_executor:"
+        )
+    ]
+    assert "needs: [prepare, deploy_executor]" in gateway_job
     assert reusable_workflow.index("\n  update_routing:") < reusable_workflow.index(
         "\n  integration:"
     )

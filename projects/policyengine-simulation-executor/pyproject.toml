@@ -12,9 +12,9 @@ authors = [
 license = {file = "../../LICENSE"}
 requires-python = ">=3.13,<3.14"
 dependencies = [
-    "opentelemetry-instrumentation-sqlalchemy (>=0.51b0,<0.52)",
+    "opentelemetry-instrumentation-sqlalchemy (>=0.65b0,<0.66)",
     "pydantic-settings (>=2.7.1,<3.0.0)",
-    "opentelemetry-instrumentation-fastapi (>=0.51b0,<0.52)",
+    "opentelemetry-instrumentation-fastapi (>=0.65b0,<0.66)",
     "policyengine-fastapi",
     "policyengine-simulation-observability",
     "policyengine-simulation-contract[modal]",
@@ -26,8 +26,7 @@ dependencies = [
     "spm-calculator==0.3.1",
     "tables>=3.10.2",
     "modal>=0.73.0",
-    "policyengine-observability[fastapi]>=1.3.0,<2",
-    "logfire>=3.0.0",
+    "policyengine-observability[fastapi,google,otlp-grpc]>=3,<4",
     # Imported directly by the artifact store client; do not rely on the
     # transitive pin via policyengine.
     "google-cloud-storage>=2",
@@ -51,11 +50,7 @@ modal-simulation-image = [
     "pip",
     "fastapi>=0.115.0",
     "tables>=3.10.2",
-    "logfire>=3.0.0",
-    # logfire imports importlib_metadata unconditionally on Python 3.13
-    # but does not declare it (see issue #602).
-    "importlib-metadata>=8",
-    "policyengine-observability[fastapi]>=1.3.0,<2",
+    "policyengine-observability[fastapi,google,otlp-grpc]>=3,<4",
     # policyengine-us 1.764.6 imports spm_calculator.forecast, which was
     # removed from later releases still allowed by its broad requirement.
     "spm-calculator==0.3.1",

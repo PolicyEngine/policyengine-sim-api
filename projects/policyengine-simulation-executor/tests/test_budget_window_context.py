@@ -4,7 +4,10 @@ from src.modal.budget_window_context import (
     build_batch_context,
     build_child_simulation_request,
 )
-from policyengine_simulation_contract.gateway_models import BudgetWindowBatchRequest, PolicyEngineBundle
+from policyengine_simulation_contract.gateway_models import (
+    BudgetWindowBatchRequest,
+    PolicyEngineBundle,
+)
 
 
 def _build_parent_payload():
@@ -17,8 +20,8 @@ def _build_parent_payload():
         scope="macro",
         reform={},
         _telemetry={
-            "run_id": "batch-run-123",
-            "process_id": "proc-123",
+            "observability_id": "batch-run-123",
+            "submission_claim_id": "proc-123",
             "capture_mode": "disabled",
         },
     )
@@ -47,7 +50,7 @@ def test_build_batch_context_extracts_request_and_metadata():
     assert context.request.window_size == 3
     assert context.request.max_parallel == 2
     assert context.request.telemetry is not None
-    assert context.request.telemetry.run_id == "batch-run-123"
+    assert context.request.telemetry.observability_id == "batch-run-123"
     assert context.resolved_version == "1.500.0"
     assert context.resolved_app_name == "policyengine-simulation-py4-10-0"
     assert context.bundle == PolicyEngineBundle(model_version="1.500.0")

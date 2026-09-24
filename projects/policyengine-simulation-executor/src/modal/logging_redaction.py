@@ -1,4 +1,4 @@
-"""Payload redaction helpers for structured logs and legacy Logfire spans.
+"""Payload redaction helpers for structured observability records.
 
 We keep these in a separate module from :mod:`src.modal.app` so they can be
 unit-tested without instantiating the Modal app (which requires runtime
@@ -44,7 +44,7 @@ def redact_params_for_logging(params) -> dict:
     # envelope.
     telemetry = params.get("_telemetry")
     if isinstance(telemetry, dict):
-        run_id = telemetry.get("run_id")
-        if run_id is not None:
-            redacted["run_id"] = run_id
+        observability_id = telemetry.get("observability_id")
+        if observability_id is not None:
+            redacted["observability_id"] = observability_id
     return redacted
