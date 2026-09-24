@@ -425,6 +425,7 @@ class ComparisonReportRecord(StrictContractModel):
     environment: ContractText
     calculation_flow: ContractText
     originating_request_id: ContractText
+    observability_id: ContractText | None = None
     production_identity: ContractText
     incumbent_execution_id: ContractText | None = None
     worker_version: ContractText

@@ -63,3 +63,15 @@ def test_deployment_workflow_keeps_v2_optional_and_separate() -> None:
     assert update_job < v2_job
     v2_section = workflow[v2_job:]
     assert "src.modal.utils.update_version_registry" not in v2_section
+    deploy_section = v2_section[: v2_section.index("\n  publish_stage12_v2_manifest:")]
+    for declaration in (
+        "OBSERVABILITY_SERVICE_NAMESPACE: ${{ vars.OBSERVABILITY_SERVICE_NAMESPACE }}",
+        "OBSERVABILITY_TRACE_PROJECT_ID: ${{ vars.OBSERVABILITY_TRACE_PROJECT_ID }}",
+        "OBSERVABILITY_LOGGING_PROJECT_ID: ${{ vars.OBSERVABILITY_LOGGING_PROJECT_ID }}",
+        "OBSERVABILITY_LOG_NAME: ${{ vars.OBSERVABILITY_LOG_NAME }}",
+        "OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}",
+        "OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ vars.OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL }}",
+        "OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OBSERVABILITY_OTLP_ENDPOINT }}",
+        "POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}",
+    ):
+        assert declaration in deploy_section

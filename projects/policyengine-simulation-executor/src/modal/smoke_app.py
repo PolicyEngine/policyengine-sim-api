@@ -8,8 +8,7 @@ shared ``build_runtime_simulation_image()``, a warm cache makes this run
 take seconds; after a relock it pays only the bundle install.
 
 Runs the imports the deployed workers perform lazily at request time —
-``run_simulation_impl``, the budget-window batch, both shared libs, and
-the explicit ``import logfire`` (issue #602's crash path).
+``run_simulation_impl``, the budget-window batch, and both shared libraries.
 
 Usage:
     uv run modal run --env=staging src/modal/smoke_app.py
@@ -34,10 +33,6 @@ smoke_image = build_runtime_simulation_image().add_local_python_source(
 def smoke_import_executor() -> dict:
     import importlib
     import pkgutil
-
-    # The #602 crash path: workers import logfire lazily inside
-    # configure_logfire; import it explicitly here.
-    import logfire  # noqa: F401
 
     # Module-level surface of the deployed app (versions resolve from the
     # baked env layer).

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
 
 import pandas as pd
+from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
@@ -23,6 +25,10 @@ from policyengine_simulation_executor.stage12_artifacts import (
     canonical_json_bytes,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+from policyengine_simulation_observability.stages import (
+    STAGE12_SIMULATION_STAGES,
+    Stage,
+)
 
 from .dependencies import ComparisonStore, artifact_store, runtime_store
 
@@ -94,6 +100,8 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
 
 def calculate_simulation_frames(
     simulation: SimulationExecutionInput,
+    *,
+    runtime: ObservabilityRuntime | None = None,
 ) -> SimulationCalculation:
     """Run exactly one policy and return its complete entity output tables."""
 
@@ -120,31 +128,79 @@ def calculate_simulation_frames(
         setup_gcp_credentials,
     )
 
-    with setup_gcp_credentials():
-        country_module = _country_module(country)
-        region = _resolve_region(
-            country_module=country_module,
-            country=country,
-            params=params,
+    credential_span = (
+        runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.CREDENTIAL_SETUP))
+        if runtime is not None
+        else nullcontext()
+    )
+    with credential_span, setup_gcp_credentials():
+        country_span = (
+            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.COUNTRY_MODULE_LOAD))
+            if runtime is not None
+            else nullcontext()
         )
-        dataset_selection = _resolve_dataset_selection(
-            params,
-            region_resolution=region,
+        with country_span:
+            country_module = _country_module(country)
+        region_span = (
+            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.REGION_RESOLUTION))
+            if runtime is not None
+            else nullcontext()
         )
-        dataset = _load_dataset(
-            params,
-            selection=dataset_selection,
-            country_module=country_module,
+        with region_span:
+            region = _resolve_region(
+                country_module=country_module,
+                country=country,
+                params=params,
+            )
+        dataset_resolution_span = (
+            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.DATASET_RESOLUTION))
+            if runtime is not None
+            else nullcontext()
         )
-        model = _build_simulation(
-            params,
-            dataset=dataset,
-            dataset_selection=dataset_selection,
-            policy=_normalise_policy(simulation.policy),
-            scoping_strategy=region.scoping_strategy,
-            region_code=region.code,
+        with dataset_resolution_span:
+            dataset_selection = _resolve_dataset_selection(
+                params,
+                region_resolution=region,
+            )
+        dataset_span = (
+            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.DATASET_LOAD))
+            if runtime is not None
+            else nullcontext()
         )
-        model.ensure()
+        with dataset_span:
+            dataset = _load_dataset(
+                params,
+                selection=dataset_selection,
+                country_module=country_module,
+            )
+        policy_span = (
+            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.POLICY_NORMALIZATION))
+            if runtime is not None
+            else nullcontext()
+        )
+        with policy_span:
+            policy = _normalise_policy(simulation.policy)
+        build_span = (
+            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.SIMULATION_BUILD))
+            if runtime is not None
+            else nullcontext()
+        )
+        with build_span:
+            model = _build_simulation(
+                params,
+                dataset=dataset,
+                dataset_selection=dataset_selection,
+                policy=policy,
+                scoping_strategy=region.scoping_strategy,
+                region_code=region.code,
+            )
+        calculation_span = (
+            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_CALCULATION))
+            if runtime is not None
+            else nullcontext()
+        )
+        with calculation_span:
+            model.ensure()
         output_data = getattr(getattr(model, "output_dataset", None), "data", None)
         entity_data = getattr(output_data, "entity_data", None)
         if not isinstance(entity_data, Mapping):
@@ -231,6 +287,7 @@ def run_single_simulation(
         [SimulationExecutionInput],
         Mapping[str, pd.DataFrame] | SimulationCalculation,
     ] = calculate_simulation_frames,
+    runtime: ObservabilityRuntime | None = None,
 ) -> dict[str, Any]:
     simulation = SimulationExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
@@ -252,23 +309,46 @@ def run_single_simulation(
     )
     persistence.replace_simulation(running)
     try:
-        artifact_storage.write_input(
-            prefix=context.artifact_prefix,
-            simulation=simulation,
+        input_span = (
+            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_INPUT_WRITE))
+            if runtime is not None
+            else nullcontext()
         )
-        calculated = calculator(simulation)
+        with input_span:
+            artifact_storage.write_input(
+                prefix=context.artifact_prefix,
+                simulation=simulation,
+            )
+        if calculator is calculate_simulation_frames:
+            calculated = calculate_simulation_frames(simulation, runtime=runtime)
+        else:
+            calculation_span = (
+                runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_CALCULATION))
+                if runtime is not None
+                else nullcontext()
+            )
+            with calculation_span:
+                calculated = calculator(simulation)
         if isinstance(calculated, SimulationCalculation):
             frames = calculated.frames
             calculation_provenance = calculated.calculation_provenance
         else:
             frames = calculated
             calculation_provenance = None
-        descriptor = artifact_storage.write_simulation(
-            prefix=context.artifact_prefix,
-            simulation=simulation,
-            frames=frames,
-            calculation_provenance=calculation_provenance,
+        artifact_span = (
+            runtime.span(
+                STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE)
+            )
+            if runtime is not None
+            else nullcontext()
         )
+        with artifact_span:
+            descriptor = artifact_storage.write_simulation(
+                prefix=context.artifact_prefix,
+                simulation=simulation,
+                frames=frames,
+                calculation_provenance=calculation_provenance,
+            )
         completed = datetime.now(UTC)
         persistence.replace_simulation(
             running.model_copy(

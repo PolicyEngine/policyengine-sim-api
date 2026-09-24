@@ -13,12 +13,14 @@ from policyengine_simulation_executor.simulation_runtime import (
 )
 
 
-def test_setup_gcp_credentials_deletes_temp_file_on_exit(monkeypatch):
+def test_setup_gcp_credentials_deletes_temp_file_on_exit(
+    monkeypatch, observability_runtime
+):
     creds = json.dumps({"type": "service_account", "project_id": "p"})
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", creds)
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
 
-    with setup_gcp_credentials():
+    with setup_gcp_credentials(observability_runtime):
         path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
         assert path is not None
         assert os.path.exists(path)
@@ -31,14 +33,16 @@ def test_setup_gcp_credentials_deletes_temp_file_on_exit(monkeypatch):
     assert os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") is None
 
 
-def test_setup_gcp_credentials_cleans_up_on_exception(monkeypatch):
+def test_setup_gcp_credentials_cleans_up_on_exception(
+    monkeypatch, observability_runtime
+):
     creds = json.dumps({"type": "service_account", "project_id": "q"})
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", creds)
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
 
     captured_path: list[str] = []
     with pytest.raises(RuntimeError):
-        with setup_gcp_credentials():
+        with setup_gcp_credentials(observability_runtime):
             captured_path.append(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
             raise RuntimeError("boom")
 
@@ -46,12 +50,14 @@ def test_setup_gcp_credentials_cleans_up_on_exception(monkeypatch):
     assert not os.path.exists(captured_path[0])
 
 
-def test_setup_gcp_credentials_preserves_existing_env(monkeypatch, tmp_path):
+def test_setup_gcp_credentials_preserves_existing_env(
+    monkeypatch, tmp_path, observability_runtime
+):
     existing = tmp_path / "existing.json"
     existing.write_text("{}")
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(existing))
 
-    with setup_gcp_credentials():
+    with setup_gcp_credentials(observability_runtime):
         assert os.environ["GOOGLE_APPLICATION_CREDENTIALS"] == str(existing)
 
     # Pre-existing var should not be disturbed.

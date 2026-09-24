@@ -1,255 +1,262 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from enum import StrEnum
-from typing import Any
+from importlib.metadata import PackageNotFoundError, version
+from typing import Any, Literal
 
 from fastapi import FastAPI
 from policyengine_observability import (
-    UNKNOWN_SEGMENT,
+    DeploymentIdentity,
+    GoogleCloudLogDestination,
+    GoogleCloudLogFormatter,
+    LogDestinationStrategy,
+    LoggingConfig,
     ObservabilityConfig,
     ObservabilityRuntime,
-    set_observability_runtime,
+    ServiceIdentity,
+    StdoutLogDestination,
+    configure,
+    instrument_fastapi,
 )
-from policyengine_observability.adapters.fastapi import (
-    init_fastapi_observability,
-)
+from starlette.datastructures import Headers
 
-
-SERVICE_NAME = "policyengine-simulation-executor"
-SPAN_PREFIX = "simulation"
-LOG_DESTINATIONS = ("stdout",)
-LOGFIRE_STATUS = "legacy_candidate_for_replacement"
-LOGFIRE_REPLACEMENT_CANDIDATE = "policyengine-observability"
-SIMULATION_METRIC_ATTRIBUTE_KEYS = (
-    "batch_job_id",
-    "country",
-    "function_call_id",
-    "geography_code",
-    "geography_type",
-    "job_id",
-    "modal_app_name",
-    "modal_environment",
-    "modal_function_name",
-    "platform",
-    "policyengine_version",
-    "process_id",
-    "region",
-    "request_id",
-    "resolved_app_name",
-    "resolved_version",
-    "run_id",
-    "logfire_status",
-    "logfire_replacement_candidate",
-    "runtime_role",
-    "scope",
-    "simulation_year",
+from policyengine_simulation_observability.identifiers import (
+    OBSERVABILITY_ID_HEADER,
+    normalize_observability_id,
 )
 
+Platform = Literal["google_cloud_run", "modal", "local", "other"]
 
-class SegmentName(StrEnum):
-    UNKNOWN = UNKNOWN_SEGMENT
+MODAL_IMAGE_ENV_NAMES = (
+    "OBSERVABILITY_SERVICE_NAMESPACE",
+    "OBSERVABILITY_TRACE_PROJECT_ID",
+    "OBSERVABILITY_LOGGING_PROJECT_ID",
+    "OBSERVABILITY_LOG_NAME",
+    "OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER",
+    "OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "POLICYENGINE_OTEL_GOOGLE_AUDIENCE",
+)
 
-    REQUEST_PARSE = "request_parse"
-    ROUTE_RESOLUTION = "route_resolution"
-    POLICYENGINE_BUNDLE = "policyengine_bundle"
-    # NOTE: there is deliberately no modal_function_lookup segment —
-    # ``Function.from_name`` is a lazy handle whose control-plane RPC fires
-    # inside ``spawn``, so lookup + spawn are timed together under
-    # MODAL_FUNCTION_SPAWN.
-    MODAL_FUNCTION_SPAWN = "modal_function_spawn"
-    MODAL_DICT_READ = "modal_dict_read"
-    MODAL_JOB_METADATA_WRITE = "modal_job_metadata_write"
-    MODAL_JOB_STATUS_POLL = "modal_job_status_poll"
+SIMULATION_ATTRIBUTE_KEYS = frozenset(
+    {
+        "ack_value_present",
+        "backend",
+        "backoff_sleep_count",
+        "backoff_sleep_ms_total",
+        "baseline_artifact",
+        "batch_job_id",
+        "capture_mode",
+        "child_poll_count",
+        "child_poll_ms_total",
+        "config_hash",
+        "correlation_id",
+        "country",
+        "data_version",
+        "dataset",
+        "elapsed_ms",
+        "error_type",
+        "evaluation_id",
+        "execution_mode",
+        "function_call_id",
+        "geography_code",
+        "geography_type",
+        "include_cliffs",
+        "job_id",
+        "job_state",
+        "method",
+        "modal_app_name",
+        "modal_application",
+        "modal_environment",
+        "modal_function_name",
+        "model_version",
+        "national_execution",
+        "parent_call_not_found",
+        "partition_uncovered_regions",
+        "policyengine_version",
+        "submission_claim_id",
+        "production_identity",
+        "reason",
+        "region",
+        "region_group",
+        "requested_version",
+        "request_id",
+        "runner_name",
+        "resolved_app_name",
+        "resolved_version",
+        "route",
+        "observability_id",
+        "coordinator_invocation_id",
+        "scope",
+        "segmented",
+        "segmented_group_count",
+        "segmented_poll_count",
+        "simulation_kind",
+        "simulation_role",
+        "simulation_year",
+        "status_code",
+        "time_period",
+        "version",
+        "worker_version",
+    }
+)
 
-    CREDENTIAL_SETUP = "credential_setup"
-    COUNTRY_MODULE_LOAD = "country_module_load"
-    REGION_RESOLUTION = "region_resolution"
-    DATASET_RESOLUTION = "dataset_resolution"
-    DATASET_LOAD = "dataset_load"
-    POLICY_NORMALIZATION = "policy_normalization"
-    SIMULATION_BUILD = "simulation_build"
-    CALCULATION = "calculation"
-    RESPONSE_SERIALIZATION = "response_serialization"
-
-    BUDGET_WINDOW_CONTEXT = "budget_window_context"
-    BUDGET_WINDOW_STATE_LOAD = "budget_window_state_load"
-    BUDGET_WINDOW_STATE_WRITE = "budget_window_state_write"
-    BUDGET_WINDOW_CHILD_SPAWN = "budget_window_child_spawn"
-    BUDGET_WINDOW_RESULT_PARSE = "budget_window_result_parse"
-    BUDGET_WINDOW_AGGREGATION = "budget_window_aggregation"
-    BUDGET_WINDOW_CHILD_REQUEST_BUILD = "budget_window_child_request_build"
-    BUDGET_WINDOW_STATUS_SERIALIZATION = "budget_window_status_serialization"
-    # NOTE: per-iteration poll/sleep segments were removed deliberately —
-    # the scheduler's poll loop publishes bounded aggregate attributes
-    # (child_poll_count/child_poll_ms_total, backoff_sleep_count/
-    # backoff_sleep_ms_total) instead, because one segment per probe grows
-    # the operation's segment tree without bound over a long batch.
-
-    SEGMENTED_NATIONAL_CHILD_SPAWN = "segmented_national_child_spawn"
-    SEGMENTED_NATIONAL_REDUCE = "segmented_national_reduce"
-
-    MODAL_JOB_METADATA_READ = "modal_job_metadata_read"
-
-    SIMULATION_OUTPUT_BUILD = "simulation_output_build"
-    SIMULATION_OUTPUT_MODEL_DUMP = "simulation_output_model_dump"
-    ECONOMIC_IMPACT_ANALYSIS = "economic_impact_analysis"
-    OUTPUT_BUDGETARY_IMPACT = "output_budgetary_impact"
-    OUTPUT_DETAILED_BUDGET = "output_detailed_budget"
-    OUTPUT_DECILE = "output_decile"
-    OUTPUT_INEQUALITY = "output_inequality"
-    OUTPUT_POVERTY = "output_poverty"
-    OUTPUT_INTRA_DECILE = "output_intra_decile"
-    OUTPUT_WEALTH_DECILE = "output_wealth_decile"
-    OUTPUT_INTRA_WEALTH_DECILE = "output_intra_wealth_decile"
-    OUTPUT_LABOR_SUPPLY = "output_labor_supply"
-    OUTPUT_CONGRESSIONAL_DISTRICT = "output_congressional_district"
-    OUTPUT_UK_CONSTITUENCY = "output_uk_constituency"
-    OUTPUT_UK_LOCAL_AUTHORITY = "output_uk_local_authority"
-    OUTPUT_CLIFF = "output_cliff"
-    OUTPUT_MODEL_VERSION = "output_model_version"
-    OUTPUT_DATA_VERSION = "output_data_version"
+DISPATCH_ATTRIBUTE_KEYS = frozenset({"job_id", "observability_id", "simulation_id"})
 
 
-def configure_process_observability(
+class _RuntimeObservabilityIdMiddleware:
+    """Attach the transport identifier after request tracing has started."""
+
+    def __init__(self, app: Any, *, runtime: ObservabilityRuntime) -> None:
+        self.app = app
+        self.runtime = runtime
+
+    async def __call__(
+        self,
+        scope: dict[str, Any],
+        receive: Callable[[], Awaitable[dict[str, Any]]],
+        send: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        if scope.get("type") == "http":
+            observability_id = normalize_observability_id(
+                Headers(scope=scope).get(OBSERVABILITY_ID_HEADER)
+            )
+            if observability_id is not None:
+                try:
+                    self.runtime.set_context(observability_id=observability_id)
+                except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+                    pass
+        await self.app(scope, receive, send)
+
+
+def modal_image_environment() -> dict[str, str]:
+    """Return deployment-provided settings to bake into a Modal image."""
+
+    configured = {
+        name: value
+        for name in MODAL_IMAGE_ENV_NAMES
+        if (value := os.getenv(name, "").strip())
+    }
+    return {
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+        "OTEL_TRACES_EXPORTER": "otlp",
+        "OTEL_METRICS_EXPORTER": "otlp",
+        "OTEL_TRACES_SAMPLER_ARG": "1.0",
+        **configured,
+    }
+
+
+def build_runtime(
     *,
-    platform: str,
+    service_name: str,
     service_role: str,
-    runtime_role: str | None = None,
-    modal_app_name: str | None = None,
-    modal_function_name: str | None = None,
-) -> None:
-    os.environ["OBSERVABILITY_PLATFORM"] = platform
-    os.environ["OBSERVABILITY_SERVICE_ROLE"] = service_role
-    os.environ["OBSERVABILITY_RUNTIME_ROLE"] = runtime_role or service_role
-    if modal_app_name:
-        os.environ["OBSERVABILITY_MODAL_APP_NAME"] = modal_app_name
-    if modal_function_name:
-        os.environ["OBSERVABILITY_MODAL_FUNCTION_NAME"] = modal_function_name
+    platform: Platform,
+    environment: str,
+    service_version: str | None = None,
+) -> ObservabilityRuntime:
+    """Create one explicitly owned simulation observability runtime."""
+
+    trace_project = os.getenv("OBSERVABILITY_TRACE_PROJECT_ID", "").strip()
+    logging_project = os.getenv("OBSERVABILITY_LOGGING_PROJECT_ID", "").strip()
+    log_name = os.getenv("OBSERVABILITY_LOG_NAME", "").strip()
+    destinations: list[LogDestinationStrategy] = [
+        StdoutLogDestination(
+            formatter=(
+                GoogleCloudLogFormatter(trace_project) if trace_project else None
+            )
+        )
+    ]
+    if logging_project or log_name:
+        destinations.append(
+            GoogleCloudLogDestination(
+                project_id=logging_project,
+                log_name=log_name,
+            )
+        )
+    config = ObservabilityConfig.from_env(
+        service=ServiceIdentity(
+            name=service_name,
+            namespace=os.getenv(
+                "OBSERVABILITY_SERVICE_NAMESPACE",
+                "policyengine.api-v1",
+            ),
+            version=service_version or _service_version(),
+            role=service_role,
+        ),
+        deployment=DeploymentIdentity(
+            environment=environment,
+            platform=platform,
+            region=os.getenv("GOOGLE_CLOUD_REGION") or os.getenv("CLOUD_RUN_REGION"),
+            instance_id=os.getenv("K_REVISION") or os.getenv("MODAL_TASK_ID"),
+        ),
+        logging=LoggingConfig(
+            destinations=tuple(destinations),
+            capture_standard_library=True,
+        ),
+        application_attribute_keys=SIMULATION_ATTRIBUTE_KEYS,
+        dispatch_attribute_keys=DISPATCH_ATTRIBUTE_KEYS,
+    )
+    config = replace(
+        config,
+        otel=replace(config.otel, sampling_ratio=1.0),
+    )
+    return configure(config)
 
 
 def init_simulation_observability(
     app: FastAPI,
     *,
     service_name: str,
-    service_role: str = "api",
+    service_role: str,
+    platform: Platform,
+    environment: str,
+    service_version: str | None = None,
 ) -> ObservabilityRuntime:
-    service_role = _service_role(service_role)
-    platform = _platform()
-    config = _config(
+    runtime = build_runtime(
         service_name=service_name,
         service_role=service_role,
         platform=platform,
+        environment=environment,
+        service_version=service_version,
     )
-    return init_fastapi_observability(
-        app,
-        config=config,
-        runtime=ObservabilityRuntime(config, segment_registry=SegmentName),
-        service_name=service_name,
-        service_role=service_role,
-        span_prefix=SPAN_PREFIX,
-        segment_registry=SegmentName,
-        static_attributes=_metadata(service_role, platform),
-    )
+    # FastAPI applies the most recently registered middleware first. Install
+    # this context layer before the lifecycle integration so it executes after
+    # begin_request has created the request-local runtime state. Application
+    # correlation middleware may then be registered outside both layers and
+    # normalize the header before either observability layer reads it.
+    app.add_middleware(_RuntimeObservabilityIdMiddleware, runtime=runtime)
+    return instrument_fastapi(app, runtime)
 
 
 def init_process_observability(
     *,
-    service_role: str,
-) -> ObservabilityRuntime:
-    service_role = _service_role(service_role)
-    platform = _platform()
-    config = _config(
-        service_name=SERVICE_NAME,
-        service_role=service_role,
-        platform=platform,
-    )
-    runtime = ObservabilityRuntime(config, segment_registry=SegmentName)
-    runtime.configure()
-    set_observability_runtime(runtime)
-    return runtime
-
-
-def process_static_attributes(*, service_role: str) -> dict[str, Any]:
-    """Static identity attributes for non-FastAPI (worker) operations.
-
-    The FastAPI adapter applies these per request via ``static_attributes``;
-    plain-process runtimes have no equivalent hook, so worker entrypoints must
-    merge this dict into their ``operation(...)`` attributes explicitly —
-    otherwise operation logs carry no platform/Modal identity.
-    """
-    return _metadata(_service_role(service_role), _platform())
-
-
-def logfire_replacement_attributes() -> dict[str, str]:
-    return {
-        "logfire_status": LOGFIRE_STATUS,
-        "logfire_replacement_candidate": LOGFIRE_REPLACEMENT_CANDIDATE,
-    }
-
-
-def _config(
-    *,
     service_name: str,
     service_role: str,
-    platform: str,
-) -> ObservabilityConfig:
-    config = ObservabilityConfig.from_env(
+    platform: Platform,
+    environment: str,
+    service_version: str | None = None,
+) -> ObservabilityRuntime:
+    return build_runtime(
         service_name=service_name,
         service_role=service_role,
-        span_prefix=SPAN_PREFIX,
-        extra_metric_attribute_keys=SIMULATION_METRIC_ATTRIBUTE_KEYS,
-        default_log_destinations=LOG_DESTINATIONS,
-    )
-    return replace(
-        config,
-        environment=_environment(),
-        log_destinations=LOG_DESTINATIONS,
-        otel_enabled=False,
-        google_cloud_project=None,
+        platform=platform,
+        environment=environment,
+        service_version=service_version,
     )
 
 
-def _environment() -> str:
-    return (
-        os.getenv("OBSERVABILITY_ENVIRONMENT")
-        or os.getenv("MODAL_ENVIRONMENT")
-        or os.getenv("DEPLOYMENT_ENVIRONMENT")
-        or os.getenv("APP_ENVIRONMENT")
-        or os.getenv("APP_ENV")
-        or os.getenv("ENVIRONMENT")
-        or "local"
-    )
-
-
-def _service_role(default: str) -> str:
-    return (
-        os.getenv("OBSERVABILITY_SERVICE_ROLE")
-        or os.getenv("OBSERVABILITY_RUNTIME_ROLE")
-        or default
-    )
-
-
-def _platform() -> str:
-    configured = os.getenv("OBSERVABILITY_PLATFORM")
-    if configured:
-        return configured
-    if os.getenv("MODAL_ENVIRONMENT") or os.getenv("MODAL_TASK_ID"):
-        return "modal"
-    return "local"
-
-
-def _metadata(service_role: str, platform: str) -> dict[str, Any]:
-    values = {
-        "platform": platform,
-        "runtime_role": os.getenv("OBSERVABILITY_RUNTIME_ROLE") or service_role,
-        "modal_environment": os.getenv("MODAL_ENVIRONMENT"),
-        "modal_app_name": os.getenv("OBSERVABILITY_MODAL_APP_NAME"),
-        "modal_function_name": os.getenv("OBSERVABILITY_MODAL_FUNCTION_NAME"),
-        **logfire_replacement_attributes(),
-    }
-    return {key: value for key, value in values.items() if value}
-
-
-set_observability_runtime(ObservabilityRuntime.disabled())
+def _service_version() -> str:
+    for name in (
+        "POLICYENGINE_SERVICE_VERSION",
+        "K_REVISION",
+        "POLICYENGINE_VERSION",
+    ):
+        value = os.getenv(name)
+        if value:
+            return value
+    try:
+        return version("policyengine-simulation-observability")
+    except PackageNotFoundError:
+        return "0.1.0"

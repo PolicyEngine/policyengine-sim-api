@@ -56,6 +56,7 @@ def create_initial_batch_state(
     resolved_version: str,
     resolved_app_name: str,
     bundle: PolicyEngineBundle,
+    observability_id: str | None = None,
 ) -> BudgetWindowBatchState:
     years = _build_years(request.start_year, request.window_size)
     now = _utc_now_iso()
@@ -84,7 +85,7 @@ def create_initial_batch_state(
         error=None,
         created_at=now,
         updated_at=now,
-        run_id=request.telemetry.run_id if request.telemetry else None,
+        observability_id=observability_id,
     )
 
 
@@ -257,5 +258,4 @@ def build_batch_status_response(
         errors=state.errors,
         resolved_app_name=state.resolved_app_name,
         policyengine_bundle=state.policyengine_bundle,
-        run_id=state.run_id,
     )

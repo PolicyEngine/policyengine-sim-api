@@ -139,12 +139,11 @@ class TestBuildNationalOutputWiring:
         assert captured["resolved_region_code"] == "us"
         assert captured["country"] == "us"
         # Both stand-ins carry the injected output_dataset.
-        assert captured["baseline"].output_dataset is captured["baseline"].kwargs[
-            "dataset"
-        ]
-        assert captured["reform"].output_dataset is captured["reform"].kwargs[
-            "dataset"
-        ]
+        assert (
+            captured["baseline"].output_dataset
+            is captured["baseline"].kwargs["dataset"]
+        )
+        assert captured["reform"].output_dataset is captured["reform"].kwargs["dataset"]
         assert captured["baseline"].kwargs["tax_benefit_model_version"] is (
             country_module.model
         )
@@ -159,9 +158,7 @@ class TestBuildNationalOutputWiring:
                 year=2026,
             )
 
-    def test__propagates_child_versions_over_builder_fallbacks(
-        self, monkeypatch
-    ):
+    def test__propagates_child_versions_over_builder_fallbacks(self, monkeypatch):
         # The rebuilt dataset has no artifact metadata, so the builder's
         # version fallbacks misreport provenance; the children loaded the
         # real artifact and their reported versions win.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
@@ -19,6 +20,13 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationArtifactDescriptor,
     SimulationExecutionInput,
     Stage12InvocationContext,
+)
+from policyengine_observability import ObservabilityRuntime
+from policyengine_simulation_observability.stages import (
+    STAGE12_CANONICAL_REPORT_STAGES,
+    STAGE12_SHADOW_REPORT_STAGES,
+    Stage,
+    StagePlan,
 )
 
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -179,6 +187,7 @@ def coordinate_report(
     artifacts: Stage12ArtifactStore | None = None,
     invoker: ChildInvoker | None = None,
     aggregator: Callable[..., dict[str, Any]] = build_aggregate_report,
+    runtime: ObservabilityRuntime | None = None,
 ) -> dict[str, Any]:
     report = ReportExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
@@ -197,11 +206,22 @@ def coordinate_report(
     persistence = store or runtime_store()
     artifact_storage = artifacts or artifact_store()
     child_invoker = invoker or ModalChildInvoker()
-    parent, should_execute = _claim_parent(
-        submitted=submitted_parent,
-        coordinator_invocation_id=coordinator_invocation_id,
-        store=persistence,
+    stage_plan: StagePlan = (
+        STAGE12_SHADOW_REPORT_STAGES
+        if context.production_function_call_id is not None
+        else STAGE12_CANONICAL_REPORT_STAGES
     )
+    claim_span = (
+        runtime.span(stage_plan.name(Stage.STAGE12_COORDINATOR_CLAIM))
+        if runtime is not None
+        else nullcontext()
+    )
+    with claim_span:
+        parent, should_execute = _claim_parent(
+            submitted=submitted_parent,
+            coordinator_invocation_id=coordinator_invocation_id,
+            store=persistence,
+        )
     if not should_execute:
         return {
             "deduplicated": True,
@@ -224,16 +244,22 @@ def coordinate_report(
     descriptors: dict[str, SimulationArtifactDescriptor] = {}
     calls: dict[str, ChildCall] = {}
     try:
-        children = {
-            simulation.role: persistence.create_or_resolve_simulation(
-                _child_record(
-                    simulation=simulation,
-                    context=context,
-                    function_name=function_name,
-                )
-            ).record
-            for simulation in simulations
-        }
+        child_state_span = (
+            runtime.span(stage_plan.name(Stage.STAGE12_CHILD_STATE_CREATE))
+            if runtime is not None
+            else nullcontext()
+        )
+        with child_state_span:
+            children = {
+                simulation.role: persistence.create_or_resolve_simulation(
+                    _child_record(
+                        simulation=simulation,
+                        context=context,
+                        function_name=function_name,
+                    )
+                ).record
+                for simulation in simulations
+            }
         for simulation in simulations:
             child = children[simulation.role]
             if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
@@ -278,13 +304,26 @@ def coordinate_report(
                 )
             )
             try:
-                call = child_invoker.spawn(
-                    application_name=application_name,
-                    function_name=function_name,
-                    environment=context.modal_environment,
-                    simulation=simulation.model_dump(mode="json"),
-                    context=context.model_dump(mode="json"),
+                dispatch_span = (
+                    runtime.span(
+                        stage_plan.name(Stage.STAGE12_CHILD_DISPATCH),
+                        attributes={"simulation_role": simulation.role.value},
+                    )
+                    if runtime is not None
+                    else nullcontext()
                 )
+                with dispatch_span:
+                    child_observability_context = (
+                        runtime.capture_context() if runtime is not None else None
+                    )
+                    call = child_invoker.spawn(
+                        application_name=application_name,
+                        function_name=function_name,
+                        environment=context.modal_environment,
+                        simulation=simulation.model_dump(mode="json"),
+                        context=context.model_dump(mode="json"),
+                        observability_context=child_observability_context,
+                    )
             except Exception as error:
                 failed_at = datetime.now(UTC)
                 latest = persistence.get_simulation(simulation.simulation_execution_id)
@@ -311,9 +350,18 @@ def coordinate_report(
         # Every required call has been started before the coordinator waits.
         for role, call in calls.items():
             try:
-                descriptors[role] = SimulationArtifactDescriptor.model_validate(
-                    call.get(timeout=SIMULATION_WAIT_TIMEOUT_SECONDS)
+                wait_span = (
+                    runtime.span(
+                        stage_plan.name(Stage.STAGE12_CHILD_WAIT),
+                        attributes={"simulation_role": role},
+                    )
+                    if runtime is not None
+                    else nullcontext()
                 )
+                with wait_span:
+                    descriptors[role] = SimulationArtifactDescriptor.model_validate(
+                        call.get(timeout=SIMULATION_WAIT_TIMEOUT_SECONDS)
+                    )
             except Exception as error:
                 simulation = next(
                     item for item in simulations if item.role.value == role
@@ -336,23 +384,41 @@ def coordinate_report(
         baseline = descriptors["baseline"]
         reform = descriptors["reform"]
         validate_aligned_outputs(report, baseline, reform)
-        baseline_payload = artifact_storage.read(baseline.artifact.uri)
-        reform_payload = artifact_storage.read(reform.artifact.uri)
+        artifact_read_span = (
+            runtime.span(stage_plan.name(Stage.STAGE12_ARTIFACT_READ))
+            if runtime is not None
+            else nullcontext()
+        )
+        with artifact_read_span:
+            baseline_payload = artifact_storage.read(baseline.artifact.uri)
+            reform_payload = artifact_storage.read(reform.artifact.uri)
         if sha256(baseline_payload).hexdigest() != baseline.artifact.content_sha256:
             raise ValueError("baseline artifact digest mismatch")
         if sha256(reform_payload).hexdigest() != reform.artifact.content_sha256:
             raise ValueError("reform artifact digest mismatch")
-        aggregate = aggregator(
-            report=report,
-            baseline_frames=deserialize_simulation_frames(baseline_payload),
-            reform_frames=deserialize_simulation_frames(reform_payload),
-            baseline_descriptor=baseline,
-            reform_descriptor=reform,
+        aggregation_span = (
+            runtime.span(stage_plan.name(Stage.STAGE12_AGGREGATION))
+            if runtime is not None
+            else nullcontext()
         )
-        aggregate_artifact = artifact_storage.write_aggregate(
-            prefix=context.artifact_prefix,
-            payload=aggregate,
+        with aggregation_span:
+            aggregate = aggregator(
+                report=report,
+                baseline_frames=deserialize_simulation_frames(baseline_payload),
+                reform_frames=deserialize_simulation_frames(reform_payload),
+                baseline_descriptor=baseline,
+                reform_descriptor=reform,
+            )
+        aggregate_write_span = (
+            runtime.span(stage_plan.name(Stage.STAGE12_AGGREGATE_ARTIFACT_WRITE))
+            if runtime is not None
+            else nullcontext()
         )
+        with aggregate_write_span:
+            aggregate_artifact = artifact_storage.write_aggregate(
+                prefix=context.artifact_prefix,
+                payload=aggregate,
+            )
         descriptor = AggregateReportArtifactDescriptor(
             evaluation_id=report.evaluation_id,
             artifact=aggregate_artifact,
@@ -381,6 +447,8 @@ def coordinate_report(
             store=persistence,
             artifacts=artifact_storage,
             invoker=child_invoker,
+            runtime=runtime,
+            stage_plan=stage_plan,
         )
         return descriptor.model_dump(mode="json")
     # Persist any coordinator, child-call, aggregation, or artifact failure

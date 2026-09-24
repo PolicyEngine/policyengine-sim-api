@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
+from policyengine_observability import ObservabilityRuntime
+from policyengine_simulation_observability.stages import Stage, StagePlan
 
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
@@ -29,6 +32,8 @@ def compare_completed_report(
     store: ComparisonStore,
     artifacts: Stage12ArtifactStore,
     invoker: ChildInvoker,
+    runtime: ObservabilityRuntime | None = None,
+    stage_plan: StagePlan | None = None,
 ) -> None:
     """Persist an isolated production/Stage 12 comparison after aggregation."""
 
@@ -36,34 +41,40 @@ def compare_completed_report(
     if production_job_id is None:
         return
     try:
-        comparing_at = datetime.now(UTC)
-        comparing = store.replace_report_result_comparison(
-            parent.model_copy(
-                update={
-                    "comparison_status": ResultComparisonStatus.RUNNING,
-                    "comparison_output_uri": None,
-                    "comparison_output_sha256": None,
-                    "comparison_schema_version": None,
-                    "comparison_completed_at": None,
-                    "comparison_error_code": None,
-                    "comparison_error_summary": None,
-                    "updated_at": comparing_at,
-                }
+        comparison_span = (
+            runtime.span(stage_plan.name(Stage.STAGE12_RESULT_COMPARISON))
+            if runtime is not None and stage_plan is not None
+            else nullcontext()
+        )
+        with comparison_span:
+            comparing_at = datetime.now(UTC)
+            comparing = store.replace_report_result_comparison(
+                parent.model_copy(
+                    update={
+                        "comparison_status": ResultComparisonStatus.RUNNING,
+                        "comparison_output_uri": None,
+                        "comparison_output_sha256": None,
+                        "comparison_schema_version": None,
+                        "comparison_completed_at": None,
+                        "comparison_error_code": None,
+                        "comparison_error_summary": None,
+                        "updated_at": comparing_at,
+                    }
+                )
             )
-        )
-        production_result = invoker.restore(production_job_id).get(
-            timeout=PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS
-        )
-        comparison = compare_results(
-            evaluation_id=parent.evaluation_id,
-            production_job_id=production_job_id,
-            production_result=production_result,
-            stage12_result=aggregate.get("result"),
-        )
-        comparison_artifact = artifacts.write_comparison(
-            prefix=context.artifact_prefix,
-            payload=comparison.model_dump(mode="json"),
-        )
+            production_result = invoker.restore(production_job_id).get(
+                timeout=PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS
+            )
+            comparison = compare_results(
+                evaluation_id=parent.evaluation_id,
+                production_job_id=production_job_id,
+                production_result=production_result,
+                stage12_result=aggregate.get("result"),
+            )
+            comparison_artifact = artifacts.write_comparison(
+                prefix=context.artifact_prefix,
+                payload=comparison.model_dump(mode="json"),
+            )
         comparison_status = (
             ResultComparisonStatus.MATCHED
             if comparison.status == "matched"
@@ -84,7 +95,7 @@ def compare_completed_report(
         logger.info(
             "stage12_result_comparison_completed",
             extra={
-                "comparison_run_id": str(parent.evaluation_id),
+                "evaluation_id": str(parent.evaluation_id),
                 "production_job_id": production_job_id,
                 "comparison_status": comparison_status.value,
                 "difference_count": comparison.difference_count,
@@ -120,14 +131,14 @@ def compare_completed_report(
             logger.exception(
                 "stage12_result_comparison_state_update_failed",
                 extra={
-                    "comparison_run_id": str(parent.evaluation_id),
+                    "evaluation_id": str(parent.evaluation_id),
                     "production_job_id": production_job_id,
                 },
             )
         logger.error(
             "stage12_result_comparison_failed",
             extra={
-                "comparison_run_id": str(parent.evaluation_id),
+                "evaluation_id": str(parent.evaluation_id),
                 "production_job_id": production_job_id,
                 "error_type": type(error).__name__,
             },

@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import modal
-from policyengine_observability import record_event
+from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
     ComparisonRunAggregationStatus,
@@ -25,6 +25,14 @@ from policyengine_simulation_contract.stage12_manifest import (
     V2WorkerVersion,
 )
 from policyengine_stage12_persistence import Stage12PersistenceStore
+from policyengine_simulation_observability.identifiers import (
+    normalize_observability_id,
+)
+from policyengine_simulation_observability.stages import (
+    STAGE12_CANONICAL_REPORT_STAGES,
+    STAGE12_SHADOW_REPORT_STAGES,
+    Stage,
+)
 
 from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.stage12_adapter import adapt_annual_comparison
@@ -55,6 +63,7 @@ class ReportInvoker(Protocol):
         report_payload: dict[str, Any],
         context_payload: dict[str, Any],
         parent_payload: dict[str, Any],
+        observability_context: dict[str, Any] | None = None,
     ) -> str: ...
 
 
@@ -95,6 +104,7 @@ class ModalReportInvoker:
         report_payload: dict[str, Any],
         context_payload: dict[str, Any],
         parent_payload: dict[str, Any],
+        observability_context: dict[str, Any] | None = None,
     ) -> str:
         function = modal.Function.from_name(
             worker.application_name,
@@ -107,6 +117,7 @@ class ModalReportInvoker:
             report_payload,
             context_payload,
             parent_payload,
+            observability_context,
         )
         invocation_id = getattr(call, "object_id", None)
         if not isinstance(invocation_id, str) or not invocation_id:
@@ -124,14 +135,21 @@ class Stage12ComparisonBackend:
         manifest_loader: V2ManifestLoader,
         store: ComparisonStore,
         invoker: ReportInvoker,
+        runtime: ObservabilityRuntime,
     ) -> None:
         self._settings = settings
         self._manifest_loader = manifest_loader
         self._store = store
         self._invoker = invoker
+        self._runtime = runtime
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> Stage12ComparisonBackend:
+    def from_settings(
+        cls,
+        settings: Settings,
+        *,
+        runtime: ObservabilityRuntime,
+    ) -> Stage12ComparisonBackend:
         manifest_store = modal.Dict.from_name(
             settings.stage12_v2_manifest_name,
             environment_name=settings.stage12_v2_manifest_environment,
@@ -142,6 +160,7 @@ class Stage12ComparisonBackend:
             manifest_loader=V2ManifestLoader(manifest_store),
             store=Stage12PersistenceStore(settings.stage12_database_url),
             invoker=ModalReportInvoker(settings.stage12_v2_manifest_environment),
+            runtime=runtime,
         )
 
     async def dispatch_after_production(
@@ -150,6 +169,7 @@ class Stage12ComparisonBackend:
         request_payload: dict[str, Any],
         production_response: bytes,
         request_id: str,
+        observability_id: str,
     ) -> None:
         prepared = await asyncio.to_thread(
             self._prepare_automatic_report,
@@ -169,6 +189,7 @@ class Stage12ComparisonBackend:
             manifest_sha256=manifest_sha256,
             request_id=request_id,
             production_function_call_id=parent.production_identity,
+            observability_id=observability_id,
         )
 
     # TEMPORARY(Stage 12): Remove this operator submission seam when Stage 14
@@ -178,6 +199,7 @@ class Stage12ComparisonBackend:
         *,
         request_payload: dict[str, Any],
         request_id: str,
+        observability_id: str,
     ) -> ComparisonReportRecord:
         """Submit one direct report and return after Modal acknowledges it."""
 
@@ -196,6 +218,7 @@ class Stage12ComparisonBackend:
             manifest_sha256=manifest_sha256,
             request_id=request_id,
             production_function_call_id=None,
+            observability_id=observability_id,
         )
 
     async def get_temporary_report(
@@ -360,15 +383,17 @@ class Stage12ComparisonBackend:
             worker=worker,
         )
         if adapted.report is None:
-            record_event(
+            self._runtime.event(
                 "stage12_comparison_run_skipped",
-                request_id=request_id,
-                production_identity=production_identity,
-                reason=(
-                    adapted.skip_reason.value
-                    if adapted.skip_reason
-                    else "unsupported_input"
-                ),
+                attributes={
+                    "request_id": request_id,
+                    "production_identity": production_identity,
+                    "reason": (
+                        adapted.skip_reason.value
+                        if adapted.skip_reason
+                        else "unsupported_input"
+                    ),
+                },
             )
             return None
         country = request_payload.get("country")
@@ -410,6 +435,7 @@ class Stage12ComparisonBackend:
         manifest_sha256: str,
         request_id: str,
         production_function_call_id: str | None,
+        observability_id: str,
     ) -> ComparisonReportRecord:
         """Return after Modal accepts the coordinator; perform no database writes."""
 
@@ -419,27 +445,61 @@ class Stage12ComparisonBackend:
             f"{parent.evaluation_id}"
         )
         try:
-            invocation_id = await self._invoker.spawn(
-                worker=worker,
-                report_payload=report.model_dump(mode="json"),
-                parent_payload=parent.model_dump(mode="json"),
-                context_payload={
-                    "request_id": request_id,
-                    "environment": self._settings.environment,
-                    "modal_environment": (
-                        self._settings.stage12_v2_manifest_environment
-                    ),
-                    "worker_version": version,
-                    "modal_application": worker.application_name,
-                    "simulation_callable": country_worker.single_simulation_callable,
-                    "version_manifest_sha256": manifest_sha256,
-                    "bundle_manifest_sha256": worker.bundle_manifest_sha256,
-                    "artifact_prefix": artifact_prefix,
-                    "production_function_call_id": production_function_call_id,
-                    "created_at": parent.created_at.isoformat(),
-                    "retention_expires_at": parent.retention_expires_at.isoformat(),
-                },
+            raw_context = self._runtime.capture_context()
+        except Exception:
+            raw_context = None
+        captured_context = dict(raw_context) if isinstance(raw_context, dict) else {}
+        captured_context.pop("observability_id", None)
+        resolved_observability_id = normalize_observability_id(observability_id)
+        if resolved_observability_id is not None:
+            captured_context["observability_id"] = resolved_observability_id
+            parent = parent.model_copy(
+                update={"observability_id": resolved_observability_id}
             )
+        stage_plan = (
+            STAGE12_SHADOW_REPORT_STAGES
+            if production_function_call_id is not None
+            else STAGE12_CANONICAL_REPORT_STAGES
+        )
+        try:
+            with self._runtime.span(
+                stage_plan.name(Stage.STAGE12_ENTRY_DISPATCH),
+                attributes={
+                    "evaluation_id": str(parent.evaluation_id),
+                    "execution_mode": (
+                        "shadow"
+                        if production_function_call_id is not None
+                        else "authoritative"
+                    ),
+                    "runner_name": "stage12",
+                },
+            ):
+                invocation_id = await self._invoker.spawn(
+                    worker=worker,
+                    report_payload=report.model_dump(mode="json"),
+                    parent_payload=parent.model_dump(mode="json"),
+                    observability_context=captured_context or None,
+                    context_payload={
+                        "request_id": request_id,
+                        "environment": self._settings.environment,
+                        "modal_environment": (
+                            self._settings.stage12_v2_manifest_environment
+                        ),
+                        "worker_version": version,
+                        "modal_application": worker.application_name,
+                        "simulation_callable": (
+                            country_worker.single_simulation_callable
+                        ),
+                        "version_manifest_sha256": manifest_sha256,
+                        "bundle_manifest_sha256": worker.bundle_manifest_sha256,
+                        "artifact_prefix": artifact_prefix,
+                        "production_function_call_id": production_function_call_id,
+                        "created_at": parent.created_at.isoformat(),
+                        "retention_expires_at": (
+                            parent.retention_expires_at.isoformat()
+                        ),
+                    },
+                )
         except Exception as error:  # noqa: BLE001
             failed_at = datetime.now(UTC)
             failed = parent.model_copy(
@@ -462,13 +522,15 @@ class Stage12ComparisonBackend:
                 "updated_at": acknowledged_at,
             }
         )
-        record_event(
+        self._runtime.event(
             "stage12_comparison_run_dispatched",
-            request_id=request_id,
-            evaluation_id=str(parent.evaluation_id),
-            production_identity=parent.production_identity,
-            worker_version=version,
-            modal_application=worker.application_name,
-            coordinator_invocation_id=invocation_id,
+            attributes={
+                "request_id": request_id,
+                "evaluation_id": str(parent.evaluation_id),
+                "production_identity": parent.production_identity,
+                "worker_version": version,
+                "modal_application": worker.application_name,
+                "coordinator_invocation_id": invocation_id,
+            },
         )
         return acknowledged

@@ -763,17 +763,6 @@
                 "type": "null"
               }
             ]
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
           }
         },
         "type": "object",
@@ -812,17 +801,6 @@
           },
           "policyengine_bundle": {
             "$ref": "#/components/schemas/PolicyEngineBundle"
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
           }
         },
         "type": "object",
@@ -1343,17 +1321,6 @@
                 "type": "null"
               }
             ]
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
           }
         },
         "type": "object",
@@ -1392,17 +1359,6 @@
           },
           "policyengine_bundle": {
             "$ref": "#/components/schemas/PolicyEngineBundle"
-          },
-          "run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Run Id"
           }
         },
         "type": "object",
@@ -2314,11 +2270,7 @@
       },
       "TelemetryEnvelope": {
         "properties": {
-          "run_id": {
-            "type": "string",
-            "title": "Run Id"
-          },
-          "process_id": {
+          "submission_claim_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -2327,29 +2279,7 @@
                 "type": "null"
               }
             ],
-            "title": "Process Id"
-          },
-          "request_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Request Id"
-          },
-          "traceparent": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Traceparent"
+            "title": "Submission Claim Id"
           },
           "requested_at": {
             "anyOf": [
@@ -2422,11 +2352,8 @@
         },
         "additionalProperties": false,
         "type": "object",
-        "required": [
-          "run_id"
-        ],
         "title": "TelemetryEnvelope",
-        "description": "Minimal shared telemetry payload shape for gateway and worker code."
+        "description": "Bounded internal metadata passed from API request to Modal worker."
       },
       "ValidationError": {
         "properties": {

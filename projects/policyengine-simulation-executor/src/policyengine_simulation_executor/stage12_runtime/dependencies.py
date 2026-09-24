@@ -74,6 +74,7 @@ class ChildInvoker(Protocol):
         environment: str,
         simulation: dict[str, Any],
         context: dict[str, Any],
+        observability_context: dict[str, Any] | None,
     ) -> ChildCall: ...
 
     def restore(self, invocation_id: str) -> ChildCall: ...
@@ -88,6 +89,7 @@ class ModalChildInvoker:
         environment: str,
         simulation: dict[str, Any],
         context: dict[str, Any],
+        observability_context: dict[str, Any] | None,
     ) -> ChildCall:
         from importlib import import_module
 
@@ -97,7 +99,7 @@ class ModalChildInvoker:
             function_name,
             environment_name=environment,
         )
-        return function.spawn(simulation, context)
+        return function.spawn(simulation, context, observability_context)
 
     def restore(self, invocation_id: str) -> ChildCall:
         from importlib import import_module

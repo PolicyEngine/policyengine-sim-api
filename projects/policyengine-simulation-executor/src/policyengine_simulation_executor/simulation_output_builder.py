@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
-from policyengine_observability import segment
+from policyengine_observability import ObservabilityRuntime
 
 from policyengine_simulation_executor import simulation_output_budget
 from policyengine_simulation_executor import simulation_output_cliff
@@ -14,7 +15,10 @@ from policyengine_simulation_executor import simulation_output_geographic
 from policyengine_simulation_executor import simulation_output_inequality
 from policyengine_simulation_executor import simulation_output_labor
 from policyengine_simulation_executor import simulation_output_poverty
-from policyengine_simulation_observability.observability import SegmentName
+from policyengine_simulation_observability.stages import (
+    ANNUAL_IMPACT_STAGES,
+    Stage,
+)
 from policyengine_simulation_executor.release_bundle import get_country_release_bundle
 from policyengine_simulation_executor.simulation_macro_output import (
     BudgetaryImpact,
@@ -44,15 +48,19 @@ class SimulationOutputBuilder:
     reform: Any
     resolved_data_version: str | None = None
     resolved_region_code: str | None = None
+    runtime: ObservabilityRuntime | None = None
     _analysis: Any = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         self.country = self.country.lower()
 
+    def _span(self, name: str):
+        return self.runtime.span(name) if self.runtime is not None else nullcontext()
+
     @property
     def analysis(self) -> Any:
         if self._analysis is None:
-            with segment(SegmentName.ECONOMIC_IMPACT_ANALYSIS):
+            with self._span(ANNUAL_IMPACT_STAGES.name(Stage.ECONOMIC_IMPACT_ANALYSIS)):
                 self._analysis = self.country_module.economic_impact_analysis(
                     self.baseline,
                     self.reform,
@@ -64,7 +72,7 @@ class SimulationOutputBuilder:
         return self.simulation_params.get("include_cliffs") is True
 
     def build(self) -> SingleYearMacroOutput:
-        with segment(SegmentName.SIMULATION_OUTPUT_BUILD):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_BUILD)):
             poverty_outputs = self._build_poverty_outputs()
             wealth_decile = getattr(self.analysis, "wealth_decile_impacts", None)
             intra_wealth_decile = getattr(
@@ -96,44 +104,46 @@ class SimulationOutputBuilder:
             )
 
     def serialize(self) -> dict[str, Any]:
-        with segment(SegmentName.CALCULATION):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.CALCULATION)):
             output = self.build()
-        with segment(SegmentName.RESPONSE_SERIALIZATION):
-            with segment(SegmentName.SIMULATION_OUTPUT_MODEL_DUMP):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
+            with self._span(
+                ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_MODEL_DUMP)
+            ):
                 return output.model_dump(mode="json")
 
     def _build_detailed_budget(self) -> DetailedBudgetOutput:
-        with segment(SegmentName.OUTPUT_DETAILED_BUDGET):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_DETAILED_BUDGET)):
             return simulation_output_budget.build_detailed_budget(self.analysis)
 
     def _build_decile(self) -> DecileOutput:
-        with segment(SegmentName.OUTPUT_DECILE):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_DECILE)):
             return simulation_output_distribution.build_decile(self.analysis)
 
     def _build_inequality(self) -> InequalityOutput:
-        with segment(SegmentName.OUTPUT_INEQUALITY):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_INEQUALITY)):
             return simulation_output_inequality.build_inequality(self.analysis)
 
     def _build_budgetary_impact(self) -> BudgetaryImpact:
-        with segment(SegmentName.OUTPUT_BUDGETARY_IMPACT):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_BUDGETARY_IMPACT)):
             return simulation_output_budget.build_budgetary_impact(
                 self.country, self.baseline, self.reform
             )
 
     def _build_poverty_outputs(self) -> PovertyModuleOutputs:
-        with segment(SegmentName.OUTPUT_POVERTY):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_POVERTY)):
             return simulation_output_poverty.build_poverty_outputs(
                 self.country, self.baseline, self.reform, self.analysis
             )
 
     def _build_intra_decile_output(self) -> IntraDecileOutput:
-        with segment(SegmentName.OUTPUT_INTRA_DECILE):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_INTRA_DECILE)):
             return simulation_output_distribution.build_intra_decile_output(
                 self.baseline, self.reform
             )
 
     def _build_wealth_decile(self, wealth_decile: Any) -> DecileOutput | None:
-        with segment(SegmentName.OUTPUT_WEALTH_DECILE):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_WEALTH_DECILE)):
             return simulation_output_distribution.build_wealth_decile(
                 self.country, wealth_decile
             )
@@ -141,17 +151,17 @@ class SimulationOutputBuilder:
     def _build_intra_wealth_decile(
         self, intra_wealth_decile: Any
     ) -> IntraDecileOutput | None:
-        with segment(SegmentName.OUTPUT_INTRA_WEALTH_DECILE):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_INTRA_WEALTH_DECILE)):
             return simulation_output_distribution.build_intra_wealth_decile(
                 self.country, intra_wealth_decile
             )
 
     def _build_labor_supply_response(self) -> LaborSupplyResponseOutput | None:
-        with segment(SegmentName.OUTPUT_LABOR_SUPPLY):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_LABOR_SUPPLY)):
             return simulation_output_labor.build_labor_supply_response(self.analysis)
 
     def _build_cliff_impact(self) -> CliffImpactOutput | None:
-        with segment(SegmentName.OUTPUT_CLIFF):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_CLIFF)):
             return simulation_output_cliff.build_cliff_impact(self.analysis)
 
     def _build_geographic_impact_output(
@@ -211,7 +221,7 @@ class SimulationOutputBuilder:
     def _build_congressional_district_impact(
         self,
     ) -> CongressionalDistrictImpactOutput | None:
-        with segment(SegmentName.OUTPUT_CONGRESSIONAL_DISTRICT):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_CONGRESSIONAL_DISTRICT)):
             return simulation_output_geographic.build_congressional_district_impact(
                 self.country,
                 self.baseline,
@@ -220,23 +230,23 @@ class SimulationOutputBuilder:
             )
 
     def _build_uk_constituency_impact(self) -> GeographicImpactOutput | None:
-        with segment(SegmentName.OUTPUT_UK_CONSTITUENCY):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_CONSTITUENCY)):
             return simulation_output_geographic.build_uk_constituency_impact(
                 self.country, self.baseline, self.reform
             )
 
     def _build_uk_local_authority_impact(self) -> GeographicImpactOutput | None:
-        with segment(SegmentName.OUTPUT_UK_LOCAL_AUTHORITY):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_LOCAL_AUTHORITY)):
             return simulation_output_geographic.build_uk_local_authority_impact(
                 self.country, self.baseline, self.reform
             )
 
     def _model_version(self) -> str:
-        with segment(SegmentName.OUTPUT_MODEL_VERSION):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_MODEL_VERSION)):
             return str(getattr(self.country_module.model, "version", ""))
 
     def _data_version(self) -> str:
-        with segment(SegmentName.OUTPUT_DATA_VERSION):
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_DATA_VERSION)):
             if self.resolved_data_version:
                 return str(self.resolved_data_version)
             if self.simulation_params.get("data_version"):

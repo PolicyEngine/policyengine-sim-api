@@ -1,7 +1,7 @@
 #!/bin/bash
 # Sync secrets from GitHub to Modal environment
 # Usage: ./modal-sync-secrets.sh <modal-environment> <gh-environment>
-# Required env vars: LOGFIRE_TOKEN, HF_TOKEN
+# Required env vars: HF_TOKEN
 # Optional env vars: GCP_CREDENTIALS_JSON
 
 set -euo pipefail
@@ -53,13 +53,6 @@ if truthy "${GATEWAY_AUTH_REQUIRED:-}" && [ ${#missing[@]} -gt 0 ]; then
   echo "  Missing: ${missing[*]-}" >&2
   exit 1
 fi
-
-# Sync Logfire secret
-uv run modal secret create policyengine-logfire \
-  "LOGFIRE_TOKEN=${LOGFIRE_TOKEN:-}" \
-  "LOGFIRE_ENVIRONMENT=$GH_ENV" \
-  --env="$MODAL_ENV" \
-  --force || true
 
 # Sync GCP credentials if provided
 if [ -n "${GCP_CREDENTIALS_JSON:-}" ]; then

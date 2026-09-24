@@ -9,13 +9,6 @@ from policyengine_simulation_contract.gateway_models import (
 )
 
 
-class AcceptedResponse(JSONResponse):
-    """Shared 202 JSON response."""
-
-    def __init__(self, content: dict):
-        super().__init__(status_code=202, content=content)
-
-
 class ServerErrorResponse(JSONResponse):
     """Shared 500 JSON response."""
 
@@ -38,30 +31,46 @@ def batch_status_payload(response: BudgetWindowBatchStatusResponse) -> dict:
     return payload
 
 
-def batch_status_response(response: BudgetWindowBatchStatusResponse):
+def batch_status_response(
+    response: BudgetWindowBatchStatusResponse,
+    *,
+    headers: dict[str, str] | None = None,
+):
     payload = batch_status_payload(response)
     if response.status in {"submitted", "running"}:
-        return AcceptedResponse(payload)
+        return JSONResponse(status_code=202, content=payload, headers=headers)
     if response.status == "failed":
         return JSONResponse(
-            status_code=400 if response.errors else 500, content=payload
+            status_code=400 if response.errors else 500,
+            content=payload,
+            headers=headers,
         )
-    return response
+    return JSONResponse(status_code=200, content=payload, headers=headers)
 
 
-def running_job_response(job_metadata: dict | None = None) -> AcceptedResponse:
-    return AcceptedResponse(
-        {
+def running_job_response(
+    job_metadata: dict | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=202,
+        content={
             "status": "running",
             "result": None,
             "error": None,
             **(job_metadata or {}),
-        }
+        },
+        headers=headers,
     )
 
 
 def failed_job_response(
-    *, error: str, job_metadata: dict | None = None, errors: list[dict] | None = None
+    *,
+    error: str,
+    job_metadata: dict | None = None,
+    errors: list[dict] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     return JSONResponse(
         status_code=400 if errors else 500,
@@ -72,4 +81,5 @@ def failed_job_response(
             "error": error,
             **(job_metadata or {}),
         },
+        headers=headers,
     )

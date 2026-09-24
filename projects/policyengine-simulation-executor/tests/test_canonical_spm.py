@@ -211,18 +211,20 @@ def test_result_transport_may_omit_nulls_but_not_resolved_options():
             combine_spm_results([malformed], SELECTION)
 
 
-def test_sync_compatibility_endpoint_preserves_explicit_null(monkeypatch):
+def test_sync_compatibility_endpoint_preserves_explicit_null(
+    monkeypatch, observability_runtime
+):
     import policyengine_simulation_executor.simulation as simulation
 
     captured = []
 
-    def capture(params):
+    def capture(params, *, runtime):
         captured.append(params)
         raise SPMInputError("SPM_GEOGRAPHY_REQUIRED", "intentional test stop")
 
     monkeypatch.setattr(simulation, "run_simulation_impl", capture)
     app = FastAPI()
-    app.include_router(create_router())
+    app.include_router(create_router(observability_runtime))
     response = TestClient(app).post(
         "/simulate/economy/comparison",
         json={"country": "us", "spm": {"as_of": None}},
@@ -457,7 +459,7 @@ class TestResolutionIsNotRepeatedWork:
         "SPM_SCENARIO_UNAVAILABLE",
     ],
 )
-def test_actual_http_formula_error_contract(monkeypatch, code):
+def test_actual_http_formula_error_contract(monkeypatch, code, observability_runtime):
     error = SPMInputError(code, "Explicit input is required")
     assert pickle.loads(pickle.dumps(error)).to_dict() == error.to_dict()
     monkeypatch.setattr(
@@ -465,7 +467,7 @@ def test_actual_http_formula_error_contract(monkeypatch, code):
         Mock(side_effect=error),
     )
     app = FastAPI()
-    app.include_router(create_router())
+    app.include_router(create_router(observability_runtime))
     response = TestClient(app).post(
         "/simulate/economy/comparison",
         json={"country": "us", "spm": {"geography_kind": "national"}},
@@ -739,7 +741,9 @@ def test_budget_window_state_keeps_typed_failure_on_replay():
         "SPM_SCENARIO_UNAVAILABLE",
     ],
 )
-def test_country_error_is_transportable_without_country_package(monkeypatch, code):
+def test_country_error_is_transportable_without_country_package(
+    monkeypatch, code, observability_runtime
+):
     from contextlib import nullcontext
 
     class CountryError(ValueError):
@@ -754,7 +758,9 @@ def test_country_error_is_transportable_without_country_package(monkeypatch, cod
         Mock(side_effect=CountryError(code, "Observed input required")),
     )
     with pytest.raises(SPMInputError) as caught:
-        simulation_runtime.run_simulation_impl({"country": "us"})
+        simulation_runtime.run_simulation_impl(
+            {"country": "us"}, runtime=observability_runtime
+        )
     transported = pickle.loads(pickle.dumps(caught.value))
     assert transported.to_dict() == {"code": code, "message": "Observed input required"}
 
@@ -822,7 +828,10 @@ def test_as_of_presence_survives_budget_parent(date_fields, expected_as_of):
     )
     assert selection["as_of"] == expected_as_of
     parent = _build_budget_window_parent_payload(
-        request, resolved_version="test", resolved_app_name="test", bundle=bundle
+        request,
+        resolved_version="test",
+        resolved_app_name="test",
+        bundle=bundle,
     )
     assert parent["spm"] == selection
 

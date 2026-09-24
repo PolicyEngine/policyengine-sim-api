@@ -3,23 +3,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from unittest.mock import Mock
 
 import pytest
 from conftest import FakeBackend, make_settings
 from fastapi import HTTPException
-from policyengine_observability import REQUEST_ID_HEADER, current_context
+from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     SimulationRole,
 )
-from stage12_fixtures import (
-    EVALUATION_ID,
-    comparison_report,
-    comparison_simulation,
-    eligible_payload,
-)
-
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.backend import (
@@ -31,13 +25,29 @@ from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12DispatchFailed,
     TemporaryStage12UnsupportedRequest,
 )
+from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
+from stage12_fixtures import (
+    EVALUATION_ID,
+    comparison_report,
+    comparison_simulation,
+    eligible_payload,
+)
 
 
-def response(status: int, payload: JsonObject) -> BackendResponse:
+def response(
+    status: int,
+    payload: JsonObject,
+    *,
+    headers: dict[str, str] | None = None,
+) -> BackendResponse:
     return BackendResponse(
         status_code=status,
         content=json.dumps(payload).encode(),
-        headers={"content-type": "application/json", "retry-after": "3"},
+        headers={
+            "content-type": "application/json",
+            "retry-after": "3",
+            **(headers or {}),
+        },
     )
 
 
@@ -152,6 +162,7 @@ def test_automatic_comparison_dispatch_preserves_production_response(
 
     from fastapi.testclient import TestClient
 
+    observability_id = "00000000-0000-4000-8000-000000000001"
     with TestClient(app) as test_client:
         result = test_client.post(
             "/simulate/economy/comparison",
@@ -160,12 +171,14 @@ def test_automatic_comparison_dispatch_preserves_production_response(
                 "scope": "macro",
                 "reform": {},
                 "_telemetry": {
-                    "run_id": "production-run-1",
-                    "process_id": "api-process-1",
+                    "submission_claim_id": "api-process-1",
                     "capture_mode": "disabled",
                 },
             },
-            headers={REQUEST_ID_HEADER: "request-1"},
+            headers={
+                REQUEST_ID_HEADER: "request-1",
+                OBSERVABILITY_ID_HEADER: observability_id,
+            },
         )
 
     assert result.status_code == 202
@@ -173,9 +186,8 @@ def test_automatic_comparison_dispatch_preserves_production_response(
     assert result.headers["x-policyengine-simulation-backend"] == "old_gateway"
     assert len(comparison.calls) == 1
     assert comparison.calls[0]["request_id"] == "request-1"
-    assert comparison.calls[0]["request_payload"]["telemetry"]["run_id"] == (
-        "production-run-1"
-    )
+    assert comparison.calls[0]["observability_id"] == observability_id
+    assert "observability_id" not in comparison.calls[0]["request_payload"]["telemetry"]
     assert json.loads(comparison.calls[0]["production_response"]) == payload
 
 
@@ -398,7 +410,11 @@ def test_temporary_stage12_poll_reads_durable_parent_and_children(backend):
 
 def test_temporary_stage12_poll_returns_terminal_metadata_with_200(backend):
     comparison = TemporaryComparisonBackend(
-        report=comparison_report(status=ComparisonRunLifecycleStatus.SUCCEEDED)
+        report=comparison_report(
+            status=ComparisonRunLifecycleStatus.SUCCEEDED
+        ).model_copy(
+            update={"observability_id": "00000000-0000-4000-8000-000000000012"}
+        )
     )
     app = create_app(
         settings=make_settings(),
@@ -414,6 +430,14 @@ def test_temporary_stage12_poll_returns_terminal_metadata_with_200(backend):
 
     assert result.status_code == 200
     assert "retry-after" not in result.headers
+    assert (
+        result.headers[OBSERVABILITY_ID_HEADER]
+        == "00000000-0000-4000-8000-000000000012"
+    )
+    assert (
+        result.json()["report"]["observability_id"]
+        == "00000000-0000-4000-8000-000000000012"
+    )
     assert result.json()["report"]["aggregate_output_uri"] == (
         "gs://stage12-private/report.json"
     )
@@ -554,15 +578,18 @@ def test_temporary_stage12_submission_returns_bounded_failures(
 
 
 def test_job_status_preserves_id_and_status(client, backend):
+    observability_id = "00000000-0000-4000-8000-000000000001"
     backend.responses[("GET", "/jobs/fc-123")] = response(
         202,
-        {"status": "running", "run_id": "run-1"},
+        {"status": "running"},
+        headers={OBSERVABILITY_ID_HEADER: observability_id},
     )
 
     result = client.get("/jobs/fc-123")
 
     assert result.status_code == 202
-    assert result.json() == {"status": "running", "run_id": "run-1"}
+    assert result.json() == {"status": "running"}
+    assert result.headers[OBSERVABILITY_ID_HEADER] == observability_id
     assert backend.requests[-1].path == "/jobs/fc-123"
 
 
@@ -633,12 +660,9 @@ def test_job_status_records_structured_backend_telemetry(
     backend,
     monkeypatch,
 ):
-    events = []
-    monkeypatch.setattr(
-        app_module,
-        "record_event",
-        lambda name, **attributes: events.append((name, attributes)),
-    )
+    runtime = client.app.state.policyengine_observability
+    event = Mock(wraps=runtime.event)
+    monkeypatch.setattr(runtime, "event", event)
     backend.responses[("GET", "/jobs/fc-123")] = response(
         202,
         {"status": "running", "job_id": "must-not-be-recorded"},
@@ -646,39 +670,18 @@ def test_job_status_records_structured_backend_telemetry(
 
     client.get("/jobs/fc-123")
 
-    name, attributes = events[-1]
+    call = next(
+        item
+        for item in event.call_args_list
+        if item.args == ("simulation_entry_backend_response",)
+    )
+    name = call.args[0]
+    attributes = call.kwargs["attributes"]
     assert name == "simulation_entry_backend_response"
     assert attributes["job_state"] == "running"
     assert attributes["status_code"] == 202
     assert attributes["route"] == "/jobs/{job_id}"
     assert attributes["job_id"] == "fc-123"
-
-
-def test_request_log_templates_route_and_keeps_structured_job_id(
-    client,
-    backend,
-    caplog,
-):
-    backend.responses[("GET", "/jobs/fc-123")] = BackendResponse(
-        202,
-        b'{"job_id":"fc-123","status":"running"}',
-        {"content-type": "application/json"},
-    )
-
-    with caplog.at_level(logging.INFO):
-        result = client.get(
-            "/jobs/fc-123",
-            headers={"Authorization": "Bearer caller"},
-        )
-
-    assert result.status_code == 202
-    request_record = next(
-        record
-        for record in caplog.records
-        if record.getMessage() == "simulation_entry_request"
-    )
-    assert request_record.path == "/jobs/{job_id}"
-    assert request_record.job_id == "fc-123"
 
 
 def test_budget_window_routes_use_original_batch_id(client, backend):
@@ -728,53 +731,46 @@ def test_versions_and_ping_are_public_proxy_routes(client, backend):
 def test_request_id_is_propagated_logged_and_returned(
     client,
     backend,
-    caplog,
 ):
-    with caplog.at_level(logging.INFO):
-        result = client.get(
-            "/versions",
-            headers={REQUEST_ID_HEADER: "request-123"},
-        )
+    result = client.get(
+        "/versions",
+        headers={REQUEST_ID_HEADER: "request-123"},
+    )
 
     assert result.headers[REQUEST_ID_HEADER] == "request-123"
     assert "x-request-id" not in result.headers
     assert backend.requests[-1].request_id == "request-123"
-    request_record = next(
-        record
-        for record in caplog.records
-        if record.getMessage() == "simulation_entry_request"
-    )
-    assert request_record.request_id == "request-123"
 
 
-def test_generated_request_id_is_shared_with_observability():
-    class CapturingBackend(FakeBackend):
-        observability_request_id: str | None = None
-
-        async def request(self, *args, **kwargs):
-            context = current_context()
-            self.observability_request_id = (
-                context.request_id if context is not None else None
-            )
-            return await super().request(*args, **kwargs)
-
-    backend = CapturingBackend()
+def test_request_identifiers_are_attached_to_the_active_observability_context(
+    backend,
+):
     app = create_app(
         settings=make_settings(),
         backend=backend,
         auth_dependency=lambda: None,
     )
+    runtime = app.state.policyengine_observability
+
+    @app.get("/_test/runtime-context")
+    def runtime_context():
+        return runtime.capture_context()
 
     from fastapi.testclient import TestClient
 
-    with TestClient(app) as client:
-        result = client.get("/versions")
+    observability_id = "00000000-0000-4000-8000-000000000001"
+    with TestClient(app) as test_client:
+        result = test_client.get(
+            "/_test/runtime-context",
+            headers={
+                REQUEST_ID_HEADER: "request-123",
+                OBSERVABILITY_ID_HEADER: observability_id,
+            },
+        )
 
-    request_id = result.headers[REQUEST_ID_HEADER]
-    assert request_id
-    assert "x-request-id" not in result.headers
-    assert backend.requests[-1].request_id == request_id
-    assert backend.observability_request_id == request_id
+    assert result.status_code == 200
+    assert result.json()["request_id"] == "request-123"
+    assert result.json()["observability_id"] == observability_id
 
 
 def test_x_request_id_is_not_an_alias(client, backend):
@@ -798,7 +794,7 @@ def test_entrypoint_uses_its_own_service_name(backend):
     )
 
     assert (
-        app.state.policyengine_observability.config.service_name
+        app.state.policyengine_observability.config.service.name
         == "policyengine-simulation-entry"
     )
 
@@ -876,9 +872,8 @@ def test_unexpected_failure_preserves_correlation_headers_and_request_log(caplog
     request_record = next(
         record
         for record in caplog.records
-        if record.getMessage() == "simulation_entry_request"
+        if record.getMessage() == "simulation_entry_unhandled_request"
     )
-    assert request_record.status_code == 500
     assert request_record.path == "/jobs/{job_id}"
     assert request_record.job_id == "job-1"
 
