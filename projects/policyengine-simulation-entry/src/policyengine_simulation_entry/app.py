@@ -84,7 +84,7 @@ class ComparisonBackend(Protocol):
         request_payload: dict[str, Any],
         production_response: bytes,
         request_id: str,
-        observability_id: str | None = None,
+        observability_id: str,
     ) -> None: ...
 
     async def submit_temporary_report(
@@ -92,7 +92,7 @@ class ComparisonBackend(Protocol):
         *,
         request_payload: dict[str, Any],
         request_id: str,
-        observability_id: str | None = None,
+        observability_id: str,
     ) -> ComparisonReportRecord: ...
 
     async def get_temporary_report(
