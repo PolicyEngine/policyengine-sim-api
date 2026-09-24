@@ -21,16 +21,16 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12InvocationContext,
     stage12_output_plan_sha256,
 )
+from policyengine_simulation_observability.stages import (
+    STAGE12_SIMULATION_STAGES,
+    Stage,
+)
 
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
     canonical_json_bytes,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
-from policyengine_simulation_observability.stages import (
-    STAGE12_SIMULATION_STAGES,
-    Stage,
-)
 
 from .dependencies import ComparisonStore, artifact_store, runtime_store
 from .output_planning import apply_output_plan, validate_output_frames

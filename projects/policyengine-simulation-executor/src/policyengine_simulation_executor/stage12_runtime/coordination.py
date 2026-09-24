@@ -9,6 +9,7 @@ from hashlib import sha256
 from typing import Any
 from uuid import uuid4
 
+from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     AggregateReportArtifactDescriptor,
     ComparisonReportRecord,
@@ -19,10 +20,9 @@ from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
     ResultComparisonStatus,
     SimulationArtifactDescriptor,
-    Stage12OutputPlan,
     Stage12InvocationContext,
+    Stage12OutputPlan,
 )
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_observability.stages import (
     STAGE12_CANONICAL_REPORT_STAGES,
     STAGE12_SHADOW_REPORT_STAGES,
@@ -46,12 +46,12 @@ from .dependencies import (
     artifact_store,
     runtime_store,
 )
-from .simulation import descriptor_from_record, simulation_input_sha256
 from .output_planning import (
     plan_simulation_input,
     resolve_report_output_plan,
     validate_output_frames,
 )
+from .simulation import descriptor_from_record, simulation_input_sha256
 
 SIMULATION_WAIT_TIMEOUT_SECONDS = 3_000
 
