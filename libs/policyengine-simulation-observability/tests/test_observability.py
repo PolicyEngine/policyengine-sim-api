@@ -2,12 +2,14 @@ import inspect
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_observability import (
+    REQUEST_ID_HEADER,
     GoogleCloudLogDestination,
     StdoutLogDestination,
 )
-
+from policyengine_simulation_observability.identifiers import (
+    OBSERVABILITY_ID_HEADER,
+)
 from policyengine_simulation_observability.observability import (
     build_runtime,
     init_process_observability,
@@ -106,6 +108,37 @@ def test_fastapi_adapter_preserves_response_and_request_id(monkeypatch):
         assert response.json() == {"status": "healthy"}
         assert response.headers[REQUEST_ID_HEADER] == "request-123"
         assert app.state.policyengine_observability is runtime
+    finally:
+        runtime.shutdown()
+
+
+def test_fastapi_adapter_attaches_observability_id_to_active_request(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    app = FastAPI()
+    runtime = init_simulation_observability(
+        app,
+        service_name="policyengine-simulation-entry-prod",
+        service_role="simulation_entry",
+        platform="google_cloud_run",
+        environment="prod",
+    )
+
+    @app.get("/context")
+    def context():
+        return runtime.capture_context()
+
+    observability_id = "00000000-0000-4000-8000-000000000001"
+    try:
+        response = TestClient(app).get(
+            "/context",
+            headers={
+                REQUEST_ID_HEADER: "request-123",
+                OBSERVABILITY_ID_HEADER: observability_id,
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["request_id"] == "request-123"
+        assert response.json()["observability_id"] == observability_id
     finally:
         runtime.shutdown()
 

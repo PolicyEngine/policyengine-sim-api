@@ -23,9 +23,7 @@ def install_observability_id_middleware(app: FastAPI) -> None:
         request.state.observability_id = observability_id
         response = await call_next(request)
         response.headers[OBSERVABILITY_ID_HEADER] = (
-            normalize_observability_id(
-                response.headers.get(OBSERVABILITY_ID_HEADER)
-            )
+            normalize_observability_id(response.headers.get(OBSERVABILITY_ID_HEADER))
             or observability_id
         )
         return response
