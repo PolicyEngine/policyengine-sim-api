@@ -1,282 +1,143 @@
 import inspect
-import json
-import os
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_observability import (
-    REQUEST_ID_HEADER,
-    ObservabilityRuntime,
-    operation,
-    set_observability_runtime,
+    GoogleCloudLogDestination,
+    StdoutLogDestination,
 )
-from policyengine_observability.runtime import OPERATION_LOGGER, REQUEST_LOGGER
 
 from policyengine_simulation_observability.observability import (
-    LOG_DESTINATIONS,
-    _environment,
-    configure_process_observability,
+    build_runtime,
     init_process_observability,
     init_simulation_observability,
-    process_static_attributes,
+    modal_image_environment,
 )
 
 
-OBSERVABILITY_ENV_KEYS = (
-    "OBSERVABILITY_ENVIRONMENT",
-    "OBSERVABILITY_PLATFORM",
-    "OBSERVABILITY_SERVICE_ROLE",
-    "OBSERVABILITY_RUNTIME_ROLE",
-    "OBSERVABILITY_MODAL_APP_NAME",
-    "OBSERVABILITY_MODAL_FUNCTION_NAME",
-    "OBSERVABILITY_LOG_DESTINATIONS",
-    "OTEL_ENABLED",
-    "GOOGLE_CLOUD_PROJECT",
-    "MODAL_ENVIRONMENT",
-    "DEPLOYMENT_ENVIRONMENT",
-    "APP_ENVIRONMENT",
-    "APP_ENV",
-    "ENVIRONMENT",
-)
-
-
-@pytest.fixture(autouse=True)
-def reset_observability_runtime():
-    saved_env = {key: os.environ.get(key) for key in OBSERVABILITY_ENV_KEYS}
-    for key in OBSERVABILITY_ENV_KEYS:
-        os.environ.pop(key, None)
-    yield
-    set_observability_runtime(ObservabilityRuntime.disabled())
-    for key, value in saved_env.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
-
-
-def test_configure_process_observability_sets_modal_metadata():
-    configure_process_observability(
-        platform="modal",
+def test_modal_runtime_has_explicit_identity_and_remote_logging(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER_ARG", "0.01")
+    monkeypatch.setenv("OBSERVABILITY_SERVICE_NAMESPACE", "example.stack")
+    monkeypatch.setenv("OBSERVABILITY_TRACE_PROJECT_ID", "trace-project")
+    monkeypatch.setenv("OBSERVABILITY_LOGGING_PROJECT_ID", "log-project")
+    monkeypatch.setenv("OBSERVABILITY_LOG_NAME", "simulation-modal")
+    runtime = build_runtime(
+        service_name="policyengine-simulation-py5-2-0",
         service_role="simulation_worker",
-        runtime_role="worker",
-        modal_app_name="policyengine-simulation-py4-19-1",
-        modal_function_name="run_simulation",
-    )
-
-    assert os.environ["OBSERVABILITY_PLATFORM"] == "modal"
-    assert os.environ["OBSERVABILITY_SERVICE_ROLE"] == "simulation_worker"
-    assert os.environ["OBSERVABILITY_RUNTIME_ROLE"] == "worker"
-    assert (
-        os.environ["OBSERVABILITY_MODAL_APP_NAME"] == "policyengine-simulation-py4-19-1"
-    )
-    assert os.environ["OBSERVABILITY_MODAL_FUNCTION_NAME"] == "run_simulation"
-
-
-def test_configure_process_observability_overwrites_stale_metadata():
-    os.environ["OBSERVABILITY_SERVICE_ROLE"] = "old_role"
-    os.environ["OBSERVABILITY_MODAL_FUNCTION_NAME"] = "old_function"
-
-    configure_process_observability(
         platform="modal",
-        service_role="budget_window_worker",
-        modal_app_name="policyengine-simulation-py4-19-1",
-        modal_function_name="run_budget_window_batch",
+        environment="main",
     )
+    try:
+        assert runtime.config.service.name == "policyengine-simulation-py5-2-0"
+        assert runtime.config.service.namespace == "example.stack"
+        assert runtime.config.service.role == "simulation_worker"
+        assert runtime.config.deployment.environment == "main"
+        assert runtime.config.deployment.platform == "modal"
+        assert runtime.config.otel.sampling_ratio == 1.0
+        stdout, remote = runtime.config.logging.destinations
+        assert isinstance(stdout, StdoutLogDestination)
+        assert isinstance(remote, GoogleCloudLogDestination)
+        assert remote.project_id == "log-project"
+        assert remote.log_name == "simulation-modal"
+    finally:
+        runtime.shutdown()
 
-    assert os.environ["OBSERVABILITY_SERVICE_ROLE"] == "budget_window_worker"
-    assert os.environ["OBSERVABILITY_RUNTIME_ROLE"] == "budget_window_worker"
-    assert os.environ["OBSERVABILITY_MODAL_FUNCTION_NAME"] == "run_budget_window_batch"
 
-
-def test_process_static_attributes_carries_modal_identity():
-    os.environ["MODAL_ENVIRONMENT"] = "main"
-    configure_process_observability(
-        platform="modal",
-        service_role="simulation_worker",
-        modal_app_name="policyengine-simulation-py4-19-1",
-        modal_function_name="run_simulation",
+def test_cloud_run_runtime_uses_stdout_without_direct_remote_logging(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    monkeypatch.delenv("OBSERVABILITY_LOGGING_PROJECT_ID", raising=False)
+    monkeypatch.delenv("OBSERVABILITY_LOG_NAME", raising=False)
+    runtime = init_process_observability(
+        service_name="policyengine-simulation-entry-prod",
+        service_role="simulation_entry",
+        platform="google_cloud_run",
+        environment="prod",
     )
-
-    attributes = process_static_attributes(service_role="simulation_worker")
-
-    assert attributes["platform"] == "modal"
-    assert attributes["runtime_role"] == "simulation_worker"
-    assert attributes["modal_environment"] == "main"
-    assert attributes["modal_app_name"] == "policyengine-simulation-py4-19-1"
-    assert attributes["modal_function_name"] == "run_simulation"
-    assert attributes["logfire_status"] == "legacy_candidate_for_replacement"
+    try:
+        assert runtime.config.logging.capture_standard_library is True
+        assert len(runtime.config.logging.destinations) == 1
+        assert isinstance(runtime.config.logging.destinations[0], StdoutLogDestination)
+    finally:
+        runtime.shutdown()
 
 
-def test_worker_operation_log_includes_modal_identity(monkeypatch):
-    """Replicates the Modal worker entrypoint sequence: the operation log
-    must carry the Modal identity attributes, which have no FastAPI-adapter
-    injection point in plain-process runtimes."""
-    configure_process_observability(
-        platform="modal",
-        service_role="simulation_worker",
-        modal_app_name="policyengine-simulation-py4-19-1",
-        modal_function_name="run_simulation",
-    )
-    init_process_observability(service_role="simulation_worker")
+def test_modal_image_environment_only_copies_explicit_destinations(monkeypatch):
+    for name in (
+        "OBSERVABILITY_LOGGING_PROJECT_ID",
+        "OBSERVABILITY_LOG_NAME",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OBSERVABILITY_LOGGING_PROJECT_ID", "another-project")
+    monkeypatch.setenv("OBSERVABILITY_LOG_NAME", "another-log")
 
-    records = []
-    monkeypatch.setattr(
-        OPERATION_LOGGER,
-        "info",
-        lambda message: records.append(json.loads(message)),
-    )
+    environment = modal_image_environment()
 
-    static_attributes = process_static_attributes(service_role="simulation_worker")
-    with operation("run_simulation", flavor="modal_function", **static_attributes):
-        pass
-
-    assert len(records) == 1
-    record = records[0]
-    assert record["event"] == "operation_completed"
-    assert record["operation"] == "run_simulation"
-    assert record["service_role"] == "simulation_worker"
-    assert record["platform"] == "modal"
-    assert record["runtime_role"] == "simulation_worker"
-    assert record["modal_app_name"] == "policyengine-simulation-py4-19-1"
-    assert record["modal_function_name"] == "run_simulation"
+    assert environment["OBSERVABILITY_LOGGING_PROJECT_ID"] == "another-project"
+    assert environment["OBSERVABILITY_LOG_NAME"] == "another-log"
+    assert "OTEL_EXPORTER_OTLP_ENDPOINT" not in environment
+    assert environment["OTEL_EXPORTER_OTLP_PROTOCOL"] == "grpc"
+    assert environment["OTEL_TRACES_SAMPLER_ARG"] == "1.0"
 
 
-def test_init_simulation_observability_forces_stdout_and_disables_exports():
-    os.environ["OTEL_ENABLED"] = "true"
-    os.environ["OBSERVABILITY_LOG_DESTINATIONS"] = "google_cloud_logging"
-    os.environ["GOOGLE_CLOUD_PROJECT"] = "policyengine-prod"
-    os.environ["MODAL_ENVIRONMENT"] = "staging"
-
-    app = FastAPI()
-    runtime = init_simulation_observability(
-        app,
-        service_name="policyengine-simulation-gateway",
-        service_role="modal_gateway",
-    )
-
-    assert app.state.policyengine_observability is runtime
-    assert runtime.config.service_name == "policyengine-simulation-gateway"
-    assert runtime.config.service_role == "modal_gateway"
-    assert runtime.config.environment == "staging"
-    assert runtime.config.log_destinations == LOG_DESTINATIONS
-    assert runtime.config.otel_enabled is False
-    assert runtime.config.google_cloud_project is None
-
-
-def test_fastapi_observability_emits_structured_request_log(monkeypatch):
+def test_fastapi_adapter_preserves_response_and_request_id(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
     app = FastAPI()
 
     @app.get("/health")
     def health():
         return {"status": "healthy"}
 
-    init_simulation_observability(
-        app,
-        service_name="policyengine-simulation-entry",
-        service_role="api",
-    )
-
-    records = []
-    monkeypatch.setattr(
-        REQUEST_LOGGER,
-        "info",
-        lambda message: records.append(json.loads(message)),
-    )
-
-    response = TestClient(app).get(
-        "/health",
-        headers={REQUEST_ID_HEADER: "request-123"},
-    )
-
-    assert response.status_code == 200
-    assert len(records) == 1
-    record = records[0]
-    assert record["schema_version"] == "policyengine.observability.request.v1"
-    assert record["event"] == "http_request_completed"
-    assert record["service_name"] == "policyengine-simulation-entry"
-    assert record["service_role"] == "api"
-    assert record["request_id"] == "request-123"
-    assert record["method"] == "GET"
-    assert record["route"] == "/health"
-    assert record["status_code"] == 200
-    assert record["logfire_status"] == "legacy_candidate_for_replacement"
-    assert record["logfire_replacement_candidate"] == "policyengine-observability"
-
-
-def test_fastapi_service_name_is_a_required_keyword_only_argument():
-    parameter = inspect.signature(init_simulation_observability).parameters[
-        "service_name"
-    ]
-
-    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
-    assert parameter.default is inspect.Parameter.empty
-
-
-@pytest.mark.parametrize("app_environment", ["beta", "prod"])
-def test_app_environment_configures_cloud_run_runtime(app_environment):
-    os.environ["APP_ENVIRONMENT"] = app_environment
-
-    app = FastAPI()
     runtime = init_simulation_observability(
         app,
-        service_name="policyengine-simulation-entry",
+        service_name="policyengine-simulation-entry-prod",
         service_role="simulation_entry",
+        platform="google_cloud_run",
+        environment="prod",
     )
+    try:
+        response = TestClient(app).get(
+            "/health",
+            headers={REQUEST_ID_HEADER: "request-123"},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"status": "healthy"}
+        assert response.headers[REQUEST_ID_HEADER] == "request-123"
+        assert app.state.policyengine_observability is runtime
+    finally:
+        runtime.shutdown()
 
-    assert runtime.config.environment == app_environment
+
+def test_observability_setup_failure_does_not_change_fastapi_response(
+    monkeypatch,
+):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://invalid.invalid")
+    monkeypatch.setenv("POLICYENGINE_OTEL_GOOGLE_AUDIENCE", "not-a-url")
+    app = FastAPI()
+
+    @app.get("/result")
+    def result():
+        return {"result": 42}
+
+    runtime = init_simulation_observability(
+        app,
+        service_name="policyengine-simulation-entry-prod",
+        service_role="simulation_entry",
+        platform="google_cloud_run",
+        environment="prod",
+    )
+    try:
+        response = TestClient(app).get("/result")
+        assert response.status_code == 200
+        assert response.json() == {"result": 42}
+    finally:
+        runtime.shutdown()
 
 
-@pytest.mark.parametrize(
-    ("environment", "expected"),
-    [
-        (
-            {
-                "OBSERVABILITY_ENVIRONMENT": "observability",
-                "MODAL_ENVIRONMENT": "modal",
-                "DEPLOYMENT_ENVIRONMENT": "deployment",
-                "APP_ENVIRONMENT": "app-environment",
-                "APP_ENV": "app-env",
-                "ENVIRONMENT": "generic",
-            },
-            "observability",
-        ),
-        (
-            {
-                "MODAL_ENVIRONMENT": "modal",
-                "DEPLOYMENT_ENVIRONMENT": "deployment",
-                "APP_ENVIRONMENT": "app-environment",
-                "APP_ENV": "app-env",
-                "ENVIRONMENT": "generic",
-            },
-            "modal",
-        ),
-        (
-            {
-                "DEPLOYMENT_ENVIRONMENT": "deployment",
-                "APP_ENVIRONMENT": "app-environment",
-                "APP_ENV": "app-env",
-                "ENVIRONMENT": "generic",
-            },
-            "deployment",
-        ),
-        (
-            {
-                "APP_ENVIRONMENT": "app-environment",
-                "APP_ENV": "app-env",
-                "ENVIRONMENT": "generic",
-            },
-            "app-environment",
-        ),
-        (
-            {"APP_ENV": "app-env", "ENVIRONMENT": "generic"},
-            "app-env",
-        ),
-        ({"ENVIRONMENT": "generic"}, "generic"),
-        ({}, "local"),
-    ],
-)
-def test_environment_precedence(environment, expected):
-    os.environ.update(environment)
-
-    assert _environment() == expected
+def test_service_identity_arguments_are_required_and_keyword_only():
+    parameters = inspect.signature(init_simulation_observability).parameters
+    for name in ("service_name", "service_role", "platform", "environment"):
+        assert parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+        assert parameters[name].default is inspect.Parameter.empty

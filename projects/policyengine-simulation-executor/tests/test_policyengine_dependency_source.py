@@ -93,7 +93,9 @@ def test_modal_app_name_is_keyed_to_policyengine_py_version():
 
 
 def test_country_package_pins_match_policyengine_bundle():
-    from policyengine_simulation_executor.release_bundle import get_country_release_bundle
+    from policyengine_simulation_executor.release_bundle import (
+        get_country_release_bundle,
+    )
 
     pyproject = _load_toml(PYPROJECT_PATH)
 

@@ -8,6 +8,14 @@ from hashlib import sha256
 from typing import Any, Literal, cast
 
 import pandas as pd
+from policyengine_observability import (
+    DeploymentIdentity,
+    LoggingConfig,
+    ObservabilityConfig,
+    ObservabilityRuntime,
+    OTelConfig,
+    ServiceIdentity,
+)
 from pydantic import BaseModel, ConfigDict
 
 from policyengine_simulation_contract.stage12_execution import (
@@ -62,6 +70,27 @@ SingleSimulationRunner = Callable[
     Mapping[str, pd.DataFrame] | SimulationCalculation,
 ]
 AggregateBuilder = Callable[..., dict[str, Any]]
+
+
+def _local_qualification_runtime() -> ObservabilityRuntime:
+    """Create a local runtime that cannot send qualification data remotely."""
+
+    return ObservabilityRuntime(
+        ObservabilityConfig(
+            service=ServiceIdentity(
+                name="policyengine-stage12-parity",
+                namespace="policyengine.simulation-v2",
+                version="local",
+                role="qualification",
+            ),
+            deployment=DeploymentIdentity(
+                environment="local",
+                platform="local",
+            ),
+            logging=LoggingConfig(destinations=()),
+            otel=OTelConfig(enabled=False),
+        )
+    )
 
 
 def _validate_matching_input(
@@ -191,12 +220,19 @@ def qualify_report_parity(
     report = ReportExecutionInput.model_validate(report_payload)
     _validate_matching_input(existing_request, report)
 
+    local_runtime: ObservabilityRuntime | None = None
     if existing_runner is None:
         from policyengine_simulation_executor.simulation_runtime import (
             run_simulation_impl,
         )
 
-        existing_runner = run_simulation_impl
+        local_runtime = _local_qualification_runtime()
+
+        def run_existing(request: dict[str, Any]) -> Mapping[str, Any]:
+            assert local_runtime is not None
+            return run_simulation_impl(request, runtime=local_runtime)
+
+        existing_runner = run_existing
     if single_simulation_runner is None:
         from policyengine_simulation_executor.stage12_runtime import (
             calculate_simulation_frames,
@@ -212,7 +248,11 @@ def qualify_report_parity(
 
     request_with_microdata = dict(existing_request)
     request_with_microdata["_emit_microdata"] = True
-    existing_result = dict(existing_runner(request_with_microdata))
+    try:
+        existing_result = dict(existing_runner(request_with_microdata))
+    finally:
+        if local_runtime is not None:
+            local_runtime.shutdown()
     microdata = existing_result.pop("_microdata", None)
     existing_baseline = _existing_frames(microdata, side="baseline")
     existing_reform = _existing_frames(microdata, side="reform")

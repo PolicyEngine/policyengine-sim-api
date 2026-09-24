@@ -348,7 +348,7 @@ def test_completed_budget_window_rows_keep_resolved_nulls(mock_modal, client):
             error=None,
             created_at="2026-01-01T00:00:00+00:00",
             updated_at="2026-01-01T00:00:01+00:00",
-            run_id="batch-run-123",
+            observability_id="batch-run-123",
         )
     )
 

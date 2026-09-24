@@ -68,6 +68,7 @@ class SemiIntegrationRuntime:
     # instead of returning, or returns ``child_results[year]`` verbatim.
     child_errors: dict[str, BaseException] = field(default_factory=dict)
     child_results: dict[str, dict] = field(default_factory=dict)
+    observability: object | None = None
 
     def child_outcome_for_year(self, simulation_year: str) -> dict:
         return self.child_results.get(
@@ -150,7 +151,10 @@ class MockParentBatchCall:
         previous = self.runtime.current_parent_call_id
         self.runtime.current_parent_call_id = self.object_id
         try:
-            self._result = batch_module.run_budget_window_batch_impl(self.payload)
+            self._result = batch_module.run_budget_window_batch_impl(
+                self.payload,
+                runtime=self.runtime.observability,
+            )
         finally:
             self.runtime.current_parent_call_id = previous
         return self._result
@@ -185,8 +189,10 @@ class MockFunction:
 @pytest.fixture
 def budget_window_semi_integration_client(
     monkeypatch,
+    observability_runtime,
 ) -> tuple[TestClient, SemiIntegrationRuntime]:
     runtime = SemiIntegrationRuntime()
+    runtime.observability = observability_runtime
     runtime.dicts["simulation-api-us-versions"] = {
         "latest": "1.500.0",
         "1.500.0": "policyengine-simulation-py4-10-0",
@@ -247,8 +253,8 @@ def test_budget_window_submit_and_poll_exercise_gateway_worker_seams(
             "window_size": 3,
             "max_parallel": 2,
             "_telemetry": {
-                "run_id": "batch-run-123",
-                "process_id": "proc-123",
+                "observability_id": "batch-run-123",
+                "submission_claim_id": "proc-123",
                 "capture_mode": "disabled",
             },
         },

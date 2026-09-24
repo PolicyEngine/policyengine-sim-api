@@ -92,6 +92,7 @@ comparison_reports = Table(
     Column("environment", String(255), nullable=False),
     Column("calculation_flow", String(255), nullable=False),
     Column("originating_request_id", String(255), nullable=False),
+    Column("observability_id", String(36)),
     Column("production_identity", String(255), nullable=False),
     Column("incumbent_execution_id", String(255)),
     Column("worker_version", String(255), nullable=False),

@@ -13,8 +13,8 @@ class ObservabilityModel(BaseModel):
 
 
 class CorrelatedRunFields(ObservabilityModel):
-    run_id: str
-    process_id: str | None = None
+    observability_id: str
+    submission_claim_id: str | None = None
     job_id: str | None = None
     trace_id: str | None = None
     request_id: str | None = None
@@ -55,8 +55,8 @@ class TracerArtifactManifest(CorrelatedRunFields):
 
 
 class SimulationTelemetryEnvelope(ObservabilityModel):
-    run_id: str
-    process_id: str | None = None
+    observability_id: str
+    submission_claim_id: str | None = None
     request_id: str | None = None
     traceparent: str | None = None
     requested_at: datetime | None = None

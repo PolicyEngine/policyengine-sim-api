@@ -32,13 +32,15 @@ class FakeImage:
         return self
 
     def pip_install_from_requirements(self, requirements_txt, **kwargs):
-        self.calls.append(
-            ("pip_install_from_requirements", requirements_txt, kwargs)
-        )
+        self.calls.append(("pip_install_from_requirements", requirements_txt, kwargs))
         return self
 
     def add_local_python_source(self, *args, **kwargs):
         self.calls.append(("add_local_python_source", args, kwargs))
+        return self
+
+    def env(self, values):
+        self.calls.append(("env", values))
         return self
 
 
@@ -80,9 +82,7 @@ def import_gateway_app(monkeypatch):
 def test_gateway_image_installs_from_own_lock_via_uv_sync(monkeypatch):
     app = import_gateway_app(monkeypatch)
 
-    uv_sync_calls = [
-        call for call in app.gateway_image.calls if call[0] == "uv_sync"
-    ]
+    uv_sync_calls = [call for call in app.gateway_image.calls if call[0] == "uv_sync"]
     assert len(uv_sync_calls) == 1
     _, uv_project_dir, kwargs = uv_sync_calls[0]
     # Absolute project dir: Modal resolves relative dirs against the
@@ -106,9 +106,7 @@ def test_gateway_image_mounts_local_packages(monkeypatch):
     app = import_gateway_app(monkeypatch)
 
     mounts = [
-        call
-        for call in app.gateway_image.calls
-        if call[0] == "add_local_python_source"
+        call for call in app.gateway_image.calls if call[0] == "add_local_python_source"
     ]
     # Dropping a package from this tuple crashes the gateway at import
     # time — the dev-group path deps are NOT installed in the image.
@@ -126,8 +124,26 @@ def test_web_app_secrets(monkeypatch):
     function_kwargs = {name: kwargs for name, kwargs in app.app.function_calls}
     assert function_kwargs["web_app"]["secrets"] == [
         app.gateway_auth_secret,
-        app.logfire_secret,
     ]
+
+
+def test_gateway_image_has_api_v1_otel_configuration(monkeypatch):
+    monkeypatch.setenv("OBSERVABILITY_SERVICE_NAMESPACE", "policyengine.api-v1")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.test")
+    monkeypatch.setenv(
+        "OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER",
+        "projects/123/locations/global/workloadIdentityPools/test/providers/test",
+    )
+    app = import_gateway_app(monkeypatch)
+    env_calls = [call for call in app.gateway_image.calls if call[0] == "env"]
+
+    assert len(env_calls) == 1
+    environment = env_calls[0][1]
+    assert environment["OTEL_EXPORTER_OTLP_ENDPOINT"] == "https://collector.test"
+    assert environment["OBSERVABILITY_SERVICE_NAMESPACE"] == "policyengine.api-v1"
+    assert environment["OTEL_TRACES_EXPORTER"] == "otlp"
+    assert environment["OTEL_METRICS_EXPORTER"] == "otlp"
+    assert "OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER" in environment
 
 
 def test_app_module_imports_at_container_entrypoint_path(monkeypatch):
@@ -143,9 +159,7 @@ def test_app_module_imports_at_container_entrypoint_path(monkeypatch):
     sys.modules["modal"].is_local = lambda: False
     sys.modules.pop("policyengine_simulation_gateway.app", None)
 
-    source_path = (
-        PROJECT_ROOT / "src" / "policyengine_simulation_gateway" / "app.py"
-    )
+    source_path = PROJECT_ROOT / "src" / "policyengine_simulation_gateway" / "app.py"
     code = compile(source_path.read_text(), "/root/app.py", "exec")
     spec = importlib.util.spec_from_loader(
         "container_entrypoint_gateway_app", loader=None, origin="/root/app.py"

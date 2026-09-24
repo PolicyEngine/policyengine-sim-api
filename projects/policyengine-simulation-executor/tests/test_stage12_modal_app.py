@@ -38,6 +38,10 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
     assert "--country us" not in uk_command
     assert module.RESOLVED_BUNDLE.bundle.policyengine_requirement in us_command
     assert module.gcp_secret["args"] == ("stage12-evaluation-gcp-credentials",)
+    assert all(
+        secret.get("args") != ("policyengine-logfire",)
+        for secret in module.worker_secrets
+    )
     for image in (
         module.us_worker_image,
         module.uk_worker_image,

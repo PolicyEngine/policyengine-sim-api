@@ -17,6 +17,8 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.27.1")
     monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.700.0")
     monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.0")
+    monkeypatch.setenv("OBSERVABILITY_SERVICE_NAMESPACE", "policyengine.api-v1")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.test")
     sys.modules.pop("src.modal.app", None)
 
     app = importlib.import_module("src.modal.app")
@@ -52,6 +54,12 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     assert app.VERSION_ENV["POLICYENGINE_BUNDLE_RECEIPT"].endswith(
         "/.policyengine-bundle-receipt.json"
     )
+    assert app.OBSERVABILITY_ENV["OBSERVABILITY_SERVICE_NAMESPACE"] == (
+        "policyengine.api-v1"
+    )
+    assert app.OBSERVABILITY_ENV["OTEL_EXPORTER_OTLP_ENDPOINT"] == (
+        "https://collector.test"
+    )
     assert command_calls[0][2]["secrets"] == [app.data_secret, app.hf_secret]
     uv_sync_calls = [
         call for call in app.simulation_image.calls if call[0] == "uv_sync"
@@ -76,23 +84,22 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     )["dependency-groups"]["modal-simulation-image"]
     names = {requirement.split(">=")[0].split("[")[0] for requirement in group}
     assert "policyengine-observability" in names
-    assert "logfire" in names
-    # logfire needs importlib_metadata at import time on Python 3.13 but
-    # does not declare it; the group must keep providing it or every
-    # worker crashes on ``import logfire``.
-    assert "importlib-metadata" in names
+    assert "logfire" not in names
     # uvx drives the policyengine bundle install into the image.
     assert "uv" in names
 
     runtime_secret_sets = {
         name: kwargs["secrets"] for name, kwargs in app.app.function_calls
     }
-    for function_name in ("run_simulation", "run_budget_window_batch"):
+    for function_name in (
+        "run_simulation",
+        "run_simulation_segment",
+        "run_budget_window_batch",
+    ):
         assert runtime_secret_sets[function_name] == [
             app.gcp_secret,
             app.data_secret,
             app.hf_secret,
-            app.logfire_secret,
         ]
 
 

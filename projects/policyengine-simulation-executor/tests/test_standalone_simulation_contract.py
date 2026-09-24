@@ -31,7 +31,7 @@ PACKAGED_RUNTIME_MODULES = (
 
 def test_standalone_executor_uses_its_own_service_name():
     assert (
-        app.state.policyengine_observability.config.service_name
+        app.state.policyengine_observability.config.service.name
         == "policyengine-simulation-executor"
     )
 
@@ -59,8 +59,9 @@ def test_standalone_simulation_openapi_keeps_legacy_schema_names():
         not in spec["components"]["schemas"]["SimulationOptions"]["properties"]
     )
 
+
 def test_standalone_simulation_route_returns_legacy_macro_contract(monkeypatch):
-    def fake_run_simulation_impl(params):
+    def fake_run_simulation_impl(params, *, runtime):
         assert params == {"country": "us", "reform": {}}
         return CURRENT_SINGLE_YEAR_MACRO_RESULT
 
@@ -79,7 +80,7 @@ def test_standalone_simulation_route_returns_legacy_macro_contract(monkeypatch):
 
 
 def test_standalone_simulation_route_forwards_include_cliffs(monkeypatch):
-    def fake_run_simulation_impl(params):
+    def fake_run_simulation_impl(params, *, runtime):
         assert params == {
             "country": "us",
             "reform": {},

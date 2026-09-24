@@ -2,6 +2,7 @@
 
 import importlib
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,36 @@ ensure_project_root_on_path = importlib.import_module(
 ).ensure_project_root_on_path
 
 ensure_project_root_on_path()
+
+
+class NoOpObservabilityRuntime:
+    """Minimal explicit runtime used by executor unit tests."""
+
+    def span(self, *args, **kwargs):
+        return nullcontext()
+
+    def operation(self, *args, **kwargs):
+        return nullcontext()
+
+    def set_context(self, **attributes):
+        return None
+
+    def event(self, *args, **kwargs):
+        return None
+
+    def record_exception(self, *args, **kwargs):
+        return None
+
+    def capture_context(self):
+        return {
+            "captured_at": "2026-09-22T00:00:00Z",
+            "request_id": "test-request",
+        }
+
+
+@pytest.fixture
+def observability_runtime():
+    return NoOpObservabilityRuntime()
 
 
 @pytest.fixture(autouse=True)

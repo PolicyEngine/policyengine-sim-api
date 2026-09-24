@@ -19,6 +19,7 @@ from sqlalchemy.sql import ClauseElement
 NOW = datetime(2026, 9, 22, tzinfo=UTC)
 REPORT_ID = UUID("00000000-0000-0000-0000-000000000001")
 SIMULATION_ID = UUID("00000000-0000-0000-0000-000000000002")
+OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000012"
 
 
 def _report() -> ComparisonReportRecord:
@@ -29,6 +30,7 @@ def _report() -> ComparisonReportRecord:
         environment="staging",
         calculation_flow="economy",
         originating_request_id="request-1",
+        observability_id=OBSERVABILITY_ID,
         production_identity="job-1",
         incumbent_execution_id="job-1",
         worker_version="5.2.0",
@@ -124,6 +126,7 @@ def test_create_and_read_report_use_sqlalchemy_statements_only() -> None:
 
     assert result.created is True
     assert result.record == report
+    assert result.record.observability_id == OBSERVABILITY_ID
     assert len(engine.connection.statements) == 1
 
 

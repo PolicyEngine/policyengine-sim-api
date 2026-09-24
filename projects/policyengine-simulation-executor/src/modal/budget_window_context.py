@@ -18,6 +18,7 @@ BATCH_ONLY_FIELDS = {
     "max_parallel",
     "target",
     "_metadata",
+    "_observability_context",
     "_telemetry",
 }
 

@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from conftest import NoOpObservabilityRuntime
+
 from src.modal import segmented_national as sn
 from policyengine_simulation_contract.spm import SPMInputError
 from policyengine_simulation_executor import simulation_runtime as sr
@@ -14,6 +16,7 @@ from policyengine_simulation_executor.national_partition import (
 
 
 NATIONAL = {"country": "us", "scope": "macro", "time_period": "2026"}
+TEST_RUNTIME = NoOpObservabilityRuntime()
 
 
 def _bare_country_module():
@@ -41,9 +44,7 @@ class TestIsPlainNationalMacro:
         assert sn.is_plain_national_macro({**NATIONAL, **overrides}) is False
 
     def test__knobs_do_not_change_the_shape(self):
-        assert (
-            sn.is_plain_national_macro({**NATIONAL, "segmented": False}) is True
-        )
+        assert sn.is_plain_national_macro({**NATIONAL, "segmented": False}) is True
 
     @pytest.mark.parametrize("region", ["us", "US", " us "])
     def test__v1_style_region_us_is_national(self, region):
@@ -74,28 +75,21 @@ class TestShouldRunSegmentedNational:
         assert sn.should_run_segmented_national(params) is False
 
     def test__explicit_segmented_true_is_eligible(self):
-        assert (
-            sn.should_run_segmented_national({**NATIONAL, "segmented": True})
-            is True
-        )
+        assert sn.should_run_segmented_national({**NATIONAL, "segmented": True}) is True
 
     def test__v1_style_region_us_is_eligible(self):
-        assert (
-            sn.should_run_segmented_national({**NATIONAL, "region": "us"})
-            is True
-        )
+        assert sn.should_run_segmented_national({**NATIONAL, "region": "us"}) is True
 
     @pytest.mark.parametrize("policy_key", ["reform", "baseline"])
-    def test__labor_supply_response_reforms_fall_back_monolithic(
-        self, policy_key
-    ):
+    def test__labor_supply_response_reforms_fall_back_monolithic(self, policy_key):
         # The reduce's stand-ins carry no policy, so LSR would silently
         # zero out (see LSR_PARAMETER_PREFIX) — these must run monolithic.
         params = {
             **NATIONAL,
             policy_key: {
-                "gov.simulation.labor_supply_responses.elasticities."
-                "income.all": {"2026-01-01.2100-12-31": -0.05}
+                "gov.simulation.labor_supply_responses.elasticities.income.all": {
+                    "2026-01-01.2100-12-31": -0.05
+                }
             },
         }
         assert sn.should_run_segmented_national(params) is False
@@ -124,9 +118,9 @@ class TestBuildGroupChildPayload:
 
     def test__reattaches_telemetry_only_when_present(self):
         with_telemetry = sn.build_group_child_payload(
-            {**NATIONAL, "_telemetry": {"run_id": "r1"}}, ["state/ca"]
+            {**NATIONAL, "_telemetry": {"observability_id": "r1"}}, ["state/ca"]
         )
-        assert with_telemetry["_telemetry"] == {"run_id": "r1"}
+        assert with_telemetry["_telemetry"] == {"observability_id": "r1"}
         without = sn.build_group_child_payload(dict(NATIONAL), ["state/ca"])
         assert "_telemetry" not in without
 
@@ -201,6 +195,7 @@ def _runner(fake_modal, params=None):
     return sn.SegmentedNationalRunner(
         params or dict(NATIONAL),
         app_name="policyengine-simulation-py-test",
+        runtime=TEST_RUNTIME,
         modal_module=fake_modal,
         poll_interval_seconds=0.001,
         poll_interval_max_seconds=0.002,
@@ -244,13 +239,10 @@ class TestSegmentedNationalRunner:
         self, monkeypatch, bare_country
     ):
         calls = [
-            FakeCall({"child": i}, polls_until_ready=(19 - i) % 3)
-            for i in range(20)
+            FakeCall({"child": i}, polls_until_ready=(19 - i) % 3) for i in range(20)
         ]
         runner = _runner(FakeModal(calls))
-        monkeypatch.setattr(
-            runner, "_reduce", lambda results, country_module: results
-        )
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
         assert runner.run() == [{"child": i} for i in range(20)]
 
     def test__child_failure_fails_fast_and_cancels_the_rest(
@@ -259,24 +251,18 @@ class TestSegmentedNationalRunner:
         calls = _twenty_calls(polls_until_ready=5)
         calls[7] = FakeCall(None, error=ValueError("boom"))
         runner = _runner(FakeModal(calls))
-        monkeypatch.setattr(
-            runner, "_reduce", lambda results, country_module: results
-        )
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
 
         with pytest.raises(RuntimeError, match="Segmented national child failed"):
             runner.run()
         assert all(c.cancelled for c in calls if c.error is None)
 
-    def test__one_transient_poll_error_is_tolerated(
-        self, monkeypatch, bare_country
-    ):
+    def test__one_transient_poll_error_is_tolerated(self, monkeypatch, bare_country):
         # A single control-plane blip on one handle must not kill the job.
         calls = _twenty_calls()
         calls[3] = FakeCall({"child": 3}, errors_once=1)
         runner = _runner(FakeModal(calls))
-        monkeypatch.setattr(
-            runner, "_reduce", lambda results, country_module: results
-        )
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
         assert runner.run() == [{"child": i} for i in range(20)]
 
     def test__spawn_failure_cancels_already_spawned_children(
@@ -285,9 +271,7 @@ class TestSegmentedNationalRunner:
         calls = _twenty_calls(polls_until_ready=100)
         fake = FakeModal(calls, fail_spawn_at=15)
         runner = _runner(fake)
-        monkeypatch.setattr(
-            runner, "_reduce", lambda results, country_module: results
-        )
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
 
         with pytest.raises(ConnectionError):
             runner.run()
@@ -314,9 +298,7 @@ class TestSegmentedNationalRunner:
 
         fake = FakeModal([FakeCall({"child": i}) for i in range(20)])
         runner = _runner(fake)
-        monkeypatch.setattr(
-            runner, "_reduce", lambda results, country_module: results
-        )
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
         runner.run()
 
         assert runner.groups[-1][-1] == "state/pr"
@@ -334,14 +316,14 @@ class TestSegmentedNationalRunner:
             captured.update(kwargs)
             return {"budget": {}}
 
-        monkeypatch.setattr(
-            sn, "build_national_output", fake_build_national_output
-        )
-        monkeypatch.setattr(
-            sr, "_country_module", lambda c: _bare_country_module()
-        )
+        monkeypatch.setattr(sn, "build_national_output", fake_build_national_output)
+        monkeypatch.setattr(sr, "_country_module", lambda c: _bare_country_module())
 
-        params = {**NATIONAL, "segmented": True, "_telemetry": {"run_id": "r"}}
+        params = {
+            **NATIONAL,
+            "segmented": True,
+            "_telemetry": {"observability_id": "r"},
+        }
         runner = _runner(FakeModal(_twenty_calls()), params=params)
         assert runner.run() == {"budget": {}}
 
@@ -360,20 +342,20 @@ class TestDispatchRunSimulation:
     def test__eligible_national_takes_the_segmented_path(self, monkeypatch):
         calls = {}
 
-        def fake_segmented(params, *, app_name):
+        def fake_segmented(params, *, app_name, runtime):
             calls["segmented"] = (params, app_name)
             return {"segmented": True}
 
         monkeypatch.setattr(sn, "run_segmented_national_impl", fake_segmented)
-        monkeypatch.setattr(
-            executor_spm, "normalize_runtime_spm", lambda params: None
-        )
+        monkeypatch.setattr(executor_spm, "normalize_runtime_spm", lambda params: None)
         monkeypatch.setattr(
             sr,
             "run_simulation_impl",
-            lambda params: pytest.fail("monolithic path must not run"),
+            lambda params, **kwargs: pytest.fail("monolithic path must not run"),
         )
-        result = sn.dispatch_run_simulation(dict(NATIONAL), app_name="app-x")
+        result = sn.dispatch_run_simulation(
+            dict(NATIONAL), app_name="app-x", runtime=TEST_RUNTIME
+        )
         assert result == {"segmented": True}
         assert calls["segmented"][1] == "app-x"
 
@@ -385,23 +367,19 @@ class TestDispatchRunSimulation:
             {"country": "uk", "scope": "macro"},
         ],
     )
-    def test__everything_else_takes_the_monolithic_path(
-        self, monkeypatch, params
-    ):
+    def test__everything_else_takes_the_monolithic_path(self, monkeypatch, params):
         monkeypatch.setattr(
             sn,
             "run_segmented_national_impl",
             lambda *a, **k: pytest.fail("segmented path must not run"),
         )
+        monkeypatch.setattr(executor_spm, "normalize_runtime_spm", lambda params: None)
         monkeypatch.setattr(
-            executor_spm, "normalize_runtime_spm", lambda params: None
+            sr, "run_simulation_impl", lambda params, **kwargs: {"monolithic": True}
         )
-        monkeypatch.setattr(
-            sr, "run_simulation_impl", lambda params: {"monolithic": True}
-        )
-        assert sn.dispatch_run_simulation(params, app_name="app-x") == {
-            "monolithic": True
-        }
+        assert sn.dispatch_run_simulation(
+            params, app_name="app-x", runtime=TEST_RUNTIME
+        ) == {"monolithic": True}
 
 
 SPM_SELECTION = {
@@ -531,14 +509,16 @@ class TestDispatchResolvesSPM:
         )
         seen = {}
 
-        def fake_segmented(params, *, app_name):
+        def fake_segmented(params, *, app_name, runtime):
             seen["params"] = params
             return {"segmented": True}
 
         monkeypatch.setattr(sn, "run_segmented_national_impl", fake_segmented)
 
         result = sn.dispatch_run_simulation(
-            {**NATIONAL, "spm": {"geography_kind": "national"}}, app_name="app-x"
+            {**NATIONAL, "spm": {"geography_kind": "national"}},
+            app_name="app-x",
+            runtime=TEST_RUNTIME,
         )
 
         assert result == {"segmented": True}
@@ -559,9 +539,11 @@ class TestDispatchResolvesSPM:
         monkeypatch.setattr(
             sr,
             "run_simulation_impl",
-            lambda params: pytest.fail("monolithic path must not run"),
+            lambda params, **kwargs: pytest.fail("monolithic path must not run"),
         )
 
         with pytest.raises(SPMInputError) as error:
-            sn.dispatch_run_simulation(dict(NATIONAL), app_name="app-x")
+            sn.dispatch_run_simulation(
+                dict(NATIONAL), app_name="app-x", runtime=TEST_RUNTIME
+            )
         assert error.value.code == "SPM_GEOGRAPHY_REQUIRED"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from conftest import make_settings
@@ -63,6 +64,11 @@ class FakeInvoker:
 
 
 def _backend(store, invoker, *, environment="staging", modal_environment="staging"):
+    runtime = MagicMock()
+    runtime.capture_context.return_value = {
+        "observability_id": "00000000-0000-4000-8000-000000000012",
+        "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
+    }
     return Stage12ComparisonBackend(
         make_settings(
             environment=environment,
@@ -71,6 +77,7 @@ def _backend(store, invoker, *, environment="staging", modal_environment="stagin
         manifest_loader=FakeLoader(),
         store=store,
         invoker=invoker,
+        runtime=runtime,
     )
 
 
@@ -103,6 +110,7 @@ async def test_modal_invoker_submits_report_context_and_pending_parent(
         report_payload={"report": "payload"},
         context_payload={"context": "payload"},
         parent_payload={"parent": "payload"},
+        observability_context={"traceparent": "trace"},
     )
 
     assert invocation_id == "modal-call-1"
@@ -111,6 +119,7 @@ async def test_modal_invoker_submits_report_context_and_pending_parent(
             {"report": "payload"},
             {"context": "payload"},
             {"parent": "payload"},
+            {"traceparent": "trace"},
         )
     ]
 
@@ -243,6 +252,7 @@ def test_temporary_submission_spawns_without_database_writes() -> None:
 
     assert store.events == []
     assert report.status is ComparisonRunLifecycleStatus.RUNNING
+    assert report.observability_id == "00000000-0000-4000-8000-000000000012"
     assert report.production_identity == f"direct:{report.evaluation_id}"
     assert report.incumbent_execution_id is None
     assert report.coordinator_invocation_id == "modal-call-1"
@@ -253,7 +263,9 @@ def test_temporary_submission_spawns_without_database_writes() -> None:
     assert call["context_payload"]["production_function_call_id"] is None
     submitted_parent = ComparisonReportRecord.model_validate(call["parent_payload"])
     assert submitted_parent.status is ComparisonRunLifecycleStatus.PENDING
+    assert submitted_parent.observability_id == report.observability_id
     assert submitted_parent.coordinator_invocation_id is None
+    assert call["observability_context"]["observability_id"] == report.observability_id
 
 
 def test_production_context_keeps_logical_and_modal_environments_distinct() -> None:

@@ -9,14 +9,17 @@ and spawns jobs on those apps.
 """
 
 import modal
+import os
 from pathlib import Path
 
-from policyengine_simulation_observability.logfire_legacy import configure_logfire
+from policyengine_simulation_observability.observability import (
+    modal_image_environment,
+)
 
 # Stable app name - this should rarely change
 app = modal.App("policyengine-simulation-gateway")
 gateway_auth_secret = modal.Secret.from_name("policyengine-gateway-auth")
-logfire_secret = modal.Secret.from_name("policyengine-logfire")
+OBSERVABILITY_ENV = modal_image_environment()
 
 # Lightweight image for gateway - no heavy dependencies.
 #
@@ -52,13 +55,14 @@ def build_gateway_image() -> modal.Image:
             "policyengine_fastapi",
             copy=True,
         )
+        .env(OBSERVABILITY_ENV)
     )
 
 
 gateway_image = build_gateway_image()
 
 
-@app.function(image=gateway_image, secrets=[gateway_auth_secret, logfire_secret])
+@app.function(image=gateway_image, secrets=[gateway_auth_secret])
 @modal.asgi_app()
 def web_app():
     """
@@ -73,7 +77,6 @@ def web_app():
     from fastapi import FastAPI
 
     from policyengine_simulation_observability.observability import (
-        configure_process_observability,
         init_simulation_observability,
     )
     from policyengine_simulation_gateway.auth import (
@@ -87,25 +90,21 @@ def web_app():
         description="Submit and poll simulation jobs. Routes to versioned simulation apps.",
         version="1.0.0",
     )
-    configure_process_observability(
-        platform="modal",
-        service_role="modal_gateway",
-        modal_app_name="policyengine-simulation-gateway",
-        modal_function_name="web_app",
-    )
-    init_simulation_observability(
+    runtime = init_simulation_observability(
         api,
         service_name="policyengine-simulation-gateway",
         service_role="modal_gateway",
+        platform="modal",
+        environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
-    configure_logfire("policyengine-simulation-gateway")
+    api.add_event_handler("shutdown", runtime.shutdown)
 
     # Startup guard: crash the container if GATEWAY_AUTH_DISABLED is set in
     # a production-equivalent Modal environment, or set without the
     # explicit acknowledgement env var. This prevents the bypass from
     # accidentally shipping to prod if a dev deploy grabs the wrong secret
     # bundle. See gateway.auth.enforce_production_auth_guard for the rules.
-    enforce_production_auth_guard()
+    enforce_production_auth_guard(runtime)
     enforce_auth_configured_guard()
 
     api.include_router(router)

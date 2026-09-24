@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import json
+from contextlib import AbstractContextManager
+from collections import Counter
 from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-from policyengine_observability import (
-    ObservabilityConfig,
-    ObservabilityRuntime,
-    set_observability_runtime,
-)
 
 from fixtures.test_simulation_api_contracts import (
     CURRENT_SINGLE_YEAR_MACRO_KEYS,
@@ -33,7 +30,7 @@ from policyengine_simulation_executor.release_bundle import get_country_release_
 from policyengine_simulation_executor.release_bundle import (
     resolve_runtime_bundle_dataset_uri,
 )
-from policyengine_simulation_observability.observability import SegmentName
+from policyengine_simulation_observability.stages import Stage
 from policyengine_simulation_executor.simulation_runtime import (
     DatasetSelection,
     RegionResolution,
@@ -100,30 +97,49 @@ class _FakeSimulation:
         raise AssertionError("test data is already materialized")
 
 
-def _with_observability_timings(callback):
-    runtime = ObservabilityRuntime(
-        ObservabilityConfig(
-            service_name="policyengine-simulation-executor-test",
-            service_role="test",
-            environment="test",
-            otel_enabled=False,
-        ),
-        segment_registry=SegmentName,
-    )
-    set_observability_runtime(runtime)
-    handle = runtime.start_operation("test_operation", flavor="unit")
-    try:
-        result = callback()
-        operation = handle["operation"]
-        return (
-            result,
-            dict(operation.timings_ms),
-            dict(operation.timing_counts),
-            [node.as_dict() for node in operation.segment_tree],
+class _TrackedSpan(AbstractContextManager):
+    def __init__(self, runtime, name, attributes):
+        self.runtime = runtime
+        self.node = {
+            "name": name,
+            "attrs": dict(attributes or {}),
+            "children": [],
+        }
+
+    def __enter__(self):
+        target = (
+            self.runtime.stack[-1]["children"]
+            if self.runtime.stack
+            else self.runtime.roots
         )
-    finally:
-        runtime.end_operation(handle)
-        set_observability_runtime(ObservabilityRuntime.disabled())
+        target.append(self.node)
+        self.runtime.stack.append(self.node)
+        self.runtime.names.append(self.node["name"])
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.runtime.stack.pop()
+
+
+class _TrackingRuntime:
+    def __init__(self):
+        self.roots = []
+        self.stack = []
+        self.names = []
+        self.context = []
+
+    def span(self, name, *, attributes=None):
+        return _TrackedSpan(self, name, attributes)
+
+    def set_context(self, **attributes):
+        self.context.extend(attributes.items())
+
+
+def _with_observability_timings(callback):
+    runtime = _TrackingRuntime()
+    result = callback(runtime)
+    counts = Counter(runtime.names)
+    return result, set(runtime.names), counts, runtime.roots
 
 
 def _macro_baseline_reform():
@@ -517,38 +533,41 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
     )
 
     result, timings, counts, segment_tree = _with_observability_timings(
-        lambda: run_simulation_impl(
+        lambda runtime: run_simulation_impl(
             {
                 "country": "us",
                 "baseline": {"gov.test.parameter": {"2026-01-01": 1}},
                 "reform": {"gov.test.parameter": {"2026-01-01": 2}},
-            }
+            },
+            runtime=runtime,
         )
     )
 
     assert result == CURRENT_SINGLE_YEAR_MACRO_RESULT
     assert set(timings) >= {
-        SegmentName.CREDENTIAL_SETUP,
-        SegmentName.REQUEST_PARSE,
-        SegmentName.COUNTRY_MODULE_LOAD,
-        SegmentName.REGION_RESOLUTION,
-        SegmentName.DATASET_LOAD,
-        SegmentName.POLICY_NORMALIZATION,
-        SegmentName.SIMULATION_BUILD,
+        Stage.CREDENTIAL_SETUP,
+        Stage.REQUEST_PARSE,
+        Stage.COUNTRY_MODULE_LOAD,
+        Stage.REGION_RESOLUTION,
+        Stage.DATASET_RESOLUTION,
+        Stage.DATASET_LOAD,
+        Stage.POLICY_NORMALIZATION,
+        Stage.SIMULATION_BUILD,
     }
-    assert counts[SegmentName.SIMULATION_BUILD] == 2
+    assert counts[Stage.SIMULATION_BUILD] == 2
     assert [node["name"] for node in segment_tree] == [
-        SegmentName.CREDENTIAL_SETUP,
-        SegmentName.REQUEST_PARSE,
-        SegmentName.COUNTRY_MODULE_LOAD,
-        SegmentName.REGION_RESOLUTION,
-        SegmentName.DATASET_LOAD,
-        SegmentName.POLICY_NORMALIZATION,
-        SegmentName.SIMULATION_BUILD,
-        SegmentName.SIMULATION_BUILD,
+        Stage.CREDENTIAL_SETUP,
+        Stage.REQUEST_PARSE,
+        Stage.COUNTRY_MODULE_LOAD,
+        Stage.REGION_RESOLUTION,
+        Stage.DATASET_RESOLUTION,
+        Stage.DATASET_LOAD,
+        Stage.POLICY_NORMALIZATION,
+        Stage.SIMULATION_BUILD,
+        Stage.SIMULATION_BUILD,
     ]
     simulation_builds = [
-        node for node in segment_tree if node["name"] == SegmentName.SIMULATION_BUILD
+        node for node in segment_tree if node["name"] == Stage.SIMULATION_BUILD
     ]
     assert [node["attrs"] for node in simulation_builds] == [
         {"simulation_kind": "baseline"},
@@ -613,7 +632,6 @@ def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
         def serialize(self):
             return CURRENT_SINGLE_YEAR_MACRO_RESULT
 
-    attributes = []
     for env in (
         "GOOGLE_APPLICATION_CREDENTIALS",
         "GOOGLE_APPLICATION_CREDENTIALS_JSON",
@@ -646,25 +664,21 @@ def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
         "policyengine_simulation_executor.simulation_runtime.SimulationOutputBuilder",
         FakeSimulationOutputBuilder,
     )
-    monkeypatch.setattr(
-        "policyengine_simulation_executor.simulation_runtime.set_attribute",
-        lambda key, value: attributes.append((key, value)),
-    )
-
     params = {
         "country": "us",
         "baseline": {"gov.test.parameter": {"2026-01-01": 1}},
         "reform": {"gov.test.parameter": {"2026-01-01": 2}},
     }
-    run_simulation_impl(params)
-    assert ("baseline_artifact", "incomplete") in attributes
+    runtime = _TrackingRuntime()
+    run_simulation_impl(params, runtime=runtime)
+    assert ("baseline_artifact", "incomplete") in runtime.context
 
     # A plain Simulation baseline (no artifact_outcome) must emit nothing.
-    attributes.clear()
+    runtime.context.clear()
     build_count[0] = 0
     simulations["baseline"] = object()
-    run_simulation_impl(params)
-    assert all(key != "baseline_artifact" for key, _ in attributes)
+    run_simulation_impl(params, runtime=runtime)
+    assert all(key != "baseline_artifact" for key, _ in runtime.context)
 
 
 def test_builder_records_output_timings_without_real_calculation(monkeypatch):
@@ -799,9 +813,11 @@ def test_builder_records_output_timings_without_real_calculation(monkeypatch):
         reform=reform,
     )
 
-    result, timings, counts, segment_tree = _with_observability_timings(
-        builder.serialize
-    )
+    def serialize(runtime):
+        builder.runtime = runtime
+        return builder.serialize()
+
+    result, timings, counts, segment_tree = _with_observability_timings(serialize)
 
     assert result["model_version"] == "mock-model-version"
     assert result["data_version"] == "mock-data-version"
@@ -822,63 +838,61 @@ def test_builder_records_output_timings_without_real_calculation(monkeypatch):
         "uk_local_authority",
     }
     assert set(timings) >= {
-        SegmentName.CALCULATION,
-        SegmentName.SIMULATION_OUTPUT_BUILD,
-        SegmentName.ECONOMIC_IMPACT_ANALYSIS,
-        SegmentName.OUTPUT_MODEL_VERSION,
-        SegmentName.OUTPUT_DATA_VERSION,
-        SegmentName.OUTPUT_BUDGETARY_IMPACT,
-        SegmentName.OUTPUT_DETAILED_BUDGET,
-        SegmentName.OUTPUT_DECILE,
-        SegmentName.OUTPUT_INEQUALITY,
-        SegmentName.OUTPUT_POVERTY,
-        SegmentName.OUTPUT_INTRA_DECILE,
-        SegmentName.OUTPUT_WEALTH_DECILE,
-        SegmentName.OUTPUT_INTRA_WEALTH_DECILE,
-        SegmentName.OUTPUT_LABOR_SUPPLY,
-        SegmentName.OUTPUT_CONGRESSIONAL_DISTRICT,
-        SegmentName.OUTPUT_UK_CONSTITUENCY,
-        SegmentName.OUTPUT_UK_LOCAL_AUTHORITY,
-        SegmentName.OUTPUT_CLIFF,
-        SegmentName.RESPONSE_SERIALIZATION,
-        SegmentName.SIMULATION_OUTPUT_MODEL_DUMP,
+        Stage.CALCULATION,
+        Stage.SIMULATION_OUTPUT_BUILD,
+        Stage.ECONOMIC_IMPACT_ANALYSIS,
+        Stage.OUTPUT_MODEL_VERSION,
+        Stage.OUTPUT_DATA_VERSION,
+        Stage.OUTPUT_BUDGETARY_IMPACT,
+        Stage.OUTPUT_DETAILED_BUDGET,
+        Stage.OUTPUT_DECILE,
+        Stage.OUTPUT_INEQUALITY,
+        Stage.OUTPUT_POVERTY,
+        Stage.OUTPUT_INTRA_DECILE,
+        Stage.OUTPUT_WEALTH_DECILE,
+        Stage.OUTPUT_INTRA_WEALTH_DECILE,
+        Stage.OUTPUT_LABOR_SUPPLY,
+        Stage.OUTPUT_CONGRESSIONAL_DISTRICT,
+        Stage.OUTPUT_UK_CONSTITUENCY,
+        Stage.OUTPUT_UK_LOCAL_AUTHORITY,
+        Stage.OUTPUT_CLIFF,
+        Stage.RESPONSE_SERIALIZATION,
+        Stage.SIMULATION_OUTPUT_MODEL_DUMP,
     }
-    assert counts[SegmentName.ECONOMIC_IMPACT_ANALYSIS] == 1
-    assert counts[SegmentName.SIMULATION_OUTPUT_MODEL_DUMP] == 1
+    assert counts[Stage.ECONOMIC_IMPACT_ANALYSIS] == 1
+    assert counts[Stage.SIMULATION_OUTPUT_MODEL_DUMP] == 1
     assert [node["name"] for node in segment_tree] == [
-        SegmentName.CALCULATION,
-        SegmentName.RESPONSE_SERIALIZATION,
+        Stage.CALCULATION,
+        Stage.RESPONSE_SERIALIZATION,
     ]
     calculation_children = segment_tree[0]["children"]
     assert [node["name"] for node in calculation_children] == [
-        SegmentName.SIMULATION_OUTPUT_BUILD
+        Stage.SIMULATION_OUTPUT_BUILD
     ]
     output_build_children = calculation_children[0]["children"]
     assert {node["name"] for node in output_build_children} >= {
-        SegmentName.OUTPUT_BUDGETARY_IMPACT,
-        SegmentName.OUTPUT_DETAILED_BUDGET,
-        SegmentName.OUTPUT_DECILE,
-        SegmentName.OUTPUT_INEQUALITY,
-        SegmentName.OUTPUT_POVERTY,
-        SegmentName.OUTPUT_INTRA_DECILE,
-        SegmentName.OUTPUT_WEALTH_DECILE,
-        SegmentName.OUTPUT_INTRA_WEALTH_DECILE,
-        SegmentName.OUTPUT_LABOR_SUPPLY,
-        SegmentName.OUTPUT_CONGRESSIONAL_DISTRICT,
-        SegmentName.OUTPUT_UK_CONSTITUENCY,
-        SegmentName.OUTPUT_UK_LOCAL_AUTHORITY,
-        SegmentName.OUTPUT_CLIFF,
-        SegmentName.OUTPUT_MODEL_VERSION,
-        SegmentName.OUTPUT_DATA_VERSION,
+        Stage.OUTPUT_BUDGETARY_IMPACT,
+        Stage.OUTPUT_DETAILED_BUDGET,
+        Stage.OUTPUT_DECILE,
+        Stage.OUTPUT_INEQUALITY,
+        Stage.OUTPUT_POVERTY,
+        Stage.OUTPUT_INTRA_DECILE,
+        Stage.OUTPUT_WEALTH_DECILE,
+        Stage.OUTPUT_INTRA_WEALTH_DECILE,
+        Stage.OUTPUT_LABOR_SUPPLY,
+        Stage.OUTPUT_CONGRESSIONAL_DISTRICT,
+        Stage.OUTPUT_UK_CONSTITUENCY,
+        Stage.OUTPUT_UK_LOCAL_AUTHORITY,
+        Stage.OUTPUT_CLIFF,
+        Stage.OUTPUT_MODEL_VERSION,
+        Stage.OUTPUT_DATA_VERSION,
     }
     poverty_node = next(
-        node
-        for node in output_build_children
-        if node["name"] == SegmentName.OUTPUT_POVERTY
+        node for node in output_build_children if node["name"] == Stage.OUTPUT_POVERTY
     )
-    assert poverty_node["children"][0]["name"] == (SegmentName.ECONOMIC_IMPACT_ANALYSIS)
+    assert poverty_node["children"][0]["name"] == (Stage.ECONOMIC_IMPACT_ANALYSIS)
     assert segment_tree[1]["children"][0]["name"] == (
-        SegmentName.SIMULATION_OUTPUT_MODEL_DUMP
+        Stage.SIMULATION_OUTPUT_MODEL_DUMP
     )
 
 
@@ -1046,12 +1060,14 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
         FakeSimulationOutputBuilder,
     )
 
+    runtime = _TrackingRuntime()
     result = _run_simulation_impl_core(
         {
             "country": "us",
             "baseline": {"gov.test.parameter": {"2026-01-01.2100-12-31": 1}},
             "reform": {"gov.test.parameter": {"2026-01-01.2100-12-31": 2}},
-        }
+        },
+        runtime=runtime,
     )
 
     assert result == CURRENT_SINGLE_YEAR_MACRO_RESULT
@@ -1073,6 +1089,7 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
             "reform": reform_simulation,
             "resolved_data_version": None,
             "resolved_region_code": "us",
+            "runtime": runtime,
         }
     ]
 
@@ -1143,7 +1160,8 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
             "region": "state/ut",
             "baseline": {},
             "reform": {},
-        }
+        },
+        runtime=_TrackingRuntime(),
     )
 
     assert result == CURRENT_SINGLE_YEAR_MACRO_RESULT

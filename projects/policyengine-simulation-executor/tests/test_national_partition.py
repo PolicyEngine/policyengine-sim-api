@@ -51,9 +51,7 @@ class TestPartitionMatchesModelRegistry:
 
         registry = _country_module("us").model.region_registry
         registry_states = {
-            region.code
-            for region in registry.regions
-            if region.region_type == "state"
+            region.code for region in registry.regions if region.region_type == "state"
         }
         partition_codes = {
             code for group in US_NATIONAL_REGION_GROUPS for code in group

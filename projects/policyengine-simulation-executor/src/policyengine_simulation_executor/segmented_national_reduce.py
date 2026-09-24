@@ -25,6 +25,8 @@ Two hazards this module exists to handle:
 import logging
 from typing import Any
 
+from policyengine_observability import ObservabilityRuntime
+
 import pandas as pd
 from microdf import MicroDataFrame
 
@@ -118,6 +120,7 @@ def build_national_output(
     country_module,
     year: int,
     resolved_data_version: str | None = None,
+    runtime: ObservabilityRuntime | None = None,
 ) -> dict[str, Any]:
     """The reduce: children's microdata -> full national macro output dict.
 
@@ -154,6 +157,7 @@ def build_national_output(
         reform=stand_in(datasets["reform"]),
         resolved_data_version=resolved_data_version,
         resolved_region_code=country,
+        runtime=runtime,
     )
     output = builder.serialize()
     # The rebuilt in-memory dataset carries no artifact metadata, so the

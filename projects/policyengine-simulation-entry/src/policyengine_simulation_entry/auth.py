@@ -8,7 +8,7 @@ import logging
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt
-from policyengine_observability import record_event
+from policyengine_observability import ObservabilityRuntime
 
 from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.schemas import CallerIdentity
@@ -29,9 +29,13 @@ class JWTDecoder:
     def __call__(
         self,
         token: HTTPAuthorizationCredentials | None,
+        runtime: ObservabilityRuntime,
     ) -> CallerIdentity:
         if token is None:
-            record_event("simulation_entry_auth_rejected", reason="missing_token")
+            runtime.event(
+                "simulation_entry_auth_rejected",
+                attributes={"reason": "missing_token"},
+            )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
         try:
@@ -53,7 +57,10 @@ class JWTDecoder:
                 "invalid_simulation_entry_bearer_token",
                 extra={"error_type": reason},
             )
-            record_event("simulation_entry_auth_rejected", reason=reason)
+            runtime.event(
+                "simulation_entry_auth_rejected",
+                attributes={"reason": reason},
+            )
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN) from error
 
 
@@ -65,8 +72,9 @@ def _decoder(issuer: str, audience: str) -> JWTDecoder:
 class CallerAuthenticator:
     """FastAPI dependency that preserves the gateway's JWT contract."""
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, runtime: ObservabilityRuntime):
         self.settings = settings
+        self.runtime = runtime
 
     def __call__(
         self,
@@ -77,7 +85,7 @@ class CallerAuthenticator:
         return _decoder(
             self.settings.auth_issuer,
             self.settings.auth_audience,
-        )(token)
+        )(token, self.runtime)
 
 
 def reset_decoder_cache() -> None:

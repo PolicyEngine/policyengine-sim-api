@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import jwt
 import pytest
@@ -48,7 +49,7 @@ def _use_static_signing_key(monkeypatch, public_key) -> None:
 
 def test_missing_token_preserves_403_contract(monkeypatch):
     class Decoder:
-        def __call__(self, token):
+        def __call__(self, token, runtime):
             from fastapi import HTTPException
 
             raise HTTPException(status_code=403)
@@ -64,7 +65,7 @@ def test_missing_token_preserves_403_contract(monkeypatch):
 
 def test_public_routes_do_not_require_token(monkeypatch):
     class Decoder:
-        def __call__(self, token):
+        def __call__(self, token, runtime):
             raise AssertionError("public route attempted authentication")
 
     monkeypatch.setattr(auth_module, "_decoder", lambda issuer, audience: Decoder())
@@ -108,7 +109,8 @@ def test_decoder_returns_only_the_declared_caller_identity(signing_keys):
                 scope="simulate:read",
                 undocumented_claim="ignored",
             ),
-        )
+        ),
+        Mock(),
     )
 
     assert isinstance(identity, CallerIdentity)

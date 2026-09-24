@@ -21,7 +21,7 @@ from policyengine_simulation_contract.gateway_models import (
 )
 
 
-def test_create_initial_batch_state_builds_queued_years_and_run_id():
+def test_create_initial_batch_state_builds_queued_years_and_observability_id():
     request = BudgetWindowBatchRequest(
         country="us",
         region="us",
@@ -31,8 +31,8 @@ def test_create_initial_batch_state_builds_queued_years_and_run_id():
         scope="macro",
         reform={},
         _telemetry={
-            "run_id": "batch-run-123",
-            "process_id": "proc-123",
+            "observability_id": "batch-run-123",
+            "submission_claim_id": "proc-123",
             "capture_mode": "disabled",
         },
     )
@@ -54,7 +54,7 @@ def test_create_initial_batch_state_builds_queued_years_and_run_id():
     assert "data" not in state.request_payload
     assert state.request_payload["scope"] == "macro"
     assert state.request_payload["reform"] == {}
-    assert state.run_id == "batch-run-123"
+    assert state.observability_id == "batch-run-123"
 
 
 def test_build_batch_status_response_computes_progress_from_completed_years():
