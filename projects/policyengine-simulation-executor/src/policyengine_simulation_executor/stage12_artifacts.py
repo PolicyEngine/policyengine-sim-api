@@ -167,9 +167,17 @@ def deserialize_simulation_frames(payload: bytes) -> dict[str, pd.DataFrame]:
     if raw_dtypes is None:
         raise ValueError("Stage 12 simulation artifact has no dtype metadata")
     dtypes = json.loads(raw_dtypes)
+    if not isinstance(dtypes, dict):
+        raise TypeError("Stage 12 simulation artifact dtype metadata is invalid")
     combined = table.to_pandas()
     frames: dict[str, pd.DataFrame] = {}
     for entity in sorted(combined[PARQUET_CONTRACT.entity_column].unique()):
+        entity_name = str(entity)
+        entity_dtypes = dtypes.get(entity_name)
+        if not isinstance(entity_dtypes, dict):
+            raise ValueError(
+                f"Stage 12 simulation artifact has no dtype schema for {entity_name}"
+            )
         frame = combined.loc[combined[PARQUET_CONTRACT.entity_column] == entity].copy()
         frame = frame.sort_values(PARQUET_CONTRACT.row_order_column, kind="stable")
         frame = frame.drop(
@@ -178,11 +186,14 @@ def deserialize_simulation_frames(payload: bytes) -> dict[str, pd.DataFrame]:
                 PARQUET_CONTRACT.row_order_column,
             ]
         )
-        frame = frame.dropna(axis=1, how="all").reset_index(drop=True)
-        for column, dtype in dtypes[entity].items():
+        # The dtype metadata is the authoritative per-entity schema. Inferring
+        # ownership by dropping all-null columns loses legitimate planned
+        # outputs whose values happen to be null for every row.
+        frame = frame.reindex(columns=sorted(entity_dtypes)).reset_index(drop=True)
+        for column, dtype in entity_dtypes.items():
             if column in frame.columns and str(frame[column].dtype) != dtype:
                 frame[column] = frame[column].astype(dtype)
-        frames[str(entity)] = frame.reindex(columns=sorted(frame.columns))
+        frames[entity_name] = frame
     return frames
 
 
