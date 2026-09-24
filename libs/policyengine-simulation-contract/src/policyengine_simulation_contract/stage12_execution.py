@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
+from hashlib import sha256
 from typing import Annotated, Literal
 from uuid import UUID
 
@@ -155,18 +157,6 @@ class GeographySelection(StrictContractModel):
         return self
 
 
-class RequestedSimulationOutput(StrictContractModel):
-    schema_version: Literal[1] = 1
-    variables: Annotated[tuple[ContractText, ...], Field(min_length=1)]
-
-    @field_validator("variables")
-    @classmethod
-    def require_unique_variables(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if len(value) != len(set(value)):
-            raise ValueError("requested variables must be unique")
-        return value
-
-
 class SimulationExecutionInput(StrictContractModel):
     contract_version: Literal[1] = 1
     evaluation_id: UUID
@@ -177,7 +167,6 @@ class SimulationExecutionInput(StrictContractModel):
     year: Annotated[int, Field(ge=1900, le=2200)]
     geography: GeographySelection
     options: dict[str, JsonValue] = Field(default_factory=dict)
-    requested_output: RequestedSimulationOutput
     bundle: BundleProvenance
 
     @model_validator(mode="before")
@@ -188,6 +177,114 @@ class SimulationExecutionInput(StrictContractModel):
                 "single-simulation input cannot contain baseline or reform fields"
             )
         return value
+
+
+class ReportAggregate(StrEnum):
+    BUDGET = "budget"
+    POVERTY = "poverty"
+    INEQUALITY = "inequality"
+    DISTRIBUTIONAL = "distributional"
+    WINNERS_AND_LOSERS = "winners_and_losers"
+    GEOGRAPHIC = "geographic"
+    PROGRAM_STATISTICS = "program_statistics"
+
+
+class ReportOutputRequirements(StrictContractModel):
+    """Report features that determine which simulation columns must exist."""
+
+    schema_version: Literal[1] = 1
+    aggregates: Annotated[tuple[ReportAggregate, ...], Field(min_length=1)]
+    include_cliff_impacts: bool
+    labor_supply_response_active: bool
+
+    @field_validator("aggregates")
+    @classmethod
+    def require_complete_aggregate_profile(
+        cls,
+        value: tuple[ReportAggregate, ...],
+    ) -> tuple[ReportAggregate, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("report output aggregates must be unique")
+        if value != tuple(ReportAggregate):
+            raise ValueError(
+                "Stage 12 currently requires the complete aggregate profile"
+            )
+        return value
+
+
+class EntityOutputPlan(StrictContractModel):
+    """Required materialized columns for one country-model entity."""
+
+    entity: ContractText
+    materialized_variables: Annotated[
+        tuple[ContractText, ...],
+        Field(min_length=1),
+    ]
+    additional_variables: tuple[ContractText, ...] = ()
+
+    @field_validator("materialized_variables", "additional_variables")
+    @classmethod
+    def require_canonical_variables(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("output-plan variables must be unique")
+        if value != tuple(sorted(value)):
+            raise ValueError("output-plan variables must use canonical order")
+        return value
+
+    @model_validator(mode="after")
+    def require_additional_subset(self) -> EntityOutputPlan:
+        if not set(self.additional_variables).issubset(self.materialized_variables):
+            raise ValueError(
+                "additional output-plan variables must be a materialized subset"
+            )
+        return self
+
+
+class Stage12OutputPlan(StrictContractModel):
+    """One immutable output schema shared by both report simulations."""
+
+    schema_version: Literal[1] = 1
+    country: CountryId
+    requirements: ReportOutputRequirements
+    entities: Annotated[tuple[EntityOutputPlan, ...], Field(min_length=1)]
+
+    @field_validator("entities")
+    @classmethod
+    def require_canonical_entities(
+        cls,
+        value: tuple[EntityOutputPlan, ...],
+    ) -> tuple[EntityOutputPlan, ...]:
+        names = tuple(entity.entity for entity in value)
+        if len(names) != len(set(names)):
+            raise ValueError("output-plan entities must be unique")
+        if names != tuple(sorted(names)):
+            raise ValueError("output-plan entities must use canonical order")
+        return value
+
+
+def stage12_output_plan_sha256(plan: Stage12OutputPlan) -> str:
+    """Return the stable digest recorded by each Stage 12 child artifact."""
+
+    payload = json.dumps(
+        plan.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+class PlannedSimulationExecutionInput(SimulationExecutionInput):
+    """Internal coordinator-to-worker input with a resolved output schema."""
+
+    output_plan: Stage12OutputPlan
+
+    @model_validator(mode="after")
+    def require_output_plan_country(self) -> PlannedSimulationExecutionInput:
+        if self.output_plan.country != self.geography.country:
+            raise ValueError("output plan country must match simulation geography")
+        return self
 
 
 class RowIdentity(StrictContractModel):
@@ -211,19 +308,10 @@ class SimulationArtifactDescriptor(StrictContractModel):
     role: SimulationRole
     artifact: ArtifactReference
     output_schema_version: Literal[1] = 1
+    output_plan_sha256: Sha256Digest
     row_identity: RowIdentity
     bundle: BundleProvenance
     calculation_provenance: dict[str, JsonValue] | None = None
-
-
-class ReportAggregate(StrEnum):
-    BUDGET = "budget"
-    POVERTY = "poverty"
-    INEQUALITY = "inequality"
-    DISTRIBUTIONAL = "distributional"
-    WINNERS_AND_LOSERS = "winners_and_losers"
-    GEOGRAPHIC = "geographic"
-    PROGRAM_STATISTICS = "program_statistics"
 
 
 class ReportExecutionInput(StrictContractModel):
@@ -250,7 +338,6 @@ class ReportExecutionInput(StrictContractModel):
             "year",
             "geography",
             "options",
-            "requested_output",
             "bundle",
         ):
             if getattr(self.baseline, field_name) != getattr(self.reform, field_name):

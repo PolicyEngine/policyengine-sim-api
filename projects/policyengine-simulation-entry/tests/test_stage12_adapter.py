@@ -93,13 +93,28 @@ def test_normalized_production_telemetry_does_not_change_eligibility() -> None:
     assert result.report.reform.options == {}
 
 
+def test_cliff_analysis_is_forwarded_to_both_simulations() -> None:
+    payload = {**eligible_payload(), "include_cliffs": True}
+
+    result = adapt_annual_comparison(
+        payload,
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert result.report is not None
+    assert result.skip_reason is None
+    assert result.report.baseline.options == {"include_cliffs": True}
+    assert result.report.reform.options == {"include_cliffs": True}
+
+
 @pytest.mark.parametrize(
     ("update", "reason"),
     [
         ({"scope": "household"}, ComparisonSkipReason.UNSUPPORTED_SCOPE),
         (
-            {"include_cliffs": True},
-            ComparisonSkipReason.UNSUPPORTED_CLIFF_CALCULATION,
+            {"include_cliffs": "true"},
+            ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE,
         ),
         ({"country": "ca"}, ComparisonSkipReason.UNSUPPORTED_COUNTRY),
         ({"data": "another"}, ComparisonSkipReason.UNSUPPORTED_DATASET),

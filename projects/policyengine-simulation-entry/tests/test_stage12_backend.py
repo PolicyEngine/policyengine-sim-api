@@ -167,7 +167,7 @@ def test_repeated_automatic_submission_uses_one_deterministic_report_identity() 
     )
 
 
-def test_unsupported_automatic_input_does_not_dispatch_or_write() -> None:
+def test_cliff_automatic_input_dispatches_without_entrypoint_writes() -> None:
     store = FakeStore()
     invoker = FakeInvoker()
 
@@ -180,7 +180,10 @@ def test_unsupported_automatic_input_does_not_dispatch_or_write() -> None:
     )
 
     assert store.events == []
-    assert invoker.calls == []
+    assert len(invoker.calls) == 1
+    report = invoker.calls[0]["report_payload"]
+    assert report["baseline"]["options"] == {"include_cliffs": True}
+    assert report["reform"]["options"] == {"include_cliffs": True}
 
 
 def test_dispatch_failure_is_sanitized_without_database_cleanup() -> None:
@@ -305,12 +308,12 @@ def test_temporary_submission_rejects_unsupported_input_without_side_effects() -
     with pytest.raises(TemporaryStage12UnsupportedRequest) as error:
         asyncio.run(
             _backend(store, invoker).submit_temporary_report(
-                request_payload={**eligible_payload(), "include_cliffs": True},
+                request_payload={**eligible_payload(), "include_cliffs": "true"},
                 request_id="request-1",
             )
         )
 
-    assert error.value.reason == "unsupported_cliff_calculation"
+    assert error.value.reason == "unsupported_request_shape"
     assert store.events == []
     assert invoker.calls == []
 

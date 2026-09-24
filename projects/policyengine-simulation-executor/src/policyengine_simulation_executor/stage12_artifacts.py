@@ -18,10 +18,11 @@ from policyengine_simulation_contract.stage12_execution import (
     AggregateReportArtifactPayload,
     ArtifactMediaType,
     ArtifactReference,
+    PlannedSimulationExecutionInput,
     ResultComparisonArtifactPayload,
     RowIdentity,
     SimulationArtifactDescriptor,
-    SimulationExecutionInput,
+    stage12_output_plan_sha256,
 )
 from pydantic import JsonValue
 
@@ -237,7 +238,7 @@ class Stage12ArtifactStore:
         self,
         *,
         prefix: str,
-        simulation: SimulationExecutionInput,
+        simulation: PlannedSimulationExecutionInput,
     ) -> ArtifactReference:
         return self._write_immutable(
             input_path(prefix=prefix, role=simulation.role.value),
@@ -249,7 +250,7 @@ class Stage12ArtifactStore:
         self,
         *,
         prefix: str,
-        simulation: SimulationExecutionInput,
+        simulation: PlannedSimulationExecutionInput,
         frames: Mapping[str, pd.DataFrame],
         calculation_provenance: Mapping[str, Any] | None = None,
     ) -> SimulationArtifactDescriptor:
@@ -275,6 +276,7 @@ class Stage12ArtifactStore:
             simulation_execution_id=simulation.simulation_execution_id,
             role=simulation.role,
             artifact=artifact,
+            output_plan_sha256=stage12_output_plan_sha256(simulation.output_plan),
             row_identity=row_identity,
             bundle=simulation.bundle,
             calculation_provenance=normalized_provenance,

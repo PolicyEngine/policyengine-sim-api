@@ -13,9 +13,10 @@ from pydantic import BaseModel, ConfigDict
 from policyengine_simulation_contract.stage12_execution import (
     ArtifactMediaType,
     ArtifactReference,
+    PlannedSimulationExecutionInput,
     ReportExecutionInput,
     SimulationArtifactDescriptor,
-    SimulationExecutionInput,
+    stage12_output_plan_sha256,
 )
 from policyengine_simulation_executor.simulation_microdata import (
     rebuild_entity_frame,
@@ -33,6 +34,10 @@ from policyengine_simulation_executor.stage12_parity import (
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
     simulation_input_sha256,
+)
+from policyengine_simulation_executor.stage12_runtime.output_planning import (
+    plan_simulation_input,
+    resolve_report_output_plan,
 )
 
 
@@ -58,7 +63,7 @@ class Stage12ParityReceipt(BaseModel):
 
 ExistingRunner = Callable[[dict[str, Any]], Mapping[str, Any]]
 SingleSimulationRunner = Callable[
-    [SimulationExecutionInput],
+    [PlannedSimulationExecutionInput],
     Mapping[str, pd.DataFrame] | SimulationCalculation,
 ]
 AggregateBuilder = Callable[..., dict[str, Any]]
@@ -147,7 +152,7 @@ def _calculation(
 
 
 def _descriptor(
-    simulation: SimulationExecutionInput,
+    simulation: PlannedSimulationExecutionInput,
     calculation: SimulationCalculation,
 ) -> SimulationArtifactDescriptor:
     payload, row_identity = serialize_simulation_frames(
@@ -167,6 +172,7 @@ def _descriptor(
             content_sha256=sha256(payload).hexdigest(),
             size_bytes=len(payload),
         ),
+        output_plan_sha256=stage12_output_plan_sha256(simulation.output_plan),
         row_identity=row_identity,
         bundle=simulation.bundle,
         calculation_provenance=cast(
@@ -190,6 +196,9 @@ def qualify_report_parity(
 
     report = ReportExecutionInput.model_validate(report_payload)
     _validate_matching_input(existing_request, report)
+    output_plan = resolve_report_output_plan(report)
+    baseline_input = plan_simulation_input(report.baseline, output_plan)
+    reform_input = plan_simulation_input(report.reform, output_plan)
 
     if existing_runner is None:
         from policyengine_simulation_executor.simulation_runtime import (
@@ -230,8 +239,8 @@ def qualify_report_parity(
         )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        baseline_future = executor.submit(single_simulation_runner, report.baseline)
-        reform_future = executor.submit(single_simulation_runner, report.reform)
+        baseline_future = executor.submit(single_simulation_runner, baseline_input)
+        reform_future = executor.submit(single_simulation_runner, reform_input)
         baseline_calculation = _calculation(baseline_future.result())
         reform_calculation = _calculation(reform_future.result())
 
@@ -246,8 +255,8 @@ def qualify_report_parity(
         tolerances=simulation_tolerances,
     )
 
-    baseline_descriptor = _descriptor(report.baseline, baseline_calculation)
-    reform_descriptor = _descriptor(report.reform, reform_calculation)
+    baseline_descriptor = _descriptor(baseline_input, baseline_calculation)
+    reform_descriptor = _descriptor(reform_input, reform_calculation)
     v2_report = aggregate_builder(
         report=report,
         baseline_frames=baseline_calculation.frames,
@@ -277,8 +286,8 @@ def qualify_report_parity(
     return Stage12ParityReceipt(
         evaluation_id=str(report.evaluation_id),
         bundle_manifest_sha256=bundle.bundle_manifest_sha256,
-        baseline_input_sha256=simulation_input_sha256(report.baseline),
-        reform_input_sha256=simulation_input_sha256(report.reform),
+        baseline_input_sha256=simulation_input_sha256(baseline_input),
+        reform_input_sha256=simulation_input_sha256(reform_input),
         existing_baseline_output_sha256=sha256(existing_baseline_payload).hexdigest(),
         v2_baseline_output_sha256=sha256(v2_baseline_payload).hexdigest(),
         existing_reform_output_sha256=sha256(existing_reform_payload).hexdigest(),

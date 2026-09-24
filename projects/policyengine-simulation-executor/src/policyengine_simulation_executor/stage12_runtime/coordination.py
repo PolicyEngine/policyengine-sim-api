@@ -14,10 +14,11 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunAggregationStatus,
     ComparisonRunLifecycleStatus,
     ComparisonSimulationRecord,
+    PlannedSimulationExecutionInput,
     ReportExecutionInput,
     ResultComparisonStatus,
     SimulationArtifactDescriptor,
-    SimulationExecutionInput,
+    Stage12OutputPlan,
     Stage12InvocationContext,
 )
 
@@ -38,13 +39,18 @@ from .dependencies import (
     runtime_store,
 )
 from .simulation import descriptor_from_record, simulation_input_sha256
+from .output_planning import (
+    plan_simulation_input,
+    resolve_report_output_plan,
+    validate_output_frames,
+)
 
 SIMULATION_WAIT_TIMEOUT_SECONDS = 3_000
 
 
 def _child_record(
     *,
-    simulation: SimulationExecutionInput,
+    simulation: PlannedSimulationExecutionInput,
     context: Stage12InvocationContext,
     function_name: str,
 ) -> ComparisonSimulationRecord:
@@ -179,6 +185,9 @@ def coordinate_report(
     artifacts: Stage12ArtifactStore | None = None,
     invoker: ChildInvoker | None = None,
     aggregator: Callable[..., dict[str, Any]] = build_aggregate_report,
+    output_plan_resolver: Callable[
+        [ReportExecutionInput], Stage12OutputPlan
+    ] = resolve_report_output_plan,
 ) -> dict[str, Any]:
     report = ReportExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
@@ -220,10 +229,14 @@ def coordinate_report(
         }
     )
     function_name = context.simulation_callable
-    simulations = (report.baseline, report.reform)
     descriptors: dict[str, SimulationArtifactDescriptor] = {}
     calls: dict[str, ChildCall] = {}
     try:
+        output_plan = output_plan_resolver(report)
+        simulations = (
+            plan_simulation_input(report.baseline, output_plan),
+            plan_simulation_input(report.reform, output_plan),
+        )
         children = {
             simulation.role: persistence.create_or_resolve_simulation(
                 _child_record(
@@ -335,17 +348,21 @@ def coordinate_report(
                 raise
         baseline = descriptors["baseline"]
         reform = descriptors["reform"]
-        validate_aligned_outputs(report, baseline, reform)
+        validate_aligned_outputs(report, output_plan, baseline, reform)
         baseline_payload = artifact_storage.read(baseline.artifact.uri)
         reform_payload = artifact_storage.read(reform.artifact.uri)
         if sha256(baseline_payload).hexdigest() != baseline.artifact.content_sha256:
             raise ValueError("baseline artifact digest mismatch")
         if sha256(reform_payload).hexdigest() != reform.artifact.content_sha256:
             raise ValueError("reform artifact digest mismatch")
+        baseline_frames = deserialize_simulation_frames(baseline_payload)
+        reform_frames = deserialize_simulation_frames(reform_payload)
+        validate_output_frames(baseline_frames, output_plan)
+        validate_output_frames(reform_frames, output_plan)
         aggregate = aggregator(
             report=report,
-            baseline_frames=deserialize_simulation_frames(baseline_payload),
-            reform_frames=deserialize_simulation_frames(reform_payload),
+            baseline_frames=baseline_frames,
+            reform_frames=reform_frames,
             baseline_descriptor=baseline,
             reform_descriptor=reform,
         )
