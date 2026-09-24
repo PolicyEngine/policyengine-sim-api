@@ -169,7 +169,7 @@ class Stage12ComparisonBackend:
         request_payload: dict[str, Any],
         production_response: bytes,
         request_id: str,
-        observability_id: str | None = None,
+        observability_id: str,
     ) -> None:
         prepared = await asyncio.to_thread(
             self._prepare_automatic_report,
@@ -199,7 +199,7 @@ class Stage12ComparisonBackend:
         *,
         request_payload: dict[str, Any],
         request_id: str,
-        observability_id: str | None = None,
+        observability_id: str,
     ) -> ComparisonReportRecord:
         """Submit one direct report and return after Modal acknowledges it."""
 
@@ -435,7 +435,7 @@ class Stage12ComparisonBackend:
         manifest_sha256: str,
         request_id: str,
         production_function_call_id: str | None,
-        observability_id: str | None,
+        observability_id: str,
     ) -> ComparisonReportRecord:
         """Return after Modal accepts the coordinator; perform no database writes."""
 
@@ -449,9 +449,8 @@ class Stage12ComparisonBackend:
         except Exception:
             raw_context = None
         captured_context = dict(raw_context) if isinstance(raw_context, dict) else {}
-        resolved_observability_id = normalize_observability_id(
-            observability_id or captured_context.get("observability_id")
-        )
+        captured_context.pop("observability_id", None)
+        resolved_observability_id = normalize_observability_id(observability_id)
         if resolved_observability_id is not None:
             captured_context["observability_id"] = resolved_observability_id
             parent = parent.model_copy(

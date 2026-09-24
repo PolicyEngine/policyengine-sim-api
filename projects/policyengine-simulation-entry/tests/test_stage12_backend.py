@@ -23,6 +23,8 @@ from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12UnsupportedRequest,
 )
 
+OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000012"
+
 
 class FakeLoader:
     def __init__(self):
@@ -66,7 +68,7 @@ class FakeInvoker:
 def _backend(store, invoker, *, environment="staging", modal_environment="staging"):
     runtime = MagicMock()
     runtime.capture_context.return_value = {
-        "observability_id": "00000000-0000-4000-8000-000000000012",
+        "observability_id": "00000000-0000-4000-8000-000000000099",
         "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
     }
     return Stage12ComparisonBackend(
@@ -133,6 +135,7 @@ def test_automatic_submission_only_awaits_modal_acknowledgement() -> None:
             request_payload=eligible_payload(),
             production_response=_response(),
             request_id="request-1",
+            observability_id=OBSERVABILITY_ID,
         )
     )
 
@@ -162,6 +165,7 @@ def test_repeated_automatic_submission_uses_one_deterministic_report_identity() 
                 request_payload=eligible_payload(),
                 production_response=_response(),
                 request_id=request_id,
+                observability_id=OBSERVABILITY_ID,
             )
         )
 
@@ -185,6 +189,7 @@ def test_unsupported_automatic_input_does_not_dispatch_or_write() -> None:
             request_payload={**eligible_payload(), "include_cliffs": True},
             production_response=_response(),
             request_id="request-1",
+            observability_id=OBSERVABILITY_ID,
         )
     )
 
@@ -205,6 +210,7 @@ def test_dispatch_failure_is_sanitized_without_database_cleanup() -> None:
                 request_payload=eligible_payload(),
                 production_response=_response(),
                 request_id="request-1",
+                observability_id=OBSERVABILITY_ID,
             )
         )
 
@@ -229,6 +235,7 @@ async def test_dispatch_cancellation_does_not_wait_for_database_cleanup() -> Non
             request_payload=eligible_payload(),
             production_response=_response(),
             request_id="request-1",
+            observability_id=OBSERVABILITY_ID,
         )
     )
     await asyncio.sleep(0)
@@ -247,12 +254,13 @@ def test_temporary_submission_spawns_without_database_writes() -> None:
         _backend(store, invoker).submit_temporary_report(
             request_payload=eligible_payload(),
             request_id="manual-request-1",
+            observability_id=OBSERVABILITY_ID,
         )
     )
 
     assert store.events == []
     assert report.status is ComparisonRunLifecycleStatus.RUNNING
-    assert report.observability_id == "00000000-0000-4000-8000-000000000012"
+    assert report.observability_id == OBSERVABILITY_ID
     assert report.production_identity == f"direct:{report.evaluation_id}"
     assert report.incumbent_execution_id is None
     assert report.coordinator_invocation_id == "modal-call-1"
@@ -281,6 +289,7 @@ def test_production_context_keeps_logical_and_modal_environments_distinct() -> N
         backend.submit_temporary_report(
             request_payload=eligible_payload(),
             request_id="production-manual-request",
+            observability_id=OBSERVABILITY_ID,
         )
     )
 
@@ -297,12 +306,14 @@ def test_each_temporary_submission_creates_a_distinct_report_identity() -> None:
         backend.submit_temporary_report(
             request_payload=eligible_payload(),
             request_id="request-1",
+            observability_id=OBSERVABILITY_ID,
         )
     )
     second = asyncio.run(
         backend.submit_temporary_report(
             request_payload=eligible_payload(),
             request_id="request-2",
+            observability_id=OBSERVABILITY_ID,
         )
     )
 
@@ -319,6 +330,7 @@ def test_temporary_submission_rejects_unsupported_input_without_side_effects() -
             _backend(store, invoker).submit_temporary_report(
                 request_payload={**eligible_payload(), "include_cliffs": True},
                 request_id="request-1",
+                observability_id=OBSERVABILITY_ID,
             )
         )
 
@@ -334,6 +346,7 @@ def test_temporary_status_reads_coordinator_owned_postgres_state() -> None:
         _backend(store, invoker).submit_temporary_report(
             request_payload=eligible_payload(),
             request_id="request-1",
+            observability_id=OBSERVABILITY_ID,
         )
     )
     store.current = report
@@ -356,6 +369,7 @@ def test_temporary_status_rejects_a_record_from_another_environment() -> None:
         staging_backend.submit_temporary_report(
             request_payload=eligible_payload(),
             request_id="request-1",
+            observability_id=OBSERVABILITY_ID,
         )
     )
     store = FakeStore(current=report)
@@ -385,6 +399,7 @@ async def test_temporary_submission_offloads_only_pure_preparation(monkeypatch) 
     report = await backend.submit_temporary_report(
         request_payload=eligible_payload(),
         request_id="request-1",
+        observability_id=OBSERVABILITY_ID,
     )
 
     assert calls == [

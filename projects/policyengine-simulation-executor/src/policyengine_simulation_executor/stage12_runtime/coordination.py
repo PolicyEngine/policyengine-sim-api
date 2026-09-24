@@ -222,8 +222,6 @@ def coordinate_report(
             coordinator_invocation_id=coordinator_invocation_id,
             store=persistence,
         )
-    if runtime is not None and parent.observability_id is not None:
-        runtime.set_context(observability_id=parent.observability_id)
     if not should_execute:
         return {
             "deduplicated": True,
