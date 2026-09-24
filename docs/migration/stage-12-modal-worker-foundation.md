@@ -165,6 +165,37 @@ identifies an artifact declared by that same bundle. The request model converts
 the Public API's `_telemetry` field to `telemetry`; the adapter accepts that
 correlation metadata but does not include it in either simulation input.
 
+## Report output planning
+
+Before starting either child simulation, the Modal report coordinator resolves
+one immutable, strongly typed output plan for the complete Stage 12 report. The
+plan records the requested aggregate profile, whether cliff analysis was
+requested, whether either policy activates labor-supply responses, and the
+required columns for every country-model entity.
+
+The resolver constructs data-free planning `Simulation` objects and invokes
+the output-configuration functions supplied by the pinned PolicyEngine 5.2.0
+bundle. For US reports this includes the budgetary-impact variables; both
+countries use PolicyEngine's conditional cliff and labor-supply configuration.
+Planning never loads a dataset or executes a simulation. The former
+`variables=("*",)` internal marker is not an output expansion mechanism and is
+no longer used.
+
+The coordinator includes the exact same output plan in the baseline and reform
+child inputs. Each child adds the plan's additional variables before calling
+`Simulation.ensure()`, then verifies that every planned entity and column is
+present before writing its Parquet artifact. The artifact descriptor records a
+digest of the plan. After both calls complete, the coordinator checks both plan
+digests and independently validates both loaded Parquet schemas before it runs
+aggregate calculations. Extra columns are permitted; missing planned columns
+fail the temporary Stage 12 report without affecting the production result.
+
+Aggregation uses the retained output tables without rerunning either model.
+The precomputed baseline and reform simulations retain their original policy
+metadata so PolicyEngine can correctly recognize conditional labor-supply
+analysis. `include_cliffs=true` is supported by this path and is carried through
+both output planning and aggregation.
+
 ## Temporary direct runner endpoint
 
 > **Temporary Stage 12 interface:** The authenticated routes in this section
