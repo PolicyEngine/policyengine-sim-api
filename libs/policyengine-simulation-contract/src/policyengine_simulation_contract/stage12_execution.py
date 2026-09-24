@@ -221,8 +221,13 @@ class EntityOutputPlan(StrictContractModel):
         Field(min_length=1),
     ]
     additional_variables: tuple[ContractText, ...] = ()
+    dataset_variables: tuple[ContractText, ...] = ()
 
-    @field_validator("materialized_variables", "additional_variables")
+    @field_validator(
+        "materialized_variables",
+        "additional_variables",
+        "dataset_variables",
+    )
     @classmethod
     def require_canonical_variables(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if len(value) != len(set(value)):
@@ -232,10 +237,18 @@ class EntityOutputPlan(StrictContractModel):
         return value
 
     @model_validator(mode="after")
-    def require_additional_subset(self) -> EntityOutputPlan:
+    def require_variable_subsets(self) -> EntityOutputPlan:
         if not set(self.additional_variables).issubset(self.materialized_variables):
             raise ValueError(
                 "additional output-plan variables must be a materialized subset"
+            )
+        if not set(self.dataset_variables).issubset(self.materialized_variables):
+            raise ValueError(
+                "dataset output-plan variables must be a materialized subset"
+            )
+        if set(self.additional_variables).intersection(self.dataset_variables):
+            raise ValueError(
+                "calculated additional variables and dataset variables must be disjoint"
             )
         return self
 

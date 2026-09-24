@@ -16,11 +16,16 @@ from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     EntityOutputPlan,
     PlannedSimulationExecutionInput,
+    ReportAggregate,
     ReportExecutionInput,
     ReportOutputRequirements,
     SimulationExecutionInput,
     Stage12OutputPlan,
 )
+
+UK_GEOGRAPHIC_DATASET_VARIABLES: dict[str, tuple[str, ...]] = {
+    "household": ("constituency_code_oa", "la_code_oa"),
+}
 
 
 class OutputVariableModel(Protocol):
@@ -74,6 +79,18 @@ def _include_cliff_impacts(report: ReportExecutionInput) -> bool:
     return value
 
 
+def _required_dataset_variables(
+    *,
+    country: CountryId,
+    aggregates: tuple[ReportAggregate, ...],
+) -> dict[str, tuple[str, ...]]:
+    """Return input-dataset columns copied into the materialized output."""
+
+    if country == "uk" and ReportAggregate.GEOGRAPHIC in aggregates:
+        return UK_GEOGRAPHIC_DATASET_VARIABLES
+    return {}
+
+
 def _configure_country_outputs(
     *,
     country: CountryId,
@@ -123,12 +140,20 @@ def resolve_report_output_plan(report: ReportExecutionInput) -> Stage12OutputPla
     )
     baseline_variables = model.resolve_entity_variables(baseline)
     reform_variables = model.resolve_entity_variables(reform)
+    dataset_variables = _required_dataset_variables(
+        country=country,
+        aggregates=requirements.aggregates,
+    )
     entities = []
-    for entity in sorted(set(baseline_variables) | set(reform_variables)):
+    for entity in sorted(
+        set(baseline_variables) | set(reform_variables) | set(dataset_variables)
+    ):
+        entity_dataset_variables = dataset_variables.get(entity, ())
         materialized = tuple(
             sorted(
                 set(baseline_variables.get(entity, ()))
                 | set(reform_variables.get(entity, ()))
+                | set(entity_dataset_variables)
             )
         )
         additional = tuple(
@@ -142,6 +167,7 @@ def resolve_report_output_plan(report: ReportExecutionInput) -> Stage12OutputPla
                 entity=entity,
                 materialized_variables=materialized,
                 additional_variables=additional,
+                dataset_variables=entity_dataset_variables,
             )
         )
     return Stage12OutputPlan(
@@ -185,7 +211,10 @@ def apply_output_plan(
     resolved = model.resolve_entity_variables(simulation)
     missing = {
         entity_plan.entity: sorted(
-            set(entity_plan.materialized_variables)
+            (
+                set(entity_plan.materialized_variables)
+                - set(entity_plan.dataset_variables)
+            )
             - set(resolved.get(entity_plan.entity, ()))
         )
         for entity_plan in output_plan.entities

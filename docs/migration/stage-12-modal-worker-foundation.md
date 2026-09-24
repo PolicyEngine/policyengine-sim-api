@@ -190,6 +190,12 @@ digests and independently validates both loaded Parquet schemas before it runs
 aggregate calculations. Extra columns are permitted; missing planned columns
 fail the temporary Stage 12 report without affecting the production result.
 
+The plan distinguishes calculated variables from columns copied directly from
+the source dataset. UK geographic reports require the household columns
+`constituency_code_oa` and `la_code_oa`. Workers do not request those columns as
+calculated PolicyEngine variables, but they must be present in each materialized
+artifact; otherwise validation fails before geographic aggregation begins.
+
 Aggregation uses the retained output tables without rerunning either model.
 The precomputed baseline and reform simulations retain their original policy
 metadata so PolicyEngine can correctly recognize conditional labor-supply

@@ -62,6 +62,11 @@ def test_output_plan_has_a_deterministic_digest() -> None:
             ("missing",),
             "subset",
         ),
+        (
+            "dataset_variables",
+            ("missing",),
+            "subset",
+        ),
     ],
 )
 def test_entity_output_plan_rejects_noncanonical_variables(
@@ -73,6 +78,7 @@ def test_entity_output_plan_rejects_noncanonical_variables(
         "entity": "person",
         "materialized_variables": ("federal_benefit_cost", "person_id"),
         "additional_variables": ("federal_benefit_cost",),
+        "dataset_variables": (),
     }
     values[field] = value
 
@@ -98,4 +104,14 @@ def test_output_plan_rejects_duplicate_or_unsorted_entities() -> None:
             country="us",
             requirements=_plan().requirements,
             entities=(entity, entity),
+        )
+
+
+def test_entity_output_plan_separates_calculated_and_dataset_variables() -> None:
+    with pytest.raises(ValueError, match="must be disjoint"):
+        EntityOutputPlan(
+            entity="household",
+            materialized_variables=("constituency_code_oa", "household_id"),
+            additional_variables=("constituency_code_oa",),
+            dataset_variables=("constituency_code_oa",),
         )

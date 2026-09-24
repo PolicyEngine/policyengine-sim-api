@@ -119,6 +119,11 @@ def _additional_variables(plan: Stage12OutputPlan, entity: str) -> set[str]:
     return set(entity_plan.additional_variables)
 
 
+def _dataset_variables(plan: Stage12OutputPlan, entity: str) -> set[str]:
+    entity_plan = next(item for item in plan.entities if item.entity == entity)
+    return set(entity_plan.dataset_variables)
+
+
 def test_us_plan_adds_budget_variables_to_the_country_defaults() -> None:
     plan = resolve_report_output_plan(_report())
 
@@ -136,6 +141,11 @@ def test_uk_plan_uses_uk_defaults_without_us_budget_variables() -> None:
     assert "benunit" in {entity.entity for entity in plan.entities}
     assert "tax_unit" not in {entity.entity for entity in plan.entities}
     assert "federal_benefit_cost" not in _variables(plan, "person")
+    assert _dataset_variables(plan, "household") == {
+        "constituency_code_oa",
+        "la_code_oa",
+    }
+    assert _dataset_variables(plan, "household").issubset(_variables(plan, "household"))
 
 
 def test_cliff_variables_are_conditional() -> None:
@@ -221,4 +231,41 @@ def test_apply_and_validate_output_plan_reject_missing_materialized_columns() ->
     validate_output_frames(frames, plan)
     frames["person"] = frames["person"].drop(columns=["federal_benefit_cost"])
     with pytest.raises(ValueError, match="federal_benefit_cost"):
+        validate_output_frames(frames, plan)
+
+
+@pytest.mark.parametrize("missing", ["constituency_code_oa", "la_code_oa"])
+def test_uk_output_validation_requires_geographic_dataset_columns(
+    missing: str,
+) -> None:
+    from policyengine.tax_benefit_models import uk
+
+    plan = resolve_report_output_plan(_report("uk"))
+    simulation = Simulation.model_construct(
+        policy={},
+        dynamic=None,
+        dataset=None,
+        scoping_strategy=None,
+        extra_variables={},
+        tax_benefit_model_version=uk.model,
+        output_dataset=None,
+    )
+
+    # Dataset variables are copied by the country model rather than calculated,
+    # so applying the plan must not try to add them to ``extra_variables``.
+    apply_output_plan(simulation, plan)
+    assert not _dataset_variables(plan, "household").intersection(
+        simulation.extra_variables.get("household", ())
+    )
+
+    frames = {
+        entity.entity: pd.DataFrame(
+            {variable: [0] for variable in entity.materialized_variables}
+        )
+        for entity in plan.entities
+    }
+    validate_output_frames(frames, plan)
+    frames["household"] = frames["household"].drop(columns=[missing])
+
+    with pytest.raises(ValueError, match=missing):
         validate_output_frames(frames, plan)
