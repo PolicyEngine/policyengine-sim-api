@@ -12,6 +12,7 @@ import os
 import shlex
 from pathlib import Path
 
+from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_observability.observability import (
@@ -74,6 +75,18 @@ worker_secrets = [
     hf_secret,
     comparison_runtime_secret,
 ]
+
+
+def _stage12_remote_context(
+    runtime: ObservabilityRuntime,
+    observability_context: dict | None,
+) -> dict[str, str] | None:
+    propagated = remote_context({"_observability_context": observability_context})
+    if propagated is not None:
+        observability_id = propagated.get("observability_id")
+        if observability_id is not None:
+            runtime.set_context(observability_id=observability_id)
+    return propagated
 
 
 def _country_bundle(country: CountryId):
@@ -205,19 +218,24 @@ def run_single_simulation_us(
         platform="modal",
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
-    with runtime.operation(
-        STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
-        attributes={"runner_name": "stage12", "simulation_role": payload.get("role")},
-        remote_context=remote_context(
-            {"_observability_context": observability_context}
-        ),
-    ):
-        return run_single_simulation(
-            payload,
-            context,
-            required_country="us",
-            runtime=runtime,
-        )
+    try:
+        propagated = _stage12_remote_context(runtime, observability_context)
+        with runtime.operation(
+            STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
+            attributes={
+                "runner_name": "stage12",
+                "simulation_role": payload.get("role"),
+            },
+            remote_context=propagated,
+        ):
+            return run_single_simulation(
+                payload,
+                context,
+                required_country="us",
+                runtime=runtime,
+            )
+    finally:
+        runtime.shutdown()
 
 
 @app.function(
@@ -244,19 +262,24 @@ def run_single_simulation_uk(
         platform="modal",
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
-    with runtime.operation(
-        STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
-        attributes={"runner_name": "stage12", "simulation_role": payload.get("role")},
-        remote_context=remote_context(
-            {"_observability_context": observability_context}
-        ),
-    ):
-        return run_single_simulation(
-            payload,
-            context,
-            required_country="uk",
-            runtime=runtime,
-        )
+    try:
+        propagated = _stage12_remote_context(runtime, observability_context)
+        with runtime.operation(
+            STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
+            attributes={
+                "runner_name": "stage12",
+                "simulation_role": payload.get("role"),
+            },
+            remote_context=propagated,
+        ):
+            return run_single_simulation(
+                payload,
+                context,
+                required_country="uk",
+                runtime=runtime,
+            )
+    finally:
+        runtime.shutdown()
 
 
 @app.function(
@@ -294,25 +317,27 @@ def coordinate_report(
         if context.get("production_function_call_id")
         else STAGE12_CANONICAL_REPORT_STAGES
     )
-    with runtime.operation(
-        stage_plan.name(Stage.STAGE12_COORDINATOR_EXECUTION),
-        attributes={
-            "runner_name": "stage12",
-            "execution_mode": (
-                "shadow"
-                if context.get("production_function_call_id")
-                else "authoritative"
-            ),
-        },
-        remote_context=remote_context(
-            {"_observability_context": observability_context}
-        ),
-    ):
-        return run_report_coordinator(
-            payload,
-            context,
-            parent,
-            application_name=APP_NAME,
-            coordinator_invocation_id=coordinator_invocation_id,
-            runtime=runtime,
-        )
+    try:
+        propagated = _stage12_remote_context(runtime, observability_context)
+        with runtime.operation(
+            stage_plan.name(Stage.STAGE12_COORDINATOR_EXECUTION),
+            attributes={
+                "runner_name": "stage12",
+                "execution_mode": (
+                    "shadow"
+                    if context.get("production_function_call_id")
+                    else "authoritative"
+                ),
+            },
+            remote_context=propagated,
+        ):
+            return run_report_coordinator(
+                payload,
+                context,
+                parent,
+                application_name=APP_NAME,
+                coordinator_invocation_id=coordinator_invocation_id,
+                runtime=runtime,
+            )
+    finally:
+        runtime.shutdown()
