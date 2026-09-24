@@ -562,6 +562,14 @@ jobs:
           STAGE12_EXPECT_US_VERSION: ${{ needs.prepare.outputs.us_version }}
           STAGE12_EXPECT_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
           STAGE12_ARTIFACT_BUCKET: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
+          OBSERVABILITY_SERVICE_NAMESPACE: ${{ vars.OBSERVABILITY_SERVICE_NAMESPACE }}
+          OBSERVABILITY_TRACE_PROJECT_ID: ${{ vars.OBSERVABILITY_TRACE_PROJECT_ID }}
+          OBSERVABILITY_LOGGING_PROJECT_ID: ${{ vars.OBSERVABILITY_LOGGING_PROJECT_ID }}
+          OBSERVABILITY_LOG_NAME: ${{ vars.OBSERVABILITY_LOG_NAME }}
+          OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ vars.OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OBSERVABILITY_OTLP_ENDPOINT }}
+          POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}
         run: uv run modal deploy --env="${{ inputs.modal_environment }}" src/modal/v2_app.py
 
       - name: Validate installed bundles, secrets, datasets, and calculations

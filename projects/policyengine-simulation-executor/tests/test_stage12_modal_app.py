@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 import sys
 import tomllib
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -12,12 +13,65 @@ import pytest
 from fixtures.fake_modal import install_fake_modal
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000001"
+
+
+class RecordingRuntime:
+    def __init__(self) -> None:
+        self.contexts: list[dict] = []
+        self.operations: list[dict] = []
+        self.shutdown_calls = 0
+
+    def set_context(self, **attributes) -> None:
+        self.contexts.append(attributes)
+
+    @contextmanager
+    def operation(self, name, **kwargs):
+        self.operations.append({"name": name, **kwargs})
+        yield
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
 
 
 def _load(monkeypatch):
     install_fake_modal(monkeypatch)
     sys.modules.pop("src.modal.v2_app", None)
     return importlib.import_module("src.modal.v2_app")
+
+
+def _observability_context() -> dict[str, str]:
+    return {
+        "captured_at": "2026-09-24T00:00:00Z",
+        "observability_id": OBSERVABILITY_ID,
+        "traceparent": "00-00000000000000000000000000000001-0000000000000001-01",
+    }
+
+
+def _invoke(
+    monkeypatch,
+    module,
+    function_name: str,
+    implementation,
+):
+    from policyengine_simulation_executor import stage12_runtime
+
+    if function_name == "coordinate_report":
+        monkeypatch.setattr(
+            module.modal,
+            "current_function_call_id",
+            lambda: "call-1",
+            raising=False,
+        )
+        monkeypatch.setattr(stage12_runtime, "coordinate_report", implementation)
+        return module.coordinate_report({}, {}, {}, _observability_context())
+
+    monkeypatch.setattr(stage12_runtime, "run_single_simulation", implementation)
+    return getattr(module, function_name)(
+        {"role": "baseline"},
+        {},
+        _observability_context(),
+    )
 
 
 def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> None:
@@ -98,6 +152,57 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     assert functions["coordinate_report"]["timeout"] == 4500
     assert functions["coordinate_report"]["max_containers"] == 10
     assert "asgi_app" not in vars(module)
+
+
+@pytest.mark.parametrize(
+    "function_name",
+    [
+        "run_single_simulation_us",
+        "run_single_simulation_uk",
+        "coordinate_report",
+    ],
+)
+def test_stage12_functions_propagate_identifier_and_close_runtime(
+    monkeypatch,
+    function_name,
+) -> None:
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+
+    result = _invoke(monkeypatch, module, function_name, lambda *_, **__: {"ok": True})
+
+    assert result == {"ok": True}
+    assert runtime.contexts == [{"observability_id": OBSERVABILITY_ID}]
+    assert runtime.operations[0]["remote_context"]["observability_id"] == (
+        OBSERVABILITY_ID
+    )
+    assert runtime.shutdown_calls == 1
+
+
+@pytest.mark.parametrize(
+    "function_name",
+    [
+        "run_single_simulation_us",
+        "run_single_simulation_uk",
+        "coordinate_report",
+    ],
+)
+def test_stage12_functions_close_runtime_after_application_error(
+    monkeypatch,
+    function_name,
+) -> None:
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+
+    def fail(*_, **__):
+        raise LookupError("application failure")
+
+    with pytest.raises(LookupError, match="application failure"):
+        _invoke(monkeypatch, module, function_name, fail)
+
+    assert runtime.shutdown_calls == 1
 
 
 def test_external_package_values_are_assertions_only(monkeypatch) -> None:
