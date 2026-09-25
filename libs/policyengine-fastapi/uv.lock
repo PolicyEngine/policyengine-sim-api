@@ -651,15 +651,15 @@ grpc = [
 
 [[package]]
 name = "google-auth"
-version = "2.58.0"
+version = "2.58.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cryptography" },
     { name = "pyasn1-modules" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ac/ca/f398a483ce5aad18ca2f735646e45ccee2439bd94a41a4ad0cfa646bd495/google_auth-2.58.0.tar.gz", hash = "sha256:55e30cf15e737de92c5323d78cda8a83fcd57e7ffbaf900c4600039fd60a80fd", size = 380018, upload-time = "2026-09-09T20:49:38.043Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/aa/8055c583f8eb69dd4544f0d6a83e22d2f01ab38bd2ce848ea599c259a2d2/google_auth-2.58.1.tar.gz", hash = "sha256:1480461d8b2347e679af758f4003700ea79a59b603c9134e18bfa95e8004ee70", size = 380459, upload-time = "2026-09-24T21:52:00.171Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/13/477d90d09591b3938b45c4e11f4d8a51291682112cb5efcac961e815d562/google_auth-2.58.0-py3-none-any.whl", hash = "sha256:8a9c4645bb4c8e91668fb1934b95ae6a8687084232753639220ba9bf04a1610d", size = 262404, upload-time = "2026-09-09T20:49:33.951Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/f0/cba0ac98e98e01849b19f7504eb3aeede741e72dfc31612e46d5f0dd981c/google_auth-2.58.1-py3-none-any.whl", hash = "sha256:66a63572d0ab629554768544df04018d79178c0bd7439ba31683ac576b79024d", size = 262483, upload-time = "2026-09-24T21:51:58.297Z" },
 ]
 
 [[package]]
@@ -696,14 +696,14 @@ wheels = [
 
 [[package]]
 name = "googleapis-common-protos"
-version = "1.75.3"
+version = "1.75.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8a/c5/4353a188e2c335aee33269e8b654af228278cca8e5f0b4b5f11e5d0e9adb/googleapis_common_protos-1.75.3.tar.gz", hash = "sha256:57c435ac2c68b108999b6db075d9053e4d7a936ba57b4a3d45667b1346f1738a", size = 153905, upload-time = "2026-09-03T22:31:21.869Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4b/13/f83676de1dce4f8106bcba91725b3f3f4baf6ca1977685102b008b8e0097/googleapis_common_protos-1.75.4.tar.gz", hash = "sha256:4587babdc82a8d7e5a3d4f5a6697e064bf44a598b4d08341c212b68185eadbcd", size = 154248, upload-time = "2026-09-24T23:20:21.759Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1a/7a/7d79170c6ce6f12e109df2b3879d6b934010cf4f99aea8de8b7e5408c174/googleapis_common_protos-1.75.3-py3-none-any.whl", hash = "sha256:a018d2bf098ca9fb6faa08d5bb780e2a2c2f73c566f069761331386c9596d3f2", size = 306984, upload-time = "2026-09-03T22:30:45.133Z" },
+    { url = "https://files.pythonhosted.org/packages/11/59/6474c44460037b8474d85c1a82311ec7244f3aabd53197be5b06a4db778e/googleapis_common_protos-1.75.4-py3-none-any.whl", hash = "sha256:e8eb9cffa9a9f3423090cc7a086012004196abab388a0561690e81887fd79cc1", size = 307743, upload-time = "2026-09-24T23:19:57.136Z" },
 ]
 
 [[package]]
@@ -1198,11 +1198,11 @@ wheels = [
 
 [[package]]
 name = "platformdirs"
-version = "4.11.12"
+version = "4.11.14"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ea/dd/65804b0c2925a1c821a05502ea57517b69a073ff400d25ab9faa3a2cf012/platformdirs-4.11.12.tar.gz", hash = "sha256:e8dc1cb58f1153fd7f61db1374317770baababec2480b37b8f01c6cc25b45267", size = 40016, upload-time = "2026-09-22T01:02:36.973Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/72/72/2075f80b8de9992872715444e7088ec3b6eea2bc0e99521e1d6e562e382d/platformdirs-4.11.14.tar.gz", hash = "sha256:0e706ec0a73a4ec023d11496153a4b6607a672f4b5027c23c3aefa9c9288c523", size = 45301, upload-time = "2026-09-25T17:24:00.877Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ec/2b/69de6317fbf48865bb12aa56c9cfcfff46b3add0cd45250725d96146dce0/platformdirs-4.11.12-py3-none-any.whl", hash = "sha256:b1ba966ac76153d9985a0787ffab951e7c18416189873d4e4ddb2c8a04a0a254", size = 24976, upload-time = "2026-09-22T01:02:35.742Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/40/03f2c094178624d155b8d27a9b0c5ab1e39efa6cc9074b599e8c671b9db1/platformdirs-4.11.14-py3-none-any.whl", hash = "sha256:c1b1a1eab4f4d1b0eb81754593f1c38de88e84ebe6f93bf6714706a6759074b1", size = 26700, upload-time = "2026-09-25T17:23:59.443Z" },
 ]
 
 [[package]]
@@ -1815,15 +1815,15 @@ wheels = [
 
 [[package]]
 name = "uvicorn"
-version = "0.53.0"
+version = "0.54.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "h11" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5d/ad/04bbb797c84fc1f26cb171f7394716f4865ffb8d8c5e1eef42565c2dfa6b/uvicorn-0.53.0.tar.gz", hash = "sha256:a9356f0cb89b3b8621529c5d5eebd69bfe154f4c3f68b4cf2de47e45fa855c2e", size = 110881, upload-time = "2026-09-14T07:44:23.815Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/34/30e9280707135d2cfc589dfff3cb796bd07a3aeb1a3e415ba09dd89d7bb4/uvicorn-0.54.0.tar.gz", hash = "sha256:a2e33cbfaa0306f8e6b0c13e0cb89d7d7a2da3e62b90c66e18c33d9807b28620", size = 112283, upload-time = "2026-09-25T06:52:37.601Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/18/0eea75741ee812e9f598b687619ce2454f6c3a1c5cd21ea990ec6bd26f45/uvicorn-0.53.0-py3-none-any.whl", hash = "sha256:e8dca71ec86dce5f04e333f0d56cdedf942446e6643b9cea1af0d6d3a02cb03e", size = 87081, upload-time = "2026-09-14T07:44:22.179Z" },
+    { url = "https://files.pythonhosted.org/packages/38/0c/b54a4fdd7f90a3af8b02ebc9ce6712c2c208b7926a2f7bad95c33ebbe943/uvicorn-0.54.0-py3-none-any.whl", hash = "sha256:505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf", size = 87427, upload-time = "2026-09-25T06:52:35.829Z" },
 ]
 
 [package.optional-dependencies]
