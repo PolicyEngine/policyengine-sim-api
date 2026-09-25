@@ -18,10 +18,11 @@ from policyengine_simulation_contract.stage12_execution import (
     AggregateReportArtifactPayload,
     ArtifactMediaType,
     ArtifactReference,
+    PlannedSimulationExecutionInput,
     ResultComparisonArtifactPayload,
     RowIdentity,
     SimulationArtifactDescriptor,
-    SimulationExecutionInput,
+    stage12_output_plan_sha256,
 )
 from pydantic import JsonValue
 
@@ -166,9 +167,17 @@ def deserialize_simulation_frames(payload: bytes) -> dict[str, pd.DataFrame]:
     if raw_dtypes is None:
         raise ValueError("Stage 12 simulation artifact has no dtype metadata")
     dtypes = json.loads(raw_dtypes)
+    if not isinstance(dtypes, dict):
+        raise TypeError("Stage 12 simulation artifact dtype metadata is invalid")
     combined = table.to_pandas()
     frames: dict[str, pd.DataFrame] = {}
     for entity in sorted(combined[PARQUET_CONTRACT.entity_column].unique()):
+        entity_name = str(entity)
+        entity_dtypes = dtypes.get(entity_name)
+        if not isinstance(entity_dtypes, dict):
+            raise ValueError(
+                f"Stage 12 simulation artifact has no dtype schema for {entity_name}"
+            )
         frame = combined.loc[combined[PARQUET_CONTRACT.entity_column] == entity].copy()
         frame = frame.sort_values(PARQUET_CONTRACT.row_order_column, kind="stable")
         frame = frame.drop(
@@ -177,11 +186,14 @@ def deserialize_simulation_frames(payload: bytes) -> dict[str, pd.DataFrame]:
                 PARQUET_CONTRACT.row_order_column,
             ]
         )
-        frame = frame.dropna(axis=1, how="all").reset_index(drop=True)
-        for column, dtype in dtypes[entity].items():
+        # The dtype metadata is the authoritative per-entity schema. Inferring
+        # ownership by dropping all-null columns loses legitimate planned
+        # outputs whose values happen to be null for every row.
+        frame = frame.reindex(columns=sorted(entity_dtypes)).reset_index(drop=True)
+        for column, dtype in entity_dtypes.items():
             if column in frame.columns and str(frame[column].dtype) != dtype:
                 frame[column] = frame[column].astype(dtype)
-        frames[str(entity)] = frame.reindex(columns=sorted(frame.columns))
+        frames[entity_name] = frame
     return frames
 
 
@@ -237,7 +249,7 @@ class Stage12ArtifactStore:
         self,
         *,
         prefix: str,
-        simulation: SimulationExecutionInput,
+        simulation: PlannedSimulationExecutionInput,
     ) -> ArtifactReference:
         return self._write_immutable(
             input_path(prefix=prefix, role=simulation.role.value),
@@ -249,7 +261,7 @@ class Stage12ArtifactStore:
         self,
         *,
         prefix: str,
-        simulation: SimulationExecutionInput,
+        simulation: PlannedSimulationExecutionInput,
         frames: Mapping[str, pd.DataFrame],
         calculation_provenance: Mapping[str, Any] | None = None,
     ) -> SimulationArtifactDescriptor:
@@ -275,6 +287,7 @@ class Stage12ArtifactStore:
             simulation_execution_id=simulation.simulation_execution_id,
             role=simulation.role,
             artifact=artifact,
+            output_plan_sha256=stage12_output_plan_sha256(simulation.output_plan),
             row_identity=row_identity,
             bundle=simulation.bundle,
             calculation_provenance=normalized_provenance,

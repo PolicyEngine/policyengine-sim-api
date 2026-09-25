@@ -49,6 +49,21 @@ def test_parquet_encoding_is_deterministic_and_preserves_rows_and_dtypes() -> No
     assert restored["person"]["person_id"].tolist() == [1, 2]
 
 
+def test_parquet_round_trip_preserves_an_all_null_entity_column() -> None:
+    frames = _frames()
+    frames["person"]["planned_value"] = pd.Series(
+        [pd.NA, pd.NA],
+        dtype="Float64",
+    )
+
+    payload, _ = serialize_simulation_frames(frames)
+    restored = deserialize_simulation_frames(payload)
+
+    assert "planned_value" in restored["person"].columns
+    assert str(restored["person"]["planned_value"].dtype) == "Float64"
+    assert restored["person"]["planned_value"].isna().all()
+
+
 def test_parquet_retains_detached_calculation_provenance() -> None:
     provenance = {
         "spm_config": {"scenario": "official"},

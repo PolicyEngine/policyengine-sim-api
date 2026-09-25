@@ -17,7 +17,6 @@ from policyengine_simulation_contract.stage12_execution import (
     GeographySelection,
     ReportAggregate,
     ReportExecutionInput,
-    RequestedSimulationOutput,
     SimulationExecutionInput,
     SimulationRole,
 )
@@ -28,7 +27,6 @@ class ComparisonSkipReason(StrEnum):
     UNSUPPORTED_FLOW = "unsupported_flow"
     UNSUPPORTED_SCOPE = "unsupported_scope"
     UNSUPPORTED_BUDGET_WINDOW = "unsupported_budget_window"
-    UNSUPPORTED_CLIFF_CALCULATION = "unsupported_cliff_calculation"
     UNSUPPORTED_COUNTRY = "unsupported_country"
     UNSUPPORTED_DATASET = "unsupported_dataset"
     MISSING_BUNDLE_PROVENANCE = "missing_bundle_provenance"
@@ -98,8 +96,9 @@ def adapt_annual_comparison(
         return _skip(ComparisonSkipReason.UNSUPPORTED_OPTIONS)
     if payload.get("scope") != "macro":
         return _skip(ComparisonSkipReason.UNSUPPORTED_SCOPE)
-    if payload.get("include_cliffs") is True:
-        return _skip(ComparisonSkipReason.UNSUPPORTED_CLIFF_CALCULATION)
+    include_cliffs = payload.get("include_cliffs")
+    if include_cliffs is not None and not isinstance(include_cliffs, bool):
+        return _skip(ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE)
     if payload.get("segmented") not in {None, False}:
         return _skip(ComparisonSkipReason.UNSUPPORTED_OPTIONS)
     country = payload.get("country")
@@ -177,7 +176,8 @@ def adapt_annual_comparison(
         region=region,
     )
     options = {key: payload[key] for key in ("spm",) if payload.get(key) is not None}
-    output = RequestedSimulationOutput(variables=("*",))
+    if include_cliffs is True:
+        options["include_cliffs"] = True
 
     def simulation(role: SimulationRole, policy: dict) -> SimulationExecutionInput:
         return SimulationExecutionInput(
@@ -189,7 +189,6 @@ def adapt_annual_comparison(
             year=int(year_text),
             geography=geography,
             options=options,
-            requested_output=output,
             bundle=provenance,
         )
 
