@@ -29,6 +29,7 @@ def _report() -> ComparisonReportRecord:
         environment="staging",
         calculation_flow="economy",
         originating_request_id="request-1",
+        observability_id="00000000-0000-0000-0000-000000000003",
         production_identity="job-1",
         incumbent_execution_id="job-1",
         worker_version="5.2.0",
@@ -125,6 +126,15 @@ def test_create_and_read_report_use_sqlalchemy_statements_only() -> None:
     assert result.created is True
     assert result.record == report
     assert len(engine.connection.statements) == 1
+    assert "observability_id" in str(engine.connection.statements[0])
+
+
+def test_report_observability_identifier_is_limited_to_36_characters() -> None:
+    values = _report().model_dump(mode="python")
+    values["observability_id"] = "x" * 37
+
+    with pytest.raises(ValueError, match="at most 36 characters"):
+        ComparisonReportRecord.model_validate(values)
 
 
 def test_report_identity_conflict_resolves_existing_row() -> None:
