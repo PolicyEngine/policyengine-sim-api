@@ -20,6 +20,7 @@ from pydantic import (
 )
 
 ContractText = Annotated[str, Field(min_length=1, max_length=255)]
+ObservabilityId = Annotated[str, Field(min_length=1, max_length=36)]
 # ``evaluation_id`` is the already-deployed physical database and wire field
 # for the temporary comparison-run identifier. Stage 14 owns its removal.
 Sha256Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -525,6 +526,7 @@ class ComparisonReportRecord(StrictContractModel):
     environment: ContractText
     calculation_flow: ContractText
     originating_request_id: ContractText
+    observability_id: ObservabilityId | None = None
     production_identity: ContractText
     incumbent_execution_id: ContractText | None = None
     worker_version: ContractText
