@@ -229,6 +229,7 @@ def _exercise_runtime_dml(connection: Connection, *, environment: str) -> None:
         "environment": environment,
         "calculation_flow": "infrastructure_validation",
         "originating_request_id": f"validation-{evaluation_id}",
+        "observability_id": None,
         "production_identity": f"validation-{evaluation_id}",
         "incumbent_execution_id": None,
         "worker_version": "validation",

@@ -15,7 +15,7 @@ from policyengine_stage12_persistence.tables import (
     comparison_simulations,
     metadata,
 )
-from sqlalchemy import ForeignKeyConstraint, UniqueConstraint
+from sqlalchemy import ForeignKeyConstraint, String, UniqueConstraint
 
 
 def test_mappings_cover_every_cross_service_record_field() -> None:
@@ -23,6 +23,14 @@ def test_mappings_cover_every_cross_service_record_field() -> None:
     assert set(SIMULATION_COLUMNS) == set(ComparisonSimulationRecord.model_fields)
     assert comparison_reports.schema == "public"
     assert comparison_simulations.schema == "public"
+
+
+def test_report_observability_identifier_matches_api_owned_schema() -> None:
+    column = comparison_reports.c.observability_id
+
+    assert column.nullable is True
+    assert isinstance(column.type, String)
+    assert column.type.length == 36
 
 
 def test_mappings_retain_identity_and_parent_constraints() -> None:
@@ -60,13 +68,11 @@ def test_mappings_retain_identity_and_parent_constraints() -> None:
     )
     assert parent_key.ondelete == "CASCADE"
     assert parent_key.name == (
-        "fk_stage12_evaluation_simulations_evaluation_id_"
-        "stage12_evaluation_reports"
+        "fk_stage12_evaluation_simulations_evaluation_id_stage12_evaluation_reports"
     )
     assert comparison_reports.primary_key.name == "pk_stage12_evaluation_reports"
     assert (
-        comparison_simulations.primary_key.name
-        == "pk_stage12_evaluation_simulations"
+        comparison_simulations.primary_key.name == "pk_stage12_evaluation_simulations"
     )
 
 
