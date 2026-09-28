@@ -100,6 +100,7 @@ jobs:
     outputs:
       policyengine_version: ${{ steps.versions.outputs.policyengine_version }}
       policyengine_core_version: ${{ steps.versions.outputs.policyengine_core_version }}
+      spm_calculator_version: ${{ steps.versions.outputs.spm_calculator_version }}
       us_version: ${{ steps.versions.outputs.us_version }}
       us_data_version: ${{ steps.versions.outputs.us_data_version }}
       uk_version: ${{ steps.versions.outputs.uk_version }}

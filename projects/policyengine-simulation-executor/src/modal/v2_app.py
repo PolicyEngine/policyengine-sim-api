@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 from pathlib import Path
 
 from policyengine_simulation_contract.stage12_bundle import CountryId
@@ -34,6 +33,7 @@ from policyengine_simulation_executor.stage12_bundle import (
     assertion_values,
     load_stage12_bundle,
 )
+from src.modal.bundle_data import bundle_data_install_command
 
 STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
@@ -85,22 +85,11 @@ def _country_bundle(country: CountryId):
 
 
 def bundle_install_command(countries: tuple[CountryId, ...]) -> str:
-    version = RESOLVED_BUNDLE.bundle.policyengine_version
-    parts = [
-        "uvx",
-        "--from",
-        RESOLVED_BUNDLE.bundle.policyengine_requirement,
-        "policyengine",
-        "bundle",
-        "install",
-        version,
-        "--venv",
-        "/.uv/.venv",
-    ]
-    for country in countries:
-        parts.extend(("--country", country))
-    parts.extend(("--data-dir", STAGE12_DATA_DIR, "--yes"))
-    return " ".join(shlex.quote(part) for part in parts)
+    return bundle_data_install_command(
+        RESOLVED_BUNDLE.bundle.policyengine_version,
+        countries=countries,
+        data_dir=STAGE12_DATA_DIR,
+    )
 
 
 def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:

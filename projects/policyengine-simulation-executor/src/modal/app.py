@@ -8,7 +8,6 @@ The gateway app (policyengine-simulation-gateway) routes requests to these versi
 """
 
 import os
-import shlex
 from pathlib import Path
 
 from policyengine_simulation_observability.observability import (
@@ -30,6 +29,7 @@ from policyengine_simulation_executor.release_bundle import (
     get_bundled_country_model_version,
 )
 from src.modal._image_setup import fetch_artifacts, snapshot_models
+from src.modal.bundle_data import bundle_data_install_command
 from src.modal.dependency_pins import project_dependency_pin
 from src.modal.logging_redaction import redact_params_for_logging
 
@@ -75,25 +75,6 @@ SIMULATION_BUNDLE_DATA_DIR = os.environ.get(
 SIMULATION_BUNDLE_RECEIPT = (
     f"{SIMULATION_BUNDLE_DATA_DIR}/.policyengine-bundle-receipt.json"
 )
-BUNDLE_CONSTRAINTS_PATH = "/opt/policyengine/bundle-constraints.txt"
-# Retain old bundle selections when a new method gets its own reviewed file.
-# These include live historical routes, the existing image-smoke fixture,
-# and the released 5.3.0 bundle, whose US model is unchanged from 5.2.0.
-BUNDLE_CONSTRAINT_FILES = {
-    version: "bundle-constraints.txt"
-    for version in (
-        "4.18.3",
-        "4.18.5",
-        "4.18.7",
-        "4.18.8",
-        "4.18.9",
-        "4.19.1",
-        "4.20.3",
-        "4.22.0",
-        "5.2.0",
-        "5.3.0",
-    )
-}
 VERSION_ENV = {
     "POLICYENGINE_VERSION": POLICYENGINE_VERSION,
     "POLICYENGINE_CORE_VERSION": POLICYENGINE_CORE_VERSION,
@@ -178,44 +159,11 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
 _ARTIFACT_BUCKET, _DEPLOY_MANIFEST = _deploy_time_artifact_inputs()
 
 
-def bundle_constraints_file(policyengine_version: str) -> str:
-    try:
-        return BUNDLE_CONSTRAINT_FILES[policyengine_version]
-    except KeyError:
-        raise ValueError(
-            f"Bundle {policyengine_version} needs a reviewed calculator constraint; "
-            "add its selection without changing historical bundle selections."
-        ) from None
-
-
 def bundle_install_command(policyengine_version: str) -> str:
-    bundle_constraints_file(policyengine_version)
-    return " ".join(
-        [
-            f"PIP_CONSTRAINT={shlex.quote(BUNDLE_CONSTRAINTS_PATH)}",
-            "uvx",
-            "--from",
-            f"policyengine=={policyengine_version}",
-            "policyengine",
-            "bundle",
-            "install",
-            policyengine_version,
-            # Install into uv_sync's venv so the bundle's model packages
-            # share one environment with the locked bootstrap packages
-            # (Modal's uv_sync creates the venv at /.uv/.venv and prepends
-            # its bin to PATH). Temporary bridge: once policyengine's CLI
-            # grows a datasets-only mode, uv will own all packages and
-            # this step shrinks to data + receipt.
-            "--venv",
-            "/.uv/.venv",
-            "--country",
-            "us",
-            "--country",
-            "uk",
-            "--data-dir",
-            SIMULATION_BUNDLE_DATA_DIR,
-            "--yes",
-        ]
+    return bundle_data_install_command(
+        policyengine_version,
+        countries=("us", "uk"),
+        data_dir=SIMULATION_BUNDLE_DATA_DIR,
     )
 
 
@@ -233,23 +181,16 @@ def build_runtime_simulation_image() -> modal.Image:
         # The modal-simulation-image dependency group, installed straight
         # from this project's uv.lock (frozen): image packages match the
         # tested environment and can only change through a relock.
-        # --only-group keeps the heavyweight project dependencies out —
-        # country models arrive via the policyengine bundle install below.
+        # --only-group keeps the project's local packages out. Its included
+        # policyengine-models group installs the exact manifest-selected model
+        # packages from uv.lock.
         .uv_sync(
             uv_project_dir=_UV_PROJECT_DIR,
             frozen=True,
             extra_options="--only-group modal-simulation-image",
         )
-        # The bundle installer invokes pip, which does not consult uv.lock.
-        # Copy the constraint into a build layer so historical bundles cannot
-        # resolve a newer, incompatible SPM calculator during a rebuild.
-        .add_local_file(
-            str(Path(_UV_PROJECT_DIR) / bundle_constraints_file(POLICYENGINE_VERSION))
-            if modal.is_local()
-            else BUNDLE_CONSTRAINTS_PATH,
-            BUNDLE_CONSTRAINTS_PATH,
-            copy=True,
-        )
+        # Packages are already installed from the frozen lock. The wrapper CLI
+        # downloads only the certified datasets and writes their receipt.
         .run_commands(
             bundle_install_command(POLICYENGINE_VERSION),
             secrets=[data_secret, hf_secret],

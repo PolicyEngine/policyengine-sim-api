@@ -14,7 +14,6 @@ on:
       - 'projects/policyengine-simulation-executor/uv.lock'
       - 'projects/policyengine-simulation-executor/pyproject.toml'
       - 'projects/policyengine-simulation-executor/src/modal/**'
-      - 'projects/policyengine-simulation-executor/bundle-constraints.txt'
       - 'projects/policyengine-simulation-executor/src/policyengine_simulation_executor/**'
       - 'libs/policyengine-simulation-contract/**'
       - 'libs/policyengine-simulation-observability/**'
@@ -32,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.pull_request.head.repo.full_name == github.repository
     # Warm cache: ~2 min. After a relock the executor smoke pays the
-    # policyengine bundle install layer (~15-20 min).
+    # certified dataset download layer (~15-20 min).
     timeout-minutes: 45
 
     steps:

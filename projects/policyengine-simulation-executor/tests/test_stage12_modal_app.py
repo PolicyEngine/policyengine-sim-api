@@ -95,7 +95,9 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
     assert "--country uk" not in us_command
     assert "--country uk" in uk_command
     assert "--country us" not in uk_command
-    assert module.RESOLVED_BUNDLE.bundle.policyengine_requirement in us_command
+    assert "--no-packages" in us_command
+    assert "uvx" not in us_command
+    assert "--venv" not in us_command
     assert module.gcp_secret["args"] == ("stage12-evaluation-gcp-credentials",)
     assert all(
         secret.get("args") != ("policyengine-logfire",)
@@ -123,10 +125,16 @@ def test_v2_image_retains_required_runtime_dependencies() -> None:
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
 
-    assert (
-        "spm-calculator==0.3.1"
-        in project["dependency-groups"]["modal-simulation-image"]
-    )
+    assert project["dependency-groups"]["policyengine-models"] == [
+        "policyengine==6.1.2",
+        "policyengine-core==3.32.5",
+        "policyengine-uk==2.90.2",
+        "policyengine-us==2.2.1",
+        "spm-calculator==1.0.0",
+    ]
+    assert {"include-group": "policyengine-models"} in project["dependency-groups"][
+        "modal-simulation-image"
+    ]
     assert "sqlalchemy>=2,<3" in project["dependency-groups"]["modal-simulation-image"]
     assert (
         "psycopg[binary]>=3.2,<4"

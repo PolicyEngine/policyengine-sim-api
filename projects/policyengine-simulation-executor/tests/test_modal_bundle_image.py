@@ -1,7 +1,5 @@
 import importlib
-import json
 import os
-import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -13,10 +11,10 @@ from fixtures.fake_modal import install_fake_modal
 
 def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     install_fake_modal(monkeypatch)
-    monkeypatch.setenv("POLICYENGINE_VERSION", "4.19.1")
-    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.27.1")
-    monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.700.0")
-    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.0")
+    monkeypatch.setenv("POLICYENGINE_VERSION", "6.1.2")
+    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.32.5")
+    monkeypatch.setenv("POLICYENGINE_US_VERSION", "2.2.1")
+    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.2")
     monkeypatch.setenv("OBSERVABILITY_SERVICE_NAMESPACE", "policyengine.api-v1")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.test")
     sys.modules.pop("src.modal.app", None)
@@ -29,26 +27,26 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     assert command_calls
     command = command_calls[0][1][0]
     assert command.startswith(
-        "PIP_CONSTRAINT=/opt/policyengine/bundle-constraints.txt "
-        "uvx --from policyengine==4.19.1 policyengine bundle install 4.19.1"
+        "policyengine bundle install 6.1.2 --no-packages --country us --country uk"
     )
-    constraint_call = next(
+    assert "PIP_CONSTRAINT" not in command
+    assert "uvx" not in command
+    assert "--venv" not in command
+    assert not [
         call for call in app.simulation_image.calls if call[0] == "add_local_file"
-    )
-    assert constraint_call[2] == "/opt/policyengine/bundle-constraints.txt"
-    assert constraint_call[3] == {"copy": True}
-    assert app.simulation_image.calls.index(constraint_call) < (
-        app.simulation_image.calls.index(command_calls[0])
-    )
-    constraints = Path(constraint_call[1]).read_text()
-    assert "spm-calculator==0.3.1" in constraints.splitlines()
+    ]
     project = tomllib.loads(
         (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
     )
-    assert "spm-calculator==0.3.1" in project["project"]["dependencies"]
-    # The bundle installs into uv_sync's venv so locked packages and
-    # bundled models share one environment.
-    assert "--venv /.uv/.venv" in command
+    expected_models = [
+        "policyengine==6.1.2",
+        "policyengine-core==3.32.5",
+        "policyengine-uk==2.90.2",
+        "policyengine-us==2.2.1",
+        "spm-calculator==1.0.0",
+    ]
+    assert project["dependency-groups"]["policyengine-models"] == expected_models
+    assert all(item in project["project"]["dependencies"] for item in expected_models)
     assert "--data-dir /opt/policyengine/data" in command
     assert app.VERSION_ENV["POLICYENGINE_DATA_FOLDER"] == "/opt/policyengine/data"
     assert app.VERSION_ENV["POLICYENGINE_BUNDLE_RECEIPT"].endswith(
@@ -68,8 +66,6 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     _, uv_project_dir, kwargs = uv_sync_calls[0]
     assert Path(uv_project_dir) == Path(__file__).resolve().parents[1]
     assert kwargs["frozen"] is True
-    # Only the image dependency group — the project's heavyweight deps
-    # (country models) arrive via the bundle install instead.
     assert "--only-group modal-simulation-image" in kwargs["extra_options"]
     # The lock is the only package source; ad-hoc pip layers would
     # reintroduce build-time resolution (issue #602).
@@ -79,14 +75,14 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
         if call[0] in ("pip_install", "pip_install_from_requirements")
     ]
 
-    group = tomllib.loads(
-        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
-    )["dependency-groups"]["modal-simulation-image"]
-    names = {requirement.split(">=")[0].split("[")[0] for requirement in group}
+    group = project["dependency-groups"]["modal-simulation-image"]
+    assert {"include-group": "policyengine-models"} in group
+    requirements = [item for item in group if isinstance(item, str)]
+    names = {requirement.split(">=")[0].split("[")[0] for requirement in requirements}
     assert "policyengine-observability" in names
     assert "logfire" not in names
-    # uvx drives the policyengine bundle install into the image.
-    assert "uv" in names
+    assert "uv" not in names
+    assert "pip" not in names
 
     runtime_secret_sets = {
         name: kwargs["secrets"] for name, kwargs in app.app.function_calls
@@ -101,76 +97,6 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
             app.data_secret,
             app.hf_secret,
         ]
-
-
-@pytest.mark.parametrize(
-    "version",
-    [
-        "4.18.3",
-        "4.18.5",
-        "4.18.7",
-        "4.18.8",
-        "4.18.9",
-        "4.19.1",
-        "4.20.3",
-        "4.22.0",
-        "5.2.0",
-        "5.3.0",
-    ],
-)
-def test_bundle_command_passes_constraints_to_child_installer(
-    monkeypatch, tmp_path, version
-):
-    """Historical bundle rebuilds must inherit the same pip constraint."""
-    install_fake_modal(monkeypatch)
-    monkeypatch.setenv("POLICYENGINE_VERSION", version)
-    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.30.1")
-    monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.764.6")
-    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.2")
-    sys.modules.pop("src.modal.app", None)
-    app = importlib.import_module("src.modal.app")
-    constraint_path = tmp_path / "bundle-constraints.txt"
-    constraint_path.write_text("spm-calculator==0.3.1\n")
-    monkeypatch.setattr(app, "BUNDLE_CONSTRAINTS_PATH", str(constraint_path))
-    executable = tmp_path / "uvx"
-    executable.write_text(
-        f"#!{sys.executable}\n"
-        "import json, os, pathlib, sys\n"
-        "print(json.dumps({'args': sys.argv[1:], 'constraints': "
-        "pathlib.Path(os.environ['PIP_CONSTRAINT']).read_text()}))\n"
-    )
-    executable.chmod(0o755)
-    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
-    result = subprocess.run(
-        ["/bin/sh", "-c", app.bundle_install_command(version)],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    output = json.loads(result.stdout)
-    assert output["constraints"] == "spm-calculator==0.3.1\n"
-    assert output["args"][:6] == [
-        "--from",
-        f"policyengine=={version}",
-        "policyengine",
-        "bundle",
-        "install",
-        version,
-    ]
-
-
-def test_unreviewed_bundle_cannot_inherit_legacy_calculator_constraint(monkeypatch):
-    """A new bundle needs an explicit reviewed calculator selection."""
-    install_fake_modal(monkeypatch)
-    monkeypatch.setenv("POLICYENGINE_VERSION", "5.2.0")
-    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.30.1")
-    monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.764.6")
-    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.2")
-    sys.modules.pop("src.modal.app", None)
-    app = importlib.import_module("src.modal.app")
-    with pytest.raises(ValueError, match="reviewed calculator constraint"):
-        app.bundle_install_command("unreviewed-future-bundle")
 
 
 def _fake_manifest():
