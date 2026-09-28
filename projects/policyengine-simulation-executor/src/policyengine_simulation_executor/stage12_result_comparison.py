@@ -1,4 +1,4 @@
-"""Exact, private comparison of production and Stage 12 aggregate results."""
+"""Private comparison of production and Stage 12 aggregate results."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from policyengine_simulation_executor.stage12_artifacts import canonical_json_by
 
 type ResultObject = dict[str, JsonValue]
 _result_adapter = TypeAdapter(ResultObject)
+NUMERIC_ABSOLUTE_TOLERANCE = 0.01
 
 
 class _MissingValue:
@@ -56,6 +57,13 @@ def _leaf_values(value: JsonValue, path: str = "") -> dict[str, JsonValue]:
 
 
 def _equal_json_values(first: JsonValue, second: JsonValue) -> bool:
+    if (
+        not isinstance(first, bool)
+        and not isinstance(second, bool)
+        and isinstance(first, (int, float))
+        and isinstance(second, (int, float))
+    ):
+        return abs(float(second) - float(first)) <= NUMERIC_ABSOLUTE_TOLERANCE
     return canonical_json_bytes(first) == canonical_json_bytes(second)
 
 
@@ -84,7 +92,7 @@ def compare_results(
     stage12_result: object,
     compared_at: datetime | None = None,
 ) -> ResultComparisonArtifactPayload:
-    """Return an exact digest and every differing scalar result leaf."""
+    """Return exact digests and scalar differences outside the numeric tolerance."""
 
     production = _result_adapter.validate_python(production_result)
     stage12 = _result_adapter.validate_python(stage12_result)

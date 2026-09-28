@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+import pytest
+
 from policyengine_simulation_executor.stage12_result_comparison import compare_results
 
 RUN_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -59,3 +61,32 @@ def test_numeric_zero_has_an_absolute_but_no_relative_delta() -> None:
     difference = receipt.differences[0]
     assert difference.absolute_delta == 5.0
     assert difference.relative_delta is None
+
+
+def test_numeric_values_within_one_cent_match() -> None:
+    receipt = compare_results(
+        evaluation_id=RUN_ID,
+        production_job_id="production-job-1",
+        production_result={"value": 10},
+        stage12_result={"value": 10.01},
+        compared_at=COMPARED_AT,
+    )
+
+    assert receipt.status == "matched"
+    assert receipt.difference_count == 0
+    assert receipt.differences == ()
+    assert receipt.production_result_sha256 != receipt.stage12_result_sha256
+
+
+def test_numeric_values_above_one_cent_differ() -> None:
+    receipt = compare_results(
+        evaluation_id=RUN_ID,
+        production_job_id="production-job-1",
+        production_result={"value": 10},
+        stage12_result={"value": 10.011},
+        compared_at=COMPARED_AT,
+    )
+
+    assert receipt.status == "different"
+    assert receipt.difference_count == 1
+    assert receipt.differences[0].absolute_delta == pytest.approx(0.011)
