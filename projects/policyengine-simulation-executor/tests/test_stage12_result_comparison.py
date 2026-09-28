@@ -78,6 +78,19 @@ def test_numeric_values_within_one_cent_match() -> None:
     assert receipt.production_result_sha256 != receipt.stage12_result_sha256
 
 
+def test_exact_decimal_tolerance_boundary_matches() -> None:
+    receipt = compare_results(
+        evaluation_id=RUN_ID,
+        production_job_id="production-job-1",
+        production_result={"value": 1.1},
+        stage12_result={"value": 1.11},
+        compared_at=COMPARED_AT,
+    )
+
+    assert receipt.status == "matched"
+    assert receipt.difference_count == 0
+
+
 def test_numeric_values_above_one_cent_differ() -> None:
     receipt = compare_results(
         evaluation_id=RUN_ID,

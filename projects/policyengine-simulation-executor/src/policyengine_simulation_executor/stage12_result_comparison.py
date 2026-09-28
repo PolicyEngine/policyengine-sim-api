@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from hashlib import sha256
 from typing import TypeGuard
 from uuid import UUID
@@ -17,7 +18,7 @@ from policyengine_simulation_executor.stage12_artifacts import canonical_json_by
 
 type ResultObject = dict[str, JsonValue]
 _result_adapter = TypeAdapter(ResultObject)
-NUMERIC_ABSOLUTE_TOLERANCE = 0.01
+NUMERIC_ABSOLUTE_TOLERANCE = Decimal("0.01")
 
 
 class _MissingValue:
@@ -63,7 +64,16 @@ def _equal_json_values(first: JsonValue, second: JsonValue) -> bool:
         and isinstance(first, (int, float))
         and isinstance(second, (int, float))
     ):
-        return abs(float(second) - float(first)) <= NUMERIC_ABSOLUTE_TOLERANCE
+        # JSON decimal literals must be compared as decimal values. Converting
+        # them to binary floats first can make an exact one-cent difference,
+        # such as 1.11 - 1.10, appear slightly greater than the tolerance.
+        first_decimal = (
+            Decimal(first) if isinstance(first, int) else Decimal(str(first))
+        )
+        second_decimal = (
+            Decimal(second) if isinstance(second, int) else Decimal(str(second))
+        )
+        return abs(second_decimal - first_decimal) <= NUMERIC_ABSOLUTE_TOLERANCE
     return canonical_json_bytes(first) == canonical_json_bytes(second)
 
 
