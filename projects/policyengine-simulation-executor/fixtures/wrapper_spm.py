@@ -1,16 +1,13 @@
-"""The canonical wrapper's ``storage_id``, transcribed for hermetic tests.
+"""The SPM-capable wrapper's ``storage_id``, transcribed for hermetic tests.
 
-The executor pins a pre-canonical ``policyengine``: its ``Simulation`` has
-no ``spm`` field and no ``storage_id``, so hermetic CI cannot import the
-property that names every canonical baseline artifact. Precompute plans a
-store path from ``BaselineArtifactIdentity.storage_id`` and the
-in-container worker aborts when the wrapper's value disagrees, so the two
-derivations have to be one identifier reached down two paths.
+Precompute plans a store path from ``BaselineArtifactIdentity.storage_id``
+and the in-container worker aborts when the wrapper's value disagrees, so the
+two derivations have to be one identifier reached down two paths.
 
 This is that second path, copied out of the SPM-capable wrapper so the
 key-discipline tests and the precompute writer==reader tests state it once.
-It proves our side has not drifted from the contract we read; it is not the
-wrapper, and only the SPM_NATIVE_SMOKE_SOURCE-gated suites run against one.
+It is an independent expression of the identifier, not a replacement for
+tests against the installed wrapper.
 
 ``policyengine/core/simulation.py``::
 
@@ -50,7 +47,7 @@ def wrapper_storage_id(simulation_id: str, spm_config: dict | None) -> str:
 
 
 def installed_wrapper_has_storage_id() -> bool:
-    """True once an SPM-capable wrapper is pinned and this file can retire."""
+    """Whether the installed wrapper exposes the SPM-aware identifier."""
     from policyengine.core import Simulation
 
     return hasattr(Simulation, "storage_id")

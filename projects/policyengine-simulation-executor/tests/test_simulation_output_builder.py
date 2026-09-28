@@ -10,6 +10,10 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from fixtures.spm_doubles import (
+    installed_spm_selection,
+    spm_capable_simulation,
+)
 from fixtures.test_simulation_api_contracts import (
     CURRENT_SINGLE_YEAR_MACRO_KEYS,
     CURRENT_SINGLE_YEAR_MACRO_RESULT,
@@ -74,6 +78,26 @@ from policyengine_simulation_executor.simulation_output_geographic import (
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
 )
+
+
+def _params_with_spm(params, selection):
+    """Return request parameters after the runtime resolves SPM settings."""
+    return params if selection is None else {**params, "spm": selection}
+
+
+def _assert_macro_result(result, selection):
+    """Check the ordinary macro result plus any installed SPM record."""
+    spm_keys = ("spm_config", "spm_provenance")
+    assert {key: value for key, value in result.items() if key not in spm_keys} == {
+        key: value
+        for key, value in CURRENT_SINGLE_YEAR_MACRO_RESULT.items()
+        if key not in spm_keys
+    }
+    if selection is None:
+        assert all(result[key] is None for key in spm_keys)
+        return
+    assert result["spm_config"] == selection
+    assert set(result["spm_provenance"]) == {"baseline", "reform"}
 
 
 def _load_dataset(params, *, country_module=None, region_resolution=None):
@@ -479,8 +503,9 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
 ):
     dataset = object()
     country_module = SimpleNamespace(model=SimpleNamespace(version="1.715.2"))
-    baseline_simulation = object()
-    reform_simulation = object()
+    selection = installed_spm_selection()
+    baseline_simulation = spm_capable_simulation(selection)
+    reform_simulation = spm_capable_simulation(selection)
     build_calls = []
 
     def fake_build_simulation(
@@ -500,7 +525,7 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
             self.kwargs = kwargs
 
         def serialize(self):
-            return CURRENT_SINGLE_YEAR_MACRO_RESULT
+            return dict(CURRENT_SINGLE_YEAR_MACRO_RESULT)
 
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", raising=False)
@@ -543,7 +568,7 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
         )
     )
 
-    assert result == CURRENT_SINGLE_YEAR_MACRO_RESULT
+    _assert_macro_result(result, selection)
     assert set(timings) >= {
         Stage.CREDENTIAL_SETUP,
         Stage.REQUEST_PARSE,
@@ -576,24 +601,24 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
     # region_code must be the RESOLVED code: it feeds the deterministic
     # baseline-id predicate, and dropping it silently disables artifact
     # reuse (every baseline becomes a miss).
+    built_params = _params_with_spm(
+        {
+            "country": "us",
+            "baseline": {"gov.test.parameter": {"2026-01-01": 1}},
+            "reform": {"gov.test.parameter": {"2026-01-01": 2}},
+        },
+        selection,
+    )
     assert build_calls == [
         (
-            {
-                "country": "us",
-                "baseline": {"gov.test.parameter": {"2026-01-01": 1}},
-                "reform": {"gov.test.parameter": {"2026-01-01": 2}},
-            },
+            built_params,
             dataset,
             {"gov.test.parameter": {"2026-01-01": 1}},
             "mock-scoping",
             "us",
         ),
         (
-            {
-                "country": "us",
-                "baseline": {"gov.test.parameter": {"2026-01-01": 1}},
-                "reform": {"gov.test.parameter": {"2026-01-01": 2}},
-            },
+            built_params,
             dataset,
             {"gov.test.parameter": {"2026-01-01": 2}},
             "mock-scoping",
@@ -607,9 +632,10 @@ def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
     artifact pipeline; losing the export would blind that measurement."""
     dataset = object()
     country_module = SimpleNamespace(model=SimpleNamespace(version="1.715.2"))
+    selection = installed_spm_selection()
     simulations = {
-        "baseline": SimpleNamespace(artifact_outcome="incomplete"),
-        "reform": object(),
+        "baseline": spm_capable_simulation(selection, artifact_outcome="incomplete"),
+        "reform": spm_capable_simulation(selection),
     }
     build_count = [0]
 
@@ -630,7 +656,7 @@ def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
             self.kwargs = kwargs
 
         def serialize(self):
-            return CURRENT_SINGLE_YEAR_MACRO_RESULT
+            return dict(CURRENT_SINGLE_YEAR_MACRO_RESULT)
 
     for env in (
         "GOOGLE_APPLICATION_CREDENTIALS",
@@ -676,7 +702,7 @@ def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
     # A plain Simulation baseline (no artifact_outcome) must emit nothing.
     runtime.context.clear()
     build_count[0] = 0
-    simulations["baseline"] = object()
+    simulations["baseline"] = spm_capable_simulation(selection)
     run_simulation_impl(params, runtime=runtime)
     assert all(key != "baseline_artifact" for key, _ in runtime.context)
 
@@ -1011,8 +1037,9 @@ def test_normalise_policy_converts_legacy_period_range_keys():
 def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch):
     dataset = object()
     country_module = SimpleNamespace(model=SimpleNamespace(version="1.715.2"))
-    baseline_simulation = object()
-    reform_simulation = object()
+    selection = installed_spm_selection()
+    baseline_simulation = spm_capable_simulation(selection)
+    reform_simulation = spm_capable_simulation(selection)
     build_calls = []
     builder_calls = []
 
@@ -1037,7 +1064,7 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
             builder_calls.append(kwargs)
 
         def serialize(self):
-            return CURRENT_SINGLE_YEAR_MACRO_RESULT
+            return dict(CURRENT_SINGLE_YEAR_MACRO_RESULT)
 
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._country_module",
@@ -1070,7 +1097,7 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
         runtime=runtime,
     )
 
-    assert result == CURRENT_SINGLE_YEAR_MACRO_RESULT
+    _assert_macro_result(result, selection)
     assert build_calls[0][2] == {"gov.test.parameter": {"2026-01-01": 1}}
     assert build_calls[1][2] == {"gov.test.parameter": {"2026-01-01": 2}}
     assert build_calls[0][3] is None
@@ -1078,11 +1105,14 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
     assert builder_calls == [
         {
             "country": "us",
-            "simulation_params": {
-                "country": "us",
-                "baseline": {"gov.test.parameter": {"2026-01-01.2100-12-31": 1}},
-                "reform": {"gov.test.parameter": {"2026-01-01.2100-12-31": 2}},
-            },
+            "simulation_params": _params_with_spm(
+                {
+                    "country": "us",
+                    "baseline": {"gov.test.parameter": {"2026-01-01.2100-12-31": 1}},
+                    "reform": {"gov.test.parameter": {"2026-01-01.2100-12-31": 2}},
+                },
+                selection,
+            ),
             "country_module": country_module,
             "dataset": dataset,
             "baseline": baseline_simulation,
@@ -1097,8 +1127,9 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
 def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypatch):
     dataset = object()
     country_module = SimpleNamespace(model=SimpleNamespace(version="1.715.2"))
-    baseline_simulation = object()
-    reform_simulation = object()
+    selection = installed_spm_selection()
+    baseline_simulation = spm_capable_simulation(selection)
+    reform_simulation = spm_capable_simulation(selection)
     scoping_strategy = object()
     region_resolution = RegionResolution(
         code="state/ut",
@@ -1131,7 +1162,7 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
             pass
 
         def serialize(self):
-            return CURRENT_SINGLE_YEAR_MACRO_RESULT
+            return dict(CURRENT_SINGLE_YEAR_MACRO_RESULT)
 
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._country_module",
@@ -1164,7 +1195,7 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
         runtime=_TrackingRuntime(),
     )
 
-    assert result == CURRENT_SINGLE_YEAR_MACRO_RESULT
+    _assert_macro_result(result, selection)
     assert build_calls[0][3] is scoping_strategy
     assert build_calls[1][3] is scoping_strategy
     assert len(load_selections) == 1

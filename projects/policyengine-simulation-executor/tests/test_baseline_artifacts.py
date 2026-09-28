@@ -326,7 +326,11 @@ class TestBuildSimulationSelection:
         from policyengine_simulation_executor import simulation_runtime as sr
 
         recorded = SimpleNamespace(
-            artifact_kwargs=None, plain_kwargs=None, id=None, id_kwargs=None
+            artifact_kwargs=None,
+            plain_kwargs=None,
+            id=None,
+            id_kwargs=None,
+            capability=None,
         )
 
         class FakeArtifactSimulation:
@@ -337,8 +341,21 @@ class TestBuildSimulationSelection:
             def __init__(self, **kwargs):
                 recorded.plain_kwargs = kwargs
 
+        # Replacing ``Simulation`` also replaces a class inspected by the SPM
+        # capability resolver. Preserve the capability derived from the real
+        # installed class before installing the test double.
+        from policyengine_simulation_executor import spm as executor_spm
+
+        installed_capability = executor_spm.runtime_spm_capability()
+
         monkeypatch.setattr(ba, "ArtifactBaselineSimulation", FakeArtifactSimulation)
         monkeypatch.setattr(policyengine_core, "Simulation", FakePlainSimulation)
+        monkeypatch.setattr(
+            executor_spm,
+            "runtime_spm_capability",
+            lambda: installed_capability,
+        )
+        recorded.capability = installed_capability
         monkeypatch.setattr(
             sr,
             "_country_module",
@@ -367,12 +384,19 @@ class TestBuildSimulationSelection:
         assert wired.plain_kwargs is None
         assert wired.artifact_kwargs["id"] == "bl1-deadbeefdeadbeef"
         assert wired.artifact_kwargs["dataset"] == "dataset"
+        expected_selection = (
+            None if wired.capability is None else wired.capability.defaults.model_dump()
+        )
+        assert wired.artifact_kwargs.get("spm") == expected_selection
         # The predicate must see the request's own facts. A wiring
         # regression (e.g. policy=None passed unconditionally) would hand
         # a REFORM simulation the baseline's deterministic id — and
         # ensure() would then serve the baseline artifact as the reform.
+        expected_params = {"country": "us", "scope": "macro"}
+        if expected_selection is not None:
+            expected_params["spm"] = expected_selection
         assert wired.id_kwargs == {
-            "params": {"country": "us", "scope": "macro"},
+            "params": expected_params,
             "country": "us",
             "dataset_is_default": True,
             "policy": None,
@@ -464,6 +488,10 @@ class DiskModelVersion:
     """Duck model version reusing the REAL load/save implementations, so
     these tests exercise genuine h5 files on disk — including the exception
     type a missing artifact raises — without loading the US tax system."""
+
+    # PolicyEngine 6 reads this class-level value while restoring SPM metadata.
+    # These disk tests are model-neutral, so keep the non-US branch selected.
+    country_code = ""
 
     def __init__(self):
         from policyengine.tax_benefit_models.us.datasets import PolicyEngineUSDataset
@@ -650,17 +678,33 @@ class SPMWrapperSimulation(Simulation):
     selections. Those three are the native suite's claims; hermetic green
     here is not wrapper conformance.
 
-    ``storage_id`` is a plain field rather than a property derived from the
-    selection, so it stays put while a load rewrites ``spm`` — the double
-    makes no claim about how the wrapper computes it, only that the artifact
-    class keys the process cache on it.
+    The real v6 wrapper exposes ``spm_config`` and ``storage_id`` as
+    properties. This double keeps them settable so each case can control what
+    a load restored, but overrides the properties instead of trying to shadow
+    them with Pydantic fields.
     """
 
     spm: dict | None = None
-    spm_config: dict | None = None
     spm_receipt: dict | None = None
-    storage_id: str = ""
+    _spm_config: dict | None = PrivateAttr(default=None)
+    _storage_id: str = PrivateAttr(default="")
     _provenance_reads: list = PrivateAttr(default_factory=list)
+
+    @property
+    def spm_config(self) -> dict | None:
+        return self._spm_config
+
+    @spm_config.setter
+    def spm_config(self, value: dict | None) -> None:
+        self._spm_config = value
+
+    @property
+    def storage_id(self) -> str:
+        return self._storage_id
+
+    @storage_id.setter
+    def storage_id(self, value: str) -> None:
+        self._storage_id = value
 
     def spm_provenance(self):
         self._provenance_reads.append(deepcopy(self.spm_config))
@@ -726,9 +770,8 @@ def _make_spm_sim(
     model_version, *, spm=None, sim_id="bl1-spm", storage_id=None, year=2026
 ):
     selection = SPM_SELECTION if spm is None else spm
-    return CanonicalSPMSimulation.model_construct(
+    simulation = CanonicalSPMSimulation.model_construct(
         id=sim_id,
-        storage_id=storage_id or f"{sim_id}-{selection['scenario']}",
         dataset=SimpleNamespace(year=year),
         tax_benefit_model_version=model_version,
         policy=None,
@@ -737,13 +780,13 @@ def _make_spm_sim(
         extra_variables={},
         output_dataset=None,
         spm=deepcopy(SPM_SELECTION) if spm is None else deepcopy(spm),
-        # The wrapper carries the selection it was configured with from
-        # construction; a load or cache hit then overwrites it with whatever
-        # the artifact was built under, which is exactly what the guard in
-        # ``ensure()`` compares against the pre-load value.
-        spm_config=deepcopy(SPM_SELECTION) if spm is None else deepcopy(spm),
         spm_receipt=None,
     )
+    simulation.storage_id = storage_id or f"{sim_id}-{selection['scenario']}"
+    # A load or cache hit overwrites the configured selection with the value
+    # stored in the artifact; the guard compares it with this requested value.
+    simulation.spm_config = deepcopy(selection)
+    return simulation
 
 
 class TestEnsureValidatesSPMReceipts:
