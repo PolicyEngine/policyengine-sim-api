@@ -60,7 +60,12 @@ with the live API-owned schema.
   its selected applications unchanged.
 - V2 worker object access uses the already-provisioned separate
   `stage12-evaluation-gcp-credentials` Modal secret. The worker application
-  does not receive the existing general GCP credential secret.
+  does not receive the existing general GCP credential secret. The credential's
+  service account can read and write its environment-specific Stage 12 artifact
+  bucket. A conditional IAM binding separately permits it to read only
+  `constituencies_2024.csv` and `local_authorities_2021.csv` from
+  `policyengine-uk-data-private`; deployment validation downloads both lookup
+  files using the worker credential.
 - `STAGE12_DATABASE_URL` is delivered from the environment-specific Secret
   Manager resource named by `STAGE12_DATABASE_URL_SECRET_NAME`. It authenticates
   as the existing shared `policyengine_v2_runtime` account; Stage 12 does not
