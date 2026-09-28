@@ -26,7 +26,7 @@ dependencies = [
     "spm-calculator==0.3.1",
     "tables>=3.10.2",
     "modal>=0.73.0",
-    "policyengine-observability[fastapi,google,otlp-grpc]>=3,<4",
+    "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.1,<4",
     # Imported directly by the artifact store client; do not rely on the
     # transitive pin via policyengine.
     "google-cloud-storage>=2",
@@ -50,7 +50,7 @@ modal-simulation-image = [
     "pip",
     "fastapi>=0.115.0",
     "tables>=3.10.2",
-    "policyengine-observability[fastapi,google,otlp-grpc]>=3,<4",
+    "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.1,<4",
     # policyengine-us 1.764.6 imports spm_calculator.forecast, which was
     # removed from later releases still allowed by its broad requirement.
     "spm-calculator==0.3.1",

@@ -39,6 +39,7 @@ def test_modal_runtime_has_explicit_identity_and_remote_logging(monkeypatch):
         assert runtime.config.deployment.environment == "main"
         assert runtime.config.deployment.platform == "modal"
         assert runtime.config.otel.sampling_ratio == 1.0
+        assert runtime.config.application_attribute_keys is None
         assert runtime.config.dispatch_attribute_keys == frozenset(
             {"job_id", "observability_id", "simulation_id"}
         )

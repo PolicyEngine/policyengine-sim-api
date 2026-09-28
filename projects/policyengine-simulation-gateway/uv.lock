@@ -1261,11 +1261,11 @@ provides-extras = ["test", "build"]
 
 [[package]]
 name = "policyengine-observability"
-version = "3.0.0"
+version = "3.0.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/44/69/963d1044a8519e2967b473db1ff1fe304966c9f93396660252bd3e339be5/policyengine_observability-3.0.0.tar.gz", hash = "sha256:bcf8027e2526c22ac490e0ef5f9e1fe89254e08b479611fa16a94142e54c34d9", size = 122222, upload-time = "2026-09-23T10:58:47.354Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/00/a6/f5d3e49523bf3d3231e9d2297fb03a4ae0704ae246d86153356dcb7eee7c/policyengine_observability-3.0.1.tar.gz", hash = "sha256:35e934b31843545a13570d6ba2e6a4b0cb002488f2c7bb1840351f6f90f30104", size = 124370, upload-time = "2026-09-28T16:48:19.916Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cb/f2/8174cbb0378573553fc6eea0073063fb4bcc197cbdbbc2170f0e73bba57a/policyengine_observability-3.0.0-py3-none-any.whl", hash = "sha256:8ce4cf186c81ba136fd824c6c81c78d4b637da177c6ac657d15ffb538fe88d75", size = 40200, upload-time = "2026-09-23T10:58:45.799Z" },
+    { url = "https://files.pythonhosted.org/packages/27/6c/879ecc01a618885e4bc741d8abb35e601d638f878e3145cda677b75c46b7/policyengine_observability-3.0.1-py3-none-any.whl", hash = "sha256:b7630d4d2d91c183b733d2e3470d3c0cbad67fd59a8c5e2f2bcc75872eea3c02", size = 40859, upload-time = "2026-09-28T16:48:18.661Z" },
 ]
 
 [package.optional-dependencies]
@@ -1355,7 +1355,7 @@ requires-dist = [
     { name = "modal", specifier = ">=1.4,<2" },
     { name = "openapi-python-client", marker = "extra == 'build'", specifier = ">=0.21.6" },
     { name = "packaging", specifier = ">=24" },
-    { name = "policyengine-observability", extras = ["fastapi", "google", "otlp-grpc"], specifier = ">=3,<4" },
+    { name = "policyengine-observability", extras = ["fastapi", "google", "otlp-grpc"], specifier = ">=3.0.1,<4" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyjwt", specifier = ">=2.10.1,<3.0.0" },
     { name = "pyright", marker = "extra == 'build'", specifier = ">=1.1.401" },
@@ -1387,7 +1387,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'build'", specifier = ">=25.1.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx2", marker = "extra == 'test'" },
-    { name = "policyengine-observability", extras = ["fastapi", "google", "otlp-grpc"], specifier = ">=3,<4" },
+    { name = "policyengine-observability", extras = ["fastapi", "google", "otlp-grpc"], specifier = ">=3.0.1,<4" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyright", marker = "extra == 'build'", specifier = ">=1.1.401" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
