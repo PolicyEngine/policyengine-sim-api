@@ -15,6 +15,13 @@ COUNTRY_PACKAGES = {
     "us": "policyengine-us",
     "uk": "policyengine-uk",
 }
+BUNDLE_PACKAGES = {
+    "policyengine",
+    "policyengine-core",
+    "policyengine-us",
+    "policyengine-uk",
+    "spm-calculator",
+}
 MODAL_APP_MODULE = "src.modal.app"
 VERSION_ENV = {
     "POLICYENGINE_VERSION": "4.18.3",
@@ -104,6 +111,28 @@ def test_country_package_pins_match_policyengine_bundle():
             _get_dependency_pin(pyproject, package)
             == get_country_release_bundle(country).model_version
         )
+
+
+def test_all_runtime_package_pins_match_policyengine_bundle():
+    from policyengine_simulation_executor.release_bundle import (
+        get_bundled_package_version,
+    )
+
+    pyproject = _load_toml(PYPROJECT_PATH)
+    model_dependencies = pyproject["dependency-groups"]["policyengine-models"]
+    model_pins = {
+        package: next(
+            dependency.removeprefix(f"{package}==")
+            for dependency in model_dependencies
+            if dependency.startswith(f"{package}==")
+        )
+        for package in BUNDLE_PACKAGES
+    }
+
+    assert set(model_pins) == BUNDLE_PACKAGES
+    for package, version in model_pins.items():
+        assert version == _get_dependency_pin(pyproject, package)
+        assert version == get_bundled_package_version(package)
 
 
 def _modal_import_env() -> dict[str, str]:

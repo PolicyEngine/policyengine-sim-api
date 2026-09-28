@@ -16,10 +16,11 @@ import pytest
 from fixtures.identity_stubs import install_identity_stubs
 from fixtures.wrapper_spm import (
     installed_wrapper_has_storage_id,
+)
+from fixtures.wrapper_spm import (
     wrapper_storage_id as _wrapper_storage_id,
 )
 from policyengine_simulation_executor import artifact_keys as ak
-
 
 _DATASET_KWARGS = dict(
     country="us",
@@ -181,6 +182,43 @@ class TestIdentityCollection:
         assert identity.store_path == (
             f"baselines/us/{_BASELINE_GOLDEN}/bl1-f9cac05d94509895.h5"
         )
+
+    def test_installed_spm_defaults_enter_dataset_identity(
+        self,
+        stub_identity_sources,
+        monkeypatch,
+    ):
+        """PolicyEngine 6's bundle-selected SPM inputs rotate artifact keys."""
+        from policyengine_simulation_executor import spm as executor_spm
+
+        class _StubForecast:
+            years = (2026,)
+
+            def entry(self, year, *, scenario, as_of):
+                return {"year": year, "scenario": scenario, "as_of": as_of}
+
+        monkeypatch.setattr(
+            executor_spm, "_forecast", lambda expected_sha256: _StubForecast()
+        )
+        monkeypatch.setattr(
+            executor_spm,
+            "_prevalidate_selection",
+            lambda selection_json, start_year, window_size: None,
+        )
+
+        capability = stub_identity_sources.installed_spm_capability()
+        assert capability is not None
+        stub_identity_sources.spm_capability = capability
+
+        identity = ak.collect_dataset_identity("us", 2026)
+        expected_selection = capability.defaults.model_dump(mode="json")
+
+        assert identity.spm == expected_selection
+        assert identity.digest == ak.dataset_key(
+            **_DATASET_KWARGS,
+            spm=expected_selection,
+        )
+        assert identity.digest != _DATASET_GOLDEN
 
 
 _SPM_SELECTION = {
