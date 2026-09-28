@@ -22,6 +22,7 @@ def test_update_policyengine_package_script_has_valid_bash_syntax() -> None:
         ["bash", "-n", str(SCRIPT)],
         capture_output=True,
         text=True,
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -152,11 +153,72 @@ def test_update_policyengine_package_updates_py_and_bundled_runtime_pins(
     assert "policyengine-core==999.999.999" in pyproject_text
     assert "policyengine-us==1.1.0" in pyproject_text
     assert "policyengine-uk==2.1.0" in pyproject_text
+    assert "spm-calculator==1.0.0" in pyproject_text
+    assert pyproject_text.count("policyengine==4.1.0") == 2
+    assert pyproject_text.count("policyengine-core==999.999.999") == 2
+    assert pyproject_text.count("policyengine-us==1.1.0") == 2
+    assert pyproject_text.count("policyengine-uk==2.1.0") == 2
+    assert pyproject_text.count("spm-calculator==1.0.0") == 2
     uv_calls = uv_log.read_text(encoding="utf-8")
     assert "lock --upgrade-package policyengine" in uv_calls
     assert "run python -m src.modal.utils.extract_bundle_versions --shell" in uv_calls
     assert "uv lock" in uv_calls
+    assert "lock --check" in uv_calls
+    assert "run --extra test pytest tests/test_bundle_version_export.py" in uv_calls
     assert "checkout -b auto/update-policyengine-4.1.0" in git_log.read_text(
         encoding="utf-8"
     )
     assert "pr create" in gh_log.read_text(encoding="utf-8")
+
+
+def test_update_policyengine_package_stops_when_loaded_bundle_is_not_target(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    git_log = tmp_path / "git.log"
+    gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
+    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(
+        fake_bin,
+        log=uv_log,
+        bundled_policyengine_version="4.0.0",
+    )
+
+    result = run_updater(
+        env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"),
+    )
+
+    assert result.returncode != 0
+    assert "reports bundle 4.0.0, expected 4.1.0" in result.stderr
+    git_calls = git_log.read_text(encoding="utf-8")
+    assert "git commit" not in git_calls
+    assert "git push" not in git_calls
+    assert "pr create" not in gh_log.read_text(encoding="utf-8")
+
+
+def test_update_policyengine_package_requires_both_runtime_dependency_lists(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    git_log = tmp_path / "git.log"
+    gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
+    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=uv_log)
+    pyproject = fake_repo / "simulation" / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text(encoding="utf-8").split("[dependency-groups]")[0],
+        encoding="utf-8",
+    )
+
+    result = run_updater(
+        env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"),
+    )
+
+    assert result.returncode != 0
+    assert "in dependency-groups.policyengine-models; found []" in result.stderr
+    git_calls = git_log.read_text(encoding="utf-8")
+    assert "git commit" not in git_calls
+    assert "git push" not in git_calls
+    assert "pr create" not in gh_log.read_text(encoding="utf-8")

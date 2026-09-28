@@ -19,34 +19,35 @@ def fake_repo(tmp_path: Path) -> Path:
     project.mkdir(parents=True)
 
     (project / "pyproject.toml").write_text(
-        "\n".join(
-            [
-                "[project]",
-                'dependencies = ["policyengine==4.0.0", "policyengine-core==0.0.0", "policyengine-us==1.0.0", "policyengine-uk==2.0.0"]',
-            ]
-        ),
+        """[project]
+dependencies = ["policyengine==4.0.0", "policyengine-core==0.0.0", "policyengine-us==1.0.0", "policyengine-uk==2.0.0", "spm-calculator==0.1.0"]
+
+[dependency-groups]
+policyengine-models = ["policyengine==4.0.0", "policyengine-core==0.0.0", "policyengine-us==1.0.0", "policyengine-uk==2.0.0", "spm-calculator==0.1.0"]
+""",
         encoding="utf-8",
     )
     (project / "uv.lock").write_text(
-        "\n".join(
-            [
-                "[[package]]",
-                'name = "policyengine"',
-                'version = "4.0.0"',
-                "",
-                "[[package]]",
-                'name = "policyengine-core"',
-                'version = "0.0.0"',
-                "",
-                "[[package]]",
-                'name = "policyengine-us"',
-                'version = "1.0.0"',
-                "",
-                "[[package]]",
-                'name = "policyengine-uk"',
-                'version = "2.0.0"',
-            ]
-        ),
+        """[[package]]
+name = "policyengine"
+version = "4.0.0"
+
+[[package]]
+name = "policyengine-core"
+version = "0.0.0"
+
+[[package]]
+name = "policyengine-us"
+version = "1.0.0"
+
+[[package]]
+name = "policyengine-uk"
+version = "2.0.0"
+
+[[package]]
+name = "spm-calculator"
+version = "0.1.0"
+""",
         encoding="utf-8",
     )
 
@@ -131,6 +132,8 @@ def install_fake_uv(
     bundled_core_version: str = "999.999.999",
     bundled_us_version: str = "1.1.0",
     bundled_uk_version: str = "2.1.0",
+    bundled_policyengine_version: str = "4.1.0",
+    bundled_spm_version: str = "1.0.0",
 ) -> None:
     write_executable(
         fake_bin / "uv",
@@ -139,8 +142,9 @@ set -euo pipefail
 printf 'uv %s\\n' "$*" >> "{log}"
 
 if [[ "$1" == "run" && "$2" == "python" && "$3" == "-m" && "$4" == "src.modal.utils.extract_bundle_versions" ]]; then
-  echo "policyengine_version=4.1.0"
+  echo "policyengine_version={bundled_policyengine_version}"
   echo "policyengine_core_version={bundled_core_version}"
+  echo "spm_calculator_version={bundled_spm_version}"
   echo "us_version={bundled_us_version}"
   echo "us_data_version=1.10.0"
   echo "uk_version={bundled_uk_version}"
@@ -172,4 +176,5 @@ def run_updater(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess[
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
