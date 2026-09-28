@@ -9,7 +9,9 @@ default."""
 
 from __future__ import annotations
 
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
+from uuid import UUID
 
 import policyengine_simulation_contract.budget_window_state as state_module
 import pytest
@@ -21,6 +23,7 @@ from policyengine_simulation_contract.budget_window_state import (
 from policyengine_simulation_contract.spm import SPMInputError, SPMSelection
 from policyengine_simulation_gateway import endpoints
 from policyengine_simulation_gateway.testing import create_gateway_app
+from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 
 import src.modal.budget_window_batch as batch_module
 import src.modal.budget_window_scheduler as scheduler_module
@@ -61,6 +64,7 @@ class SemiIntegrationRuntime:
     calls: dict[str, object] = field(default_factory=dict)
     child_payloads: list[dict] = field(default_factory=list)
     child_observability_contexts: list[dict | None] = field(default_factory=list)
+    parent_observability_context: dict | None = None
     current_parent_call_id: str | None = None
     next_parent_call_id: str = "parent-batch-123"
     active_child_calls: set[str] = field(default_factory=set)
@@ -135,10 +139,17 @@ class MockChildCall:
 
 
 class MockParentBatchCall:
-    def __init__(self, runtime: SemiIntegrationRuntime, *, payload: dict):
+    def __init__(
+        self,
+        runtime: SemiIntegrationRuntime,
+        *,
+        payload: dict,
+        observability_context: dict | None,
+    ):
         self.runtime = runtime
         self.object_id = runtime.next_parent_call_id
         self.payload = payload
+        self.observability_context = observability_context
         self._polls = 0
         self._result = None
 
@@ -152,10 +163,14 @@ class MockParentBatchCall:
         previous = self.runtime.current_parent_call_id
         self.runtime.current_parent_call_id = self.object_id
         try:
-            self._result = batch_module.run_budget_window_batch_impl(
-                self.payload,
-                runtime=self.runtime.observability,
-            )
+            with self.runtime.observability.operation(
+                "test.budget_window_parent",
+                remote_context=self.observability_context,
+            ):
+                self._result = batch_module.run_budget_window_batch_impl(
+                    self.payload,
+                    runtime=self.runtime.observability,
+                )
         finally:
             self.runtime.current_parent_call_id = previous
         return self._result
@@ -171,7 +186,12 @@ class MockFunction:
 
     def spawn(self, payload: dict, *, observability_context=None):
         if self.func_name == "run_budget_window_batch":
-            call = MockParentBatchCall(self.runtime, payload=payload)
+            self.runtime.parent_observability_context = observability_context
+            call = MockParentBatchCall(
+                self.runtime,
+                payload=payload,
+                observability_context=observability_context,
+            )
             self.runtime.calls[call.object_id] = call
             return call
 
@@ -191,10 +211,38 @@ class MockFunction:
 @pytest.fixture
 def budget_window_semi_integration_client(
     monkeypatch,
-    observability_runtime,
 ) -> tuple[TestClient, SemiIntegrationRuntime]:
     runtime = SemiIntegrationRuntime()
-    runtime.observability = observability_runtime
+
+    class PropagatingRuntime:
+        def __init__(self):
+            self.context: dict = {}
+
+        def span(self, *args, **kwargs):
+            return nullcontext()
+
+        @contextmanager
+        def operation(self, *args, remote_context=None, **kwargs):
+            previous = self.context
+            self.context = dict(remote_context or {})
+            try:
+                yield
+            finally:
+                self.context = previous
+
+        def capture_context(self):
+            return dict(self.context)
+
+        def set_context(self, **attributes):
+            self.context.update(attributes)
+
+        def event(self, *args, **kwargs):
+            return None
+
+        def record_exception(self, *args, **kwargs):
+            return None
+
+    runtime.observability = PropagatingRuntime()
     runtime.dicts["simulation-api-us-versions"] = {
         "latest": "1.500.0",
         "1.500.0": "policyengine-simulation-py4-10-0",
@@ -263,14 +311,21 @@ def test_budget_window_submit_and_poll_exercise_gateway_worker_seams(
 
     assert submit_response.status_code == 200
     assert submit_response.json()["batch_job_id"] == "parent-batch-123"
+    observability_id = submit_response.headers[OBSERVABILITY_ID_HEADER]
+    assert str(UUID(observability_id)) == observability_id
+    assert runtime.parent_observability_context["observability_id"] == (
+        observability_id
+    )
 
     first_poll = client.get("/budget-window-jobs/parent-batch-123")
     assert first_poll.status_code == 202
+    assert first_poll.headers[OBSERVABILITY_ID_HEADER] == observability_id
     assert first_poll.json()["status"] == "submitted"
     assert first_poll.json()["queued_years"] == ["2026", "2027", "2028"]
 
     second_poll = client.get("/budget-window-jobs/parent-batch-123")
     assert second_poll.status_code == 200
+    assert second_poll.headers[OBSERVABILITY_ID_HEADER] == observability_id
     body = second_poll.json()
 
     assert body["status"] == "complete"
@@ -305,6 +360,13 @@ def test_budget_window_submit_and_poll_exercise_gateway_worker_seams(
     assert all("window_size" not in payload for payload in runtime.child_payloads)
     assert all("max_parallel" not in payload for payload in runtime.child_payloads)
     assert all("_metadata" not in payload for payload in runtime.child_payloads)
+    assert all(
+        "_observability_context" not in payload for payload in runtime.child_payloads
+    )
+    assert all(
+        context is not None and context["observability_id"] == observability_id
+        for context in runtime.child_observability_contexts
+    )
 
 
 def submit_budget_window(client, *, window_size=3, max_parallel=1):
