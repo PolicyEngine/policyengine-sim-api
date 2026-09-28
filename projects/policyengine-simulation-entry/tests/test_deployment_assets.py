@@ -59,6 +59,199 @@ def test_deployment_scripts_have_valid_shell_syntax():
     assert os.access(CLOUD_RUN_DEPLOY_SCRIPT, os.X_OK)
 
 
+def _write_fake_smoke_curl(tmp_path: Path, revisions: list[str]) -> tuple[Path, Path]:
+    state_file = tmp_path / "health-request-count"
+    revisions_file = tmp_path / "health-revisions"
+    revisions_file.write_text("\n".join(revisions) + "\n", encoding="utf-8")
+    fake_curl = tmp_path / "curl"
+    fake_curl.write_text(
+        textwrap.dedent("""\
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            headers_file=""
+            body_file=""
+            url=""
+            while [ "$#" -gt 0 ]; do
+              case "$1" in
+                --dump-header|--output|--request|--header|--data)
+                  option="$1"
+                  value="$2"
+                  shift 2
+                  case "${option}" in
+                    --dump-header) headers_file="${value}" ;;
+                    --output) body_file="${value}" ;;
+                  esac
+                  ;;
+                --fail|--silent|--show-error)
+                  shift
+                  ;;
+                *)
+                  url="$1"
+                  shift
+                  ;;
+              esac
+            done
+
+            case "${url}" in
+              */health)
+                count=0
+                if [ -f "${FAKE_CURL_STATE}" ]; then
+                  count="$(cat "${FAKE_CURL_STATE}")"
+                fi
+                line_number=$((count + 1))
+                revision="$(sed -n "${line_number}p" "${FAKE_CURL_REVISIONS}")"
+                printf '%s' "${line_number}" > "${FAKE_CURL_STATE}"
+                printf 'HTTP/1.1 200 OK\r\nX-PolicyEngine-Simulation-Revision: %s\r\n\r\n' \
+                  "${revision}" > "${headers_file}"
+                printf '{"status":"healthy"}' > "${body_file}"
+                ;;
+              */ready)
+                printf '{"status":"ready"}'
+                ;;
+              */versions)
+                printf '{}'
+                ;;
+              */ping)
+                printf '{"incremented":2}'
+                ;;
+              *)
+                printf 'Unexpected fake curl URL: %s\n' "${url}" >&2
+                exit 2
+                ;;
+            esac
+            """),
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+    return state_file, revisions_file
+
+
+def _smoke_test_env(
+    tmp_path: Path,
+    state_file: Path,
+    revisions_file: Path,
+) -> dict[str, str]:
+    return {
+        **os.environ,
+        "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+        "FAKE_CURL_STATE": str(state_file),
+        "FAKE_CURL_REVISIONS": str(revisions_file),
+        "SIMULATION_ENTRYPOINT_ROUTING_MAX_ATTEMPTS": "3",
+        "SIMULATION_ENTRYPOINT_ROUTING_RETRY_DELAY_SECONDS": "0",
+    }
+
+
+def test_stable_smoke_retries_the_previous_revision_until_target_is_served(
+    tmp_path: Path,
+):
+    old_revision = "policyengine-simulation-entry-00001-old"
+    target_revision = "policyengine-simulation-entry-00002-new"
+    state_file, revisions_file = _write_fake_smoke_curl(
+        tmp_path,
+        [old_revision, old_revision, target_revision],
+    )
+
+    subprocess.run(
+        [
+            "bash",
+            SMOKE_SCRIPT,
+            "https://simulation.example.test",
+            target_revision,
+            old_revision,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_smoke_test_env(tmp_path, state_file, revisions_file),
+    )
+
+    assert state_file.read_text(encoding="utf-8") == "3"
+
+
+def test_stable_smoke_rejects_an_unexpected_revision_without_retrying(tmp_path: Path):
+    old_revision = "policyengine-simulation-entry-00001-old"
+    target_revision = "policyengine-simulation-entry-00002-new"
+    unexpected_revision = "policyengine-simulation-entry-00003-unexpected"
+    state_file, revisions_file = _write_fake_smoke_curl(
+        tmp_path,
+        [unexpected_revision, target_revision],
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            SMOKE_SCRIPT,
+            "https://simulation.example.test",
+            target_revision,
+            old_revision,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_smoke_test_env(tmp_path, state_file, revisions_file),
+    )
+
+    assert result.returncode == 1
+    assert "Unexpected revision" in result.stderr
+    assert state_file.read_text(encoding="utf-8") == "1"
+
+
+def test_candidate_smoke_rejects_a_revision_mismatch_without_retrying(tmp_path: Path):
+    old_revision = "policyengine-simulation-entry-00001-old"
+    target_revision = "policyengine-simulation-entry-00002-new"
+    state_file, revisions_file = _write_fake_smoke_curl(
+        tmp_path,
+        [old_revision, target_revision],
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            SMOKE_SCRIPT,
+            "https://candidate.example.test",
+            target_revision,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_smoke_test_env(tmp_path, state_file, revisions_file),
+    )
+
+    assert result.returncode == 1
+    assert "Expected revision" in result.stderr
+    assert state_file.read_text(encoding="utf-8") == "1"
+
+
+def test_stable_smoke_fails_when_the_previous_revision_does_not_converge(
+    tmp_path: Path,
+):
+    old_revision = "policyengine-simulation-entry-00001-old"
+    target_revision = "policyengine-simulation-entry-00002-new"
+    state_file, revisions_file = _write_fake_smoke_curl(
+        tmp_path,
+        [old_revision, old_revision, old_revision],
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            SMOKE_SCRIPT,
+            "https://simulation.example.test",
+            target_revision,
+            old_revision,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_smoke_test_env(tmp_path, state_file, revisions_file),
+    )
+
+    assert result.returncode == 1
+    assert "did not serve revision" in result.stderr
+    assert state_file.read_text(encoding="utf-8") == "3"
+
+
 def test_stage12_deployment_uses_the_api_owned_schema_directly():
     validation_script = STAGE12_VALIDATION_SCRIPT.read_text(encoding="utf-8")
 
@@ -396,7 +589,15 @@ def test_full_stack_promotion_order_is_explicit():
     )
     assert "needs: [deploy_entrypoint, authenticated_test]" in reusable_workflow
     assert (
-        'cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}"'
+        'cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"'
+        in reusable_workflow
+    )
+    assert (
+        'cloud-run-simulation-entry-smoke.sh "${CUSTOM_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"'
+        in reusable_workflow
+    )
+    assert (
+        'cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.deploy_entrypoint.outputs.revision }}"'
         in reusable_workflow
     )
     assert "failure() && steps.promote.outcome == 'success'" in reusable_workflow
