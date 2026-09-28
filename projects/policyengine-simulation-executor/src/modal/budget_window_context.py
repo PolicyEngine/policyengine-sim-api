@@ -9,6 +9,7 @@ from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     PolicyEngineBundle,
 )
+
 from src.modal.fanout import build_child_payload
 
 BATCH_ONLY_FIELDS = {

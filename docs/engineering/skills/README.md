@@ -13,3 +13,6 @@ Current skills:
   verification, and title conventions.
 - `testing.md`: test placement, dependency boundaries, and expected validation
   commands.
+- `observability.md`: identifier ownership, HTTP and Modal transport,
+  persistence, registered runtime stages, trace boundaries, and failure
+  isolation.

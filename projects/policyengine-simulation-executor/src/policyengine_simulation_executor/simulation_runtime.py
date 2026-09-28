@@ -17,10 +17,13 @@ from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, Iterator
 
-from policyengine_observability import segment, set_attribute
+from policyengine_observability import ObservabilityRuntime
 
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
-from policyengine_simulation_observability.observability import SegmentName
+from policyengine_simulation_observability.stages import (
+    ANNUAL_IMPACT_STAGES,
+    Stage,
+)
 from policyengine_simulation_executor.release_bundle import (
     get_country_release_bundle,
     resolve_bundle_dataset_name,
@@ -73,7 +76,9 @@ def _normalize_credentials_blob(creds_json: str) -> str:
 
 
 @contextlib.contextmanager
-def setup_gcp_credentials() -> Iterator[None]:
+def setup_gcp_credentials(
+    runtime: ObservabilityRuntime | None = None,
+) -> Iterator[None]:
     """
     Set up GCP credentials from environment variable.
 
@@ -88,7 +93,12 @@ def setup_gcp_credentials() -> Iterator[None]:
     previous = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     creds_file = None
     try:
-        with segment(SegmentName.CREDENTIAL_SETUP):
+        credential_span = (
+            runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.CREDENTIAL_SETUP))
+            if runtime is not None
+            else contextlib.nullcontext()
+        )
+        with credential_span:
             # Log available GCP-related env vars for debugging.
             gcp_vars = {
                 k: v[:50] + "..." if len(v) > 50 else v
@@ -135,7 +145,11 @@ def setup_gcp_credentials() -> Iterator[None]:
             creds_file.close()
 
 
-def run_simulation_impl(params: dict) -> dict:
+def run_simulation_impl(
+    params: dict,
+    *,
+    runtime: ObservabilityRuntime,
+) -> dict:
     """
     Execute economic simulation.
 
@@ -144,9 +158,9 @@ def run_simulation_impl(params: dict) -> dict:
     """
     # Set up GCP credentials if needed. The credentials temp file is
     # cleaned up on exit so we never leave signed JSON material on disk.
-    with setup_gcp_credentials():
+    with setup_gcp_credentials(runtime):
         try:
-            return _run_simulation_impl_core(params)
+            return _run_simulation_impl_core(params, runtime=runtime)
         except ValueError as exc:
             # Gateway images intentionally do not install country packages.
             # Transport the public error through the shared contract instead.
@@ -192,8 +206,7 @@ def _normalise_policy(policy: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def _resolve_dataset_reference(country: str) -> str:
-    with segment(SegmentName.DATASET_RESOLUTION):
-        return resolve_bundle_dataset_name(country, None)
+    return resolve_bundle_dataset_name(country, None)
 
 
 def _normalise_region_code(country: str, region: Any) -> str:
@@ -535,8 +548,12 @@ def _build_simulation(
     )
 
 
-def _run_simulation_impl_core(params: dict) -> dict:
-    with segment(SegmentName.REQUEST_PARSE):
+def _run_simulation_impl_core(
+    params: dict,
+    *,
+    runtime: ObservabilityRuntime,
+) -> dict:
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
         simulation_params, telemetry, metadata = split_internal_payload(params)
     metadata = metadata or {}
     from policyengine_simulation_executor.spm import (
@@ -549,46 +566,50 @@ def _run_simulation_impl_core(params: dict) -> dict:
         simulation_params["spm"] = selection
 
     logger.info(
-        "Starting simulation for country=%s run_id=%s process_id=%s",
+        "Starting simulation for country=%s submission_claim_id=%s",
         simulation_params.get("country", "unknown"),
-        getattr(telemetry, "run_id", None),
-        getattr(telemetry, "process_id", None),
+        getattr(telemetry, "submission_claim_id", None),
     )
     if metadata:
         logger.info("Received simulation metadata keys: %s", sorted(metadata))
 
     country = simulation_params.get("country", "us").lower()
     _set_runtime_attributes(
+        runtime=runtime,
         simulation_params=simulation_params,
         telemetry=telemetry,
         metadata=metadata,
         country=country,
     )
 
-    with segment(SegmentName.COUNTRY_MODULE_LOAD):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.COUNTRY_MODULE_LOAD)):
         country_module = _country_module(country)
-    with segment(SegmentName.REGION_RESOLUTION):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REGION_RESOLUTION)):
         region_resolution = _resolve_region(
             country_module=country_module,
             country=country,
             params=simulation_params,
         )
-    set_attribute("region", region_resolution.code)
-    dataset_selection = _resolve_dataset_selection(
-        simulation_params, region_resolution=region_resolution
-    )
-    with segment(SegmentName.DATASET_LOAD):
+    runtime.set_context(region=region_resolution.code)
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.DATASET_RESOLUTION)):
+        dataset_selection = _resolve_dataset_selection(
+            simulation_params, region_resolution=region_resolution
+        )
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD)):
         dataset = _load_dataset(
             simulation_params,
             selection=dataset_selection,
             country_module=country_module,
         )
-    with segment(SegmentName.POLICY_NORMALIZATION):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.POLICY_NORMALIZATION)):
         baseline_policy = _normalise_policy(simulation_params.get("baseline"))
         reform_policy = _normalise_policy(simulation_params.get("reform"))
 
     logger.info("Initialising baseline and reform simulations")
-    with segment(SegmentName.SIMULATION_BUILD, simulation_kind="baseline"):
+    with runtime.span(
+        ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_BUILD),
+        attributes={"simulation_kind": "baseline"},
+    ):
         baseline = _build_simulation(
             simulation_params,
             dataset=dataset,
@@ -597,7 +618,10 @@ def _run_simulation_impl_core(params: dict) -> dict:
             scoping_strategy=region_resolution.scoping_strategy,
             region_code=region_resolution.code,
         )
-    with segment(SegmentName.SIMULATION_BUILD, simulation_kind="reform"):
+    with runtime.span(
+        ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_BUILD),
+        attributes={"simulation_kind": "reform"},
+    ):
         reform = _build_simulation(
             simulation_params,
             dataset=dataset,
@@ -617,6 +641,7 @@ def _run_simulation_impl_core(params: dict) -> dict:
         reform=reform,
         resolved_data_version=None,
         resolved_region_code=region_resolution.code,
+        runtime=runtime,
     )
     output = builder.serialize()
     output.update(
@@ -628,7 +653,7 @@ def _run_simulation_impl_core(params: dict) -> dict:
     # (hit / incomplete / miss) is known for deterministic-id baselines.
     artifact_outcome = getattr(baseline, "artifact_outcome", None)
     if artifact_outcome is not None:
-        set_attribute("baseline_artifact", artifact_outcome)
+        runtime.set_context(baseline_artifact=artifact_outcome)
         logger.info("Baseline artifact outcome: %s", artifact_outcome)
     logger.info("Comparison complete")
     if params.get("_emit_microdata"):
@@ -642,24 +667,26 @@ def _run_simulation_impl_core(params: dict) -> dict:
 
 def _set_runtime_attributes(
     *,
+    runtime: ObservabilityRuntime,
     simulation_params: dict[str, Any],
     telemetry,
     metadata: dict[str, Any],
     country: str,
 ) -> None:
-    set_attribute("country", country)
-    set_attribute("scope", simulation_params.get("scope"))
-    set_attribute("simulation_year", _parse_year(simulation_params))
-    set_attribute("run_id", getattr(telemetry, "run_id", None))
-    set_attribute("process_id", getattr(telemetry, "process_id", None))
-    set_attribute("request_id", getattr(telemetry, "request_id", None))
-    set_attribute("geography_code", getattr(telemetry, "geography_code", None))
-    set_attribute("geography_type", getattr(telemetry, "geography_type", None))
-
-    set_attribute("resolved_version", metadata.get("resolved_version"))
-    set_attribute("resolved_app_name", metadata.get("resolved_app_name"))
+    runtime.set_context(
+        country=country,
+        scope=simulation_params.get("scope"),
+        simulation_year=_parse_year(simulation_params),
+        submission_claim_id=getattr(telemetry, "submission_claim_id", None),
+        geography_code=getattr(telemetry, "geography_code", None),
+        geography_type=getattr(telemetry, "geography_type", None),
+        resolved_version=metadata.get("resolved_version"),
+        resolved_app_name=metadata.get("resolved_app_name"),
+    )
     bundle = metadata.get("policyengine_bundle")
     if isinstance(bundle, dict):
-        set_attribute("policyengine_version", bundle.get("policyengine_version"))
-        set_attribute("model_version", bundle.get("model_version"))
-        set_attribute("data_version", bundle.get("data_version"))
+        runtime.set_context(
+            policyengine_version=bundle.get("policyengine_version"),
+            model_version=bundle.get("model_version"),
+            data_version=bundle.get("data_version"),
+        )

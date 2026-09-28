@@ -3,9 +3,8 @@
 import json
 
 import pytest
-from pydantic import ValidationError
-
 from policyengine_simulation_contract.gateway_models import (
+    MAX_GATEWAY_REQUEST_BYTES,
     BatchChildJobStatus,
     BudgetWindowAnnualImpact,
     BudgetWindowBatchRequest,
@@ -16,7 +15,6 @@ from policyengine_simulation_contract.gateway_models import (
     HealthResponse,
     JobStatusResponse,
     JobSubmitResponse,
-    MAX_GATEWAY_REQUEST_BYTES,
     PingRequest,
     PingResponse,
     ReadinessResponse,
@@ -24,6 +22,7 @@ from policyengine_simulation_contract.gateway_models import (
     VersionMap,
     VersionsResponse,
 )
+from pydantic import ValidationError
 
 
 class TestPingRequest:
@@ -180,6 +179,34 @@ class TestSimulationRequest:
         assert request.version is None
         assert request.policyengine_version == "4.10.0"
 
+    @pytest.mark.parametrize(
+        "field",
+        ["observability_id", "run_id", "request_id", "traceparent"],
+    )
+    def test_simulation_request_discards_noncanonical_context_fields(self, field):
+        request = SimulationRequest(
+            country="us",
+            _telemetry={
+                field: "identifier",
+                "submission_claim_id": "claim-123",
+                "capture_mode": "disabled",
+            },
+        )
+
+        assert request.telemetry is not None
+        assert request.telemetry.submission_claim_id == "claim-123"
+        assert field not in request.telemetry.model_dump()
+
+    def test_simulation_request_maps_legacy_process_id(self):
+        request = SimulationRequest(
+            country="us",
+            _telemetry={"process_id": "legacy-claim-123"},
+        )
+
+        assert request.telemetry is not None
+        assert request.telemetry.submission_claim_id == "legacy-claim-123"
+        assert "process_id" not in request.telemetry.model_dump()
+
     def test_simulation_request_accepts_documented_simulation_fields(self):
         """
         Given the documented simulation fields (reform, region, scope)
@@ -303,15 +330,13 @@ class TestSimulationRequest:
         request = SimulationRequest(
             country="us",
             _telemetry={
-                "run_id": "run-123",
-                "process_id": "proc-123",
+                "submission_claim_id": "proc-123",
                 "capture_mode": "disabled",
             },
         )
 
         assert request.telemetry is not None
-        assert request.telemetry.run_id == "run-123"
-        assert request.telemetry.process_id == "proc-123"
+        assert request.telemetry.submission_claim_id == "proc-123"
 
 
 class TestJobSubmitResponse:
@@ -551,14 +576,13 @@ class TestBudgetWindowBatchRequest:
             start_year="2026",
             window_size=10,
             _telemetry={
-                "run_id": "batch-run-123",
-                "process_id": "proc-123",
+                "submission_claim_id": "proc-123",
                 "capture_mode": "disabled",
             },
         )
 
         assert request.telemetry is not None
-        assert request.telemetry.run_id == "batch-run-123"
+        assert request.telemetry.submission_claim_id == "proc-123"
 
 
 class TestBudgetWindowBatchSubmitResponse:
@@ -576,7 +600,6 @@ class TestBudgetWindowBatchSubmitResponse:
                 "model_version": "1.500.0",
                 "dataset": "default",
             },
-            run_id="batch-run-123",
         )
 
         assert response.model_dump(mode="json") == {
@@ -593,7 +616,6 @@ class TestBudgetWindowBatchSubmitResponse:
                 "spm": None,
                 "dataset": "default",
             },
-            "run_id": "batch-run-123",
         }
 
 

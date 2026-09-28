@@ -1,8 +1,7 @@
 """Pre-merge image smoke: import the gateway inside its real image.
 
-Runs the true entrypoint surface — every package module, the explicit
-``import logfire`` (issue #602's crash path), and the real ASGI factory —
-inside the exact image the deploy ships. Catches in-image breakage
+Runs the true entrypoint surface — every package module and the real ASGI
+factory — inside the exact image the deploy ships. Catches in-image breakage
 (missing lock packages, mount gaps, import-time crashes) before merge
 instead of at the post-merge beta integration tests.
 
@@ -26,10 +25,6 @@ def smoke_import_gateway() -> dict:
     import importlib
     import os
     import pkgutil
-
-    # The #602 crash path: logfire imports importlib_metadata at import
-    # time; the app only touches logfire lazily, so import it explicitly.
-    import logfire  # noqa: F401
 
     import policyengine_simulation_contract
     import policyengine_simulation_gateway

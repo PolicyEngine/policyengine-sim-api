@@ -31,15 +31,11 @@ import functools
 import logging
 import os
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from policyengine_observability import record_event
+from policyengine_observability import ObservabilityRuntime
 from policyengine_fastapi.auth import JWTDecoder
-from policyengine_simulation_observability.logfire_legacy import (
-    legacy_logfire_attributes,
-    logfire_is_configured,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +126,7 @@ class AuthMisconfiguredError(RuntimeError):
     """Refuse to start when required auth config is absent or partial."""
 
 
-def enforce_production_auth_guard() -> None:
+def enforce_production_auth_guard(runtime: ObservabilityRuntime) -> None:
     """Validate at startup that the auth-disabled bypass is only used in dev.
 
     Must be called from the ASGI app factory (``gateway.app.web_app``) before
@@ -147,9 +143,9 @@ def enforce_production_auth_guard() -> None:
        the bypass impossible to set via one stray env var — an operator
        must actively opt in.
 
-    Even when the guard passes, emit a ``CRITICAL`` log, a structured
-    observability event, and a legacy Logfire event so any audit of the
-    service's logs surfaces the bypass immediately.
+    Even when the check passes, emit a ``CRITICAL`` log and a structured
+    observability event so any audit of the service's logs surfaces the bypass
+    immediately.
     """
     if not _auth_disabled():
         return
@@ -180,25 +176,15 @@ def enforce_production_auth_guard() -> None:
     )
     logger.critical(banner)
     try:
-        record_event(
+        runtime.event(
             "gateway_auth_disabled_bypass_active",
-            modal_environment=modal_env,
-            ack_value_present=True,
-            **legacy_logfire_attributes(),
+            severity="CRITICAL",
+            attributes={
+                "modal_environment": modal_env,
+                "ack_value_present": True,
+            },
         )
     except Exception:  # pragma: no cover - observability must never block startup
-        pass
-    try:
-        if logfire_is_configured():
-            import logfire
-
-            logfire.error(
-                "gateway_auth_disabled_bypass_active",
-                modal_environment=modal_env,
-                ack_value_present=True,
-                **legacy_logfire_attributes(),
-            )
-    except Exception:  # pragma: no cover - logfire optional / misconfigured
         pass
 
 
@@ -235,6 +221,7 @@ def enforce_auth_configured_guard() -> None:
 
 
 def require_auth(
+    request: Request,
     token: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
 ) -> dict | None:
     """FastAPI dependency gating an endpoint behind a bearer JWT.
@@ -281,4 +268,13 @@ def require_auth(
             detail="Gateway authentication is not configured.",
         )
 
-    return decoder(token)
+    try:
+        return decoder(token)
+    except HTTPException:
+        runtime = getattr(request.app.state, "policyengine_observability", None)
+        if isinstance(runtime, ObservabilityRuntime):
+            runtime.event(
+                "simulation_gateway_auth_rejected",
+                attributes={"reason": "invalid_or_missing_token"},
+            )
+        raise

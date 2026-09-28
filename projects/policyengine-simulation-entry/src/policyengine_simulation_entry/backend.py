@@ -8,13 +8,17 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import httpx
-from pydantic import ValidationError
-from policyengine_observability import REQUEST_ID_HEADER
+from policyengine_observability import (
+    REQUEST_ID_HEADER,
+    ObservabilityRuntime,
+    instrument_httpx,
+)
 from policyengine_simulation_contract.json_types import JsonObject
+from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
+from pydantic import ValidationError
 
 from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.schemas import BackendServiceToken
-
 
 SAFE_RESPONSE_HEADERS = frozenset(
     {
@@ -23,6 +27,7 @@ SAFE_RESPONSE_HEADERS = frozenset(
         "etag",
         "retry-after",
         REQUEST_ID_HEADER.lower(),
+        OBSERVABILITY_ID_HEADER.lower(),
     }
 )
 
@@ -60,6 +65,7 @@ class SimulationBackend(Protocol):
         *,
         json_body: JsonObject | None = None,
         request_id: str | None = None,
+        observability_id: str | None = None,
     ) -> BackendResponse: ...
 
 
@@ -122,9 +128,11 @@ class OldGatewayBackend:
         settings: Settings,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        runtime: ObservabilityRuntime | None = None,
     ):
         self.settings = settings
         self.transport = transport
+        self.observability = runtime
         self.client: httpx.AsyncClient | None = None
         self.token_provider: ClientCredentialsTokenProvider | None = None
 
@@ -142,6 +150,8 @@ class OldGatewayBackend:
             transport=self.transport,
             follow_redirects=False,
         )
+        if self.observability is not None:
+            instrument_httpx(self.client, self.observability)
         self.token_provider = ClientCredentialsTokenProvider(
             self.settings,
             self.client,
@@ -172,6 +182,7 @@ class OldGatewayBackend:
         *,
         json_body: JsonObject | None = None,
         request_id: str | None = None,
+        observability_id: str | None = None,
     ) -> BackendResponse:
         client, token_provider = self._runtime()
         method = method.upper()
@@ -183,6 +194,8 @@ class OldGatewayBackend:
             headers = {"Authorization": f"Bearer {token}"}
             if request_id:
                 headers[REQUEST_ID_HEADER] = request_id
+            if observability_id:
+                headers[OBSERVABILITY_ID_HEADER] = observability_id
 
             try:
                 response = await client.request(
@@ -220,6 +233,8 @@ class OldGatewayBackend:
                     (
                         REQUEST_ID_HEADER
                         if key.lower() == REQUEST_ID_HEADER.lower()
+                        else OBSERVABILITY_ID_HEADER
+                        if key.lower() == OBSERVABILITY_ID_HEADER.lower()
                         else key
                     ): value
                     for key, value in response.headers.items()

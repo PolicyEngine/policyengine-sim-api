@@ -7,13 +7,12 @@ from policyengine_fastapi.observability import (
     SimulationLifecycleEvent,
     SimulationRunSummary,
     SimulationStage,
-    SimulationTelemetryEnvelope,
     SimulationTimelineEntry,
     TracerArtifactManifest,
     TracerCaptureMode,
     VersionStageMetricResponse,
     build_observability,
-    generate_run_id,
+    generate_observability_id,
     get_observability,
     parse_header_value_pairs,
     stable_config_hash,
@@ -49,11 +48,11 @@ def test_observability_config_disabled__returns_disabled_defaults():
 
 
 def test_correlation_helpers__generate_ids_and_stable_hashes():
-    run_id = generate_run_id()
+    observability_id = generate_observability_id()
     left = stable_config_hash({"b": 2, "a": 1})
     right = stable_config_hash({"a": 1, "b": 2})
 
-    assert len(run_id) == 36
+    assert len(observability_id) == 36
     assert left == right
     assert left.startswith("sha256:")
 
@@ -67,10 +66,10 @@ def test_contract_models__serialize_expected_shapes():
         status="ok",
         timestamp=timestamp,
         service="policyengine-simulation-worker",
-        run_id="run-123",
+        observability_id="run-123",
     )
     manifest = TracerArtifactManifest(
-        run_id="run-123",
+        observability_id="run-123",
         scenario="baseline",
         capture_mode=TracerCaptureMode.THRESHOLD,
         artifact_format="policyengine.flat_trace.v1",
@@ -78,7 +77,7 @@ def test_contract_models__serialize_expected_shapes():
         generated_at=timestamp,
     )
     response = SimulationCompositeTraceResponse(
-        run=SimulationRunSummary(run_id="run-123", status="complete"),
+        run=SimulationRunSummary(observability_id="run-123", status="complete"),
         timeline=[
             SimulationTimelineEntry(
                 stage=SimulationStage.REQUEST_ACCEPTED,
@@ -107,15 +106,6 @@ def test_contract_models__serialize_expected_shapes():
     assert dumped_version_metrics["versions"] == []
 
 
-def test_telemetry_envelope__serializes_expected_defaults():
-    envelope = SimulationTelemetryEnvelope(run_id="run-123")
-
-    dumped = envelope.model_dump(mode="json")
-
-    assert dumped["run_id"] == "run-123"
-    assert dumped["capture_mode"] == "disabled"
-
-
 def test_contract_models__reject_extra_fields():
     try:
         SimulationLifecycleEvent(
@@ -124,22 +114,13 @@ def test_contract_models__reject_extra_fields():
             status="ok",
             timestamp=datetime(2026, 4, 9, 20, 0, tzinfo=UTC),
             service="policyengine-simulation-worker",
-            run_id="run-789",
+            observability_id="run-789",
             unexpected=True,
         )
     except ValidationError as error:
         assert "unexpected" in str(error)
     else:
         raise AssertionError("Expected extra field validation to fail")
-
-
-def test_contract_models__reject_invalid_enum_values():
-    try:
-        SimulationTelemetryEnvelope(run_id="run-123", capture_mode="bad-mode")
-    except ValidationError as error:
-        assert "capture_mode" in str(error)
-    else:
-        raise AssertionError("Expected invalid enum validation to fail")
 
 
 def test_noop_observability__accepts_calls_without_side_effects():
@@ -150,14 +131,14 @@ def test_noop_observability__accepts_calls_without_side_effects():
         status="ok",
         timestamp=datetime(2026, 4, 9, 20, 0, tzinfo=UTC),
         service="policyengine-simulation-worker",
-        run_id="run-456",
+        observability_id="run-456",
     )
 
     observability.emit_lifecycle_event(event)
     observability.emit_counter("policyengine.simulation.run.count")
     observability.emit_histogram("policyengine.simulation.run.duration.seconds", 1.23)
     with observability.span("run_simulation") as span:
-        span.set_attribute("run_id", "run-456")
+        span.set_attribute("observability_id", "run-456")
         span.add_event("simulation.completed")
     observability.flush()
 

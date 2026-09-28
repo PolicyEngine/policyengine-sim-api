@@ -7,30 +7,31 @@ Each deployment creates a versioned app (e.g., policyengine-simulation-py4-10-0)
 The gateway app (policyengine-simulation-gateway) routes requests to these versioned apps.
 """
 
-import modal
 import os
 import shlex
 from pathlib import Path
 
-from policyengine_observability import operation, set_attribute
-
-from src.modal._image_setup import fetch_artifacts, snapshot_models
-from src.modal.dependency_pins import project_dependency_pin
-from policyengine_simulation_observability.logfire_legacy import (
-    configure_logfire,
-    flush_logfire,
-    legacy_logfire_attributes,
-    logfire_span,
-)
-from src.modal.logging_redaction import redact_params_for_logging
 from policyengine_simulation_observability.observability import (
-    configure_process_observability,
     init_process_observability,
-    process_static_attributes,
+    modal_image_environment,
 )
+from policyengine_simulation_observability.stages import (
+    ANNUAL_IMPACT_STAGES,
+    BUDGET_WINDOW_STAGES,
+    SEGMENTED_NATIONAL_STAGES,
+    Stage,
+)
+from policyengine_simulation_observability.telemetry import (
+    normalize_observability_context,
+)
+
+import modal
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_country_model_version,
 )
+from src.modal._image_setup import fetch_artifacts, snapshot_models
+from src.modal.dependency_pins import project_dependency_pin
+from src.modal.logging_redaction import redact_params_for_logging
 
 
 def _version_from_env_or_local_dependency(env_var: str, package: str) -> str:
@@ -125,8 +126,7 @@ app = modal.App(APP_NAME)
 gcp_secret = modal.Secret.from_name("gcp-credentials", environment_name="main")
 data_secret = modal.Secret.from_name("policyengine-data-credentials")
 hf_secret = modal.Secret.from_name("huggingface-token")
-# Legacy Logfire export remains while we evaluate a replacement observability platform.
-logfire_secret = modal.Secret.from_name("policyengine-logfire")
+OBSERVABILITY_ENV = modal_image_environment()
 
 
 # Only meaningful locally: image definitions are built on the deploying
@@ -255,6 +255,7 @@ def build_runtime_simulation_image() -> modal.Image:
             secrets=[data_secret, hf_secret],
         )
         .env(VERSION_ENV)
+        .env(OBSERVABILITY_ENV)
     )
 
 
@@ -297,23 +298,19 @@ simulation_image = (
 def _configure_modal_observability(
     *,
     service_role: str,
-    modal_function_name: str,
-) -> dict:
-    configure_process_observability(
+):
+    return init_process_observability(
+        service_name=APP_NAME,
         platform="modal",
         service_role=service_role,
-        modal_app_name=APP_NAME,
-        modal_function_name=modal_function_name,
+        environment=os.getenv("MODAL_ENVIRONMENT", "local"),
+        service_version=POLICYENGINE_VERSION,
     )
-    init_process_observability(service_role=service_role)
-    # Worker operations have no FastAPI adapter to inject static identity
-    # attributes, so the caller must merge these into its operation attrs.
-    return process_static_attributes(service_role=service_role)
 
 
-def _set_modal_call_attributes() -> None:
+def _set_modal_call_attributes(runtime) -> None:
     try:
-        set_attribute("function_call_id", modal.current_function_call_id())
+        runtime.set_context(function_call_id=modal.current_function_call_id())
     except Exception:
         pass
 
@@ -325,48 +322,53 @@ def _set_modal_call_attributes() -> None:
     timeout=3600,
     retries=0,
     max_containers=100,
-    secrets=[gcp_secret, data_secret, hf_secret, logfire_secret],
+    secrets=[gcp_secret, data_secret, hf_secret],
 )
-def run_simulation(params: dict) -> dict:
+def run_simulation(
+    params: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
     """
     Execute economic simulation.
 
     Imports the snapshotted implementation at runtime.
-    Emits redacted operation data to both observability systems.
+    Emits redacted operation data through the shared observability runtime.
     """
-    static_attributes = _configure_modal_observability(
-        service_role="simulation_worker",
-        modal_function_name="run_simulation",
-    )
+    runtime = _configure_modal_observability(service_role="simulation_worker")
 
     # We deliberately avoid sending full ``params`` or ``result`` blobs to
-    # either observability system: both can embed signed URLs, reform
+    # observability: they can embed signed URLs, reform
     # parameter trees with sensitive policy details, or result payloads
-    # large enough to blow attribute budgets. The redacted summary keeps
-    # correlation traceability via run_id while leaving the heavy payload
-    # in memory.
+    # large enough to blow attribute budgets. Correlation fields come from
+    # the validated remote context while the heavy payload stays in memory.
     redacted_params = {
         **redact_params_for_logging(params),
-        **static_attributes,
-        **legacy_logfire_attributes(),
+        "modal_app_name": APP_NAME,
+        "modal_environment": os.getenv("MODAL_ENVIRONMENT", "local"),
+        "modal_function_name": "run_simulation",
     }
-    logfire_enabled = False
     try:
-        with operation("run_simulation", flavor="modal_function", **redacted_params):
-            logfire_enabled = configure_logfire("policyengine-simulation")
-            _set_modal_call_attributes()
-            with logfire_span(logfire_enabled, "run_simulation", **redacted_params):
-                from src.modal.segmented_national import (
-                    dispatch_run_simulation,
-                )
+        propagated = normalize_observability_context(observability_context)
+        with runtime.operation(
+            ANNUAL_IMPACT_STAGES.name(Stage.ANNUAL_EXECUTION),
+            attributes=redacted_params,
+            remote_context=propagated,
+        ):
+            _set_modal_call_attributes(runtime)
+            from src.modal.segmented_national import dispatch_run_simulation
 
-                # Plain national macro requests fan out across region groups
-                # by default (segmented: false opts out). APP_NAME is this
-                # deployed app; children spawn into its dedicated
-                # run_simulation_segment pool.
-                return dispatch_run_simulation(params, app_name=APP_NAME)
+            # Plain national macro requests fan out across region groups
+            # by default (segmented: false opts out). APP_NAME is this
+            # deployed app; children spawn into its dedicated
+            # run_simulation_segment pool.
+            return dispatch_run_simulation(
+                params,
+                app_name=APP_NAME,
+                runtime=runtime,
+            )
     finally:
-        flush_logfire(logfire_enabled)
+        runtime.shutdown()
 
 
 @app.function(
@@ -376,9 +378,13 @@ def run_simulation(params: dict) -> dict:
     timeout=3600,
     retries=0,
     max_containers=300,
-    secrets=[gcp_secret, data_secret, hf_secret, logfire_secret],
+    secrets=[gcp_secret, data_secret, hf_secret],
 )
-def run_simulation_segment(params: dict) -> dict:
+def run_simulation_segment(
+    params: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
     """One region-group child of a segmented national run.
 
     The same worker as ``run_simulation`` but a separate Modal function so
@@ -387,32 +393,28 @@ def run_simulation_segment(params: dict) -> dict:
     waits on. Calls the monolithic impl directly — children are
     ``region_group`` requests and never re-segment.
     """
-    static_attributes = _configure_modal_observability(
-        service_role="simulation_worker",
-        modal_function_name="run_simulation_segment",
-    )
+    runtime = _configure_modal_observability(service_role="simulation_worker")
     redacted_params = {
         **redact_params_for_logging(params),
-        **static_attributes,
-        **legacy_logfire_attributes(),
+        "modal_app_name": APP_NAME,
+        "modal_environment": os.getenv("MODAL_ENVIRONMENT", "local"),
+        "modal_function_name": "run_simulation_segment",
     }
-    logfire_enabled = False
     try:
-        with operation(
-            "run_simulation_segment", flavor="modal_function", **redacted_params
+        propagated = normalize_observability_context(observability_context)
+        with runtime.operation(
+            SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_EXECUTION),
+            attributes=redacted_params,
+            remote_context=propagated,
         ):
-            logfire_enabled = configure_logfire("policyengine-simulation")
-            _set_modal_call_attributes()
-            with logfire_span(
-                logfire_enabled, "run_simulation_segment", **redacted_params
-            ):
-                from policyengine_simulation_executor.simulation_runtime import (
-                    run_simulation_impl,
-                )
+            _set_modal_call_attributes(runtime)
+            from policyengine_simulation_executor.simulation_runtime import (
+                run_simulation_impl,
+            )
 
-                return run_simulation_impl(params)
+            return run_simulation_impl(params, runtime=runtime)
     finally:
-        flush_logfire(logfire_enabled)
+        runtime.shutdown()
 
 
 @app.function(
@@ -422,36 +424,32 @@ def run_simulation_segment(params: dict) -> dict:
     timeout=3600,
     retries=0,
     max_containers=100,
-    secrets=[gcp_secret, data_secret, hf_secret, logfire_secret],
+    secrets=[gcp_secret, data_secret, hf_secret],
 )
-def run_budget_window_batch(params: dict) -> dict:
+def run_budget_window_batch(
+    params: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
     """Execute a multi-year budget-window batch orchestration."""
-    static_attributes = _configure_modal_observability(
-        service_role="budget_window_worker",
-        modal_function_name="run_budget_window_batch",
-    )
+    runtime = _configure_modal_observability(service_role="budget_window_worker")
 
     redacted_params = {
         **redact_params_for_logging(params),
-        **static_attributes,
-        **legacy_logfire_attributes(),
+        "modal_app_name": APP_NAME,
+        "modal_environment": os.getenv("MODAL_ENVIRONMENT", "local"),
+        "modal_function_name": "run_budget_window_batch",
     }
-    logfire_enabled = False
     try:
-        with operation(
-            "run_budget_window_batch",
-            flavor="modal_function",
-            **redacted_params,
+        propagated = normalize_observability_context(observability_context)
+        with runtime.operation(
+            BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_EXECUTION),
+            attributes=redacted_params,
+            remote_context=propagated,
         ):
-            logfire_enabled = configure_logfire("policyengine-simulation")
-            _set_modal_call_attributes()
-            with logfire_span(
-                logfire_enabled,
-                "run_budget_window_batch",
-                **redacted_params,
-            ):
-                from src.modal.budget_window_batch import run_budget_window_batch_impl
+            _set_modal_call_attributes(runtime)
+            from src.modal.budget_window_batch import run_budget_window_batch_impl
 
-                return run_budget_window_batch_impl(params)
+            return run_budget_window_batch_impl(params, runtime=runtime)
     finally:
-        flush_logfire(logfire_enabled)
+        runtime.shutdown()

@@ -262,6 +262,7 @@ class MockFunction:
 
     def __init__(self):
         self.last_payload = None
+        self.last_observability_context = None
         self.last_from_name_call = None
         self.last_call = None
         self.calls = []
@@ -283,14 +284,28 @@ class BoundMockFunction:
         self.app_name = app_name
         self.func_name = func_name
 
-    def spawn(self, payload: dict) -> MockFunctionCall:
+    def spawn(
+        self,
+        payload: dict,
+        *,
+        observability_context: dict | None = None,
+    ) -> MockFunctionCall:
         self.recorder.last_payload = payload
+        self.recorder.last_observability_context = observability_context
         is_batch = self.func_name == "run_budget_window_batch"
         object_id = "mock-batch-job-id-123" if is_batch else "mock-job-id-123"
         self.recorder.last_call = MockFunctionCall(object_id=object_id)
         if is_batch:
             self.recorder.last_call.running = True
-        self.recorder.calls.append((self.app_name, self.func_name, payload, object_id))
+        self.recorder.calls.append(
+            (
+                self.app_name,
+                self.func_name,
+                payload,
+                observability_context,
+                object_id,
+            )
+        )
         return self.recorder.last_call
 
 
@@ -305,8 +320,8 @@ class MockModalException:
 @pytest.fixture
 def mock_modal(monkeypatch):
     """Patch Modal calls in the gateway endpoints module."""
-    from policyengine_simulation_contract import dataset_uri
-    from policyengine_simulation_contract import budget_window_state
+    from policyengine_simulation_contract import budget_window_state, dataset_uri
+
     from policyengine_simulation_gateway import endpoints
 
     mock_func = MockFunction()

@@ -76,8 +76,7 @@ def test_absent_package_versions_resolve_from_the_selected_bundle() -> None:
 def test_normalized_production_telemetry_does_not_change_eligibility() -> None:
     payload = eligible_payload()
     payload["telemetry"] = {
-        "run_id": "production-run-1",
-        "process_id": "api-process-1",
+        "submission_claim_id": "api-process-1",
         "capture_mode": "disabled",
     }
 
