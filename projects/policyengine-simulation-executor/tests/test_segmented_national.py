@@ -3,17 +3,15 @@
 from types import SimpleNamespace
 
 import pytest
-
 from conftest import NoOpObservabilityRuntime
-
-from src.modal import segmented_national as sn
 from policyengine_simulation_contract.spm import SPMInputError
+
 from policyengine_simulation_executor import simulation_runtime as sr
 from policyengine_simulation_executor import spm as executor_spm
 from policyengine_simulation_executor.national_partition import (
     US_NATIONAL_REGION_GROUPS,
 )
-
+from src.modal import segmented_national as sn
 
 NATIONAL = {"country": "us", "scope": "macro", "time_period": "2026"}
 TEST_RUNTIME = NoOpObservabilityRuntime()
@@ -170,6 +168,7 @@ class FakeModal:
         self._calls = list(calls)
         self.fail_spawn_at = fail_spawn_at
         self.spawned_payloads = []
+        self.spawned_observability_contexts = []
         self.from_name_args = None
         fake = self
 
@@ -181,13 +180,14 @@ class FakeModal:
 
         self.Function = _Function
 
-    def _spawn(self, payload):
+    def _spawn(self, payload, *, observability_context=None):
         if (
             self.fail_spawn_at is not None
             and len(self.spawned_payloads) == self.fail_spawn_at
         ):
             raise ConnectionError("spawn RPC failed")
         self.spawned_payloads.append(payload)
+        self.spawned_observability_contexts.append(observability_context)
         return self._calls[len(self.spawned_payloads) - 1]
 
 
@@ -233,6 +233,13 @@ class TestSegmentedNationalRunner:
         groups = [p["region_group"] for p in fake.spawned_payloads]
         assert groups == [list(g) for g in runner.groups]
         assert all(p["_emit_microdata"] is True for p in fake.spawned_payloads)
+        assert all(
+            context == TEST_RUNTIME.capture_context()
+            for context in fake.spawned_observability_contexts
+        )
+        assert all(
+            "_observability_context" not in payload for payload in fake.spawned_payloads
+        )
         assert result == {"ok": [{"child": i} for i in range(20)]}
 
     def test__collects_out_of_order_completions_in_group_order(

@@ -10,13 +10,14 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from policyengine_simulation_contract.hf_dataset import HuggingFaceDatasetReferenceError
+from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
+
 from fixtures.gateway_endpoints import (
     TEST_APP_RELEASE_BUNDLE,
     TEST_ROUTING_STATE,
     resolve_test_dataset_uri,
 )
-from policyengine_simulation_contract.hf_dataset import HuggingFaceDatasetReferenceError
-from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 
 OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000001"
 
@@ -292,11 +293,10 @@ class TestSubmitSimulationEndpoint:
         generated_observability_id = response.headers[OBSERVABILITY_ID_HEADER]
         assert str(UUID(generated_observability_id)) == generated_observability_id
         assert (
-            mock_modal["func"].last_payload["_observability_context"][
-                "observability_id"
-            ]
+            mock_modal["func"].last_observability_context["observability_id"]
             == generated_observability_id
         )
+        assert "_observability_context" not in mock_modal["func"].last_payload
 
     def test__given_submission_with_include_cliffs__then_forwards_worker_flag(
         self, mock_modal, client: TestClient
@@ -349,7 +349,11 @@ class TestSubmitSimulationEndpoint:
         spawned = mock_modal["func"].last_payload
         assert field not in spawned["_telemetry"]
         assert spawned["_telemetry"]["submission_claim_id"] == "claim-123"
-        assert spawned["_observability_context"]["observability_id"] == OBSERVABILITY_ID
+        assert (
+            mock_modal["func"].last_observability_context["observability_id"]
+            == OBSERVABILITY_ID
+        )
+        assert "_observability_context" not in spawned
 
     def test__given_legacy_process_id__then_maps_submission_claim_id(
         self, mock_modal, client: TestClient
@@ -409,11 +413,10 @@ class TestSubmitSimulationEndpoint:
         assert "observability_id" not in data
         assert response.headers[OBSERVABILITY_ID_HEADER] == OBSERVABILITY_ID
         assert (
-            mock_modal["func"].last_payload["_observability_context"][
-                "observability_id"
-            ]
+            mock_modal["func"].last_observability_context["observability_id"]
             == OBSERVABILITY_ID
         )
+        assert "_observability_context" not in mock_modal["func"].last_payload
         assert "observability_id" not in mock_modal["func"].last_payload["_telemetry"]
 
     def test__given_submission_without_data__then_returns_default_bundle_metadata(

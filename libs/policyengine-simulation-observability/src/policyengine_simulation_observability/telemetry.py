@@ -82,10 +82,11 @@ class TelemetryEnvelope(BaseModel):
         }
 
 
-def remote_context(params: dict[str, Any]) -> dict[str, str] | None:
-    """Return only the correlation fields accepted by the shared runtime."""
+def normalize_observability_context(
+    context: object,
+) -> dict[str, str] | None:
+    """Validate context transported separately from an application payload."""
 
-    context = params.get("_observability_context")
     if not isinstance(context, dict):
         return None
     try:
@@ -98,26 +99,11 @@ def remote_context(params: dict[str, Any]) -> dict[str, str] | None:
     }
 
 
-def apply_remote_context(
-    runtime: Any,
-    params: dict[str, Any],
-) -> dict[str, str] | None:
-    """Validate remote context and apply its diagnostic identifier locally."""
-
-    propagated = remote_context(params)
-    if propagated is not None:
-        observability_id = propagated.get("observability_id")
-        if observability_id is not None:
-            runtime.set_context(observability_id=observability_id)
-    return propagated
-
-
 def split_internal_payload(
     params: dict[str, Any],
 ) -> tuple[dict[str, Any], TelemetryEnvelope | None, dict[str, Any] | None]:
     simulation_params = dict(params)
     raw_telemetry = simulation_params.pop("_telemetry", None)
-    simulation_params.pop("_observability_context", None)
     raw_metadata = simulation_params.pop("_metadata", None)
 
     telemetry = None

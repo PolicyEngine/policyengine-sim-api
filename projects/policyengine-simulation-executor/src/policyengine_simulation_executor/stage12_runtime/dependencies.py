@@ -99,7 +99,11 @@ class ModalChildInvoker:
             function_name,
             environment_name=environment,
         )
-        return function.spawn(simulation, context, observability_context)
+        return function.spawn(
+            simulation,
+            context,
+            observability_context=observability_context,
+        )
 
     def restore(self, invocation_id: str) -> ChildCall:
         from importlib import import_module

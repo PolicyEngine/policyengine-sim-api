@@ -14,7 +14,7 @@ def test_redact_params_strips_signed_urls_and_reform_bodies():
         "reform": {"gov.irs.income.bracket[2].rate": {"2024-01-01": 0.45}},
         "baseline": {"gov.irs.income.bracket[2].rate": {"2023-01-01": 0.43}},
         "_telemetry": {"submission_claim_id": "p-1"},
-        "_observability_context": {"observability_id": "run-123"},
+        "_private_control": {"value": "internal"},
         "_metadata": {"resolved_app_name": "policyengine-simulation-us1-500"},
     }
 
@@ -24,7 +24,7 @@ def test_redact_params_strips_signed_urls_and_reform_bodies():
     assert redacted["country"] == "us"
     assert redacted["scope"] == "macro"
     assert "_telemetry" not in redacted
-    assert "_observability_context" not in redacted
+    assert "_private_control" not in redacted
     assert "_metadata" not in redacted
 
     # Sensitive fields are stripped entirely.
@@ -46,7 +46,7 @@ def test_redact_params_strips_all_underscore_prefixed_keys():
         "scope": "macro",
         "region_group": ["state/hi", "state/ia"],
         "_emit_microdata": True,
-        "_observability_context": {"observability_id": "run-9"},
+        "_private_control": {"value": "internal"},
         "_metadata": {"resolved_app_name": "x"},
     }
 

@@ -7,7 +7,6 @@ Modal configuration that unit tests don't provide).
 
 from __future__ import annotations
 
-
 # Keys in request payloads that must never reach observability backends.
 # ``data`` is a signed GCS/HF URL (may contain embedded short-lived
 # credentials), and the reform/baseline parameter trees are potentially
@@ -24,7 +23,7 @@ def redact_params_for_logging(params) -> dict:
     corresponds to, but strip any field that may contain URLs with signed
     credentials or arbitrarily large user-submitted parameter trees.
 
-    Underscore-prefixed keys (``_telemetry``, ``_observability_context``, ``_metadata``,
+    Underscore-prefixed keys (``_telemetry``, ``_metadata``,
     ``_emit_microdata``, and any future internal flag) are dropped: they are
     internal control/routing fields, and observability backends reject
     attribute keys that start with an underscore — so leaking one crashes

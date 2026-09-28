@@ -93,8 +93,8 @@ async def test_modal_invoker_submits_report_context_and_pending_parent(
 ) -> None:
     calls = []
 
-    async def spawn_aio(*args):
-        calls.append(args)
+    async def spawn_aio(*args, **kwargs):
+        calls.append((args, kwargs))
         return SimpleNamespace(object_id="modal-call-1")
 
     def from_name(*args, **kwargs):
@@ -118,10 +118,12 @@ async def test_modal_invoker_submits_report_context_and_pending_parent(
     assert invocation_id == "modal-call-1"
     assert calls == [
         (
-            {"report": "payload"},
-            {"context": "payload"},
-            {"parent": "payload"},
-            {"traceparent": "trace"},
+            (
+                {"report": "payload"},
+                {"context": "payload"},
+                {"parent": "payload"},
+            ),
+            {"observability_context": {"traceparent": "trace"}},
         )
     ]
 

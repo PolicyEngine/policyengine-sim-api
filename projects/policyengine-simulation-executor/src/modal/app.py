@@ -7,28 +7,31 @@ Each deployment creates a versioned app (e.g., policyengine-simulation-py4-10-0)
 The gateway app (policyengine-simulation-gateway) routes requests to these versioned apps.
 """
 
-import modal
 import os
 import shlex
 from pathlib import Path
 
-from src.modal._image_setup import fetch_artifacts, snapshot_models
-from src.modal.dependency_pins import project_dependency_pin
-from src.modal.logging_redaction import redact_params_for_logging
 from policyengine_simulation_observability.observability import (
     init_process_observability,
     modal_image_environment,
 )
-from policyengine_simulation_observability.telemetry import apply_remote_context
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     BUDGET_WINDOW_STAGES,
     SEGMENTED_NATIONAL_STAGES,
     Stage,
 )
+from policyengine_simulation_observability.telemetry import (
+    normalize_observability_context,
+)
+
+import modal
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_country_model_version,
 )
+from src.modal._image_setup import fetch_artifacts, snapshot_models
+from src.modal.dependency_pins import project_dependency_pin
+from src.modal.logging_redaction import redact_params_for_logging
 
 
 def _version_from_env_or_local_dependency(env_var: str, package: str) -> str:
@@ -321,7 +324,11 @@ def _set_modal_call_attributes(runtime) -> None:
     max_containers=100,
     secrets=[gcp_secret, data_secret, hf_secret],
 )
-def run_simulation(params: dict) -> dict:
+def run_simulation(
+    params: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
     """
     Execute economic simulation.
 
@@ -342,7 +349,7 @@ def run_simulation(params: dict) -> dict:
         "modal_function_name": "run_simulation",
     }
     try:
-        propagated = apply_remote_context(runtime, params)
+        propagated = normalize_observability_context(observability_context)
         with runtime.operation(
             ANNUAL_IMPACT_STAGES.name(Stage.ANNUAL_EXECUTION),
             attributes=redacted_params,
@@ -373,7 +380,11 @@ def run_simulation(params: dict) -> dict:
     max_containers=300,
     secrets=[gcp_secret, data_secret, hf_secret],
 )
-def run_simulation_segment(params: dict) -> dict:
+def run_simulation_segment(
+    params: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
     """One region-group child of a segmented national run.
 
     The same worker as ``run_simulation`` but a separate Modal function so
@@ -390,7 +401,7 @@ def run_simulation_segment(params: dict) -> dict:
         "modal_function_name": "run_simulation_segment",
     }
     try:
-        propagated = apply_remote_context(runtime, params)
+        propagated = normalize_observability_context(observability_context)
         with runtime.operation(
             SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_EXECUTION),
             attributes=redacted_params,
@@ -415,7 +426,11 @@ def run_simulation_segment(params: dict) -> dict:
     max_containers=100,
     secrets=[gcp_secret, data_secret, hf_secret],
 )
-def run_budget_window_batch(params: dict) -> dict:
+def run_budget_window_batch(
+    params: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
     """Execute a multi-year budget-window batch orchestration."""
     runtime = _configure_modal_observability(service_role="budget_window_worker")
 
@@ -426,7 +441,7 @@ def run_budget_window_batch(params: dict) -> dict:
         "modal_function_name": "run_budget_window_batch",
     }
     try:
-        propagated = apply_remote_context(runtime, params)
+        propagated = normalize_observability_context(observability_context)
         with runtime.operation(
             BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_EXECUTION),
             attributes=redacted_params,

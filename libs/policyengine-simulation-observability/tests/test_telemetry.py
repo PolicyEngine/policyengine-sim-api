@@ -1,8 +1,8 @@
 import pytest
+
 from policyengine_simulation_observability.telemetry import (
     TelemetryEnvelope,
-    apply_remote_context,
-    remote_context,
+    normalize_observability_context,
     split_internal_payload,
 )
 
@@ -16,18 +16,12 @@ def test_split_internal_payload__removes_internal_fields():
             "submission_claim_id": "proc-123",
             "capture_mode": "disabled",
         },
-        "_observability_context": {
-            "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
-            "captured_at": "2026-09-22T00:00:00Z",
-            "request_id": "request-123",
-        },
     }
 
     simulation_params, telemetry, metadata = split_internal_payload(payload)
 
     assert "_metadata" not in simulation_params
     assert "_telemetry" not in simulation_params
-    assert "_observability_context" not in simulation_params
     assert simulation_params == {"country": "us", "scope": "macro"}
     assert telemetry == TelemetryEnvelope(
         submission_claim_id="proc-123",
@@ -36,15 +30,13 @@ def test_split_internal_payload__removes_internal_fields():
     assert metadata == {"submission_claim_id": "proc-123"}
 
 
-def test_remote_context_validates_and_serializes_allowlisted_fields():
-    context = remote_context(
+def test_observability_context_validates_and_serializes_allowlisted_fields():
+    context = normalize_observability_context(
         {
-            "_observability_context": {
-                "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
-                "captured_at": "2026-09-22T00:00:00Z",
-                "request_id": "request-123",
-                "job_id": "job-123",
-            }
+            "traceparent": "00-11111111111111111111111111111111-2222222222222222-01",
+            "captured_at": "2026-09-22T00:00:00Z",
+            "request_id": "request-123",
+            "job_id": "job-123",
         }
     )
 
@@ -54,54 +46,26 @@ def test_remote_context_validates_and_serializes_allowlisted_fields():
     assert context["captured_at"] == "2026-09-22 00:00:00+00:00"
 
 
-def test_remote_context_rejects_malformed_or_extra_values():
-    assert remote_context({"_observability_context": {"captured_at": "bad"}}) is None
+def test_observability_context_rejects_malformed_or_extra_values():
+    assert normalize_observability_context({"captured_at": "bad"}) is None
     assert (
-        remote_context(
+        normalize_observability_context(
             {
-                "_observability_context": {
-                    "captured_at": "2026-09-22T00:00:00Z",
-                    "observability_id": "not-a-uuid",
-                }
+                "captured_at": "2026-09-22T00:00:00Z",
+                "observability_id": "not-a-uuid",
             }
         )
         is None
     )
     assert (
-        remote_context(
+        normalize_observability_context(
             {
-                "_observability_context": {
-                    "captured_at": "2026-09-22T00:00:00Z",
-                    "household": {"people": {}},
-                }
+                "captured_at": "2026-09-22T00:00:00Z",
+                "household": {"people": {}},
             }
         )
         is None
     )
-
-
-def test_apply_remote_context_sets_the_runtime_diagnostic_identifier():
-    class Runtime:
-        def __init__(self):
-            self.context = {}
-
-        def set_context(self, **values):
-            self.context.update(values)
-
-    runtime = Runtime()
-    params = {
-        "_observability_context": {
-            "captured_at": "2026-09-22T00:00:00Z",
-            "observability_id": "00000000-0000-4000-8000-000000000001",
-        }
-    }
-
-    propagated = apply_remote_context(runtime, params)
-
-    assert propagated is not None
-    assert runtime.context == {
-        "observability_id": "00000000-0000-4000-8000-000000000001"
-    }
 
 
 def test_split_internal_payload__tolerates_missing_internal_fields():

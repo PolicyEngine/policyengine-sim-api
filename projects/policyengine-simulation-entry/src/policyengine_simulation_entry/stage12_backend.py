@@ -24,7 +24,6 @@ from policyengine_simulation_contract.stage12_manifest import (
     V2ManifestLoader,
     V2WorkerVersion,
 )
-from policyengine_stage12_persistence import Stage12PersistenceStore
 from policyengine_simulation_observability.identifiers import (
     normalize_observability_id,
 )
@@ -33,6 +32,7 @@ from policyengine_simulation_observability.stages import (
     STAGE12_SHADOW_REPORT_STAGES,
     Stage,
 )
+from policyengine_stage12_persistence import Stage12PersistenceStore
 
 from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.stage12_adapter import adapt_annual_comparison
@@ -117,7 +117,7 @@ class ModalReportInvoker:
             report_payload,
             context_payload,
             parent_payload,
-            observability_context,
+            observability_context=observability_context,
         )
         invocation_id = getattr(call, "object_id", None)
         if not isinstance(invocation_id, str) or not invocation_id:

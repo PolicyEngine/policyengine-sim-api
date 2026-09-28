@@ -64,13 +64,18 @@ def _invoke(
             raising=False,
         )
         monkeypatch.setattr(stage12_runtime, "coordinate_report", implementation)
-        return module.coordinate_report({}, {}, {}, _observability_context())
+        return module.coordinate_report(
+            {},
+            {},
+            {},
+            observability_context=_observability_context(),
+        )
 
     monkeypatch.setattr(stage12_runtime, "run_single_simulation", implementation)
     return getattr(module, function_name)(
         {"role": "baseline"},
         {},
-        _observability_context(),
+        observability_context=_observability_context(),
     )
 
 
@@ -173,7 +178,7 @@ def test_stage12_functions_propagate_identifier_and_close_runtime(
     result = _invoke(monkeypatch, module, function_name, lambda *_, **__: {"ok": True})
 
     assert result == {"ok": True}
-    assert runtime.contexts == [{"observability_id": OBSERVABILITY_ID}]
+    assert runtime.contexts == []
     assert runtime.operations[0]["remote_context"]["observability_id"] == (
         OBSERVABILITY_ID
     )

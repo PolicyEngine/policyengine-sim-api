@@ -5,18 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import modal
 from policyengine_observability import ObservabilityRuntime
-
-from src.modal.budget_window_context import (
-    BudgetWindowBatchContext,
-    ChildSimulationHandle,
-    build_child_simulation_request,
-)
-from src.modal.budget_window_results import (
-    build_budget_window_result,
-    extract_annual_impact,
-)
 from policyengine_simulation_contract.budget_window_state import (
     build_batch_status_response,
     create_initial_batch_state,
@@ -33,6 +22,17 @@ from policyengine_simulation_contract.budget_window_state import (
 from policyengine_simulation_contract.spm import spm_error_detail
 from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_observability.stages import BUDGET_WINDOW_STAGES, Stage
+
+import modal
+from src.modal.budget_window_context import (
+    BudgetWindowBatchContext,
+    ChildSimulationHandle,
+    build_child_simulation_request,
+)
+from src.modal.budget_window_results import (
+    build_budget_window_result,
+    extract_annual_impact,
+)
 
 # Polling tuning. The runner busy-loops across child FunctionCall.get(timeout=0)
 # probes; when no child resolved we sleep before the next probe to stop the
@@ -173,14 +173,15 @@ class BudgetWindowBatchRunner:
                     self.context,
                     simulation_year=simulation_year,
                 )
-            child_request.payload["_observability_context"] = (
-                self.runtime.capture_context()
-            )
+            observability_context = self.runtime.capture_context()
             with self.runtime.span(
                 BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_CHILD_SPAWN),
                 attributes={"simulation_year": simulation_year},
             ):
-                call = self.child_func.spawn(child_request.payload)
+                call = self.child_func.spawn(
+                    child_request.payload,
+                    observability_context=observability_context,
+                )
             self.child_handles[simulation_year] = ChildSimulationHandle(
                 simulation_year=simulation_year,
                 job_id=call.object_id,

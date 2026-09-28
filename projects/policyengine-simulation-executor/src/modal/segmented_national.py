@@ -24,19 +24,11 @@ import logging
 import time
 from typing import Any
 
-import modal
 from policyengine_observability import ObservabilityRuntime
-
-from policyengine_simulation_executor.national_partition import (
-    national_region_groups,
-)
-from policyengine_simulation_executor.segmented_national_reduce import (
-    build_national_output,
-)
 from policyengine_simulation_contract.spm import (
-    spm_error_detail,
     SPMInputError,
     combine_spm_results,
+    spm_error_detail,
 )
 from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_observability.stages import (
@@ -44,6 +36,14 @@ from policyengine_simulation_observability.stages import (
     Stage,
 )
 from policyengine_simulation_observability.telemetry import split_internal_payload
+
+import modal
+from policyengine_simulation_executor.national_partition import (
+    national_region_groups,
+)
+from policyengine_simulation_executor.segmented_national_reduce import (
+    build_national_output,
+)
 from src.modal.fanout import build_child_payload, next_backoff
 
 logger = logging.getLogger(__name__)
@@ -214,14 +214,17 @@ class SegmentedNationalRunner:
         try:
             for group in self.groups:
                 payload = build_group_child_payload(self.params, group)
-                payload["_observability_context"] = self.runtime.capture_context()
+                observability_context = self.runtime.capture_context()
                 with self.runtime.span(
                     SEGMENTED_NATIONAL_STAGES.name(
                         Stage.SEGMENTED_NATIONAL_CHILD_SPAWN
                     ),
                     attributes={"region_group": "+".join(group)},
                 ):
-                    call = self.child_func.spawn(payload)
+                    call = self.child_func.spawn(
+                        payload,
+                        observability_context=observability_context,
+                    )
                 handles.append((group, call))
         except Exception:
             # Children spawned before the failure must not run for a job

@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from collections import deque
 
-import pytest
-
-import src.modal.budget_window_batch as batch_module
-import src.modal.budget_window_scheduler as scheduler_module
 import policyengine_simulation_contract.budget_window_state as state_module
-from src.modal.budget_window_batch import run_budget_window_batch_impl
+import pytest
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     PolicyEngineBundle,
 )
+
+import src.modal.budget_window_batch as batch_module
+import src.modal.budget_window_scheduler as scheduler_module
+from src.modal.budget_window_batch import run_budget_window_batch_impl
 
 
 class SequencedCall:
@@ -69,10 +69,17 @@ class MockRunSimulationFunction:
         self.results_by_year = results_by_year
         self.call_registry = call_registry
         self.spawned_years: list[str] = []
+        self.spawned_observability_contexts: list[dict | None] = []
 
-    def spawn(self, payload: dict) -> SequencedCall:
+    def spawn(
+        self,
+        payload: dict,
+        *,
+        observability_context: dict | None = None,
+    ) -> SequencedCall:
         year = payload["time_period"]
         self.spawned_years.append(year)
+        self.spawned_observability_contexts.append(observability_context)
         call = SequencedCall(
             object_id=f"child-{year}",
             events=list(self.results_by_year[year]),

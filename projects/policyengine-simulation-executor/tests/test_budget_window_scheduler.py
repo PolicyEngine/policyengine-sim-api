@@ -11,19 +11,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import policyengine_simulation_contract.budget_window_state as state_module
 import pytest
 from fastapi.testclient import TestClient
-
-import src.modal.budget_window_batch as batch_module
-import src.modal.budget_window_scheduler as scheduler_module
-import policyengine_simulation_contract.budget_window_state as state_module
 from policyengine_simulation_contract.budget_window_state import (
     BUDGET_WINDOW_JOB_DICT_NAME,
     BUDGET_WINDOW_JOB_SEED_DICT_NAME,
 )
 from policyengine_simulation_contract.spm import SPMInputError, SPMSelection
-from policyengine_simulation_gateway.testing import create_gateway_app
 from policyengine_simulation_gateway import endpoints
+from policyengine_simulation_gateway.testing import create_gateway_app
+
+import src.modal.budget_window_batch as batch_module
+import src.modal.budget_window_scheduler as scheduler_module
 
 SPM_SELECTION = SPMSelection(
     forecast_content_sha256="a" * 64,
@@ -60,6 +60,7 @@ class SemiIntegrationRuntime:
     dicts: dict[str, dict] = field(default_factory=dict)
     calls: dict[str, object] = field(default_factory=dict)
     child_payloads: list[dict] = field(default_factory=list)
+    child_observability_contexts: list[dict | None] = field(default_factory=list)
     current_parent_call_id: str | None = None
     next_parent_call_id: str = "parent-batch-123"
     active_child_calls: set[str] = field(default_factory=set)
@@ -168,7 +169,7 @@ class MockFunction:
         self.app_name = app_name
         self.func_name = func_name
 
-    def spawn(self, payload: dict):
+    def spawn(self, payload: dict, *, observability_context=None):
         if self.func_name == "run_budget_window_batch":
             call = MockParentBatchCall(self.runtime, payload=payload)
             self.runtime.calls[call.object_id] = call
@@ -176,6 +177,7 @@ class MockFunction:
 
         simulation_year = payload["time_period"]
         self.runtime.child_payloads.append(payload)
+        self.runtime.child_observability_contexts.append(observability_context)
         call = MockChildCall(
             self.runtime,
             object_id=f"child-{simulation_year}",

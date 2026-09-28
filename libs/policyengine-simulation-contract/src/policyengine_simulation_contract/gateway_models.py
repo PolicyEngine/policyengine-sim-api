@@ -34,9 +34,7 @@ from policyengine_simulation_observability.telemetry import TelemetryEnvelope
 MAX_GATEWAY_REQUEST_BYTES = 262_144
 
 
-INTERNAL_PASSTHROUGH_FIELDS = frozenset(
-    {"_metadata", "_observability_context", "_runtime_bundle"}
-)
+INTERNAL_PASSTHROUGH_FIELDS = frozenset({"_metadata", "_runtime_bundle"})
 
 
 class PolicyParameterChanges(RootModel[JsonObject]):

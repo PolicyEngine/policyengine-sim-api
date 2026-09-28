@@ -24,7 +24,9 @@ from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
     Stage,
 )
-from policyengine_simulation_observability.telemetry import apply_remote_context
+from policyengine_simulation_observability.telemetry import (
+    normalize_observability_context,
+)
 
 import modal
 from policyengine_simulation_executor.stage12_bundle import (
@@ -193,6 +195,7 @@ def validate_worker_uk() -> dict:
 def run_single_simulation_us(
     payload: dict,
     context: dict,
+    *,
     observability_context: dict | None = None,
 ) -> dict:
     from policyengine_simulation_executor.stage12_runtime import (
@@ -206,9 +209,7 @@ def run_single_simulation_us(
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
     try:
-        propagated = apply_remote_context(
-            runtime, {"_observability_context": observability_context}
-        )
+        propagated = normalize_observability_context(observability_context)
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
@@ -239,6 +240,7 @@ def run_single_simulation_us(
 def run_single_simulation_uk(
     payload: dict,
     context: dict,
+    *,
     observability_context: dict | None = None,
 ) -> dict:
     from policyengine_simulation_executor.stage12_runtime import (
@@ -252,9 +254,7 @@ def run_single_simulation_uk(
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
     try:
-        propagated = apply_remote_context(
-            runtime, {"_observability_context": observability_context}
-        )
+        propagated = normalize_observability_context(observability_context)
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
@@ -288,6 +288,7 @@ def coordinate_report(
     payload: dict,
     context: dict,
     parent: dict,
+    *,
     observability_context: dict | None = None,
 ) -> dict:
     from policyengine_simulation_executor.stage12_runtime import (
@@ -309,9 +310,7 @@ def coordinate_report(
         else STAGE12_CANONICAL_REPORT_STAGES
     )
     try:
-        propagated = apply_remote_context(
-            runtime, {"_observability_context": observability_context}
-        )
+        propagated = normalize_observability_context(observability_context)
         with runtime.operation(
             stage_plan.name(Stage.STAGE12_COORDINATOR_EXECUTION),
             attributes={

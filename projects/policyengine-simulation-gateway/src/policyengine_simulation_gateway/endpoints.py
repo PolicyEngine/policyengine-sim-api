@@ -4,12 +4,11 @@ FastAPI endpoints for the Gateway API.
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, TypedDict
+from typing import TypedDict
 
 import modal
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from policyengine_observability import ObservabilityRuntime
-
 from policyengine_simulation_contract.budget_window_state import (
     build_batch_status_response,
     create_initial_batch_state,
@@ -18,19 +17,7 @@ from policyengine_simulation_contract.budget_window_state import (
     put_batch_job_seed,
     put_batch_job_state,
 )
-from policyengine_simulation_gateway.auth import require_auth
-from policyengine_simulation_contract.spm import (
-    SPMCapability,
-    SPMInputError,
-    spm_error_detail,
-    resolve_spm_selection,
-)
-from policyengine_simulation_observability.errors import log_and_redact_exception
-from policyengine_simulation_observability.identifiers import (
-    OBSERVABILITY_ID_HEADER,
-    normalize_observability_id,
-    resolve_observability_id,
-)
+from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
@@ -45,19 +32,32 @@ from policyengine_simulation_contract.gateway_models import (
     VersionMap,
     VersionsResponse,
 )
-from policyengine_simulation_gateway.responses import (
-    batch_status_response,
-    failed_job_response,
-    running_job_response,
-)
-from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 from policyengine_simulation_contract.hf_dataset import (
     HuggingFaceDatasetReferenceError,
+)
+from policyengine_simulation_contract.spm import (
+    SPMCapability,
+    SPMInputError,
+    resolve_spm_selection,
+    spm_error_detail,
+)
+from policyengine_simulation_observability.errors import log_and_redact_exception
+from policyengine_simulation_observability.identifiers import (
+    OBSERVABILITY_ID_HEADER,
+    normalize_observability_id,
+    resolve_observability_id,
 )
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     BUDGET_WINDOW_STAGES,
     Stage,
+)
+
+from policyengine_simulation_gateway.auth import require_auth
+from policyengine_simulation_gateway.responses import (
+    batch_status_response,
+    failed_job_response,
+    running_job_response,
 )
 
 logger = logging.getLogger(__name__)
@@ -642,8 +642,8 @@ def _build_budget_window_parent_payload(
 
 def resolve_route(
     country: str,
-    version: Optional[str],
-    policyengine_version: Optional[str] = None,
+    version: str | None,
+    policyengine_version: str | None = None,
 ) -> RouteResolution:
     """Resolve a country/package or policyengine.py version to a Modal app."""
     country_lower = country.lower()
@@ -666,7 +666,7 @@ def resolve_route(
     )
 
 
-def get_app_name(country: str, version: Optional[str]) -> tuple[str, str]:
+def get_app_name(country: str, version: str | None) -> tuple[str, str]:
     """Backward-compatible helper for tests and API v1 health checks."""
     resolution = resolve_route(country, version)
     return resolution.app_name, resolution.response_version
@@ -744,7 +744,7 @@ async def submit_simulation(
 
     if request.spm is not None:
         payload["spm"] = request.spm.model_dump(mode="json")
-    payload["_observability_context"] = runtime.capture_context()
+    observability_context = runtime.capture_context()
 
     logger.info(
         "Routing %s:%s to app %s (observability_id=%s)",
@@ -759,7 +759,10 @@ async def submit_simulation(
     # so both live under the spawn segment to time the real network cost.
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
         sim_func = modal.Function.from_name(route.app_name, "run_simulation")
-        call = sim_func.spawn(payload)
+        call = sim_func.spawn(
+            payload,
+            observability_context=observability_context,
+        )
 
     runtime.set_context(job_id=call.object_id)
 
@@ -843,10 +846,13 @@ async def submit_budget_window_batch(
         )
 
     # Lazy handle + spawn together: the RPC cost lands in ``spawn``.
-    payload["_observability_context"] = runtime.capture_context()
+    observability_context = runtime.capture_context()
     with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
         batch_func = modal.Function.from_name(route.app_name, "run_budget_window_batch")
-        call = batch_func.spawn(payload)
+        call = batch_func.spawn(
+            payload,
+            observability_context=observability_context,
+        )
     batch_job_id = call.object_id
     runtime.set_context(batch_job_id=batch_job_id)
 
