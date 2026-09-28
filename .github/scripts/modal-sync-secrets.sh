@@ -1,8 +1,7 @@
 #!/bin/bash
 # Sync secrets from GitHub to Modal environment
 # Usage: ./modal-sync-secrets.sh <modal-environment> <gh-environment>
-# Required env vars: HF_TOKEN
-# Optional env vars: GCP_CREDENTIALS_JSON
+# Required env vars: HF_TOKEN, GCP_CREDENTIALS_JSON
 
 set -euo pipefail
 
@@ -21,6 +20,12 @@ echo "Syncing secrets to Modal environment: $MODAL_ENV"
 if [ -z "${HF_TOKEN:-}" ]; then
   echo "HF_TOKEN is required to sync the Hugging Face dataset secret." >&2
   echo "Add HF_TOKEN to the GitHub environment secrets for '$GH_ENV'." >&2
+  exit 1
+fi
+
+if [ -z "${GCP_CREDENTIALS_JSON:-}" ]; then
+  echo "GCP_CREDENTIALS_JSON is required to sync the shared artifact-store credential." >&2
+  echo "Add GCP_CREDENTIALS_JSON to the repository secrets." >&2
   exit 1
 fi
 
@@ -54,13 +59,14 @@ if truthy "${GATEWAY_AUTH_REQUIRED:-}" && [ ${#missing[@]} -gt 0 ]; then
   exit 1
 fi
 
-# Sync GCP credentials if provided
-if [ -n "${GCP_CREDENTIALS_JSON:-}" ]; then
-  uv run modal secret create gcp-credentials \
-    "GOOGLE_APPLICATION_CREDENTIALS_JSON=$GCP_CREDENTIALS_JSON" \
-    --env="$MODAL_ENV" \
-    --force || true
-fi
+# The legacy executor explicitly reads this shared secret from Modal's main
+# environment in both staging and production. Synchronize that exact resource
+# during deployment and stop immediately if the update fails; runtime storage
+# and observability error handling remain independent of this deployment step.
+uv run modal secret create gcp-credentials \
+  "GOOGLE_APPLICATION_CREDENTIALS_JSON=$GCP_CREDENTIALS_JSON" \
+  --env="main" \
+  --force
 
 # Sync Hugging Face token for private certified datasets used during bundle
 # image build and worker runtime.
