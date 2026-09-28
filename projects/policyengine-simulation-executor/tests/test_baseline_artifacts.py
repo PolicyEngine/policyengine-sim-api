@@ -12,7 +12,6 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-
 from policyengine.core import Simulation
 from pydantic import PrivateAttr
 
@@ -458,7 +457,6 @@ class TestIdentityErrorContract:
 def _year_data(person_columns=None):
     """Minimal real USYearData — six entities, weights included."""
     from microdf import MicroDataFrame
-
     from policyengine.tax_benefit_models.us.datasets import USYearData
 
     person = {
@@ -648,22 +646,13 @@ def _spm_receipt(selection=None, *, year="2026"):
     }
 
 
-def _installed_wrapper_supports_spm() -> bool:
-    return "spm" in Simulation.model_fields and hasattr(Simulation, "spm_provenance")
-
-
-_INSTALLED_WRAPPER_SUPPORTS_SPM = _installed_wrapper_supports_spm()
-
-
 class SPMWrapperSimulation(Simulation):
-    """Test double for the canonical wrapper's SPM surface.
+    """Controllable test double for PolicyEngine 6's SPM surface.
 
     The wrapper the canonical bundle installs adds an ``spm`` field, an
     ``spm_config`` holding the selection an artifact was built under, and an
     ``spm_provenance()`` calculation receipt; it restores that metadata on a
-    load or a cache hit. The ``policyengine`` this project pins has none of
-    it, which is why ``ensure()``'s receipt validation was reachable only
-    from the SPM_NATIVE_SMOKE_SOURCE-gated tests.
+    load or a cache hit.
 
     This double reproduces that surface's *shape and restore timing*, which
     is all the guard depends on. It is deliberately more permissive than the
@@ -990,14 +979,6 @@ class TestEnsureValidatesSPMReceipts:
         assert sim.spm_config == other
         assert cached.spm_config == SPM_SELECTION
 
-    @pytest.mark.skipif(
-        not _INSTALLED_WRAPPER_SUPPORTS_SPM,
-        reason=(
-            "The pinned policyengine is pre-canonical; this checks the double "
-            "above against the real surface as soon as an SPM-capable wrapper "
-            "is pinned, at which point the double should be retired for it."
-        ),
-    )
     def test_the_double_matches_the_installed_wrapper_surface(self):
         from policyengine.core import Simulation
 
