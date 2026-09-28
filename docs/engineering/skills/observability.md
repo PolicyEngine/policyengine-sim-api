@@ -15,7 +15,7 @@ Use each identifier for its defined scope:
 | `batch_job_id` | One budget window Modal invocation | Modal | Yes, as functional batch state |
 | `evaluation_id` | One Stage 12 report | Stage 12 report construction | Yes, as functional report state |
 | `simulation_execution_id` | One Stage 12 baseline or reform simulation | Stage 12 coordinator | Yes, as functional simulation state |
-| `submission_claim_id` | Caller supplied submission metadata used during the current API transition | API v1 | Only where the simulation request is stored |
+| `submission_claim_id` | One API v1 attempt to acquire ownership of a simulation submission | API v1 | Only where the simulation request is stored |
 
 `observability_id` is a canonical UUID string and has diagnostic meaning only.
 Do not use it for idempotency, authorization, database identity, routing, or

@@ -17,7 +17,9 @@ The deployment workflow passes these settings from GitHub environment or
 repository variables. This library contains no Google Cloud project, log name,
 collector URL, service account, or identity provider default.
 
-`X-PolicyEngine-Request-Id`, W3C trace headers, and the bounded internal
-`_observability_context` object provide correlation across HTTP and Modal job
-dispatch. Request bodies, reform definitions, household data, credentials, and
-person-level values are excluded from telemetry.
+`X-PolicyEngine-Request-Id`, `X-PolicyEngine-Observability-Id`, W3C trace
+headers, and the bounded `observability_context` Modal function argument provide
+correlation across HTTP and asynchronous dispatch. The context argument is
+separate from the calculation payload. Request bodies, reform definitions,
+household data, credentials, and person-level values are excluded from
+telemetry.
