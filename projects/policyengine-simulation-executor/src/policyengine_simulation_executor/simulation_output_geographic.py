@@ -59,7 +59,7 @@ def _complete_uk_geography_output(
     """Require every UK geography record to contain lookup-owned metadata."""
 
     output = build_geographic_impact_output(value)
-    if output is None:
+    if output is None or not output.root:
         raise ValueError("UK geography output did not contain result records")
     for record in output.root:
         record_values = record.model_dump(mode="python")

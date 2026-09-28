@@ -83,6 +83,15 @@ def test_complete_uk_geography_output_accepts_lookup_metadata() -> None:
     assert record["y"] == -40
 
 
+def test_complete_uk_geography_output_rejects_empty_result() -> None:
+    with pytest.raises(ValueError, match="did not contain result records"):
+        simulation_output_geographic._complete_uk_geography_output(
+            [],
+            code_field="constituency_code",
+            name_field="constituency_name",
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
