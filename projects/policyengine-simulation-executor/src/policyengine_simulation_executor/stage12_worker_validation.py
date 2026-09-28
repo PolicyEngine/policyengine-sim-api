@@ -55,8 +55,10 @@ def _check_dataset_access(path: str, expected_sha256: str) -> None:
 
 def _run_non_serving_calculation(country: CountryId) -> None:
     country_module = import_module(f"policyengine.tax_benefit_models.{country}")
+    household = {"county_fips": "06037"} if country == "us" else None
     result = country_module.calculate_household(
         people=[{"age": 40, "employment_income": 50_000}],
+        **({"household": household} if household is not None else {}),
         year=2026,
         extra_variables=["household_net_income"],
     )

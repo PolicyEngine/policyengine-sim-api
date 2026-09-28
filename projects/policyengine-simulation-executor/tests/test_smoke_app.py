@@ -18,15 +18,15 @@ def summarize_bundle_status(monkeypatch):
 
 def _passing_status() -> dict:
     package_versions = {
-        "policyengine": "6.1.2",
-        "policyengine-core": "3.32.5",
-        "policyengine-us": "2.2.1",
-        "policyengine-uk": "2.90.2",
-        "spm-calculator": "1.0.0",
+        "policyengine": "wrapper-test-version",
+        "policyengine-core": "core-test-version",
+        "policyengine-us": "us-test-version",
+        "policyengine-uk": "uk-test-version",
+        "spm-calculator": "spm-test-version",
     }
     return {
         "matched": True,
-        "bundle_version": "6.1.2",
+        "bundle_version": "bundle-test-version",
         "packages": [
             {
                 "package": package,
@@ -39,14 +39,14 @@ def _passing_status() -> dict:
             {
                 "country": "us",
                 "dataset": "populace_us_2024",
-                "expected_version": "populace-us-2024-spm-20260915",
+                "expected_version": "us-data-test-version",
                 "expected_sha256": "a" * 64,
                 "status": "ok",
             },
             {
                 "country": "uk",
                 "dataset": "enhanced_frs_2024_25",
-                "expected_version": "policyengine-uk-data-1.56.16",
+                "expected_version": "uk-data-test-version",
                 "expected_sha256": "b" * 64,
                 "status": "ok",
             },
@@ -58,9 +58,9 @@ def _passing_status() -> dict:
 def test_bundle_status_summary_requires_complete_v6_runtime(summarize_bundle_status):
     summary = summarize_bundle_status(_passing_status())
 
-    assert summary["bundle_version"] == "6.1.2"
-    assert summary["packages"]["spm-calculator"] == "1.0.0"
-    assert summary["datasets"]["uk"]["version"] == "policyengine-uk-data-1.56.16"
+    assert summary["bundle_version"] == "bundle-test-version"
+    assert summary["packages"]["spm-calculator"] == "spm-test-version"
+    assert summary["datasets"]["uk"]["version"] == "uk-data-test-version"
 
 
 @pytest.mark.parametrize(

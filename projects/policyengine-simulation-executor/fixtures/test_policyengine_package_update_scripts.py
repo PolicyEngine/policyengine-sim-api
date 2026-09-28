@@ -104,19 +104,62 @@ exit 0
     )
 
 
-def install_fake_gh(fake_bin: Path, *, log: Path, open_pr: str = "") -> None:
+def install_fake_gh(
+    fake_bin: Path,
+    *,
+    log: Path,
+    open_pr: str = "",
+    open_issue: str = "679",
+) -> None:
     write_executable(
         fake_bin / "gh",
         f"""#!/usr/bin/env bash
 set -euo pipefail
 printf 'gh %s\\n' "$*" >> "{log}"
 
-if [[ "$1" == "pr" && "$2" == "list" ]]; then
+if [[ "$1" == "api" ]]; then
+  if [[ -n "{open_issue}" ]]; then
+    printf '[[{{"number":%s,"title":"Update policyengine to 4.1.0"}}]]\\n' "{open_issue}"
+  else
+    printf '[[]]\\n'
+  fi
+  exit 0
+fi
+
+if [[ "$1" == "issue" && "$2" == "view" ]]; then
+  printf '{{"number":%s,"state":"OPEN","title":"Update policyengine to 4.1.0"}}\\n' "${{3}}"
+  exit 0
+fi
+
+if [[ "$1" == "issue" && "$2" == "create" ]]; then
+  printf 'https://github.com/PolicyEngine/policyengine-sim-api/issues/680\\n'
+  exit 0
+fi
+
+if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"number,state"* ]]; then
   printf '%s\\n' "{open_pr}"
   exit 0
 fi
 
+if [[ "$1" == "pr" && "$2" == "view" ]]; then
+  printf '{{"isDraft":true,"headRepository":{{"nameWithOwner":"PolicyEngine/policyengine-sim-api"}},"headRepositoryOwner":{{"login":"PolicyEngine"}}}}\\n'
+  exit 0
+fi
+
 if [[ "$1" == "pr" && "$2" == "create" ]]; then
+  body_file=""
+  previous=""
+  for argument in "$@"; do
+    if [[ "$previous" == "--body-file" ]]; then
+      body_file="$argument"
+      break
+    fi
+    previous="$argument"
+  done
+  if [[ -n "$body_file" ]]; then
+    printf 'pr-body-first-line %s\\n' "$(head -n 1 "$body_file")" >> "{log}"
+  fi
+  printf 'https://github.com/PolicyEngine/policyengine-sim-api/pull/703\\n'
   exit 0
 fi
 

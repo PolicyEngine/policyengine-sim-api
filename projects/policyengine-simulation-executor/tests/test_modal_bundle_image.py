@@ -7,14 +7,32 @@ from pathlib import Path
 import pytest
 
 from fixtures.fake_modal import install_fake_modal
+from policyengine_simulation_executor.release_bundle import (
+    get_bundled_package_version,
+)
+
+
+POLICYENGINE_BUNDLE_PACKAGES = (
+    "policyengine",
+    "policyengine-core",
+    "policyengine-uk",
+    "policyengine-us",
+    "spm-calculator",
+)
 
 
 def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     install_fake_modal(monkeypatch)
-    monkeypatch.setenv("POLICYENGINE_VERSION", "6.1.2")
-    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.32.5")
-    monkeypatch.setenv("POLICYENGINE_US_VERSION", "2.2.1")
-    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.2")
+    bundle_versions = {
+        package: get_bundled_package_version(package)
+        for package in POLICYENGINE_BUNDLE_PACKAGES
+    }
+    monkeypatch.setenv("POLICYENGINE_VERSION", bundle_versions["policyengine"])
+    monkeypatch.setenv(
+        "POLICYENGINE_CORE_VERSION", bundle_versions["policyengine-core"]
+    )
+    monkeypatch.setenv("POLICYENGINE_US_VERSION", bundle_versions["policyengine-us"])
+    monkeypatch.setenv("POLICYENGINE_UK_VERSION", bundle_versions["policyengine-uk"])
     monkeypatch.setenv("OBSERVABILITY_SERVICE_NAMESPACE", "policyengine.api-v1")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.test")
     sys.modules.pop("src.modal.app", None)
@@ -27,7 +45,8 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     assert command_calls
     command = command_calls[0][1][0]
     assert command.startswith(
-        "policyengine bundle install 6.1.2 --no-packages --country us --country uk"
+        "policyengine bundle install "
+        f"{bundle_versions['policyengine']} --no-packages --country us --country uk"
     )
     assert "PIP_CONSTRAINT" not in command
     assert "uvx" not in command
@@ -39,11 +58,8 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
         (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
     )
     expected_models = [
-        "policyengine==6.1.2",
-        "policyengine-core==3.32.5",
-        "policyengine-uk==2.90.2",
-        "policyengine-us==2.2.1",
-        "spm-calculator==1.0.0",
+        f"{package}=={bundle_versions[package]}"
+        for package in POLICYENGINE_BUNDLE_PACKAGES
     ]
     assert project["dependency-groups"]["policyengine-models"] == expected_models
     assert all(item in project["project"]["dependencies"] for item in expected_models)

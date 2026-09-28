@@ -32,12 +32,109 @@ PROJECT_DIR="${PROJECT_DIR:-projects/policyengine-simulation-executor}"
 PROJECT_PATH="${ROOT_DIR}/${PROJECT_DIR}"
 PYPROJECT="${PROJECT_PATH}/pyproject.toml"
 LOCKFILE="${PROJECT_PATH}/uv.lock"
+REPOSITORY="${GITHUB_REPOSITORY:-PolicyEngine/policyengine-sim-api}"
+ISSUE_NUMBER=""
+
+ensure_update_issue() {
+  local issue_details
+  local issue_title
+  local issue_url
+
+  issue_title="Update policyengine to ${LATEST}"
+  ISSUE_NUMBER=$(
+    gh api --paginate --slurp \
+      "repos/${REPOSITORY}/issues?state=open&per_page=100" \
+      | python3 -c '
+import json
+import sys
+
+title = sys.argv[1]
+pages = json.load(sys.stdin)
+matches = sorted(
+    item["number"]
+    for page in pages
+    for item in page
+    if "pull_request" not in item and item.get("title") == title
+)
+if matches:
+    print(matches[0])
+' "$issue_title"
+  )
+
+  if [[ -z "$ISSUE_NUMBER" ]]; then
+    issue_url=$(gh issue create \
+      --repo "$REPOSITORY" \
+      --title "$issue_title" \
+      --body "Track the automated simulation runtime update to policyengine ${LATEST}.")
+    ISSUE_NUMBER="${issue_url##*/}"
+  fi
+
+  if [[ ! "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: Could not resolve an issue for policyengine ${LATEST}." >&2
+    exit 1
+  fi
+
+  issue_details=$(gh issue view "$ISSUE_NUMBER" \
+    --repo "$REPOSITORY" \
+    --json number,state,title)
+  printf '%s' "$issue_details" | python3 -c '
+import json
+import sys
+
+expected_number = int(sys.argv[1])
+expected_title = sys.argv[2]
+issue = json.load(sys.stdin)
+if issue.get("number") != expected_number:
+    raise SystemExit("Resolved update issue has an unexpected number")
+if issue.get("state") != "OPEN":
+    raise SystemExit("Resolved update issue is not open")
+if issue.get("title") != expected_title:
+    raise SystemExit("Resolved update issue has an unexpected title")
+' "$ISSUE_NUMBER" "$issue_title"
+}
+
+verify_update_pr() {
+  local pr_details
+
+  pr_details=$(gh pr view "$BRANCH" \
+    --repo "$REPOSITORY" \
+    --json isDraft,headRepositoryOwner,headRepository)
+  printf '%s' "$pr_details" | python3 -c '
+import json
+import sys
+
+expected_repository = sys.argv[1]
+pr = json.load(sys.stdin)
+if pr.get("isDraft") is not True:
+    raise SystemExit("Automated policyengine update PR is not a draft")
+head_repository = pr.get("headRepository") or {}
+if head_repository.get("nameWithOwner") != expected_repository:
+    raise SystemExit("Automated policyengine update PR is not from the canonical repository")
+' "$REPOSITORY"
+}
+
+create_update_pr() {
+  local pr_body_file
+
+  ensure_update_issue
+  pr_body_file="$(create_pr_body_file)"
+  gh pr create \
+    --draft \
+    --repo "$REPOSITORY" \
+    --base main \
+    --head "$BRANCH" \
+    --title "chore(deps): update policyengine to ${LATEST}" \
+    --body-file "$pr_body_file"
+  verify_update_pr
+}
 
 create_pr_body_file() {
   local pr_body_file
 
   pr_body_file="$(mktemp)"
   {
+    echo "Fixes #${ISSUE_NUMBER}"
+    echo
     echo "## Summary"
     echo
     echo "Update policyengine.py from ${CURRENT} to ${LATEST} in the simulation API runtime."
@@ -120,11 +217,10 @@ if [[ "$DRY_RUN" == "1" ]]; then
   exit 0
 fi
 
-EXISTING_PR=$(gh pr list \
-  --head "$BRANCH" \
-  --state open \
-  --json number \
-  --jq '.[0].number' 2>/dev/null || true)
+EXISTING_PR=$(gh pr view "$BRANCH" \
+  --repo "$REPOSITORY" \
+  --json number,state \
+  --jq 'select(.state == "OPEN") | .number' 2>/dev/null || true)
 if [[ -n "$EXISTING_PR" ]]; then
   echo "PR #${EXISTING_PR} already exists for ${BRANCH}. Skipping."
   exit 0
@@ -132,12 +228,7 @@ fi
 
 if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
   echo "Remote branch '${BRANCH}' already exists without an open PR. Creating PR."
-  PR_BODY_FILE="$(create_pr_body_file)"
-  gh pr create \
-    --base main \
-    --head "$BRANCH" \
-    --title "chore(deps): update policyengine to ${LATEST}" \
-    --body-file "$PR_BODY_FILE"
+  create_update_pr
   echo "PR created for existing branch ${BRANCH}"
   exit 0
 fi
@@ -341,15 +432,10 @@ if git diff --quiet -- "$PYPROJECT" "$LOCKFILE"; then
   exit 0
 fi
 
-PR_BODY_FILE="$(create_pr_body_file)"
-
 git add "$PYPROJECT" "$LOCKFILE"
 git commit -m "chore(deps): update policyengine to ${LATEST}"
 git push -u origin "$BRANCH"
 
-gh pr create \
-  --base main \
-  --title "chore(deps): update policyengine to ${LATEST}" \
-  --body-file "$PR_BODY_FILE"
+create_update_pr
 
 echo "PR created for policyengine ${CURRENT} -> ${LATEST}"

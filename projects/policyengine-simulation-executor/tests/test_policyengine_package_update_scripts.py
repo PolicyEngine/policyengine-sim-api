@@ -28,6 +28,17 @@ def test_update_policyengine_package_script_has_valid_bash_syntax() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_update_policyengine_workflow_requests_issue_and_pr_permissions() -> None:
+    workflow = (
+        SCRIPT.parent.parent / "workflows" / "check-policyengine-updates.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "issues: write" in workflow
+    assert "permission-contents: write" in workflow
+    assert "permission-issues: write" in workflow
+    assert "permission-pull-requests: write" in workflow
+
+
 def test_update_policyengine_package_rejects_unknown_argument(
     fake_bin: Path, fake_repo: Path, tmp_path: Path
 ) -> None:
@@ -101,7 +112,9 @@ def test_update_policyengine_package_skips_when_open_pr_exists(
 
     assert result.returncode == 0, result.stderr
     assert "PR #123 already exists for auto/update-policyengine-4.1.0" in result.stdout
-    assert "pr create" not in gh_log.read_text(encoding="utf-8")
+    gh_calls = gh_log.read_text(encoding="utf-8")
+    assert "pr create" not in gh_calls
+    assert "issue create" not in gh_calls
 
 
 def test_update_policyengine_package_opens_pr_for_existing_branch_without_open_pr(
@@ -124,9 +137,10 @@ def test_update_policyengine_package_opens_pr_for_existing_branch_without_open_p
     assert result.returncode == 0, result.stderr
     assert "already exists without an open PR. Creating PR." in result.stdout
     gh_calls = gh_log.read_text(encoding="utf-8")
-    assert "pr list" in gh_calls
-    assert "pr create" in gh_calls
+    assert "pr view" in gh_calls
+    assert "pr create --draft --repo PolicyEngine/policyengine-sim-api" in gh_calls
     assert "--head auto/update-policyengine-4.1.0" in gh_calls
+    assert "pr-body-first-line Fixes #679" in gh_calls
 
 
 def test_update_policyengine_package_updates_py_and_bundled_runtime_pins(
@@ -169,6 +183,29 @@ def test_update_policyengine_package_updates_py_and_bundled_runtime_pins(
         encoding="utf-8"
     )
     assert "pr create" in gh_log.read_text(encoding="utf-8")
+
+
+def test_update_policyengine_package_creates_and_links_missing_issue(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    git_log = tmp_path / "git.log"
+    gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
+    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_gh(fake_bin, log=gh_log, open_issue="")
+    install_fake_uv(fake_bin, log=uv_log)
+
+    result = run_updater(
+        env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"),
+    )
+
+    assert result.returncode == 0, result.stderr
+    gh_calls = gh_log.read_text(encoding="utf-8")
+    assert "api --paginate --slurp" in gh_calls
+    assert "issue create --repo PolicyEngine/policyengine-sim-api" in gh_calls
+    assert "issue view 680 --repo PolicyEngine/policyengine-sim-api" in gh_calls
+    assert "pr-body-first-line Fixes #680" in gh_calls
+    assert "pr create --draft --repo PolicyEngine/policyengine-sim-api" in gh_calls
 
 
 def test_update_policyengine_package_stops_when_loaded_bundle_is_not_target(

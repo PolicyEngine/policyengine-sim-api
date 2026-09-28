@@ -11,6 +11,9 @@ from pathlib import Path
 import pytest
 
 from fixtures.fake_modal import install_fake_modal
+from policyengine_simulation_executor.release_bundle import (
+    get_bundled_package_version,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000001"
@@ -125,12 +128,15 @@ def test_v2_image_retains_required_runtime_dependencies() -> None:
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
 
+    packages = (
+        "policyengine",
+        "policyengine-core",
+        "policyengine-uk",
+        "policyengine-us",
+        "spm-calculator",
+    )
     assert project["dependency-groups"]["policyengine-models"] == [
-        "policyengine==6.1.2",
-        "policyengine-core==3.32.5",
-        "policyengine-uk==2.90.2",
-        "policyengine-us==2.2.1",
-        "spm-calculator==1.0.0",
+        f"{package}=={get_bundled_package_version(package)}" for package in packages
     ]
     assert {"include-group": "policyengine-models"} in project["dependency-groups"][
         "modal-simulation-image"
