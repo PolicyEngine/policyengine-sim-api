@@ -6,24 +6,24 @@ from fastapi import FastAPI, Request
 from policyengine_simulation_observability.identifiers import (
     OBSERVABILITY_ID_HEADER,
     normalize_observability_id,
-    resolve_observability_id,
 )
-from starlette.datastructures import MutableHeaders
 
 
 def install_observability_id_middleware(app: FastAPI) -> None:
-    """Resolve one request identifier and return it on every response."""
+    """Store an incoming identifier candidate without creating a workflow."""
 
     @app.middleware("http")
     async def observability_id_transport(request: Request, call_next):
-        observability_id = resolve_observability_id(
+        request.state.incoming_observability_id = normalize_observability_id(
             request.headers.get(OBSERVABILITY_ID_HEADER)
         )
-        MutableHeaders(scope=request.scope)[OBSERVABILITY_ID_HEADER] = observability_id
-        request.state.observability_id = observability_id
+        request.state.observability_id = None
         response = await call_next(request)
-        response.headers[OBSERVABILITY_ID_HEADER] = (
-            normalize_observability_id(response.headers.get(OBSERVABILITY_ID_HEADER))
-            or observability_id
+        bound_observability_id = normalize_observability_id(
+            request.state.observability_id
         )
+        if bound_observability_id is not None:
+            response.headers[OBSERVABILITY_ID_HEADER] = bound_observability_id
+        elif OBSERVABILITY_ID_HEADER in response.headers:
+            del response.headers[OBSERVABILITY_ID_HEADER]
         return response

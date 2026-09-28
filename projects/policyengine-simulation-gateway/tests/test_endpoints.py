@@ -922,7 +922,10 @@ class TestSubmitSimulationEndpoint:
             headers={OBSERVABILITY_ID_HEADER: OBSERVABILITY_ID},
         )
 
-        response = client.get(f"/jobs/{submit_response.json()['job_id']}")
+        response = client.get(
+            f"/jobs/{submit_response.json()['job_id']}",
+            headers={OBSERVABILITY_ID_HEADER: "00000000-0000-4000-8000-000000000099"},
+        )
 
         assert response.status_code == 200
         assert "observability_id" not in response.json()
@@ -943,10 +946,14 @@ class TestSubmitSimulationEndpoint:
             lambda exc, **kwargs: recorded_errors.append((exc, kwargs)),
         )
 
-        response = client.get("/jobs/unknown-job-id")
+        response = client.get(
+            "/jobs/unknown-job-id",
+            headers={OBSERVABILITY_ID_HEADER: OBSERVABILITY_ID},
+        )
 
         assert response.status_code == 404
         assert response.json()["detail"] == "Job not found: unknown-job-id"
+        assert OBSERVABILITY_ID_HEADER not in response.headers
         assert str(recorded_errors[0][0]) == "Job not found: unknown-job-id"
         assert recorded_errors[0][1] == {
             "handled": True,
@@ -970,6 +977,28 @@ class TestSubmitSimulationEndpoint:
             response.json()["detail"]
             == "Job not found: auth-smoke-probe-does-not-exist"
         )
+
+    def test__given_legacy_job_without_identifier__then_poll_does_not_create_one(
+        self,
+        mock_modal,
+        client: TestClient,
+    ):
+        job_id = "legacy-job-without-observability-id"
+        mock_modal["dicts"]["simulation-api-job-metadata"] = {
+            job_id: {
+                "resolved_app_name": "legacy-worker",
+                "policyengine_bundle": {"model_version": "1.500.0"},
+            }
+        }
+        mock_modal["func"].call_for(job_id)
+
+        response = client.get(
+            f"/jobs/{job_id}",
+            headers={OBSERVABILITY_ID_HEADER: OBSERVABILITY_ID},
+        )
+
+        assert response.status_code == 200
+        assert OBSERVABILITY_ID_HEADER not in response.headers
 
     def test__given_running_job__then_polling_returns_202(
         self, mock_modal, client: TestClient

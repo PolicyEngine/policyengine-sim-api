@@ -593,11 +593,30 @@ def _serialize_job_metadata(
     }
 
 
-def _request_observability_id(http_request: Request) -> str:
-    return resolve_observability_id(
-        getattr(http_request.state, "observability_id", None)
-        or http_request.headers.get(OBSERVABILITY_ID_HEADER)
+def _bind_observability_id(
+    http_request: Request,
+    runtime: ObservabilityRuntime,
+    value: object,
+) -> str | None:
+    observability_id = normalize_observability_id(value)
+    http_request.state.observability_id = observability_id
+    if observability_id is not None:
+        try:
+            runtime.set_context(observability_id=observability_id)
+        except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+            pass
+    return observability_id
+
+
+def _start_workflow_observability(
+    http_request: Request,
+    runtime: ObservabilityRuntime,
+) -> str:
+    observability_id = resolve_observability_id(
+        getattr(http_request.state, "incoming_observability_id", None)
     )
+    _bind_observability_id(http_request, runtime, observability_id)
+    return observability_id
 
 
 def _observability_headers(observability_id: str | None) -> dict[str, str] | None:
@@ -691,7 +710,7 @@ async def submit_simulation(
     Returns immediately with job_id for polling.
     """
     runtime = _runtime(http_request)
-    observability_id = _request_observability_id(http_request)
+    observability_id = _start_workflow_observability(http_request, runtime)
     response.headers[OBSERVABILITY_ID_HEADER] = observability_id
     runtime.set_context(
         country=request.country,
@@ -797,7 +816,7 @@ async def submit_budget_window_batch(
     Submit a budget-window batch job.
     """
     runtime = _runtime(http_request)
-    observability_id = _request_observability_id(http_request)
+    observability_id = _start_workflow_observability(http_request, runtime)
     response.headers[OBSERVABILITY_ID_HEADER] = observability_id
     runtime.set_context(
         country=request.country,
@@ -902,8 +921,11 @@ async def get_job_status(job_id: str, request: Request, response: Response):
     if job_metadata is None:
         _record_not_found(runtime, f"Job not found: {job_id}")
         raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
-    observability_id = normalize_observability_id(job_metadata.get("observability_id"))
-    runtime.set_context(observability_id=observability_id)
+    observability_id = _bind_observability_id(
+        request,
+        runtime,
+        job_metadata.get("observability_id"),
+    )
     if observability_id is not None:
         response.headers[OBSERVABILITY_ID_HEADER] = observability_id
     public_metadata = _public_job_metadata(job_metadata)
@@ -974,7 +996,7 @@ async def get_budget_window_job_status(
     with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)):
         state = get_batch_job_state(batch_job_id)
     if state is not None:
-        runtime.set_context(observability_id=state.observability_id)
+        _bind_observability_id(request, runtime, state.observability_id)
         response_headers = _observability_headers(state.observability_id)
         if response_headers is not None:
             response.headers.update(response_headers)
@@ -992,7 +1014,7 @@ async def get_budget_window_job_status(
         raise HTTPException(
             status_code=404, detail=f"Budget-window job not found: {batch_job_id}"
         )
-    runtime.set_context(observability_id=seed_state.observability_id)
+    _bind_observability_id(request, runtime, seed_state.observability_id)
     response_headers = _observability_headers(seed_state.observability_id)
     if response_headers is not None:
         response.headers.update(response_headers)

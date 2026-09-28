@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import httpx
-from pydantic import ValidationError
 from policyengine_observability import (
     REQUEST_ID_HEADER,
     ObservabilityRuntime,
@@ -16,10 +15,10 @@ from policyengine_observability import (
 )
 from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
+from pydantic import ValidationError
 
 from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.schemas import BackendServiceToken
-
 
 SAFE_RESPONSE_HEADERS = frozenset(
     {
@@ -234,6 +233,8 @@ class OldGatewayBackend:
                     (
                         REQUEST_ID_HEADER
                         if key.lower() == REQUEST_ID_HEADER.lower()
+                        else OBSERVABILITY_ID_HEADER
+                        if key.lower() == OBSERVABILITY_ID_HEADER.lower()
                         else key
                     ): value
                     for key, value in response.headers.items()

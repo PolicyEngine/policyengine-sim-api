@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 from conftest import FakeBackend, make_settings
@@ -14,6 +15,14 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     SimulationRole,
 )
+from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
+from stage12_fixtures import (
+    EVALUATION_ID,
+    comparison_report,
+    comparison_simulation,
+    eligible_payload,
+)
+
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.backend import (
@@ -24,13 +33,6 @@ from policyengine_simulation_entry.backend import (
 from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12DispatchFailed,
     TemporaryStage12UnsupportedRequest,
-)
-from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
-from stage12_fixtures import (
-    EVALUATION_ID,
-    comparison_report,
-    comparison_simulation,
-    eligible_payload,
 )
 
 
@@ -85,7 +87,10 @@ class TemporaryComparisonBackend:
 
 
 def test_health_is_local_and_compatible(client, backend):
-    result = client.get("/health")
+    result = client.get(
+        "/health",
+        headers={OBSERVABILITY_ID_HEADER: "00000000-0000-4000-8000-000000000001"},
+    )
 
     assert result.status_code == 200
     assert result.json() == {"status": "healthy"}
@@ -94,6 +99,7 @@ def test_health_is_local_and_compatible(client, backend):
         == "simulation-entry-test-revision"
     )
     assert backend.requests == []
+    assert OBSERVABILITY_ID_HEADER not in result.headers
 
 
 def test_readiness_tracks_backend(client, backend):
@@ -130,6 +136,31 @@ def test_comparison_submission_preserves_upstream_response(client, backend):
     assert result.json() == payload
     assert result.headers["x-policyengine-simulation-backend"] == "old_gateway"
     assert backend.requests[-1].path == "/simulate/economy/comparison"
+    observability_id = result.headers[OBSERVABILITY_ID_HEADER]
+    assert str(UUID(observability_id)) == observability_id
+    assert backend.requests[-1].observability_id == observability_id
+
+
+def test_submission_keeps_entry_identifier_when_backend_returns_another(
+    client,
+    backend,
+):
+    entry_observability_id = "00000000-0000-4000-8000-000000000001"
+    backend.responses[("POST", "/simulate/economy/comparison")] = response(
+        202,
+        {"status": "submitted", "job_id": "fc-123"},
+        headers={OBSERVABILITY_ID_HEADER: "00000000-0000-4000-8000-000000000099"},
+    )
+
+    result = client.post(
+        "/simulate/economy/comparison",
+        json={"country": "us", "scope": "macro", "reform": {}},
+        headers={OBSERVABILITY_ID_HEADER: entry_observability_id},
+    )
+
+    assert result.status_code == 202
+    assert result.headers[OBSERVABILITY_ID_HEADER] == entry_observability_id
+    assert backend.requests[-1].observability_id == entry_observability_id
 
 
 def test_automatic_comparison_dispatch_preserves_production_response(
@@ -321,6 +352,9 @@ def test_temporary_stage12_submission_returns_polling_identifier(backend):
         "poll_url": f"/internal/stage12/reports/{EVALUATION_ID}",
     }
     assert comparison.submissions[0]["request_id"] == "manual-request-1"
+    observability_id = result.headers[OBSERVABILITY_ID_HEADER]
+    assert str(UUID(observability_id)) == observability_id
+    assert comparison.submissions[0]["observability_id"] == observability_id
     assert backend.requests == []
 
 
@@ -372,11 +406,15 @@ def test_temporary_stage12_poll_not_found_has_short_retry_hint(backend):
     from fastapi.testclient import TestClient
 
     with TestClient(app) as test_client:
-        result = test_client.get(f"/internal/stage12/reports/{EVALUATION_ID}")
+        result = test_client.get(
+            f"/internal/stage12/reports/{EVALUATION_ID}",
+            headers={OBSERVABILITY_ID_HEADER: "00000000-0000-4000-8000-000000000099"},
+        )
 
     assert result.status_code == 404
     assert result.headers["retry-after"] == "1"
     assert result.json() == {"detail": "Stage 12 report was not found."}
+    assert OBSERVABILITY_ID_HEADER not in result.headers
 
 
 def test_temporary_stage12_poll_reads_durable_parent_and_children(backend):
@@ -395,7 +433,10 @@ def test_temporary_stage12_poll_reads_durable_parent_and_children(backend):
     from fastapi.testclient import TestClient
 
     with TestClient(app) as test_client:
-        result = test_client.get(f"/internal/stage12/reports/{EVALUATION_ID}")
+        result = test_client.get(
+            f"/internal/stage12/reports/{EVALUATION_ID}",
+            headers={OBSERVABILITY_ID_HEADER: "00000000-0000-4000-8000-000000000099"},
+        )
 
     assert result.status_code == 202
     assert result.headers["retry-after"] == "5"
@@ -404,6 +445,7 @@ def test_temporary_stage12_poll_reads_durable_parent_and_children(backend):
         "baseline",
         "reform",
     ]
+    assert OBSERVABILITY_ID_HEADER not in result.headers
     assert comparison.polls == [EVALUATION_ID]
     assert backend.requests == []
 
@@ -426,7 +468,10 @@ def test_temporary_stage12_poll_returns_terminal_metadata_with_200(backend):
     from fastapi.testclient import TestClient
 
     with TestClient(app) as test_client:
-        result = test_client.get(f"/internal/stage12/reports/{EVALUATION_ID}")
+        result = test_client.get(
+            f"/internal/stage12/reports/{EVALUATION_ID}",
+            headers={OBSERVABILITY_ID_HEADER: "00000000-0000-4000-8000-000000000099"},
+        )
 
     assert result.status_code == 200
     assert "retry-after" not in result.headers
@@ -585,12 +630,16 @@ def test_job_status_preserves_id_and_status(client, backend):
         headers={OBSERVABILITY_ID_HEADER: observability_id},
     )
 
-    result = client.get("/jobs/fc-123")
+    result = client.get(
+        "/jobs/fc-123",
+        headers={OBSERVABILITY_ID_HEADER: "00000000-0000-4000-8000-000000000099"},
+    )
 
     assert result.status_code == 202
     assert result.json() == {"status": "running"}
     assert result.headers[OBSERVABILITY_ID_HEADER] == observability_id
     assert backend.requests[-1].path == "/jobs/fc-123"
+    assert backend.requests[-1].observability_id is None
 
 
 def test_polling_and_budget_window_routes_never_dispatch_stage12_comparison(backend):
@@ -742,7 +791,7 @@ def test_request_id_is_propagated_logged_and_returned(
     assert backend.requests[-1].request_id == "request-123"
 
 
-def test_request_identifiers_are_attached_to_the_active_observability_context(
+def test_non_workflow_routes_do_not_bind_incoming_observability_id(
     backend,
 ):
     app = create_app(
@@ -770,7 +819,8 @@ def test_request_identifiers_are_attached_to_the_active_observability_context(
 
     assert result.status_code == 200
     assert result.json()["request_id"] == "request-123"
-    assert result.json()["observability_id"] == observability_id
+    assert "observability_id" not in result.json()
+    assert OBSERVABILITY_ID_HEADER not in result.headers
 
 
 def test_x_request_id_is_not_an_alias(client, backend):

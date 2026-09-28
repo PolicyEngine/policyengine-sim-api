@@ -7,6 +7,7 @@ from policyengine_observability import (
     GoogleCloudLogDestination,
     StdoutLogDestination,
 )
+
 from policyengine_simulation_observability.identifiers import (
     OBSERVABILITY_ID_HEADER,
 )
@@ -112,7 +113,7 @@ def test_fastapi_adapter_preserves_response_and_request_id(monkeypatch):
         runtime.shutdown()
 
 
-def test_fastapi_adapter_attaches_observability_id_to_active_request(monkeypatch):
+def test_fastapi_adapter_does_not_bind_unvalidated_workflow_identifier(monkeypatch):
     monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
     app = FastAPI()
     runtime = init_simulation_observability(
@@ -138,7 +139,7 @@ def test_fastapi_adapter_attaches_observability_id_to_active_request(monkeypatch
         )
         assert response.status_code == 200
         assert response.json()["request_id"] == "request-123"
-        assert response.json()["observability_id"] == observability_id
+        assert "observability_id" not in response.json()
     finally:
         runtime.shutdown()
 

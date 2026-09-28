@@ -37,6 +37,7 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from policyengine_simulation_observability.identifiers import (
     OBSERVABILITY_ID_HEADER,
+    normalize_observability_id,
     resolve_observability_id,
 )
 from policyengine_simulation_observability.observability import (
@@ -176,6 +177,54 @@ def create_app(
         platform="google_cloud_run",
         environment=runtime_settings.environment,
     )
+
+    def bind_observability_id(request: Request, value: object) -> str | None:
+        observability_id = normalize_observability_id(value)
+        request.state.observability_id = observability_id
+        if observability_id is not None:
+            try:
+                runtime.set_context(observability_id=observability_id)
+            except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+                pass
+        return observability_id
+
+    def start_workflow_observability(request: Request) -> str:
+        observability_id = resolve_observability_id(
+            getattr(request.state, "incoming_observability_id", None)
+        )
+        bind_observability_id(request, observability_id)
+        return observability_id
+
+    def backend_observability_id(headers: dict[str, str]) -> str | None:
+        return next(
+            (
+                normalize_observability_id(value)
+                for key, value in headers.items()
+                if key.lower() == OBSERVABILITY_ID_HEADER.lower()
+            ),
+            None,
+        )
+
+    def adopt_backend_observability_id(
+        request: Request,
+        headers: dict[str, str],
+    ) -> str | None:
+        current = normalize_observability_id(request.state.observability_id)
+        downstream = backend_observability_id(headers)
+        if current is not None and downstream is not None and current != downstream:
+            try:
+                runtime.event(
+                    "simulation_entry_observability_id_mismatch",
+                    attributes={
+                        "backend": "old_gateway",
+                        "reason": "downstream_identifier_differed",
+                    },
+                )
+            except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+                pass
+            return current
+        return bind_observability_id(request, current or downstream)
+
     runtime_backend = backend or OldGatewayBackend(runtime_settings, runtime=runtime)
     authenticate = auth_dependency or CallerAuthenticator(runtime_settings, runtime)
     runtime_comparison = comparison_backend
@@ -193,13 +242,13 @@ def create_app(
     async def request_context(request: Request, call_next):
         headers = MutableHeaders(scope=request.scope)
         request_id = headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())
-        observability_id = resolve_observability_id(
+        incoming_observability_id = normalize_observability_id(
             headers.get(OBSERVABILITY_ID_HEADER)
         )
         headers[REQUEST_ID_HEADER] = request_id
-        headers[OBSERVABILITY_ID_HEADER] = observability_id
         request.state.request_id = request_id
-        request.state.observability_id = observability_id
+        request.state.incoming_observability_id = incoming_observability_id
+        request.state.observability_id = None
         try:
             response = await call_next(request)
         except Exception:
@@ -218,8 +267,13 @@ def create_app(
                 media_type="text/plain",
                 headers={REQUEST_ID_HEADER: request_id},
             )
-        if OBSERVABILITY_ID_HEADER not in response.headers:
-            response.headers[OBSERVABILITY_ID_HEADER] = observability_id
+        bound_observability_id = normalize_observability_id(
+            request.state.observability_id
+        )
+        if bound_observability_id is not None:
+            response.headers[OBSERVABILITY_ID_HEADER] = bound_observability_id
+        elif OBSERVABILITY_ID_HEADER in response.headers:
+            del response.headers[OBSERVABILITY_ID_HEADER]
         if runtime_settings.revision:
             response.headers["X-PolicyEngine-Simulation-Revision"] = (
                 runtime_settings.revision
@@ -249,6 +303,10 @@ def create_app(
                 json_body=body,
                 request_id=request.state.request_id,
                 observability_id=request.state.observability_id,
+            )
+            observability_id = adopt_backend_observability_id(
+                request,
+                result.headers,
             )
             attributes: BackendTelemetryAttributes = {
                 "request_id": request.state.request_id,
@@ -283,7 +341,12 @@ def create_app(
                 "simulation_entry_backend_response",
                 attributes=attributes,
             )
-            return _response(result)
+            response = _response(result)
+            if observability_id is not None:
+                response.headers[OBSERVABILITY_ID_HEADER] = observability_id
+            elif OBSERVABILITY_ID_HEADER in response.headers:
+                del response.headers[OBSERVABILITY_ID_HEADER]
+            return response
         except BackendTimeout:
             runtime.event(
                 "simulation_entry_backend_timeout",
@@ -355,12 +418,13 @@ def create_app(
                 content={"detail": "Stage 12 direct execution is unavailable."},
                 headers={"Retry-After": "10"},
             )
+        observability_id = start_workflow_observability(request)
         try:
             report = await asyncio.wait_for(
                 comparison.submit_temporary_report(
                     request_payload=_model_json(body),
                     request_id=request.state.request_id,
-                    observability_id=request.state.observability_id,
+                    observability_id=observability_id,
                 ),
                 timeout=STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
             )
@@ -463,12 +527,12 @@ def create_app(
             ComparisonRunLifecycleStatus.RUNNING,
         }
         response_headers = {"Retry-After": "5"} if running else {}
-        if report.observability_id is not None:
-            response_headers[OBSERVABILITY_ID_HEADER] = report.observability_id
-            try:
-                runtime.set_context(observability_id=report.observability_id)
-            except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
-                pass
+        report_observability_id = bind_observability_id(
+            request,
+            report.observability_id,
+        )
+        if report_observability_id is not None:
+            response_headers[OBSERVABILITY_ID_HEADER] = report_observability_id
         return JSONResponse(
             status_code=202 if running else 200,
             content=payload.model_dump(mode="json"),
@@ -499,6 +563,7 @@ def create_app(
         body: SimulationRequest,
         request: Request,
     ) -> Response:
+        observability_id = start_workflow_observability(request)
         request_payload = _model_json(body)
         response = await forward(
             request,
@@ -520,7 +585,7 @@ def create_app(
                         request_payload=request_payload,
                         production_response=bytes(response.body),
                         request_id=request.state.request_id,
-                        observability_id=request.state.observability_id,
+                        observability_id=observability_id,
                     ),
                     timeout=STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
                 )
@@ -567,6 +632,7 @@ def create_app(
         body: BudgetWindowBatchRequest,
         request: Request,
     ) -> Response:
+        start_workflow_observability(request)
         return await forward(
             request,
             "POST",
