@@ -798,7 +798,7 @@ jobs:
         run: .github/scripts/set-cloud-run-simulation-entry-revision.sh
 
       - name: Verify stable service routing
-        run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}"
+        run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"
 
       - name: Verify stable service authentication
         working-directory: projects/policyengine-simulation-entry
@@ -812,7 +812,7 @@ jobs:
 
       - name: Verify configured custom hostname
         if: ${{ env.CUSTOM_URL != '' }}
-        run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${CUSTOM_URL}" "${TARGET_REVISION}"
+        run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${CUSTOM_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"
 
       - name: Verify configured custom-hostname authentication
         if: ${{ env.CUSTOM_URL != '' }}
