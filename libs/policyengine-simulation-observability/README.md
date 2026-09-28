@@ -23,3 +23,9 @@ correlation across HTTP and asynchronous dispatch. The context argument is
 separate from the calculation payload. Request bodies, reform definitions,
 household data, credentials, and person-level values are excluded from
 telemetry.
+
+Local logs and spans accept explicitly supplied scalar attributes after the
+shared package applies its prohibited-name, type, redaction, and string-length
+checks. Only `job_id`, `observability_id`, and `simulation_id` are transported
+through the `observability_context` argument. Metric labels use the shared
+package's separate bounded list.
