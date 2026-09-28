@@ -127,7 +127,6 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          LOGFIRE_TOKEN: ${{ secrets.LOGFIRE_TOKEN }}
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
           GATEWAY_AUTH_ISSUER: ${{ secrets.GATEWAY_AUTH_ISSUER }}
@@ -222,6 +221,10 @@ jobs:
         env:
           IMAGE: ${{ steps.image.outputs.uri }}
           TAG: ${{ steps.metadata.outputs.tag }}
+          OBSERVABILITY_SERVICE_NAMESPACE: ${{ vars.OBSERVABILITY_SERVICE_NAMESPACE }}
+          OBSERVABILITY_TRACE_PROJECT_ID: ${{ vars.OBSERVABILITY_TRACE_PROJECT_ID }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OBSERVABILITY_OTLP_ENDPOINT }}
+          POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}
           DEPLOY_STAGE12_V2: ${{ inputs.deploy_stage12_v2 }}
           APP_ENVIRONMENT: ${{ inputs.deployment_environment }}
           MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
@@ -292,7 +295,7 @@ jobs:
   deploy_gateway:
     name: Deploy and unit test Modal gateway
     if: ${{ inputs.deploy_existing_stack }}
-    needs: prepare
+    needs: [prepare, deploy_executor]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
     outputs:
@@ -315,6 +318,14 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          OBSERVABILITY_SERVICE_NAMESPACE: ${{ vars.OBSERVABILITY_SERVICE_NAMESPACE }}
+          OBSERVABILITY_TRACE_PROJECT_ID: ${{ vars.OBSERVABILITY_TRACE_PROJECT_ID }}
+          OBSERVABILITY_LOGGING_PROJECT_ID: ${{ vars.OBSERVABILITY_LOGGING_PROJECT_ID }}
+          OBSERVABILITY_LOG_NAME: ${{ vars.OBSERVABILITY_LOG_NAME }}
+          OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ vars.OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OBSERVABILITY_OTLP_ENDPOINT }}
+          POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}
         run: uv run modal deploy --env="${{ inputs.modal_environment }}" src/policyengine_simulation_gateway/app.py
 
       - name: Run gateway unit tests
@@ -383,6 +394,14 @@ jobs:
           POLICYENGINE_MANIFEST_DIGEST: ${{ steps.precompute.outputs.manifest_digest }}
           POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}
           GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+          OBSERVABILITY_SERVICE_NAMESPACE: ${{ vars.OBSERVABILITY_SERVICE_NAMESPACE }}
+          OBSERVABILITY_TRACE_PROJECT_ID: ${{ vars.OBSERVABILITY_TRACE_PROJECT_ID }}
+          OBSERVABILITY_LOGGING_PROJECT_ID: ${{ vars.OBSERVABILITY_LOGGING_PROJECT_ID }}
+          OBSERVABILITY_LOG_NAME: ${{ vars.OBSERVABILITY_LOG_NAME }}
+          OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ vars.OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OBSERVABILITY_OTLP_ENDPOINT }}
+          POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}
         run: uv run modal deploy --env="${{ inputs.modal_environment }}" src/modal/app.py
 
       - name: Run executor unit tests
@@ -543,6 +562,14 @@ jobs:
           STAGE12_EXPECT_US_VERSION: ${{ needs.prepare.outputs.us_version }}
           STAGE12_EXPECT_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
           STAGE12_ARTIFACT_BUCKET: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
+          OBSERVABILITY_SERVICE_NAMESPACE: ${{ vars.OBSERVABILITY_SERVICE_NAMESPACE }}
+          OBSERVABILITY_TRACE_PROJECT_ID: ${{ vars.OBSERVABILITY_TRACE_PROJECT_ID }}
+          OBSERVABILITY_LOGGING_PROJECT_ID: ${{ vars.OBSERVABILITY_LOGGING_PROJECT_ID }}
+          OBSERVABILITY_LOG_NAME: ${{ vars.OBSERVABILITY_LOG_NAME }}
+          OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER }}
+          OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ vars.OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL }}
+          OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OBSERVABILITY_OTLP_ENDPOINT }}
+          POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}
         run: uv run modal deploy --env="${{ inputs.modal_environment }}" src/modal/v2_app.py
 
       - name: Validate installed bundles, secrets, datasets, and calculations

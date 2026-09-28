@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, Response
-from policyengine_observability import REQUEST_ID_HEADER, record_event
+from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
@@ -35,8 +35,12 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     ComparisonSimulationRecord,
 )
+from policyengine_simulation_observability.identifiers import (
+    OBSERVABILITY_ID_HEADER,
+    normalize_observability_id,
+    resolve_observability_id,
+)
 from policyengine_simulation_observability.observability import (
-    configure_process_observability,
     init_simulation_observability,
 )
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -81,6 +85,7 @@ class ComparisonBackend(Protocol):
         request_payload: dict[str, Any],
         production_response: bytes,
         request_id: str,
+        observability_id: str,
     ) -> None: ...
 
     async def submit_temporary_report(
@@ -88,6 +93,7 @@ class ComparisonBackend(Protocol):
         *,
         request_payload: dict[str, Any],
         request_id: str,
+        observability_id: str,
     ) -> ComparisonReportRecord: ...
 
     async def get_temporary_report(
@@ -146,15 +152,6 @@ def create_app(
     """Build the app with injectable auth/backend seams for hermetic tests."""
 
     runtime_settings = settings or Settings.from_env()
-    runtime_backend = backend or OldGatewayBackend(runtime_settings)
-    authenticate = auth_dependency or CallerAuthenticator(runtime_settings)
-    runtime_comparison = comparison_backend
-    if runtime_comparison is None and runtime_settings.stage12_resources_configured:
-        from policyengine_simulation_entry.stage12_backend import (
-            Stage12ComparisonBackend,
-        )
-
-        runtime_comparison = Stage12ComparisonBackend.from_settings(runtime_settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -164,6 +161,7 @@ def create_app(
             yield
         finally:
             await runtime_backend.close()
+            runtime.shutdown()
 
     app = FastAPI(
         title="PolicyEngine Simulation Entrypoint",
@@ -172,23 +170,85 @@ def create_app(
         lifespan=lifespan,
     )
 
-    configure_process_observability(
-        platform="cloud_run",
-        service_role="simulation_entry",
-    )
-    init_simulation_observability(
+    runtime = init_simulation_observability(
         app,
         service_name="policyengine-simulation-entry",
         service_role="simulation_entry",
+        platform="google_cloud_run",
+        environment=runtime_settings.environment,
     )
+
+    def bind_observability_id(request: Request, value: object) -> str | None:
+        observability_id = normalize_observability_id(value)
+        request.state.observability_id = observability_id
+        if observability_id is not None:
+            try:
+                runtime.set_context(observability_id=observability_id)
+            except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+                pass
+        return observability_id
+
+    def start_workflow_observability(request: Request) -> str:
+        observability_id = resolve_observability_id(
+            getattr(request.state, "incoming_observability_id", None)
+        )
+        bind_observability_id(request, observability_id)
+        return observability_id
+
+    def backend_observability_id(headers: dict[str, str]) -> str | None:
+        return next(
+            (
+                normalize_observability_id(value)
+                for key, value in headers.items()
+                if key.lower() == OBSERVABILITY_ID_HEADER.lower()
+            ),
+            None,
+        )
+
+    def adopt_backend_observability_id(
+        request: Request,
+        headers: dict[str, str],
+    ) -> str | None:
+        current = normalize_observability_id(request.state.observability_id)
+        downstream = backend_observability_id(headers)
+        if current is not None and downstream is not None and current != downstream:
+            try:
+                runtime.event(
+                    "simulation_entry_observability_id_mismatch",
+                    attributes={
+                        "backend": "old_gateway",
+                        "reason": "downstream_identifier_differed",
+                    },
+                )
+            except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+                pass
+            return current
+        return bind_observability_id(request, current or downstream)
+
+    runtime_backend = backend or OldGatewayBackend(runtime_settings, runtime=runtime)
+    authenticate = auth_dependency or CallerAuthenticator(runtime_settings, runtime)
+    runtime_comparison = comparison_backend
+    if runtime_comparison is None and runtime_settings.stage12_resources_configured:
+        from policyengine_simulation_entry.stage12_backend import (
+            Stage12ComparisonBackend,
+        )
+
+        runtime_comparison = Stage12ComparisonBackend.from_settings(
+            runtime_settings,
+            runtime=runtime,
+        )
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
         headers = MutableHeaders(scope=request.scope)
         request_id = headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())
+        incoming_observability_id = normalize_observability_id(
+            headers.get(OBSERVABILITY_ID_HEADER)
+        )
         headers[REQUEST_ID_HEADER] = request_id
         request.state.request_id = request_id
-        started = time.monotonic()
+        request.state.incoming_observability_id = incoming_observability_id
+        request.state.observability_id = None
         try:
             response = await call_next(request)
         except Exception:
@@ -207,23 +267,17 @@ def create_app(
                 media_type="text/plain",
                 headers={REQUEST_ID_HEADER: request_id},
             )
-        elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+        bound_observability_id = normalize_observability_id(
+            request.state.observability_id
+        )
+        if bound_observability_id is not None:
+            response.headers[OBSERVABILITY_ID_HEADER] = bound_observability_id
+        elif OBSERVABILITY_ID_HEADER in response.headers:
+            del response.headers[OBSERVABILITY_ID_HEADER]
         if runtime_settings.revision:
             response.headers["X-PolicyEngine-Simulation-Revision"] = (
                 runtime_settings.revision
             )
-        logger.info(
-            "simulation_entry_request",
-            extra={
-                "request_id": request_id,
-                "method": request.method,
-                "path": _route_template(request),
-                "status_code": response.status_code,
-                "elapsed_ms": elapsed_ms,
-                "backend": "old_gateway",
-                **_request_identifiers(request),
-            },
-        )
         return response
 
     async def forward(
@@ -239,11 +293,20 @@ def create_app(
         route = _route_template(request)
         event_identifiers: RequestIdentifiers = identifiers or {}
         try:
+            runtime.set_context(backend="old_gateway", **event_identifiers)
+        except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+            pass
+        try:
             result = await runtime_backend.request(
                 method,
                 path,
                 json_body=body,
                 request_id=request.state.request_id,
+                observability_id=request.state.observability_id,
+            )
+            observability_id = adopt_backend_observability_id(
+                request,
+                result.headers,
             )
             attributes: BackendTelemetryAttributes = {
                 "request_id": request.state.request_id,
@@ -274,14 +337,24 @@ def create_app(
             )
             if response_identifier_key and response_identifier is not None:
                 attributes[response_identifier_key] = response_identifier
-            record_event("simulation_entry_backend_response", **attributes)
-            return _response(result)
+            runtime.event(
+                "simulation_entry_backend_response",
+                attributes=attributes,
+            )
+            response = _response(result)
+            if observability_id is not None:
+                response.headers[OBSERVABILITY_ID_HEADER] = observability_id
+            elif OBSERVABILITY_ID_HEADER in response.headers:
+                del response.headers[OBSERVABILITY_ID_HEADER]
+            return response
         except BackendTimeout:
-            record_event(
+            runtime.event(
                 "simulation_entry_backend_timeout",
-                request_id=request.state.request_id,
-                route=route,
-                **event_identifiers,
+                attributes={
+                    "request_id": request.state.request_id,
+                    "route": route,
+                    **event_identifiers,
+                },
             )
             return JSONResponse(
                 status_code=504,
@@ -292,11 +365,13 @@ def create_app(
                 },
             )
         except BackendUnavailable:
-            record_event(
+            runtime.event(
                 "simulation_entry_backend_unavailable",
-                request_id=request.state.request_id,
-                route=route,
-                **event_identifiers,
+                attributes={
+                    "request_id": request.state.request_id,
+                    "route": route,
+                    **event_identifiers,
+                },
             )
             return JSONResponse(
                 status_code=503,
@@ -343,11 +418,13 @@ def create_app(
                 content={"detail": "Stage 12 direct execution is unavailable."},
                 headers={"Retry-After": "10"},
             )
+        observability_id = start_workflow_observability(request)
         try:
             report = await asyncio.wait_for(
                 comparison.submit_temporary_report(
                     request_payload=_model_json(body),
                     request_id=request.state.request_id,
+                    observability_id=observability_id,
                 ),
                 timeout=STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
             )
@@ -449,10 +526,17 @@ def create_app(
             ComparisonRunLifecycleStatus.PENDING,
             ComparisonRunLifecycleStatus.RUNNING,
         }
+        response_headers = {"Retry-After": "5"} if running else {}
+        report_observability_id = bind_observability_id(
+            request,
+            report.observability_id,
+        )
+        if report_observability_id is not None:
+            response_headers[OBSERVABILITY_ID_HEADER] = report_observability_id
         return JSONResponse(
             status_code=202 if running else 200,
             content=payload.model_dump(mode="json"),
-            headers={"Retry-After": "5"} if running else None,
+            headers=response_headers or None,
         )
 
     @app.post(
@@ -479,6 +563,7 @@ def create_app(
         body: SimulationRequest,
         request: Request,
     ) -> Response:
+        observability_id = start_workflow_observability(request)
         request_payload = _model_json(body)
         response = await forward(
             request,
@@ -500,6 +585,7 @@ def create_app(
                         request_payload=request_payload,
                         production_response=bytes(response.body),
                         request_id=request.state.request_id,
+                        observability_id=observability_id,
                     ),
                     timeout=STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
                 )
@@ -546,6 +632,7 @@ def create_app(
         body: BudgetWindowBatchRequest,
         request: Request,
     ) -> Response:
+        start_workflow_observability(request)
         return await forward(
             request,
             "POST",

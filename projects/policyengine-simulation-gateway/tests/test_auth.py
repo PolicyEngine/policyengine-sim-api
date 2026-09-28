@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from policyengine_simulation_gateway.testing import create_gateway_app
 from policyengine_simulation_gateway import auth as auth_module
@@ -30,6 +32,12 @@ GATED_REQUESTS = [
     ("get", "/jobs/some-job-id", None),
     ("get", "/budget-window-jobs/some-job-id", None),
 ]
+
+
+def _request():
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(policyengine_observability=Mock()))
+    )
 
 
 @pytest.fixture
@@ -71,7 +79,7 @@ def test__given_no_bearer_token__then_gated_endpoint_returns_403(
 
 def test__given_auth_disabled_env__then_dependency_returns_none(monkeypatch):
     monkeypatch.setenv(auth_module.GATEWAY_AUTH_DISABLED_ENV, "1")
-    assert auth_module.require_auth(token=None) is None
+    assert auth_module.require_auth(_request(), token=None) is None
 
 
 def test__given_auth_not_configured_and_not_required__then_dependency_allows(
@@ -82,7 +90,7 @@ def test__given_auth_not_configured_and_not_required__then_dependency_allows(
     monkeypatch.delenv(auth_module.GATEWAY_AUTH_ISSUER_ENV, raising=False)
     monkeypatch.delenv(auth_module.GATEWAY_AUTH_AUDIENCE_ENV, raising=False)
 
-    assert auth_module.require_auth(token=None) is None
+    assert auth_module.require_auth(_request(), token=None) is None
 
 
 def test__given_auth_configured_but_not_required__then_dependency_allows(
@@ -93,7 +101,7 @@ def test__given_auth_configured_but_not_required__then_dependency_allows(
     monkeypatch.setenv(auth_module.GATEWAY_AUTH_ISSUER_ENV, "https://issuer.example/")
     monkeypatch.setenv(auth_module.GATEWAY_AUTH_AUDIENCE_ENV, "aud")
 
-    assert auth_module.require_auth(token=None) is None
+    assert auth_module.require_auth(_request(), token=None) is None
 
 
 def test__given_auth_required_and_misconfigured__then_dependency_raises_503(
@@ -107,7 +115,7 @@ def test__given_auth_required_and_misconfigured__then_dependency_raises_503(
     monkeypatch.delenv(auth_module.GATEWAY_AUTH_AUDIENCE_ENV, raising=False)
 
     with pytest.raises(HTTPException) as exc_info:
-        auth_module.require_auth(token=None)
+        auth_module.require_auth(_request(), token=None)
 
     assert exc_info.value.status_code == 503
 
@@ -121,7 +129,7 @@ def test__given_partial_auth_config__then_dependency_raises_503(monkeypatch):
     monkeypatch.delenv(auth_module.GATEWAY_AUTH_AUDIENCE_ENV, raising=False)
 
     with pytest.raises(HTTPException) as exc_info:
-        auth_module.require_auth(token=None)
+        auth_module.require_auth(_request(), token=None)
 
     assert exc_info.value.status_code == 503
 
@@ -243,7 +251,7 @@ class TestProductionAuthGuard:
         monkeypatch.delenv(auth_module.MODAL_ENVIRONMENT_ENV, raising=False)
 
         # Must not raise even without any prod env configured.
-        auth_module.enforce_production_auth_guard()
+        auth_module.enforce_production_auth_guard(Mock())
 
     def test__given_disabled_and_modal_env_missing__then_refuses(self, monkeypatch):
         """Unset MODAL_ENVIRONMENT is treated as production: refuse."""
@@ -255,7 +263,7 @@ class TestProductionAuthGuard:
         )
 
         with pytest.raises(auth_module.AuthDisabledInProductionError):
-            auth_module.enforce_production_auth_guard()
+            auth_module.enforce_production_auth_guard(Mock())
 
     @pytest.mark.parametrize("prod_env", ["main", "prod", "production", "PROD"])
     def test__given_disabled_and_prod_modal_env__then_refuses(
@@ -270,7 +278,7 @@ class TestProductionAuthGuard:
         )
 
         with pytest.raises(auth_module.AuthDisabledInProductionError):
-            auth_module.enforce_production_auth_guard()
+            auth_module.enforce_production_auth_guard(Mock())
 
     def test__given_disabled_in_dev_without_ack__then_refuses(self, monkeypatch):
         """A single env var (``GATEWAY_AUTH_DISABLED=1``) is not enough."""
@@ -279,7 +287,7 @@ class TestProductionAuthGuard:
         monkeypatch.delenv(auth_module.GATEWAY_AUTH_DISABLED_ACK_ENV, raising=False)
 
         with pytest.raises(auth_module.AuthDisabledWithoutAckError):
-            auth_module.enforce_production_auth_guard()
+            auth_module.enforce_production_auth_guard(Mock())
 
     def test__given_disabled_in_dev_with_wrong_ack__then_refuses(self, monkeypatch):
         """ACK must exactly match the magic string — truthy is not enough."""
@@ -288,7 +296,7 @@ class TestProductionAuthGuard:
         monkeypatch.setenv(auth_module.GATEWAY_AUTH_DISABLED_ACK_ENV, "yes")
 
         with pytest.raises(auth_module.AuthDisabledWithoutAckError):
-            auth_module.enforce_production_auth_guard()
+            auth_module.enforce_production_auth_guard(Mock())
 
     def test__given_disabled_in_dev_with_correct_ack__then_allows_and_logs(
         self, monkeypatch, caplog
@@ -304,20 +312,13 @@ class TestProductionAuthGuard:
         )
 
         with caplog.at_level(logging.CRITICAL, logger=auth_module.logger.name):
-            auth_module.enforce_production_auth_guard()
+            auth_module.enforce_production_auth_guard(Mock())
 
         assert any(
             "GATEWAY AUTH IS DISABLED" in record.message for record in caplog.records
         ), f"Expected critical auth-disabled banner, got {caplog.records!r}"
 
-    def test__given_bypass_active__then_logfire_event_gated_on_configuration(
-        self, monkeypatch
-    ):
-        """The legacy Logfire audit event fires only when configure_logfire
-        actually ran with a token — not based on logfire's send_to_logfire
-        flag, which is True even on an unconfigured instance."""
-        import sys
-
+    def test__given_bypass_active__then_runtime_event_is_recorded(self, monkeypatch):
         monkeypatch.setenv(auth_module.GATEWAY_AUTH_DISABLED_ENV, "1")
         monkeypatch.setenv(auth_module.MODAL_ENVIRONMENT_ENV, "dev")
         monkeypatch.setenv(
@@ -325,26 +326,16 @@ class TestProductionAuthGuard:
             auth_module.GATEWAY_AUTH_DISABLED_ACK_VALUE,
         )
 
-        class _FakeLogfire:
-            def __init__(self):
-                self.calls = []
-
-            def error(self, *args, **kwargs):
-                self.calls.append((args, kwargs))
-
-        fake_logfire = _FakeLogfire()
-        monkeypatch.setitem(sys.modules, "logfire", fake_logfire)
-
-        monkeypatch.setattr(auth_module, "logfire_is_configured", lambda: False)
-        auth_module.enforce_production_auth_guard()
-        assert fake_logfire.calls == []
-
-        monkeypatch.setattr(auth_module, "logfire_is_configured", lambda: True)
-        auth_module.enforce_production_auth_guard()
-        assert len(fake_logfire.calls) == 1
-        args, kwargs = fake_logfire.calls[0]
-        assert args == ("gateway_auth_disabled_bypass_active",)
-        assert kwargs["modal_environment"] == "dev"
+        runtime = Mock()
+        auth_module.enforce_production_auth_guard(runtime)
+        runtime.event.assert_called_once_with(
+            "gateway_auth_disabled_bypass_active",
+            severity="CRITICAL",
+            attributes={
+                "modal_environment": "dev",
+                "ack_value_present": True,
+            },
+        )
 
 
 class TestAuthConfiguredGuard:

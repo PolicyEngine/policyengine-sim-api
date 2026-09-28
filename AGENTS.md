@@ -14,6 +14,10 @@ Before opening, replacing, or sharing any pull request, read
 When adding, moving, or reviewing tests, read
 `docs/engineering/skills/testing.md`.
 
+Before changing correlation identifiers, telemetry transport, spans, stage
+names, logging, or observability failure handling, read
+`docs/engineering/skills/observability.md`.
+
 ## Development
 
 - Use Python 3.13 and `uv`.

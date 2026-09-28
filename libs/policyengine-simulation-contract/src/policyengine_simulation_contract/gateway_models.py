@@ -183,7 +183,6 @@ class JobSubmitResponse(BaseModel):
     version: str
     resolved_app_name: str
     policyengine_bundle: PolicyEngineBundle
-    run_id: Optional[str] = None
 
 
 class JobStatusResponse(BaseModel):
@@ -195,7 +194,6 @@ class JobStatusResponse(BaseModel):
     error: Optional[str] = None
     resolved_app_name: Optional[str] = None
     policyengine_bundle: Optional[PolicyEngineBundle] = None
-    run_id: Optional[str] = None
 
 
 class BudgetWindowBatchRequest(GatewayRequestBase):
@@ -297,7 +295,6 @@ class BudgetWindowBatchSubmitResponse(BaseModel):
     version: str
     resolved_app_name: str
     policyengine_bundle: PolicyEngineBundle
-    run_id: Optional[str] = None
 
 
 class BudgetWindowBatchStatusResponse(BaseModel):
@@ -315,7 +312,6 @@ class BudgetWindowBatchStatusResponse(BaseModel):
     error: Optional[str] = None
     resolved_app_name: Optional[str] = None
     policyengine_bundle: Optional[PolicyEngineBundle] = None
-    run_id: Optional[str] = None
 
 
 class BudgetWindowBatchState(BaseModel):
@@ -347,7 +343,7 @@ class BudgetWindowBatchState(BaseModel):
     error: Optional[str] = None
     created_at: str
     updated_at: str
-    run_id: Optional[str] = None
+    observability_id: Optional[str] = None
 
 
 class PingRequest(BaseModel):
