@@ -77,9 +77,10 @@ def test_complete_uk_geography_output_accepts_lookup_metadata() -> None:
         name_field="constituency_name",
     )
 
-    assert result.root[0].constituency_name == "Aldershot"
-    assert result.root[0].x == 56
-    assert result.root[0].y == -40
+    record = result.root[0].model_dump(mode="python")
+    assert record["constituency_name"] == "Aldershot"
+    assert record["x"] == 56
+    assert record["y"] == -40
 
 
 @pytest.mark.parametrize(

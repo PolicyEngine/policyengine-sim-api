@@ -92,11 +92,11 @@ def build_geographic_impact_output(value: Any) -> GeographicImpactOutput | None:
         return value
     records = _output_model_dump(value)
     if isinstance(records, list):
-        return GeographicImpactOutput(
+        return GeographicImpactOutput.model_validate(
             [dict(item) for item in records if isinstance(item, Mapping)]
         )
     if isinstance(value, list):
-        return GeographicImpactOutput(
+        return GeographicImpactOutput.model_validate(
             [dict(item) for item in value if isinstance(item, Mapping)]
         )
     return None
