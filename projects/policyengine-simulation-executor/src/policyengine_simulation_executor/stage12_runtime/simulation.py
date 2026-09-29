@@ -56,24 +56,39 @@ def build_stage12_simulation(
     policy: dict[str, Any] | None,
     scoping_strategy: Any,
     region_code: str | None,
+    execution: PlannedSimulationExecutionInput,
 ):
     """Construct a Stage 12 simulation without selecting v1 cache code."""
 
     from policyengine.core import Simulation
     from policyengine_simulation_executor.spm import normalize_runtime_spm
 
-    # These values become part of Stage 12's independent cache eligibility
-    # and identity in the next layer; retaining them in this constructor keeps
-    # the monolithic and segmented call sites identical.
-    del dataset_selection, region_code
     selection = normalize_runtime_spm(params)
-    return Simulation(
+    from policyengine_simulation_executor.stage12_cache.runtime import (
+        Stage12CachedSimulation,
+        qualifying_cache_identity,
+    )
+
+    resolved = load_stage12_bundle()
+    identity = qualifying_cache_identity(
+        execution,
+        resolved=resolved,
+        dataset_is_default=dataset_selection.is_default,
+        scoping_strategy=scoping_strategy,
+    )
+    simulation_type = Stage12CachedSimulation if identity is not None else Simulation
+    model = simulation_type(
         **({"spm": selection} if selection is not None else {}),
+        **({"id": identity.simulation_id} if identity is not None else {}),
         dataset=dataset,
         tax_benefit_model_version=country_module.model,
         policy=policy,
         scoping_strategy=scoping_strategy,
     )
+    if isinstance(model, Stage12CachedSimulation):
+        model.configure_stage12_cache(execution.output_plan)
+    del region_code
+    return model
 
 
 def simulation_input_sha256(simulation: SimulationExecutionInput) -> str:
@@ -232,6 +247,7 @@ def calculate_simulation_frames(
                 policy=policy,
                 scoping_strategy=region.scoping_strategy,
                 region_code=region.code,
+                execution=simulation,
             )
         calculation_span = (
             runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_CALCULATION))
@@ -241,6 +257,9 @@ def calculate_simulation_frames(
         with calculation_span:
             apply_output_plan(model, simulation.output_plan)
             model.ensure()
+        cache_outcome = getattr(model, "stage12_cache_outcome", None)
+        if runtime is not None and cache_outcome is not None:
+            runtime.set_context(stage12_cache_outcome=cache_outcome)
         output_data = getattr(getattr(model, "output_dataset", None), "data", None)
         entity_data = getattr(output_data, "entity_data", None)
         if not isinstance(entity_data, Mapping):
