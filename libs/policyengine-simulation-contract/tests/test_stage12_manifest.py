@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -107,7 +107,7 @@ def _worker(version: str = "5.2.0") -> V2WorkerVersion:
             validated=True,
             application_name=application_name,
             bundle_manifest_sha256=resolved.bundle_manifest_sha256,
-            validated_at=datetime(2026, 9, 14, tzinfo=timezone.utc),
+            validated_at=datetime(2026, 9, 14, tzinfo=UTC),
             validation_invocation_id="validation-123",
             country_validation_invocation_ids={
                 "us": "validation-us-123",
