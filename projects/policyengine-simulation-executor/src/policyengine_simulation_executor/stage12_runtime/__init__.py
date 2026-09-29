@@ -2,6 +2,7 @@
 
 from .aggregation import build_aggregate_report, build_spm_result
 from .coordination import coordinate_report
+from .fanout import Stage12SegmentRunner, run_segmented_simulation
 from .partition import stage12_region_groups, stage12_region_groups_for_model
 from .segment_contracts import Stage12SegmentInput, Stage12SegmentResult
 from .segmentation import (
@@ -26,6 +27,7 @@ __all__ = [
     "SimulationCalculation",
     "Stage12SegmentInput",
     "Stage12SegmentResult",
+    "Stage12SegmentRunner",
     "build_aggregate_report",
     "build_segment_inputs",
     "build_stage12_simulation",
@@ -33,6 +35,7 @@ __all__ = [
     "calculate_segment",
     "coordinate_report",
     "run_single_simulation",
+    "run_segmented_simulation",
     "merge_segment_results",
     "simulation_input_sha256",
     "stage12_region_groups",

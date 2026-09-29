@@ -556,6 +556,50 @@ def test_single_worker_accepts_one_policy_and_persists_one_artifact() -> None:
     ]
 
 
+def test_single_worker_routes_eligible_us_calculation_to_segment_runner() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    received = []
+
+    def segmented_calculator(value):
+        received.append(value)
+        return SimulationCalculation(frames=_frames())
+
+    run_single_simulation(
+        simulation.model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        required_country="us",
+        store=store,
+        artifacts=FakeArtifacts(),
+        calculator=lambda _: pytest.fail("monolithic calculator was selected"),
+        segmented_calculator=segmented_calculator,
+    )
+
+    assert received == [simulation]
+
+
+def test_single_worker_honors_explicit_segmentation_opt_out() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE).model_copy(
+        update={"options": {"segmented": False}}
+    )
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    segmented_calls = []
+
+    run_single_simulation(
+        simulation.model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        required_country="us",
+        store=store,
+        artifacts=FakeArtifacts(),
+        calculator=lambda _: _frames(),
+        segmented_calculator=lambda value: segmented_calls.append(value),
+    )
+
+    assert segmented_calls == []
+
+
 def test_single_worker_retains_detached_calculation_provenance() -> None:
     store = FakeStore()
     simulation = _planned_simulation(SimulationRole.BASELINE)

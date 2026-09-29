@@ -99,8 +99,9 @@ def adapt_annual_comparison(
     include_cliffs = payload.get("include_cliffs")
     if include_cliffs is not None and not isinstance(include_cliffs, bool):
         return _skip(ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE)
-    if payload.get("segmented") not in {None, False}:
-        return _skip(ComparisonSkipReason.UNSUPPORTED_OPTIONS)
+    segmented = payload.get("segmented")
+    if segmented is not None and not isinstance(segmented, bool):
+        return _skip(ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE)
     country = payload.get("country")
     if not isinstance(country, str) or _country_worker(worker, country) is None:
         return _skip(ComparisonSkipReason.UNSUPPORTED_COUNTRY)
@@ -175,7 +176,11 @@ def adapt_annual_comparison(
         country=cast(CountryId, country),
         region=region,
     )
-    options = {key: payload[key] for key in ("spm",) if payload.get(key) is not None}
+    options = {
+        key: payload[key]
+        for key in ("spm", "segmented")
+        if payload.get(key) is not None
+    }
     if include_cliffs is True:
         options["include_cliffs"] = True
 

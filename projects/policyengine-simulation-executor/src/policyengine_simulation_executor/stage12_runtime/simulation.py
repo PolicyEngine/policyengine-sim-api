@@ -25,6 +25,7 @@ from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetada
 from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
     Stage,
+    StagePlan,
 )
 
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -153,6 +154,7 @@ def calculate_simulation_frames(
     simulation: PlannedSimulationExecutionInput,
     *,
     runtime: ObservabilityRuntime | None = None,
+    stage_plan: StagePlan = STAGE12_SIMULATION_STAGES,
 ) -> SimulationCalculation:
     """Run one policy and return the coordinator-planned entity output tables."""
 
@@ -179,20 +181,20 @@ def calculate_simulation_frames(
     )
 
     credential_span = (
-        runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.CREDENTIAL_SETUP))
+        runtime.span(stage_plan.name(Stage.CREDENTIAL_SETUP))
         if runtime is not None
         else nullcontext()
     )
     with credential_span, setup_gcp_credentials():
         country_span = (
-            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.COUNTRY_MODULE_LOAD))
+            runtime.span(stage_plan.name(Stage.COUNTRY_MODULE_LOAD))
             if runtime is not None
             else nullcontext()
         )
         with country_span:
             country_module = _country_module(country)
         region_span = (
-            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.REGION_RESOLUTION))
+            runtime.span(stage_plan.name(Stage.REGION_RESOLUTION))
             if runtime is not None
             else nullcontext()
         )
@@ -203,7 +205,7 @@ def calculate_simulation_frames(
                 params=params,
             )
         dataset_resolution_span = (
-            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.DATASET_RESOLUTION))
+            runtime.span(stage_plan.name(Stage.DATASET_RESOLUTION))
             if runtime is not None
             else nullcontext()
         )
@@ -213,7 +215,7 @@ def calculate_simulation_frames(
                 region_resolution=region,
             )
         dataset_span = (
-            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.DATASET_LOAD))
+            runtime.span(stage_plan.name(Stage.DATASET_LOAD))
             if runtime is not None
             else nullcontext()
         )
@@ -228,14 +230,14 @@ def calculate_simulation_frames(
             dataset,
         )
         policy_span = (
-            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.POLICY_NORMALIZATION))
+            runtime.span(stage_plan.name(Stage.POLICY_NORMALIZATION))
             if runtime is not None
             else nullcontext()
         )
         with policy_span:
             policy = _normalise_policy(simulation.policy)
         build_span = (
-            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.SIMULATION_BUILD))
+            runtime.span(stage_plan.name(Stage.SIMULATION_BUILD))
             if runtime is not None
             else nullcontext()
         )
@@ -251,13 +253,19 @@ def calculate_simulation_frames(
                 execution=simulation,
             )
         calculation_span = (
-            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_CALCULATION))
+            runtime.span(stage_plan.name(Stage.STAGE12_CALCULATION))
             if runtime is not None
             else nullcontext()
         )
         with calculation_span:
             apply_output_plan(model, simulation.output_plan)
-            model.ensure()
+            cache_span = (
+                runtime.span(stage_plan.name(Stage.STAGE12_CACHE_LOOKUP))
+                if runtime is not None and hasattr(model, "stage12_cache_outcome")
+                else nullcontext()
+            )
+            with cache_span:
+                model.ensure()
         cache_outcome = getattr(model, "stage12_cache_outcome", None)
         if runtime is not None and cache_outcome is not None:
             runtime.set_context(stage12_cache_outcome=cache_outcome)
@@ -351,6 +359,10 @@ def run_single_simulation(
         [PlannedSimulationExecutionInput],
         Mapping[str, pd.DataFrame] | SimulationCalculation,
     ] = calculate_simulation_frames,
+    segmented_calculator: Callable[
+        [PlannedSimulationExecutionInput], SimulationCalculation
+    ]
+    | None = None,
     runtime: ObservabilityRuntime | None = None,
 ) -> dict[str, Any]:
     simulation = PlannedSimulationExecutionInput.model_validate(payload)
@@ -383,7 +395,11 @@ def run_single_simulation(
                 prefix=context.artifact_prefix,
                 simulation=simulation,
             )
-        if calculator is calculate_simulation_frames:
+        from .segmentation import should_segment_simulation
+
+        if segmented_calculator is not None and should_segment_simulation(simulation):
+            calculated = segmented_calculator(simulation)
+        elif calculator is calculate_simulation_frames:
             calculated = calculate_simulation_frames(simulation, runtime=runtime)
         else:
             calculation_span = (

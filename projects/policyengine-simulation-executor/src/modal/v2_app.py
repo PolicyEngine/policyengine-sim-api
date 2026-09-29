@@ -19,6 +19,7 @@ from policyengine_simulation_observability.observability import (
 )
 from policyengine_simulation_observability.stages import (
     STAGE12_CANONICAL_REPORT_STAGES,
+    STAGE12_SEGMENT_STAGES,
     STAGE12_SHADOW_REPORT_STAGES,
     STAGE12_SIMULATION_STAGES,
     Stage,
@@ -220,7 +221,46 @@ def validate_worker_uk() -> dict:
     image=us_worker_image,
     cpu=8.0,
     memory=32768,
-    timeout=3000,
+    timeout=3600,
+    retries=0,
+    max_containers=300,
+    secrets=worker_secrets,
+)
+def run_single_simulation_segment_us(
+    payload: dict,
+    *,
+    observability_context: dict | None = None,
+) -> dict:
+    from policyengine_simulation_executor.stage12_runtime import calculate_segment
+
+    runtime = init_process_observability(
+        service_name="policyengine-stage12-us-segment-worker",
+        service_role="stage12_segment_worker",
+        platform="modal",
+        environment=os.getenv("MODAL_ENVIRONMENT", "local"),
+    )
+
+    try:
+        propagated = normalize_observability_context(observability_context)
+        with runtime.operation(
+            STAGE12_SEGMENT_STAGES.name(Stage.STAGE12_SEGMENT_EXECUTION),
+            attributes={
+                "runner_name": "stage12",
+                "simulation_role": payload.get("simulation", {}).get("role"),
+                "segment_index": payload.get("segment_index"),
+            },
+            remote_context=propagated,
+        ):
+            return calculate_segment(payload, runtime=runtime).model_dump(mode="python")
+    finally:
+        runtime.shutdown()
+
+
+@app.function(
+    image=us_worker_image,
+    cpu=8.0,
+    memory=32768,
+    timeout=3900,
     retries=0,
     max_containers=10,
     secrets=worker_secrets,
@@ -232,6 +272,7 @@ def run_single_simulation_us(
     observability_context: dict | None = None,
 ) -> dict:
     from policyengine_simulation_executor.stage12_runtime import (
+        run_segmented_simulation,
         run_single_simulation,
     )
 
@@ -241,6 +282,14 @@ def run_single_simulation_us(
         platform="modal",
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
+
+    def segmented_calculator(simulation):
+        return run_segmented_simulation(
+            simulation,
+            app_name=APP_NAME,
+            runtime=runtime,
+        )
+
     try:
         propagated = normalize_observability_context(observability_context)
         with runtime.operation(
@@ -255,6 +304,7 @@ def run_single_simulation_us(
                 payload,
                 context,
                 required_country="us",
+                segmented_calculator=segmented_calculator,
                 runtime=runtime,
             )
     finally:
@@ -310,9 +360,9 @@ def run_single_simulation_uk(
     image=coordinator_image,
     cpu=2.0,
     memory=8192,
-    # Allow one 50-minute child-calculation window, the subsequent 15-minute
-    # production-result wait, and bounded aggregation/persistence overhead.
-    timeout=4500,
+    # Allow the two logical simulation parents to start and collect all region
+    # calculations, then retain bounded aggregation/persistence overhead.
+    timeout=5100,
     retries=0,
     max_containers=10,
     secrets=worker_secrets,

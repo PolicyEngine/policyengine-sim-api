@@ -11,6 +11,7 @@ from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     PlannedSimulationExecutionInput,
 )
+from policyengine_simulation_observability.stages import STAGE12_SEGMENT_STAGES
 
 from policyengine_simulation_executor.stage12_artifacts import (
     deserialize_calculation_provenance,
@@ -87,7 +88,11 @@ def calculate_segment(
     segment = Stage12SegmentInput.model_validate(payload)
     scoped = _scoped_simulation(segment)
     if calculator is calculate_simulation_frames:
-        calculated = calculate_simulation_frames(scoped, runtime=runtime)
+        calculated = calculate_simulation_frames(
+            scoped,
+            runtime=runtime,
+            stage_plan=STAGE12_SEGMENT_STAGES,
+        )
     else:
         calculated = calculator(scoped)
     if isinstance(calculated, SimulationCalculation):
