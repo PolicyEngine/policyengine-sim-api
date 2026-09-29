@@ -107,6 +107,21 @@ def test_cliff_analysis_is_forwarded_to_both_simulations() -> None:
     assert result.report.reform.options == {"include_cliffs": True}
 
 
+@pytest.mark.parametrize("segmented", [True, False])
+def test_segmentation_selection_is_forwarded_to_both_simulations(segmented) -> None:
+    payload = {**eligible_payload(), "segmented": segmented}
+
+    result = adapt_annual_comparison(
+        payload,
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert result.report is not None
+    assert result.report.baseline.options == {"segmented": segmented}
+    assert result.report.reform.options == {"segmented": segmented}
+
+
 @pytest.mark.parametrize(
     ("update", "reason"),
     [
@@ -124,7 +139,7 @@ def test_cliff_analysis_is_forwarded_to_both_simulations() -> None:
         ),
         ({"time_period": "2026-01"}, ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE),
         ({"region": None}, ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE),
-        ({"segmented": True}, ComparisonSkipReason.UNSUPPORTED_OPTIONS),
+        ({"segmented": "true"}, ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE),
         ({"region_group": ["state/ca"]}, ComparisonSkipReason.UNSUPPORTED_OPTIONS),
     ],
 )
