@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from policyengine.data.uk_geography_assets import (
     CONSTITUENCY_ASSET_SPEC,
-    LOCAL_AUTHORITY_ASSET_SPEC,
+    resolve_uk_local_authority_asset_spec,
 )
 
 from policyengine_simulation_executor.simulation_macro_output import (
@@ -232,12 +232,17 @@ def build_uk_constituency_impact(
 
 
 def build_uk_local_authority_impact(
-    country: str, baseline, reform
+    country: str,
+    baseline,
+    reform,
+    *,
+    dataset_identity: str | None,
 ) -> GeographicImpactOutput | None:
     if country != "uk":
         return None
 
-    lookup_csv_path = _required_uk_geography_lookup_csv_path(LOCAL_AUTHORITY_ASSET_SPEC)
+    asset_spec = resolve_uk_local_authority_asset_spec(dataset_identity)
+    lookup_csv_path = _required_uk_geography_lookup_csv_path(asset_spec)
     impact = _output_module_function(
         "local_authority_impact", "compute_uk_local_authority_impacts"
     )(
@@ -245,6 +250,7 @@ def build_uk_local_authority_impact(
         reform,
         local_authority_csv_path=lookup_csv_path,
         download_missing_assets=False,
+        dataset_identity=dataset_identity,
     )
     return _complete_uk_geography_output(
         getattr(impact, "local_authority_results", None),

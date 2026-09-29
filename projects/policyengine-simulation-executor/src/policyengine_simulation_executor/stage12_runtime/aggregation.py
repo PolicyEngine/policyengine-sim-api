@@ -145,6 +145,7 @@ def build_aggregate_report(
         dataset=datasets["baseline"],
         baseline=stand_in(datasets["baseline"], report.baseline.policy),
         reform=stand_in(datasets["reform"], report.reform.policy),
+        dataset_identity=report.baseline.bundle.dataset.identity,
         resolved_data_version=report.baseline.bundle.dataset.artifact_revision,
         resolved_region_code=report.baseline.geography.region,
     ).serialize()

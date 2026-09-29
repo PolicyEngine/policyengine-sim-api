@@ -63,9 +63,14 @@ with the live API-owned schema.
   does not receive the existing general GCP credential secret. The credential's
   service account can read and write its environment-specific Stage 12 artifact
   bucket. A conditional IAM binding separately permits it to read only
-  `constituencies_2024.csv` and `local_authorities_2021.csv` from
-  `policyengine-uk-data-private`; deployment validation downloads both lookup
-  files using the worker credential.
+  `constituencies_2024.csv`, `local_authorities_lad22.csv`, and
+  `local_authorities_lad23.csv` from `policyengine-uk-data-private`;
+  deployment validation downloads all three lookup files using the worker
+  credential. PolicyEngine.py maps explicitly named legacy datasets to LAD22
+  and treats LAD23 as the default for every other dataset identity. The
+  simulation coordinator passes the selected bundle dataset identity into the
+  aggregate-output builder; neither the front end nor an environment variable
+  chooses the local-authority roster.
 - `STAGE12_DATABASE_URL` is delivered from the environment-specific Secret
   Manager resource named by `STAGE12_DATABASE_URL_SECRET_NAME`. It authenticates
   as the existing shared `policyengine_v2_runtime` account; Stage 12 does not
@@ -179,7 +184,7 @@ requested, whether either policy activates labor-supply responses, and the
 required columns for every country-model entity.
 
 The resolver constructs data-free planning `Simulation` objects and invokes
-the output-configuration functions supplied by the pinned PolicyEngine 5.2.0
+the output-configuration functions supplied by the pinned PolicyEngine.py
 bundle. For US reports this includes the budgetary-impact variables; both
 countries use PolicyEngine's conditional cliff and labor-supply configuration.
 Planning never loads a dataset or executes a simulation. The former

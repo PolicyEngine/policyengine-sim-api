@@ -90,10 +90,13 @@ def test_storage_validation_uses_only_the_modal_worker_credentials() -> None:
 
     assert "runtime_gcloud auth activate-service-account" in source
     modal_account = '--account="${STAGE12_MODAL_SERVICE_ACCOUNT}"'
+    # Two canary transfers plus one loop body that checks every lookup object.
     assert source.count(f"runtime_gcloud {modal_account} storage cp") == 3
     assert source.count(f"runtime_gcloud {modal_account} storage rm") == 2
     assert "gs://policyengine-uk-data-private/constituencies_2024.csv" in source
-    assert "gs://policyengine-uk-data-private/local_authorities_2021.csv" in source
+    assert "gs://policyengine-uk-data-private/local_authorities_lad22.csv" in source
+    assert "gs://policyengine-uk-data-private/local_authorities_lad23.csv" in source
+    assert "gs://policyengine-uk-data-private/local_authorities_2021.csv" not in source
     assert "STAGE12_UK_GEOGRAPHY_BUCKET" not in source
 
 

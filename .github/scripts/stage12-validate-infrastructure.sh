@@ -39,7 +39,8 @@ for account in \
 done
 uk_geography_lookup_objects=(
   "gs://policyengine-uk-data-private/constituencies_2024.csv"
-  "gs://policyengine-uk-data-private/local_authorities_2021.csv"
+  "gs://policyengine-uk-data-private/local_authorities_lad22.csv"
+  "gs://policyengine-uk-data-private/local_authorities_lad23.csv"
 )
 for secret_name in \
   "${STAGE12_MODAL_TOKEN_ID_SECRET_NAME}" \

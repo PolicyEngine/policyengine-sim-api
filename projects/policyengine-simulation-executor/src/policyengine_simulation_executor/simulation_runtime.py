@@ -250,13 +250,15 @@ def _build_uk_weight_replacement_region(region_code: str):
     from policyengine.core.scoping_strategy import WeightReplacementStrategy
     from policyengine.data.uk_geography_assets import (
         CONSTITUENCY_ASSET_SPEC,
-        LOCAL_AUTHORITY_ASSET_SPEC,
+        resolve_uk_local_authority_asset_spec,
     )
 
     asset_spec = (
         CONSTITUENCY_ASSET_SPEC
         if prefix == "constituency"
-        else LOCAL_AUTHORITY_ASSET_SPEC
+        else resolve_uk_local_authority_asset_spec(
+            get_country_release_bundle("uk").default_dataset
+        )
     )
     return Region(
         code=region_code,
@@ -639,6 +641,7 @@ def _run_simulation_impl_core(
         dataset=dataset,
         baseline=baseline,
         reform=reform,
+        dataset_identity=dataset_selection.name,
         resolved_data_version=None,
         resolved_region_code=region_resolution.code,
         runtime=runtime,

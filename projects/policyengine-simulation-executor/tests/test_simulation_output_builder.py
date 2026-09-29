@@ -38,6 +38,9 @@ from policyengine_simulation_executor.simulation_runtime import (
 from policyengine_simulation_executor.simulation_runtime import (
     _load_dataset as _load_selected_dataset,
 )
+from policyengine_simulation_executor.simulation_runtime import (
+    _build_uk_weight_replacement_region,
+)
 from policyengine_simulation_executor.simulation_runtime import _nondefault_data_folder
 from policyengine_simulation_executor.simulation_runtime import _normalise_policy
 from policyengine_simulation_executor.simulation_runtime import (
@@ -142,6 +145,19 @@ def _with_observability_timings(callback):
     return result, set(runtime.names), counts, runtime.roots
 
 
+def _disable_spm_for_mocked_runtime(monkeypatch) -> None:
+    """Keep non-SPM runtime tests independent of the installed bundle default."""
+
+    from policyengine_simulation_executor import spm
+
+    monkeypatch.setattr(spm, "normalize_runtime_spm", lambda _params: None)
+    monkeypatch.setattr(
+        spm,
+        "simulation_spm_result",
+        lambda _baseline, _reform, _selection, **_kwargs: {},
+    )
+
+
 def _macro_baseline_reform():
     baseline = _FakeSimulation(
         pd.DataFrame(
@@ -175,6 +191,7 @@ def _simulation_output_builder(
     analysis=None,
     include_cliffs: bool | None = None,
     resolved_region_code: str | None = "us",
+    dataset_identity: str | None = None,
 ) -> SimulationOutputBuilder:
     analysis = analysis or fake_analysis()
 
@@ -204,6 +221,7 @@ def _simulation_output_builder(
         dataset=SimpleNamespace(metadata={}),
         baseline=baseline,
         reform=reform,
+        dataset_identity=dataset_identity,
         resolved_region_code=resolved_region_code,
     )
 
@@ -477,6 +495,7 @@ def test_builder_passes_resolved_region_to_congressional_district_output(monkeyp
 def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
     monkeypatch,
 ):
+    _disable_spm_for_mocked_runtime(monkeypatch)
     dataset = object()
     country_module = SimpleNamespace(model=SimpleNamespace(version="1.715.2"))
     baseline_simulation = object()
@@ -605,6 +624,7 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
 def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
     """The hit/incomplete/miss attribute is the rollout metric for the
     artifact pipeline; losing the export would blind that measurement."""
+    _disable_spm_for_mocked_runtime(monkeypatch)
     dataset = object()
     country_module = SimpleNamespace(model=SimpleNamespace(version="1.715.2"))
     simulations = {
@@ -1009,6 +1029,7 @@ def test_normalise_policy_converts_legacy_period_range_keys():
 
 
 def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch):
+    _disable_spm_for_mocked_runtime(monkeypatch)
     dataset = object()
     country_module = SimpleNamespace(model=SimpleNamespace(version="1.715.2"))
     baseline_simulation = object()
@@ -1087,6 +1108,7 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
             "dataset": dataset,
             "baseline": baseline_simulation,
             "reform": reform_simulation,
+            "dataset_identity": get_country_release_bundle("us").default_dataset,
             "resolved_data_version": None,
             "resolved_region_code": "us",
             "runtime": runtime,
@@ -1095,6 +1117,7 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
 
 
 def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypatch):
+    _disable_spm_for_mocked_runtime(monkeypatch)
     dataset = object()
     country_module = SimpleNamespace(model=SimpleNamespace(version="1.715.2"))
     baseline_simulation = object()
@@ -1197,6 +1220,13 @@ def test_dataset_selection_identifies_the_actual_bundle_default():
     assert omitted.is_default
     assert alternate.name == nondefault
     assert not alternate.is_default
+
+
+def test_uk_local_authority_region_uses_default_dataset_lookup_vintage():
+    region = _build_uk_weight_replacement_region("local_authority/E07000026")
+
+    assert region is not None
+    assert region.scoping_strategy.lookup_csv_key == "local_authorities_lad22.csv"
 
 
 def test_dataset_selection_rejects_a_bundled_uri_as_public_data():
@@ -1715,8 +1745,9 @@ def test_uk_local_authority_impact_uses_policyengine_output_function(monkeypatch
             assert baseline_simulation is baseline
             assert reform_simulation is reform
             assert kwargs == {
-                "local_authority_csv_path": "/tmp/local_authorities_2021.csv",
+                "local_authority_csv_path": "/tmp/local_authorities_lad22.csv",
                 "download_missing_assets": False,
+                "dataset_identity": "populace_uk_2023",
             }
             return SimpleNamespace(local_authority_results=expected)
 
@@ -1726,17 +1757,24 @@ def test_uk_local_authority_impact_uses_policyengine_output_function(monkeypatch
         "policyengine_simulation_executor.simulation_output_geographic._output_module_function",
         fake_output_module_function,
     )
+    observed_specs = []
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_geographic."
         "_required_uk_geography_lookup_csv_path",
-        lambda spec: "/tmp/local_authorities_2021.csv",
+        lambda spec: observed_specs.append(spec) or "/tmp/local_authorities_lad22.csv",
     )
 
     result = _simulation_output_builder(
-        "uk", baseline, reform
+        "uk",
+        baseline,
+        reform,
+        dataset_identity="populace_uk_2023",
     )._build_uk_local_authority_impact()
     assert result is not None
     assert result.model_dump(mode="json") == expected
+    assert [spec.lookup_csv_filename for spec in observed_specs] == [
+        "local_authorities_lad22.csv"
+    ]
     assert (
         _simulation_output_builder(
             "us", baseline, reform

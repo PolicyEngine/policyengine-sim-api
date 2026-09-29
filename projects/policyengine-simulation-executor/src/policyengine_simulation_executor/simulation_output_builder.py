@@ -46,6 +46,7 @@ class SimulationOutputBuilder:
     dataset: Any
     baseline: Any
     reform: Any
+    dataset_identity: str | None = None
     resolved_data_version: str | None = None
     resolved_region_code: str | None = None
     runtime: ObservabilityRuntime | None = None
@@ -238,7 +239,10 @@ class SimulationOutputBuilder:
     def _build_uk_local_authority_impact(self) -> GeographicImpactOutput | None:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_LOCAL_AUTHORITY)):
             return simulation_output_geographic.build_uk_local_authority_impact(
-                self.country, self.baseline, self.reform
+                self.country,
+                self.baseline,
+                self.reform,
+                dataset_identity=self.dataset_identity,
             )
 
     def _model_version(self) -> str:
