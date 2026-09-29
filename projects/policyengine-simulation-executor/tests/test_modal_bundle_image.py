@@ -1,11 +1,8 @@
 import importlib
-import os
 import sys
-import tomllib
 from pathlib import Path
 
-import pytest
-
+import tomllib
 from fixtures.fake_modal import install_fake_modal
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_package_version,
@@ -56,11 +53,14 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     project = tomllib.loads(
         (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
     )
-    expected_models = [
-        f"{package}=={bundle_versions[package]}"
-        for package in POLICYENGINE_BUNDLE_PACKAGES
-    ]
-    assert all(item in project["project"]["dependencies"] for item in expected_models)
+    project_dependencies = project["project"]["dependencies"]
+    expected_wrapper = f"policyengine[models]=={bundle_versions['policyengine']}"
+    assert project_dependencies.count(expected_wrapper) == 1
+    for package in POLICYENGINE_BUNDLE_PACKAGES[1:]:
+        assert not any(
+            isinstance(item, str) and item.startswith(f"{package}==")
+            for item in project_dependencies
+        )
     assert "--data-dir /opt/policyengine/data" in command
     assert app.VERSION_ENV["POLICYENGINE_DATA_FOLDER"] == "/opt/policyengine/data"
     assert app.VERSION_ENV["POLICYENGINE_BUNDLE_RECEIPT"].endswith(
@@ -90,7 +90,7 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     ]
 
     group = project["dependency-groups"]["modal-simulation-image"]
-    assert f"policyengine[models]=={bundle_versions['policyengine']}" in group
+    assert expected_wrapper in group
     assert not any(isinstance(item, dict) for item in group)
     for package in POLICYENGINE_BUNDLE_PACKAGES[1:]:
         assert not any(

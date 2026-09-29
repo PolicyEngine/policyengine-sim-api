@@ -20,7 +20,7 @@ def fake_repo(tmp_path: Path) -> Path:
 
     (project / "pyproject.toml").write_text(
         """[project]
-dependencies = ["policyengine==4.0.0", "policyengine-core==0.0.0", "policyengine-us==1.0.0", "policyengine-uk==2.0.0", "spm-calculator==0.1.0"]
+dependencies = ["policyengine[models]==4.0.0"]
 
 [dependency-groups]
 modal-simulation-image = ["policyengine[models]==4.0.0", "fastapi>=0.115.0"]

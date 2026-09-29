@@ -3,20 +3,15 @@
 import os
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 REPO_ROOT = Path(__file__).parent.parent
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
 MODAL_APP_PATH = REPO_ROOT / "src" / "modal" / "app.py"
-POLICYENGINE_DEPENDENCY_PREFIX = "policyengine=="
-POLICYENGINE_CORE_DEPENDENCY_PREFIX = "policyengine-core=="
-COUNTRY_PACKAGES = {
-    "us": "policyengine-us",
-    "uk": "policyengine-uk",
-}
-BUNDLE_PACKAGES = {
-    "policyengine",
+POLICYENGINE_MODELS_DEPENDENCY_PREFIX = "policyengine[models]=="
+COMPONENT_PACKAGES = {
     "policyengine-core",
     "policyengine-us",
     "policyengine-uk",
@@ -39,52 +34,50 @@ def _load_toml(path: Path) -> dict:
 def _get_pyproject_policyengine_dependency(pyproject: dict) -> str:
     dependencies = pyproject["project"]["dependencies"]
     return next(
-        dep for dep in dependencies if dep.startswith(POLICYENGINE_DEPENDENCY_PREFIX)
-    )
-
-
-def _get_pyproject_policyengine_core_dependency(pyproject: dict) -> str:
-    dependencies = pyproject["project"]["dependencies"]
-    return next(
         dep
         for dep in dependencies
-        if dep.startswith(POLICYENGINE_CORE_DEPENDENCY_PREFIX)
+        if dep.startswith(POLICYENGINE_MODELS_DEPENDENCY_PREFIX)
     )
 
 
-def _get_dependency_pin(pyproject: dict, package: str) -> str:
-    dependencies = pyproject["project"]["dependencies"]
-    prefix = f"{package}=="
-    return next(
-        dep.removeprefix(prefix) for dep in dependencies if dep.startswith(prefix)
+def test_all_runtime_dependencies_use_policyengine_models_extra():
+    from policyengine_simulation_executor.release_bundle import (
+        get_bundled_package_version,
     )
-
-
-def test_policyengine_dependency_version_is_pinned_consistently():
-    from src.modal.dependency_pins import project_dependency_pin
 
     pyproject = _load_toml(PYPROJECT_PATH)
-    pyproject_dependency = _get_pyproject_policyengine_dependency(pyproject)
-    pyproject_core_dependency = _get_pyproject_policyengine_core_dependency(pyproject)
-
-    assert pyproject_dependency.startswith(POLICYENGINE_DEPENDENCY_PREFIX)
-    assert pyproject_core_dependency.startswith(POLICYENGINE_CORE_DEPENDENCY_PREFIX)
-    assert (
-        f"policyengine=={project_dependency_pin('policyengine')}"
-        == pyproject_dependency
-    )
-    assert (
-        f"policyengine-core=={project_dependency_pin('policyengine-core')}"
-        == pyproject_core_dependency
+    wrapper_version = get_bundled_package_version("policyengine")
+    expected_requirement = f"policyengine[models]=={wrapper_version}"
+    dependency_lists = (
+        pyproject["project"]["dependencies"],
+        pyproject["dependency-groups"]["modal-simulation-image"],
     )
 
+    assert _get_pyproject_policyengine_dependency(pyproject) == expected_requirement
+    for dependencies in dependency_lists:
+        assert dependencies.count(expected_requirement) == 1
+        assert not any(
+            isinstance(dependency, str) and dependency.startswith("policyengine==")
+            for dependency in dependencies
+        )
+        for package in COMPONENT_PACKAGES:
+            assert not any(
+                isinstance(dependency, str)
+                and (
+                    dependency.startswith(f"{package}==")
+                    or dependency.startswith(f"{package}[")
+                )
+                for dependency in dependencies
+            )
 
-def test_modal_app_reads_policyengine_pins_from_pyproject():
+
+def test_modal_app_reads_package_versions_from_policyengine_bundle():
     modal_source = MODAL_APP_PATH.read_text(encoding="utf-8")
 
     assert '"policyengine==4.10.0"' not in modal_source
     assert '"policyengine-core==3.26.1"' not in modal_source
-    assert "project_dependency_pin" in modal_source
+    assert "project_dependency_pin" not in modal_source
+    assert "get_bundled_package_version" in modal_source
     assert '"policyengine"' in modal_source
     assert '"policyengine-core"' in modal_source
     assert "POLICYENGINE_CORE_VERSION" in modal_source
@@ -97,42 +90,6 @@ def test_modal_app_name_is_keyed_to_policyengine_py_version():
     assert "def get_app_name(policyengine_version: str)" in modal_source
     assert "policyengine-simulation-py" in modal_source
     assert "policyengine-simulation-us" not in modal_source
-
-
-def test_country_package_pins_match_policyengine_bundle():
-    from policyengine_simulation_executor.release_bundle import (
-        get_country_release_bundle,
-    )
-
-    pyproject = _load_toml(PYPROJECT_PATH)
-
-    for country, package in COUNTRY_PACKAGES.items():
-        assert (
-            _get_dependency_pin(pyproject, package)
-            == get_country_release_bundle(country).model_version
-        )
-
-
-def test_modal_models_extra_and_project_pins_match_policyengine_bundle():
-    from policyengine_simulation_executor.release_bundle import (
-        get_bundled_package_version,
-    )
-
-    pyproject = _load_toml(PYPROJECT_PATH)
-    modal_dependencies = pyproject["dependency-groups"]["modal-simulation-image"]
-    wrapper_version = get_bundled_package_version("policyengine")
-
-    assert modal_dependencies.count(f"policyengine[models]=={wrapper_version}") == 1
-    assert not any(isinstance(dependency, dict) for dependency in modal_dependencies)
-    for package in BUNDLE_PACKAGES:
-        assert _get_dependency_pin(pyproject, package) == get_bundled_package_version(
-            package
-        )
-        if package != "policyengine":
-            assert not any(
-                isinstance(dependency, str) and dependency.startswith(f"{package}==")
-                for dependency in modal_dependencies
-            )
 
 
 def _modal_import_env() -> dict[str, str]:
@@ -150,13 +107,12 @@ import modal
 modal.is_local = lambda: False
 
 from policyengine_simulation_executor import release_bundle
-from src.modal import dependency_pins
 
 def fail(message):
     raise AssertionError(message)
 
-dependency_pins.project_dependency_pin = lambda package: fail(
-    f"read pyproject for {package}"
+release_bundle.get_bundled_package_version = lambda package: fail(
+    f"read bundle package for {package}"
 )
 release_bundle.get_bundled_country_model_version = lambda country: fail(
     f"read bundle manifest for {country}"

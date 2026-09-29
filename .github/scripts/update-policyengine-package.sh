@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Check PyPI for a newer policyengine.py package, update the simulation project
-# pin, sync runtime package pins to that policyengine.py bundle, and open one
+# requirement, let its models extra select every runtime component, and open one
 # bundle-level PR.
 #
 # Usage:
@@ -139,7 +139,7 @@ create_pr_body_file() {
     echo
     echo "Update policyengine.py from ${CURRENT} to ${LATEST} in the simulation API runtime."
     echo
-    echo "This also syncs runtime package pins to the versions bundled by policyengine.py ${LATEST}:"
+    echo "The policyengine[models] requirement selects the runtime versions bundled by policyengine.py ${LATEST}:"
     echo "- policyengine-core: ${BUNDLED_CORE_VERSION:-resolved from bundle during update}"
     echo "- policyengine-us: ${BUNDLED_US_VERSION:-resolved from bundle during update}"
     echo "- policyengine-uk: ${BUNDLED_UK_VERSION:-resolved from bundle during update}"
@@ -162,16 +162,25 @@ if [[ ! -f "$PYPROJECT" || ! -f "$LOCKFILE" ]]; then
 fi
 
 CURRENT=$(python3 - "$PYPROJECT" "$PACKAGE" <<'PY'
-import re
 import sys
+import tomllib
 from pathlib import Path
 
 pyproject, package = sys.argv[1:]
-text = Path(pyproject).read_text(encoding="utf-8")
-match = re.search(rf'"{re.escape(package)}==([^"]+)"', text)
-if not match:
-    raise SystemExit(f"Package {package!r} not found in {pyproject}")
-print(match.group(1))
+parsed = tomllib.loads(Path(pyproject).read_text(encoding="utf-8"))
+dependencies = parsed.get("project", {}).get("dependencies", [])
+prefix = f"{package}[models]=="
+matches = [
+    dependency.removeprefix(prefix)
+    for dependency in dependencies
+    if isinstance(dependency, str) and dependency.startswith(prefix)
+]
+if len(matches) != 1:
+    raise SystemExit(
+        f"Expected one {package}[models] requirement in project.dependencies; "
+        f"found {matches!r}"
+    )
+print(matches[0])
 PY
 )
 
@@ -239,6 +248,7 @@ git checkout -b "$BRANCH"
 
 python3 - "$PYPROJECT" "$PACKAGE" "$CURRENT" "$LATEST" <<'PY'
 import os
+import re
 import sys
 import tempfile
 import tomllib
@@ -249,19 +259,27 @@ pyproject_path, package, current, latest = sys.argv[1:]
 pyproject = Path(pyproject_path)
 pyproject_text = pyproject.read_text(encoding="utf-8")
 parsed = tomllib.loads(pyproject_text)
+old_requirement = f"{package}[models]=={current}"
+new_requirement = f"{package}[models]=={latest}"
 requirements = {
-    "project.dependencies": (
-        parsed.get("project", {}).get("dependencies", []),
-        f"{package}=={current}",
-        f"{package}=={latest}",
-    ),
-    "dependency-groups.modal-simulation-image": (
-        parsed.get("dependency-groups", {}).get("modal-simulation-image", []),
-        f"{package}[models]=={current}",
-        f"{package}[models]=={latest}",
-    ),
+    "project.dependencies": parsed.get("project", {}).get("dependencies", []),
+    "dependency-groups.modal-simulation-image": parsed.get(
+        "dependency-groups", {}
+    ).get("modal-simulation-image", []),
 }
-for location, (dependencies, old_requirement, new_requirement) in requirements.items():
+component_packages = (
+    "policyengine-core",
+    "policyengine-us",
+    "policyengine-uk",
+    "spm-calculator",
+)
+
+
+def requirement_name(requirement):
+    return re.split(r"[\s\[<>=!~;@]", requirement, maxsplit=1)[0]
+
+
+for location, dependencies in requirements.items():
     package_prefix = old_requirement.rsplit("==", 1)[0] + "=="
     matches = [
         dependency
@@ -272,14 +290,37 @@ for location, (dependencies, old_requirement, new_requirement) in requirements.i
         raise SystemExit(
             f"Expected {old_requirement} in {location}; found {matches!r}"
         )
-    old_pin = f'"{old_requirement}"'
-    new_pin = f'"{new_requirement}"'
-    if pyproject_text.count(old_pin) != 1:
+    redundant_wrapper_requirements = [
+        dependency
+        for dependency in dependencies
+        if isinstance(dependency, str)
+        and dependency != old_requirement
+        and requirement_name(dependency) == package
+    ]
+    if redundant_wrapper_requirements:
         raise SystemExit(
-            f"Expected {old_pin} once in {pyproject}; "
-            f"found {pyproject_text.count(old_pin)}"
+            f"Expected only {old_requirement} for {package} in {location}; "
+            f"found {redundant_wrapper_requirements!r}"
         )
-    pyproject_text = pyproject_text.replace(old_pin, new_pin)
+    direct_component_requirements = [
+        dependency
+        for dependency in dependencies
+        if isinstance(dependency, str)
+        and requirement_name(dependency) in component_packages
+    ]
+    if direct_component_requirements:
+        raise SystemExit(
+            f"Expected {location} to obtain component packages from "
+            f"{package}[models]; found {direct_component_requirements!r}"
+        )
+old_pin = f'"{old_requirement}"'
+new_pin = f'"{new_requirement}"'
+if pyproject_text.count(old_pin) != len(requirements):
+    raise SystemExit(
+        f"Expected {old_pin} {len(requirements)} times in {pyproject}; "
+        f"found {pyproject_text.count(old_pin)}"
+    )
+pyproject_text = pyproject_text.replace(old_pin, new_pin)
 with tempfile.NamedTemporaryFile(
     mode="w",
     encoding="utf-8",
@@ -292,9 +333,7 @@ with tempfile.NamedTemporaryFile(
 os.replace(temporary_path, pyproject)
 PY
 
-# Read the target wrapper's release manifest without resolving the project. The
-# project still has the previous component pins at this point, which may
-# conflict with the target wrapper's models extra.
+# Read the target wrapper's release manifest without resolving the project.
 for attempt in 1 2 3; do
   if BUNDLE_OUTPUT=$(
     uv run \
@@ -372,114 +411,6 @@ echo "  spm-calculator==${BUNDLED_SPM_VERSION}"
 echo "Certified data releases:"
 echo "  us=${BUNDLED_US_DATA_VERSION}"
 echo "  uk=${BUNDLED_UK_DATA_VERSION}"
-
-python3 - "$PYPROJECT" "$BUNDLED_POLICYENGINE_VERSION" "$BUNDLED_CORE_VERSION" "$BUNDLED_US_VERSION" "$BUNDLED_UK_VERSION" "$BUNDLED_SPM_VERSION" <<'PY'
-import os
-import re
-import sys
-import tempfile
-import tomllib
-from pathlib import Path
-
-(
-    pyproject_path,
-    policyengine_version,
-    core_version,
-    us_version,
-    uk_version,
-    spm_version,
-) = sys.argv[1:]
-pyproject = Path(pyproject_path)
-text = pyproject.read_text(encoding="utf-8")
-pins = {
-    "policyengine": policyengine_version,
-    "policyengine-core": core_version,
-    "policyengine-us": us_version,
-    "policyengine-uk": uk_version,
-    "spm-calculator": spm_version,
-}
-
-# Project dependencies supply local development, tests, and non-Modal runtimes,
-# so retain exact direct pins for every package in the wrapper's release
-# manifest. The Modal image needs only the wrapper's models extra: its package
-# metadata declares those same exact component versions and uv.lock records the
-# resolved environment.
-parsed = tomllib.loads(text)
-project_dependencies = parsed.get("project", {}).get("dependencies", [])
-modal_dependencies = parsed.get("dependency-groups", {}).get(
-    "modal-simulation-image", []
-)
-expected_modal_requirement = f"policyengine[models]=={policyengine_version}"
-modal_wrapper_requirements = [
-    dependency
-    for dependency in modal_dependencies
-    if isinstance(dependency, str) and dependency.startswith("policyengine[models]==")
-]
-if modal_wrapper_requirements != [expected_modal_requirement]:
-    raise SystemExit(
-        f"Expected {expected_modal_requirement} in "
-        "dependency-groups.modal-simulation-image; "
-        f"found {modal_wrapper_requirements!r}"
-    )
-for package in pins:
-    matches = [
-        dependency
-        for dependency in project_dependencies
-        if isinstance(dependency, str) and dependency.startswith(f"{package}==")
-    ]
-    if len(matches) != 1:
-        raise SystemExit(
-            f"Expected one exact {package} pin in project.dependencies; "
-            f"found {len(matches)}"
-        )
-for package in pins:
-    if package == "policyengine":
-        continue
-    modal_component_pins = [
-        dependency
-        for dependency in modal_dependencies
-        if isinstance(dependency, str) and dependency.startswith(f"{package}==")
-    ]
-    if modal_component_pins:
-        raise SystemExit(
-            f"Expected {package} to be supplied by policyengine[models], "
-            f"found direct Modal requirements {modal_component_pins!r}"
-        )
-
-for package, version in pins.items():
-    pattern = rf'"{re.escape(package)}==[^"]+"'
-    replacement = f'"{package}=={version}"'
-    text, count = re.subn(pattern, replacement, text)
-    if count != 1:
-        raise SystemExit(
-            f"Expected to update {package} once in {pyproject}; updated {count}"
-        )
-
-updated = tomllib.loads(text)
-for package, version in pins.items():
-    if f"{package}=={version}" not in updated["project"]["dependencies"]:
-        raise SystemExit(
-            f"Updated {package} pin is missing from project.dependencies"
-        )
-if expected_modal_requirement not in updated["dependency-groups"][
-    "modal-simulation-image"
-]:
-    raise SystemExit(
-        "Updated policyengine[models] requirement is missing from "
-        "dependency-groups.modal-simulation-image"
-    )
-
-with tempfile.NamedTemporaryFile(
-    mode="w",
-    encoding="utf-8",
-    dir=pyproject.parent,
-    prefix=f".{pyproject.name}.",
-    delete=False,
-) as temporary:
-    temporary.write(text)
-    temporary_path = temporary.name
-os.replace(temporary_path, pyproject)
-PY
 
 # The PyPI Simple index can briefly lag the JSON API after a release, so retry
 # the final project lock as well.

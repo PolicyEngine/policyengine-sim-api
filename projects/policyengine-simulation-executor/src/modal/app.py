@@ -10,6 +10,10 @@ The gateway app (policyengine-simulation-gateway) routes requests to these versi
 import os
 from pathlib import Path
 
+from policyengine_simulation_executor.release_bundle import (
+    get_bundled_country_model_version,
+    get_bundled_package_version,
+)
 from policyengine_simulation_observability.observability import (
     init_process_observability,
     modal_image_environment,
@@ -23,23 +27,19 @@ from policyengine_simulation_observability.stages import (
 from policyengine_simulation_observability.telemetry import (
     normalize_observability_context,
 )
-
-import modal
-from policyengine_simulation_executor.release_bundle import (
-    get_bundled_country_model_version,
-)
 from src.modal._image_setup import fetch_artifacts, snapshot_models
 from src.modal.bundle_data import bundle_data_install_command
-from src.modal.dependency_pins import project_dependency_pin
 from src.modal.logging_redaction import redact_params_for_logging
 
+import modal
 
-def _version_from_env_or_local_dependency(env_var: str, package: str) -> str:
+
+def _version_from_env_or_local_bundle_package(env_var: str, package: str) -> str:
     value = os.environ.get(env_var)
     if value:
         return value
     if modal.is_local():
-        return project_dependency_pin(package)
+        return get_bundled_package_version(package)
     raise RuntimeError(
         f"{env_var} must be set in the Modal image environment for remote "
         "simulation workers."
@@ -58,11 +58,11 @@ def _version_from_env_or_local_bundle(env_var: str, country: str) -> str:
     )
 
 
-POLICYENGINE_VERSION = _version_from_env_or_local_dependency(
+POLICYENGINE_VERSION = _version_from_env_or_local_bundle_package(
     "POLICYENGINE_VERSION",
     "policyengine",
 )
-POLICYENGINE_CORE_VERSION = _version_from_env_or_local_dependency(
+POLICYENGINE_CORE_VERSION = _version_from_env_or_local_bundle_package(
     "POLICYENGINE_CORE_VERSION",
     "policyengine-core",
 )

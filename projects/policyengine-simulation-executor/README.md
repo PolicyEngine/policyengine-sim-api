@@ -10,9 +10,11 @@ their runtime packages straight from this project's `uv.lock` via
 packages therefore match the versions the test environment runs against
 and can only change through a relock — never through a fresh resolution
 at image-build time (issue #602 is what happens otherwise).
-`modal-simulation-image` declares `policyengine[models]` at an exact wrapper
-version. That extra declares the wrapper's exact core, country-model, and SPM
-calculator dependencies, and `uv.lock` records the versions that uv resolved.
+Both the executor project and `modal-simulation-image` declare
+`policyengine[models]` at an exact wrapper version. That extra declares the
+wrapper's exact core, country-model, and SPM calculator dependencies, and
+`uv.lock` records the versions that uv resolved. Neither dependency list
+duplicates those component versions.
 
 After `uv_sync`, `policyengine bundle install --no-packages` downloads and
 verifies the certified datasets and writes the bundle receipt. It does not run
@@ -21,12 +23,12 @@ precompute, and import-smoke paths share this package and data arrangement.
 The gateway lives in its own project and installs from its own lock; see its
 README.
 
-To change a PolicyEngine release, update the wrapper requirement in the project
-dependencies and `modal-simulation-image`, then run `uv lock`. The automated
-updater reads the wrapper's release manifest and updates the direct component
-pins used by local development and non-Modal runtimes. Other image dependencies
-belong in `modal-simulation-image`. PRs touching image inputs run an in-image
-import smoke (`src/modal/smoke_app.py` via
+To change a PolicyEngine release, update the `policyengine[models]` requirement
+in the project dependencies and `modal-simulation-image`, then run `uv lock`.
+The automated updater changes only those wrapper requirements; it reads the
+wrapper's release manifest to verify and report the selected component and data
+versions. Other image dependencies belong in `modal-simulation-image`. PRs
+touching image inputs run an in-image import smoke (`src/modal/smoke_app.py` via
 `.github/workflows/pr-image-smoke.yml`). Note that any change to the
 group or lock invalidates the image layer cache, including the artifact
 fetch layer below.

@@ -143,7 +143,7 @@ def test_update_policyengine_package_opens_pr_for_existing_branch_without_open_p
     assert "pr-body-first-line Fixes #679" in gh_calls
 
 
-def test_update_policyengine_package_updates_py_and_bundled_runtime_pins(
+def test_update_policyengine_package_updates_only_wrapper_requirements(
     fake_bin: Path, fake_repo: Path, tmp_path: Path
 ) -> None:
     git_log = tmp_path / "git.log"
@@ -163,17 +163,12 @@ def test_update_policyengine_package_updates_py_and_bundled_runtime_pins(
     pyproject_text = (fake_repo / "simulation" / "pyproject.toml").read_text(
         encoding="utf-8"
     )
-    assert "policyengine==4.1.0" in pyproject_text
-    assert "policyengine-core==999.999.999" in pyproject_text
-    assert "policyengine-us==1.1.0" in pyproject_text
-    assert "policyengine-uk==2.1.0" in pyproject_text
-    assert "spm-calculator==1.0.0" in pyproject_text
-    assert pyproject_text.count("policyengine==4.1.0") == 1
-    assert pyproject_text.count("policyengine[models]==4.1.0") == 1
-    assert pyproject_text.count("policyengine-core==999.999.999") == 1
-    assert pyproject_text.count("policyengine-us==1.1.0") == 1
-    assert pyproject_text.count("policyengine-uk==2.1.0") == 1
-    assert pyproject_text.count("spm-calculator==1.0.0") == 1
+    assert pyproject_text.count("policyengine[models]==4.1.0") == 2
+    assert "policyengine==4.1.0" not in pyproject_text
+    assert "policyengine-core==" not in pyproject_text
+    assert "policyengine-us==" not in pyproject_text
+    assert "policyengine-uk==" not in pyproject_text
+    assert "spm-calculator==" not in pyproject_text
     uv_calls = uv_log.read_text(encoding="utf-8")
     assert "run --isolated --no-project --with policyengine==4.1.0 python -" in uv_calls
     assert "lock --upgrade-package policyengine" not in uv_calls
@@ -257,6 +252,40 @@ def test_update_policyengine_package_requires_modal_models_requirement(
 
     assert result.returncode != 0
     assert "in dependency-groups.modal-simulation-image; found []" in result.stderr
+    git_calls = git_log.read_text(encoding="utf-8")
+    assert "git commit" not in git_calls
+    assert "git push" not in git_calls
+    assert "pr create" not in gh_log.read_text(encoding="utf-8")
+
+
+def test_update_policyengine_package_rejects_direct_component_requirements(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    git_log = tmp_path / "git.log"
+    gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
+    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=uv_log)
+    pyproject = fake_repo / "simulation" / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text(encoding="utf-8").replace(
+            'dependencies = ["policyengine[models]==4.0.0"]',
+            'dependencies = ["policyengine[models]==4.0.0", '
+            '"policyengine-core==0.0.0"]',
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_updater(
+        env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"),
+    )
+
+    assert result.returncode != 0
+    assert (
+        "Expected project.dependencies to obtain component packages from "
+        "policyengine[models]"
+    ) in result.stderr
     git_calls = git_log.read_text(encoding="utf-8")
     assert "git commit" not in git_calls
     assert "git push" not in git_calls
