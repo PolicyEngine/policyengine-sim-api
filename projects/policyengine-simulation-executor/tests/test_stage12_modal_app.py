@@ -176,6 +176,14 @@ def test_v2_static_runtime_file_smoke_uses_exact_uk_worker_image(monkeypatch) ->
     }
 
 
+def test_only_us_worker_image_fetches_stage12_cache(monkeypatch) -> None:
+    module = _load(monkeypatch)
+
+    assert any(call[0] == "run_function" for call in module.us_worker_image.calls)
+    assert not any(call[0] == "run_function" for call in module.uk_worker_image.calls)
+    assert not any(call[0] == "run_function" for call in module.coordinator_image.calls)
+
+
 def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     monkeypatch,
 ) -> None:

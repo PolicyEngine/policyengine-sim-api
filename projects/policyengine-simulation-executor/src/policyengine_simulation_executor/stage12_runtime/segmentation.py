@@ -185,4 +185,5 @@ def merge_segment_results(
     return SimulationCalculation(
         frames=merged,
         calculation_provenance=_merge_calculation_provenance(provenance),
+        cache_outcome=None,
     )

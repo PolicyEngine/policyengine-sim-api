@@ -29,13 +29,28 @@ def test_all_country_results_must_match_the_deployment_bundle(monkeypatch) -> No
                 "dataset_uri": bundle.default_dataset_uri,
                 "data_artifact_revision": bundle.data_artifact_revision,
                 "bundle_manifest_sha256": resolved.bundle_manifest_sha256,
+                "cache": (
+                    {
+                        "manifest_sha256": "c" * 64,
+                        "partition_sha256": "d" * 64,
+                        "years": [2026, 2027, 2025],
+                        "segment_count": 20,
+                        "dataset_count": 3,
+                        "baseline_count": 60,
+                    }
+                    if country == "us"
+                    else None
+                ),
             },
             invocation_id,
         )
 
     monkeypatch.setattr(validation, "_spawn_validation", fake_spawn_validation)
 
-    result = validation.validate_release(environment="staging")
+    result = validation.validate_release(
+        environment="staging",
+        expected_cache_manifest_sha256="c" * 64,
+    )
 
     assert result.validated is True
     assert result.country_validation_invocation_ids == {
@@ -43,6 +58,8 @@ def test_all_country_results_must_match_the_deployment_bundle(monkeypatch) -> No
         "uk": "call-uk",
     }
     assert invocation_ids == ["call-us", "call-uk"]
+    assert result.cache is not None
+    assert result.cache.manifest_sha256 == "c" * 64
 
 
 def test_country_result_mismatch_stops_publication(monkeypatch) -> None:
@@ -60,4 +77,7 @@ def test_country_result_mismatch_stops_publication(monkeypatch) -> None:
     )
 
     with pytest.raises(RuntimeError, match="differ from deployment"):
-        validation.validate_release(environment="staging")
+        validation.validate_release(
+            environment="staging",
+            expected_cache_manifest_sha256="c" * 64,
+        )

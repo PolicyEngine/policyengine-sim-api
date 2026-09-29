@@ -16,6 +16,7 @@ from policyengine_simulation_contract.stage12_manifest import (
     ACTIVE_MANIFEST_KEY,
     V1_ROUTING_STATE_NAME,
     V2_VERSION_MANIFEST_NAME,
+    Stage12CacheRelease,
     V2CountryWorker,
     V2ManifestLoader,
     V2WorkerValidation,
@@ -176,6 +177,21 @@ def test_manifest_rejects_incomplete_or_unvalidated_worker() -> None:
     value = _worker().model_dump(mode="json")
     value.pop("report_coordinator_callable")
     with pytest.raises(ValueError):
+        V2WorkerVersion.model_validate(value)
+
+
+def test_cache_metadata_is_optional_for_old_workers_and_must_match_validation() -> None:
+    old = _worker()
+    assert old.cache is None
+
+    cache = Stage12CacheRelease(
+        manifest_sha256="c" * 64,
+        partition_sha256="d" * 64,
+        years=(2026, 2027, 2025),
+    )
+    value = old.model_dump(mode="json")
+    value["cache"] = cache.model_dump(mode="json")
+    with pytest.raises(ValueError, match="cache metadata differs"):
         V2WorkerVersion.model_validate(value)
 
     value = _worker().model_dump(mode="json")

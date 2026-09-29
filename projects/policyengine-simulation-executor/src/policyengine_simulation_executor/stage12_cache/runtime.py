@@ -52,13 +52,14 @@ def qualifying_cache_identity(
         not isinstance(code, str) or not code.startswith("state/") for code in raw_group
     ):
         return None
+    region_codes = tuple(code for code in raw_group if isinstance(code, str))
     scope_key = getattr(scoping_strategy, "cache_key", None)
     if not isinstance(scope_key, str) or not scope_key:
         return None
     return collect_baseline_identity(
         simulation,
         resolved=resolved,
-        region_codes=tuple(raw_group),
+        region_codes=region_codes,
         scope_key=scope_key,
     )
 

@@ -35,12 +35,37 @@ from policyengine_simulation_executor.stage12_bundle import (
 )
 from src.modal.bundle_data import bundle_data_install_command
 from src.modal.static_runtime_files import add_static_runtime_files
+from src.modal.stage12_cache_image import fetch_stage12_cache
 
 STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
 RESOLVED_BUNDLE = load_stage12_bundle()
 BUNDLE_VALUES = assertion_values(RESOLVED_BUNDLE.bundle)
 APP_NAME = v2_application_name(RESOLVED_BUNDLE.bundle.policyengine_version)
+
+
+def _deploy_time_cache_inputs() -> tuple[str, dict | None]:
+    """Resolve and validate the cache manifest on the deploying machine."""
+
+    if not modal.is_local():
+        return "", None
+    bucket = os.environ.get("STAGE12_CACHE_BUCKET", "")
+    digest = os.environ.get("STAGE12_CACHE_MANIFEST_DIGEST")
+    if not digest:
+        return bucket, None
+    from policyengine_simulation_executor.stage12_cache.models import CacheManifest
+    from policyengine_simulation_executor.stage12_cache.store import Stage12CacheStore
+
+    payload = Stage12CacheStore(bucket).read_manifest(digest)
+    if payload is None:
+        raise RuntimeError("Stage 12 cache manifest is unavailable")
+    manifest = CacheManifest.model_validate(payload)
+    if manifest.bundle.bundle_manifest_sha256 != RESOLVED_BUNDLE.bundle_manifest_sha256:
+        raise RuntimeError("Stage 12 cache manifest names another bundle")
+    return bucket, manifest.canonical_payload()
+
+
+STAGE12_CACHE_BUCKET, STAGE12_CACHE_MANIFEST = _deploy_time_cache_inputs()
 
 
 def _external_assertions(environment: dict[str, str]) -> dict[str, str]:
@@ -88,7 +113,9 @@ def _country_bundle(country: CountryId):
     )
 
 
-def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:
+def build_v2_image(
+    countries: tuple[CountryId, ...], *, include_us_cache: bool = False
+) -> modal.Image:
     country_values = {
         country: _country_bundle(country).model_dump(mode="json")
         for country in countries
@@ -120,21 +147,33 @@ def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:
                     sort_keys=True,
                     separators=(",", ":"),
                 ),
+                "STAGE12_CACHE_MANIFEST_DIGEST": os.environ.get(
+                    "STAGE12_CACHE_MANIFEST_DIGEST", ""
+                ),
             }
         )
-        .add_local_python_source(
-            "src.modal",
-            "policyengine_simulation_executor",
-            "policyengine_simulation_observability",
-            "policyengine_simulation_contract",
-            "policyengine_stage12_persistence",
-            copy=True,
+    )
+    if include_us_cache:
+        image = image.run_function(
+            fetch_stage12_cache,
+            args=(STAGE12_CACHE_BUCKET, STAGE12_CACHE_MANIFEST),
+            secrets=[gcp_secret],
+            cpu=2.0,
+            memory=4096,
+            timeout=1800,
         )
+    image = image.add_local_python_source(
+        "src.modal",
+        "policyengine_simulation_executor",
+        "policyengine_simulation_observability",
+        "policyengine_simulation_contract",
+        "policyengine_stage12_persistence",
+        copy=True,
     )
     return add_static_runtime_files(image, uv_project_dir=_UV_PROJECT_DIR)
 
 
-us_worker_image = build_v2_image(("us",))
+us_worker_image = build_v2_image(("us",), include_us_cache=True)
 uk_worker_image = build_v2_image(("uk",))
 coordinator_image = build_v2_image(("us", "uk"))
 
@@ -147,6 +186,9 @@ def _validate(country: CountryId) -> dict:
     return validate_country_worker(
         country=country,
         expected_bundle_manifest_sha256=os.environ["STAGE12_BUNDLE_MANIFEST_SHA256"],
+        expected_cache_manifest_sha256=(
+            os.environ.get("STAGE12_CACHE_MANIFEST_DIGEST") if country == "us" else None
+        ),
     )
 
 

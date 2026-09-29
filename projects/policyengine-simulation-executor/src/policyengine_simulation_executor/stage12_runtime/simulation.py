@@ -45,6 +45,7 @@ class SimulationCalculation:
     frames: Mapping[str, pd.DataFrame]
     calculation_provenance: dict[str, Any] | None = None
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
+    cache_outcome: str | None = None
 
 
 def build_stage12_simulation(
@@ -289,6 +290,7 @@ def calculate_simulation_frames(
             frames=frames,
             calculation_provenance=calculation_provenance,
             uk_local_authority_metadata=uk_local_authority_metadata,
+            cache_outcome=cache_outcome,
         )
 
 

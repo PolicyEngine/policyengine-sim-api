@@ -20,6 +20,7 @@ def _environment() -> dict[str, str]:
         "GOOGLE_APPLICATION_CREDENTIALS_JSON": "{}",
         "STAGE12_DATABASE_URL": "postgresql://runtime:secret@db.example/postgres",
         "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
+        "STAGE12_CACHE_BUCKET": "policyengine-stage12-cache-staging",
     }
 
 
@@ -35,6 +36,7 @@ def test_validation_checks_dataset_and_non_serving_calculation() -> None:
         dataset_path_resolver=lambda _: "/installed/populace_us_2024.h5",
         dataset_check=lambda path, digest: datasets.append((path, digest)),
         calculation_check=countries.append,
+        cache_check=lambda digest: {"manifest_sha256": digest},
     )
 
     assert result["validated"] is True
@@ -49,6 +51,7 @@ def test_validation_checks_dataset_and_non_serving_calculation() -> None:
     )
     assert datasets == [("/installed/populace_us_2024.h5", expected_dataset.sha256)]
     assert countries == ["us"]
+    assert result["cache"] is None
 
 
 def test_non_serving_us_calculation_supports_national_spm() -> None:
@@ -106,6 +109,33 @@ def test_validation_rejects_digest_mismatch_before_dataset_access() -> None:
             calculation_check=lambda _: None,
         )
     assert accessed == []
+
+
+def test_us_validation_reports_the_verified_cache_release() -> None:
+    resolved = load_stage12_bundle()
+    seen: list[str] = []
+    cache = {
+        "manifest_sha256": "c" * 64,
+        "partition_sha256": "d" * 64,
+        "years": [2026, 2027, 2025],
+        "segment_count": 20,
+        "dataset_count": 3,
+        "baseline_count": 60,
+    }
+
+    result = validate_country_worker(
+        country="us",
+        expected_bundle_manifest_sha256=resolved.bundle_manifest_sha256,
+        expected_cache_manifest_sha256="c" * 64,
+        environment=_environment(),
+        dataset_path_resolver=lambda _: "/installed/populace_us_2024.h5",
+        dataset_check=lambda *_: None,
+        calculation_check=lambda _: None,
+        cache_check=lambda digest: seen.append(digest) or cache,
+    )
+
+    assert seen == ["c" * 64]
+    assert result["cache"] == cache
 
 
 @pytest.mark.parametrize(
