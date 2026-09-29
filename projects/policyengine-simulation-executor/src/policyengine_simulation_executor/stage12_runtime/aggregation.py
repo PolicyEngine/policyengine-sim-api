@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import pandas as pd
+from policyengine.core import Simulation
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
@@ -33,6 +34,15 @@ def validate_uk_local_authority_metadata(
     if baseline is not None or reform is not None:
         raise ValueError("non-UK simulation artifacts contain UK authority metadata")
     return None
+
+
+class PrecomputedSimulation(Simulation):
+    """A Stage 12 aggregate input whose output dataset is already complete."""
+
+    def ensure(self) -> None:
+        """Do not recalculate frames loaded from Stage 12 artifacts."""
+
+        return
 
 
 def validate_aligned_outputs(
@@ -114,9 +124,6 @@ def build_aggregate_report(
     reform_descriptor: SimulationArtifactDescriptor,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> dict[str, Any]:
-    from policyengine_simulation_executor.segmented_national_reduce import (
-        PrecomputedSimulation,
-    )
     from policyengine_simulation_executor.simulation_output_builder import (
         SimulationOutputBuilder,
     )
