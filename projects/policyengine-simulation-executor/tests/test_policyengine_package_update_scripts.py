@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 from fixtures.test_policyengine_package_update_scripts import (
@@ -25,6 +26,23 @@ def test_update_policyengine_package_script_has_valid_bash_syntax() -> None:
         check=False,
     )
 
+    assert result.returncode == 0, result.stderr
+
+
+def test_update_policyengine_package_uses_a_separate_python_helper() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    helper = SCRIPT.with_name("update_policyengine_package.py")
+
+    assert "update_policyengine_package.py" in source
+    assert "python3 -c" not in source
+    assert "python -c" not in source
+    assert "<<'PY'" not in source
+    result = subprocess.run(
+        [sys.executable, str(helper), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     assert result.returncode == 0, result.stderr
 
 
@@ -170,7 +188,8 @@ def test_update_policyengine_package_updates_only_wrapper_requirements(
     assert "policyengine-uk==" not in pyproject_text
     assert "spm-calculator==" not in pyproject_text
     uv_calls = uv_log.read_text(encoding="utf-8")
-    assert "run --isolated --no-project --with policyengine==4.1.0 python -" in uv_calls
+    assert "run --isolated --no-project --with policyengine==4.1.0 python " in uv_calls
+    assert "update_policyengine_package.py bundle-versions" in uv_calls
     assert "lock --upgrade-package policyengine" not in uv_calls
     assert "uv lock" in uv_calls
     assert uv_calls.index("run --isolated") < uv_calls.index("uv lock")

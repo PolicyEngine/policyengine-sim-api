@@ -184,7 +184,9 @@ def install_fake_uv(
 set -euo pipefail
 printf 'uv %s\\n' "$*" >> "{log}"
 
-if [[ "$1" == "run" && "$*" == *"--isolated --no-project --with policyengine==4.1.0 python -"* ]]; then
+if [[ "$1" == "run" \
+  && "$*" == *"--isolated --no-project --with policyengine==4.1.0"* \
+  && "$*" == *"update_policyengine_package.py bundle-versions"* ]]; then
   echo "policyengine_version={bundled_policyengine_version}"
   echo "policyengine_core_version={bundled_core_version}"
   echo "spm_calculator_version={bundled_spm_version}"

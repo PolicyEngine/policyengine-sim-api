@@ -27,11 +27,13 @@ elif [[ -n "${1:-}" ]]; then
 fi
 
 PACKAGE="policyengine"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 PROJECT_DIR="${PROJECT_DIR:-projects/policyengine-simulation-executor}"
 PROJECT_PATH="${ROOT_DIR}/${PROJECT_DIR}"
 PYPROJECT="${PROJECT_PATH}/pyproject.toml"
 LOCKFILE="${PROJECT_PATH}/uv.lock"
+PYTHON_HELPER="${SCRIPT_DIR}/update_policyengine_package.py"
 REPOSITORY="${GITHUB_REPOSITORY:-PolicyEngine/policyengine-sim-api}"
 ISSUE_NUMBER=""
 
@@ -44,21 +46,7 @@ ensure_update_issue() {
   ISSUE_NUMBER=$(
     gh api --paginate --slurp \
       "repos/${REPOSITORY}/issues?state=open&per_page=100" \
-      | python3 -c '
-import json
-import sys
-
-title = sys.argv[1]
-pages = json.load(sys.stdin)
-matches = sorted(
-    item["number"]
-    for page in pages
-    for item in page
-    if "pull_request" not in item and item.get("title") == title
-)
-if matches:
-    print(matches[0])
-' "$issue_title"
+      | python3 "$PYTHON_HELPER" find-issue --title "$issue_title"
   )
 
   if [[ -z "$ISSUE_NUMBER" ]]; then
@@ -77,20 +65,10 @@ if matches:
   issue_details=$(gh issue view "$ISSUE_NUMBER" \
     --repo "$REPOSITORY" \
     --json number,state,title)
-  printf '%s' "$issue_details" | python3 -c '
-import json
-import sys
-
-expected_number = int(sys.argv[1])
-expected_title = sys.argv[2]
-issue = json.load(sys.stdin)
-if issue.get("number") != expected_number:
-    raise SystemExit("Resolved update issue has an unexpected number")
-if issue.get("state") != "OPEN":
-    raise SystemExit("Resolved update issue is not open")
-if issue.get("title") != expected_title:
-    raise SystemExit("Resolved update issue has an unexpected title")
-' "$ISSUE_NUMBER" "$issue_title"
+  printf '%s' "$issue_details" \
+    | python3 "$PYTHON_HELPER" verify-issue \
+      --number "$ISSUE_NUMBER" \
+      --title "$issue_title"
 }
 
 verify_update_pr() {
@@ -99,18 +77,8 @@ verify_update_pr() {
   pr_details=$(gh pr view "$BRANCH" \
     --repo "$REPOSITORY" \
     --json isDraft,headRepositoryOwner,headRepository)
-  printf '%s' "$pr_details" | python3 -c '
-import json
-import sys
-
-expected_repository = sys.argv[1]
-pr = json.load(sys.stdin)
-if pr.get("isDraft") is not True:
-    raise SystemExit("Automated policyengine update PR is not a draft")
-head_repository = pr.get("headRepository") or {}
-if head_repository.get("nameWithOwner") != expected_repository:
-    raise SystemExit("Automated policyengine update PR is not from the canonical repository")
-' "$REPOSITORY"
+  printf '%s' "$pr_details" \
+    | python3 "$PYTHON_HELPER" verify-pr --repository "$REPOSITORY"
 }
 
 create_update_pr() {
@@ -161,33 +129,15 @@ if [[ ! -f "$PYPROJECT" || ! -f "$LOCKFILE" ]]; then
   exit 1
 fi
 
-CURRENT=$(python3 - "$PYPROJECT" "$PACKAGE" <<'PY'
-import sys
-import tomllib
-from pathlib import Path
-
-pyproject, package = sys.argv[1:]
-parsed = tomllib.loads(Path(pyproject).read_text(encoding="utf-8"))
-dependencies = parsed.get("project", {}).get("dependencies", [])
-prefix = f"{package}[models]=="
-matches = [
-    dependency.removeprefix(prefix)
-    for dependency in dependencies
-    if isinstance(dependency, str) and dependency.startswith(prefix)
-]
-if len(matches) != 1:
-    raise SystemExit(
-        f"Expected one {package}[models] requirement in project.dependencies; "
-        f"found {matches!r}"
-    )
-print(matches[0])
-PY
-)
+CURRENT=$(python3 "$PYTHON_HELPER" current-version \
+  --pyproject "$PYPROJECT" \
+  --package "$PACKAGE")
 
 if [[ -n "${LATEST_OVERRIDE:-}" ]]; then
   LATEST="$LATEST_OVERRIDE"
 else
-  LATEST=$(curl -fsSL "https://pypi.org/pypi/${PACKAGE}/json" | python3 -c 'import json, sys; print(json.load(sys.stdin)["info"]["version"])')
+  LATEST=$(curl -fsSL "https://pypi.org/pypi/${PACKAGE}/json" \
+    | python3 "$PYTHON_HELPER" latest-version --package "$PACKAGE")
   if [[ -z "$LATEST" ]]; then
     echo "ERROR: Could not fetch latest version for ${PACKAGE} from PyPI." >&2
     exit 1
@@ -246,92 +196,11 @@ git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git checkout -b "$BRANCH"
 
-python3 - "$PYPROJECT" "$PACKAGE" "$CURRENT" "$LATEST" <<'PY'
-import os
-import re
-import sys
-import tempfile
-import tomllib
-from pathlib import Path
-
-pyproject_path, package, current, latest = sys.argv[1:]
-
-pyproject = Path(pyproject_path)
-pyproject_text = pyproject.read_text(encoding="utf-8")
-parsed = tomllib.loads(pyproject_text)
-old_requirement = f"{package}[models]=={current}"
-new_requirement = f"{package}[models]=={latest}"
-requirements = {
-    "project.dependencies": parsed.get("project", {}).get("dependencies", []),
-    "dependency-groups.modal-simulation-image": parsed.get(
-        "dependency-groups", {}
-    ).get("modal-simulation-image", []),
-}
-component_packages = (
-    "policyengine-core",
-    "policyengine-us",
-    "policyengine-uk",
-    "spm-calculator",
-)
-
-
-def requirement_name(requirement):
-    return re.split(r"[\s\[<>=!~;@]", requirement, maxsplit=1)[0]
-
-
-for location, dependencies in requirements.items():
-    package_prefix = old_requirement.rsplit("==", 1)[0] + "=="
-    matches = [
-        dependency
-        for dependency in dependencies
-        if isinstance(dependency, str) and dependency.startswith(package_prefix)
-    ]
-    if matches != [old_requirement]:
-        raise SystemExit(
-            f"Expected {old_requirement} in {location}; found {matches!r}"
-        )
-    redundant_wrapper_requirements = [
-        dependency
-        for dependency in dependencies
-        if isinstance(dependency, str)
-        and dependency != old_requirement
-        and requirement_name(dependency) == package
-    ]
-    if redundant_wrapper_requirements:
-        raise SystemExit(
-            f"Expected only {old_requirement} for {package} in {location}; "
-            f"found {redundant_wrapper_requirements!r}"
-        )
-    direct_component_requirements = [
-        dependency
-        for dependency in dependencies
-        if isinstance(dependency, str)
-        and requirement_name(dependency) in component_packages
-    ]
-    if direct_component_requirements:
-        raise SystemExit(
-            f"Expected {location} to obtain component packages from "
-            f"{package}[models]; found {direct_component_requirements!r}"
-        )
-old_pin = f'"{old_requirement}"'
-new_pin = f'"{new_requirement}"'
-if pyproject_text.count(old_pin) != len(requirements):
-    raise SystemExit(
-        f"Expected {old_pin} {len(requirements)} times in {pyproject}; "
-        f"found {pyproject_text.count(old_pin)}"
-    )
-pyproject_text = pyproject_text.replace(old_pin, new_pin)
-with tempfile.NamedTemporaryFile(
-    mode="w",
-    encoding="utf-8",
-    dir=pyproject.parent,
-    prefix=f".{pyproject.name}.",
-    delete=False,
-) as temporary:
-    temporary.write(pyproject_text)
-    temporary_path = temporary.name
-os.replace(temporary_path, pyproject)
-PY
+python3 "$PYTHON_HELPER" update-requirements \
+  --pyproject "$PYPROJECT" \
+  --package "$PACKAGE" \
+  --current "$CURRENT" \
+  --latest "$LATEST"
 
 # Read the target wrapper's release manifest without resolving the project.
 for attempt in 1 2 3; do
@@ -340,39 +209,7 @@ for attempt in 1 2 3; do
       --isolated \
       --no-project \
       --with "${PACKAGE}==${LATEST}" \
-      python - <<'PY'
-from policyengine.bundle import get_current_bundle
-
-bundle = get_current_bundle()
-packages = bundle.get("packages", {})
-data_releases = bundle.get("data_releases", {})
-
-
-def package_version(name):
-    package = packages.get(name, {})
-    version = package.get("version")
-    if not isinstance(version, str) or not version:
-        raise SystemExit(f"Bundle has no version for {name}")
-    return version
-
-
-def data_release_version(country):
-    release = data_releases.get(country, {})
-    data_package = release.get("data_package", {})
-    version = release.get("version") or data_package.get("version")
-    if not isinstance(version, str) or not version:
-        raise SystemExit(f"Bundle has no data release version for {country}")
-    return version
-
-
-print(f"policyengine_version={package_version('policyengine')}")
-print(f"policyengine_core_version={package_version('policyengine-core')}")
-print(f"spm_calculator_version={package_version('spm-calculator')}")
-print(f"us_version={package_version('policyengine-us')}")
-print(f"us_data_version={data_release_version('us')}")
-print(f"uk_version={package_version('policyengine-uk')}")
-print(f"uk_data_version={data_release_version('uk')}")
-PY
+      python "$PYTHON_HELPER" bundle-versions
   ); then
     break
   fi
