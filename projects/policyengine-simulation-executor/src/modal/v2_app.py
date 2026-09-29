@@ -68,7 +68,10 @@ if os.environ.get("MODAL_APP_NAME") not in {None, "", APP_NAME}:
 app = modal.App(APP_NAME)
 gcp_secret = modal.Secret.from_name("stage12-evaluation-gcp-credentials")
 data_secret = modal.Secret.from_name("policyengine-data-credentials")
-hf_secret = modal.Secret.from_name("huggingface-token")
+hf_secret = modal.Secret.from_name(
+    "huggingface-token",
+    required_keys=["HF_TOKEN"],
+)
 comparison_runtime_secret = modal.Secret.from_name("stage12-evaluation-runtime")
 worker_secrets = [
     gcp_secret,

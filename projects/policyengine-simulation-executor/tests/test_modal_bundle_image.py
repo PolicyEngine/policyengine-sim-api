@@ -60,6 +60,10 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     assert app.OBSERVABILITY_ENV["OTEL_EXPORTER_OTLP_ENDPOINT"] == (
         "https://collector.test"
     )
+    assert app.hf_secret == {
+        "args": ("huggingface-token",),
+        "kwargs": {"required_keys": ["HF_TOKEN"]},
+    }
     assert command_calls[0][2]["secrets"] == [app.data_secret, app.hf_secret]
     uv_sync_calls = [
         call for call in app.simulation_image.calls if call[0] == "uv_sync"

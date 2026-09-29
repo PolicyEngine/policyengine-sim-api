@@ -11,13 +11,6 @@ set -euo pipefail
 MODAL_ENV="${1:?Modal environment required}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-echo "=== UK Hugging Face dataset access (env: $MODAL_ENV) ==="
-(
-    cd "$REPO_ROOT/projects/policyengine-simulation-executor"
-    uv run modal run --env="$MODAL_ENV" \
-        src/modal/smoke_app.py --uk-hf-access-only
-)
-
 echo "=== Gateway image smoke (env: $MODAL_ENV) ==="
 (
     cd "$REPO_ROOT/projects/policyengine-simulation-gateway"

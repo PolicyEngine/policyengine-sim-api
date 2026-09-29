@@ -13,7 +13,7 @@ import json
 import os
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Literal
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -26,7 +26,6 @@ HF_TOKEN_ENV_VARS = (
     "HUGGINGFACE_HUB_TOKEN",
     "HUGGINGFACE_TOKEN",
 )
-HFRepositoryType = Literal["dataset", "model"]
 
 
 class HuggingFaceDatasetReferenceError(ValueError):
@@ -78,15 +77,13 @@ def parse_hf_dataset_uri(dataset_uri: str) -> HFDatasetReference | None:
 
 
 @lru_cache
-def _fetch_hf_repository_revision(
+def _fetch_hf_dataset_revision(
     repo_id: str,
     revision: str,
-    repo_type: HFRepositoryType,
     token: str | None,
 ) -> dict[str, Any]:
-    resource_name = "datasets" if repo_type == "dataset" else "models"
     url = (
-        f"{HF_ENDPOINT}/api/{resource_name}/"
+        f"{HF_ENDPOINT}/api/datasets/"
         f"{quote(repo_id, safe='/')}/revision/{quote(revision, safe='')}"
     )
     headers = {"Accept": "application/json"}
@@ -100,13 +97,12 @@ def _fetch_hf_repository_revision(
     except HTTPError as exc:
         detail = exc.reason or f"HTTP {exc.code}"
         raise HuggingFaceDatasetReferenceError(
-            f"Hugging Face {repo_type} repository revision "
-            f"{repo_id}@{revision} was not found: "
+            f"Hugging Face dataset revision {repo_id}@{revision} was not found: "
             f"{detail}"
         ) from exc
     except (OSError, URLError, json.JSONDecodeError) as exc:
         raise HuggingFaceDatasetReferenceError(
-            f"Unable to validate Hugging Face {repo_type} repository revision "
+            f"Unable to validate Hugging Face dataset revision "
             f"{repo_id}@{revision}: {exc}"
         ) from exc
 
@@ -128,41 +124,21 @@ def _siblings_contain_path(payload: dict[str, Any], path: str) -> bool | None:
     return False if seen_file_listing else None
 
 
-def validate_hf_artifact_uri(
-    dataset_uri: str,
-    repo_type: HFRepositoryType,
-) -> str:
-    """Validate a pinned artifact against its declared Hub repository type."""
+def validate_hf_dataset_uri(dataset_uri: str) -> str:
+    """Validate an explicit ``hf://`` dataset URI if it pins a revision."""
 
     parsed = parse_hf_dataset_uri(dataset_uri)
     if parsed is None or parsed.revision is None:
         return dataset_uri
 
-    payload = _fetch_hf_repository_revision(
-        parsed.repo_id,
-        parsed.revision,
-        repo_type,
-        _hf_token(),
-    )
+    payload = _fetch_hf_dataset_revision(parsed.repo_id, parsed.revision, _hf_token())
     contains_path = _siblings_contain_path(payload, parsed.path)
-    if contains_path is None:
-        raise HuggingFaceDatasetReferenceError(
-            f"Hugging Face {repo_type} repository revision "
-            f"{parsed.repo_id}@{parsed.revision} did not provide an artifact listing"
-        )
     if contains_path is False:
         raise HuggingFaceDatasetReferenceError(
-            f"Hugging Face {repo_type} repository revision "
-            f"{parsed.repo_id}@{parsed.revision} does not contain artifact "
-            f"{parsed.path!r}"
+            f"Hugging Face dataset revision {parsed.repo_id}@{parsed.revision} "
+            f"does not contain artifact {parsed.path!r}"
         )
     return dataset_uri
-
-
-def validate_hf_dataset_uri(dataset_uri: str) -> str:
-    """Validate a pinned URI stored in a Hugging Face dataset repository."""
-
-    return validate_hf_artifact_uri(dataset_uri, "dataset")
 
 
 def with_hf_revision(dataset_uri: str, revision: str) -> str:

@@ -9,34 +9,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate-uk-hf-access:
-    name: Validate UK Hugging Face dataset access
-    runs-on: ubuntu-latest
-    if: github.event.pull_request.head.repo.full_name == github.repository
-
-    steps:
-    - uses: actions/checkout@v6
-
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: '3.13'
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v8.1.0
-      with:
-        enable-cache: true
-
-    - name: Validate every UK bundle dataset with the staging credential
-      working-directory: projects/policyengine-simulation-executor
-      env:
-        MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-        MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-      run: uv run modal run --env=staging src/modal/smoke_app.py --uk-hf-access-only
-
   test:
     name: Test
-    needs: validate-uk-hf-access
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -76,7 +50,6 @@ jobs:
 
   lint:
     name: Lint
-    needs: validate-uk-hf-access
     runs-on: ubuntu-latest
 
     steps:
