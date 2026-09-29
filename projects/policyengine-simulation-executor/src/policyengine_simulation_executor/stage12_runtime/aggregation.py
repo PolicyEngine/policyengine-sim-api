@@ -213,13 +213,19 @@ def build_spm_result(
         raise TypeError("SPM calculation selection is invalid")
     if selection != reform_provenance.get("spm_config"):
         raise ValueError("SPM calculation selections do not match")
+    baseline_values = baseline_provenance.get("spm_provenance")
+    reform_values = reform_provenance.get("spm_provenance")
+    baseline_items = (
+        baseline_values if isinstance(baseline_values, list) else [baseline_values]
+    )
+    reform_items = reform_values if isinstance(reform_values, list) else [reform_values]
     return combine_spm_results(
         [
             {
                 "spm_config": selection,
                 "spm_provenance": {
-                    "baseline": [baseline_provenance.get("spm_provenance")],
-                    "reform": [reform_provenance.get("spm_provenance")],
+                    "baseline": baseline_items,
+                    "reform": reform_items,
                 },
             }
         ],

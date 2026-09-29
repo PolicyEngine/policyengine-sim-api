@@ -472,7 +472,7 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
         resolve_dataset,
     )
     monkeypatch.setattr(simulation_runtime, "_load_dataset", load_dataset)
-    monkeypatch.setattr(simulation_runtime, "_build_simulation", build_simulation)
+    monkeypatch.setattr(worker, "build_stage12_simulation", build_simulation)
 
     result = worker.calculate_simulation_frames(
         _planned_simulation(SimulationRole.BASELINE)

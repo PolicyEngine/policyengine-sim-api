@@ -47,6 +47,35 @@ class SimulationCalculation:
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
 
 
+def build_stage12_simulation(
+    params: dict[str, Any],
+    *,
+    dataset: Any,
+    dataset_selection: Any,
+    country_module: Any,
+    policy: dict[str, Any] | None,
+    scoping_strategy: Any,
+    region_code: str | None,
+):
+    """Construct a Stage 12 simulation without selecting v1 cache code."""
+
+    from policyengine.core import Simulation
+    from policyengine_simulation_executor.spm import normalize_runtime_spm
+
+    # These values become part of Stage 12's independent cache eligibility
+    # and identity in the next layer; retaining them in this constructor keeps
+    # the monolithic and segmented call sites identical.
+    del dataset_selection, region_code
+    selection = normalize_runtime_spm(params)
+    return Simulation(
+        **({"spm": selection} if selection is not None else {}),
+        dataset=dataset,
+        tax_benefit_model_version=country_module.model,
+        policy=policy,
+        scoping_strategy=scoping_strategy,
+    )
+
+
 def simulation_input_sha256(simulation: SimulationExecutionInput) -> str:
     normalized = simulation.model_dump(
         mode="json",
@@ -125,7 +154,6 @@ def calculate_simulation_frames(
         **simulation.options,
     }
     from policyengine_simulation_executor.simulation_runtime import (
-        _build_simulation,
         _country_module,
         _load_dataset,
         _normalise_policy,
@@ -196,10 +224,11 @@ def calculate_simulation_frames(
             else nullcontext()
         )
         with build_span:
-            model = _build_simulation(
+            model = build_stage12_simulation(
                 params,
                 dataset=dataset,
                 dataset_selection=dataset_selection,
+                country_module=country_module,
                 policy=policy,
                 scoping_strategy=region.scoping_strategy,
                 region_code=region.code,
