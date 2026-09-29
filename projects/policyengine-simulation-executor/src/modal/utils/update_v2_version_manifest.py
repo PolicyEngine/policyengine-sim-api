@@ -38,6 +38,7 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
         bundle=resolved.bundle,
         bundle_manifest_sha256=resolved.bundle_manifest_sha256,
         validation=validation,
+        cache=validation.cache,
     )
     validate_manifest_has_no_credentials(worker.model_dump(mode="json"))
     return worker

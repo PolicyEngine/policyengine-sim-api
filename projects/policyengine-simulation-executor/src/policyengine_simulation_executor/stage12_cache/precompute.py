@@ -322,25 +322,32 @@ def verify_determinism_impl(
 
 def build_manifest(plan: PrecomputePlan, store: Stage12CacheStore) -> CacheManifest:
     artifacts = []
-    for artifact_type, entries in (
-        ("dataset", plan.datasets),
-        ("baseline", plan.baselines),
-    ):
-        for entry in entries:
-            stored = store.describe(entry.path)
-            artifacts.append(
-                ManifestArtifact(
-                    type=artifact_type,
-                    path=entry.path,
-                    filename=entry.filename
-                    if artifact_type == "dataset"
-                    else f"{entry.simulation_id}.h5",
-                    year=entry.year,
-                    identity_digest=entry.digest,
-                    content_sha256=stored.content_sha256,
-                    size_bytes=stored.size_bytes,
-                )
+    for entry in plan.datasets:
+        stored = store.describe(entry.path)
+        artifacts.append(
+            ManifestArtifact(
+                type="dataset",
+                path=entry.path,
+                filename=entry.filename,
+                year=entry.year,
+                identity_digest=entry.digest,
+                content_sha256=stored.content_sha256,
+                size_bytes=stored.size_bytes,
             )
+        )
+    for entry in plan.baselines:
+        stored = store.describe(entry.path)
+        artifacts.append(
+            ManifestArtifact(
+                type="baseline",
+                path=entry.path,
+                filename=f"{entry.simulation_id}.h5",
+                year=entry.year,
+                identity_digest=entry.digest,
+                content_sha256=stored.content_sha256,
+                size_bytes=stored.size_bytes,
+            )
+        )
     return CacheManifest(
         years=plan.years,
         partition_sha256=plan.partition_sha256,
