@@ -242,6 +242,7 @@ def run_single_simulation_segment_us(
 
     try:
         propagated = normalize_observability_context(observability_context)
+        result = None
         with runtime.operation(
             STAGE12_SEGMENT_STAGES.name(Stage.STAGE12_SEGMENT_EXECUTION),
             attributes={
@@ -251,7 +252,12 @@ def run_single_simulation_segment_us(
             },
             remote_context=propagated,
         ):
-            return calculate_segment(payload, runtime=runtime).model_dump(mode="python")
+            result = calculate_segment(payload, runtime=runtime).model_dump(
+                mode="python"
+            )
+        if result is None:
+            raise RuntimeError("Stage 12 segment calculation returned no result")
+        return result
     finally:
         runtime.shutdown()
 
@@ -292,6 +298,7 @@ def run_single_simulation_us(
 
     try:
         propagated = normalize_observability_context(observability_context)
+        result = None
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
@@ -300,13 +307,16 @@ def run_single_simulation_us(
             },
             remote_context=propagated,
         ):
-            return run_single_simulation(
+            result = run_single_simulation(
                 payload,
                 context,
                 required_country="us",
                 segmented_calculator=segmented_calculator,
                 runtime=runtime,
             )
+        if result is None:
+            raise RuntimeError("Stage 12 US simulation returned no result")
+        return result
     finally:
         runtime.shutdown()
 
@@ -338,6 +348,7 @@ def run_single_simulation_uk(
     )
     try:
         propagated = normalize_observability_context(observability_context)
+        result = None
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
@@ -346,12 +357,15 @@ def run_single_simulation_uk(
             },
             remote_context=propagated,
         ):
-            return run_single_simulation(
+            result = run_single_simulation(
                 payload,
                 context,
                 required_country="uk",
                 runtime=runtime,
             )
+        if result is None:
+            raise RuntimeError("Stage 12 UK simulation returned no result")
+        return result
     finally:
         runtime.shutdown()
 
@@ -394,6 +408,7 @@ def coordinate_report(
     )
     try:
         propagated = normalize_observability_context(observability_context)
+        result = None
         with runtime.operation(
             stage_plan.name(Stage.STAGE12_COORDINATOR_EXECUTION),
             attributes={
@@ -406,7 +421,7 @@ def coordinate_report(
             },
             remote_context=propagated,
         ):
-            return run_report_coordinator(
+            result = run_report_coordinator(
                 payload,
                 context,
                 parent,
@@ -414,5 +429,8 @@ def coordinate_report(
                 coordinator_invocation_id=coordinator_invocation_id,
                 runtime=runtime,
             )
+        if result is None:
+            raise RuntimeError("Stage 12 report coordinator returned no result")
+        return result
     finally:
         runtime.shutdown()

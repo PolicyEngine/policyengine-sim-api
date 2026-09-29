@@ -54,8 +54,13 @@ The simulation entry service dispatches the current production run and the
 Stage 12 report with the same `observability_id`. Stage 12 creates separate
 functional identifiers for the report and its baseline and reform simulations.
 The coordinator passes captured context to both simulation workers. When Stage
-12 becomes the authoritative runner, the same report identifier flow applies;
-only the selected functional result changes.
+12 runs an eligible US national report, each simulation worker passes that same
+context to 20 region-group calculation calls. Baseline and reform therefore
+produce 40 region-group invocations with one `observability_id`, two
+`simulation_execution_id` values, and no additional persisted simulation
+records. The region-group index and cache outcome distinguish their structured
+logs. When Stage 12 becomes the authoritative runner, the same report
+identifier flow applies; only the selected functional result changes.
 
 ## Query model
 

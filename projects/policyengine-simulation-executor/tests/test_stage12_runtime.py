@@ -587,6 +587,10 @@ def test_single_worker_honors_explicit_segmentation_opt_out() -> None:
     store.children[simulation.simulation_execution_id] = _child(simulation)
     segmented_calls = []
 
+    def unexpected_segmented(value):
+        segmented_calls.append(value)
+        return SimulationCalculation(frames=_frames())
+
     run_single_simulation(
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
@@ -594,7 +598,7 @@ def test_single_worker_honors_explicit_segmentation_opt_out() -> None:
         store=store,
         artifacts=FakeArtifacts(),
         calculator=lambda _: _frames(),
-        segmented_calculator=lambda value: segmented_calls.append(value),
+        segmented_calculator=unexpected_segmented,
     )
 
     assert segmented_calls == []

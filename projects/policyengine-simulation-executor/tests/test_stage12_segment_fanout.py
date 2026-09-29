@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from types import SimpleNamespace
+from typing import cast
 
 import pandas as pd
 import pytest
+from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import SimulationRole
 
 from policyengine_simulation_executor.stage12_runtime import (
@@ -116,7 +118,7 @@ def _runner(*, errors: dict[int, list[Exception]] | None = None):
     runner = Stage12SegmentRunner(
         simulation,
         app_name="stage12-app",
-        runtime=runtime,
+        runtime=cast(ObservabilityRuntime, runtime),
         modal_module=SimpleNamespace(Function=FunctionLookup),
         groups=US_REGION_GROUPS,
         sleep=sleeps.append,
