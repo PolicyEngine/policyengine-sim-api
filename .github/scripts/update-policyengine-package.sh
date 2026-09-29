@@ -249,30 +249,37 @@ pyproject_path, package, current, latest = sys.argv[1:]
 pyproject = Path(pyproject_path)
 pyproject_text = pyproject.read_text(encoding="utf-8")
 parsed = tomllib.loads(pyproject_text)
-dependency_lists = {
-    "project.dependencies": parsed.get("project", {}).get("dependencies", []),
-    "dependency-groups.policyengine-models": parsed.get("dependency-groups", {}).get(
-        "policyengine-models", []
+requirements = {
+    "project.dependencies": (
+        parsed.get("project", {}).get("dependencies", []),
+        f"{package}=={current}",
+        f"{package}=={latest}",
+    ),
+    "dependency-groups.modal-simulation-image": (
+        parsed.get("dependency-groups", {}).get("modal-simulation-image", []),
+        f"{package}[models]=={current}",
+        f"{package}[models]=={latest}",
     ),
 }
-old_pin = f'"{package}=={current}"'
-new_pin = f'"{package}=={latest}"'
-for location, dependencies in dependency_lists.items():
+for location, (dependencies, old_requirement, new_requirement) in requirements.items():
+    package_prefix = old_requirement.rsplit("==", 1)[0] + "=="
     matches = [
         dependency
         for dependency in dependencies
-        if isinstance(dependency, str) and dependency.startswith(f"{package}==")
+        if isinstance(dependency, str) and dependency.startswith(package_prefix)
     ]
-    if matches != [f"{package}=={current}"]:
+    if matches != [old_requirement]:
         raise SystemExit(
-            f"Expected {package}=={current} in {location}; found {matches!r}"
+            f"Expected {old_requirement} in {location}; found {matches!r}"
         )
-updated_text = pyproject_text.replace(old_pin, new_pin)
-if pyproject_text.count(old_pin) != len(dependency_lists):
-    raise SystemExit(
-        f"Expected {old_pin} {len(dependency_lists)} times in {pyproject}; "
-        f"found {pyproject_text.count(old_pin)}"
-    )
+    old_pin = f'"{old_requirement}"'
+    new_pin = f'"{new_requirement}"'
+    if pyproject_text.count(old_pin) != 1:
+        raise SystemExit(
+            f"Expected {old_pin} once in {pyproject}; "
+            f"found {pyproject_text.count(old_pin)}"
+        )
+    pyproject_text = pyproject_text.replace(old_pin, new_pin)
 with tempfile.NamedTemporaryFile(
     mode="w",
     encoding="utf-8",
@@ -280,32 +287,64 @@ with tempfile.NamedTemporaryFile(
     prefix=f".{pyproject.name}.",
     delete=False,
 ) as temporary:
-    temporary.write(updated_text)
+    temporary.write(pyproject_text)
     temporary_path = temporary.name
 os.replace(temporary_path, pyproject)
 PY
 
-# The PyPI Simple index (which uv resolves from) can lag the JSON API right
-# after a release, so retry the lock a few times.
+# Read the target wrapper's release manifest without resolving the project. The
+# project still has the previous component pins at this point, which may
+# conflict with the target wrapper's models extra.
 for attempt in 1 2 3; do
-  if (
-    cd "$PROJECT_PATH"
-    uv lock --upgrade-package "$PACKAGE"
+  if BUNDLE_OUTPUT=$(
+    uv run \
+      --isolated \
+      --no-project \
+      --with "${PACKAGE}==${LATEST}" \
+      python - <<'PY'
+from policyengine.bundle import get_current_bundle
+
+bundle = get_current_bundle()
+packages = bundle.get("packages", {})
+data_releases = bundle.get("data_releases", {})
+
+
+def package_version(name):
+    package = packages.get(name, {})
+    version = package.get("version")
+    if not isinstance(version, str) or not version:
+        raise SystemExit(f"Bundle has no version for {name}")
+    return version
+
+
+def data_release_version(country):
+    release = data_releases.get(country, {})
+    data_package = release.get("data_package", {})
+    version = release.get("version") or data_package.get("version")
+    if not isinstance(version, str) or not version:
+        raise SystemExit(f"Bundle has no data release version for {country}")
+    return version
+
+
+print(f"policyengine_version={package_version('policyengine')}")
+print(f"policyengine_core_version={package_version('policyengine-core')}")
+print(f"spm_calculator_version={package_version('spm-calculator')}")
+print(f"us_version={package_version('policyengine-us')}")
+print(f"us_data_version={data_release_version('us')}")
+print(f"uk_version={package_version('policyengine-uk')}")
+print(f"uk_data_version={data_release_version('uk')}")
+PY
   ); then
     break
   fi
   if [[ "$attempt" == "3" ]]; then
-    echo "ERROR: uv lock failed after ${attempt} attempts." >&2
+    echo "ERROR: Could not inspect ${PACKAGE} ${LATEST} after ${attempt} attempts." >&2
     exit 1
   fi
-  echo "uv lock attempt ${attempt} failed; retrying in 30s..."
+  echo "Bundle inspection attempt ${attempt} failed; retrying in 30s..."
   sleep 30
 done
 
-BUNDLE_OUTPUT=$(
-  cd "$PROJECT_PATH"
-  uv run python -m src.modal.utils.extract_bundle_versions --shell
-)
 BUNDLED_US_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "us_version" {print $2}')
 BUNDLED_UK_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "uk_version" {print $2}')
 BUNDLED_CORE_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "policyengine_core_version" {print $2}')
@@ -360,49 +399,75 @@ pins = {
     "spm-calculator": spm_version,
 }
 
-# These two dependency lists are installed in different places: project
-# dependencies supply local development/tests, while policyengine-models is
-# the only source for the Modal image. Require one exact pin in each list so a
-# release cannot update one runtime while leaving the other on an older bundle.
+# Project dependencies supply local development, tests, and non-Modal runtimes,
+# so retain exact direct pins for every package in the wrapper's release
+# manifest. The Modal image needs only the wrapper's models extra: its package
+# metadata declares those same exact component versions and uv.lock records the
+# resolved environment.
 parsed = tomllib.loads(text)
-dependency_lists = {
-    "project.dependencies": parsed.get("project", {}).get("dependencies", []),
-    "dependency-groups.policyengine-models": parsed.get("dependency-groups", {}).get(
-        "policyengine-models", []
-    ),
-}
-for location, dependencies in dependency_lists.items():
-    for package in pins:
-        matches = [
-            dependency
-            for dependency in dependencies
-            if isinstance(dependency, str) and dependency.startswith(f"{package}==")
-        ]
-        if len(matches) != 1:
-            raise SystemExit(
-                f"Expected one exact {package} pin in {location}; found {len(matches)}"
-            )
+project_dependencies = parsed.get("project", {}).get("dependencies", [])
+modal_dependencies = parsed.get("dependency-groups", {}).get(
+    "modal-simulation-image", []
+)
+expected_modal_requirement = f"policyengine[models]=={policyengine_version}"
+modal_wrapper_requirements = [
+    dependency
+    for dependency in modal_dependencies
+    if isinstance(dependency, str) and dependency.startswith("policyengine[models]==")
+]
+if modal_wrapper_requirements != [expected_modal_requirement]:
+    raise SystemExit(
+        f"Expected {expected_modal_requirement} in "
+        "dependency-groups.modal-simulation-image; "
+        f"found {modal_wrapper_requirements!r}"
+    )
+for package in pins:
+    matches = [
+        dependency
+        for dependency in project_dependencies
+        if isinstance(dependency, str) and dependency.startswith(f"{package}==")
+    ]
+    if len(matches) != 1:
+        raise SystemExit(
+            f"Expected one exact {package} pin in project.dependencies; "
+            f"found {len(matches)}"
+        )
+for package in pins:
+    if package == "policyengine":
+        continue
+    modal_component_pins = [
+        dependency
+        for dependency in modal_dependencies
+        if isinstance(dependency, str) and dependency.startswith(f"{package}==")
+    ]
+    if modal_component_pins:
+        raise SystemExit(
+            f"Expected {package} to be supplied by policyengine[models], "
+            f"found direct Modal requirements {modal_component_pins!r}"
+        )
 
 for package, version in pins.items():
     pattern = rf'"{re.escape(package)}==[^"]+"'
     replacement = f'"{package}=={version}"'
     text, count = re.subn(pattern, replacement, text)
-    if count != len(dependency_lists):
+    if count != 1:
         raise SystemExit(
-            f"Expected to update {package} {len(dependency_lists)} times in "
-            f"{pyproject}; updated {count}"
+            f"Expected to update {package} once in {pyproject}; updated {count}"
         )
 
 updated = tomllib.loads(text)
-for location, dependencies in {
-    "project.dependencies": updated["project"]["dependencies"],
-    "dependency-groups.policyengine-models": updated["dependency-groups"][
-        "policyengine-models"
-    ],
-}.items():
-    for package, version in pins.items():
-        if f"{package}=={version}" not in dependencies:
-            raise SystemExit(f"Updated {package} pin is missing from {location}")
+for package, version in pins.items():
+    if f"{package}=={version}" not in updated["project"]["dependencies"]:
+        raise SystemExit(
+            f"Updated {package} pin is missing from project.dependencies"
+        )
+if expected_modal_requirement not in updated["dependency-groups"][
+    "modal-simulation-image"
+]:
+    raise SystemExit(
+        "Updated policyengine[models] requirement is missing from "
+        "dependency-groups.modal-simulation-image"
+    )
 
 with tempfile.NamedTemporaryFile(
     mode="w",
@@ -416,9 +481,25 @@ with tempfile.NamedTemporaryFile(
 os.replace(temporary_path, pyproject)
 PY
 
+# The PyPI Simple index can briefly lag the JSON API after a release, so retry
+# the final project lock as well.
+for attempt in 1 2 3; do
+  if (
+    cd "$PROJECT_PATH"
+    uv lock
+  ); then
+    break
+  fi
+  if [[ "$attempt" == "3" ]]; then
+    echo "ERROR: uv lock failed after ${attempt} attempts." >&2
+    exit 1
+  fi
+  echo "uv lock attempt ${attempt} failed; retrying in 30s..."
+  sleep 30
+done
+
 (
   cd "$PROJECT_PATH"
-  uv lock
   uv lock --check
   uv run --extra test pytest \
     tests/test_bundle_version_export.py \

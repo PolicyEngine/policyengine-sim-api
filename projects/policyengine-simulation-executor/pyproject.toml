@@ -40,19 +40,13 @@ packages = ["src/policyengine_simulation_executor"]
 # project; the image installs it directly with
 # uv_sync(--only-group modal-simulation-image, frozen=True), so image
 # packages can only change through a relock and always match the
-# versions the test environment runs against. The included model group is
-# maintained from PolicyEngine.py's release manifest; the bundle command only
-# downloads certified datasets and writes their receipt.
+# versions the test environment runs against. PolicyEngine.py's models extra
+# declares its exact core, country-model, and SPM calculator versions; uv.lock
+# records the complete resolved environment. The bundle command only downloads
+# certified datasets and writes their receipt.
 [dependency-groups]
-policyengine-models = [
-    "policyengine==6.1.2",
-    "policyengine-core==3.32.5",
-    "policyengine-uk==2.90.2",
-    "policyengine-us==2.2.1",
-    "spm-calculator==1.0.0",
-]
 modal-simulation-image = [
-    {include-group = "policyengine-models"},
+    "policyengine[models]==6.1.2",
     "fastapi>=0.115.0",
     "tables>=3.10.2",
     "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.1,<4",

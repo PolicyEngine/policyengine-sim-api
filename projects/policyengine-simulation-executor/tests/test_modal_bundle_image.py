@@ -11,7 +11,6 @@ from policyengine_simulation_executor.release_bundle import (
     get_bundled_package_version,
 )
 
-
 POLICYENGINE_BUNDLE_PACKAGES = (
     "policyengine",
     "policyengine-core",
@@ -61,7 +60,6 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
         f"{package}=={bundle_versions[package]}"
         for package in POLICYENGINE_BUNDLE_PACKAGES
     ]
-    assert project["dependency-groups"]["policyengine-models"] == expected_models
     assert all(item in project["project"]["dependencies"] for item in expected_models)
     assert "--data-dir /opt/policyengine/data" in command
     assert app.VERSION_ENV["POLICYENGINE_DATA_FOLDER"] == "/opt/policyengine/data"
@@ -92,7 +90,12 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     ]
 
     group = project["dependency-groups"]["modal-simulation-image"]
-    assert {"include-group": "policyengine-models"} in group
+    assert f"policyengine[models]=={bundle_versions['policyengine']}" in group
+    assert not any(isinstance(item, dict) for item in group)
+    for package in POLICYENGINE_BUNDLE_PACKAGES[1:]:
+        assert not any(
+            isinstance(item, str) and item.startswith(f"{package}==") for item in group
+        )
     requirements = [item for item in group if isinstance(item, str)]
     names = {requirement.split(">=")[0].split("[")[0] for requirement in requirements}
     assert "policyengine-observability" in names

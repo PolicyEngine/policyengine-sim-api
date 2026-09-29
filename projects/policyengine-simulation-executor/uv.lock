@@ -1710,6 +1710,14 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/2c/00/63af579350d76cf85debca243c0360fa6689b50d22bedd89b3425aa7dd5b/policyengine-6.1.2-py3-none-any.whl", hash = "sha256:526e6557fc52b18d671be1726e30bf4eb728124d17372bf27c82c5fcc25813be", size = 252407, upload-time = "2026-09-27T03:54:51.197Z" },
 ]
 
+[package.optional-dependencies]
+models = [
+    { name = "policyengine-core" },
+    { name = "policyengine-uk" },
+    { name = "policyengine-us" },
+    { name = "spm-calculator" },
+]
+
 [[package]]
 name = "policyengine-core"
 version = "3.32.5"
@@ -1872,23 +1880,12 @@ dev = [
 modal-simulation-image = [
     { name = "fastapi" },
     { name = "google-cloud-storage" },
-    { name = "policyengine" },
-    { name = "policyengine-core" },
+    { name = "policyengine", extra = ["models"] },
     { name = "policyengine-observability", extra = ["fastapi", "google", "otlp-grpc"] },
-    { name = "policyengine-uk" },
-    { name = "policyengine-us" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pyarrow" },
-    { name = "spm-calculator" },
     { name = "sqlalchemy" },
     { name = "tables" },
-]
-policyengine-models = [
-    { name = "policyengine" },
-    { name = "policyengine-core" },
-    { name = "policyengine-uk" },
-    { name = "policyengine-us" },
-    { name = "spm-calculator" },
 ]
 
 [package.metadata]
@@ -1924,23 +1921,12 @@ dev = [{ name = "policyengine-simulation-gateway", editable = "../policyengine-s
 modal-simulation-image = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "google-cloud-storage", specifier = ">=2" },
-    { name = "policyengine", specifier = "==6.1.2" },
-    { name = "policyengine-core", specifier = "==3.32.5" },
+    { name = "policyengine", extras = ["models"], specifier = "==6.1.2" },
     { name = "policyengine-observability", extras = ["fastapi", "google", "otlp-grpc"], specifier = ">=3.0.1,<4" },
-    { name = "policyengine-uk", specifier = "==2.90.2" },
-    { name = "policyengine-us", specifier = "==2.2.1" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
     { name = "pyarrow", specifier = ">=20,<24" },
-    { name = "spm-calculator", specifier = "==1.0.0" },
     { name = "sqlalchemy", specifier = ">=2,<3" },
     { name = "tables", specifier = ">=3.10.2" },
-]
-policyengine-models = [
-    { name = "policyengine", specifier = "==6.1.2" },
-    { name = "policyengine-core", specifier = "==3.32.5" },
-    { name = "policyengine-uk", specifier = "==2.90.2" },
-    { name = "policyengine-us", specifier = "==2.2.1" },
-    { name = "spm-calculator", specifier = "==1.0.0" },
 ]
 
 [[package]]

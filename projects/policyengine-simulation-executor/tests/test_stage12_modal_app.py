@@ -128,24 +128,13 @@ def test_v2_image_retains_required_runtime_dependencies() -> None:
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
 
-    packages = (
-        "policyengine",
-        "policyengine-core",
-        "policyengine-uk",
-        "policyengine-us",
-        "spm-calculator",
-    )
-    assert project["dependency-groups"]["policyengine-models"] == [
-        f"{package}=={get_bundled_package_version(package)}" for package in packages
-    ]
-    assert {"include-group": "policyengine-models"} in project["dependency-groups"][
-        "modal-simulation-image"
-    ]
-    assert "sqlalchemy>=2,<3" in project["dependency-groups"]["modal-simulation-image"]
+    group = project["dependency-groups"]["modal-simulation-image"]
     assert (
-        "psycopg[binary]>=3.2,<4"
-        in project["dependency-groups"]["modal-simulation-image"]
+        f"policyengine[models]=={get_bundled_package_version('policyengine')}" in group
     )
+    assert not any(isinstance(item, dict) for item in group)
+    assert "sqlalchemy>=2,<3" in group
+    assert "psycopg[binary]>=3.2,<4" in group
 
 
 def test_v2_app_declares_validation_workers_and_non_http_coordinator(

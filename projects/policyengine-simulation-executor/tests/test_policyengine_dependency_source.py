@@ -113,26 +113,26 @@ def test_country_package_pins_match_policyengine_bundle():
         )
 
 
-def test_all_runtime_package_pins_match_policyengine_bundle():
+def test_modal_models_extra_and_project_pins_match_policyengine_bundle():
     from policyengine_simulation_executor.release_bundle import (
         get_bundled_package_version,
     )
 
     pyproject = _load_toml(PYPROJECT_PATH)
-    model_dependencies = pyproject["dependency-groups"]["policyengine-models"]
-    model_pins = {
-        package: next(
-            dependency.removeprefix(f"{package}==")
-            for dependency in model_dependencies
-            if dependency.startswith(f"{package}==")
-        )
-        for package in BUNDLE_PACKAGES
-    }
+    modal_dependencies = pyproject["dependency-groups"]["modal-simulation-image"]
+    wrapper_version = get_bundled_package_version("policyengine")
 
-    assert set(model_pins) == BUNDLE_PACKAGES
-    for package, version in model_pins.items():
-        assert version == _get_dependency_pin(pyproject, package)
-        assert version == get_bundled_package_version(package)
+    assert modal_dependencies.count(f"policyengine[models]=={wrapper_version}") == 1
+    assert not any(isinstance(dependency, dict) for dependency in modal_dependencies)
+    for package in BUNDLE_PACKAGES:
+        assert _get_dependency_pin(pyproject, package) == get_bundled_package_version(
+            package
+        )
+        if package != "policyengine":
+            assert not any(
+                isinstance(dependency, str) and dependency.startswith(f"{package}==")
+                for dependency in modal_dependencies
+            )
 
 
 def _modal_import_env() -> dict[str, str]:

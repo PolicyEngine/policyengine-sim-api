@@ -23,7 +23,7 @@ def fake_repo(tmp_path: Path) -> Path:
 dependencies = ["policyengine==4.0.0", "policyengine-core==0.0.0", "policyengine-us==1.0.0", "policyengine-uk==2.0.0", "spm-calculator==0.1.0"]
 
 [dependency-groups]
-policyengine-models = ["policyengine==4.0.0", "policyengine-core==0.0.0", "policyengine-us==1.0.0", "policyengine-uk==2.0.0", "spm-calculator==0.1.0"]
+modal-simulation-image = ["policyengine[models]==4.0.0", "fastapi>=0.115.0"]
 """,
         encoding="utf-8",
     )
@@ -184,7 +184,7 @@ def install_fake_uv(
 set -euo pipefail
 printf 'uv %s\\n' "$*" >> "{log}"
 
-if [[ "$1" == "run" && "$2" == "python" && "$3" == "-m" && "$4" == "src.modal.utils.extract_bundle_versions" ]]; then
+if [[ "$1" == "run" && "$*" == *"--isolated --no-project --with policyengine==4.1.0 python -"* ]]; then
   echo "policyengine_version={bundled_policyengine_version}"
   echo "policyengine_core_version={bundled_core_version}"
   echo "spm_calculator_version={bundled_spm_version}"

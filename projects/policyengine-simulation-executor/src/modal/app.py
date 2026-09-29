@@ -181,9 +181,9 @@ def build_runtime_simulation_image() -> modal.Image:
         # The modal-simulation-image dependency group, installed straight
         # from this project's uv.lock (frozen): image packages match the
         # tested environment and can only change through a relock.
-        # --only-group keeps the project's local packages out. Its included
-        # policyengine-models group installs the exact manifest-selected model
-        # packages from uv.lock.
+        # --only-group keeps the project's local packages out. The
+        # policyengine[models] requirement declares the wrapper's model
+        # packages, and uv.lock supplies their exact resolved versions.
         .uv_sync(
             uv_project_dir=_UV_PROJECT_DIR,
             frozen=True,
