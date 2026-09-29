@@ -10,6 +10,7 @@ import policyengine_simulation_contract.hf_dataset as hf_dataset
 from policyengine_simulation_contract.hf_dataset import (
     HuggingFaceDatasetReferenceError,
     parse_hf_dataset_uri,
+    validate_hf_artifact_uri,
     validate_hf_dataset_uri,
     with_hf_revision,
 )
@@ -40,8 +41,8 @@ def test_parse_hf_dataset_uri_extracts_repo_path_and_revision():
     assert parsed.revision == "custom-v1"
 
 
-def test_fetch_hf_dataset_revision_uses_dataset_revision_api(monkeypatch):
-    hf_dataset._fetch_hf_dataset_revision.cache_clear()
+def test_fetch_hf_repository_revision_uses_declared_repository_type(monkeypatch):
+    hf_dataset._fetch_hf_repository_revision.cache_clear()
     seen = {}
 
     def fake_urlopen(request, timeout):
@@ -52,16 +53,16 @@ def test_fetch_hf_dataset_revision_uses_dataset_revision_api(monkeypatch):
 
     monkeypatch.setattr(hf_dataset, "urlopen", fake_urlopen)
 
-    payload = hf_dataset._fetch_hf_dataset_revision(
+    payload = hf_dataset._fetch_hf_repository_revision(
         "policyengine/populace-us",
         "custom-v1",
+        "model",
         "hf-token",
     )
 
     assert payload == {"sha": "abc123", "siblings": []}
     assert seen["url"] == (
-        "https://huggingface.co/api/datasets/"
-        "policyengine/populace-us/revision/custom-v1"
+        "https://huggingface.co/api/models/policyengine/populace-us/revision/custom-v1"
     )
     assert seen["headers"]["Authorization"] == "Bearer hf-token"
     assert seen["timeout"] == hf_dataset.HF_REQUEST_TIMEOUT_SECONDS
@@ -70,8 +71,10 @@ def test_fetch_hf_dataset_revision_uses_dataset_revision_api(monkeypatch):
 def test_validate_hf_dataset_uri_rejects_revision_missing_artifact(monkeypatch):
     monkeypatch.setattr(
         hf_dataset,
-        "_fetch_hf_dataset_revision",
-        lambda repo_id, revision, token: {"siblings": [{"rfilename": "other_file.h5"}]},
+        "_fetch_hf_repository_revision",
+        lambda repo_id, revision, repo_type, token: {
+            "siblings": [{"rfilename": "other_file.h5"}]
+        },
     )
 
     with pytest.raises(
@@ -81,6 +84,36 @@ def test_validate_hf_dataset_uri_rejects_revision_missing_artifact(monkeypatch):
         validate_hf_dataset_uri(
             "hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"
         )
+
+
+def test_validate_hf_dataset_uri_rejects_missing_artifact_listing(monkeypatch):
+    monkeypatch.setattr(
+        hf_dataset,
+        "_fetch_hf_repository_revision",
+        lambda repo_id, revision, repo_type, token: {"sha": "abc123"},
+    )
+
+    with pytest.raises(
+        HuggingFaceDatasetReferenceError,
+        match="did not provide an artifact listing",
+    ):
+        validate_hf_dataset_uri(
+            "hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"
+        )
+
+
+def test_validate_hf_artifact_uri_uses_model_repository_api(monkeypatch):
+    seen_repository_types = []
+
+    def fake_fetch(repo_id, revision, repo_type, token):
+        seen_repository_types.append(repo_type)
+        return {"siblings": [{"rfilename": "enhanced_frs.h5"}]}
+
+    monkeypatch.setattr(hf_dataset, "_fetch_hf_repository_revision", fake_fetch)
+
+    uri = "hf://policyengine/private-uk/enhanced_frs.h5@release-v1"
+    assert validate_hf_artifact_uri(uri, "model") == uri
+    assert seen_repository_types == ["model"]
 
 
 def test_with_hf_revision_validates_and_preserves_requested_revision(monkeypatch):
@@ -99,6 +132,4 @@ def test_with_hf_revision_validates_and_preserves_requested_revision(monkeypatch
         )
         == "hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"
     )
-    assert calls == [
-        "hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"
-    ]
+    assert calls == ["hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"]

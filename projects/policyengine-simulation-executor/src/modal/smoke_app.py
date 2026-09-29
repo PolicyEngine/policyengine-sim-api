@@ -16,7 +16,7 @@ Usage:
 
 import modal
 
-from src.modal.app import build_runtime_simulation_image
+from src.modal.app import build_runtime_simulation_image, hf_secret
 
 app = modal.App("policyengine-simulation-executor-smoke")
 
@@ -27,6 +27,17 @@ smoke_image = build_runtime_simulation_image().add_local_python_source(
     "policyengine_simulation_contract",
     copy=True,
 )
+
+
+@app.function(image=smoke_image, secrets=[hf_secret], timeout=120)
+def smoke_uk_hf_dataset_access() -> str:
+    """Exercise the deployed HF_TOKEN against every bundle-declared UK artifact."""
+
+    from policyengine_simulation_executor.uk_hf_access import (
+        validate_uk_hf_dataset_access,
+    )
+
+    return validate_uk_hf_dataset_access().model_dump_json()
 
 
 @app.function(image=smoke_image, timeout=600, memory=8192)
@@ -71,7 +82,13 @@ def smoke_import_executor() -> dict:
 
 
 @app.local_entrypoint()
-def main():
+def main(uk_hf_access_only: bool = False):
+    access_report = smoke_uk_hf_dataset_access.remote()
+    print(access_report)
+    print("UK Hugging Face dataset access OK")
+    if uk_hf_access_only:
+        return
+
     report = smoke_import_executor.remote()
     print(report)
     print("executor image smoke OK")
