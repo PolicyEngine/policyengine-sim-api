@@ -10,10 +10,6 @@ The gateway app (policyengine-simulation-gateway) routes requests to these versi
 import os
 from pathlib import Path
 
-from policyengine_simulation_executor.release_bundle import (
-    get_bundled_country_model_version,
-    get_bundled_package_version,
-)
 from policyengine_simulation_observability.observability import (
     init_process_observability,
     modal_image_environment,
@@ -27,11 +23,15 @@ from policyengine_simulation_observability.stages import (
 from policyengine_simulation_observability.telemetry import (
     normalize_observability_context,
 )
+
+import modal
+from policyengine_simulation_executor.release_bundle import (
+    get_bundled_country_model_version,
+    get_bundled_package_version,
+)
 from src.modal._image_setup import fetch_artifacts, snapshot_models
 from src.modal.bundle_data import bundle_data_install_command
 from src.modal.logging_redaction import redact_params_for_logging
-
-import modal
 
 
 def _version_from_env_or_local_bundle_package(env_var: str, package: str) -> str:
@@ -159,14 +159,6 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
 _ARTIFACT_BUCKET, _DEPLOY_MANIFEST = _deploy_time_artifact_inputs()
 
 
-def bundle_install_command(policyengine_version: str) -> str:
-    return bundle_data_install_command(
-        policyengine_version,
-        countries=("us", "uk"),
-        data_dir=SIMULATION_BUNDLE_DATA_DIR,
-    )
-
-
 def build_runtime_simulation_image() -> modal.Image:
     """Image layers up to the version env — everything except the artifact
     fetch and model snapshot.
@@ -192,7 +184,11 @@ def build_runtime_simulation_image() -> modal.Image:
         # Packages are already installed from the frozen lock. The wrapper CLI
         # downloads only the certified datasets and writes their receipt.
         .run_commands(
-            bundle_install_command(POLICYENGINE_VERSION),
+            bundle_data_install_command(
+                POLICYENGINE_VERSION,
+                countries=("us", "uk"),
+                data_dir=SIMULATION_BUNDLE_DATA_DIR,
+            ),
             secrets=[data_secret, hf_secret],
         )
         .env(VERSION_ENV)

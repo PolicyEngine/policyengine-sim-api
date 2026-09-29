@@ -84,14 +84,6 @@ def _country_bundle(country: CountryId):
     )
 
 
-def bundle_install_command(countries: tuple[CountryId, ...]) -> str:
-    return bundle_data_install_command(
-        RESOLVED_BUNDLE.bundle.policyengine_version,
-        countries=countries,
-        data_dir=STAGE12_DATA_DIR,
-    )
-
-
 def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:
     country_values = {
         country: _country_bundle(country).model_dump(mode="json")
@@ -105,7 +97,12 @@ def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:
             extra_options="--only-group modal-simulation-image",
         )
         .run_commands(
-            bundle_install_command(countries), secrets=[data_secret, hf_secret]
+            bundle_data_install_command(
+                RESOLVED_BUNDLE.bundle.policyengine_version,
+                countries=countries,
+                data_dir=STAGE12_DATA_DIR,
+            ),
+            secrets=[data_secret, hf_secret],
         )
         .env(
             {
