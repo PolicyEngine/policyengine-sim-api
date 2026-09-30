@@ -98,6 +98,14 @@ def test_detector_identifies_lad23_from_a_successor_code() -> None:
     assert metadata.boundary_version is UKLocalAuthorityBoundaryVersion.LAD23
 
 
+def test_detector_ignores_missing_values_while_identifying_boundary_version() -> None:
+    metadata = detect_uk_local_authority_boundary_version(
+        [None, "", "  ", b"", float("nan"), pd.NA, "E07000026"]
+    )
+
+    assert metadata.boundary_version is UKLocalAuthorityBoundaryVersion.LAD22
+
+
 @pytest.mark.parametrize(
     ("code", "expected"),
     [
@@ -154,7 +162,10 @@ def test_detector_rejects_an_unidentifiable_configuration() -> None:
         detect_uk_local_authority_boundary_version(["E06000001", "S12000033"])
 
 
-@pytest.mark.parametrize("value", [None, "", "UNKNOWN", "E06000999"])
+@pytest.mark.parametrize(
+    "value",
+    [None, "", "  ", b"", float("nan"), pd.NA, "UNKNOWN", "E06000999"],
+)
 def test_detector_rejects_missing_or_unsupported_codes(value: object) -> None:
     with pytest.raises((TypeError, ValueError), match="local-authority code"):
         detect_uk_local_authority_boundary_version([value])

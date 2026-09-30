@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import math
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -219,7 +220,11 @@ def load_uk_local_authority_resources() -> UKLocalAuthorityResources:
     )
 
 
-def _normalise_observed_code(value: object) -> str:
+def _normalise_observed_code(value: object) -> str | None:
+    if value is None or value is pd.NA:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
     if isinstance(value, bytes):
         try:
             code = value.decode("utf-8").strip()
@@ -231,6 +236,8 @@ def _normalise_observed_code(value: object) -> str:
         code = value.strip()
     else:
         raise TypeError("UK dataset contains a non-text local-authority code")
+    if not code:
+        return None
     if not _CODE_PATTERN.fullmatch(code):
         raise ValueError(f"UK dataset contains invalid local-authority code {code!r}")
     return code
@@ -241,7 +248,11 @@ def detect_uk_local_authority_boundary_version(
 ) -> UKLocalAuthorityMetadata:
     """Identify LAD22 or LAD23 from the unscoped dataset's authority codes."""
 
-    observed_codes = frozenset(_normalise_observed_code(value) for value in values)
+    observed_codes = frozenset(
+        code
+        for value in values
+        if (code := _normalise_observed_code(value)) is not None
+    )
     if not observed_codes:
         raise ValueError("UK dataset contains no local-authority codes")
     supported_codes = load_uk_local_authority_resources().names.keys()
