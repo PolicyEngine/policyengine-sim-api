@@ -488,6 +488,54 @@ def test_temporary_stage12_poll_returns_terminal_metadata_with_200(backend):
     )
 
 
+def test_temporary_stage12_poll_returns_propagated_failure_values(backend):
+    report = comparison_report(status=ComparisonRunLifecycleStatus.FAILED).model_copy(
+        update={
+            "error_code": "invalid_policy_period",
+            "error_summary": "The reform period is invalid.",
+        }
+    )
+    baseline = comparison_simulation(SimulationRole.BASELINE).model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.INCOMPLETE,
+            "error_code": "cancelled_after_peer_failure",
+            "error_summary": "Cancelled after reform simulation failed.",
+            "completed_at": report.completed_at,
+        }
+    )
+    reform = comparison_simulation(SimulationRole.REFORM).model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.FAILED,
+            "error_code": "invalid_policy_period",
+            "error_summary": "The reform period is invalid.",
+            "completed_at": report.completed_at,
+        }
+    )
+    comparison = TemporaryComparisonBackend(
+        report=report,
+        simulations=(baseline, reform),
+    )
+    app = create_app(
+        settings=make_settings(),
+        backend=backend,
+        auth_dependency=lambda: None,
+        comparison_backend=comparison,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.get(f"/internal/stage12/reports/{EVALUATION_ID}")
+
+    assert result.status_code == 200
+    payload = result.json()
+    assert payload["report"]["error_code"] == "invalid_policy_period"
+    assert payload["report"]["error_summary"] == "The reform period is invalid."
+    assert payload["simulations"][0]["status"] == "incomplete"
+    assert payload["simulations"][0]["error_code"] == "cancelled_after_peer_failure"
+    assert payload["simulations"][1]["error_code"] == "invalid_policy_period"
+
+
 def test_temporary_stage12_routes_are_excluded_from_openapi(backend):
     app = create_app(
         settings=make_settings(),
