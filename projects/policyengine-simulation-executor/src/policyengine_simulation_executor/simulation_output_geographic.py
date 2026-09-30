@@ -6,9 +6,13 @@ from collections.abc import Mapping
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 from policyengine.data.uk_geography_assets import (
     CONSTITUENCY_ASSET_SPEC,
     LOCAL_AUTHORITY_ASSET_SPEC,
+)
+from policyengine_simulation_contract.stage12_execution import (
+    UKLocalAuthorityMetadata,
 )
 
 from policyengine_simulation_executor.simulation_macro_output import (
@@ -232,10 +236,60 @@ def build_uk_constituency_impact(
 
 
 def build_uk_local_authority_impact(
-    country: str, baseline, reform
+    country: str,
+    baseline,
+    reform,
+    *,
+    uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> GeographicImpactOutput | None:
     if country != "uk":
         return None
+
+    if uk_local_authority_metadata is not None:
+        from policyengine.outputs.uk_geography_impact import (
+            compute_longwise_uk_geography_impacts,
+        )
+        from policyengine_simulation_executor.stage12_runtime.uk_local_authority_metadata import (
+            load_uk_local_authority_resources,
+        )
+
+        baseline_household = pd.DataFrame(baseline.output_dataset.data.household)
+        reform_household = pd.DataFrame(reform.output_dataset.data.household)
+        numeric_records = compute_longwise_uk_geography_impacts(
+            baseline_household=baseline_household,
+            reform_household=reform_household,
+            geography_column="la_code_oa",
+            result_key_prefix="local_authority",
+            lookup_csv_path=None,
+        )
+        boundary_version = uk_local_authority_metadata.boundary_version
+        display_metadata = load_uk_local_authority_resources().metadata_for(
+            boundary_version
+        )
+        records: list[dict[str, object]] = []
+        for numeric_record in numeric_records:
+            code = numeric_record.get("local_authority_code")
+            if not isinstance(code, str) or not code:
+                raise ValueError("UK local-authority output contains an invalid code")
+            metadata = display_metadata.get(code)
+            if metadata is None:
+                raise ValueError(
+                    f"UK local-authority code {code!r} is not part of the detected "
+                    f"{boundary_version.value.upper()} boundary version"
+                )
+            records.append(
+                {
+                    **numeric_record,
+                    "local_authority_name": metadata.name,
+                    "x": metadata.x,
+                    "y": metadata.y,
+                }
+            )
+        return _complete_uk_geography_output(
+            records,
+            code_field="local_authority_code",
+            name_field="local_authority_name",
+        )
 
     lookup_csv_path = _required_uk_geography_lookup_csv_path(LOCAL_AUTHORITY_ASSET_SPEC)
     impact = _output_module_function(

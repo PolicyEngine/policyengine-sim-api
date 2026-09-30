@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from policyengine_observability import ObservabilityRuntime
+from policyengine_simulation_contract.stage12_execution import (
+    UKLocalAuthorityMetadata,
+)
 
 from policyengine_simulation_executor import simulation_output_budget
 from policyengine_simulation_executor import simulation_output_cliff
@@ -49,6 +52,7 @@ class SimulationOutputBuilder:
     resolved_data_version: str | None = None
     resolved_region_code: str | None = None
     runtime: ObservabilityRuntime | None = None
+    uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
     _analysis: Any = field(default=None, init=False)
 
     def __post_init__(self) -> None:
@@ -238,7 +242,10 @@ class SimulationOutputBuilder:
     def _build_uk_local_authority_impact(self) -> GeographicImpactOutput | None:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_LOCAL_AUTHORITY)):
             return simulation_output_geographic.build_uk_local_authority_impact(
-                self.country, self.baseline, self.reform
+                self.country,
+                self.baseline,
+                self.reform,
+                uk_local_authority_metadata=self.uk_local_authority_metadata,
             )
 
     def _model_version(self) -> str:
