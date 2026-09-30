@@ -181,6 +181,9 @@ runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage cp \
 runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage cp \
   "${cache_canary_object}" "${canary_download_file}" --quiet
 cmp "${canary_source_file}" "${canary_download_file}"
+gcloud storage cp \
+  "${cache_canary_object}" "${canary_download_file}" --quiet
+cmp "${canary_source_file}" "${canary_download_file}"
 runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage rm \
   "${cache_canary_object}" --quiet
 cache_canary_object=""

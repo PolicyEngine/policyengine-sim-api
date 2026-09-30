@@ -77,7 +77,7 @@ def test_infrastructure_validation_rejects_missing_configuration() -> None:
     assert "STAGE12_ENVIRONMENT is required" in result.stderr
 
 
-def test_storage_validation_uses_only_the_modal_worker_credentials() -> None:
+def test_storage_validation_checks_runtime_and_deployment_credentials() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     helper_start = source.index("runtime_gcloud()")
     helper_end = source.index("\n}\n", helper_start)
@@ -94,6 +94,10 @@ def test_storage_validation_uses_only_the_modal_worker_credentials() -> None:
     modal_account = '--account="${STAGE12_MODAL_SERVICE_ACCOUNT}"'
     assert source.count(f"runtime_gcloud {modal_account} storage cp") == 5
     assert source.count(f"runtime_gcloud {modal_account} storage rm") == 4
+    assert (
+        'gcloud storage cp \\\n  "${cache_canary_object}" '
+        '"${canary_download_file}" --quiet'
+    ) in source
     assert "gs://${STAGE12_CACHE_BUCKET}/_deployment-validation" in source
     assert "gs://policyengine-uk-data-private/constituencies_2024.csv" in source
     assert "gs://policyengine-uk-data-private/local_authorities_2021.csv" not in source
