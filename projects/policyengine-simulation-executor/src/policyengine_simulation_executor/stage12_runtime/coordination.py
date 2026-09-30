@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -198,9 +198,8 @@ def coordinate_report(
     artifacts: Stage12ArtifactStore | None = None,
     invoker: ChildInvoker | None = None,
     aggregator: Callable[..., dict[str, Any]] = build_aggregate_report,
-    output_plan_resolver: Callable[
-        [ReportExecutionInput], Stage12OutputPlan
-    ] = resolve_report_output_plan,
+    output_plan_resolver: Callable[[ReportExecutionInput], Stage12OutputPlan]
+    | None = None,
     runtime: ObservabilityRuntime | None = None,
 ) -> dict[str, Any]:
     report = ReportExecutionInput.model_validate(payload)
@@ -242,26 +241,53 @@ def coordinate_report(
             "evaluation_id": str(parent.evaluation_id),
             "status": parent.status.value,
         }
-    context = context.model_copy(
-        update={
-            "artifact_prefix": (
-                f"stage-12-runs/{parent.environment}/"
-                f"{parent.created_at:%Y}/{parent.created_at:%m}/"
-                f"{parent.evaluation_id}"
-            ),
-            "created_at": parent.created_at,
-            "retention_expires_at": parent.retention_expires_at,
-        }
-    )
-    function_name = context.simulation_callable
     descriptors: dict[str, SimulationArtifactDescriptor] = {}
     calls: dict[str, ChildCall] = {}
     try:
-        output_plan = output_plan_resolver(report)
-        simulations = (
-            plan_simulation_input(report.baseline, output_plan),
-            plan_simulation_input(report.reform, output_plan),
-        )
+
+        def stage_scope(
+            stage: Stage,
+            attributes: Mapping[str, object] | None = None,
+        ):
+            if runtime is None:
+                return nullcontext()
+            return runtime.operation(
+                stage_plan.name(stage),
+                attributes=attributes,
+            )
+
+        with stage_scope(Stage.STAGE12_COORDINATOR_PREPARATION):
+            context = context.model_copy(
+                update={
+                    "artifact_prefix": (
+                        f"stage-12-runs/{parent.environment}/"
+                        f"{parent.created_at:%Y}/{parent.created_at:%m}/"
+                        f"{parent.evaluation_id}"
+                    ),
+                    "created_at": parent.created_at,
+                    "retention_expires_at": parent.retention_expires_at,
+                }
+            )
+            function_name = context.simulation_callable
+            with stage_scope(
+                Stage.STAGE12_OUTPUT_PLANNING,
+                {"country": report.baseline.geography.country},
+            ):
+                if output_plan_resolver is None:
+                    output_plan = resolve_report_output_plan(
+                        report,
+                        stage_scope=stage_scope,
+                    )
+                else:
+                    output_plan = output_plan_resolver(report)
+            simulations = []
+            for simulation in (report.baseline, report.reform):
+                with stage_scope(
+                    Stage.STAGE12_CHILD_INPUT_PLANNING,
+                    {"simulation_role": simulation.role.value},
+                ):
+                    simulations.append(plan_simulation_input(simulation, output_plan))
+            planned_simulations = tuple(simulations)
         child_state_span = (
             runtime.span(stage_plan.name(Stage.STAGE12_CHILD_STATE_CREATE))
             if runtime is not None
@@ -276,9 +302,9 @@ def coordinate_report(
                         function_name=function_name,
                     )
                 ).record
-                for simulation in simulations
+                for simulation in planned_simulations
             }
-        for simulation in simulations:
+        for simulation in planned_simulations:
             child = children[simulation.role]
             if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
                 descriptor = descriptor_from_record(child, simulation)

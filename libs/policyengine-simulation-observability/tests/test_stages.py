@@ -29,3 +29,23 @@ def test_stage_plan_rejects_a_stage_from_another_configuration() -> None:
 
     with pytest.raises(ValueError, match="not registered"):
         annual.name(Stage.STAGE12_AGGREGATION)
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    [
+        RunConfiguration.STAGE12_SHADOW_REPORT,
+        RunConfiguration.STAGE12_CANONICAL_REPORT,
+    ],
+)
+def test_stage12_report_plans_include_output_planning_breakdown(
+    configuration: RunConfiguration,
+) -> None:
+    stages = RUN_STAGE_REGISTRY[configuration].stages
+
+    assert Stage.STAGE12_COORDINATOR_PREPARATION in stages
+    assert Stage.STAGE12_OUTPUT_PLANNING in stages
+    assert Stage.STAGE12_COUNTRY_MODEL_LOAD in stages
+    assert Stage.STAGE12_OUTPUT_CONFIGURATION in stages
+    assert Stage.STAGE12_OUTPUT_VARIABLE_RESOLUTION in stages
+    assert Stage.STAGE12_CHILD_INPUT_PLANNING in stages

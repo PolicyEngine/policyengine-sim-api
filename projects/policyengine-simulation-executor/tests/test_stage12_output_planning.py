@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from uuid import UUID
 
 import pandas as pd
@@ -22,6 +23,7 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12OutputPlan,
 )
 from pydantic import JsonValue
+from policyengine_simulation_observability.stages import Stage
 
 from policyengine_simulation_executor.stage12_runtime.output_planning import (
     apply_output_plan,
@@ -194,6 +196,23 @@ def test_planning_is_deterministic_and_never_ensures_a_simulation(monkeypatch) -
     second = resolve_report_output_plan(_report(include_cliffs=True))
 
     assert first == second
+
+
+def test_output_planning_records_each_expensive_substage() -> None:
+    observed: list[tuple[Stage, dict[str, object]]] = []
+
+    @contextmanager
+    def record_stage(stage: Stage, attributes):
+        observed.append((stage, dict(attributes or {})))
+        yield
+
+    resolve_report_output_plan(_report(), stage_scope=record_stage)
+
+    assert observed == [
+        (Stage.STAGE12_COUNTRY_MODEL_LOAD, {"country": "us"}),
+        (Stage.STAGE12_OUTPUT_CONFIGURATION, {"country": "us"}),
+        (Stage.STAGE12_OUTPUT_VARIABLE_RESOLUTION, {"country": "us"}),
+    ]
 
 
 def test_incomplete_aggregate_profile_is_rejected_before_dispatch() -> None:

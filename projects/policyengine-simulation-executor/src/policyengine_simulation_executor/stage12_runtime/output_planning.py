@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from typing import Protocol, cast
 
 import pandas as pd
@@ -22,6 +23,7 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationExecutionInput,
     Stage12OutputPlan,
 )
+from policyengine_simulation_observability.stages import Stage
 
 UK_GEOGRAPHIC_DATASET_VARIABLES: dict[str, tuple[str, ...]] = {
     "household": ("constituency_code_oa", "la_code_oa"),
@@ -35,6 +37,19 @@ class OutputVariableModel(Protocol):
         self,
         simulation: Simulation,
     ) -> dict[str, list[str]]: ...
+
+
+StageScope = Callable[
+    [Stage, Mapping[str, object] | None],
+    AbstractContextManager[object],
+]
+
+
+def _unmonitored_stage_scope(
+    _stage: Stage,
+    _attributes: Mapping[str, object] | None = None,
+) -> AbstractContextManager[object]:
+    return nullcontext()
 
 
 def _country_model(country: CountryId) -> OutputVariableModel:
@@ -119,57 +134,65 @@ def _configure_country_outputs(
     return labor_supply_active
 
 
-def resolve_report_output_plan(report: ReportExecutionInput) -> Stage12OutputPlan:
+def resolve_report_output_plan(
+    report: ReportExecutionInput,
+    *,
+    stage_scope: StageScope = _unmonitored_stage_scope,
+) -> Stage12OutputPlan:
     """Resolve one country-owned output schema for both report simulations."""
 
     country = report.baseline.geography.country
-    model = _country_model(country)
-    baseline = _planning_simulation(report.baseline, model=model)
-    reform = _planning_simulation(report.reform, model=model)
-    include_cliff_impacts = _include_cliff_impacts(report)
-    labor_supply_active = _configure_country_outputs(
-        country=country,
-        baseline=baseline,
-        reform=reform,
-        include_cliff_impacts=include_cliff_impacts,
-    )
-    requirements = ReportOutputRequirements(
-        aggregates=report.requested_aggregates,
-        include_cliff_impacts=include_cliff_impacts,
-        labor_supply_response_active=labor_supply_active,
-    )
-    baseline_variables = model.resolve_entity_variables(baseline)
-    reform_variables = model.resolve_entity_variables(reform)
-    dataset_variables = _required_dataset_variables(
-        country=country,
-        aggregates=requirements.aggregates,
-    )
-    entities = []
-    for entity in sorted(
-        set(baseline_variables) | set(reform_variables) | set(dataset_variables)
-    ):
-        entity_dataset_variables = dataset_variables.get(entity, ())
-        materialized = tuple(
-            sorted(
-                set(baseline_variables.get(entity, ()))
-                | set(reform_variables.get(entity, ()))
-                | set(entity_dataset_variables)
-            )
+    stage_attributes = {"country": country}
+    with stage_scope(Stage.STAGE12_COUNTRY_MODEL_LOAD, stage_attributes):
+        model = _country_model(country)
+    with stage_scope(Stage.STAGE12_OUTPUT_CONFIGURATION, stage_attributes):
+        baseline = _planning_simulation(report.baseline, model=model)
+        reform = _planning_simulation(report.reform, model=model)
+        include_cliff_impacts = _include_cliff_impacts(report)
+        labor_supply_active = _configure_country_outputs(
+            country=country,
+            baseline=baseline,
+            reform=reform,
+            include_cliff_impacts=include_cliff_impacts,
         )
-        additional = tuple(
-            sorted(
-                set((baseline.extra_variables or {}).get(entity, ()))
-                | set((reform.extra_variables or {}).get(entity, ()))
-            )
+        requirements = ReportOutputRequirements(
+            aggregates=report.requested_aggregates,
+            include_cliff_impacts=include_cliff_impacts,
+            labor_supply_response_active=labor_supply_active,
         )
-        entities.append(
-            EntityOutputPlan(
-                entity=entity,
-                materialized_variables=materialized,
-                additional_variables=additional,
-                dataset_variables=entity_dataset_variables,
-            )
+    with stage_scope(Stage.STAGE12_OUTPUT_VARIABLE_RESOLUTION, stage_attributes):
+        baseline_variables = model.resolve_entity_variables(baseline)
+        reform_variables = model.resolve_entity_variables(reform)
+        dataset_variables = _required_dataset_variables(
+            country=country,
+            aggregates=requirements.aggregates,
         )
+        entities = []
+        for entity in sorted(
+            set(baseline_variables) | set(reform_variables) | set(dataset_variables)
+        ):
+            entity_dataset_variables = dataset_variables.get(entity, ())
+            materialized = tuple(
+                sorted(
+                    set(baseline_variables.get(entity, ()))
+                    | set(reform_variables.get(entity, ()))
+                    | set(entity_dataset_variables)
+                )
+            )
+            additional = tuple(
+                sorted(
+                    set((baseline.extra_variables or {}).get(entity, ()))
+                    | set((reform.extra_variables or {}).get(entity, ()))
+                )
+            )
+            entities.append(
+                EntityOutputPlan(
+                    entity=entity,
+                    materialized_variables=materialized,
+                    additional_variables=additional,
+                    dataset_variables=entity_dataset_variables,
+                )
+            )
     return Stage12OutputPlan(
         country=country,
         requirements=requirements,

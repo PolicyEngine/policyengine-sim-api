@@ -1,4 +1,5 @@
 import inspect
+import re
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -26,6 +27,9 @@ def test_modal_runtime_has_explicit_identity_and_remote_logging(monkeypatch):
     monkeypatch.setenv("OBSERVABILITY_TRACE_PROJECT_ID", "trace-project")
     monkeypatch.setenv("OBSERVABILITY_LOGGING_PROJECT_ID", "log-project")
     monkeypatch.setenv("OBSERVABILITY_LOG_NAME", "simulation-modal")
+    monkeypatch.setenv("MODAL_REGION", "us-east")
+    monkeypatch.setenv("MODAL_TASK_ID", "task-123")
+    monkeypatch.setenv("K_REVISION", "irrelevant-cloud-run-revision")
     runtime = build_runtime(
         service_name="policyengine-simulation-py5-2-0",
         service_role="simulation_worker",
@@ -38,6 +42,11 @@ def test_modal_runtime_has_explicit_identity_and_remote_logging(monkeypatch):
         assert runtime.config.service.role == "simulation_worker"
         assert runtime.config.deployment.environment == "main"
         assert runtime.config.deployment.platform == "modal"
+        assert runtime.config.deployment.region == "us-east"
+        assert re.fullmatch(
+            r"task-123:\d+:[0-9a-f]{32}",
+            runtime.config.deployment.instance_id or "",
+        )
         assert runtime.config.otel.sampling_ratio == 1.0
         assert runtime.config.application_attribute_keys is None
         assert runtime.config.dispatch_attribute_keys == frozenset(
@@ -56,6 +65,9 @@ def test_cloud_run_runtime_uses_stdout_without_direct_remote_logging(monkeypatch
     monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
     monkeypatch.delenv("OBSERVABILITY_LOGGING_PROJECT_ID", raising=False)
     monkeypatch.delenv("OBSERVABILITY_LOG_NAME", raising=False)
+    monkeypatch.setenv("CLOUD_RUN_REGION", "us-central1")
+    monkeypatch.setenv("K_REVISION", "entry-00123-abc")
+    monkeypatch.setenv("MODAL_TASK_ID", "irrelevant-modal-task")
     runtime = init_process_observability(
         service_name="policyengine-simulation-entry-prod",
         service_role="simulation_entry",
@@ -64,6 +76,11 @@ def test_cloud_run_runtime_uses_stdout_without_direct_remote_logging(monkeypatch
     )
     try:
         assert runtime.config.logging.capture_standard_library is True
+        assert runtime.config.deployment.region == "us-central1"
+        assert re.fullmatch(
+            r"entry-00123-abc:\d+:[0-9a-f]{32}",
+            runtime.config.deployment.instance_id or "",
+        )
         assert len(runtime.config.logging.destinations) == 1
         assert isinstance(runtime.config.logging.destinations[0], StdoutLogDestination)
     finally:
