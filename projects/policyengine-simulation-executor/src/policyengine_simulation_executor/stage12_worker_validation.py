@@ -65,6 +65,16 @@ def _run_non_serving_calculation(country: CountryId) -> None:
         raise RuntimeError("Stage 12 validation calculation returned no net income")
 
 
+def _check_uk_local_authority_resources() -> None:
+    from policyengine_simulation_executor.stage12_runtime.uk_local_authority_metadata import (
+        load_uk_local_authority_resources,
+    )
+
+    resources = load_uk_local_authority_resources()
+    for roster in resources.coordinates:
+        resources.metadata_for(roster)
+
+
 def validate_country_worker(
     *,
     country: CountryId,
@@ -75,6 +85,9 @@ def validate_country_worker(
     ),
     dataset_check: Callable[[str, str], None] = _check_dataset_access,
     calculation_check: Callable[[CountryId], None] = _run_non_serving_calculation,
+    local_authority_resource_check: Callable[[], None] = (
+        _check_uk_local_authority_resources
+    ),
 ) -> dict[str, Any]:
     """Validate imports, installed bundle, secrets, data, and calculation."""
 
@@ -109,6 +122,8 @@ def validate_country_worker(
         if dataset.identity == country_bundle.default_dataset
     )
     dataset_check(installed_dataset_path, selected_dataset.sha256)
+    if country == "uk":
+        local_authority_resource_check()
     calculation_check(country)
     return {
         "validated": True,
