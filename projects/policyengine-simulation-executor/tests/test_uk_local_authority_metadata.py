@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
 from policyengine_simulation_contract.stage12_execution import (
     UKLocalAuthorityRoster,
 )
 
 from policyengine_simulation_executor.stage12_runtime.uk_local_authority_metadata import (
+    detect_uk_local_authority_roster,
     load_uk_local_authority_resources,
 )
 
@@ -69,3 +72,35 @@ def test_resource_lookup_combines_names_with_roster_coordinates() -> None:
     assert isinstance(cumberland.x, int)
     assert isinstance(cumberland.y, int)
     assert "E06000063" not in resources.metadata_for(UKLocalAuthorityRoster.LAD22)
+
+
+def test_detector_identifies_lad22_from_a_predecessor_code() -> None:
+    metadata = detect_uk_local_authority_roster(
+        ["E06000001", " E07000026 ", "S12000033"]
+    )
+
+    assert metadata.roster is UKLocalAuthorityRoster.LAD22
+
+
+def test_detector_identifies_lad23_from_a_successor_code() -> None:
+    metadata = detect_uk_local_authority_roster(
+        [b"E06000001", b"E06000063", b"S12000033"]
+    )
+
+    assert metadata.roster is UKLocalAuthorityRoster.LAD23
+
+
+def test_detector_rejects_mixed_authority_configurations() -> None:
+    with pytest.raises(ValueError, match="mixes LAD22 and LAD23"):
+        detect_uk_local_authority_roster(["E07000026", "E06000063"])
+
+
+def test_detector_rejects_an_unidentifiable_configuration() -> None:
+    with pytest.raises(ValueError, match="cannot be identified"):
+        detect_uk_local_authority_roster(["E06000001", "S12000033"])
+
+
+@pytest.mark.parametrize("value", [None, "", "UNKNOWN", "E06000999"])
+def test_detector_rejects_missing_or_unsupported_codes(value: object) -> None:
+    with pytest.raises((TypeError, ValueError), match="local-authority code"):
+        detect_uk_local_authority_roster([value])

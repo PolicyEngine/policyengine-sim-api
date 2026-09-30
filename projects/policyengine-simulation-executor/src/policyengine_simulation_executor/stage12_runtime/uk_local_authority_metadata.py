@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
@@ -11,12 +12,62 @@ from types import MappingProxyType
 from typing import Mapping
 
 from policyengine_simulation_contract.stage12_execution import (
+    UKLocalAuthorityMetadata,
     UKLocalAuthorityRoster,
 )
 
 _CODE_PATTERN = re.compile(r"^[A-Z]\d{8}$")
 _RESOURCE_PACKAGE = "policyengine_simulation_executor"
 _RESOURCE_DIRECTORY = ("resources", "uk_local_authorities")
+_LAD22_ONLY_CODES = frozenset(
+    {
+        "E07000026",
+        "E07000027",
+        "E07000028",
+        "E07000029",
+        "E07000030",
+        "E07000031",
+        "E07000163",
+        "E07000164",
+        "E07000165",
+        "E07000166",
+        "E07000167",
+        "E07000168",
+        "E07000169",
+        "E07000187",
+        "E07000188",
+        "E07000189",
+        "E07000246",
+    }
+)
+_LAD23_ONLY_CODES = frozenset(
+    {
+        "E06000063",
+        "E06000064",
+        "E06000065",
+        "E06000066",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class LocalAuthorityRosterDefinition:
+    """Codes that distinguish one supported boundary configuration."""
+
+    roster: UKLocalAuthorityRoster
+    distinguishing_codes: frozenset[str]
+
+
+_ROSTER_DEFINITIONS = (
+    LocalAuthorityRosterDefinition(
+        roster=UKLocalAuthorityRoster.LAD22,
+        distinguishing_codes=_LAD22_ONLY_CODES,
+    ),
+    LocalAuthorityRosterDefinition(
+        roster=UKLocalAuthorityRoster.LAD23,
+        distinguishing_codes=_LAD23_ONLY_CODES,
+    ),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +199,10 @@ def load_uk_local_authority_resources() -> UKLocalAuthorityResources:
         raise ValueError(
             "UK local-authority names must exactly cover the supported rosters"
         )
+    if lad22.keys() - lad23.keys() != _LAD22_ONLY_CODES:
+        raise ValueError("LAD22 distinguishing codes do not match its coordinate file")
+    if lad23.keys() - lad22.keys() != _LAD23_ONLY_CODES:
+        raise ValueError("LAD23 distinguishing codes do not match its coordinate file")
     for code in lad22.keys() & lad23.keys():
         if lad22[code] != lad23[code]:
             raise ValueError(
@@ -162,3 +217,50 @@ def load_uk_local_authority_resources() -> UKLocalAuthorityResources:
             }
         ),
     )
+
+
+def _normalise_observed_code(value: object) -> str:
+    if isinstance(value, bytes):
+        try:
+            code = value.decode("utf-8").strip()
+        except UnicodeDecodeError as error:
+            raise ValueError(
+                "UK dataset contains an invalid local-authority code"
+            ) from error
+    elif isinstance(value, str):
+        code = value.strip()
+    else:
+        raise TypeError("UK dataset contains a non-text local-authority code")
+    if not _CODE_PATTERN.fullmatch(code):
+        raise ValueError(f"UK dataset contains invalid local-authority code {code!r}")
+    return code
+
+
+def detect_uk_local_authority_roster(
+    values: Iterable[object],
+) -> UKLocalAuthorityMetadata:
+    """Identify LAD22 or LAD23 from the unscoped dataset's authority codes."""
+
+    observed_codes = frozenset(_normalise_observed_code(value) for value in values)
+    if not observed_codes:
+        raise ValueError("UK dataset contains no local-authority codes")
+    supported_codes = load_uk_local_authority_resources().names.keys()
+    unsupported_codes = observed_codes - supported_codes
+    if unsupported_codes:
+        first = min(unsupported_codes)
+        raise ValueError(
+            f"UK dataset contains unsupported local-authority code {first!r}"
+        )
+
+    matches = tuple(
+        definition
+        for definition in _ROSTER_DEFINITIONS
+        if observed_codes & definition.distinguishing_codes
+    )
+    if len(matches) > 1:
+        raise ValueError("UK dataset mixes LAD22 and LAD23 local-authority codes")
+    if not matches:
+        raise ValueError(
+            "UK dataset local-authority configuration cannot be identified"
+        )
+    return UKLocalAuthorityMetadata(roster=matches[0].roster)
