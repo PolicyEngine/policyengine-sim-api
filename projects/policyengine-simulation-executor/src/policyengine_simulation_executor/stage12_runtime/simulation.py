@@ -19,6 +19,7 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationArtifactDescriptor,
     SimulationExecutionInput,
     Stage12InvocationContext,
+    UKLocalAuthorityMetadata,
     stage12_output_plan_sha256,
 )
 from policyengine_simulation_observability.stages import (
@@ -40,6 +41,32 @@ from .output_planning import apply_output_plan, validate_output_frames
 class SimulationCalculation:
     frames: Mapping[str, pd.DataFrame]
     calculation_provenance: dict[str, Any] | None = None
+    uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
+
+
+def _detect_uk_local_authority_metadata(
+    country: CountryId,
+    dataset: object,
+) -> UKLocalAuthorityMetadata | None:
+    """Inspect a complete dataset before any requested regional scoping."""
+
+    if country != "uk":
+        return None
+    data = getattr(dataset, "data", None)
+    entity_data = getattr(data, "entity_data", None)
+    if not isinstance(entity_data, Mapping):
+        raise TypeError("UK dataset contains no entity tables")
+    household = entity_data.get("household")
+    if household is None:
+        raise ValueError("UK dataset contains no household table")
+    household_frame = pd.DataFrame(household)
+    if "la_code_oa" not in household_frame:
+        raise ValueError("UK dataset household table contains no la_code_oa column")
+    from .uk_local_authority_metadata import detect_uk_local_authority_boundary_version
+
+    return detect_uk_local_authority_boundary_version(
+        household_frame["la_code_oa"].tolist()
+    )
 
 
 def simulation_input_sha256(simulation: SimulationExecutionInput) -> str:
@@ -174,6 +201,10 @@ def calculate_simulation_frames(
                 selection=dataset_selection,
                 country_module=country_module,
             )
+        uk_local_authority_metadata = _detect_uk_local_authority_metadata(
+            country,
+            dataset,
+        )
         policy_span = (
             runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.POLICY_NORMALIZATION))
             if runtime is not None
@@ -231,6 +262,7 @@ def calculate_simulation_frames(
         return SimulationCalculation(
             frames=frames,
             calculation_provenance=calculation_provenance,
+            uk_local_authority_metadata=uk_local_authority_metadata,
         )
 
 
@@ -336,9 +368,11 @@ def run_single_simulation(
         if isinstance(calculated, SimulationCalculation):
             frames = calculated.frames
             calculation_provenance = calculated.calculation_provenance
+            uk_local_authority_metadata = calculated.uk_local_authority_metadata
         else:
             frames = calculated
             calculation_provenance = None
+            uk_local_authority_metadata = None
         validate_output_frames(frames, simulation.output_plan)
         artifact_span = (
             runtime.span(
@@ -353,6 +387,7 @@ def run_single_simulation(
                 simulation=simulation,
                 frames=frames,
                 calculation_provenance=calculation_provenance,
+                uk_local_authority_metadata=uk_local_authority_metadata,
             )
         completed = datetime.now(UTC)
         persistence.replace_simulation(

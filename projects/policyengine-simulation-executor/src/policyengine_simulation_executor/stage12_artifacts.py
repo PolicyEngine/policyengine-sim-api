@@ -22,6 +22,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ResultComparisonArtifactPayload,
     RowIdentity,
     SimulationArtifactDescriptor,
+    UKLocalAuthorityMetadata,
     stage12_output_plan_sha256,
 )
 from pydantic import JsonValue
@@ -118,6 +119,7 @@ def serialize_simulation_frames(
     frames: Mapping[str, pd.DataFrame],
     *,
     calculation_provenance: Mapping[str, Any] | None = None,
+    uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> tuple[bytes, RowIdentity]:
     combined, dtypes, identifier_values = _frame_payload(frames)
     identity_payload = canonical_json_bytes(identifier_values)
@@ -139,6 +141,10 @@ def serialize_simulation_frames(
     if calculation_provenance is not None:
         metadata[PARQUET_CONTRACT.calculation_provenance_metadata_key.encode()] = (
             canonical_json_bytes(calculation_provenance)
+        )
+    if uk_local_authority_metadata is not None:
+        metadata[PARQUET_CONTRACT.uk_local_authority_metadata_key.encode()] = (
+            canonical_json_bytes(uk_local_authority_metadata.model_dump(mode="json"))
         )
     table = table.replace_schema_metadata(metadata)
     buffer = BytesIO()
@@ -210,6 +216,20 @@ def deserialize_calculation_provenance(payload: bytes) -> dict[str, Any] | None:
     return value
 
 
+def deserialize_uk_local_authority_metadata(
+    payload: bytes,
+) -> UKLocalAuthorityMetadata | None:
+    """Read typed UK authority metadata from a Stage 12 simulation artifact."""
+
+    table = pq.read_table(BytesIO(payload))
+    raw = (table.schema.metadata or {}).get(
+        PARQUET_CONTRACT.uk_local_authority_metadata_key.encode()
+    )
+    if raw is None:
+        return None
+    return UKLocalAuthorityMetadata.model_validate_json(raw)
+
+
 class Stage12ArtifactStore:
     def __init__(self, bucket_name: str, *, store: ArtifactStore | None = None):
         if not bucket_name:
@@ -264,6 +284,7 @@ class Stage12ArtifactStore:
         simulation: PlannedSimulationExecutionInput,
         frames: Mapping[str, pd.DataFrame],
         calculation_provenance: Mapping[str, Any] | None = None,
+        uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
     ) -> SimulationArtifactDescriptor:
         normalized_provenance = cast(
             dict[str, JsonValue] | None,
@@ -276,6 +297,7 @@ class Stage12ArtifactStore:
         payload, row_identity = serialize_simulation_frames(
             frames,
             calculation_provenance=normalized_provenance,
+            uk_local_authority_metadata=uk_local_authority_metadata,
         )
         artifact = self._write_immutable(
             simulation_path(prefix=prefix, role=simulation.role.value),

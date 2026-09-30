@@ -11,9 +11,28 @@ from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
     SimulationArtifactDescriptor,
     Stage12OutputPlan,
+    UKLocalAuthorityMetadata,
     stage12_output_plan_sha256,
 )
 from pydantic import JsonValue
+
+
+def validate_uk_local_authority_metadata(
+    country: CountryId,
+    baseline: UKLocalAuthorityMetadata | None,
+    reform: UKLocalAuthorityMetadata | None,
+) -> UKLocalAuthorityMetadata | None:
+    """Require matching UK authority metadata and reject it elsewhere."""
+
+    if country == "uk":
+        if baseline is None or reform is None:
+            raise ValueError("UK simulation artifact metadata is missing")
+        if baseline != reform:
+            raise ValueError("UK simulation artifact boundary versions do not match")
+        return baseline
+    if baseline is not None or reform is not None:
+        raise ValueError("non-UK simulation artifacts contain UK authority metadata")
+    return None
 
 
 def validate_aligned_outputs(
@@ -93,6 +112,7 @@ def build_aggregate_report(
     reform_frames: Mapping[str, pd.DataFrame],
     baseline_descriptor: SimulationArtifactDescriptor,
     reform_descriptor: SimulationArtifactDescriptor,
+    uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> dict[str, Any]:
     from policyengine_simulation_executor.segmented_national_reduce import (
         PrecomputedSimulation,
@@ -147,6 +167,7 @@ def build_aggregate_report(
         reform=stand_in(datasets["reform"], report.reform.policy),
         resolved_data_version=report.baseline.bundle.dataset.artifact_revision,
         resolved_region_code=report.baseline.geography.region,
+        uk_local_authority_metadata=uk_local_authority_metadata,
     ).serialize()
     output.update(
         build_spm_result(

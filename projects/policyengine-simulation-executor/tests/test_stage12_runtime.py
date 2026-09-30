@@ -38,6 +38,8 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationRole,
     Stage12InvocationContext,
     Stage12OutputPlan,
+    UKLocalAuthorityMetadata,
+    UKLocalAuthorityBoundaryVersion,
     stage12_output_plan_sha256,
 )
 
@@ -52,6 +54,12 @@ from policyengine_simulation_executor.stage12_runtime import (
     coordinate_report as coordinate_report_impl,
     run_single_simulation,
     simulation_input_sha256,
+)
+from policyengine_simulation_executor.stage12_runtime.aggregation import (
+    validate_uk_local_authority_metadata,
+)
+from policyengine_simulation_executor.stage12_runtime.simulation import (
+    _detect_uk_local_authority_metadata,
 )
 
 NOW = datetime(2026, 9, 15, tzinfo=UTC)
@@ -330,8 +338,29 @@ class FakeArtifacts:
         simulation,
         frames,
         calculation_provenance=None,
+        uk_local_authority_metadata=None,
     ):
-        descriptor = self.add_simulation(simulation, frames)
+        payload, row_identity = serialize_simulation_frames(
+            frames,
+            calculation_provenance=calculation_provenance,
+            uk_local_authority_metadata=uk_local_authority_metadata,
+        )
+        uri = f"gs://private/{simulation.role.value}.parquet"
+        self.payloads[uri] = payload
+        descriptor = SimulationArtifactDescriptor(
+            evaluation_id=simulation.evaluation_id,
+            simulation_execution_id=simulation.simulation_execution_id,
+            role=simulation.role,
+            artifact=ArtifactReference(
+                uri=uri,
+                media_type=ArtifactMediaType.PARQUET,
+                content_sha256=sha256(payload).hexdigest(),
+                size_bytes=len(payload),
+            ),
+            output_plan_sha256=stage12_output_plan_sha256(_output_plan()),
+            row_identity=row_identity,
+            bundle=simulation.bundle,
+        )
         return descriptor.model_copy(
             update={"calculation_provenance": calculation_provenance}
         )
@@ -457,6 +486,48 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
     assert received["ensured"] is True
     assert received["extras_at_ensure"] == {"household": [], "person": []}
     assert set(result.frames) == {"household", "person"}
+
+
+def test_uk_boundary_version_is_detected_from_the_unscoped_dataset() -> None:
+    dataset = type(
+        "Dataset",
+        (),
+        {
+            "data": type(
+                "Data",
+                (),
+                {
+                    "entity_data": {
+                        "household": pd.DataFrame(
+                            {"la_code_oa": ["E06000001", "E07000026"]}
+                        )
+                    }
+                },
+            )()
+        },
+    )()
+
+    metadata = _detect_uk_local_authority_metadata("uk", dataset)
+
+    assert metadata == UKLocalAuthorityMetadata(
+        boundary_version=UKLocalAuthorityBoundaryVersion.LAD22
+    )
+
+
+def test_country_metadata_alignment_rejects_missing_or_mismatched_uk_values() -> None:
+    lad22 = UKLocalAuthorityMetadata(
+        boundary_version=UKLocalAuthorityBoundaryVersion.LAD22
+    )
+    lad23 = UKLocalAuthorityMetadata(
+        boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
+    )
+
+    with pytest.raises(ValueError, match="missing"):
+        validate_uk_local_authority_metadata("uk", None, lad22)
+    with pytest.raises(ValueError, match="do not match"):
+        validate_uk_local_authority_metadata("uk", lad22, lad23)
+    assert validate_uk_local_authority_metadata("uk", lad22, lad22) == lad22
+    assert validate_uk_local_authority_metadata("us", None, None) is None
 
 
 def test_single_worker_accepts_one_policy_and_persists_one_artifact() -> None:
@@ -680,6 +751,7 @@ def test_aggregate_stand_ins_preserve_policy_and_cliff_options(monkeypatch) -> N
 
     assert result["result"] == {"captured": True}
     assert observed["simulation_params"]["include_cliffs"] is True
+    assert observed["uk_local_authority_metadata"] is None
     assert labor_supply_response_is_active(
         observed["baseline"],
         observed["reform"],
@@ -867,6 +939,7 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
     assert observed["reform_frames"]["household"]["household_net_income"].tolist() == [
         120.0
     ]
+    assert observed["uk_local_authority_metadata"] is None
     assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
     assert store.parent.aggregation_status is ComparisonRunAggregationStatus.SUCCEEDED
     assert store.parent.coordinator_invocation_id == "coordinator-1"

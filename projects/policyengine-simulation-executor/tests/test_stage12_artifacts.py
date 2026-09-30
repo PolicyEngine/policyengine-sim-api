@@ -8,12 +8,17 @@ from uuid import UUID
 import numpy as np
 import pandas as pd
 import pytest
+from policyengine_simulation_contract.stage12_execution import (
+    UKLocalAuthorityMetadata,
+    UKLocalAuthorityBoundaryVersion,
+)
 
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
     comparison_run_prefix,
     deserialize_calculation_provenance,
     deserialize_simulation_frames,
+    deserialize_uk_local_authority_metadata,
     serialize_simulation_frames,
 )
 
@@ -75,6 +80,25 @@ def test_parquet_retains_detached_calculation_provenance() -> None:
     )
 
     assert deserialize_calculation_provenance(payload) == provenance
+
+
+def test_parquet_retains_typed_uk_local_authority_metadata() -> None:
+    metadata = UKLocalAuthorityMetadata(
+        boundary_version=UKLocalAuthorityBoundaryVersion.LAD22
+    )
+
+    payload, _ = serialize_simulation_frames(
+        _frames(),
+        uk_local_authority_metadata=metadata,
+    )
+
+    assert deserialize_uk_local_authority_metadata(payload) == metadata
+
+
+def test_parquet_omits_uk_metadata_for_non_uk_simulations() -> None:
+    payload, _ = serialize_simulation_frames(_frames())
+
+    assert deserialize_uk_local_authority_metadata(payload) is None
 
 
 def test_duplicate_entity_identifiers_are_rejected() -> None:
