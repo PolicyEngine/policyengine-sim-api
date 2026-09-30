@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -181,6 +181,22 @@ def _report() -> ReportExecutionInput:
 def coordinate_report(*args, **kwargs):
     kwargs.setdefault("output_plan_resolver", lambda _: _output_plan())
     return coordinate_report_impl(*args, **kwargs)
+
+
+class RecordingRuntime:
+    def __init__(self) -> None:
+        self.operations: list[tuple[str, dict[str, object]]] = []
+
+    @contextmanager
+    def operation(self, name, *, attributes=None, **_kwargs):
+        self.operations.append((name, dict(attributes or {})))
+        yield
+
+    def span(self, *_args, **_kwargs):
+        return nullcontext()
+
+    def capture_context(self):
+        return {}
 
 
 def _context() -> Stage12InvocationContext:
@@ -986,6 +1002,42 @@ def test_duplicate_coordinator_submission_does_not_start_duplicate_children() ->
         "status": "succeeded",
     }
     assert duplicate_invoker.events == []
+
+
+def test_coordinator_measures_output_and_child_input_planning() -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    runtime = RecordingRuntime()
+
+    coordinate_report(
+        _report().model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        _parent().model_dump(mode="json"),
+        application_name=_context().modal_application,
+        coordinator_invocation_id="coordinator-1",
+        store=store,
+        artifacts=artifacts,
+        invoker=ConcurrentInvoker(artifacts),
+        aggregator=lambda **_: {"result": "complete"},
+        runtime=runtime,
+    )
+
+    planning_operations = [
+        operation
+        for operation in runtime.operations
+        if operation[0]
+        in {
+            "stage12_coordinator_preparation",
+            "stage12_output_planning",
+            "stage12_child_input_planning",
+        }
+    ]
+    assert planning_operations == [
+        ("stage12_coordinator_preparation", {}),
+        ("stage12_output_planning", {"country": "us"}),
+        ("stage12_child_input_planning", {"simulation_role": "baseline"}),
+        ("stage12_child_input_planning", {"simulation_role": "reform"}),
+    ]
 
 
 def test_coordinator_compares_automatic_run_after_successful_aggregation() -> None:

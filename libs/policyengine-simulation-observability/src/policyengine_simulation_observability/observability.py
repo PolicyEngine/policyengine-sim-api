@@ -18,6 +18,7 @@ from policyengine_observability import (
     StdoutLogDestination,
     configure,
     instrument_fastapi,
+    process_instance_id,
 )
 
 Platform = Literal["google_cloud_run", "modal", "local", "other"]
@@ -63,6 +64,14 @@ def build_runtime(
 ) -> ObservabilityRuntime:
     """Create one explicitly owned simulation observability runtime."""
 
+    platform_instance_id = (
+        os.getenv("MODAL_TASK_ID") if platform == "modal" else os.getenv("K_REVISION")
+    )
+    region = (
+        os.getenv("MODAL_REGION")
+        if platform == "modal"
+        else os.getenv("GOOGLE_CLOUD_REGION") or os.getenv("CLOUD_RUN_REGION")
+    )
     trace_project = os.getenv("OBSERVABILITY_TRACE_PROJECT_ID", "").strip()
     logging_project = os.getenv("OBSERVABILITY_LOGGING_PROJECT_ID", "").strip()
     log_name = os.getenv("OBSERVABILITY_LOG_NAME", "").strip()
@@ -93,8 +102,8 @@ def build_runtime(
         deployment=DeploymentIdentity(
             environment=environment,
             platform=platform,
-            region=os.getenv("GOOGLE_CLOUD_REGION") or os.getenv("CLOUD_RUN_REGION"),
-            instance_id=os.getenv("K_REVISION") or os.getenv("MODAL_TASK_ID"),
+            region=region,
+            instance_id=process_instance_id(service_name, platform_instance_id),
         ),
         logging=LoggingConfig(
             destinations=tuple(destinations),

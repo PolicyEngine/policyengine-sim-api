@@ -24,7 +24,7 @@ dependencies = [
     "policyengine[models]==6.2.1",
     "tables>=3.10.2",
     "modal>=0.73.0",
-    "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.1,<4",
+    "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.2,<4",
     # Imported directly by the artifact store client; do not rely on the
     # transitive pin via policyengine.
     "google-cloud-storage>=2",
@@ -49,7 +49,7 @@ modal-simulation-image = [
     "policyengine[models]==6.2.1",
     "fastapi>=0.115.0",
     "tables>=3.10.2",
-    "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.1,<4",
+    "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.2,<4",
     # The artifact fetch layer and store client read GCS. The lib is also a
     # transitive dependency of policyengine, but the image must not depend
     # on an upstream package keeping it.
