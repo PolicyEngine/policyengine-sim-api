@@ -745,6 +745,7 @@ def test_aggregate_stand_ins_preserve_policy_and_cliff_options(monkeypatch) -> N
 
     assert result["result"] == {"captured": True}
     assert observed["simulation_params"]["include_cliffs"] is True
+    assert observed["uk_local_authority_metadata"] is None
     assert labor_supply_response_is_active(
         observed["baseline"],
         observed["reform"],

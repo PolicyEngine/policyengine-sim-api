@@ -114,7 +114,6 @@ def build_aggregate_report(
     reform_descriptor: SimulationArtifactDescriptor,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> dict[str, Any]:
-    del uk_local_authority_metadata
     from policyengine_simulation_executor.segmented_national_reduce import (
         PrecomputedSimulation,
     )
@@ -168,6 +167,7 @@ def build_aggregate_report(
         reform=stand_in(datasets["reform"], report.reform.policy),
         resolved_data_version=report.baseline.bundle.dataset.artifact_revision,
         resolved_region_code=report.baseline.geography.region,
+        uk_local_authority_metadata=uk_local_authority_metadata,
     ).serialize()
     output.update(
         build_spm_result(
