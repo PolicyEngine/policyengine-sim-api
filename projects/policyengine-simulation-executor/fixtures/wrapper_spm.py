@@ -1,16 +1,13 @@
-"""The canonical wrapper's ``storage_id``, transcribed for hermetic tests.
+"""PolicyEngine 6's SPM-aware ``storage_id`` expression for test doubles.
 
-The executor pins a pre-canonical ``policyengine``: its ``Simulation`` has
-no ``spm`` field and no ``storage_id``, so hermetic CI cannot import the
-property that names every canonical baseline artifact. Precompute plans a
-store path from ``BaselineArtifactIdentity.storage_id`` and the
-in-container worker aborts when the wrapper's value disagrees, so the two
-derivations have to be one identifier reached down two paths.
+Precompute plans a store path from ``BaselineArtifactIdentity.storage_id``
+and the in-container worker aborts when the wrapper's value disagrees, so the
+two derivations have to be one identifier reached down two paths.
 
-This is that second path, copied out of the SPM-capable wrapper so the
-key-discipline tests and the precompute writer==reader tests state it once.
-It proves our side has not drifted from the contract we read; it is not the
-wrapper, and only the SPM_NATIVE_SMOKE_SOURCE-gated suites run against one.
+This is that second path, copied from the installed PolicyEngine 6 wrapper so
+the key-discipline and precompute tests state it once. It is an independent
+expression of the identifier, not a replacement for tests against the installed
+wrapper; ``test_artifact_keys`` compares both paths directly.
 
 ``policyengine/core/simulation.py``::
 
@@ -23,19 +20,12 @@ wrapper, and only the SPM_NATIVE_SMOKE_SOURCE-gated suites run against one.
         encoded = json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
         return f"{self.id}-spm-{hashlib.sha256(encoded).hexdigest()}"
 
-Read from ``policyengine-5.3.0-py3-none-any.whl`` sha256
-``8c640d967575dddad70840bcbe938cea251c56958eded647c83eb9c5902735f1``, the
-unpublished development wheel the native qualification lane installs. The
-hash is the identifier, not the version: another local build carries the
-same filename and version and has no ``storage_id`` at all.
-
-``spm_config`` above is not a stored value. On the canonical wrapper it
+``spm_config`` above is not a stored value. On PolicyEngine 6 it
 refuses a non-US ``tax_benefit_model_version`` and otherwise re-resolves
 ``spm`` through the installed bundle, so an unset selection becomes the
 bundle's defaults rather than None -- which is why this function takes a
 config that has already been resolved, and why the agreement claim is
-about the digest, not about the resolution. Both are checked against that
-wheel in ``TestWrapperStorageIdAgreement``'s recorded out-of-band run.
+about the digest, not about the resolution.
 """
 
 import hashlib
@@ -47,10 +37,3 @@ def wrapper_storage_id(simulation_id: str, spm_config: dict | None) -> str:
         return simulation_id
     encoded = json.dumps(spm_config, sort_keys=True, separators=(",", ":")).encode()
     return f"{simulation_id}-spm-{hashlib.sha256(encoded).hexdigest()}"
-
-
-def installed_wrapper_has_storage_id() -> bool:
-    """True once an SPM-capable wrapper is pinned and this file can retire."""
-    from policyengine.core import Simulation
-
-    return hasattr(Simulation, "storage_id")

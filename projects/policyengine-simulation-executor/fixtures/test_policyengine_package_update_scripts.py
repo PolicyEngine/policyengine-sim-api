@@ -19,34 +19,35 @@ def fake_repo(tmp_path: Path) -> Path:
     project.mkdir(parents=True)
 
     (project / "pyproject.toml").write_text(
-        "\n".join(
-            [
-                "[project]",
-                'dependencies = ["policyengine==4.0.0", "policyengine-core==0.0.0", "policyengine-us==1.0.0", "policyengine-uk==2.0.0"]',
-            ]
-        ),
+        """[project]
+dependencies = ["policyengine[models]==4.0.0"]
+
+[dependency-groups]
+modal-simulation-image = ["policyengine[models]==4.0.0", "fastapi>=0.115.0"]
+""",
         encoding="utf-8",
     )
     (project / "uv.lock").write_text(
-        "\n".join(
-            [
-                "[[package]]",
-                'name = "policyengine"',
-                'version = "4.0.0"',
-                "",
-                "[[package]]",
-                'name = "policyengine-core"',
-                'version = "0.0.0"',
-                "",
-                "[[package]]",
-                'name = "policyengine-us"',
-                'version = "1.0.0"',
-                "",
-                "[[package]]",
-                'name = "policyengine-uk"',
-                'version = "2.0.0"',
-            ]
-        ),
+        """[[package]]
+name = "policyengine"
+version = "4.0.0"
+
+[[package]]
+name = "policyengine-core"
+version = "0.0.0"
+
+[[package]]
+name = "policyengine-us"
+version = "1.0.0"
+
+[[package]]
+name = "policyengine-uk"
+version = "2.0.0"
+
+[[package]]
+name = "spm-calculator"
+version = "0.1.0"
+""",
         encoding="utf-8",
     )
 
@@ -103,19 +104,62 @@ exit 0
     )
 
 
-def install_fake_gh(fake_bin: Path, *, log: Path, open_pr: str = "") -> None:
+def install_fake_gh(
+    fake_bin: Path,
+    *,
+    log: Path,
+    open_pr: str = "",
+    open_issue: str = "679",
+) -> None:
     write_executable(
         fake_bin / "gh",
         f"""#!/usr/bin/env bash
 set -euo pipefail
 printf 'gh %s\\n' "$*" >> "{log}"
 
-if [[ "$1" == "pr" && "$2" == "list" ]]; then
+if [[ "$1" == "api" ]]; then
+  if [[ -n "{open_issue}" ]]; then
+    printf '[[{{"number":%s,"title":"Update policyengine to 4.1.0"}}]]\\n' "{open_issue}"
+  else
+    printf '[[]]\\n'
+  fi
+  exit 0
+fi
+
+if [[ "$1" == "issue" && "$2" == "view" ]]; then
+  printf '{{"number":%s,"state":"OPEN","title":"Update policyengine to 4.1.0"}}\\n' "${{3}}"
+  exit 0
+fi
+
+if [[ "$1" == "issue" && "$2" == "create" ]]; then
+  printf 'https://github.com/PolicyEngine/policyengine-sim-api/issues/680\\n'
+  exit 0
+fi
+
+if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"number,state"* ]]; then
   printf '%s\\n' "{open_pr}"
   exit 0
 fi
 
+if [[ "$1" == "pr" && "$2" == "view" ]]; then
+  printf '{{"isDraft":true,"headRepository":{{"nameWithOwner":"PolicyEngine/policyengine-sim-api"}},"headRepositoryOwner":{{"login":"PolicyEngine"}}}}\\n'
+  exit 0
+fi
+
 if [[ "$1" == "pr" && "$2" == "create" ]]; then
+  body_file=""
+  previous=""
+  for argument in "$@"; do
+    if [[ "$previous" == "--body-file" ]]; then
+      body_file="$argument"
+      break
+    fi
+    previous="$argument"
+  done
+  if [[ -n "$body_file" ]]; then
+    printf 'pr-body-first-line %s\\n' "$(head -n 1 "$body_file")" >> "{log}"
+  fi
+  printf 'https://github.com/PolicyEngine/policyengine-sim-api/pull/703\\n'
   exit 0
 fi
 
@@ -131,6 +175,8 @@ def install_fake_uv(
     bundled_core_version: str = "999.999.999",
     bundled_us_version: str = "1.1.0",
     bundled_uk_version: str = "2.1.0",
+    bundled_policyengine_version: str = "4.1.0",
+    bundled_spm_version: str = "1.0.0",
 ) -> None:
     write_executable(
         fake_bin / "uv",
@@ -138,9 +184,12 @@ def install_fake_uv(
 set -euo pipefail
 printf 'uv %s\\n' "$*" >> "{log}"
 
-if [[ "$1" == "run" && "$2" == "python" && "$3" == "-m" && "$4" == "src.modal.utils.extract_bundle_versions" ]]; then
-  echo "policyengine_version=4.1.0"
+if [[ "$1" == "run" \
+  && "$*" == *"--isolated --no-project --with policyengine==4.1.0"* \
+  && "$*" == *"update_policyengine_package.py bundle-versions"* ]]; then
+  echo "policyengine_version={bundled_policyengine_version}"
   echo "policyengine_core_version={bundled_core_version}"
+  echo "spm_calculator_version={bundled_spm_version}"
   echo "us_version={bundled_us_version}"
   echo "us_data_version=1.10.0"
   echo "uk_version={bundled_uk_version}"
@@ -172,4 +221,5 @@ def run_updater(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess[
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )

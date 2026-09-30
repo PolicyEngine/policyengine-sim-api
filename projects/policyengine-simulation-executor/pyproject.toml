@@ -19,11 +19,9 @@ dependencies = [
     "policyengine-simulation-observability",
     "policyengine-simulation-contract[modal]",
     "policyengine-stage12-persistence",
-    "policyengine==5.2.0",
-    "policyengine-core==3.30.1",
-    "policyengine-uk==2.90.2",
-    "policyengine-us==1.764.6",
-    "spm-calculator==0.3.1",
+    # PolicyEngine.py's models extra is the only selector for core, country
+    # models, and the SPM calculator. Do not duplicate those versions here.
+    "policyengine[models]==6.2.1",
     "tables>=3.10.2",
     "modal>=0.73.0",
     "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.1,<4",
@@ -40,20 +38,16 @@ packages = ["src/policyengine_simulation_executor"]
 # project; the image installs it directly with
 # uv_sync(--only-group modal-simulation-image, frozen=True), so image
 # packages can only change through a relock and always match the
-# versions the test environment runs against. Country models are NOT
-# here — the policyengine bundle install manages them.
+# versions the test environment runs against. PolicyEngine.py's models extra
+# declares its exact core, country-model, and SPM calculator versions; uv.lock
+# records the complete resolved environment. The bundle command only downloads
+# certified datasets and writes their receipt.
 [dependency-groups]
 modal-simulation-image = [
-    "uv",
-    # The policyengine bundle installer runs `python -m pip install` in
-    # the target environment, and uv-created venvs do not ship pip.
-    "pip",
+    "policyengine[models]==6.2.1",
     "fastapi>=0.115.0",
     "tables>=3.10.2",
     "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.1,<4",
-    # policyengine-us 1.764.6 imports spm_calculator.forecast, which was
-    # removed from later releases still allowed by its broad requirement.
-    "spm-calculator==0.3.1",
     # The artifact fetch layer and store client read GCS. The lib is also a
     # transitive dependency of policyengine, but the image must not depend
     # on an upstream package keeping it.

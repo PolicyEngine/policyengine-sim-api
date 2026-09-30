@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Check PyPI for a newer policyengine.py package, update the simulation project
-# pin, sync runtime package pins to that policyengine.py bundle, and open one
+# requirement, let its models extra select every runtime component, and open one
 # bundle-level PR.
 #
 # Usage:
@@ -27,27 +27,95 @@ elif [[ -n "${1:-}" ]]; then
 fi
 
 PACKAGE="policyengine"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 PROJECT_DIR="${PROJECT_DIR:-projects/policyengine-simulation-executor}"
 PROJECT_PATH="${ROOT_DIR}/${PROJECT_DIR}"
 PYPROJECT="${PROJECT_PATH}/pyproject.toml"
 LOCKFILE="${PROJECT_PATH}/uv.lock"
+PYTHON_HELPER="${SCRIPT_DIR}/update_policyengine_package.py"
+REPOSITORY="${GITHUB_REPOSITORY:-PolicyEngine/policyengine-sim-api}"
+ISSUE_NUMBER=""
+
+ensure_update_issue() {
+  local issue_details
+  local issue_title
+  local issue_url
+
+  issue_title="Update policyengine to ${LATEST}"
+  ISSUE_NUMBER=$(
+    gh api --paginate --slurp \
+      "repos/${REPOSITORY}/issues?state=open&per_page=100" \
+      | python3 "$PYTHON_HELPER" find-issue --title "$issue_title"
+  )
+
+  if [[ -z "$ISSUE_NUMBER" ]]; then
+    issue_url=$(gh issue create \
+      --repo "$REPOSITORY" \
+      --title "$issue_title" \
+      --body "Track the automated simulation runtime update to policyengine ${LATEST}.")
+    ISSUE_NUMBER="${issue_url##*/}"
+  fi
+
+  if [[ ! "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: Could not resolve an issue for policyengine ${LATEST}." >&2
+    exit 1
+  fi
+
+  issue_details=$(gh issue view "$ISSUE_NUMBER" \
+    --repo "$REPOSITORY" \
+    --json number,state,title)
+  printf '%s' "$issue_details" \
+    | python3 "$PYTHON_HELPER" verify-issue \
+      --number "$ISSUE_NUMBER" \
+      --title "$issue_title"
+}
+
+verify_update_pr() {
+  local pr_details
+
+  pr_details=$(gh pr view "$BRANCH" \
+    --repo "$REPOSITORY" \
+    --json isDraft,headRepositoryOwner,headRepository)
+  printf '%s' "$pr_details" \
+    | python3 "$PYTHON_HELPER" verify-pr --repository "$REPOSITORY"
+}
+
+create_update_pr() {
+  local pr_body_file
+
+  ensure_update_issue
+  pr_body_file="$(create_pr_body_file)"
+  gh pr create \
+    --draft \
+    --repo "$REPOSITORY" \
+    --base main \
+    --head "$BRANCH" \
+    --title "chore(deps): update policyengine to ${LATEST}" \
+    --body-file "$pr_body_file"
+  verify_update_pr
+}
 
 create_pr_body_file() {
   local pr_body_file
 
   pr_body_file="$(mktemp)"
   {
+    echo "Fixes #${ISSUE_NUMBER}"
+    echo
     echo "## Summary"
     echo
     echo "Update policyengine.py from ${CURRENT} to ${LATEST} in the simulation API runtime."
     echo
-    echo "This also syncs runtime package pins to the versions bundled by policyengine.py ${LATEST}:"
+    echo "The policyengine[models] requirement selects the runtime versions bundled by policyengine.py ${LATEST}:"
     echo "- policyengine-core: ${BUNDLED_CORE_VERSION:-resolved from bundle during update}"
     echo "- policyengine-us: ${BUNDLED_US_VERSION:-resolved from bundle during update}"
     echo "- policyengine-uk: ${BUNDLED_UK_VERSION:-resolved from bundle during update}"
+    echo "- spm-calculator: ${BUNDLED_SPM_VERSION:-resolved from bundle during update}"
     echo
-    echo "Country data package versions remain manifest-derived at runtime/deploy time rather than independently pinned here."
+    echo "The bundle also selects these certified data releases:"
+    echo "- US: ${BUNDLED_US_DATA_VERSION:-resolved from bundle during update}"
+    echo "- UK: ${BUNDLED_UK_DATA_VERSION:-resolved from bundle during update}"
     echo
     echo "---"
     echo "Generated automatically by GitHub Actions."
@@ -61,24 +129,15 @@ if [[ ! -f "$PYPROJECT" || ! -f "$LOCKFILE" ]]; then
   exit 1
 fi
 
-CURRENT=$(python3 - "$PYPROJECT" "$PACKAGE" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-pyproject, package = sys.argv[1:]
-text = Path(pyproject).read_text(encoding="utf-8")
-match = re.search(rf'"{re.escape(package)}==([^"]+)"', text)
-if not match:
-    raise SystemExit(f"Package {package!r} not found in {pyproject}")
-print(match.group(1))
-PY
-)
+CURRENT=$(python3 "$PYTHON_HELPER" current-version \
+  --pyproject "$PYPROJECT" \
+  --package "$PACKAGE")
 
 if [[ -n "${LATEST_OVERRIDE:-}" ]]; then
   LATEST="$LATEST_OVERRIDE"
 else
-  LATEST=$(curl -fsSL "https://pypi.org/pypi/${PACKAGE}/json" | python3 -c 'import json, sys; print(json.load(sys.stdin)["info"]["version"])')
+  LATEST=$(curl -fsSL "https://pypi.org/pypi/${PACKAGE}/json" \
+    | python3 "$PYTHON_HELPER" latest-version --package "$PACKAGE")
   if [[ -z "$LATEST" ]]; then
     echo "ERROR: Could not fetch latest version for ${PACKAGE} from PyPI." >&2
     exit 1
@@ -117,11 +176,10 @@ if [[ "$DRY_RUN" == "1" ]]; then
   exit 0
 fi
 
-EXISTING_PR=$(gh pr list \
-  --head "$BRANCH" \
-  --state open \
-  --json number \
-  --jq '.[0].number' 2>/dev/null || true)
+EXISTING_PR=$(gh pr view "$BRANCH" \
+  --repo "$REPOSITORY" \
+  --json number,state \
+  --jq 'select(.state == "OPEN") | .number' 2>/dev/null || true)
 if [[ -n "$EXISTING_PR" ]]; then
   echo "PR #${EXISTING_PR} already exists for ${BRANCH}. Skipping."
   exit 0
@@ -129,12 +187,7 @@ fi
 
 if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
   echo "Remote branch '${BRANCH}' already exists without an open PR. Creating PR."
-  PR_BODY_FILE="$(create_pr_body_file)"
-  gh pr create \
-    --base main \
-    --head "$BRANCH" \
-    --title "chore(deps): update policyengine to ${LATEST}" \
-    --body-file "$PR_BODY_FILE"
+  create_update_pr
   echo "PR created for existing branch ${BRANCH}"
   exit 0
 fi
@@ -143,27 +196,65 @@ git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git checkout -b "$BRANCH"
 
-python3 - "$PYPROJECT" "$PACKAGE" "$CURRENT" "$LATEST" <<'PY'
-import sys
-from pathlib import Path
+python3 "$PYTHON_HELPER" update-requirements \
+  --pyproject "$PYPROJECT" \
+  --package "$PACKAGE" \
+  --current "$CURRENT" \
+  --latest "$LATEST"
 
-pyproject_path, package, current, latest = sys.argv[1:]
+# Read the target wrapper's release manifest without resolving the project.
+for attempt in 1 2 3; do
+  if BUNDLE_OUTPUT=$(
+    uv run \
+      --isolated \
+      --no-project \
+      --with "${PACKAGE}==${LATEST}" \
+      python "$PYTHON_HELPER" bundle-versions
+  ); then
+    break
+  fi
+  if [[ "$attempt" == "3" ]]; then
+    echo "ERROR: Could not inspect ${PACKAGE} ${LATEST} after ${attempt} attempts." >&2
+    exit 1
+  fi
+  echo "Bundle inspection attempt ${attempt} failed; retrying in 30s..."
+  sleep 30
+done
 
-pyproject = Path(pyproject_path)
-pyproject_text = pyproject.read_text(encoding="utf-8")
-old_pin = f'"{package}=={current}"'
-new_pin = f'"{package}=={latest}"'
-if old_pin not in pyproject_text:
-    raise SystemExit(f"Could not find {old_pin} in {pyproject}")
-pyproject.write_text(pyproject_text.replace(old_pin, new_pin), encoding="utf-8")
-PY
+BUNDLED_US_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "us_version" {print $2}')
+BUNDLED_UK_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "uk_version" {print $2}')
+BUNDLED_CORE_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "policyengine_core_version" {print $2}')
+BUNDLED_POLICYENGINE_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "policyengine_version" {print $2}')
+BUNDLED_SPM_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "spm_calculator_version" {print $2}')
+BUNDLED_US_DATA_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "us_data_version" {print $2}')
+BUNDLED_UK_DATA_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "uk_data_version" {print $2}')
 
-# The PyPI Simple index (which uv resolves from) can lag the JSON API right
-# after a release, so retry the lock a few times.
+if [[ -z "$BUNDLED_POLICYENGINE_VERSION" || -z "$BUNDLED_CORE_VERSION" || -z "$BUNDLED_US_VERSION" || -z "$BUNDLED_UK_VERSION" || -z "$BUNDLED_SPM_VERSION" || -z "$BUNDLED_US_DATA_VERSION" || -z "$BUNDLED_UK_DATA_VERSION" ]]; then
+  echo "ERROR: Could not resolve bundled runtime package versions." >&2
+  echo "$BUNDLE_OUTPUT" >&2
+  exit 1
+fi
+if [[ "$BUNDLED_POLICYENGINE_VERSION" != "$LATEST" ]]; then
+  echo "ERROR: Installed policyengine.py reports bundle ${BUNDLED_POLICYENGINE_VERSION}, expected ${LATEST}." >&2
+  exit 1
+fi
+
+echo "Bundled runtime pins:"
+echo "  policyengine==${BUNDLED_POLICYENGINE_VERSION}"
+echo "  policyengine-core==${BUNDLED_CORE_VERSION}"
+echo "  policyengine-us==${BUNDLED_US_VERSION}"
+echo "  policyengine-uk==${BUNDLED_UK_VERSION}"
+echo "  spm-calculator==${BUNDLED_SPM_VERSION}"
+echo "Certified data releases:"
+echo "  us=${BUNDLED_US_DATA_VERSION}"
+echo "  uk=${BUNDLED_UK_DATA_VERSION}"
+
+# The PyPI Simple index can briefly lag the JSON API after a release, so retry
+# the final project lock as well.
 for attempt in 1 2 3; do
   if (
     cd "$PROJECT_PATH"
-    uv lock --upgrade-package "$PACKAGE"
+    uv lock
   ); then
     break
   fi
@@ -175,50 +266,14 @@ for attempt in 1 2 3; do
   sleep 30
 done
 
-BUNDLE_OUTPUT=$(
-  cd "$PROJECT_PATH"
-  uv run python -m src.modal.utils.extract_bundle_versions --shell
-)
-BUNDLED_US_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "us_version" {print $2}')
-BUNDLED_UK_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "uk_version" {print $2}')
-BUNDLED_CORE_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "policyengine_core_version" {print $2}')
-
-if [[ -z "$BUNDLED_CORE_VERSION" || -z "$BUNDLED_US_VERSION" || -z "$BUNDLED_UK_VERSION" ]]; then
-  echo "ERROR: Could not resolve bundled runtime package versions." >&2
-  echo "$BUNDLE_OUTPUT" >&2
-  exit 1
-fi
-
-echo "Bundled runtime pins:"
-echo "  policyengine-core==${BUNDLED_CORE_VERSION}"
-echo "  policyengine-us==${BUNDLED_US_VERSION}"
-echo "  policyengine-uk==${BUNDLED_UK_VERSION}"
-
-python3 - "$PYPROJECT" "$BUNDLED_CORE_VERSION" "$BUNDLED_US_VERSION" "$BUNDLED_UK_VERSION" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-pyproject_path, core_version, us_version, uk_version = sys.argv[1:]
-pyproject = Path(pyproject_path)
-text = pyproject.read_text(encoding="utf-8")
-pins = {
-    "policyengine-core": core_version,
-    "policyengine-us": us_version,
-    "policyengine-uk": uk_version,
-}
-for package, version in pins.items():
-    pattern = rf'"{re.escape(package)}==[^"]+"'
-    replacement = f'"{package}=={version}"'
-    text, count = re.subn(pattern, replacement, text, count=1)
-    if count != 1:
-        raise SystemExit(f"Could not update {package} in {pyproject}")
-pyproject.write_text(text, encoding="utf-8")
-PY
-
 (
   cd "$PROJECT_PATH"
-  uv lock
+  uv lock --check
+  uv run --extra test pytest \
+    tests/test_bundle_version_export.py \
+    tests/test_policyengine_dependency_source.py \
+    tests/test_modal_bundle_image.py \
+    -q
 )
 
 if git diff --quiet -- "$PYPROJECT" "$LOCKFILE"; then
@@ -226,15 +281,10 @@ if git diff --quiet -- "$PYPROJECT" "$LOCKFILE"; then
   exit 0
 fi
 
-PR_BODY_FILE="$(create_pr_body_file)"
-
 git add "$PYPROJECT" "$LOCKFILE"
 git commit -m "chore(deps): update policyengine to ${LATEST}"
 git push -u origin "$BRANCH"
 
-gh pr create \
-  --base main \
-  --title "chore(deps): update policyengine to ${LATEST}" \
-  --body-file "$PR_BODY_FILE"
+create_update_pr
 
 echo "PR created for policyengine ${CURRENT} -> ${LATEST}"

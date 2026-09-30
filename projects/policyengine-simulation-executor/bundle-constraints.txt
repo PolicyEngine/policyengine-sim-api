@@ -1,4 +1,0 @@
-# Older policyengine bundles omit this transitive dependency from their manifest.
-# Keep their established SPM method when pip rebuilds an image. Update only with
-# a reviewed country-model/bundle migration, including historical route handling.
-spm-calculator==0.3.1

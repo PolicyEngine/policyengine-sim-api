@@ -1,9 +1,10 @@
 #!/bin/bash
 # Extract policyengine.py, policyengine-core, country package versions, and
-# country data release versions.
+# SPM calculator, and country data release versions.
 # Usage: ./modal-extract-versions.sh <project-dir>
 # Outputs: Sets policyengine_version, policyengine_core_version, us_version,
-# us_data_version, uk_version, and uk_data_version in GITHUB_OUTPUT
+# spm_calculator_version, us_data_version, uk_version, and uk_data_version in
+# GITHUB_OUTPUT
 
 set -euo pipefail
 

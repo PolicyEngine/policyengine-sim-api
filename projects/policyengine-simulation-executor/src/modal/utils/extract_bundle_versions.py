@@ -19,6 +19,7 @@ def _bundle_outputs() -> dict[str, str]:
     return {
         "policyengine_version": get_bundled_package_version("policyengine"),
         "policyengine_core_version": get_bundled_package_version("policyengine-core"),
+        "spm_calculator_version": get_bundled_package_version("spm-calculator"),
         "us_version": get_bundled_package_version("policyengine-us"),
         "us_data_version": us_bundle.data_version,
         "uk_version": get_bundled_package_version("policyengine-uk"),
@@ -45,6 +46,7 @@ def main() -> None:
         "Deploying with policyengine.py bundle "
         f"{outputs['policyengine_version']}: "
         f"policyengine-core={outputs['policyengine_core_version']}, "
+        f"spm-calculator={outputs['spm_calculator_version']}, "
         f"policyengine-us={outputs['us_version']}, "
         f"us-data-release={outputs['us_data_version']}, "
         f"policyengine-uk={outputs['uk_version']}, "

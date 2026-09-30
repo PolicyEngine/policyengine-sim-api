@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping
 from hashlib import sha256
 from importlib import import_module
-import os
 from pathlib import Path
 from typing import Any
 
 from policyengine_simulation_contract.stage12_bundle import CountryId
 
-from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.release_bundle import (
     resolve_local_bundle_dataset_path,
 )
+from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 
 REQUIRED_SECRET_ALTERNATIVES = (
     ("HF_TOKEN",),
@@ -55,8 +55,10 @@ def _check_dataset_access(path: str, expected_sha256: str) -> None:
 
 def _run_non_serving_calculation(country: CountryId) -> None:
     country_module = import_module(f"policyengine.tax_benefit_models.{country}")
+    spm = {"geography_kind": "national"} if country == "us" else None
     result = country_module.calculate_household(
         people=[{"age": 40, "employment_income": 50_000}],
+        **({"spm": spm} if spm is not None else {}),
         year=2026,
         extra_variables=["household_net_income"],
     )

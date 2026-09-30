@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from hashlib import sha256
+from types import SimpleNamespace
 
 import pytest
 
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.stage12_worker_validation import (
+    _run_non_serving_calculation,
     validate_country_worker,
 )
 
@@ -47,6 +49,31 @@ def test_validation_checks_dataset_and_non_serving_calculation() -> None:
     )
     assert datasets == [("/installed/populace_us_2024.h5", expected_dataset.sha256)]
     assert countries == ["us"]
+
+
+def test_non_serving_us_calculation_supports_national_spm() -> None:
+    """The deployed-worker check must not invent a county for its synthetic household."""
+    _run_non_serving_calculation("us")
+
+
+def test_non_serving_us_calculation_selects_national_without_county(
+    monkeypatch,
+) -> None:
+    calls: list[dict] = []
+
+    def calculate_household(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(household={"household_net_income": 1})
+
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.stage12_worker_validation.import_module",
+        lambda _: SimpleNamespace(calculate_household=calculate_household),
+    )
+
+    _run_non_serving_calculation("us")
+
+    assert calls[0]["spm"] == {"geography_kind": "national"}
+    assert "household" not in calls[0]
 
 
 def test_uk_validation_loads_packaged_local_authority_resources() -> None:

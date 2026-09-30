@@ -9,6 +9,13 @@ import pytest
 from src.modal.utils import update_version_registry as registry
 
 
+class _StubForecast:
+    years = (2026,)
+
+    def entry(self, year, *, scenario, as_of):
+        return {"year": year, "scenario": scenario, "as_of": as_of}
+
+
 class FakeDict:
     def __init__(self, initial: dict | None = None):
         self._data = dict(initial or {})
@@ -112,6 +119,33 @@ def test_validate_routing_state_accepts_complete_state(fake_bundle_metadata):
     )
 
     registry.validate_routing_state(state)
+
+
+def test_bundle_manifest_records_policyengine_6_spm_capability(
+    fake_bundle_metadata,
+    monkeypatch,
+):
+    from policyengine.bundle import get_current_bundle
+    from policyengine_simulation_contract.spm import SPM_CONTRACT_VERSION
+
+    from policyengine_simulation_executor import spm as executor_spm
+
+    monkeypatch.setattr(
+        executor_spm,
+        "_forecast",
+        lambda expected_sha256: _StubForecast(),
+    )
+
+    bundle = get_current_bundle()
+    metadata = registry.build_bundle_manifest_metadata(
+        app_name="policyengine-simulation-py6-1-2",
+        policyengine_version=bundle["policyengine_version"],
+    )
+
+    assert metadata["spm"] == {
+        "contract_version": SPM_CONTRACT_VERSION,
+        "defaults": bundle["measurements"]["spm"],
+    }
 
 
 def test_validate_routing_state_rejects_missing_latest_route(fake_bundle_metadata):

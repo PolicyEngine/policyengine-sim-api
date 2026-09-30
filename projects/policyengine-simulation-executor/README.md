@@ -4,30 +4,31 @@ PolicyEngine Simulation API service.
 
 ## Modal image dependencies
 
-The executor image (`src/modal/app.py`) installs its bootstrap packages
-straight from this project's `uv.lock` via
+The executor images (`src/modal/app.py` and `src/modal/v2_app.py`) install
+their runtime packages straight from this project's `uv.lock` via
 `uv_sync(frozen=True, --only-group modal-simulation-image)`. Image
 packages therefore match the versions the test environment runs against
 and can only change through a relock — never through a fresh resolution
-at image-build time (issue #602 is what happens otherwise). Country
-model packages are deliberately not in the group: the
-`policyengine bundle install` layer manages them, installing into the
-same interpreter (uv_sync's venv is first on PATH). The gateway lives in
-its own project (`projects/policyengine-simulation-gateway`) whose image
-installs the same way from that project's lock — see its README.
+at image-build time (issue #602 is what happens otherwise).
+Both the executor project and `modal-simulation-image` declare
+`policyengine[models]` at an exact wrapper version. That extra declares the
+wrapper's exact core, country-model, and SPM calculator dependencies, and
+`uv.lock` records the versions that uv resolved. Neither dependency list
+duplicates those component versions.
 
-The bundle install subprocess uses `bundle-constraints.txt` through
-`PIP_CONSTRAINT`, because pip does not read `uv.lock`. This preserves SPM
-calculator 0.3.1 for the current country model and historical bundle rebuilds.
-The worker, precompute, and import-smoke images share this constrained build
-path. `BUNDLE_CONSTRAINT_FILES` selects the file by exact bundle version;
-unreviewed versions fail before building. Add a new reviewed file and selection
-for a country/bundle migration, keeping historical selections on their compatible
-calculator version.
+After `uv_sync`, `policyengine bundle install --no-packages` downloads and
+verifies the certified datasets and writes the bundle receipt. It does not run
+pip or alter the locked Python environment. The v1 worker, Stage 12 workers,
+precompute, and import-smoke paths share this package and data arrangement.
+The gateway lives in its own project and installs from its own lock; see its
+README.
 
-To change image dependencies, edit the `modal-simulation-image`
-dependency group and run `uv lock`. PRs touching image inputs run an
-in-image import smoke (`src/modal/smoke_app.py` via
+To change a PolicyEngine release, update the `policyengine[models]` requirement
+in the project dependencies and `modal-simulation-image`, then run `uv lock`.
+The automated updater changes only those wrapper requirements; it reads the
+wrapper's release manifest to verify and report the selected component and data
+versions. Other image dependencies belong in `modal-simulation-image`. PRs
+touching image inputs run an in-image import smoke (`src/modal/smoke_app.py` via
 `.github/workflows/pr-image-smoke.yml`). Note that any change to the
 group or lock invalidates the image layer cache, including the artifact
 fetch layer below.

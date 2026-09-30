@@ -11,6 +11,9 @@ from pathlib import Path
 import pytest
 
 from fixtures.fake_modal import install_fake_modal
+from policyengine_simulation_executor.release_bundle import (
+    get_bundled_package_version,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000001"
@@ -95,7 +98,9 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
     assert "--country uk" not in us_command
     assert "--country uk" in uk_command
     assert "--country us" not in uk_command
-    assert module.RESOLVED_BUNDLE.bundle.policyengine_requirement in us_command
+    assert "--no-packages" in us_command
+    assert "uvx" not in us_command
+    assert "--venv" not in us_command
     assert module.gcp_secret["args"] == ("stage12-evaluation-gcp-credentials",)
     assert module.hf_secret == {
         "args": ("huggingface-token",),
@@ -140,15 +145,13 @@ def test_v2_image_retains_required_runtime_dependencies() -> None:
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
 
+    group = project["dependency-groups"]["modal-simulation-image"]
     assert (
-        "spm-calculator==0.3.1"
-        in project["dependency-groups"]["modal-simulation-image"]
+        f"policyengine[models]=={get_bundled_package_version('policyengine')}" in group
     )
-    assert "sqlalchemy>=2,<3" in project["dependency-groups"]["modal-simulation-image"]
-    assert (
-        "psycopg[binary]>=3.2,<4"
-        in project["dependency-groups"]["modal-simulation-image"]
-    )
+    assert not any(isinstance(item, dict) for item in group)
+    assert "sqlalchemy>=2,<3" in group
+    assert "psycopg[binary]>=3.2,<4" in group
 
 
 def test_v2_static_runtime_file_smoke_uses_exact_uk_worker_image(monkeypatch) -> None:

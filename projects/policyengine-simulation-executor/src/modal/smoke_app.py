@@ -1,11 +1,15 @@
-"""Pre-merge image smoke: import the executor runtime inside its image.
+"""Pre-merge image smoke: validate and import the executor runtime image.
 
-Import parity, not data parity: the image here is the deployed image's
-layer prefix (pinned pip layer, policyengine bundle install, version
-env) plus the source mounts — deliberately excluding the artifact-fetch
-and model-snapshot layers, which add no Python packages. Because layers are content-addressed and built through the
-shared ``build_runtime_simulation_image()``, a warm cache makes this run
+The image here is the deployed image's layer prefix (frozen uv sync,
+dataset-only PolicyEngine bundle install, version env) plus the source mounts.
+It deliberately excludes the artifact-fetch and model-snapshot layers, which
+add no Python packages. Because layers are content-addressed and built through
+the shared ``build_runtime_simulation_image()``, a warm cache makes this run
 take seconds; after a relock it pays only the bundle install.
+
+Before importing worker code, the smoke uses PolicyEngine's bundle status
+check. That compares all selected package versions with the bundle manifest,
+reads the dataset-install receipt, and hashes both installed country datasets.
 
 Runs the imports the deployed workers perform lazily at request time —
 ``run_simulation_impl``, the budget-window batch, and both shared libraries.
@@ -15,7 +19,6 @@ Usage:
 """
 
 import modal
-
 from src.modal.app import build_runtime_simulation_image
 
 app = modal.App("policyengine-simulation-executor-smoke")
@@ -28,11 +31,71 @@ smoke_image = build_runtime_simulation_image().add_local_python_source(
     copy=True,
 )
 
+_EXPECTED_RUNTIME_PACKAGES = frozenset(
+    {
+        "policyengine",
+        "policyengine-core",
+        "policyengine-uk",
+        "policyengine-us",
+        "spm-calculator",
+    }
+)
+_EXPECTED_COUNTRIES = frozenset({"us", "uk"})
+
+
+def _summarize_bundle_status(status: dict) -> dict:
+    """Reject an incomplete or mismatched runtime bundle and summarize it."""
+    import json
+
+    package_names = {check.get("package") for check in status.get("packages", [])}
+    dataset_countries = {check.get("country") for check in status.get("datasets", [])}
+    receipt = status.get("receipt")
+    receipt_countries = (
+        set(receipt.get("countries", [])) if isinstance(receipt, dict) else set()
+    )
+    complete = (
+        status.get("matched") is True
+        and package_names == _EXPECTED_RUNTIME_PACKAGES
+        and dataset_countries == _EXPECTED_COUNTRIES
+        and receipt_countries == _EXPECTED_COUNTRIES
+    )
+    if not complete:
+        raise RuntimeError(
+            "PolicyEngine runtime bundle validation failed:\n"
+            + json.dumps(status, indent=2, sort_keys=True)
+        )
+    return {
+        "bundle_version": status["bundle_version"],
+        "packages": {
+            check["package"]: check["installed_version"] for check in status["packages"]
+        },
+        "datasets": {
+            check["country"]: {
+                "dataset": check["dataset"],
+                "version": check["expected_version"],
+                "sha256": check["expected_sha256"],
+            }
+            for check in status["datasets"]
+        },
+    }
+
 
 @app.function(image=smoke_image, timeout=600, memory=8192)
 def smoke_import_executor() -> dict:
     import importlib
+    import os
     import pkgutil
+    from pathlib import Path
+
+    from policyengine.bundle import inspect_bundle_status
+
+    bundle = _summarize_bundle_status(
+        inspect_bundle_status(
+            os.environ["POLICYENGINE_VERSION"],
+            countries=["us", "uk"],
+            data_dir=Path(os.environ["POLICYENGINE_DATA_FOLDER"]),
+        )
+    )
 
     # Module-level surface of the deployed app (versions resolve from the
     # baked env layer).
@@ -43,6 +106,9 @@ def smoke_import_executor() -> dict:
     # policyengine.core chain) on EVERY request, so a break there crashes
     # all requests at import time — exactly the #602 failure class this
     # smoke exists to catch.
+    import policyengine_simulation_contract
+    import policyengine_simulation_observability
+
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: F401
         run_simulation_impl,
     )
@@ -52,9 +118,6 @@ def smoke_import_executor() -> dict:
     from src.modal.segmented_national import (  # noqa: F401
         dispatch_run_simulation,
     )
-
-    import policyengine_simulation_contract
-    import policyengine_simulation_observability
 
     imported = []
     for package in (
@@ -67,7 +130,7 @@ def smoke_import_executor() -> dict:
             importlib.import_module(module.name)
             imported.append(module.name)
 
-    return {"modules_imported": len(imported)}
+    return {"modules_imported": len(imported), "bundle": bundle}
 
 
 @app.local_entrypoint()

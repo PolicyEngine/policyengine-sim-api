@@ -46,6 +46,7 @@ def test_version_export_reads_package_versions_from_policyengine_bundle(monkeypa
     package_versions = {
         "policyengine": "4.1.0",
         "policyengine-core": "9.9.9",
+        "spm-calculator": "3.1.4",
         "policyengine-us": "1.1.0",
         "policyengine-uk": "2.1.0",
     }
@@ -67,12 +68,14 @@ def test_version_export_reads_package_versions_from_policyengine_bundle(monkeypa
     assert requested_packages == [
         "policyengine",
         "policyengine-core",
+        "spm-calculator",
         "policyengine-us",
         "policyengine-uk",
     ]
     assert outputs == {
         "policyengine_version": "4.1.0",
         "policyengine_core_version": "9.9.9",
+        "spm_calculator_version": "3.1.4",
         "us_version": "1.1.0",
         "us_data_version": "1.10.0",
         "uk_version": "2.1.0",
