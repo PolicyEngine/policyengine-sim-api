@@ -68,13 +68,22 @@ def _run_non_serving_calculation(country: CountryId) -> None:
 
 
 def _check_uk_local_authority_resources() -> None:
-    from policyengine_simulation_executor.stage12_runtime.uk_local_authority_metadata import (
+    from policyengine_simulation_executor.uk_local_authority_metadata import (
         load_uk_local_authority_resources,
     )
 
     resources = load_uk_local_authority_resources()
     for boundary_version in resources.coordinates:
         resources.metadata_for(boundary_version)
+
+
+def _check_uk_local_authority_dataset(dataset_path: str) -> None:
+    from policyengine_simulation_executor.uk_local_authority_metadata import (
+        detect_uk_local_authority_metadata_from_hdf,
+    )
+
+    _check_uk_local_authority_resources()
+    detect_uk_local_authority_metadata_from_hdf(dataset_path)
 
 
 def validate_country_worker(
@@ -87,8 +96,8 @@ def validate_country_worker(
     ),
     dataset_check: Callable[[str, str], None] = _check_dataset_access,
     calculation_check: Callable[[CountryId], None] = _run_non_serving_calculation,
-    local_authority_resource_check: Callable[[], None] = (
-        _check_uk_local_authority_resources
+    local_authority_resource_check: Callable[[str], None] = (
+        _check_uk_local_authority_dataset
     ),
 ) -> dict[str, Any]:
     """Validate imports, installed bundle, secrets, data, and calculation."""
@@ -125,7 +134,7 @@ def validate_country_worker(
     )
     dataset_check(installed_dataset_path, selected_dataset.sha256)
     if country == "uk":
-        local_authority_resource_check()
+        local_authority_resource_check(installed_dataset_path)
     calculation_check(country)
     return {
         "validated": True,

@@ -163,10 +163,16 @@ def test_v2_static_runtime_file_smoke_uses_exact_uk_worker_image(monkeypatch) ->
     assert functions["smoke_stage12_static_runtime_files"]["image"] is (
         module.uk_worker_image
     )
+    monkeypatch.setattr(
+        smoke,
+        "validate_installed_uk_local_authority_dataset",
+        lambda: "lad22",
+    )
     assert smoke.smoke_stage12_static_runtime_files() == {
         "names": 378,
         "lad22_coordinates": 374,
         "lad23_coordinates": 361,
+        "installed_dataset_boundary_version": "lad22",
     }
 
 

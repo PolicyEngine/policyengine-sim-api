@@ -87,11 +87,11 @@ def test_uk_validation_loads_packaged_local_authority_resources() -> None:
         dataset_path_resolver=lambda _: "/installed/enhanced_frs_2024_25.h5",
         dataset_check=lambda *_: None,
         calculation_check=lambda _: None,
-        local_authority_resource_check=lambda: checks.append("resources-loaded"),
+        local_authority_resource_check=lambda path: checks.append(path),
     )
 
     assert result["validated"] is True
-    assert checks == ["resources-loaded"]
+    assert checks == ["/installed/enhanced_frs_2024_25.h5"]
 
 
 def test_validation_rejects_digest_mismatch_before_dataset_access() -> None:

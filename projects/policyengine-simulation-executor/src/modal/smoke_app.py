@@ -18,17 +18,32 @@ Usage:
     uv run modal run --env=staging src/modal/smoke_app.py
 """
 
+from pathlib import Path
+
 import modal
 from src.modal.app import build_runtime_simulation_image
+from src.modal.static_runtime_files import add_static_runtime_files
+
+from policyengine_simulation_executor.release_bundle import (
+    resolve_local_bundle_dataset_path,
+)
+from policyengine_simulation_executor.uk_local_authority_metadata import (
+    detect_uk_local_authority_metadata_from_hdf,
+)
 
 app = modal.App("policyengine-simulation-executor-smoke")
 
-smoke_image = build_runtime_simulation_image().add_local_python_source(
-    "src.modal",
-    "policyengine_simulation_executor",
-    "policyengine_simulation_observability",
-    "policyengine_simulation_contract",
-    copy=True,
+smoke_image = add_static_runtime_files(
+    build_runtime_simulation_image().add_local_python_source(
+        "src.modal",
+        "policyengine_simulation_executor",
+        "policyengine_simulation_observability",
+        "policyengine_simulation_contract",
+        copy=True,
+    ),
+    uv_project_dir=(
+        str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
+    ),
 )
 
 _EXPECTED_RUNTIME_PACKAGES = frozenset(
@@ -80,6 +95,16 @@ def _summarize_bundle_status(status: dict) -> dict:
     }
 
 
+def _validate_installed_uk_local_authority_dataset() -> str:
+    """Require the installed UK dataset to match one packaged boundary version."""
+
+    dataset_path = resolve_local_bundle_dataset_path("uk", None)
+    if dataset_path is None:
+        raise RuntimeError("installed certified UK dataset is unavailable")
+    metadata = detect_uk_local_authority_metadata_from_hdf(dataset_path)
+    return metadata.boundary_version.value
+
+
 @app.function(image=smoke_image, timeout=600, memory=8192)
 def smoke_import_executor() -> dict:
     import importlib
@@ -95,6 +120,9 @@ def smoke_import_executor() -> dict:
             countries=["us", "uk"],
             data_dir=Path(os.environ["POLICYENGINE_DATA_FOLDER"]),
         )
+    )
+    bundle["uk_local_authority_boundary_version"] = (
+        _validate_installed_uk_local_authority_dataset()
     )
 
     # Module-level surface of the deployed app (versions resolve from the
