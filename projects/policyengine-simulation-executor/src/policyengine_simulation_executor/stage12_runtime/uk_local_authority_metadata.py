@@ -12,13 +12,13 @@ from types import MappingProxyType
 from typing import Mapping
 
 from policyengine_simulation_contract.stage12_execution import (
-    UKLocalAuthorityMetadata,
     UKLocalAuthorityBoundaryVersion,
+    UKLocalAuthorityMetadata,
 )
 
 _CODE_PATTERN = re.compile(r"^[A-Z]\d{8}$")
 _RESOURCE_PACKAGE = "policyengine_simulation_executor"
-_RESOURCE_DIRECTORY = ("resources", "uk_local_authorities")
+_RESOURCE_DIRECTORY = ("static_runtime_files", "uk_local_authorities")
 _LAD22_ONLY_CODES = frozenset(
     {
         "E07000026",
