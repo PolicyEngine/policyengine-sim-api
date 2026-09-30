@@ -13,6 +13,7 @@ from policyengine_simulation_contract.stage12_execution import SimulationRole
 
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
+    Stage12Cancellation,
     Stage12ExecutionError,
     Stage12SegmentRunner,
     build_segment_inputs,
@@ -196,4 +197,18 @@ def test_dispatch_error_cancels_segments_that_already_started() -> None:
         runner.run()
 
     assert len(function.calls) == 5
+    assert all(call.cancelled == 1 for call in function.calls)
+
+
+def test_persisted_parent_cancellation_cancels_all_segments() -> None:
+    runner, function, _, sleeps = _runner(
+        errors={index: [TimeoutError()] for index in range(20)}
+    )
+    checks = iter([False, False, True])
+    runner.cancellation_requested = lambda: next(checks, True)
+
+    with pytest.raises(Stage12Cancellation):
+        runner.run()
+
+    assert sleeps == [0.5]
     assert all(call.cancelled == 1 for call in function.calls)

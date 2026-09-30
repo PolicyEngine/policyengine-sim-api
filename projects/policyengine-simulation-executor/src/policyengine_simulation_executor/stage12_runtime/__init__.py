@@ -3,6 +3,7 @@
 from .aggregation import build_aggregate_report, build_spm_result
 from .coordination import coordinate_report
 from .failures import (
+    Stage12Cancellation,
     Stage12ExecutionError,
     Stage12FailureDetail,
     Stage12InputError,
@@ -38,6 +39,7 @@ __all__ = [
     "Stage12ExecutionError",
     "Stage12FailureDetail",
     "Stage12InputError",
+    "Stage12Cancellation",
     "build_aggregate_report",
     "build_segment_inputs",
     "build_stage12_simulation",

@@ -18,7 +18,11 @@ from policyengine_simulation_observability.stages import (
 )
 
 from .partition import stage12_region_groups_for_model
-from .failures import Stage12ExecutionError, failure_detail_from_exception
+from .failures import (
+    Stage12Cancellation,
+    Stage12ExecutionError,
+    failure_detail_from_exception,
+)
 from .segmentation import build_segment_inputs, merge_segment_results
 from .simulation import SimulationCalculation
 
@@ -48,12 +52,14 @@ class Stage12SegmentRunner:
         sleep: Callable[[float], None] = time.sleep,
         poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
         poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
+        cancellation_requested: Callable[[], bool] | None = None,
     ) -> None:
         self.simulation = simulation
         self.runtime = runtime
         self.sleep = sleep
         self.poll_interval_initial_seconds = poll_interval_seconds
         self.poll_interval_max_seconds = poll_interval_max_seconds
+        self.cancellation_requested = cancellation_requested or (lambda: False)
         self.groups = [list(group) for group in groups] if groups is not None else None
         self.child_function = modal_module.Function.from_name(
             app_name,
@@ -127,6 +133,7 @@ class Stage12SegmentRunner:
         poll_count = 0
 
         while pending:
+            self._raise_if_cancelled(handles)
             progress_made = False
             for index in sorted(pending):
                 segment_index, call = handles[index]
@@ -161,7 +168,7 @@ class Stage12SegmentRunner:
                 progress_made = True
             self.runtime.set_context(stage12_segment_poll_count=poll_count)
             if pending and not progress_made:
-                self.sleep(current_sleep)
+                self._wait_with_cancellation(current_sleep, handles)
                 current_sleep = _next_backoff(
                     current_sleep,
                     maximum=self.poll_interval_max_seconds,
@@ -172,6 +179,25 @@ class Stage12SegmentRunner:
         if any(result is None for result in results):
             raise RuntimeError("Stage 12 segment collection is incomplete")
         return [result for result in results if result is not None]
+
+    def _wait_with_cancellation(
+        self,
+        seconds: float,
+        handles: list[tuple[int, Any]],
+    ) -> None:
+        remaining = seconds
+        while remaining > 0:
+            self._raise_if_cancelled(handles)
+            delay = min(1.0, remaining)
+            self.sleep(delay)
+            remaining -= delay
+        self._raise_if_cancelled(handles)
+
+    def _raise_if_cancelled(self, handles: list[tuple[int, Any]]) -> None:
+        if not self.cancellation_requested():
+            return
+        self._cancel_all(handles)
+        raise Stage12Cancellation("Stage 12 simulation was cancelled")
 
     @staticmethod
     def _cancel_all(handles: list[tuple[int, Any]]) -> None:
@@ -187,9 +213,11 @@ def run_segmented_simulation(
     *,
     app_name: str,
     runtime: ObservabilityRuntime,
+    cancellation_requested: Callable[[], bool] | None = None,
 ) -> SimulationCalculation:
     return Stage12SegmentRunner(
         simulation,
         app_name=app_name,
         runtime=runtime,
+        cancellation_requested=cancellation_requested,
     ).run()

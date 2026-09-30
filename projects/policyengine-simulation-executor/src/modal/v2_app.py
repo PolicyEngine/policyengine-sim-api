@@ -289,11 +289,12 @@ def run_single_simulation_us(
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
 
-    def segmented_calculator(simulation):
+    def segmented_calculator(simulation, cancellation_requested):
         return run_segmented_simulation(
             simulation,
             app_name=APP_NAME,
             runtime=runtime,
+            cancellation_requested=cancellation_requested,
         )
 
     try:

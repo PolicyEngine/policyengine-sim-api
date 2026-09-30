@@ -57,6 +57,10 @@ class Stage12ExecutionError(RuntimeError):
         super().__init__("Stage 12 execution failed")
 
 
+class Stage12Cancellation(RuntimeError):
+    """Stop a simulation whose durable record was cancelled by its parent."""
+
+
 def _safe_detail(
     *,
     error_code: str,
