@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext
+import io
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Lock
@@ -12,6 +14,15 @@ from uuid import UUID, uuid4
 
 import pandas as pd
 import pytest
+from policyengine_observability import (
+    DeploymentIdentity,
+    LoggingConfig,
+    ObservabilityConfig,
+    OTelConfig,
+    ServiceIdentity,
+    StdoutLogDestination,
+    configure,
+)
 from policyengine_simulation_contract.stage12_execution import (
     ArtifactMediaType,
     ArtifactReference,
@@ -44,7 +55,6 @@ from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
-
 from policyengine_simulation_executor.stage12_artifacts import (
     canonical_json_bytes,
     serialize_simulation_frames,
@@ -53,9 +63,11 @@ from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
     _build_spm_result,
     build_aggregate_report,
-    coordinate_report as coordinate_report_impl,
     run_single_simulation,
     simulation_input_sha256,
+)
+from policyengine_simulation_executor.stage12_runtime import (
+    coordinate_report as coordinate_report_impl,
 )
 from policyengine_simulation_executor.stage12_runtime.aggregation import (
     validate_uk_local_authority_metadata,
@@ -1036,6 +1048,72 @@ def test_coordinator_measures_output_and_child_input_planning() -> None:
         ("stage12_child_input_planning", {"simulation_role": "baseline"}),
         ("stage12_child_input_planning", {"simulation_role": "reform"}),
     ]
+
+
+def test_coordinator_planning_operations_preserve_observability_id() -> None:
+    output = io.StringIO()
+    runtime = configure(
+        ObservabilityConfig(
+            service=ServiceIdentity(
+                name="stage12-test",
+                namespace="policyengine.api-v1",
+                version="test",
+                role="coordinator",
+            ),
+            deployment=DeploymentIdentity(
+                environment="test",
+                platform="local",
+                region="us-central1",
+                instance_id="test-process",
+            ),
+            logging=LoggingConfig(
+                destinations=(StdoutLogDestination(),),
+            ),
+            otel=OTelConfig(enabled=False),
+            dispatch_attribute_keys=frozenset({"observability_id"}),
+        )
+    )
+    runtime._delivery._stdout = output
+    observability_id = "00000000-0000-4000-8000-000000000004"
+    artifacts = FakeArtifacts()
+
+    try:
+        with runtime.operation(
+            "stage12_report",
+            remote_context={
+                "captured_at": NOW.isoformat(),
+                "observability_id": observability_id,
+            },
+        ):
+            coordinate_report(
+                _report().model_dump(mode="json"),
+                _context().model_dump(mode="json"),
+                _parent().model_dump(mode="json"),
+                application_name=_context().modal_application,
+                coordinator_invocation_id="coordinator-1",
+                store=FakeStore(),
+                artifacts=artifacts,
+                invoker=ConcurrentInvoker(artifacts),
+                aggregator=lambda **_: {"result": "complete"},
+                runtime=runtime,
+            )
+    finally:
+        runtime.shutdown()
+
+    records = [json.loads(line) for line in output.getvalue().splitlines()]
+    planning_names = {
+        "stage12_coordinator_preparation",
+        "stage12_output_planning",
+        "stage12_child_input_planning",
+    }
+    planning_records = [
+        record for record in records if record.get("operation.name") in planning_names
+    ]
+    assert len(planning_records) == 4
+    assert all(
+        record["attributes"]["observability_id"] == observability_id
+        for record in planning_records
+    )
 
 
 def test_coordinator_compares_automatic_run_after_successful_aggregation() -> None:
