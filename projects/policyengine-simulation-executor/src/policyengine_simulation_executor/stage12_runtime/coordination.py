@@ -7,8 +7,10 @@ from contextlib import nullcontext
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
+import logging
+import time
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
@@ -55,6 +57,7 @@ from .dependencies import (
 from .failure_recording import persist_failure_record, report_original_failure
 from .failures import (
     Stage12ExecutionError,
+    Stage12FailureDetail,
     failure_detail_from_exception,
     failure_detail_from_record,
 )
@@ -64,8 +67,228 @@ from .output_planning import (
     validate_output_frames,
 )
 from .simulation import descriptor_from_record, simulation_input_sha256
+from .segmentation import should_segment_simulation
 
 SIMULATION_WAIT_TIMEOUT_SECONDS = 3_000
+SIMULATION_POLL_INITIAL_SECONDS = 0.25
+SIMULATION_POLL_MAX_SECONDS = 1.0
+SIMULATION_POLL_BACKOFF_FACTOR = 2.0
+
+logger = logging.getLogger(__name__)
+
+
+def _next_poll_interval(current: float) -> float:
+    return min(
+        current * SIMULATION_POLL_BACKOFF_FACTOR,
+        SIMULATION_POLL_MAX_SECONDS,
+    )
+
+
+def _replace_running_simulation(
+    *,
+    store: ComparisonStore,
+    simulation: PlannedSimulationExecutionInput,
+    status: ComparisonRunLifecycleStatus,
+    detail: Stage12FailureDetail,
+) -> ComparisonSimulationRecord:
+    changed_at = datetime.now(UTC)
+    current = store.get_simulation(simulation.simulation_execution_id)
+    candidate = current.model_copy(
+        update={
+            "status": status,
+            "error_code": detail.error_code,
+            "error_summary": detail.error_summary,
+            "updated_at": changed_at,
+            "completed_at": changed_at,
+        }
+    )
+    result, _ = store.replace_simulation_if_status(
+        candidate,
+        expected_status=ComparisonRunLifecycleStatus.RUNNING,
+    )
+    return result
+
+
+def _cancel_pending_simulations(
+    *,
+    calls: dict[str, ChildCall],
+    simulations: dict[str, PlannedSimulationExecutionInput],
+    roles: set[str],
+    store: ComparisonStore,
+    failed_role: str,
+) -> None:
+    detail = Stage12FailureDetail(
+        error_code="cancelled_after_peer_failure",
+        error_summary=f"Cancelled after {failed_role} simulation failed.",
+    )
+    for role in sorted(roles):
+        if role == failed_role:
+            continue
+        simulation = simulations[role]
+        try:
+            latest = _replace_running_simulation(
+                store=store,
+                simulation=simulation,
+                status=ComparisonRunLifecycleStatus.INCOMPLETE,
+                detail=detail,
+            )
+        except Exception as error:  # noqa: BLE001
+            logger.error(
+                "Stage 12 peer state cancellation failed for %s (%s)",
+                role,
+                type(error).__name__,
+            )
+            continue
+        if latest.status is not ComparisonRunLifecycleStatus.INCOMPLETE:
+            continue
+        if should_segment_simulation(simulation):
+            # The simulation worker reads the persisted state and cancels the
+            # segment handles it owns. Modal does not guarantee recursive
+            # cancellation for calls created with spawn().
+            continue
+        try:
+            calls[role].cancel()
+        except Exception as error:  # noqa: BLE001
+            logger.warning(
+                "Stage 12 peer cancellation failed for %s (%s)",
+                role,
+                type(error).__name__,
+            )
+
+
+def _child_failure_detail(
+    *,
+    error: BaseException,
+    simulation: PlannedSimulationExecutionInput,
+    store: ComparisonStore,
+    runtime: ObservabilityRuntime | None,
+) -> Stage12FailureDetail:
+    child = store.get_simulation(simulation.simulation_execution_id)
+    if (
+        child.status is ComparisonRunLifecycleStatus.FAILED
+        and child.error_code is not None
+    ):
+        return failure_detail_from_record(
+            error_code=child.error_code,
+            error_summary=child.error_summary,
+        )
+    detail = failure_detail_from_exception(
+        error,
+        runtime=runtime,
+        scope="stage12_simulation_invocation",
+        default_code="simulation_invocation_failed",
+        context={
+            "evaluation_id": str(simulation.evaluation_id),
+            "simulation_role": simulation.role.value,
+        },
+    )
+    persist_failure_record(
+        partial(
+            _replace_running_simulation,
+            store=store,
+            simulation=simulation,
+            status=ComparisonRunLifecycleStatus.FAILED,
+            detail=detail,
+        ),
+        runtime=runtime,
+        failure_scope="child_wait",
+    )
+    return detail
+
+
+def _observe_simulations(
+    *,
+    calls: dict[str, ChildCall],
+    simulations: dict[str, PlannedSimulationExecutionInput],
+    descriptors: dict[str, SimulationArtifactDescriptor],
+    store: ComparisonStore,
+    runtime: ObservabilityRuntime | None,
+    sleep: Callable[[float], None],
+    monotonic: Callable[[], float],
+    timeout_seconds: float,
+) -> None:
+    pending = set(calls)
+    deadline = monotonic() + timeout_seconds
+    poll_interval = SIMULATION_POLL_INITIAL_SECONDS
+
+    while pending:
+        progress_made = False
+        for role in sorted(pending):
+            call = calls[role]
+            try:
+                result = call.get(timeout=0)
+                descriptor = SimulationArtifactDescriptor.model_validate(result)
+            except TimeoutError:
+                continue
+            except Exception as error:  # noqa: BLE001
+                report_original_failure(
+                    error,
+                    runtime=runtime,
+                    failure_scope="child_wait",
+                    attributes={"simulation_role": role},
+                )
+                detail = _child_failure_detail(
+                    error=error,
+                    simulation=simulations[role],
+                    store=store,
+                    runtime=runtime,
+                )
+                _cancel_pending_simulations(
+                    calls=calls,
+                    simulations=simulations,
+                    roles=pending,
+                    store=store,
+                    failed_role=role,
+                )
+                raise Stage12ExecutionError(detail) from None
+            descriptors[role] = descriptor
+            pending.remove(role)
+            progress_made = True
+
+        if not pending:
+            return
+        if monotonic() >= deadline:
+            detail = Stage12FailureDetail(
+                error_code="simulation_wait_timeout",
+                error_summary=(
+                    "Stage 12 simulations did not finish within "
+                    f"{timeout_seconds:g} seconds."
+                ),
+            )
+            wait_timeout = Stage12ExecutionError(detail)
+            report_original_failure(
+                wait_timeout,
+                runtime=runtime,
+                failure_scope="child_wait_timeout",
+            )
+            for role in sorted(pending):
+                persist_failure_record(
+                    partial(
+                        _replace_running_simulation,
+                        store=store,
+                        simulation=simulations[role],
+                        status=ComparisonRunLifecycleStatus.FAILED,
+                        detail=detail,
+                    ),
+                    runtime=runtime,
+                    failure_scope="child_wait_timeout",
+                )
+                if not should_segment_simulation(simulations[role]):
+                    try:
+                        calls[role].cancel()
+                    except Exception as error:  # noqa: BLE001
+                        logger.warning(
+                            "Stage 12 timeout cancellation failed for %s (%s)",
+                            role,
+                            type(error).__name__,
+                        )
+            raise wait_timeout
+        sleep(poll_interval)
+        poll_interval = (
+            SIMULATION_POLL_INITIAL_SECONDS
+            if progress_made
+            else _next_poll_interval(poll_interval)
+        )
 
 
 def _child_record(
@@ -194,30 +417,6 @@ def _claim_parent(
     return claimed, True
 
 
-def _mark_child_failed(
-    persistence: ComparisonStore,
-    simulation_execution_id: UUID,
-    *,
-    error_code: str,
-    error_summary: str,
-) -> None:
-    latest = persistence.get_simulation(simulation_execution_id)
-    if latest.status is ComparisonRunLifecycleStatus.SUCCEEDED:
-        return
-    failed_at = datetime.now(UTC)
-    persistence.replace_simulation(
-        latest.model_copy(
-            update={
-                "status": ComparisonRunLifecycleStatus.FAILED,
-                "error_code": error_code,
-                "error_summary": error_summary,
-                "updated_at": failed_at,
-                "completed_at": failed_at,
-            }
-        )
-    )
-
-
 def coordinate_report(
     payload: object,
     context_payload: object,
@@ -232,6 +431,9 @@ def coordinate_report(
     output_plan_resolver: Callable[[ReportExecutionInput], Stage12OutputPlan]
     | None = None,
     runtime: ObservabilityRuntime | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+    wait_timeout_seconds: float = SIMULATION_WAIT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     report = ReportExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
@@ -319,6 +521,9 @@ def coordinate_report(
                 ):
                     simulations.append(plan_simulation_input(simulation, output_plan))
             planned_simulations = tuple(simulations)
+        simulations = {
+            simulation.role.value: simulation for simulation in planned_simulations
+        }
         child_state_span = (
             runtime.span(stage_plan.name(Stage.STAGE12_CHILD_STATE_CREATE))
             if runtime is not None
@@ -418,14 +623,21 @@ def coordinate_report(
                 )
                 persist_failure_record(
                     partial(
-                        _mark_child_failed,
-                        persistence,
-                        simulation.simulation_execution_id,
-                        error_code=detail.error_code,
-                        error_summary=detail.error_summary,
+                        _replace_running_simulation,
+                        store=persistence,
+                        simulation=simulation,
+                        status=ComparisonRunLifecycleStatus.FAILED,
+                        detail=detail,
                     ),
                     runtime=runtime,
                     failure_scope="child_dispatch",
+                )
+                _cancel_pending_simulations(
+                    calls=calls,
+                    simulations=simulations,
+                    roles=set(calls),
+                    store=persistence,
+                    failed_role=simulation.role.value,
                 )
                 raise Stage12ExecutionError(detail) from None
             calls[simulation.role.value] = call
@@ -435,67 +647,24 @@ def coordinate_report(
                 modal_invocation_id=call.object_id,
                 updated_at=datetime.now(UTC),
             )
-        # Every required call has been started before the coordinator waits.
-        for role, call in calls.items():
-            try:
-                wait_span = (
-                    runtime.span(
-                        stage_plan.name(Stage.STAGE12_CHILD_WAIT),
-                        attributes={"simulation_role": role},
-                    )
-                    if runtime is not None
-                    else nullcontext()
-                )
-                with wait_span:
-                    descriptors[role] = SimulationArtifactDescriptor.model_validate(
-                        call.get(timeout=SIMULATION_WAIT_TIMEOUT_SECONDS)
-                    )
-            except Exception as error:
-                report_original_failure(
-                    error,
-                    runtime=runtime,
-                    failure_scope="child_wait",
-                    attributes={"simulation_role": role},
-                )
-                simulation = next(
-                    item for item in simulations if item.role.value == role
-                )
-                child = persistence.get_simulation(simulation.simulation_execution_id)
-                if (
-                    child.status is ComparisonRunLifecycleStatus.FAILED
-                    and child.error_code is not None
-                ):
-                    detail = failure_detail_from_record(
-                        error_code=child.error_code,
-                        error_summary=child.error_summary,
-                    )
-                else:
-                    detail = failure_detail_from_exception(
-                        error,
-                        runtime=runtime,
-                        scope="stage12_simulation_invocation",
-                        default_code="simulation_invocation_failed",
-                        context={
-                            "evaluation_id": str(report.evaluation_id),
-                            "simulation_role": role,
-                        },
-                    )
-                if child.status not in {
-                    ComparisonRunLifecycleStatus.SUCCEEDED,
-                    ComparisonRunLifecycleStatus.FAILED,
-                }:
-                    persist_failure_record(
-                        partial(
-                            _mark_child_failed,
-                            persistence,
-                            simulation.simulation_execution_id,
-                            error_code=detail.error_code,
-                            error_summary=detail.error_summary,
-                        ),
-                        runtime=runtime,
-                        failure_scope="child_wait",
-                    )
-                raise Stage12ExecutionError(detail) from None
+        # Every required call has been started before the coordinator observes
+        # baseline and reform together through nonblocking result probes.
+        wait_span = (
+            runtime.span(stage_plan.name(Stage.STAGE12_CHILD_WAIT))
+            if runtime is not None
+            else nullcontext()
+        )
+        with wait_span:
+            _observe_simulations(
+                calls=calls,
+                simulations=simulations,
+                descriptors=descriptors,
+                store=persistence,
+                runtime=runtime,
+                sleep=sleep,
+                monotonic=monotonic,
+                timeout_seconds=wait_timeout_seconds,
+            )
         baseline = descriptors["baseline"]
         reform = descriptors["reform"]
         validate_aligned_outputs(report, output_plan, baseline, reform)
@@ -581,8 +750,9 @@ def coordinate_report(
     # before returning a stable exception to Modal.
     except Exception as error:  # noqa: BLE001
         if not isinstance(error, Stage12ExecutionError):
-            # Child dispatch and wait failures raise Stage12ExecutionError only
-            # after reporting the original error where it occurred.
+            # Child dispatch, child and wait-timeout failures raise
+            # Stage12ExecutionError only after reporting the original failure
+            # where it occurred.
             report_original_failure(
                 error,
                 runtime=runtime,

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -43,11 +44,14 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 from .dependencies import ComparisonStore, artifact_store, runtime_store
 from .failure_recording import persist_failure_record, report_original_failure
 from .failures import (
+    Stage12Cancellation,
     Stage12FailureDetail,
     failure_detail_from_exception,
     validate_policy_periods,
 )
 from .output_planning import apply_output_plan, validate_output_frames
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -366,7 +370,7 @@ def _mark_running_simulation_failed(
     latest = persistence.get_simulation(simulation_execution_id)
     if latest.status is not ComparisonRunLifecycleStatus.RUNNING:
         return
-    persistence.replace_simulation(
+    persistence.replace_simulation_if_status(
         latest.model_copy(
             update={
                 "status": ComparisonRunLifecycleStatus.FAILED,
@@ -375,7 +379,8 @@ def _mark_running_simulation_failed(
                 "updated_at": failed_at,
                 "completed_at": failed_at,
             }
-        )
+        ),
+        expected_status=ComparisonRunLifecycleStatus.RUNNING,
     )
 
 
@@ -391,7 +396,7 @@ def run_single_simulation(
         Mapping[str, pd.DataFrame] | SimulationCalculation,
     ] = calculate_simulation_frames,
     segmented_calculator: Callable[
-        [PlannedSimulationExecutionInput], SimulationCalculation
+        [PlannedSimulationExecutionInput, Callable[[], bool]], SimulationCalculation
     ]
     | None = None,
     runtime: ObservabilityRuntime | None = None,
@@ -404,6 +409,11 @@ def run_single_simulation(
     child = persistence.get_simulation(simulation.simulation_execution_id)
     if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
         return descriptor_from_record(child, simulation).model_dump(mode="json")
+    if child.status not in {
+        ComparisonRunLifecycleStatus.PENDING,
+        ComparisonRunLifecycleStatus.RUNNING,
+    }:
+        raise RuntimeError("Stage 12 simulation is no longer active")
     started = datetime.now(UTC)
     running = child.model_copy(
         update={
@@ -414,7 +424,25 @@ def run_single_simulation(
             "error_summary": None,
         }
     )
-    persistence.replace_simulation(running)
+    running, claimed = persistence.replace_simulation_if_status(
+        running,
+        expected_status=child.status,
+    )
+    if not claimed:
+        raise RuntimeError("Stage 12 simulation was cancelled")
+
+    def cancellation_requested() -> bool:
+        try:
+            latest = persistence.get_simulation(simulation.simulation_execution_id)
+        except Exception as error:  # noqa: BLE001
+            logger.warning(
+                "Stage 12 cancellation check failed for %s (%s)",
+                simulation.simulation_execution_id,
+                type(error).__name__,
+            )
+            return False
+        return latest.status is not ComparisonRunLifecycleStatus.RUNNING
+
     try:
         validate_policy_periods(simulation.policy)
         input_span = (
@@ -430,7 +458,7 @@ def run_single_simulation(
         from .segmentation import should_segment_simulation
 
         if segmented_calculator is not None and should_segment_simulation(simulation):
-            calculated = segmented_calculator(simulation)
+            calculated = segmented_calculator(simulation, cancellation_requested)
         elif calculator is calculate_simulation_frames:
             calculated = calculate_simulation_frames(simulation, runtime=runtime)
         else:
@@ -466,7 +494,7 @@ def run_single_simulation(
                 uk_local_authority_metadata=uk_local_authority_metadata,
             )
         completed = datetime.now(UTC)
-        persistence.replace_simulation(
+        _, replaced = persistence.replace_simulation_if_status(
             running.model_copy(
                 update={
                     "status": ComparisonRunLifecycleStatus.SUCCEEDED,
@@ -479,9 +507,14 @@ def run_single_simulation(
                     "updated_at": completed,
                     "completed_at": completed,
                 }
-            )
+            ),
+            expected_status=ComparisonRunLifecycleStatus.RUNNING,
         )
+        if not replaced:
+            raise Stage12Cancellation("Stage 12 simulation was cancelled")
         return descriptor.model_dump(mode="json")
+    except Stage12Cancellation:
+        raise RuntimeError("Stage 12 simulation was cancelled") from None
     # Persist any country-package calculation failure before returning a
     # stable exception to Modal.
     except Exception as error:  # noqa: BLE001
