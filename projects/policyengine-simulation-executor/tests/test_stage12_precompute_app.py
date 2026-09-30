@@ -48,3 +48,4 @@ def test_precompute_image_installs_only_the_us_bundle(monkeypatch) -> None:
         if call[0] == "add_local_python_source"
     )
     assert "policyengine_simulation_executor" in local_source[1]
+    assert "policyengine_stage12_persistence" in local_source[1]
