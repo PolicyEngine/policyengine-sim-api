@@ -52,6 +52,20 @@ class SimulationRole(StrEnum):
     STANDALONE = "standalone"
 
 
+class UKLocalAuthorityRoster(StrEnum):
+    """Supported UK local-authority boundary configurations."""
+
+    LAD22 = "lad22"
+    LAD23 = "lad23"
+
+
+class UKLocalAuthorityMetadata(StrictContractModel):
+    """Authority configuration detected from a UK simulation dataset."""
+
+    country: Literal["uk"] = "uk"
+    roster: UKLocalAuthorityRoster
+
+
 class ArtifactMediaType(StrEnum):
     JSON = "application/json"
     PARQUET = "application/vnd.apache.parquet"
