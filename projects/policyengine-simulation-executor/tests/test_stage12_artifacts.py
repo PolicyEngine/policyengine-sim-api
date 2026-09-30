@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import patch
 from uuid import UUID
 
 import numpy as np
 import pandas as pd
 import pytest
 from policyengine_simulation_contract.stage12_execution import (
-    UKLocalAuthorityMetadata,
     UKLocalAuthorityBoundaryVersion,
+    UKLocalAuthorityMetadata,
 )
 
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -99,6 +100,25 @@ def test_parquet_omits_uk_metadata_for_non_uk_simulations() -> None:
     payload, _ = serialize_simulation_frames(_frames())
 
     assert deserialize_uk_local_authority_metadata(payload) is None
+
+
+def test_metadata_reads_do_not_materialize_simulation_rows() -> None:
+    provenance = {"spm_config": {"scenario": "official"}}
+    metadata = UKLocalAuthorityMetadata(
+        boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
+    )
+    payload, _ = serialize_simulation_frames(
+        _frames(),
+        calculation_provenance=provenance,
+        uk_local_authority_metadata=metadata,
+    )
+
+    with patch(
+        "policyengine_simulation_executor.stage12_artifacts.pq.read_table",
+        side_effect=AssertionError("metadata reads must not materialize Parquet rows"),
+    ):
+        assert deserialize_calculation_provenance(payload) == provenance
+        assert deserialize_uk_local_authority_metadata(payload) == metadata
 
 
 def test_duplicate_entity_identifiers_are_rejected() -> None:

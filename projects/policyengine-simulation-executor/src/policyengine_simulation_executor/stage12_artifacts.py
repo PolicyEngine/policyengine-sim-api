@@ -203,9 +203,15 @@ def deserialize_simulation_frames(payload: bytes) -> dict[str, pd.DataFrame]:
     return frames
 
 
+def _parquet_schema_metadata(payload: bytes) -> Mapping[bytes, bytes]:
+    """Read artifact metadata without materializing its simulation rows."""
+
+    parquet_file = pq.ParquetFile(BytesIO(payload))
+    return parquet_file.schema_arrow.metadata or {}
+
+
 def deserialize_calculation_provenance(payload: bytes) -> dict[str, Any] | None:
-    table = pq.read_table(BytesIO(payload))
-    raw = (table.schema.metadata or {}).get(
+    raw = _parquet_schema_metadata(payload).get(
         PARQUET_CONTRACT.calculation_provenance_metadata_key.encode()
     )
     if raw is None:
@@ -221,8 +227,7 @@ def deserialize_uk_local_authority_metadata(
 ) -> UKLocalAuthorityMetadata | None:
     """Read typed UK authority metadata from a Stage 12 simulation artifact."""
 
-    table = pq.read_table(BytesIO(payload))
-    raw = (table.schema.metadata or {}).get(
+    raw = _parquet_schema_metadata(payload).get(
         PARQUET_CONTRACT.uk_local_authority_metadata_key.encode()
     )
     if raw is None:
