@@ -10,9 +10,11 @@ from policyengine_simulation_contract.stage12_execution import (
     ReportAggregate,
     ReportOutputRequirements,
     Stage12OutputPlan,
-    UKLocalAuthorityMetadata,
-    UKLocalAuthorityBoundaryVersion,
     stage12_output_plan_sha256,
+)
+from policyengine_simulation_contract.uk_geography import (
+    UKLocalAuthorityBoundaryVersion,
+    UKLocalAuthorityMetadata,
 )
 
 

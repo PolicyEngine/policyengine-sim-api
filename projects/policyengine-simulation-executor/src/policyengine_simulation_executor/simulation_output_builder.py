@@ -7,9 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from policyengine_observability import ObservabilityRuntime
-from policyengine_simulation_contract.stage12_execution import (
-    UKLocalAuthorityMetadata,
-)
+from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
 from policyengine_simulation_executor import simulation_output_budget
 from policyengine_simulation_executor import simulation_output_cliff

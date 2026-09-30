@@ -8,9 +8,9 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 from policyengine.data.uk_geography_assets import CONSTITUENCY_ASSET_SPEC
-from policyengine_simulation_contract.stage12_execution import (
-    UKLocalAuthorityMetadata,
+from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
+    UKLocalAuthorityMetadata,
 )
 
 from policyengine_simulation_executor import simulation_output_geographic
@@ -144,7 +144,7 @@ def test_complete_uk_geography_output_rejects_fallback_metadata(
         (UKLocalAuthorityBoundaryVersion.LAD23, "E06000063", "Cumberland"),
     ],
 )
-def test_stage12_local_authority_output_uses_detected_boundary_metadata(
+def test_local_authority_output_uses_detected_boundary_metadata(
     monkeypatch,
     boundary_version: UKLocalAuthorityBoundaryVersion,
     code: str,
@@ -153,7 +153,7 @@ def test_stage12_local_authority_output_uses_detected_boundary_metadata(
     monkeypatch.setattr(
         simulation_output_geographic,
         "_required_uk_geography_lookup_csv_path",
-        lambda _: pytest.fail("Stage 12 must not resolve the legacy GCS lookup"),
+        lambda _: pytest.fail("local-authority output must not resolve a GCS lookup"),
     )
 
     result = simulation_output_geographic.build_uk_local_authority_impact(
@@ -174,7 +174,7 @@ def test_stage12_local_authority_output_uses_detected_boundary_metadata(
     assert record["average_household_income_change"] == 10.0
 
 
-def test_stage12_local_authority_output_rejects_code_outside_boundary_version() -> None:
+def test_local_authority_output_rejects_code_outside_boundary_version() -> None:
     with pytest.raises(
         ValueError, match="not part of the detected LAD22 boundary version"
     ):
@@ -188,54 +188,18 @@ def test_stage12_local_authority_output_rejects_code_outside_boundary_version() 
         )
 
 
-def test_legacy_local_authority_output_still_resolves_the_gcs_lookup(
+def test_local_authority_output_requires_detected_boundary_metadata(
     monkeypatch,
 ) -> None:
-    observed: list[object] = []
-    legacy_record = {
-        "local_authority_code": "E06000063",
-        "local_authority_name": "Cumberland",
-        "x": 1,
-        "y": 2,
-        "average_household_income_change": 10.0,
-        "relative_household_income_change": 0.1,
-        "population": 2.0,
-    }
-
-    def require_lookup(spec):
-        observed.append(spec)
-        return "/tmp/local_authorities_2021.csv"
-
-    def output_function(module: str, function: str):
-        assert module == "local_authority_impact"
-        assert function == "compute_uk_local_authority_impacts"
-
-        def calculate(*args, **kwargs):
-            observed.append(kwargs)
-            return SimpleNamespace(local_authority_results=[legacy_record])
-
-        return calculate
-
     monkeypatch.setattr(
         simulation_output_geographic,
         "_required_uk_geography_lookup_csv_path",
-        require_lookup,
-    )
-    monkeypatch.setattr(
-        simulation_output_geographic,
-        "_output_module_function",
-        output_function,
+        lambda _: pytest.fail("local-authority output must not resolve a GCS lookup"),
     )
 
-    result = simulation_output_geographic.build_uk_local_authority_impact(
-        "uk",
-        object(),
-        object(),
-    )
-
-    assert result is not None
-    assert observed[0] is simulation_output_geographic.LOCAL_AUTHORITY_ASSET_SPEC
-    assert observed[1] == {
-        "local_authority_csv_path": "/tmp/local_authorities_2021.csv",
-        "download_missing_assets": False,
-    }
+    with pytest.raises(ValueError, match="boundary metadata is required"):
+        simulation_output_geographic.build_uk_local_authority_impact(
+            "uk",
+            object(),
+            object(),
+        )

@@ -601,6 +601,11 @@ def _run_simulation_impl_core(
             selection=dataset_selection,
             country_module=country_module,
         )
+    from policyengine_simulation_executor.uk_local_authority_metadata import (
+        detect_uk_local_authority_metadata,
+    )
+
+    uk_local_authority_metadata = detect_uk_local_authority_metadata(country, dataset)
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.POLICY_NORMALIZATION)):
         baseline_policy = _normalise_policy(simulation_params.get("baseline"))
         reform_policy = _normalise_policy(simulation_params.get("reform"))
@@ -642,6 +647,7 @@ def _run_simulation_impl_core(
         resolved_data_version=None,
         resolved_region_code=region_resolution.code,
         runtime=runtime,
+        uk_local_authority_metadata=uk_local_authority_metadata,
     )
     output = builder.serialize()
     output.update(

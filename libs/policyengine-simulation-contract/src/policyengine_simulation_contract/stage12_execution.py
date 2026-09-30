@@ -18,6 +18,10 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from policyengine_simulation_contract.uk_geography import (
+    UKLocalAuthorityBoundaryVersion as UKLocalAuthorityBoundaryVersion,
+    UKLocalAuthorityMetadata as UKLocalAuthorityMetadata,
+)
 
 ContractText = Annotated[str, Field(min_length=1, max_length=255)]
 ObservabilityId = Annotated[str, Field(min_length=1, max_length=36)]
@@ -50,20 +54,6 @@ class SimulationRole(StrEnum):
     BASELINE = "baseline"
     REFORM = "reform"
     STANDALONE = "standalone"
-
-
-class UKLocalAuthorityBoundaryVersion(StrEnum):
-    """Supported UK local-authority boundary versions."""
-
-    LAD22 = "lad22"
-    LAD23 = "lad23"
-
-
-class UKLocalAuthorityMetadata(StrictContractModel):
-    """Local-authority boundary version detected from a UK simulation dataset."""
-
-    country: Literal["uk"] = "uk"
-    boundary_version: UKLocalAuthorityBoundaryVersion
 
 
 class ArtifactMediaType(StrEnum):

@@ -38,9 +38,11 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationRole,
     Stage12InvocationContext,
     Stage12OutputPlan,
-    UKLocalAuthorityMetadata,
-    UKLocalAuthorityBoundaryVersion,
     stage12_output_plan_sha256,
+)
+from policyengine_simulation_contract.uk_geography import (
+    UKLocalAuthorityBoundaryVersion,
+    UKLocalAuthorityMetadata,
 )
 
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -58,8 +60,8 @@ from policyengine_simulation_executor.stage12_runtime import (
 from policyengine_simulation_executor.stage12_runtime.aggregation import (
     validate_uk_local_authority_metadata,
 )
-from policyengine_simulation_executor.stage12_runtime.simulation import (
-    _detect_uk_local_authority_metadata,
+from policyengine_simulation_executor.uk_local_authority_metadata import (
+    detect_uk_local_authority_metadata,
 )
 
 NOW = datetime(2026, 9, 15, tzinfo=UTC)
@@ -507,7 +509,7 @@ def test_uk_boundary_version_is_detected_from_the_unscoped_dataset() -> None:
         },
     )()
 
-    metadata = _detect_uk_local_authority_metadata("uk", dataset)
+    metadata = detect_uk_local_authority_metadata("uk", dataset)
 
     assert metadata == UKLocalAuthorityMetadata(
         boundary_version=UKLocalAuthorityBoundaryVersion.LAD22

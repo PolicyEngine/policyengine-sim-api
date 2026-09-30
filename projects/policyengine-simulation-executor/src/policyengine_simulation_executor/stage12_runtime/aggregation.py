@@ -11,9 +11,9 @@ from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
     SimulationArtifactDescriptor,
     Stage12OutputPlan,
-    UKLocalAuthorityMetadata,
     stage12_output_plan_sha256,
 )
+from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 from pydantic import JsonValue
 
 
