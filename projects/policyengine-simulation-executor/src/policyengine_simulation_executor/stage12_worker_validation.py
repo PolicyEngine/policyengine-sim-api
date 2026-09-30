@@ -17,7 +17,7 @@ from policyengine_simulation_executor.release_bundle import (
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 
 REQUIRED_SECRET_ALTERNATIVES = (
-    ("HF_TOKEN",),
+    ("HUGGING_FACE_TOKEN",),
     (
         "GOOGLE_APPLICATION_CREDENTIALS_JSON",
         "GCP_CREDENTIALS_JSON",

@@ -16,7 +16,7 @@ from policyengine_simulation_executor.stage12_worker_validation import (
 
 def _environment() -> dict[str, str]:
     return {
-        "HF_TOKEN": "test-token",
+        "HUGGING_FACE_TOKEN": "test-token",
         "GOOGLE_APPLICATION_CREDENTIALS_JSON": "{}",
         "STAGE12_DATABASE_URL": "postgresql://runtime:secret@db.example/postgres",
         "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
@@ -117,17 +117,17 @@ def test_validation_rejects_digest_mismatch_before_dataset_access() -> None:
             "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
         },
         {
-            "HF_TOKEN": "test-token",
+            "HUGGING_FACE_TOKEN": "test-token",
             "STAGE12_DATABASE_URL": "postgresql://runtime:secret@db.example/postgres",
             "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
         },
         {
-            "HF_TOKEN": "test-token",
+            "HUGGING_FACE_TOKEN": "test-token",
             "GOOGLE_APPLICATION_CREDENTIALS_JSON": "{}",
             "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
         },
         {
-            "HF_TOKEN": "test-token",
+            "HUGGING_FACE_TOKEN": "test-token",
             "GOOGLE_APPLICATION_CREDENTIALS_JSON": "{}",
             "STAGE12_DATABASE_URL": "postgresql://runtime:secret@db.example/postgres",
         },

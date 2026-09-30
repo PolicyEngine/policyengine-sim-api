@@ -109,7 +109,7 @@ gcp_secret = modal.Secret.from_name("gcp-credentials", environment_name="main")
 data_secret = modal.Secret.from_name("policyengine-data-credentials")
 hf_secret = modal.Secret.from_name(
     "huggingface-token",
-    required_keys=["HF_TOKEN"],
+    required_keys=["HUGGING_FACE_TOKEN"],
 )
 OBSERVABILITY_ENV = modal_image_environment()
 

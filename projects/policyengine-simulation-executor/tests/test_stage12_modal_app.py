@@ -104,7 +104,7 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
     assert module.gcp_secret["args"] == ("stage12-evaluation-gcp-credentials",)
     assert module.hf_secret == {
         "args": ("huggingface-token",),
-        "kwargs": {"required_keys": ["HF_TOKEN"]},
+        "kwargs": {"required_keys": ["HUGGING_FACE_TOKEN"]},
     }
     assert all(
         secret.get("args") != ("policyengine-logfire",)

@@ -353,7 +353,7 @@ class TestModalSyncSecrets:
         assert "run modal secret create gcp-credentials" in calls
         assert "--env=main --force" in calls
         assert "run modal secret create huggingface-token" in calls
-        assert "HF_TOKEN=hf_test" in calls
+        assert "HUGGING_FACE_TOKEN=hf_test" in calls
         assert "run modal secret create policyengine-gateway-auth" in calls
         assert "GATEWAY_AUTH_ISSUER=https://tenant.auth0.com/" in calls
         assert (

@@ -74,7 +74,7 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     )
     assert app.hf_secret == {
         "args": ("huggingface-token",),
-        "kwargs": {"required_keys": ["HF_TOKEN"]},
+        "kwargs": {"required_keys": ["HUGGING_FACE_TOKEN"]},
     }
     assert command_calls[0][2]["secrets"] == [app.data_secret, app.hf_secret]
     uv_sync_calls = [
