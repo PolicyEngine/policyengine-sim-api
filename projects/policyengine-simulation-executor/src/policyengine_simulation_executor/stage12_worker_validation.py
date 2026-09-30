@@ -28,6 +28,10 @@ REQUIRED_SECRET_ALTERNATIVES = (
     ("STAGE12_CACHE_BUCKET",),
 )
 
+US_VALIDATION_REFORM = {
+    "gov.irs.credits.ctc.amount.base[0].amount": {"2026-01-01.2100-12-31": 3_000}
+}
+
 
 def _require_secret_environment(environment: Mapping[str, str]) -> None:
     for alternatives in REQUIRED_SECRET_ALTERNATIVES:
@@ -56,16 +60,40 @@ def _check_dataset_access(path: str, expected_sha256: str) -> None:
 
 def _run_non_serving_calculation(country: CountryId) -> None:
     country_module = import_module(f"policyengine.tax_benefit_models.{country}")
-    spm = {"geography_kind": "national"} if country == "us" else None
+    people = [{"age": 40, "employment_income": 50_000}]
+    extra_variables = ["household_net_income"]
+    options: dict[str, Any] = {}
+    if country == "us":
+        from policyengine_simulation_executor.simulation_runtime import (
+            _normalise_policy,
+        )
+
+        people = [
+            {
+                "age": 40,
+                "employment_income": 50_000,
+                "is_tax_unit_head": True,
+            },
+            {"age": 10, "is_tax_unit_dependent": True},
+        ]
+        extra_variables.append("ctc")
+        options["spm"] = {"geography_kind": "national"}
+        options["reform"] = _normalise_policy(US_VALIDATION_REFORM)
     result = country_module.calculate_household(
-        people=[{"age": 40, "employment_income": 50_000}],
-        **({"spm": spm} if spm is not None else {}),
+        people=people,
         year=2026,
-        extra_variables=["household_net_income"],
+        extra_variables=extra_variables,
+        **options,
     )
     household = getattr(result, "household", None)
     if not isinstance(household, Mapping) or "household_net_income" not in household:
         raise RuntimeError("Stage 12 validation calculation returned no net income")
+    if country == "us":
+        tax_unit = getattr(result, "tax_unit", None)
+        if not isinstance(tax_unit, Mapping) or not isinstance(
+            tax_unit.get("ctc"), (int, float)
+        ):
+            raise RuntimeError("Stage 12 validation reform returned no CTC value")
 
 
 def _check_uk_local_authority_resources() -> None:
