@@ -21,7 +21,7 @@ dependencies = [
     "policyengine-stage12-persistence",
     # PolicyEngine.py's models extra is the only selector for core, country
     # models, and the SPM calculator. Do not duplicate those versions here.
-    "policyengine[models]==6.1.2",
+    "policyengine[models]==6.2.1",
     "tables>=3.10.2",
     "modal>=0.73.0",
     "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.1,<4",
@@ -44,7 +44,7 @@ packages = ["src/policyengine_simulation_executor"]
 # certified datasets and writes their receipt.
 [dependency-groups]
 modal-simulation-image = [
-    "policyengine[models]==6.1.2",
+    "policyengine[models]==6.2.1",
     "fastapi>=0.115.0",
     "tables>=3.10.2",
     "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.1,<4",
