@@ -47,6 +47,10 @@ class FakeImage:
         self.calls.append(("add_local_file", local_path, remote_path, kwargs))
         return self
 
+    def add_local_dir(self, local_path, remote_path, **kwargs):
+        self.calls.append(("add_local_dir", local_path, remote_path, kwargs))
+        return self
+
     def run_function(self, function, **kwargs):
         self.calls.append(("run_function", function.__name__, kwargs))
         return self

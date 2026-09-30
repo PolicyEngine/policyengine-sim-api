@@ -36,7 +36,20 @@ from policyengine_simulation_executor.stage12_bundle import (
 )
 
 STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
+STAGE12_STATIC_RUNTIME_FILES_DIR = (
+    "/root/policyengine_simulation_executor/static_runtime_files"
+)
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
+_LOCAL_STATIC_RUNTIME_FILES_DIR = (
+    str(
+        Path(_UV_PROJECT_DIR)
+        / "src"
+        / "policyengine_simulation_executor"
+        / "static_runtime_files"
+    )
+    if modal.is_local()
+    else STAGE12_STATIC_RUNTIME_FILES_DIR
+)
 RESOLVED_BUNDLE = load_stage12_bundle()
 BUNDLE_VALUES = assertion_values(RESOLVED_BUNDLE.bundle)
 APP_NAME = v2_application_name(RESOLVED_BUNDLE.bundle.policyengine_version)
@@ -141,6 +154,14 @@ def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:
             "policyengine_simulation_observability",
             "policyengine_simulation_contract",
             "policyengine_stage12_persistence",
+            copy=True,
+        )
+        # Modal's Python-source layer intentionally contains only .py files.
+        # Copy runtime data separately so every Stage 12 image has the same
+        # expandable directory of static files used by executor code.
+        .add_local_dir(
+            _LOCAL_STATIC_RUNTIME_FILES_DIR,
+            STAGE12_STATIC_RUNTIME_FILES_DIR,
             copy=True,
         )
     )

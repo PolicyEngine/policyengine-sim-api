@@ -24,4 +24,11 @@ echo "=== Executor image smoke (env: $MODAL_ENV) ==="
     uv run modal run --env="$MODAL_ENV" src/modal/smoke_app.py
 )
 
+echo "=== Stage 12 static runtime file smoke (env: $MODAL_ENV) ==="
+(
+    cd "$REPO_ROOT/projects/policyengine-simulation-executor"
+    uv run modal run --env="$MODAL_ENV" \
+        src/modal/v2_static_runtime_files_smoke.py
+)
+
 echo "=== Image smokes passed ==="

@@ -218,7 +218,10 @@ configuration, an unknown code, or a dataset without a distinguishing code
 fails the Stage 12 run. Dataset names and release labels do not select a
 boundary version, and there is no fallback to the newest known configuration.
 
-The executor temporarily packages three display-only resources:
+The executor temporarily packages three display-only resources under its
+expandable `static_runtime_files/uk_local_authorities/` directory. The v2 Modal
+image copies that directory explicitly because Modal's Python-source layer does
+not include non-Python files by default:
 
 - one common `code,name` file containing the union of supported authority
   codes;
