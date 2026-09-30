@@ -4,7 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import pandas as pd
+from policyengine.data.uk_geography_assets import (
+    CONSTITUENCY_ASSET_SPEC,
+    LOCAL_AUTHORITY_ASSET_SPEC,
+)
+from policyengine_simulation_contract.stage12_execution import (
+    UKLocalAuthorityMetadata,
+)
 
 from policyengine_simulation_executor.simulation_macro_output import (
     CongressionalDistrictImpactOutput,
@@ -17,6 +26,56 @@ from policyengine_simulation_executor.simulation_output_common import (
     _output_module_function,
     _try_compute_output,
 )
+
+if TYPE_CHECKING:
+    from policyengine.data.uk_geography_assets import UKGeographyAssetSpec
+
+
+def _required_uk_geography_lookup_csv_path(spec: UKGeographyAssetSpec) -> str:
+    """Resolve one required lookup under the runtime GCP identity."""
+
+    from policyengine.outputs.uk_geography_impact import (
+        resolve_uk_geography_lookup_csv_path,
+    )
+    from policyengine_simulation_executor.simulation_runtime import (
+        setup_gcp_credentials,
+    )
+
+    with setup_gcp_credentials():
+        path = resolve_uk_geography_lookup_csv_path(
+            spec,
+            download_missing_assets=True,
+        )
+    if path is None:
+        raise FileNotFoundError(
+            f"Required UK {spec.geography_type} lookup CSV "
+            f"{spec.lookup_csv_filename!r} could not be resolved"
+        )
+    return path
+
+
+def _complete_uk_geography_output(
+    value: object,
+    *,
+    code_field: str,
+    name_field: str,
+) -> GeographicImpactOutput:
+    """Require every UK geography record to contain lookup-owned metadata."""
+
+    output = build_geographic_impact_output(value)
+    if output is None or not output.root:
+        raise ValueError("UK geography output did not contain result records")
+    for record in output.root:
+        record_values = record.model_dump(mode="python")
+        code = record_values.get(code_field)
+        name = record_values.get(name_field)
+        if not isinstance(code, str) or not code.strip():
+            raise ValueError(f"UK geography output is missing {code_field}")
+        if not isinstance(name, str) or not name.strip() or name == code:
+            raise ValueError(f"UK geography {code!r} is missing a lookup name")
+        if record_values.get("x") is None or record_values.get("y") is None:
+            raise ValueError(f"UK geography {code!r} is missing lookup coordinates")
+    return output
 
 
 @lru_cache(maxsize=1)
@@ -37,11 +96,11 @@ def build_geographic_impact_output(value: Any) -> GeographicImpactOutput | None:
         return value
     records = _output_model_dump(value)
     if isinstance(records, list):
-        return GeographicImpactOutput(
+        return GeographicImpactOutput.model_validate(
             [dict(item) for item in records if isinstance(item, Mapping)]
         )
     if isinstance(value, list):
-        return GeographicImpactOutput(
+        return GeographicImpactOutput.model_validate(
             [dict(item) for item in value if isinstance(item, Mapping)]
         )
     return None
@@ -160,35 +219,89 @@ def build_uk_constituency_impact(
     if country != "uk":
         return None
 
-    impact = _try_compute_output(
-        "constituency impacts",
-        _output_module_function(
-            "constituency_impact", "compute_uk_constituency_impacts"
-        ),
+    lookup_csv_path = _required_uk_geography_lookup_csv_path(CONSTITUENCY_ASSET_SPEC)
+    impact = _output_module_function(
+        "constituency_impact", "compute_uk_constituency_impacts"
+    )(
         baseline,
         reform,
+        constituency_csv_path=lookup_csv_path,
+        download_missing_assets=False,
     )
-    if impact is None:
-        return None
-    return build_geographic_impact_output(getattr(impact, "constituency_results", None))
+    return _complete_uk_geography_output(
+        getattr(impact, "constituency_results", None),
+        code_field="constituency_code",
+        name_field="constituency_name",
+    )
 
 
 def build_uk_local_authority_impact(
-    country: str, baseline, reform
+    country: str,
+    baseline,
+    reform,
+    *,
+    uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> GeographicImpactOutput | None:
     if country != "uk":
         return None
 
-    impact = _try_compute_output(
-        "local authority impacts",
-        _output_module_function(
-            "local_authority_impact", "compute_uk_local_authority_impacts"
-        ),
+    if uk_local_authority_metadata is not None:
+        from policyengine.outputs.uk_geography_impact import (
+            compute_longwise_uk_geography_impacts,
+        )
+        from policyengine_simulation_executor.stage12_runtime.uk_local_authority_metadata import (
+            load_uk_local_authority_resources,
+        )
+
+        baseline_household = pd.DataFrame(baseline.output_dataset.data.household)
+        reform_household = pd.DataFrame(reform.output_dataset.data.household)
+        numeric_records = compute_longwise_uk_geography_impacts(
+            baseline_household=baseline_household,
+            reform_household=reform_household,
+            geography_column="la_code_oa",
+            result_key_prefix="local_authority",
+            lookup_csv_path=None,
+        )
+        boundary_version = uk_local_authority_metadata.boundary_version
+        display_metadata = load_uk_local_authority_resources().metadata_for(
+            boundary_version
+        )
+        records: list[dict[str, object]] = []
+        for numeric_record in numeric_records:
+            code = numeric_record.get("local_authority_code")
+            if not isinstance(code, str) or not code:
+                raise ValueError("UK local-authority output contains an invalid code")
+            metadata = display_metadata.get(code)
+            if metadata is None:
+                raise ValueError(
+                    f"UK local-authority code {code!r} is not part of the detected "
+                    f"{boundary_version.value.upper()} boundary version"
+                )
+            records.append(
+                {
+                    **numeric_record,
+                    "local_authority_name": metadata.name,
+                    "x": metadata.x,
+                    "y": metadata.y,
+                }
+            )
+        return _complete_uk_geography_output(
+            records,
+            code_field="local_authority_code",
+            name_field="local_authority_name",
+        )
+
+    lookup_csv_path = _required_uk_geography_lookup_csv_path(LOCAL_AUTHORITY_ASSET_SPEC)
+    impact = _output_module_function(
+        "local_authority_impact", "compute_uk_local_authority_impacts"
+    )(
         baseline,
         reform,
+        local_authority_csv_path=lookup_csv_path,
+        download_missing_assets=False,
     )
-    if impact is None:
-        return None
-    return build_geographic_impact_output(
-        getattr(impact, "local_authority_results", None)
+    return _complete_uk_geography_output(
+        getattr(impact, "local_authority_results", None),
+        code_field="local_authority_code",
+        name_field="local_authority_name",
     )

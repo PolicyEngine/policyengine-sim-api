@@ -102,6 +102,10 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
     assert "uvx" not in us_command
     assert "--venv" not in us_command
     assert module.gcp_secret["args"] == ("stage12-evaluation-gcp-credentials",)
+    assert module.hf_secret == {
+        "args": ("huggingface-token",),
+        "kwargs": {"required_keys": ["HF_TOKEN"]},
+    }
     assert all(
         secret.get("args") != ("policyengine-logfire",)
         for secret in module.worker_secrets
@@ -121,6 +125,19 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
             "policyengine_simulation_contract",
             "policyengine_stage12_persistence",
         )
+        static_runtime_files = next(
+            call for call in image.calls if call[0] == "add_local_dir"
+        )
+        assert Path(static_runtime_files[1]) == (
+            PROJECT_ROOT
+            / "src"
+            / "policyengine_simulation_executor"
+            / "static_runtime_files"
+        )
+        assert static_runtime_files[2] == (
+            "/root/policyengine_simulation_executor/static_runtime_files"
+        )
+        assert static_runtime_files[3] == {"copy": True}
 
 
 def test_v2_image_retains_required_runtime_dependencies() -> None:
@@ -135,6 +152,22 @@ def test_v2_image_retains_required_runtime_dependencies() -> None:
     assert not any(isinstance(item, dict) for item in group)
     assert "sqlalchemy>=2,<3" in group
     assert "psycopg[binary]>=3.2,<4" in group
+
+
+def test_v2_static_runtime_file_smoke_uses_exact_uk_worker_image(monkeypatch) -> None:
+    module = _load(monkeypatch)
+    sys.modules.pop("src.modal.v2_static_runtime_files_smoke", None)
+    smoke = importlib.import_module("src.modal.v2_static_runtime_files_smoke")
+    functions = {name: options for name, options in smoke.app.function_calls}
+
+    assert functions["smoke_stage12_static_runtime_files"]["image"] is (
+        module.uk_worker_image
+    )
+    assert smoke.smoke_stage12_static_runtime_files() == {
+        "names": 378,
+        "lad22_coordinates": 374,
+        "lad23_coordinates": 361,
+    }
 
 
 def test_v2_app_declares_validation_workers_and_non_http_coordinator(

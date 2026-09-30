@@ -252,8 +252,8 @@ def _constituency_impact_record() -> ConstituencyImpactRecord:
     return ConstituencyImpactRecord(
         constituency_code="E14000530",
         constituency_name="Birmingham, Ladywood",
-        x=None,
-        y=None,
+        x=34,
+        y=-42,
         average_household_income_change=10.0,
         relative_household_income_change=0.01,
         population=1000.0,
@@ -264,8 +264,8 @@ def _local_authority_impact_record() -> LocalAuthorityImpactRecord:
     return LocalAuthorityImpactRecord(
         local_authority_code="E06000001",
         local_authority_name="Hartlepool",
-        x=None,
-        y=None,
+        x=63,
+        y=-19,
         average_household_income_change=12.0,
         relative_household_income_change=0.02,
         population=900.0,
@@ -1699,9 +1699,13 @@ def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
         assert module_name == "constituency_impact"
         assert name == "compute_uk_constituency_impacts"
 
-        def compute(baseline_simulation, reform_simulation):
+        def compute(baseline_simulation, reform_simulation, **kwargs):
             assert baseline_simulation is baseline
             assert reform_simulation is reform
+            assert kwargs == {
+                "constituency_csv_path": "/tmp/constituencies_2024.csv",
+                "download_missing_assets": False,
+            }
             return SimpleNamespace(constituency_results=expected)
 
         return compute
@@ -1709,6 +1713,11 @@ def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_geographic._output_module_function",
         fake_output_module_function,
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_output_geographic."
+        "_required_uk_geography_lookup_csv_path",
+        lambda spec: "/tmp/constituencies_2024.csv",
     )
 
     result = _simulation_output_builder(
@@ -1733,9 +1742,13 @@ def test_uk_local_authority_impact_uses_policyengine_output_function(monkeypatch
         assert module_name == "local_authority_impact"
         assert name == "compute_uk_local_authority_impacts"
 
-        def compute(baseline_simulation, reform_simulation):
+        def compute(baseline_simulation, reform_simulation, **kwargs):
             assert baseline_simulation is baseline
             assert reform_simulation is reform
+            assert kwargs == {
+                "local_authority_csv_path": "/tmp/local_authorities_2021.csv",
+                "download_missing_assets": False,
+            }
             return SimpleNamespace(local_authority_results=expected)
 
         return compute
@@ -1743,6 +1756,11 @@ def test_uk_local_authority_impact_uses_policyengine_output_function(monkeypatch
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_geographic._output_module_function",
         fake_output_module_function,
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_output_geographic."
+        "_required_uk_geography_lookup_csv_path",
+        lambda spec: "/tmp/local_authorities_2021.csv",
     )
 
     result = _simulation_output_builder(

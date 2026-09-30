@@ -106,7 +106,10 @@ app = modal.App(APP_NAME)
 # GCP credentials are shared across environments (always from main)
 gcp_secret = modal.Secret.from_name("gcp-credentials", environment_name="main")
 data_secret = modal.Secret.from_name("policyengine-data-credentials")
-hf_secret = modal.Secret.from_name("huggingface-token")
+hf_secret = modal.Secret.from_name(
+    "huggingface-token",
+    required_keys=["HF_TOKEN"],
+)
 OBSERVABILITY_ENV = modal_image_environment()
 
 

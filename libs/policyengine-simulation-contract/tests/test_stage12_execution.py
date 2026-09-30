@@ -5,10 +5,13 @@ from __future__ import annotations
 import pytest
 
 from policyengine_simulation_contract.stage12_execution import (
+    SIMULATION_PARQUET_PAYLOAD_CONTRACT,
     EntityOutputPlan,
     ReportAggregate,
     ReportOutputRequirements,
     Stage12OutputPlan,
+    UKLocalAuthorityMetadata,
+    UKLocalAuthorityBoundaryVersion,
     stage12_output_plan_sha256,
 )
 
@@ -115,3 +118,24 @@ def test_entity_output_plan_separates_calculated_and_dataset_variables() -> None
             additional_variables=("constituency_code_oa",),
             dataset_variables=("constituency_code_oa",),
         )
+
+
+def test_uk_local_authority_metadata_is_strict_and_typed() -> None:
+    metadata = UKLocalAuthorityMetadata(
+        boundary_version=UKLocalAuthorityBoundaryVersion.LAD22
+    )
+
+    assert metadata.country == "uk"
+    assert metadata.boundary_version is UKLocalAuthorityBoundaryVersion.LAD22
+
+    with pytest.raises(ValueError, match="extra_forbidden"):
+        UKLocalAuthorityMetadata.model_validate(
+            {"country": "uk", "boundary_version": "lad23", "dataset": "microcosm"}
+        )
+
+
+def test_parquet_contract_names_uk_local_authority_metadata() -> None:
+    assert (
+        SIMULATION_PARQUET_PAYLOAD_CONTRACT.uk_local_authority_metadata_key
+        == "policyengine.stage12.uk_local_authority_metadata"
+    )

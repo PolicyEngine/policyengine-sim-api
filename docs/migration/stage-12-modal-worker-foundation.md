@@ -60,7 +60,13 @@ with the live API-owned schema.
   its selected applications unchanged.
 - V2 worker object access uses the already-provisioned separate
   `stage12-evaluation-gcp-credentials` Modal secret. The worker application
-  does not receive the existing general GCP credential secret.
+  does not receive the existing general GCP credential secret. The credential's
+  service account can read and write its environment-specific Stage 12 artifact
+  bucket. A conditional IAM binding separately permits it to read
+  `constituencies_2024.csv` from `policyengine-uk-data-private`; deployment
+  validation downloads that lookup file using the worker credential. Stage 12
+  local-authority output uses packaged metadata and does not require access to
+  `local_authorities_2021.csv`.
 - `STAGE12_DATABASE_URL` is delivered from the environment-specific Secret
   Manager resource named by `STAGE12_DATABASE_URL_SECRET_NAME`. It authenticates
   as the existing shared `policyengine_v2_runtime` account; Stage 12 does not
@@ -201,6 +207,44 @@ The precomputed baseline and reform simulations retain their original policy
 metadata so PolicyEngine can correctly recognize conditional labor-supply
 analysis. `include_cliffs=true` is supported by this path and is carried through
 both output planning and aggregation.
+
+### Temporary UK local-authority display metadata
+
+Stage 12 detects the local-authority boundary configuration from the complete
+source dataset before applying any requested regional scope. It examines the
+dataset's `la_code_oa` values: the 17 predecessor English authorities identify
+LAD22, while `E06000063` through `E06000066` identify LAD23. A mixed boundary
+configuration, an unknown code, or a dataset without a distinguishing code
+fails the Stage 12 run. Dataset names and release labels do not select a
+boundary version, and there is no fallback to the newest known configuration.
+
+The executor temporarily packages three display-only resources under its
+expandable `static_runtime_files/uk_local_authorities/` directory. The v2 Modal
+image copies that directory explicitly because Modal's Python-source layer does
+not include non-Python files by default:
+
+- one common `code,name` file containing the union of supported authority
+  codes;
+- one `code,x,y` file for the 374-authority LAD22 configuration; and
+- one `code,x,y` file for the 361-authority LAD23 configuration.
+
+The Enhanced FRS geography is LAD22: its 2021 output areas are crosswalked to
+2022 local-authority boundaries. The output-area vintage does not make the
+local-authority boundary version LAD21. Names and coordinates are attached only
+after numeric local-authority impacts have been calculated; these resources
+never assign a household to an authority.
+
+The detected boundary version is stored as typed metadata in both child Parquet
+artifacts. The coordinator requires baseline and reform to agree before it
+enriches the aggregate output. Existing non-Stage-12 calculations continue to
+use the existing GCS lookup and are not changed by this path.
+
+This resource ownership is temporary. A future boundary version must add its
+codes to the common names file, add a distinct coordinate file, and register a
+typed detector definition. Longer term, display-coordinate rendering should
+move to the front end, and Stage 14 or later work should remove these temporary
+executor resources when the authoritative v2 report architecture supersedes
+Stage 12.
 
 ## Temporary direct runner endpoint
 

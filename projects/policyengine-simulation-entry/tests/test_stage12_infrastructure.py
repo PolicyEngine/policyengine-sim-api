@@ -29,7 +29,10 @@ def test_infrastructure_validation_is_bounded_and_valid_shell() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert "STAGE12_ENVIRONMENT" in source
     assert "STAGE12_ARTIFACT_BUCKET" in source
-    assert "Pre-provisioned Stage 12 database, secret, and storage access" in source
+    assert (
+        "Pre-provisioned Stage 12 database, secret, artifact storage, and UK "
+        "geography lookup access" in source
+    )
     assert "STAGE12_DATABASE_URL_SECRET_NAME" in source
     assert "policyengine_v2_runtime" in source
     assert r"${expected_role}\.[a-z0-9]{20}" in source
@@ -87,8 +90,11 @@ def test_storage_validation_uses_only_the_modal_worker_credentials() -> None:
 
     assert "runtime_gcloud auth activate-service-account" in source
     modal_account = '--account="${STAGE12_MODAL_SERVICE_ACCOUNT}"'
-    assert source.count(f"runtime_gcloud {modal_account} storage cp") == 2
+    assert source.count(f"runtime_gcloud {modal_account} storage cp") == 3
     assert source.count(f"runtime_gcloud {modal_account} storage rm") == 2
+    assert "gs://policyengine-uk-data-private/constituencies_2024.csv" in source
+    assert "gs://policyengine-uk-data-private/local_authorities_2021.csv" not in source
+    assert "STAGE12_UK_GEOGRAPHY_BUCKET" not in source
 
 
 def test_modal_secret_sync_rejects_missing_configuration() -> None:

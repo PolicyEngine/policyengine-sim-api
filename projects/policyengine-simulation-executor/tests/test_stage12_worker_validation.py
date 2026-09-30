@@ -6,6 +6,7 @@ from hashlib import sha256
 from types import SimpleNamespace
 
 import pytest
+
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.stage12_worker_validation import (
     _run_non_serving_calculation,
@@ -73,6 +74,24 @@ def test_non_serving_us_calculation_selects_national_without_county(
 
     assert calls[0]["spm"] == {"geography_kind": "national"}
     assert "household" not in calls[0]
+
+
+def test_uk_validation_loads_packaged_local_authority_resources() -> None:
+    resolved = load_stage12_bundle()
+    checks: list[str] = []
+
+    result = validate_country_worker(
+        country="uk",
+        expected_bundle_manifest_sha256=resolved.bundle_manifest_sha256,
+        environment=_environment(),
+        dataset_path_resolver=lambda _: "/installed/enhanced_frs_2024_25.h5",
+        dataset_check=lambda *_: None,
+        calculation_check=lambda _: None,
+        local_authority_resource_check=lambda: checks.append("resources-loaded"),
+    )
+
+    assert result["validated"] is True
+    assert checks == ["resources-loaded"]
 
 
 def test_validation_rejects_digest_mismatch_before_dataset_access() -> None:

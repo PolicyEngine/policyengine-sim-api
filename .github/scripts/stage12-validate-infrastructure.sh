@@ -37,6 +37,9 @@ for account in \
     exit 1
   fi
 done
+uk_geography_lookup_objects=(
+  "gs://policyengine-uk-data-private/constituencies_2024.csv"
+)
 for secret_name in \
   "${STAGE12_MODAL_TOKEN_ID_SECRET_NAME}" \
   "${STAGE12_MODAL_TOKEN_SECRET_SECRET_NAME}" \
@@ -161,4 +164,13 @@ runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage rm \
   "${canary_object}" --quiet
 canary_object=""
 
-echo "Pre-provisioned Stage 12 database, secret, and storage access is verified."
+for lookup_object in "${uk_geography_lookup_objects[@]}"; do
+  runtime_gcloud --account="${STAGE12_MODAL_SERVICE_ACCOUNT}" storage cp \
+    "${lookup_object}" "${canary_download_file}" --quiet
+  if [[ ! -s "${canary_download_file}" ]]; then
+    echo "Stage 12 worker downloaded an empty UK geography lookup: ${lookup_object}" >&2
+    exit 1
+  fi
+done
+
+echo "Pre-provisioned Stage 12 database, secret, artifact storage, and UK geography lookup access is verified."
