@@ -66,7 +66,10 @@ def test_non_serving_us_calculation_selects_national_without_county(
 
     def calculate_household(**kwargs):
         calls.append(kwargs)
-        return SimpleNamespace(household={"household_net_income": 1})
+        return SimpleNamespace(
+            household={"household_net_income": 1},
+            tax_unit={"ctc": 1},
+        )
 
     monkeypatch.setattr(
         "policyengine_simulation_executor.stage12_worker_validation.import_module",
@@ -77,6 +80,33 @@ def test_non_serving_us_calculation_selects_national_without_county(
 
     assert calls[0]["spm"] == {"geography_kind": "national"}
     assert "household" not in calls[0]
+
+
+def test_us_validation_normalizes_the_frontend_reform_interval(monkeypatch) -> None:
+    from policyengine_simulation_executor import stage12_worker_validation
+
+    received = {}
+
+    def calculate_household(**kwargs):
+        received.update(kwargs)
+        return SimpleNamespace(
+            household={"household_net_income": 50_000},
+            tax_unit={"ctc": 3_000},
+        )
+
+    monkeypatch.setattr(
+        stage12_worker_validation,
+        "import_module",
+        lambda _: SimpleNamespace(calculate_household=calculate_household),
+    )
+
+    _run_non_serving_calculation("us")
+
+    assert received["reform"] == {
+        "gov.irs.credits.ctc.amount.base[0].amount": {"2026-01-01": 3_000}
+    }
+    assert received["people"][1]["is_tax_unit_dependent"] is True
+    assert "ctc" in received["extra_variables"]
 
 
 def test_uk_validation_loads_packaged_local_authority_resources() -> None:
