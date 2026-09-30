@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
 from typing import Any
+from uuid import UUID
 
 import pandas as pd
 from policyengine_observability import ObservabilityRuntime
@@ -41,6 +42,11 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 
 from .dependencies import ComparisonStore, artifact_store, runtime_store
 from .failure_recording import persist_failure_record, report_original_failure
+from .failures import (
+    Stage12FailureDetail,
+    failure_detail_from_exception,
+    validate_policy_periods,
+)
 from .output_planning import apply_output_plan, validate_output_frames
 
 
@@ -348,6 +354,31 @@ def descriptor_from_record(
     )
 
 
+def _mark_running_simulation_failed(
+    persistence: ComparisonStore,
+    simulation_execution_id: UUID,
+    *,
+    detail: Stage12FailureDetail,
+    failed_at: datetime,
+) -> None:
+    """Record a failure only while the simulation is still running."""
+
+    latest = persistence.get_simulation(simulation_execution_id)
+    if latest.status is not ComparisonRunLifecycleStatus.RUNNING:
+        return
+    persistence.replace_simulation(
+        latest.model_copy(
+            update={
+                "status": ComparisonRunLifecycleStatus.FAILED,
+                "error_code": detail.error_code,
+                "error_summary": detail.error_summary,
+                "updated_at": failed_at,
+                "completed_at": failed_at,
+            }
+        )
+    )
+
+
 def run_single_simulation(
     payload: object,
     context_payload: object,
@@ -385,6 +416,7 @@ def run_single_simulation(
     )
     persistence.replace_simulation(running)
     try:
+        validate_policy_periods(simulation.policy)
         input_span = (
             runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_INPUT_WRITE))
             if runtime is not None
@@ -460,18 +492,24 @@ def run_single_simulation(
             attributes={"simulation_role": simulation.role.value},
         )
         failed_at = datetime.now(UTC)
+        detail = failure_detail_from_exception(
+            error,
+            runtime=runtime,
+            scope="stage12_simulation_execution",
+            default_code="simulation_execution_failed",
+            context={
+                "evaluation_id": str(simulation.evaluation_id),
+                "simulation_execution_id": str(simulation.simulation_execution_id),
+                "simulation_role": simulation.role.value,
+            },
+        )
         persist_failure_record(
             partial(
-                persistence.replace_simulation,
-                running.model_copy(
-                    update={
-                        "status": ComparisonRunLifecycleStatus.FAILED,
-                        "error_code": "simulation_execution_failed",
-                        "error_summary": type(error).__name__,
-                        "updated_at": failed_at,
-                        "completed_at": failed_at,
-                    }
-                ),
+                _mark_running_simulation_failed,
+                persistence,
+                simulation.simulation_execution_id,
+                detail=detail,
+                failed_at=failed_at,
             ),
             runtime=runtime,
             failure_scope="simulation_execution",

@@ -13,6 +13,7 @@ from policyengine_simulation_contract.stage12_execution import SimulationRole
 
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
+    Stage12ExecutionError,
     Stage12SegmentRunner,
     build_segment_inputs,
     calculate_segment,
@@ -170,11 +171,14 @@ def test_second_poll_error_cancels_all_started_segments() -> None:
         errors={0: [ConnectionError("first"), RuntimeError("second")]}
     )
 
-    with pytest.raises(RuntimeError, match="segment 0 failed"):
+    with pytest.raises(Stage12ExecutionError) as error:
         runner.run()
 
     assert len(function.calls) == 20
     assert all(call.cancelled == 1 for call in function.calls)
+    assert error.value.detail.error_code == "segment_execution_failed"
+    assert error.value.detail.segment_index == 0
+    assert "second" not in error.value.detail.error_summary
 
 
 def test_dispatch_error_cancels_segments_that_already_started() -> None:

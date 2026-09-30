@@ -18,6 +18,7 @@ from policyengine_simulation_observability.stages import (
 )
 
 from .partition import stage12_region_groups_for_model
+from .failures import Stage12ExecutionError, failure_detail_from_exception
 from .segmentation import build_segment_inputs, merge_segment_results
 from .simulation import SimulationCalculation
 
@@ -145,10 +146,16 @@ class Stage12SegmentRunner:
                             type(error).__name__,
                         )
                         continue
+                    detail = failure_detail_from_exception(
+                        error,
+                        runtime=self.runtime,
+                        scope="stage12_segment_call",
+                        default_code="segment_execution_failed",
+                        context={"segment_index": segment_index},
+                        segment_index=segment_index,
+                    )
                     self._cancel_all(handles)
-                    raise RuntimeError(
-                        f"Stage 12 segment {segment_index} failed"
-                    ) from None
+                    raise Stage12ExecutionError(detail) from None
                 pending.discard(index)
                 poll_errors.pop(index, None)
                 progress_made = True
