@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from policyengine_simulation_contract.stage12_execution import (
+    SIMULATION_PARQUET_PAYLOAD_CONTRACT,
     EntityOutputPlan,
     ReportAggregate,
     ReportOutputRequirements,
@@ -129,3 +130,10 @@ def test_uk_local_authority_metadata_is_strict_and_typed() -> None:
         UKLocalAuthorityMetadata.model_validate(
             {"country": "uk", "roster": "lad23", "dataset": "microcosm"}
         )
+
+
+def test_parquet_contract_names_uk_local_authority_metadata() -> None:
+    assert (
+        SIMULATION_PARQUET_PAYLOAD_CONTRACT.uk_local_authority_metadata_key
+        == "policyengine.stage12.uk_local_authority_metadata"
+    )

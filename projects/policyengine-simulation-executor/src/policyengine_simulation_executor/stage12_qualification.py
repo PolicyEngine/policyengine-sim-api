@@ -43,6 +43,9 @@ from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
     simulation_input_sha256,
 )
+from policyengine_simulation_executor.stage12_runtime.aggregation import (
+    validate_uk_local_authority_metadata,
+)
 from policyengine_simulation_executor.stage12_runtime.output_planning import (
     plan_simulation_input,
     resolve_report_output_plan,
@@ -187,6 +190,7 @@ def _descriptor(
     payload, row_identity = serialize_simulation_frames(
         calculation.frames,
         calculation_provenance=calculation.calculation_provenance,
+        uk_local_authority_metadata=calculation.uk_local_authority_metadata,
     )
     return SimulationArtifactDescriptor(
         evaluation_id=simulation.evaluation_id,
@@ -303,6 +307,11 @@ def qualify_report_parity(
         reform_frames=reform_calculation.frames,
         baseline_descriptor=baseline_descriptor,
         reform_descriptor=reform_descriptor,
+        uk_local_authority_metadata=validate_uk_local_authority_metadata(
+            report.baseline.geography.country,
+            baseline_calculation.uk_local_authority_metadata,
+            reform_calculation.uk_local_authority_metadata,
+        ),
     )
     v2_result = v2_report.get("result")
     if not isinstance(v2_result, Mapping):
@@ -318,10 +327,12 @@ def qualify_report_parity(
     v2_baseline_payload, _ = serialize_simulation_frames(
         baseline_calculation.frames,
         calculation_provenance=baseline_calculation.calculation_provenance,
+        uk_local_authority_metadata=baseline_calculation.uk_local_authority_metadata,
     )
     v2_reform_payload, _ = serialize_simulation_frames(
         reform_calculation.frames,
         calculation_provenance=reform_calculation.calculation_provenance,
+        uk_local_authority_metadata=reform_calculation.uk_local_authority_metadata,
     )
     return Stage12ParityReceipt(
         evaluation_id=str(report.evaluation_id),

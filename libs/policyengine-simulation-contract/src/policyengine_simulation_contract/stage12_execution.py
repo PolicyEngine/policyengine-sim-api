@@ -99,6 +99,9 @@ class SimulationParquetPayloadContract(StrictContractModel):
     calculation_provenance_metadata_key: Literal[
         "policyengine.stage12.calculation_provenance"
     ] = "policyengine.stage12.calculation_provenance"
+    uk_local_authority_metadata_key: Literal[
+        "policyengine.stage12.uk_local_authority_metadata"
+    ] = "policyengine.stage12.uk_local_authority_metadata"
 
 
 SIMULATION_PARQUET_PAYLOAD_CONTRACT = SimulationParquetPayloadContract()
