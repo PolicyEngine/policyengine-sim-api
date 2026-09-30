@@ -34,9 +34,14 @@ from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
     deserialize_calculation_provenance,
     deserialize_simulation_frames,
+    deserialize_uk_local_authority_metadata,
 )
 
-from .aggregation import build_aggregate_report, validate_aligned_outputs
+from .aggregation import (
+    build_aggregate_report,
+    validate_aligned_outputs,
+    validate_uk_local_authority_metadata,
+)
 from .comparison import compare_completed_report
 from .dependencies import (
     ChildCall,
@@ -411,6 +416,11 @@ def coordinate_report(
             raise ValueError("reform artifact digest mismatch")
         baseline_frames = deserialize_simulation_frames(baseline_payload)
         reform_frames = deserialize_simulation_frames(reform_payload)
+        uk_local_authority_metadata = validate_uk_local_authority_metadata(
+            report.baseline.geography.country,
+            deserialize_uk_local_authority_metadata(baseline_payload),
+            deserialize_uk_local_authority_metadata(reform_payload),
+        )
         validate_output_frames(baseline_frames, output_plan)
         validate_output_frames(reform_frames, output_plan)
         aggregation_span = (
@@ -425,6 +435,7 @@ def coordinate_report(
                 reform_frames=reform_frames,
                 baseline_descriptor=baseline,
                 reform_descriptor=reform,
+                uk_local_authority_metadata=uk_local_authority_metadata,
             )
         aggregate_write_span = (
             runtime.span(stage_plan.name(Stage.STAGE12_AGGREGATE_ARTIFACT_WRITE))

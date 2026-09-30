@@ -52,6 +52,20 @@ class SimulationRole(StrEnum):
     STANDALONE = "standalone"
 
 
+class UKLocalAuthorityBoundaryVersion(StrEnum):
+    """Supported UK local-authority boundary versions."""
+
+    LAD22 = "lad22"
+    LAD23 = "lad23"
+
+
+class UKLocalAuthorityMetadata(StrictContractModel):
+    """Local-authority boundary version detected from a UK simulation dataset."""
+
+    country: Literal["uk"] = "uk"
+    boundary_version: UKLocalAuthorityBoundaryVersion
+
+
 class ArtifactMediaType(StrEnum):
     JSON = "application/json"
     PARQUET = "application/vnd.apache.parquet"
@@ -85,6 +99,9 @@ class SimulationParquetPayloadContract(StrictContractModel):
     calculation_provenance_metadata_key: Literal[
         "policyengine.stage12.calculation_provenance"
     ] = "policyengine.stage12.calculation_provenance"
+    uk_local_authority_metadata_key: Literal[
+        "policyengine.stage12.uk_local_authority_metadata"
+    ] = "policyengine.stage12.uk_local_authority_metadata"
 
 
 SIMULATION_PARQUET_PAYLOAD_CONTRACT = SimulationParquetPayloadContract()

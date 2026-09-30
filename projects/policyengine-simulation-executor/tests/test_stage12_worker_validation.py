@@ -49,6 +49,24 @@ def test_validation_checks_dataset_and_non_serving_calculation() -> None:
     assert countries == ["us"]
 
 
+def test_uk_validation_loads_packaged_local_authority_resources() -> None:
+    resolved = load_stage12_bundle()
+    checks: list[str] = []
+
+    result = validate_country_worker(
+        country="uk",
+        expected_bundle_manifest_sha256=resolved.bundle_manifest_sha256,
+        environment=_environment(),
+        dataset_path_resolver=lambda _: "/installed/enhanced_frs_2024_25.h5",
+        dataset_check=lambda *_: None,
+        calculation_check=lambda _: None,
+        local_authority_resource_check=lambda: checks.append("resources-loaded"),
+    )
+
+    assert result["validated"] is True
+    assert checks == ["resources-loaded"]
+
+
 def test_validation_rejects_digest_mismatch_before_dataset_access() -> None:
     accessed: list[str] = []
     with pytest.raises(RuntimeError, match="digest differs"):
