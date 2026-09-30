@@ -125,14 +125,26 @@ simulation artifacts. `segmented=false`, US subnational requests, UK requests,
 cliff analysis, and labor-supply-response calculations use the
 single-container Stage 12 path.
 
+After dispatching both logical simulations, the coordinator checks both Modal
+calls with nonblocking result probes on every polling pass. It does not wait
+for baseline before checking reform. The first failed simulation supplies the
+report's `error_code` and safe `error_summary`; the coordinator marks the
+unresolved peer `incomplete` with `cancelled_after_peer_failure`. A segmented
+peer reads that persisted state, cancels the region-group calls it owns, and
+exits without overwriting the cancellation record. Expected input failures
+retain their typed code and message. Unexpected exceptions are logged in full
+and persisted as a generic message with a correlation ID.
+
 Stage 12 deployments run `src/modal/stage12_precompute_app.py` against the
 dedicated `STAGE12_CACHE_BUCKET`. It publishes three annual datasets plus 60
 current-law US baseline files and emits
 `STAGE12_CACHE_MANIFEST_DIGEST=<sha256>`. The US worker image downloads and
 verifies the manifest's 63 files during image construction. The release
 validation checks the recorded manifest, hashes a baseline file, and requires
-a real calculation to load that file without recomputing it. The cache manifest
-digest is then stored in the separate v2 version manifest.
+a real calculation to load that file without recomputing it. Worker validation
+also calculates a US household under a nonempty CTC reform using the frontend
+interval format `2026-01-01.2100-12-31`. The cache manifest digest is then
+stored in the separate v2 version manifest.
 
 The cache is an optimization, not required state for a calculation: an absent
 file causes a normal calculation, and a file missing planned output columns is

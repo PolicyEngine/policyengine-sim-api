@@ -19,7 +19,8 @@ simulation submission or polling contracts.
   simulations therefore resolve in Modal `main` without relabeling durable
   records as `main`.
 - One v2 report-coordinator invocation starts baseline and reform as distinct
-  single-simulation calls before awaiting either result.
+  single-simulation calls, then checks both calls with nonblocking result probes
+  on every polling pass.
 - An eligible US national single-simulation call starts 20 region-group
   calculation calls and merges their typed Parquet results. Because baseline
   and reform are separate and start before either is awaited, an eligible
@@ -294,6 +295,21 @@ entity identifiers before merging. A missing or failed region-group call fails
 that logical simulation. The parent makes a best-effort cancellation request
 for every calculation call that it already started.
 
+The report coordinator observes baseline and reform together rather than
+blocking on one role first. On the first failure, it copies the failed
+simulation's `error_code` and safe `error_summary` to the report, marks the
+unresolved peer `incomplete` with `cancelled_after_peer_failure`, and completes
+the report as failed without waiting for the peer calculation. A segmented
+peer checks its persisted simulation status during bounded waits; after seeing
+the cancellation state, it cancels all region-group calls it owns and exits.
+Atomic status replacement prevents a late calculation result from replacing
+that cancellation record.
+
+Typed input failures, including invalid policy periods and SPM selection
+errors, retain their code and bounded message through the segment, simulation,
+and report layers. Unexpected exceptions are logged with their complete stack
+trace and persisted only as `Simulation failed (correlation_id=...)`.
+
 Before each v2 deployment, the independent Stage 12 precompute application
 builds three annual US dataset files and 60 current-law baseline files: one for
 each of 20 region groups in 2025, 2026, and 2027. Cache identities include the
@@ -397,9 +413,17 @@ curl -X POST "${SIMULATION_ENTRYPOINT_URL}/internal/stage12/reports" \
     "time_period": "2026",
     "segmented": true,
     "baseline": {},
-    "reform": {}
+    "reform": {
+      "gov.irs.credits.ctc.amount.base[0].amount": {
+        "2026-01-01.2100-12-31": 3000
+      }
+    }
   }'
 ```
+
+Policy values may be scalars, ISO effective-date mappings, or frontend interval
+mappings in `YYYY-MM-DD.YYYY-MM-DD` form. A bare year such as `"2026"` is not
+a valid effective-period key.
 
 The `segmented` field is optional. Omitting it uses segmentation when the
 request meets the eligibility conditions above. `false` explicitly selects the
@@ -427,6 +451,9 @@ While the report is pending or running, GET returns `202` and `Retry-After: 5`;
 completed, failed, incomplete, or skipped states return `200`. The response
 contains the complete temporary parent and child execution metadata, including
 private artifact references and digests, but never returns artifact contents.
+For a failed report, the parent record contains the originating safe failure;
+the failed simulation contains the same values, and a peer stopped because of
+that failure is `incomplete` with `cancelled_after_peer_failure`.
 Cloud Run therefore requires no additional object-storage permission for this
 interface.
 
@@ -460,7 +487,7 @@ starting child simulations. Unsupported automatic inputs are logged with a
 bounded reason and are not persisted.
 
 The report coordinator starts baseline and reform as independent Modal calls,
-waits for them, and derives the Stage 12 aggregate. It then restores the
+observes both until they succeed, and derives the Stage 12 aggregate. It then restores the
 production Modal function call by the retained production job identifier and
 waits up to 15 minutes for that production call to finish. It compares both
 complete aggregate result objects exactly. The private
