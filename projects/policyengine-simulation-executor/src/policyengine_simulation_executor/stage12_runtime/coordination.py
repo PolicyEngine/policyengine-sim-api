@@ -51,6 +51,11 @@ from .dependencies import (
     artifact_store,
     runtime_store,
 )
+from .failures import (
+    Stage12ExecutionError,
+    failure_detail_from_exception,
+    failure_detail_from_record,
+)
 from .output_planning import (
     plan_simulation_input,
     resolve_report_output_plan,
@@ -345,19 +350,29 @@ def coordinate_report(
             except Exception as error:
                 failed_at = datetime.now(UTC)
                 latest = persistence.get_simulation(simulation.simulation_execution_id)
+                detail = failure_detail_from_exception(
+                    error,
+                    runtime=runtime,
+                    scope="stage12_simulation_dispatch",
+                    default_code="simulation_dispatch_failed",
+                    context={
+                        "evaluation_id": str(report.evaluation_id),
+                        "simulation_role": simulation.role.value,
+                    },
+                )
                 if latest.status is not ComparisonRunLifecycleStatus.SUCCEEDED:
                     persistence.replace_simulation(
                         latest.model_copy(
                             update={
                                 "status": ComparisonRunLifecycleStatus.FAILED,
-                                "error_code": "simulation_dispatch_failed",
-                                "error_summary": type(error).__name__,
+                                "error_code": detail.error_code,
+                                "error_summary": detail.error_summary,
                                 "updated_at": failed_at,
                                 "completed_at": failed_at,
                             }
                         )
                     )
-                raise
+                raise Stage12ExecutionError(detail) from None
             calls[simulation.role.value] = call
             persistence.attach_simulation_invocation(
                 simulation.simulation_execution_id,
@@ -385,20 +400,42 @@ def coordinate_report(
                     item for item in simulations if item.role.value == role
                 )
                 child = persistence.get_simulation(simulation.simulation_execution_id)
-                if child.status is not ComparisonRunLifecycleStatus.SUCCEEDED:
+                if (
+                    child.status is ComparisonRunLifecycleStatus.FAILED
+                    and child.error_code is not None
+                ):
+                    detail = failure_detail_from_record(
+                        error_code=child.error_code,
+                        error_summary=child.error_summary,
+                    )
+                else:
+                    detail = failure_detail_from_exception(
+                        error,
+                        runtime=runtime,
+                        scope="stage12_simulation_invocation",
+                        default_code="simulation_invocation_failed",
+                        context={
+                            "evaluation_id": str(report.evaluation_id),
+                            "simulation_role": role,
+                        },
+                    )
+                if child.status not in {
+                    ComparisonRunLifecycleStatus.SUCCEEDED,
+                    ComparisonRunLifecycleStatus.FAILED,
+                }:
                     failed_at = datetime.now(UTC)
                     persistence.replace_simulation(
                         child.model_copy(
                             update={
                                 "status": ComparisonRunLifecycleStatus.FAILED,
-                                "error_code": "simulation_invocation_failed",
-                                "error_summary": type(error).__name__,
+                                "error_code": detail.error_code,
+                                "error_summary": detail.error_summary,
                                 "updated_at": failed_at,
                                 "completed_at": failed_at,
                             }
                         )
                     )
-                raise
+                raise Stage12ExecutionError(detail) from None
         baseline = descriptors["baseline"]
         reform = descriptors["reform"]
         validate_aligned_outputs(report, output_plan, baseline, reform)
@@ -483,13 +520,20 @@ def coordinate_report(
     # before returning a stable exception to Modal.
     except Exception as error:  # noqa: BLE001
         failed_at = datetime.now(UTC)
+        detail = failure_detail_from_exception(
+            error,
+            runtime=runtime,
+            scope="stage12_report_coordination",
+            default_code="report_coordination_failed",
+            context={"evaluation_id": str(report.evaluation_id)},
+        )
         persistence.replace_report(
             parent.model_copy(
                 update={
                     "status": ComparisonRunLifecycleStatus.FAILED,
                     "aggregation_status": ComparisonRunAggregationStatus.FAILED,
-                    "error_code": "report_coordination_failed",
-                    "error_summary": type(error).__name__,
+                    "error_code": detail.error_code,
+                    "error_summary": detail.error_summary,
                     "updated_at": failed_at,
                     "completed_at": failed_at,
                 }

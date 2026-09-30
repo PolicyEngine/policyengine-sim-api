@@ -38,6 +38,10 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 )
 
 from .dependencies import ComparisonStore, artifact_store, runtime_store
+from .failures import (
+    failure_detail_from_exception,
+    validate_policy_periods,
+)
 from .output_planning import apply_output_plan, validate_output_frames
 
 
@@ -385,6 +389,7 @@ def run_single_simulation(
     )
     persistence.replace_simulation(running)
     try:
+        validate_policy_periods(simulation.policy)
         input_span = (
             runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_INPUT_WRITE))
             if runtime is not None
@@ -454,15 +459,28 @@ def run_single_simulation(
     # stable exception to Modal.
     except Exception as error:  # noqa: BLE001
         failed_at = datetime.now(UTC)
-        persistence.replace_simulation(
-            running.model_copy(
-                update={
-                    "status": ComparisonRunLifecycleStatus.FAILED,
-                    "error_code": "simulation_execution_failed",
-                    "error_summary": type(error).__name__,
-                    "updated_at": failed_at,
-                    "completed_at": failed_at,
-                }
-            )
+        detail = failure_detail_from_exception(
+            error,
+            runtime=runtime,
+            scope="stage12_simulation_execution",
+            default_code="simulation_execution_failed",
+            context={
+                "evaluation_id": str(simulation.evaluation_id),
+                "simulation_execution_id": str(simulation.simulation_execution_id),
+                "simulation_role": simulation.role.value,
+            },
         )
+        latest = persistence.get_simulation(simulation.simulation_execution_id)
+        if latest.status is ComparisonRunLifecycleStatus.RUNNING:
+            persistence.replace_simulation(
+                latest.model_copy(
+                    update={
+                        "status": ComparisonRunLifecycleStatus.FAILED,
+                        "error_code": detail.error_code,
+                        "error_summary": detail.error_summary,
+                        "updated_at": failed_at,
+                        "completed_at": failed_at,
+                    }
+                )
+            )
         raise RuntimeError("Stage 12 simulation execution failed") from None

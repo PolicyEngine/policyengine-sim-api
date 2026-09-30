@@ -63,6 +63,7 @@ from policyengine_simulation_executor.stage12_runtime.aggregation import (
 from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata,
 )
+from policyengine_simulation_contract.spm import SPMInputError
 
 NOW = datetime(2026, 9, 15, tzinfo=UTC)
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -650,7 +651,59 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
     child = store.children[simulation.simulation_execution_id]
     assert child.status is ComparisonRunLifecycleStatus.FAILED
     assert child.error_code == "simulation_execution_failed"
-    assert child.error_summary == "RuntimeError"
+    assert child.error_summary.startswith("Simulation failed (correlation_id=")
+    assert "sensitive" not in child.error_summary
+
+
+def test_single_worker_preserves_typed_failure_values() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+
+    def fail(_simulation):
+        raise SPMInputError("SPM_YEAR_UNAVAILABLE", "No SPM values for 2026")
+
+    with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=fail,
+        )
+
+    child = store.children[simulation.simulation_execution_id]
+    assert child.error_code == "SPM_YEAR_UNAVAILABLE"
+    assert child.error_summary == "No SPM values for 2026"
+
+
+def test_single_worker_rejects_bare_year_policy_period_before_calculation() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE).model_copy(
+        update={
+            "policy": {"gov.irs.credits.ctc.amount.base[0].amount": {"2026": 3_000}}
+        }
+    )
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+
+    with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=lambda _: pytest.fail("calculation must not start"),
+        )
+
+    child = store.children[simulation.simulation_execution_id]
+    assert child.error_code == "invalid_policy_period"
+    assert child.error_summary == (
+        "Policy parameter 'gov.irs.credits.ctc.amount.base[0].amount' has invalid "
+        "effective period '2026'; expected YYYY-MM-DD or "
+        "YYYY-MM-DD.YYYY-MM-DD."
+    )
 
 
 def test_single_worker_rejects_frames_that_do_not_satisfy_the_output_plan() -> None:
@@ -1178,12 +1231,67 @@ def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None
 
     assert artifacts.aggregate_writes == []
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
-    assert store.parent.error_summary == "RuntimeError"
+    assert store.parent.error_summary.startswith("Simulation failed (correlation_id=")
     assert "sensitive" not in store.parent.error_summary
     failed_child = store.children[REFORM_ID]
     assert failed_child.status is ComparisonRunLifecycleStatus.FAILED
     assert failed_child.error_code == "simulation_invocation_failed"
-    assert failed_child.error_summary == "RuntimeError"
+    assert failed_child.error_summary == store.parent.error_summary
+
+
+def test_coordinator_propagates_an_already_persisted_child_failure() -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+
+    class PersistedFailureCall:
+        object_id = "call-reform"
+
+        def get(self, *, timeout=None):
+            child = store.children[REFORM_ID]
+            failed_at = datetime.now(UTC)
+            store.replace_simulation(
+                child.model_copy(
+                    update={
+                        "status": ComparisonRunLifecycleStatus.FAILED,
+                        "error_code": "invalid_policy_period",
+                        "error_summary": "The reform period is invalid.",
+                        "updated_at": failed_at,
+                        "completed_at": failed_at,
+                    }
+                )
+            )
+            raise RuntimeError("remote wrapper must not replace the child failure")
+
+    class PersistedFailureInvoker:
+        def spawn(self, *, simulation, **_):
+            parsed = PlannedSimulationExecutionInput.model_validate(simulation)
+            if parsed.role is SimulationRole.REFORM:
+                return PersistedFailureCall()
+            descriptor = artifacts.add_simulation(parsed, _frames(100.0))
+            return ImmediateCall(
+                "call-baseline", descriptor.model_dump(mode="json"), []
+            )
+
+        def restore(self, invocation_id):
+            raise AssertionError(f"unexpected restored invocation {invocation_id}")
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=PersistedFailureInvoker(),
+            aggregator=lambda **_: {"must": "not run"},
+        )
+
+    assert store.children[REFORM_ID].error_code == "invalid_policy_period"
+    assert store.children[REFORM_ID].error_summary == "The reform period is invalid."
+    assert store.parent.error_code == "invalid_policy_period"
+    assert store.parent.error_summary == "The reform period is invalid."
 
 
 @pytest.mark.parametrize(
@@ -1237,7 +1345,7 @@ def test_coordinator_records_failure_when_child_persistence_fails() -> None:
 
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_code == "report_coordination_failed"
-    assert store.parent.error_summary == "RuntimeError"
+    assert store.parent.error_summary.startswith("Simulation failed (correlation_id=")
 
 
 def test_coordinator_rejects_incompatible_row_identity() -> None:
@@ -1371,7 +1479,8 @@ def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
     assert invoker.events == ["spawn:baseline", "spawn:reform"]
     assert artifacts.aggregate_writes == []
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
-    assert store.parent.error_summary == "TimeoutError"
+    assert store.parent.error_summary.startswith("Simulation failed (correlation_id=")
     timed_out_child = store.children[BASELINE_ID]
     assert timed_out_child.status is ComparisonRunLifecycleStatus.FAILED
-    assert timed_out_child.error_summary == "TimeoutError"
+    assert timed_out_child.error_code == "simulation_invocation_failed"
+    assert timed_out_child.error_summary == store.parent.error_summary
