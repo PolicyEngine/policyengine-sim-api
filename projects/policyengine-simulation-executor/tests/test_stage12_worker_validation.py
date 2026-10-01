@@ -16,7 +16,7 @@ from policyengine_simulation_executor.stage12_worker_validation import (
 
 def _environment() -> dict[str, str]:
     return {
-        "HF_TOKEN": "test-token",
+        "HUGGING_FACE_TOKEN": "test-token",
         "GOOGLE_APPLICATION_CREDENTIALS_JSON": "{}",
         "STAGE12_DATABASE_URL": "postgresql://runtime:secret@db.example/postgres",
         "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
@@ -87,11 +87,11 @@ def test_uk_validation_loads_packaged_local_authority_resources() -> None:
         dataset_path_resolver=lambda _: "/installed/enhanced_frs_2024_25.h5",
         dataset_check=lambda *_: None,
         calculation_check=lambda _: None,
-        local_authority_resource_check=lambda: checks.append("resources-loaded"),
+        local_authority_resource_check=lambda path: checks.append(path),
     )
 
     assert result["validated"] is True
-    assert checks == ["resources-loaded"]
+    assert checks == ["/installed/enhanced_frs_2024_25.h5"]
 
 
 def test_validation_rejects_digest_mismatch_before_dataset_access() -> None:
@@ -117,17 +117,17 @@ def test_validation_rejects_digest_mismatch_before_dataset_access() -> None:
             "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
         },
         {
-            "HF_TOKEN": "test-token",
+            "HUGGING_FACE_TOKEN": "test-token",
             "STAGE12_DATABASE_URL": "postgresql://runtime:secret@db.example/postgres",
             "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
         },
         {
-            "HF_TOKEN": "test-token",
+            "HUGGING_FACE_TOKEN": "test-token",
             "GOOGLE_APPLICATION_CREDENTIALS_JSON": "{}",
             "STAGE12_ARTIFACT_BUCKET": "policyengine-stage12-staging",
         },
         {
-            "HF_TOKEN": "test-token",
+            "HUGGING_FACE_TOKEN": "test-token",
             "GOOGLE_APPLICATION_CREDENTIALS_JSON": "{}",
             "STAGE12_DATABASE_URL": "postgresql://runtime:secret@db.example/postgres",
         },

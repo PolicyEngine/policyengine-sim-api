@@ -32,6 +32,7 @@ from policyengine_simulation_executor.release_bundle import (
 from src.modal._image_setup import fetch_artifacts, snapshot_models
 from src.modal.bundle_data import bundle_data_install_command
 from src.modal.logging_redaction import redact_params_for_logging
+from src.modal.static_runtime_files import add_static_runtime_files
 
 
 def _version_from_env_or_local_bundle_package(env_var: str, package: str) -> str:
@@ -108,7 +109,7 @@ gcp_secret = modal.Secret.from_name("gcp-credentials", environment_name="main")
 data_secret = modal.Secret.from_name("policyengine-data-credentials")
 hf_secret = modal.Secret.from_name(
     "huggingface-token",
-    required_keys=["HF_TOKEN"],
+    required_keys=["HUGGING_FACE_TOKEN"],
 )
 OBSERVABILITY_ENV = modal_image_environment()
 
@@ -222,17 +223,16 @@ def build_base_simulation_image() -> modal.Image:
 
 
 # Heavy image with model snapshot for simulation
-simulation_image = (
-    build_base_simulation_image()
-    .add_local_python_source(
+simulation_image = add_static_runtime_files(
+    build_base_simulation_image().add_local_python_source(
         "src.modal",
         "policyengine_simulation_executor",
         "policyengine_simulation_observability",
         "policyengine_simulation_contract",
         copy=True,
-    )
-    .run_function(snapshot_models)
-)
+    ),
+    uv_project_dir=_UV_PROJECT_DIR,
+).run_function(snapshot_models)
 
 
 def _configure_modal_observability(

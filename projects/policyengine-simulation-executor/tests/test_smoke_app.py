@@ -4,16 +4,25 @@ import importlib
 import sys
 
 import pytest
+from policyengine_simulation_contract.uk_geography import (
+    UKLocalAuthorityBoundaryVersion,
+    UKLocalAuthorityMetadata,
+)
 
 from fixtures.fake_modal import install_fake_modal
 
 
 @pytest.fixture
-def summarize_bundle_status(monkeypatch):
+def smoke_module(monkeypatch):
     install_fake_modal(monkeypatch)
     sys.modules.pop("src.modal.app", None)
     sys.modules.pop("src.modal.smoke_app", None)
-    return importlib.import_module("src.modal.smoke_app")._summarize_bundle_status
+    return importlib.import_module("src.modal.smoke_app")
+
+
+@pytest.fixture
+def summarize_bundle_status(smoke_module):
+    return smoke_module._summarize_bundle_status
 
 
 def _passing_status() -> dict:
@@ -81,3 +90,27 @@ def test_bundle_status_summary_rejects_mismatch_or_incomplete_install(
 
     with pytest.raises(RuntimeError, match="runtime bundle validation failed"):
         summarize_bundle_status(status)
+
+
+def test_uk_dataset_smoke_validates_installed_codes_against_packaged_resources(
+    monkeypatch,
+    smoke_module,
+) -> None:
+    observed: list[str] = []
+
+    monkeypatch.setattr(
+        smoke_module,
+        "resolve_local_bundle_dataset_path",
+        lambda country, requested: "/installed/enhanced_frs_2024_25.h5",
+    )
+    monkeypatch.setattr(
+        smoke_module,
+        "detect_uk_local_authority_metadata_from_hdf",
+        lambda path: observed.append(path)
+        or UKLocalAuthorityMetadata(
+            boundary_version=UKLocalAuthorityBoundaryVersion.LAD22
+        ),
+    )
+
+    assert smoke_module._validate_installed_uk_local_authority_dataset() == "lad22"
+    assert observed == ["/installed/enhanced_frs_2024_25.h5"]

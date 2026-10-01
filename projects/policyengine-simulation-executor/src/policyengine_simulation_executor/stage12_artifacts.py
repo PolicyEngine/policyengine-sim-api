@@ -22,9 +22,9 @@ from policyengine_simulation_contract.stage12_execution import (
     ResultComparisonArtifactPayload,
     RowIdentity,
     SimulationArtifactDescriptor,
-    UKLocalAuthorityMetadata,
     stage12_output_plan_sha256,
 )
+from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 from pydantic import JsonValue
 
 from policyengine_simulation_executor.artifact_store import ArtifactStore

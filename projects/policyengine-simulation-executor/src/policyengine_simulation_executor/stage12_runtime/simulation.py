@@ -19,9 +19,9 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationArtifactDescriptor,
     SimulationExecutionInput,
     Stage12InvocationContext,
-    UKLocalAuthorityMetadata,
     stage12_output_plan_sha256,
 )
+from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
     Stage,
@@ -32,6 +32,9 @@ from policyengine_simulation_executor.stage12_artifacts import (
     canonical_json_bytes,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+from policyengine_simulation_executor.uk_local_authority_metadata import (
+    detect_uk_local_authority_metadata,
+)
 
 from .dependencies import ComparisonStore, artifact_store, runtime_store
 from .output_planning import apply_output_plan, validate_output_frames
@@ -42,31 +45,6 @@ class SimulationCalculation:
     frames: Mapping[str, pd.DataFrame]
     calculation_provenance: dict[str, Any] | None = None
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
-
-
-def _detect_uk_local_authority_metadata(
-    country: CountryId,
-    dataset: object,
-) -> UKLocalAuthorityMetadata | None:
-    """Inspect a complete dataset before any requested regional scoping."""
-
-    if country != "uk":
-        return None
-    data = getattr(dataset, "data", None)
-    entity_data = getattr(data, "entity_data", None)
-    if not isinstance(entity_data, Mapping):
-        raise TypeError("UK dataset contains no entity tables")
-    household = entity_data.get("household")
-    if household is None:
-        raise ValueError("UK dataset contains no household table")
-    household_frame = pd.DataFrame(household)
-    if "la_code_oa" not in household_frame:
-        raise ValueError("UK dataset household table contains no la_code_oa column")
-    from .uk_local_authority_metadata import detect_uk_local_authority_boundary_version
-
-    return detect_uk_local_authority_boundary_version(
-        household_frame["la_code_oa"].tolist()
-    )
 
 
 def simulation_input_sha256(simulation: SimulationExecutionInput) -> str:
@@ -201,7 +179,7 @@ def calculate_simulation_frames(
                 selection=dataset_selection,
                 country_module=country_module,
             )
-        uk_local_authority_metadata = _detect_uk_local_authority_metadata(
+        uk_local_authority_metadata = detect_uk_local_authority_metadata(
             country,
             dataset,
         )

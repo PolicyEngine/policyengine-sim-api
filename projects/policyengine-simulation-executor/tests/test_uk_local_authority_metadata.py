@@ -1,18 +1,22 @@
-"""Tests for packaged Stage 12 UK local-authority display metadata."""
+"""Tests for packaged UK local-authority display metadata."""
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pandas as pd
 import pytest
 
-from policyengine_simulation_contract.stage12_execution import (
+from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
 )
 
-from policyengine_simulation_executor.stage12_runtime.uk_local_authority_metadata import (
+from policyengine_simulation_executor.uk_local_authority_metadata import (
+    detect_uk_local_authority_metadata,
     detect_uk_local_authority_boundary_version,
+    detect_uk_local_authority_metadata_from_hdf,
     load_uk_local_authority_resources,
 )
-
 
 LAD22_ONLY_CODES = {
     "E07000026",
@@ -94,6 +98,60 @@ def test_detector_identifies_lad23_from_a_successor_code() -> None:
     assert metadata.boundary_version is UKLocalAuthorityBoundaryVersion.LAD23
 
 
+def test_detector_ignores_missing_values_while_identifying_boundary_version() -> None:
+    metadata = detect_uk_local_authority_boundary_version(
+        [None, "", "  ", b"", float("nan"), pd.NA, "E07000026"]
+    )
+
+    assert metadata.boundary_version is UKLocalAuthorityBoundaryVersion.LAD22
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        ("E07000026", UKLocalAuthorityBoundaryVersion.LAD22),
+        ("E06000063", UKLocalAuthorityBoundaryVersion.LAD23),
+    ],
+)
+def test_dataset_detector_reads_the_complete_uk_household_table(
+    code: str,
+    expected: UKLocalAuthorityBoundaryVersion,
+) -> None:
+    dataset = SimpleNamespace(
+        data=SimpleNamespace(
+            entity_data={"household": pd.DataFrame({"la_code_oa": ["E06000001", code]})}
+        )
+    )
+
+    metadata = detect_uk_local_authority_metadata("uk", dataset)
+
+    assert metadata is not None
+    assert metadata.boundary_version is expected
+
+
+def test_dataset_detector_skips_non_uk_datasets() -> None:
+    assert detect_uk_local_authority_metadata("us", object()) is None
+
+
+def test_installed_hdf_detector_reads_local_authority_codes(tmp_path) -> None:
+    dataset_path = tmp_path / "uk-dataset.h5"
+    pd.DataFrame(
+        {
+            "household_id": [1, 2],
+            "la_code_oa": ["E06000001", "E07000026"],
+        }
+    ).to_hdf(
+        dataset_path,
+        key="household",
+        format="table",
+        data_columns=True,
+    )
+
+    metadata = detect_uk_local_authority_metadata_from_hdf(str(dataset_path))
+
+    assert metadata.boundary_version is UKLocalAuthorityBoundaryVersion.LAD22
+
+
 def test_detector_rejects_mixed_authority_configurations() -> None:
     with pytest.raises(ValueError, match="mixes LAD22 and LAD23"):
         detect_uk_local_authority_boundary_version(["E07000026", "E06000063"])
@@ -104,7 +162,10 @@ def test_detector_rejects_an_unidentifiable_configuration() -> None:
         detect_uk_local_authority_boundary_version(["E06000001", "S12000033"])
 
 
-@pytest.mark.parametrize("value", [None, "", "UNKNOWN", "E06000999"])
+@pytest.mark.parametrize(
+    "value",
+    [None, "", "  ", b"", float("nan"), pd.NA, "UNKNOWN", "E06000999"],
+)
 def test_detector_rejects_missing_or_unsupported_codes(value: object) -> None:
     with pytest.raises((TypeError, ValueError), match="local-authority code"):
         detect_uk_local_authority_boundary_version([value])

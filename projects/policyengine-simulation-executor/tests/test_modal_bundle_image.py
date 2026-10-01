@@ -74,7 +74,7 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     )
     assert app.hf_secret == {
         "args": ("huggingface-token",),
-        "kwargs": {"required_keys": ["HF_TOKEN"]},
+        "kwargs": {"required_keys": ["HUGGING_FACE_TOKEN"]},
     }
     assert command_calls[0][2]["secrets"] == [app.data_secret, app.hf_secret]
     uv_sync_calls = [
@@ -211,7 +211,27 @@ def test_modal_image_fetches_artifacts_between_env_and_local_source(monkeypatch)
         for index, call in enumerate(calls)
         if call[0] == "run_function" and call[1] == "snapshot_models"
     )
-    assert env_index < fetch_indices[0] < local_source_index < snapshot_index
+    static_files_index = next(
+        index for index, call in enumerate(calls) if call[0] == "add_local_dir"
+    )
+    assert (
+        env_index
+        < fetch_indices[0]
+        < local_source_index
+        < static_files_index
+        < snapshot_index
+    )
+    static_files = calls[static_files_index]
+    assert Path(static_files[1]) == (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "policyengine_simulation_executor"
+        / "static_runtime_files"
+    )
+    assert static_files[2] == (
+        "/root/policyengine_simulation_executor/static_runtime_files"
+    )
+    assert static_files[3] == {"copy": True}
 
     # The shared libs ship into the image as mounted source; dropping one
     # from this tuple crashes workers at import time.

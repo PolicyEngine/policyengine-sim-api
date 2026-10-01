@@ -1,17 +1,17 @@
-"""Packaged UK local-authority display metadata for temporary Stage 12 output."""
+"""Packaged UK local-authority metadata shared by all simulation workers."""
 
 from __future__ import annotations
 
 import csv
+import math
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
 from types import MappingProxyType
-from typing import Mapping
-
-from policyengine_simulation_contract.stage12_execution import (
+import pandas as pd
+from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
@@ -189,7 +189,7 @@ def _load_coordinates(filename: str) -> Mapping[str, LocalAuthorityCoordinate]:
 
 @lru_cache(maxsize=1)
 def load_uk_local_authority_resources() -> UKLocalAuthorityResources:
-    """Load and validate every packaged Stage 12 local-authority resource."""
+    """Load and validate every packaged local-authority resource."""
 
     names = _load_names()
     lad22 = _load_coordinates("coordinates_lad22.csv")
@@ -220,7 +220,11 @@ def load_uk_local_authority_resources() -> UKLocalAuthorityResources:
     )
 
 
-def _normalise_observed_code(value: object) -> str:
+def _normalise_observed_code(value: object) -> str | None:
+    if value is None or value is pd.NA:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
     if isinstance(value, bytes):
         try:
             code = value.decode("utf-8").strip()
@@ -232,6 +236,8 @@ def _normalise_observed_code(value: object) -> str:
         code = value.strip()
     else:
         raise TypeError("UK dataset contains a non-text local-authority code")
+    if not code:
+        return None
     if not _CODE_PATTERN.fullmatch(code):
         raise ValueError(f"UK dataset contains invalid local-authority code {code!r}")
     return code
@@ -242,7 +248,11 @@ def detect_uk_local_authority_boundary_version(
 ) -> UKLocalAuthorityMetadata:
     """Identify LAD22 or LAD23 from the unscoped dataset's authority codes."""
 
-    observed_codes = frozenset(_normalise_observed_code(value) for value in values)
+    observed_codes = frozenset(
+        code
+        for value in values
+        if (code := _normalise_observed_code(value)) is not None
+    )
     if not observed_codes:
         raise ValueError("UK dataset contains no local-authority codes")
     supported_codes = load_uk_local_authority_resources().names.keys()
@@ -265,3 +275,56 @@ def detect_uk_local_authority_boundary_version(
             "UK dataset local-authority configuration cannot be identified"
         )
     return UKLocalAuthorityMetadata(boundary_version=matches[0].boundary_version)
+
+
+def detect_uk_local_authority_metadata(
+    country: str,
+    dataset: object,
+) -> UKLocalAuthorityMetadata | None:
+    """Inspect a complete dataset before any requested regional scoping."""
+
+    if country != "uk":
+        return None
+    data = getattr(dataset, "data", None)
+    entity_data = getattr(data, "entity_data", None)
+    if not isinstance(entity_data, Mapping):
+        raise TypeError("UK dataset contains no entity tables")
+    household = entity_data.get("household")
+    if household is None:
+        raise ValueError("UK dataset contains no household table")
+    household_frame = pd.DataFrame(household)
+    if "la_code_oa" not in household_frame:
+        raise ValueError("UK dataset household table contains no la_code_oa column")
+    return detect_uk_local_authority_boundary_version(
+        household_frame["la_code_oa"].tolist()
+    )
+
+
+def detect_uk_local_authority_metadata_from_hdf(
+    dataset_path: str,
+) -> UKLocalAuthorityMetadata:
+    """Validate an installed UK HDF dataset against the packaged metadata."""
+
+    observed_codes: set[object] = set()
+    with pd.HDFStore(dataset_path, mode="r") as store:
+        if "/household" not in store.keys():
+            raise ValueError("UK dataset contains no household table")
+        try:
+            chunks = store.select(
+                "household",
+                columns=["la_code_oa"],
+                chunksize=100_000,
+            )
+            for chunk in chunks:
+                if "la_code_oa" not in chunk:
+                    raise ValueError(
+                        "UK dataset household table contains no la_code_oa column"
+                    )
+                observed_codes.update(chunk["la_code_oa"].drop_duplicates().tolist())
+        except (KeyError, TypeError, ValueError) as error:
+            if "la_code_oa" in str(error):
+                raise ValueError(
+                    "UK dataset household table contains no la_code_oa column"
+                ) from error
+            raise
+    return detect_uk_local_authority_boundary_version(observed_codes)

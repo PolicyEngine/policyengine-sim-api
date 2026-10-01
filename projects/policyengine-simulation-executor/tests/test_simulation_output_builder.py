@@ -62,6 +62,7 @@ from policyengine_simulation_executor.simulation_macro_output import (
     DecileOutput,
     DetailedBudgetOutput,
     CongressionalDistrictImpactOutput,
+    GeographicImpactOutput,
     GenderPovertyOutput,
     InequalityOutput,
     IntraDecileOutput,
@@ -77,6 +78,10 @@ from policyengine_simulation_executor.simulation_output_geographic import (
 )
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
+)
+from policyengine_simulation_contract.uk_geography import (
+    UKLocalAuthorityBoundaryVersion,
+    UKLocalAuthorityMetadata,
 )
 
 
@@ -199,6 +204,7 @@ def _simulation_output_builder(
     analysis=None,
     include_cliffs: bool | None = None,
     resolved_region_code: str | None = "us",
+    uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> SimulationOutputBuilder:
     analysis = analysis or fake_analysis()
 
@@ -229,6 +235,7 @@ def _simulation_output_builder(
         baseline=baseline,
         reform=reform,
         resolved_region_code=resolved_region_code,
+        uk_local_authority_metadata=uk_local_authority_metadata,
     )
 
 
@@ -1120,6 +1127,7 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
             "resolved_data_version": None,
             "resolved_region_code": "us",
             "runtime": runtime,
+            "uk_local_authority_metadata": None,
         }
     ]
 
@@ -1201,6 +1209,56 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
     assert len(load_selections) == 1
     assert build_calls[0][4] is load_selections[0]
     assert build_calls[1][4] is load_selections[0]
+
+
+def test_run_simulation_impl_core_passes_detected_uk_boundary_to_builder(monkeypatch):
+    dataset = SimpleNamespace(
+        data=SimpleNamespace(
+            entity_data={
+                "household": pd.DataFrame({"la_code_oa": ["E06000001", "E07000026"]})
+            }
+        )
+    )
+    country_module = SimpleNamespace(model=SimpleNamespace(version="2.90.0"))
+    builder_calls: list[dict] = []
+
+    class FakeSimulationOutputBuilder:
+        def __init__(self, **kwargs):
+            builder_calls.append(kwargs)
+
+        def serialize(self):
+            return dict(CURRENT_SINGLE_YEAR_MACRO_RESULT)
+
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._country_module",
+        lambda country: country_module,
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._resolve_region",
+        lambda **kwargs: RegionResolution(code="uk", dataset_reference=None),
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._load_dataset",
+        lambda params, country_module, selection: dataset,
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._build_simulation",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime.SimulationOutputBuilder",
+        FakeSimulationOutputBuilder,
+    )
+
+    _run_simulation_impl_core(
+        {"country": "uk", "baseline": {}, "reform": {}},
+        runtime=_TrackingRuntime(),
+    )
+
+    metadata = builder_calls[0]["uk_local_authority_metadata"]
+    assert metadata == UKLocalAuthorityMetadata(
+        boundary_version=UKLocalAuthorityBoundaryVersion.LAD22
+    )
 
 
 def test_resolve_dataset_reference_uses_bundle_default():
@@ -1733,41 +1791,43 @@ def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
     )
 
 
-def test_uk_local_authority_impact_uses_policyengine_output_function(monkeypatch):
+def test_uk_local_authority_impact_receives_detected_boundary_metadata(monkeypatch):
     baseline = object()
     reform = object()
     expected = [_local_authority_impact_record().model_dump(mode="json")]
-
-    def fake_output_module_function(module_name, name):
-        assert module_name == "local_authority_impact"
-        assert name == "compute_uk_local_authority_impacts"
-
-        def compute(baseline_simulation, reform_simulation, **kwargs):
-            assert baseline_simulation is baseline
-            assert reform_simulation is reform
-            assert kwargs == {
-                "local_authority_csv_path": "/tmp/local_authorities_2021.csv",
-                "download_missing_assets": False,
-            }
-            return SimpleNamespace(local_authority_results=expected)
-
-        return compute
-
-    monkeypatch.setattr(
-        "policyengine_simulation_executor.simulation_output_geographic._output_module_function",
-        fake_output_module_function,
+    metadata = UKLocalAuthorityMetadata(
+        boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
     )
+    calls: list[tuple[object, object, UKLocalAuthorityMetadata | None]] = []
+
+    def build(country, baseline_simulation, reform_simulation, **kwargs):
+        if country != "uk":
+            return None
+        assert country == "uk"
+        calls.append(
+            (
+                baseline_simulation,
+                reform_simulation,
+                kwargs["uk_local_authority_metadata"],
+            )
+        )
+        return GeographicImpactOutput.model_validate(expected)
+
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_geographic."
-        "_required_uk_geography_lookup_csv_path",
-        lambda spec: "/tmp/local_authorities_2021.csv",
+        "build_uk_local_authority_impact",
+        build,
     )
 
     result = _simulation_output_builder(
-        "uk", baseline, reform
+        "uk",
+        baseline,
+        reform,
+        uk_local_authority_metadata=metadata,
     )._build_uk_local_authority_impact()
     assert result is not None
     assert result.model_dump(mode="json") == expected
+    assert calls == [(baseline, reform, metadata)]
     assert (
         _simulation_output_builder(
             "us", baseline, reform

@@ -71,7 +71,7 @@ uv run modal secret create gcp-credentials \
 # Sync Hugging Face token for private certified datasets used during bundle
 # image build and worker runtime.
 uv run modal secret create huggingface-token \
-  "HF_TOKEN=$HF_TOKEN" \
+  "HUGGING_FACE_TOKEN=$HF_TOKEN" \
   --env="$MODAL_ENV" \
   --force
 
