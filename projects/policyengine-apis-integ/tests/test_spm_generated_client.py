@@ -42,17 +42,32 @@ def test_generated_capability_keeps_and_enforces_contract_version():
         SPMCapability.from_dict({**capability, "contract_version": "unknown-v2"})
 
 
-def test_generated_receipts_preserve_arbitrary_dated_metadata():
+def test_generated_receipts_use_only_compact_typed_metadata():
     receipt = {
+        "schema_version": "canonical-spm-provenance-v2",
         "forecast_id": "test-only",
         "forecast_sha256": "a" * 64,
         "scenario": "ce_trend",
         "geography_kind": "national",
-        "runtime_versions": {"policyengine-us": "test-only", "optional": None},
-        "years": {"2026": {"status": "forecast", "window": [2021, 2025]}},
-        "geographies": [{"year": 2026, "county_assignment": None}],
-        "composition_method": "test-only",
-        "storage_method": "test-only",
+        "geography_id": None,
+        "county_vintage": "2020",
+        "as_of": None,
+        "years": ["2026"],
+        "runtime_versions": {
+            "policyengine": "6.2.1",
+            "policyengine-core": "3.32.10",
+            "policyengine-us": "2.2.1",
+            "spm-calculator": "1.0.0",
+        },
     }
-    provenance = {"baseline": [receipt], "reform": [receipt]}
+    provenance = {
+        "schema_version": "canonical-spm-comparison-v2",
+        "baseline": {"receipt": receipt, "execution_count": 20},
+        "reform": {"receipt": receipt, "execution_count": 20},
+    }
     assert SPMComparisonProvenance.from_dict(provenance).to_dict() == provenance
+
+
+def test_generated_comparison_rejects_old_receipt_lists():
+    with pytest.raises((KeyError, TypeError, ValueError)):
+        SPMComparisonProvenance.from_dict({"baseline": [], "reform": []})

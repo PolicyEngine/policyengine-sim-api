@@ -204,6 +204,8 @@ def build_spm_provenance(
     """Build one compact receipt from resolved calculation inputs."""
 
     _require_complete_selection(selection)
+    assert selection.forecast_content_sha256 is not None
+    assert selection.scenario is not None
     if forecast_sha256 != selection.forecast_content_sha256:
         raise ValueError("SPM receipt artifact hash differs from the selection")
     return SPMProvenance(
@@ -215,9 +217,7 @@ def build_spm_provenance(
         geography_id=selection.geography_id,
         county_vintage=selection.county_vintage,
         as_of=(
-            date.fromisoformat(selection.as_of)
-            if selection.as_of is not None
-            else None
+            date.fromisoformat(selection.as_of) if selection.as_of is not None else None
         ),
         years=tuple(years),
         runtime_versions=runtime_versions,

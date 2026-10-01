@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
+from io import BytesIO
 from unittest.mock import patch
 from uuid import UUID
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 import pytest
 from policyengine_simulation_contract.stage12_execution import (
     UKLocalAuthorityBoundaryVersion,
@@ -19,6 +22,7 @@ from policyengine_simulation_contract.spm import (
     build_spm_calculation_provenance,
     build_spm_provenance,
 )
+from pydantic import ValidationError
 
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
@@ -110,6 +114,26 @@ def test_parquet_retains_detached_calculation_provenance() -> None:
     )
 
     assert deserialize_calculation_provenance(payload) == provenance
+
+
+def test_parquet_rejects_old_rich_calculation_provenance() -> None:
+    payload, _ = serialize_simulation_frames(_frames())
+    table = pq.read_table(BytesIO(payload))
+    metadata = dict(table.schema.metadata or {})
+    metadata[b"policyengine.stage12.calculation_provenance"] = json.dumps(
+        {
+            "spm_config": {"scenario": "official"},
+            "spm_provenance": {
+                "forecast_id": "old-rich-receipt",
+                "geographies": [],
+            },
+        }
+    ).encode()
+    output = BytesIO()
+    pq.write_table(table.replace_schema_metadata(metadata), output)
+
+    with pytest.raises(ValidationError):
+        deserialize_calculation_provenance(output.getvalue())
 
 
 def test_parquet_retains_typed_uk_local_authority_metadata() -> None:

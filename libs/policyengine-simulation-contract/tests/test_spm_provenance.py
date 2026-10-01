@@ -73,6 +73,7 @@ def test_compact_receipt_has_exact_public_shape() -> None:
     [
         {"forecast_sha256": "A" * 64},
         {"forecast_sha256": "a" * 63},
+        {"forecast_id": "forecast with spaces"},
         {"years": ["2027", "2026"]},
         {"years": ["2026", "2026"]},
         {"years": ["26"]},
@@ -106,6 +107,20 @@ def test_compact_receipt_rejects_old_rich_shape() -> None:
 
     with pytest.raises(ValidationError):
         SPMProvenance.model_validate(old)
+
+
+def test_compact_receipt_serializes_as_of_as_an_iso_date() -> None:
+    dated = build_spm_provenance(
+        forecast_id="forecast-2026",
+        forecast_sha256="a" * 64,
+        selection=SELECTION.model_copy(
+            update={"as_of": "2026-09-09"},
+        ),
+        years=("2026",),
+        runtime_versions=VERSIONS,
+    )
+
+    assert dated.model_dump(mode="json", by_alias=True)["as_of"] == "2026-09-09"
 
 
 def test_builder_requires_receipt_to_match_resolved_selection() -> None:
