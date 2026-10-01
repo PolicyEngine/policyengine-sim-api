@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import pandas as pd
 from policyengine_observability import (
@@ -208,10 +208,7 @@ def _descriptor(
         output_plan_sha256=stage12_output_plan_sha256(simulation.output_plan),
         row_identity=row_identity,
         bundle=simulation.bundle,
-        calculation_provenance=cast(
-            dict[str, Any] | None,
-            calculation.calculation_provenance,
-        ),
+        calculation_provenance=calculation.calculation_provenance,
     )
 
 

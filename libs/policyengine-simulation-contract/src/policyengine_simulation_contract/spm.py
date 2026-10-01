@@ -98,7 +98,7 @@ class SPMSelection(BaseModel):
 
 
 class SPMResolvedConfiguration(BaseModel):
-    """The complete six-field SPM selection recorded beside a receipt."""
+    """An internal complete SPM selection derived from a compact receipt."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -211,20 +211,6 @@ class SPMRuntimeVersions(BaseModel):
     spm_calculator: str = Field(min_length=1, alias="spm-calculator")
 
 
-class SPMCalculationProvenance(BaseModel):
-    """One compact receipt stored with an internal calculation artifact."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    spm_provenance: SPMProvenance
-
-    @property
-    def spm_config(self) -> SPMResolvedConfiguration:
-        """Derive internal resolved configuration from the canonical receipt."""
-
-        return _resolved_spm_configuration_from_provenance(self.spm_provenance)
-
-
 def _require_complete_selection(selection: SPMSelection) -> None:
     required = set(SPMSelection.model_fields)
     missing = required.difference(selection.model_fields_set)
@@ -302,12 +288,12 @@ def build_spm_provenance(
     )
 
 
-def build_spm_calculation_provenance(
+def validate_spm_calculation_provenance(
     *,
     config: SPMSelection,
     receipt: SPMProvenance,
-) -> SPMCalculationProvenance:
-    """Pair a resolved selection with a matching compact receipt."""
+) -> SPMProvenance:
+    """Validate and return the sole compact receipt for a calculation."""
 
     resolved = _resolved_spm_configuration(config)
     receipt_configuration = _resolved_spm_configuration_from_provenance(receipt)
@@ -316,7 +302,7 @@ def build_spm_calculation_provenance(
             raise ValueError(
                 f"SPM receipt {field_name} differs from the resolved selection"
             )
-    return SPMCalculationProvenance(spm_provenance=receipt)
+    return receipt
 
 
 SPM_CONTRACT_VERSION = "canonical-spm-v1"
@@ -400,6 +386,12 @@ class SPMComparisonProvenance(BaseModel):
     schema_version: Literal["canonical-spm-comparison-v2"]
     baseline: SPMExecutionProvenance
     reform: SPMExecutionProvenance
+
+    @model_validator(mode="after")
+    def validate_compatible_receipts(self) -> "SPMComparisonProvenance":
+        if self.baseline.receipt != self.reform.receipt:
+            raise ValueError("baseline and reform SPM receipts differ")
+        return self
 
 
 def _collapse_spm_receipts(
@@ -538,7 +530,7 @@ def validate_spm_result(
                 ) from exc
             raise
         for execution in (provenance.baseline, provenance.reform):
-            build_spm_calculation_provenance(
+            validate_spm_calculation_provenance(
                 config=SPMSelection.model_validate(chosen.model_dump(mode="json")),
                 receipt=execution.receipt,
             )

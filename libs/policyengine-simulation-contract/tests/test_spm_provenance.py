@@ -6,17 +6,14 @@ import pytest
 from pydantic import ValidationError
 
 from policyengine_simulation_contract.spm import (
-    SPMCalculationProvenance,
     SPMComparisonProvenance,
     SPMProvenance,
-    SPMResolvedConfiguration,
     SPMRuntimeVersions,
     SPMSelection,
-    build_spm_calculation_provenance,
     build_spm_comparison_provenance,
     build_spm_provenance,
+    validate_spm_calculation_provenance,
 )
-
 
 SELECTION = SPMSelection(
     forecast_content_sha256="a" * 64,
@@ -156,37 +153,31 @@ def test_builder_requires_receipt_to_match_resolved_selection() -> None:
 
 
 def test_calculation_builder_requires_complete_matching_config() -> None:
-    calculated = build_spm_calculation_provenance(
+    calculated = validate_spm_calculation_provenance(
         config=SELECTION,
         receipt=receipt(),
     )
-    assert isinstance(calculated, SPMCalculationProvenance)
-    assert isinstance(calculated.spm_config, SPMResolvedConfiguration)
-    assert calculated.spm_config.model_dump(mode="json") == {
-        **SELECTION.model_dump(mode="json"),
-        "geography_id": None,
-        "as_of": None,
-    }
-    assert calculated.model_dump(mode="json", by_alias=True) == {
-        "spm_provenance": receipt().model_dump(mode="json", by_alias=True)
-    }
+    assert calculated == receipt()
+    assert calculated.model_dump(mode="json", by_alias=True) == receipt().model_dump(
+        mode="json", by_alias=True
+    )
 
     with pytest.raises(ValueError, match="scenario"):
-        build_spm_calculation_provenance(
+        validate_spm_calculation_provenance(
             config=SELECTION.model_copy(update={"scenario": "zero_real"}),
             receipt=receipt(),
         )
 
 
 def test_calculation_provenance_rejects_legacy_sibling_config() -> None:
-    calculated = build_spm_calculation_provenance(
+    calculated = validate_spm_calculation_provenance(
         config=SELECTION,
         receipt=receipt(),
     ).model_dump(mode="json", by_alias=True)
     calculated["spm_config"] = SELECTION.model_dump(mode="json")
 
     with pytest.raises(ValidationError):
-        SPMCalculationProvenance.model_validate(calculated)
+        SPMProvenance.model_validate(calculated)
 
 
 def test_comparison_collapses_identical_children_and_counts_them() -> None:
@@ -218,6 +209,17 @@ def test_comparison_rejects_missing_or_mismatched_children() -> None:
             baseline_receipts=[receipt()],
             reform_receipts=[receipt(year="2027")],
         )
+
+
+def test_comparison_model_rejects_mismatched_receipts() -> None:
+    comparison = build_spm_comparison_provenance(
+        baseline_receipts=[receipt()],
+        reform_receipts=[receipt()],
+    ).model_dump(mode="json", by_alias=True)
+    comparison["reform"]["receipt"]["years"] = ["2027"]
+
+    with pytest.raises(ValidationError, match="baseline and reform"):
+        SPMComparisonProvenance.model_validate(comparison)
 
 
 def test_comparison_contract_rejects_old_receipt_lists() -> None:

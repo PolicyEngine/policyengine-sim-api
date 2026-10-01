@@ -6,12 +6,11 @@ from functools import lru_cache
 
 from policyengine_simulation_contract.spm import (
     SPMCapability,
-    SPMCalculationProvenance,
     SPMInputError,
     SPMProvenance,
     SPMRuntimeVersions,
     SPMSelection,
-    build_spm_calculation_provenance,
+    validate_spm_calculation_provenance,
     build_spm_comparison_provenance,
     build_spm_provenance,
     resolve_spm_selection,
@@ -251,7 +250,7 @@ def compact_spm_provenance(
 def simulation_spm_calculation_provenance(
     simulation: object,
     selection: object,
-) -> SPMCalculationProvenance:
+) -> SPMProvenance:
     """Read and compact one simulation's resolved SPM receipt."""
 
     resolved = SPMSelection.model_validate(selection)
@@ -267,7 +266,7 @@ def simulation_spm_calculation_provenance(
             "Simulation has no valid SPM calculation receipt",
         )
     try:
-        return build_spm_calculation_provenance(
+        return validate_spm_calculation_provenance(
             config=resolved,
             receipt=compact_spm_provenance(receipt(), resolved),
         )
@@ -284,8 +283,8 @@ def simulation_spm_result(baseline, reform, selection, *, expected_year=None):
     baseline_provenance = simulation_spm_calculation_provenance(baseline, selection)
     reform_provenance = simulation_spm_calculation_provenance(reform, selection)
     comparison = build_spm_comparison_provenance(
-        baseline_receipts=[baseline_provenance.spm_provenance],
-        reform_receipts=[reform_provenance.spm_provenance],
+        baseline_receipts=[baseline_provenance],
+        reform_receipts=[reform_provenance],
     )
     if expected_year is not None and str(expected_year) not in (
         comparison.baseline.receipt.years

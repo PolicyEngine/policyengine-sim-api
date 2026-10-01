@@ -24,7 +24,7 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationArtifactDescriptor,
     stage12_output_plan_sha256,
 )
-from policyengine_simulation_contract.spm import SPMCalculationProvenance
+from policyengine_simulation_contract.spm import SPMProvenance
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
 from policyengine_simulation_executor.artifact_store import ArtifactStore
@@ -118,7 +118,7 @@ def _frame_payload(
 def serialize_simulation_frames(
     frames: Mapping[str, pd.DataFrame],
     *,
-    calculation_provenance: SPMCalculationProvenance | None = None,
+    calculation_provenance: SPMProvenance | None = None,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> tuple[bytes, RowIdentity]:
     combined, dtypes, identifier_values = _frame_payload(frames)
@@ -214,13 +214,13 @@ def _parquet_schema_metadata(payload: bytes) -> Mapping[bytes, bytes]:
 
 def deserialize_calculation_provenance(
     payload: bytes,
-) -> SPMCalculationProvenance | None:
+) -> SPMProvenance | None:
     raw = _parquet_schema_metadata(payload).get(
         PARQUET_CONTRACT.calculation_provenance_metadata_key.encode()
     )
     if raw is None:
         return None
-    return SPMCalculationProvenance.model_validate_json(raw)
+    return SPMProvenance.model_validate_json(raw)
 
 
 def deserialize_uk_local_authority_metadata(
@@ -289,7 +289,7 @@ class Stage12ArtifactStore:
         prefix: str,
         simulation: PlannedSimulationExecutionInput,
         frames: Mapping[str, pd.DataFrame],
-        calculation_provenance: SPMCalculationProvenance | None = None,
+        calculation_provenance: SPMProvenance | None = None,
         uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
     ) -> SimulationArtifactDescriptor:
         payload, row_identity = serialize_simulation_frames(

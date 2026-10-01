@@ -203,18 +203,12 @@ def build_spm_result(
     reform_provenance = reform_descriptor.calculation_provenance
     if baseline_provenance is None or reform_provenance is None:
         raise ValueError("SPM calculation provenance is missing")
-    selection = baseline_provenance.spm_config
-    if selection != reform_provenance.spm_config:
-        raise ValueError("SPM calculation selections do not match")
-    for receipt in (
-        baseline_provenance.spm_provenance,
-        reform_provenance.spm_provenance,
-    ):
+    for receipt in (baseline_provenance, reform_provenance):
         if str(report.baseline.year) not in receipt.years:
             raise ValueError("SPM calculation provenance does not cover report year")
     comparison = build_spm_comparison_provenance(
-        baseline_receipts=[baseline_provenance.spm_provenance],
-        reform_receipts=[reform_provenance.spm_provenance],
+        baseline_receipts=[baseline_provenance],
+        reform_receipts=[reform_provenance],
     )
     return {
         "spm_provenance": comparison.model_dump(mode="json", by_alias=True),

@@ -19,8 +19,8 @@ from policyengine_simulation_contract.stage12_execution import (
 from policyengine_simulation_contract.spm import (
     SPMRuntimeVersions,
     SPMSelection,
-    build_spm_calculation_provenance,
     build_spm_provenance,
+    validate_spm_calculation_provenance,
 )
 from pydantic import ValidationError
 
@@ -75,7 +75,7 @@ def _calculation_provenance():
             }
         ),
     )
-    return build_spm_calculation_provenance(config=selection, receipt=receipt)
+    return validate_spm_calculation_provenance(config=selection, receipt=receipt)
 
 
 def test_parquet_encoding_is_deterministic_and_preserves_rows_and_dtypes() -> None:

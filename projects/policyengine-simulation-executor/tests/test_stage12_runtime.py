@@ -43,8 +43,8 @@ from policyengine_simulation_contract.stage12_execution import (
 from policyengine_simulation_contract.spm import (
     SPMRuntimeVersions,
     SPMSelection,
-    build_spm_calculation_provenance,
     build_spm_provenance,
+    validate_spm_calculation_provenance,
 )
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
@@ -99,7 +99,7 @@ def _spm_calculation_provenance():
             }
         ),
     )
-    return build_spm_calculation_provenance(config=selection, receipt=receipt)
+    return validate_spm_calculation_provenance(config=selection, receipt=receipt)
 
 
 def _bundle() -> BundleProvenance:

@@ -18,9 +18,15 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from policyengine_simulation_contract.spm import SPMCalculationProvenance
+
+from policyengine_simulation_contract.spm import (
+    SPMComparisonProvenance,
+    SPMProvenance,
+)
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion as UKLocalAuthorityBoundaryVersion,
+)
+from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityMetadata as UKLocalAuthorityMetadata,
 )
 
@@ -333,7 +339,7 @@ class SimulationArtifactDescriptor(StrictContractModel):
     output_plan_sha256: Sha256Digest
     row_identity: RowIdentity
     bundle: BundleProvenance
-    calculation_provenance: SPMCalculationProvenance | None = None
+    calculation_provenance: SPMProvenance | None = None
 
 
 class ReportExecutionInput(StrictContractModel):
@@ -400,6 +406,16 @@ class AggregateReportArtifactPayload(StrictContractModel):
         if len(value) != len(set(value)):
             raise ValueError("requested aggregates must be unique")
         return value
+
+    @model_validator(mode="after")
+    def validate_spm_provenance(self) -> AggregateReportArtifactPayload:
+        """Reject duplicate or noncanonical SPM data in aggregate artifacts."""
+
+        if "spm_config" in self.result:
+            raise ValueError("aggregate result must not include legacy spm_config")
+        if "spm_provenance" in self.result:
+            SPMComparisonProvenance.model_validate(self.result["spm_provenance"])
+        return self
 
 
 class ResultDifference(StrictContractModel):

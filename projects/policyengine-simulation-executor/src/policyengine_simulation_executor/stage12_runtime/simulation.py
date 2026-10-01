@@ -21,7 +21,7 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12InvocationContext,
     stage12_output_plan_sha256,
 )
-from policyengine_simulation_contract.spm import SPMCalculationProvenance
+from policyengine_simulation_contract.spm import SPMProvenance
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
@@ -44,7 +44,7 @@ from .output_planning import apply_output_plan, validate_output_frames
 @dataclass(frozen=True)
 class SimulationCalculation:
     frames: Mapping[str, pd.DataFrame]
-    calculation_provenance: SPMCalculationProvenance | None = None
+    calculation_provenance: SPMProvenance | None = None
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
 
 
