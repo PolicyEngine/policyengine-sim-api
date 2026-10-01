@@ -80,6 +80,12 @@ class Stage(StrEnum):
     STAGE12_ENTRY_DISPATCH = "stage12_entry_dispatch"
     STAGE12_COORDINATOR_EXECUTION = "stage12_coordinator_execution"
     STAGE12_COORDINATOR_CLAIM = "stage12_coordinator_claim"
+    STAGE12_COORDINATOR_PREPARATION = "stage12_coordinator_preparation"
+    STAGE12_OUTPUT_PLANNING = "stage12_output_planning"
+    STAGE12_COUNTRY_MODEL_LOAD = "stage12_country_model_load"
+    STAGE12_OUTPUT_CONFIGURATION = "stage12_output_configuration"
+    STAGE12_OUTPUT_VARIABLE_RESOLUTION = "stage12_output_variable_resolution"
+    STAGE12_CHILD_INPUT_PLANNING = "stage12_child_input_planning"
     STAGE12_CHILD_STATE_CREATE = "stage12_child_state_create"
     STAGE12_CHILD_DISPATCH = "stage12_child_dispatch"
     STAGE12_CHILD_WAIT = "stage12_child_wait"
@@ -183,6 +189,12 @@ _STAGE12_COMMON = (
     Stage.STAGE12_ENTRY_DISPATCH,
     Stage.STAGE12_COORDINATOR_EXECUTION,
     Stage.STAGE12_COORDINATOR_CLAIM,
+    Stage.STAGE12_COORDINATOR_PREPARATION,
+    Stage.STAGE12_OUTPUT_PLANNING,
+    Stage.STAGE12_COUNTRY_MODEL_LOAD,
+    Stage.STAGE12_OUTPUT_CONFIGURATION,
+    Stage.STAGE12_OUTPUT_VARIABLE_RESOLUTION,
+    Stage.STAGE12_CHILD_INPUT_PLANNING,
     Stage.STAGE12_CHILD_STATE_CREATE,
     Stage.STAGE12_CHILD_DISPATCH,
     Stage.STAGE12_CHILD_WAIT,
