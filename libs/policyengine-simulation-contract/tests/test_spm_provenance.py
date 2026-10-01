@@ -3,8 +3,6 @@
 import json
 
 import pytest
-from pydantic import ValidationError
-
 from policyengine_simulation_contract.spm import (
     SPMComparisonProvenance,
     SPMProvenance,
@@ -14,6 +12,7 @@ from policyengine_simulation_contract.spm import (
     build_spm_provenance,
     validate_spm_calculation_provenance,
 )
+from pydantic import ValidationError
 
 SELECTION = SPMSelection(
     forecast_content_sha256="a" * 64,
@@ -23,12 +22,14 @@ SELECTION = SPMSelection(
     county_vintage="2020",
     as_of=None,
 )
-VERSIONS = SPMRuntimeVersions.model_validate(
+# Synthetic fixture values used only to exercise the public receipt contract.
+# Deployed workers obtain real package versions from the PolicyEngine.py bundle.
+TEST_RUNTIME_VERSIONS = SPMRuntimeVersions.model_validate(
     {
-        "policyengine": "6.2.1",
-        "policyengine-core": "3.32.10",
-        "policyengine-us": "2.2.1",
-        "spm-calculator": "1.0.0",
+        "policyengine": "0.0.0-test-policyengine",
+        "policyengine-core": "0.0.0-test-policyengine-core",
+        "policyengine-us": "0.0.0-test-policyengine-us",
+        "spm-calculator": "0.0.0-test-spm-calculator",
     }
 )
 
@@ -39,7 +40,7 @@ def receipt(*, year: str = "2026", forecast_id: str = "forecast-2026"):
         forecast_sha256="a" * 64,
         selection=SELECTION,
         years=(year,),
-        runtime_versions=VERSIONS,
+        runtime_versions=TEST_RUNTIME_VERSIONS,
     )
 
 
@@ -60,10 +61,10 @@ def test_compact_receipt_has_exact_public_shape() -> None:
         "as_of": None,
         "years": ["2026"],
         "runtime_versions": {
-            "policyengine": "6.2.1",
-            "policyengine-core": "3.32.10",
-            "policyengine-us": "2.2.1",
-            "spm-calculator": "1.0.0",
+            "policyengine": "0.0.0-test-policyengine",
+            "policyengine-core": "0.0.0-test-policyengine-core",
+            "policyengine-us": "0.0.0-test-policyengine-us",
+            "spm-calculator": "0.0.0-test-spm-calculator",
         },
     }
     assert without_optional_nulls["geography_id"] is None
@@ -120,7 +121,7 @@ def test_compact_receipt_rejects_old_rich_shape() -> None:
 def test_runtime_versions_reject_invalid_package_versions(
     package: str, invalid_value: str | None
 ) -> None:
-    versions = VERSIONS.model_dump(mode="json", by_alias=True)
+    versions = TEST_RUNTIME_VERSIONS.model_dump(mode="json", by_alias=True)
     invalid_versions: dict[str, str | None] = {**versions, package: invalid_value}
 
     with pytest.raises(ValidationError):
@@ -135,7 +136,7 @@ def test_compact_receipt_serializes_as_of_as_an_iso_date() -> None:
             update={"as_of": "2026-09-09"},
         ),
         years=("2026",),
-        runtime_versions=VERSIONS,
+        runtime_versions=TEST_RUNTIME_VERSIONS,
     )
 
     assert dated.model_dump(mode="json", by_alias=True)["as_of"] == "2026-09-09"
@@ -148,7 +149,7 @@ def test_builder_requires_receipt_to_match_resolved_selection() -> None:
             forecast_sha256="b" * 64,
             selection=SELECTION,
             years=("2026",),
-            runtime_versions=VERSIONS,
+            runtime_versions=TEST_RUNTIME_VERSIONS,
         )
 
 
