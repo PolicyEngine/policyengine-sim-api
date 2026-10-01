@@ -58,7 +58,6 @@ def spm_child_result(runtime, simulation_year, *, receipt_year):
         },
     }
     return {
-        "spm_config": dict(SPM_SELECTION),
         "spm_provenance": {
             "schema_version": "canonical-spm-comparison-v2",
             "baseline": {"receipt": receipt, "execution_count": 1},

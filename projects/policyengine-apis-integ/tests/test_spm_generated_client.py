@@ -4,11 +4,13 @@ import json
 
 import pytest
 
+from policyengine_api_simulation_client import models as generated_models
 from policyengine_api_simulation_client.models import (
+    BudgetWindowAnnualImpact,
     SPMCapability,
     SPMComparisonProvenance,
-    SPMResolvedConfiguration,
     SPMSelection,
+    SingleYearMacroOutput,
     SimulationRequest,
 )
 
@@ -69,31 +71,10 @@ def test_generated_receipts_use_only_compact_typed_metadata():
     assert SPMComparisonProvenance.from_dict(provenance).to_dict() == provenance
 
 
-@pytest.mark.parametrize(
-    "field",
-    [
-        "forecast_content_sha256",
-        "scenario",
-        "geography_kind",
-        "geography_id",
-        "county_vintage",
-        "as_of",
-    ],
-)
-def test_generated_completed_config_requires_all_resolved_fields(field):
-    resolved = {
-        "forecast_content_sha256": "a" * 64,
-        "scenario": "ce_trend",
-        "geography_kind": "national",
-        "geography_id": None,
-        "county_vintage": "2020",
-        "as_of": None,
-    }
-    assert SPMResolvedConfiguration.from_dict(resolved).to_dict() == resolved
-    del resolved[field]
-
-    with pytest.raises(KeyError):
-        SPMResolvedConfiguration.from_dict(resolved)
+def test_generated_completed_results_have_no_sibling_spm_config():
+    assert "spm_config" not in SingleYearMacroOutput.__annotations__
+    assert "spm_config" not in BudgetWindowAnnualImpact.__annotations__
+    assert not hasattr(generated_models, "SPMResolvedConfiguration")
 
 
 def test_generated_comparison_rejects_old_receipt_lists():

@@ -15,7 +15,6 @@ from pydantic import (
 )
 
 from policyengine_simulation_contract.spm import (
-    SPMResolvedConfiguration,
     SPMSelection,
     SPMCapability,
     SPMComparisonProvenance,
@@ -238,7 +237,8 @@ class BudgetWindowBatchRequest(GatewayRequestBase):
 class BudgetWindowAnnualImpact(BaseModel):
     """Annual budget-window impact row."""
 
-    spm_config: Optional[SPMResolvedConfiguration] = None
+    model_config = ConfigDict(extra="forbid")
+
     spm_provenance: Optional[SPMComparisonProvenance] = None
     year: str
     taxRevenueImpact: float

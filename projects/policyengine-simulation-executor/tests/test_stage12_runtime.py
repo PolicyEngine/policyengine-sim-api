@@ -610,6 +610,7 @@ def test_single_worker_retains_detached_calculation_provenance() -> None:
     assert result["calculation_provenance"] == provenance.model_dump(
         mode="json", by_alias=True
     )
+    assert "spm_config" not in result["calculation_provenance"]
 
 
 def test_single_worker_exposes_only_a_bounded_failure() -> None:
@@ -663,7 +664,6 @@ def test_single_worker_rejects_frames_that_do_not_satisfy_the_output_plan() -> N
 
 def test_aggregate_combines_detached_spm_receipts() -> None:
     provenance = _spm_calculation_provenance()
-    selection = provenance.spm_config.model_dump(mode="json")
 
     report = _report()
     report = report.model_copy(
@@ -693,9 +693,10 @@ def test_aggregate_combines_detached_spm_receipts() -> None:
         reform_descriptor=reform,
     )
 
-    assert result["spm_config"] == selection
+    assert "spm_config" not in result
     assert result["spm_provenance"]["baseline"]["execution_count"] == 1
     assert result["spm_provenance"]["reform"]["execution_count"] == 1
+    assert result["spm_provenance"]["baseline"]["receipt"]["scenario"] == "official"
 
 
 def test_aggregate_stand_ins_preserve_policy_and_cliff_options(monkeypatch) -> None:

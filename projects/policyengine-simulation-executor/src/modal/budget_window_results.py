@@ -5,10 +5,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from policyengine_simulation_contract.spm import (
-    SPMResolvedConfiguration,
-    validate_spm_result,
-)
+from policyengine_simulation_contract.spm import validate_spm_result
 
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowAnnualImpact,
@@ -68,9 +65,6 @@ def extract_annual_impact(
         state_tax_revenue_impact = 0.0
 
     return BudgetWindowAnnualImpact(
-        spm_config=(
-            SPMResolvedConfiguration.model_validate(spm) if spm is not None else None
-        ),
         spm_provenance=receipt,
         year=simulation_year,
         taxRevenueImpact=tax_revenue_impact,

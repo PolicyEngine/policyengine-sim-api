@@ -88,14 +88,9 @@ def test_canonical_spm_extensions_are_public():
     assert "spm" in schemas["BudgetWindowBatchRequest"]["properties"]
     assert "spm_provenance" in schemas["SingleYearMacroOutput"]["properties"]
     assert "spm_provenance" in schemas["BudgetWindowAnnualImpact"]["properties"]
-    assert schemas["SPMResolvedConfiguration"]["required"] == [
-        "forecast_content_sha256",
-        "scenario",
-        "geography_kind",
-        "geography_id",
-        "county_vintage",
-        "as_of",
-    ]
+    assert "spm_config" not in schemas["SingleYearMacroOutput"]["properties"]
+    assert "spm_config" not in schemas["BudgetWindowAnnualImpact"]["properties"]
+    assert "SPMResolvedConfiguration" not in schemas
     assert all(
         schemas["SPMRuntimeVersions"]["properties"][field]["minLength"] == 1
         for field in (

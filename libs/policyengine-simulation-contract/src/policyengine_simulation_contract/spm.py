@@ -1,7 +1,7 @@
 """Dependency-light public models for US SPM selection and calculation receipts."""
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from datetime import date
 from typing import Any, Literal, Optional
 
@@ -11,6 +11,7 @@ from pydantic import (
     Field,
     SerializationInfo,
     SerializerFunctionWrapHandler,
+    ValidationError,
     field_validator,
     model_serializer,
     model_validator,
@@ -158,6 +159,23 @@ class SPMProvenance(BaseModel):
     years: tuple[str, ...]
     runtime_versions: "SPMRuntimeVersions"
 
+    @model_serializer(mode="wrap")
+    def serialize_provenance(
+        self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
+    ):
+        """Keep required nullable configuration fields in response bodies."""
+
+        dumped = handler(self)
+        if info.exclude_none:
+            for name in ("geography_id", "as_of"):
+                if (
+                    (info.include is None or name in info.include)
+                    and (info.exclude is None or name not in info.exclude)
+                    and getattr(self, name) is None
+                ):
+                    dumped[name] = None
+        return dumped
+
     @field_validator("years")
     @classmethod
     def validate_years(cls, value: tuple[str, ...]) -> tuple[str, ...]:
@@ -194,33 +212,17 @@ class SPMRuntimeVersions(BaseModel):
 
 
 class SPMCalculationProvenance(BaseModel):
-    """Resolved SPM selection paired with its compact calculation receipt."""
+    """One compact receipt stored with an internal calculation artifact."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    spm_config: SPMResolvedConfiguration
     spm_provenance: SPMProvenance
 
-    @model_validator(mode="after")
-    def require_matching_receipt(self) -> "SPMCalculationProvenance":
-        expected = {
-            "forecast_sha256": self.spm_config.forecast_content_sha256,
-            "scenario": self.spm_config.scenario,
-            "geography_kind": self.spm_config.geography_kind,
-            "geography_id": self.spm_config.geography_id,
-            "county_vintage": self.spm_config.county_vintage,
-            "as_of": (
-                date.fromisoformat(self.spm_config.as_of)
-                if self.spm_config.as_of is not None
-                else None
-            ),
-        }
-        for field_name, expected_value in expected.items():
-            if getattr(self.spm_provenance, field_name) != expected_value:
-                raise ValueError(
-                    f"SPM receipt {field_name} differs from the resolved selection"
-                )
-        return self
+    @property
+    def spm_config(self) -> SPMResolvedConfiguration:
+        """Derive internal resolved configuration from the canonical receipt."""
+
+        return _resolved_spm_configuration_from_provenance(self.spm_provenance)
 
 
 def _require_complete_selection(selection: SPMSelection) -> None:
@@ -254,20 +256,19 @@ def _resolved_spm_configuration(
     )
 
 
-def _validate_completed_spm_configuration(
-    value: object,
+def _resolved_spm_configuration_from_provenance(
+    receipt: SPMProvenance,
 ) -> SPMResolvedConfiguration:
-    """Validate child metadata behind a stable typed-error boundary."""
+    """Derive internal configuration from a receipt without a sibling object."""
 
-    if not isinstance(value, Mapping):
-        raise ValueError("Result has no complete resolved SPM selection")
-    missing = set(SPMResolvedConfiguration.model_fields).difference(value)
-    if missing:
-        raise ValueError(
-            "Result has no complete resolved SPM selection; missing "
-            + ", ".join(sorted(missing))
-        )
-    return SPMResolvedConfiguration.model_validate(value)
+    return SPMResolvedConfiguration(
+        forecast_content_sha256=receipt.forecast_sha256,
+        scenario=receipt.scenario,
+        geography_kind=receipt.geography_kind,
+        geography_id=receipt.geography_id,
+        county_vintage=receipt.county_vintage,
+        as_of=receipt.as_of.isoformat() if receipt.as_of is not None else None,
+    )
 
 
 def build_spm_provenance(
@@ -308,10 +309,14 @@ def build_spm_calculation_provenance(
 ) -> SPMCalculationProvenance:
     """Pair a resolved selection with a matching compact receipt."""
 
-    return SPMCalculationProvenance(
-        spm_config=_resolved_spm_configuration(config),
-        spm_provenance=receipt,
-    )
+    resolved = _resolved_spm_configuration(config)
+    receipt_configuration = _resolved_spm_configuration_from_provenance(receipt)
+    for field_name in SPMResolvedConfiguration.model_fields:
+        if getattr(receipt_configuration, field_name) != getattr(resolved, field_name):
+            raise ValueError(
+                f"SPM receipt {field_name} differs from the resolved selection"
+            )
+    return SPMCalculationProvenance(spm_provenance=receipt)
 
 
 SPM_CONTRACT_VERSION = "canonical-spm-v1"
@@ -508,11 +513,13 @@ def validate_spm_result(
     result: dict, selection: Any, *, expected_year: int | str | None = None
 ):
     """Do not accept incomplete or mixed-method child/cached output."""
+    if "spm_config" in result:
+        raise SPMInputError(
+            "SPM_CONFIGURATION_UNAVAILABLE",
+            "Completed results must not contain legacy spm_config metadata",
+        )
     if selection is None:
-        if (
-            result.get("spm_config") is not None
-            or result.get("spm_provenance") is not None
-        ):
+        if result.get("spm_provenance") is not None:
             raise SPMInputError(
                 "SPM_CONFIGURATION_UNAVAILABLE",
                 "Unexpected SPM receipt for a historical result",
@@ -520,14 +527,16 @@ def validate_spm_result(
         return None
     try:
         chosen = _resolved_spm_configuration(SPMSelection.model_validate(selection))
-        result_selection = _validate_completed_spm_configuration(
-            result.get("spm_config")
-        )
-        if result_selection != chosen:
-            raise ValueError("Result SPM selection differs from the request")
-        provenance = SPMComparisonProvenance.model_validate(
-            result.get("spm_provenance")
-        )
+        try:
+            provenance = SPMComparisonProvenance.model_validate(
+                result.get("spm_provenance")
+            )
+        except ValidationError as exc:
+            if any(error["type"] == "missing" for error in exc.errors()):
+                raise ValueError(
+                    "Result has no complete resolved SPM provenance"
+                ) from exc
+            raise
         for execution in (provenance.baseline, provenance.reform):
             build_spm_calculation_provenance(
                 config=SPMSelection.model_validate(chosen.model_dump(mode="json")),
@@ -577,8 +586,5 @@ def combine_spm_results(
         ],
     )
     return {
-        "spm_config": _resolved_spm_configuration(
-            SPMSelection.model_validate(selection)
-        ).model_dump(mode="json"),
         "spm_provenance": combined.model_dump(mode="json", by_alias=True),
     }

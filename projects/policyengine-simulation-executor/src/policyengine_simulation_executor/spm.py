@@ -295,6 +295,5 @@ def simulation_spm_result(baseline, reform, selection, *, expected_year=None):
             "Result SPM provenance does not cover the requested year",
         )
     return {
-        "spm_config": baseline_provenance.spm_config.model_dump(mode="json"),
         "spm_provenance": comparison.model_dump(mode="json", by_alias=True),
     }

@@ -406,16 +406,6 @@
       },
       "BudgetWindowAnnualImpact": {
         "properties": {
-          "spm_config": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SPMResolvedConfiguration"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "spm_provenance": {
             "anyOf": [
               {
@@ -451,6 +441,7 @@
             "title": "Budgetaryimpact"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "year",
@@ -1908,70 +1899,6 @@
         "title": "SPMProvenance",
         "description": "Compact detached receipt for one SPM calculation configuration."
       },
-      "SPMResolvedConfiguration": {
-        "properties": {
-          "forecast_content_sha256": {
-            "type": "string",
-            "pattern": "^[0-9a-f]{64}$",
-            "title": "Forecast Content Sha256"
-          },
-          "scenario": {
-            "type": "string",
-            "minLength": 1,
-            "pattern": "^\\S+$",
-            "title": "Scenario"
-          },
-          "geography_kind": {
-            "type": "string",
-            "enum": [
-              "county",
-              "national",
-              "metro"
-            ],
-            "title": "Geography Kind"
-          },
-          "geography_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "minLength": 1
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Geography Id"
-          },
-          "county_vintage": {
-            "type": "string",
-            "pattern": "^[0-9]{4}$",
-            "title": "County Vintage"
-          },
-          "as_of": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "As Of"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "forecast_content_sha256",
-          "scenario",
-          "geography_kind",
-          "geography_id",
-          "county_vintage",
-          "as_of"
-        ],
-        "title": "SPMResolvedConfiguration",
-        "description": "The complete six-field SPM selection recorded beside a receipt."
-      },
       "SPMRuntimeVersions": {
         "properties": {
           "policyengine": {
@@ -2246,16 +2173,6 @@
       },
       "SingleYearMacroOutput": {
         "properties": {
-          "spm_config": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SPMResolvedConfiguration"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "spm_provenance": {
             "anyOf": [
               {

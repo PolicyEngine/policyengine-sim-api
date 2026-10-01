@@ -94,7 +94,6 @@ def result(selection=SELECTION, year="2026"):
         },
     )
     return {
-        "spm_config": deepcopy(selection),
         "spm_provenance": {
             "schema_version": "canonical-spm-comparison-v2",
             "baseline": {"receipt": receipt, "execution_count": 1},
@@ -248,9 +247,21 @@ def test_annual_child_and_segment_receipts_must_cover_requested_year():
 )
 def test_result_transport_requires_every_resolved_option(field):
     transported = result()
-    del transported["spm_config"][field]
+    receipt_field = "forecast_sha256" if field == "forecast_content_sha256" else field
+    del transported["spm_provenance"]["baseline"]["receipt"][receipt_field]
 
     with pytest.raises(SPMInputError, match="complete resolved") as error:
+        combine_spm_results([transported], SELECTION)
+    assert error.value.code == "SPM_CONFIGURATION_UNAVAILABLE"
+
+
+def test_result_transport_rejects_legacy_sibling_config():
+    transported = result()
+    transported["spm_config"] = deepcopy(SELECTION)
+
+    with pytest.raises(
+        SPMInputError, match="must not contain legacy spm_config"
+    ) as error:
         combine_spm_results([transported], SELECTION)
     assert error.value.code == "SPM_CONFIGURATION_UNAVAILABLE"
 

@@ -48,6 +48,9 @@ def receipt(*, year: str = "2026", forecast_id: str = "forecast-2026"):
 
 def test_compact_receipt_has_exact_public_shape() -> None:
     value = receipt().model_dump(mode="json", by_alias=True)
+    without_optional_nulls = receipt().model_dump(
+        mode="json", by_alias=True, exclude_none=True
+    )
 
     assert value == {
         "schema_version": "canonical-spm-provenance-v2",
@@ -66,6 +69,8 @@ def test_compact_receipt_has_exact_public_shape() -> None:
             "spm-calculator": "1.0.0",
         },
     }
+    assert without_optional_nulls["geography_id"] is None
+    assert without_optional_nulls["as_of"] is None
     assert len(json.dumps(value, separators=(",", ":")).encode()) < 1_024
 
 
@@ -157,10 +162,13 @@ def test_calculation_builder_requires_complete_matching_config() -> None:
     )
     assert isinstance(calculated, SPMCalculationProvenance)
     assert isinstance(calculated.spm_config, SPMResolvedConfiguration)
-    assert calculated.model_dump(mode="json", exclude_none=True)["spm_config"] == {
+    assert calculated.spm_config.model_dump(mode="json") == {
         **SELECTION.model_dump(mode="json"),
         "geography_id": None,
         "as_of": None,
+    }
+    assert calculated.model_dump(mode="json", by_alias=True) == {
+        "spm_provenance": receipt().model_dump(mode="json", by_alias=True)
     }
 
     with pytest.raises(ValueError, match="scenario"):
@@ -170,23 +178,12 @@ def test_calculation_builder_requires_complete_matching_config() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "field",
-    [
-        "forecast_content_sha256",
-        "scenario",
-        "geography_kind",
-        "geography_id",
-        "county_vintage",
-        "as_of",
-    ],
-)
-def test_completed_calculation_config_requires_every_resolved_field(field: str) -> None:
+def test_calculation_provenance_rejects_legacy_sibling_config() -> None:
     calculated = build_spm_calculation_provenance(
         config=SELECTION,
         receipt=receipt(),
     ).model_dump(mode="json", by_alias=True)
-    del calculated["spm_config"][field]
+    calculated["spm_config"] = SELECTION.model_dump(mode="json")
 
     with pytest.raises(ValidationError):
         SPMCalculationProvenance.model_validate(calculated)

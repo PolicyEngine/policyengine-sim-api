@@ -217,6 +217,5 @@ def build_spm_result(
         reform_receipts=[reform_provenance.spm_provenance],
     )
     return {
-        "spm_config": selection.model_dump(mode="json"),
         "spm_provenance": comparison.model_dump(mode="json", by_alias=True),
     }

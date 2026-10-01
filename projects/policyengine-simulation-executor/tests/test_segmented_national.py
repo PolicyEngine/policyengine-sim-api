@@ -423,7 +423,6 @@ def _spm_child(index, *, selection=SPM_SELECTION, year="2026"):
     """One child's result carrying that segment's own SPM receipts."""
     return {
         "child": index,
-        "spm_config": dict(selection),
         "spm_provenance": {
             "schema_version": "canonical-spm-comparison-v2",
             "baseline": {
@@ -439,9 +438,9 @@ def _spm_child(index, *, selection=SPM_SELECTION, year="2026"):
 
 
 def _spm_child_missing(index, field):
-    """A child whose transported selection lost a resolved option."""
+    """A child whose canonical receipt lost a resolved option."""
     child = _spm_child(index)
-    del child["spm_config"][field]
+    del child["spm_provenance"]["baseline"]["receipt"][field]
     return child
 
 
@@ -463,16 +462,17 @@ class TestSegmentedNationalSPM:
 
         output = runner.run()
 
-        # The resolved selection rides to every child unchanged and comes
-        # back on the parent as the one national selection.
+        # The resolved selection rides to every child unchanged. Completed
+        # output publishes that configuration only inside the receipt.
         assert all(p["spm"] == SPM_SELECTION for p in fake.spawned_payloads)
-        assert output["spm_config"] == SPM_SELECTION
+        assert "spm_config" not in output
         # One receipt describes all identical child executions. The counts
         # prove that every segment contributed without duplicating metadata.
         provenance = output["spm_provenance"]
         assert provenance["baseline"]["execution_count"] == 20
         assert provenance["reform"]["execution_count"] == 20
         assert provenance["baseline"]["receipt"]["forecast_id"] == "test-only"
+        assert provenance["baseline"]["receipt"]["county_vintage"] == "2020"
         assert output["budget"] == {}
 
     @pytest.mark.parametrize(
@@ -480,7 +480,7 @@ class TestSegmentedNationalSPM:
         [
             (
                 _spm_child(7, selection={**SPM_SELECTION, "scenario": "zero_real"}),
-                "selection differs from the request",
+                "differs from the resolved selection",
             ),
             (_spm_child(7, year="2025"), "does not cover the requested year"),
             (_spm_child_missing(7, "county_vintage"), "complete resolved"),

@@ -63,7 +63,12 @@ def test_worker_baseline_reform_national_local_cache_and_receipts(
         ).all()
     result = simulation_spm_result(baseline, reform, baseline.spm_config)
     dumped = json.loads(json.dumps(result))
-    assert dumped["spm_config"] == baseline.spm_config == reform.spm_config
+    assert "spm_config" not in dumped
+    assert baseline.spm_config == reform.spm_config
+    assert (
+        dumped["spm_provenance"]["baseline"]["receipt"]["scenario"]
+        == baseline.spm_config["scenario"]
+    )
     assert dumped["spm_provenance"]["reform"]["receipt"]["years"] == ["2024"]
     original = baseline.spm_provenance()
     original["years"].clear()
