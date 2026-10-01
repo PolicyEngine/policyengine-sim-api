@@ -238,20 +238,30 @@ RESOLVED_SELECTION = {
 
 def spm_receipt(year):
     return {
+        "schema_version": "canonical-spm-provenance-v2",
         "forecast_id": "ce-forecast",
         "forecast_sha256": "a" * 64,
         "scenario": "ce_trend",
         "geography_kind": "national",
-        "runtime_versions": {"spm_calculator": "0.3.1"},
-        "years": {str(year): {"entry": f"{year}-01-01"}},
-        "geographies": [{"kind": "national"}],
-        "composition_method": "national",
-        "storage_method": "artifact",
+        "geography_id": None,
+        "county_vintage": "2020",
+        "as_of": None,
+        "years": [str(year)],
+        "runtime_versions": {
+            "policyengine": "6.2.1",
+            "policyengine-core": "3.32.10",
+            "policyengine-us": "2.2.1",
+            "spm-calculator": "1.0.0",
+        },
     }
 
 
 def spm_provenance(year):
-    return {"baseline": [spm_receipt(year)], "reform": [spm_receipt(year)]}
+    return {
+        "schema_version": "canonical-spm-comparison-v2",
+        "baseline": {"receipt": spm_receipt(year), "execution_count": 1},
+        "reform": {"receipt": spm_receipt(year), "execution_count": 1},
+    }
 
 
 def test_completed_result_body_keeps_resolved_nulls(mock_modal, client):

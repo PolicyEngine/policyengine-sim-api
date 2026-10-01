@@ -143,10 +143,10 @@ class SPMRuntimeVersions(BaseModel):
         serialize_by_alias=True,
     )
 
-    policyengine: Optional[str]
-    policyengine_core: Optional[str] = Field(alias="policyengine-core")
-    policyengine_us: Optional[str] = Field(alias="policyengine-us")
-    spm_calculator: Optional[str] = Field(alias="spm-calculator")
+    policyengine: str
+    policyengine_core: str = Field(alias="policyengine-core")
+    policyengine_us: str = Field(alias="policyengine-us")
+    spm_calculator: str = Field(alias="spm-calculator")
 
 
 class SPMCalculationProvenance(BaseModel):

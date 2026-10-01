@@ -234,16 +234,6 @@ def compact_spm_provenance(
     if not isinstance(raw_versions, Mapping):
         raise TypeError("SPM calculation receipt has no runtime versions")
     runtime_versions = SPMRuntimeVersions.model_validate(raw_versions)
-    if any(
-        version is None
-        for version in (
-            runtime_versions.policyengine,
-            runtime_versions.policyengine_core,
-            runtime_versions.policyengine_us,
-            runtime_versions.spm_calculator,
-        )
-    ):
-        raise ValueError("Certified SPM calculation runtime versions must be populated")
     raw_years = country_receipt.get("years")
     if not isinstance(raw_years, Mapping):
         raise TypeError("SPM calculation receipt has no executed years")

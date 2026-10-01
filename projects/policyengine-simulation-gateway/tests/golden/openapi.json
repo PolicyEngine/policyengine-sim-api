@@ -1758,31 +1758,27 @@
       },
       "SPMComparisonProvenance": {
         "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "canonical-spm-comparison-v2",
+            "title": "Schema Version"
+          },
           "baseline": {
-            "items": {
-              "$ref": "#/components/schemas/SPMProvenance"
-            },
-            "type": "array",
-            "minItems": 1,
-            "title": "Baseline"
+            "$ref": "#/components/schemas/SPMExecutionProvenance"
           },
           "reform": {
-            "items": {
-              "$ref": "#/components/schemas/SPMProvenance"
-            },
-            "type": "array",
-            "minItems": 1,
-            "title": "Reform"
+            "$ref": "#/components/schemas/SPMExecutionProvenance"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "schema_version",
           "baseline",
           "reform"
         ],
         "title": "SPMComparisonProvenance",
-        "description": "One receipt per executed regional segment, separately for each policy."
+        "description": "Compact receipts for the baseline and reform execution sets."
       },
       "SPMErrorDetail": {
         "properties": {
@@ -1802,78 +1798,145 @@
         ],
         "title": "SPMErrorDetail"
       },
-      "SPMProvenance": {
+      "SPMExecutionProvenance": {
         "properties": {
-          "forecast_id": {
-            "type": "string",
-            "title": "Forecast Id"
+          "receipt": {
+            "$ref": "#/components/schemas/SPMProvenance"
           },
-          "forecast_sha256": {
-            "type": "string",
-            "title": "Forecast Sha256"
-          },
-          "scenario": {
-            "type": "string",
-            "title": "Scenario"
-          },
-          "geography_kind": {
-            "type": "string",
-            "title": "Geography Kind"
-          },
-          "runtime_versions": {
-            "additionalProperties": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "type": "object",
-            "title": "Runtime Versions"
-          },
-          "years": {
-            "additionalProperties": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "type": "object",
-            "title": "Years"
-          },
-          "geographies": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "type": "array",
-            "title": "Geographies"
-          },
-          "composition_method": {
-            "type": "string",
-            "title": "Composition Method"
-          },
-          "storage_method": {
-            "type": "string",
-            "title": "Storage Method"
+          "execution_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Execution Count"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "receipt",
+          "execution_count"
+        ],
+        "title": "SPMExecutionProvenance",
+        "description": "One shared receipt and the number of executions that produced it."
+      },
+      "SPMProvenance": {
+        "properties": {
+          "schema_version": {
+            "type": "string",
+            "const": "canonical-spm-provenance-v2",
+            "title": "Schema Version"
+          },
+          "forecast_id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Forecast Id"
+          },
+          "forecast_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Forecast Sha256"
+          },
+          "scenario": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\S+$",
+            "title": "Scenario"
+          },
+          "geography_kind": {
+            "type": "string",
+            "enum": [
+              "county",
+              "national",
+              "metro"
+            ],
+            "title": "Geography Kind"
+          },
+          "geography_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Geography Id"
+          },
+          "county_vintage": {
+            "type": "string",
+            "pattern": "^[0-9]{4}$",
+            "title": "County Vintage"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "years": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Years"
+          },
+          "runtime_versions": {
+            "$ref": "#/components/schemas/SPMRuntimeVersions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "schema_version",
           "forecast_id",
           "forecast_sha256",
           "scenario",
           "geography_kind",
-          "runtime_versions",
+          "geography_id",
+          "county_vintage",
+          "as_of",
           "years",
-          "geographies",
-          "composition_method",
-          "storage_method"
+          "runtime_versions"
         ],
         "title": "SPMProvenance",
-        "description": "Detached calculation receipt; data certification is a separate claim."
+        "description": "Compact detached receipt for one SPM calculation configuration."
+      },
+      "SPMRuntimeVersions": {
+        "properties": {
+          "policyengine": {
+            "type": "string",
+            "title": "Policyengine"
+          },
+          "policyengine-core": {
+            "type": "string",
+            "title": "Policyengine-Core"
+          },
+          "policyengine-us": {
+            "type": "string",
+            "title": "Policyengine-Us"
+          },
+          "spm-calculator": {
+            "type": "string",
+            "title": "Spm-Calculator"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "policyengine",
+          "policyengine-core",
+          "policyengine-us",
+          "spm-calculator"
+        ],
+        "title": "SPMRuntimeVersions",
+        "description": "Package versions needed to reproduce an SPM calculation."
       },
       "SPMSelection": {
         "properties": {

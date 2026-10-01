@@ -109,6 +109,18 @@ def test_compact_receipt_rejects_old_rich_shape() -> None:
         SPMProvenance.model_validate(old)
 
 
+@pytest.mark.parametrize(
+    "package",
+    ["policyengine", "policyengine-core", "policyengine-us", "spm-calculator"],
+)
+def test_runtime_versions_reject_null_package_versions(package: str) -> None:
+    versions = VERSIONS.model_dump(mode="json", by_alias=True)
+    invalid_versions: dict[str, str | None] = {**versions, package: None}
+
+    with pytest.raises(ValidationError):
+        SPMRuntimeVersions.model_validate(invalid_versions)
+
+
 def test_compact_receipt_serializes_as_of_as_an_iso_date() -> None:
     dated = build_spm_provenance(
         forecast_id="forecast-2026",
