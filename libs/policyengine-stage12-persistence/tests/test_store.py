@@ -204,6 +204,68 @@ def test_invocation_attachment_is_compare_and_set() -> None:
     assert result == attached
 
 
+def test_simulation_status_replacement_is_compare_and_set() -> None:
+    running = _simulation().model_copy(
+        update={"status": ComparisonRunLifecycleStatus.RUNNING}
+    )
+    failed = running.model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.FAILED,
+            "error_code": "simulation_execution_failed",
+            "completed_at": NOW,
+        }
+    )
+    engine = FakeEngine(
+        [
+            FakeResult(row=_row(running)),
+            FakeResult(row=_row(failed)),
+        ]
+    )
+    store = Stage12PersistenceStore(engine=engine)  # type: ignore[arg-type]
+
+    result, replaced = store.replace_simulation_if_status(
+        failed,
+        expected_status=ComparisonRunLifecycleStatus.RUNNING,
+    )
+
+    assert replaced is True
+    assert result == failed
+    assert len(engine.connection.statements) == 2
+
+
+def test_simulation_status_replacement_preserves_a_concurrent_cancellation() -> None:
+    incomplete = _simulation().model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.INCOMPLETE,
+            "error_code": "cancelled_after_peer_failure",
+            "completed_at": NOW,
+        }
+    )
+    succeeded = _simulation().model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
+            "output_uri": "gs://private/baseline.parquet",
+            "output_sha256": "c" * 64,
+            "output_schema_version": 1,
+            "row_identity_columns": ("household.household_id",),
+            "row_count": 1,
+            "row_identity_sha256": "d" * 64,
+            "completed_at": NOW,
+        }
+    )
+    engine = FakeEngine([FakeResult(row=_row(incomplete))])
+    store = Stage12PersistenceStore(engine=engine)  # type: ignore[arg-type]
+
+    result, replaced = store.replace_simulation_if_status(
+        succeeded,
+        expected_status=ComparisonRunLifecycleStatus.RUNNING,
+    )
+
+    assert replaced is False
+    assert result == incomplete
+    assert len(engine.connection.statements) == 1
+
+
 def test_database_url_uses_one_canonical_secret_format() -> None:
     parsed = normalized_database_url(
         "postgresql://policyengine_v2_runtime:secret@db.example/postgres"

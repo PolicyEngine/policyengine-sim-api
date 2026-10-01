@@ -63,6 +63,7 @@ from policyengine_simulation_executor.stage12_runtime.aggregation import (
 from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata,
 )
+from policyengine_simulation_contract.spm import SPMInputError
 
 NOW = datetime(2026, 9, 15, tzinfo=UTC)
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -282,6 +283,14 @@ class FakeStore:
             self.children[record.simulation_execution_id] = record
         return record
 
+    def replace_simulation_if_status(self, record, *, expected_status):
+        with self.lock:
+            current = self.children[record.simulation_execution_id]
+            if current.status is not expected_status:
+                return current, False
+            self.children[record.simulation_execution_id] = record
+        return record, True
+
     def attach_simulation_invocation(
         self,
         simulation_execution_id,
@@ -472,7 +481,7 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
         resolve_dataset,
     )
     monkeypatch.setattr(simulation_runtime, "_load_dataset", load_dataset)
-    monkeypatch.setattr(simulation_runtime, "_build_simulation", build_simulation)
+    monkeypatch.setattr(worker, "build_stage12_simulation", build_simulation)
 
     result = worker.calculate_simulation_frames(
         _planned_simulation(SimulationRole.BASELINE)
@@ -556,6 +565,55 @@ def test_single_worker_accepts_one_policy_and_persists_one_artifact() -> None:
     ]
 
 
+def test_single_worker_routes_eligible_us_calculation_to_segment_runner() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    received = []
+
+    def segmented_calculator(value, cancellation_requested):
+        received.append(value)
+        assert cancellation_requested() is False
+        return SimulationCalculation(frames=_frames())
+
+    run_single_simulation(
+        simulation.model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        required_country="us",
+        store=store,
+        artifacts=FakeArtifacts(),
+        calculator=lambda _: pytest.fail("monolithic calculator was selected"),
+        segmented_calculator=segmented_calculator,
+    )
+
+    assert received == [simulation]
+
+
+def test_single_worker_honors_explicit_segmentation_opt_out() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE).model_copy(
+        update={"options": {"segmented": False}}
+    )
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    segmented_calls = []
+
+    def unexpected_segmented(value, cancellation_requested):
+        segmented_calls.append(value)
+        return SimulationCalculation(frames=_frames())
+
+    run_single_simulation(
+        simulation.model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        required_country="us",
+        store=store,
+        artifacts=FakeArtifacts(),
+        calculator=lambda _: _frames(),
+        segmented_calculator=unexpected_segmented,
+    )
+
+    assert segmented_calls == []
+
+
 def test_single_worker_retains_detached_calculation_provenance() -> None:
     store = FakeStore()
     simulation = _planned_simulation(SimulationRole.BASELINE)
@@ -602,7 +660,97 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
     child = store.children[simulation.simulation_execution_id]
     assert child.status is ComparisonRunLifecycleStatus.FAILED
     assert child.error_code == "simulation_execution_failed"
-    assert child.error_summary == "RuntimeError"
+    assert child.error_summary.startswith("Simulation failed (correlation_id=")
+    assert "sensitive" not in child.error_summary
+
+
+def test_single_worker_preserves_typed_failure_values() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+
+    def fail(_simulation):
+        raise SPMInputError("SPM_YEAR_UNAVAILABLE", "No SPM values for 2026")
+
+    with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=fail,
+        )
+
+    child = store.children[simulation.simulation_execution_id]
+    assert child.error_code == "SPM_YEAR_UNAVAILABLE"
+    assert child.error_summary == "No SPM values for 2026"
+
+
+def test_single_worker_rejects_bare_year_policy_period_before_calculation() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE).model_copy(
+        update={
+            "policy": {"gov.irs.credits.ctc.amount.base[0].amount": {"2026": 3_000}}
+        }
+    )
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+
+    with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=lambda _: pytest.fail("calculation must not start"),
+        )
+
+    child = store.children[simulation.simulation_execution_id]
+    assert child.error_code == "invalid_policy_period"
+    assert child.error_summary == (
+        "Policy parameter 'gov.irs.credits.ctc.amount.base[0].amount' has invalid "
+        "effective period '2026'; expected YYYY-MM-DD or "
+        "YYYY-MM-DD.YYYY-MM-DD."
+    )
+
+
+def test_late_simulation_success_does_not_overwrite_parent_cancellation() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+
+    def segmented_calculator(value, cancellation_requested):
+        current = store.children[value.simulation_execution_id]
+        cancelled_at = datetime.now(UTC)
+        store.replace_simulation(
+            current.model_copy(
+                update={
+                    "status": ComparisonRunLifecycleStatus.INCOMPLETE,
+                    "error_code": "cancelled_after_peer_failure",
+                    "error_summary": "Cancelled after reform simulation failed.",
+                    "updated_at": cancelled_at,
+                    "completed_at": cancelled_at,
+                }
+            )
+        )
+        assert cancellation_requested() is True
+        return SimulationCalculation(frames=_frames())
+
+    with pytest.raises(RuntimeError, match="Stage 12 simulation was cancelled"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=lambda _: pytest.fail("monolithic calculator was selected"),
+            segmented_calculator=segmented_calculator,
+        )
+
+    child = store.children[simulation.simulation_execution_id]
+    assert child.status is ComparisonRunLifecycleStatus.INCOMPLETE
+    assert child.error_code == "cancelled_after_peer_failure"
 
 
 def test_single_worker_rejects_frames_that_do_not_satisfy_the_output_plan() -> None:
@@ -797,6 +945,9 @@ class FutureCall:
     def get(self, *, timeout=None):
         return self.future.result(timeout=timeout)
 
+    def cancel(self):
+        self.future.cancel()
+
 
 class ImmediateCall:
     def __init__(self, object_id, result, observed_timeouts):
@@ -807,6 +958,9 @@ class ImmediateCall:
     def get(self, *, timeout=None):
         self.observed_timeouts.append(timeout)
         return self.result
+
+    def cancel(self):
+        return None
 
 
 class ConcurrentInvoker:
@@ -1130,12 +1284,193 @@ def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None
 
     assert artifacts.aggregate_writes == []
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
-    assert store.parent.error_summary == "RuntimeError"
+    assert store.parent.error_summary.startswith("Simulation failed (correlation_id=")
     assert "sensitive" not in store.parent.error_summary
     failed_child = store.children[REFORM_ID]
     assert failed_child.status is ComparisonRunLifecycleStatus.FAILED
     assert failed_child.error_code == "simulation_invocation_failed"
-    assert failed_child.error_summary == "RuntimeError"
+    assert failed_child.error_summary == store.parent.error_summary
+
+
+@pytest.mark.parametrize(
+    ("failed_role", "failed_id", "pending_role", "pending_id"),
+    [
+        ("reform", REFORM_ID, "baseline", BASELINE_ID),
+        ("baseline", BASELINE_ID, "reform", REFORM_ID),
+    ],
+)
+def test_coordinator_observes_one_role_failure_while_the_peer_is_pending(
+    failed_role,
+    failed_id,
+    pending_role,
+    pending_id,
+) -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+
+    class PendingCall:
+        object_id = f"call-{pending_role}"
+
+        def __init__(self):
+            self.timeouts = []
+
+        def get(self, *, timeout=None):
+            self.timeouts.append(timeout)
+            raise TimeoutError()
+
+        def cancel(self):
+            raise AssertionError("segmented cancellation must be cooperative")
+
+    class FailedCall:
+        object_id = f"call-{failed_role}"
+
+        def __init__(self):
+            self.timeouts = []
+
+        def get(self, *, timeout=None):
+            self.timeouts.append(timeout)
+            child = store.children[failed_id]
+            failed_at = datetime.now(UTC)
+            store.replace_simulation(
+                child.model_copy(
+                    update={
+                        "status": ComparisonRunLifecycleStatus.FAILED,
+                        "error_code": "invalid_policy_period",
+                        "error_summary": "The reform period is invalid.",
+                        "updated_at": failed_at,
+                        "completed_at": failed_at,
+                    }
+                )
+            )
+            raise RuntimeError("remote wrapper")
+
+        def cancel(self):
+            return None
+
+    baseline_call = PendingCall()
+    failed_call = FailedCall()
+
+    class ConcurrentFailureInvoker:
+        def spawn(self, *, simulation, **_):
+            role = PlannedSimulationExecutionInput.model_validate(simulation).role
+            return failed_call if role.value == failed_role else baseline_call
+
+        def restore(self, invocation_id):
+            raise AssertionError(f"unexpected restored invocation {invocation_id}")
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=ConcurrentFailureInvoker(),
+            aggregator=lambda **_: {"must": "not run"},
+            sleep=lambda _: pytest.fail("failure should be observed before sleeping"),
+        )
+
+    assert failed_call.timeouts == [0]
+    assert baseline_call.timeouts == ([0] if pending_role == "baseline" else [])
+    pending = store.children[pending_id]
+    assert pending.status is ComparisonRunLifecycleStatus.INCOMPLETE
+    assert pending.error_code == "cancelled_after_peer_failure"
+    assert pending.error_summary == f"Cancelled after {failed_role} simulation failed."
+    assert store.parent.error_code == "invalid_policy_period"
+    assert store.parent.error_summary == "The reform period is invalid."
+    assert artifacts.aggregate_writes == []
+
+
+def test_dispatch_failure_cancels_an_already_started_peer() -> None:
+    store = FakeStore()
+    baseline_call = TimeoutCall("call-baseline")
+
+    class DispatchFailureInvoker:
+        def spawn(self, *, simulation, **_):
+            role = PlannedSimulationExecutionInput.model_validate(simulation).role
+            if role is SimulationRole.REFORM:
+                raise ConnectionError("dispatch contains sensitive details")
+            return baseline_call
+
+        def restore(self, invocation_id):
+            raise AssertionError(f"unexpected restored invocation {invocation_id}")
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=FakeArtifacts(),
+            invoker=DispatchFailureInvoker(),
+        )
+
+    baseline = store.children[BASELINE_ID]
+    reform = store.children[REFORM_ID]
+    assert baseline.status is ComparisonRunLifecycleStatus.INCOMPLETE
+    assert baseline.error_code == "cancelled_after_peer_failure"
+    assert reform.status is ComparisonRunLifecycleStatus.FAILED
+    assert reform.error_code == "simulation_dispatch_failed"
+    assert store.parent.error_code == "simulation_dispatch_failed"
+
+
+def test_coordinator_propagates_an_already_persisted_child_failure() -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+
+    class PersistedFailureCall:
+        object_id = "call-reform"
+
+        def get(self, *, timeout=None):
+            child = store.children[REFORM_ID]
+            failed_at = datetime.now(UTC)
+            store.replace_simulation(
+                child.model_copy(
+                    update={
+                        "status": ComparisonRunLifecycleStatus.FAILED,
+                        "error_code": "invalid_policy_period",
+                        "error_summary": "The reform period is invalid.",
+                        "updated_at": failed_at,
+                        "completed_at": failed_at,
+                    }
+                )
+            )
+            raise RuntimeError("remote wrapper must not replace the child failure")
+
+    class PersistedFailureInvoker:
+        def spawn(self, *, simulation, **_):
+            parsed = PlannedSimulationExecutionInput.model_validate(simulation)
+            if parsed.role is SimulationRole.REFORM:
+                return PersistedFailureCall()
+            descriptor = artifacts.add_simulation(parsed, _frames(100.0))
+            return ImmediateCall(
+                "call-baseline", descriptor.model_dump(mode="json"), []
+            )
+
+        def restore(self, invocation_id):
+            raise AssertionError(f"unexpected restored invocation {invocation_id}")
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=PersistedFailureInvoker(),
+            aggregator=lambda **_: {"must": "not run"},
+        )
+
+    assert store.children[REFORM_ID].error_code == "invalid_policy_period"
+    assert store.children[REFORM_ID].error_summary == "The reform period is invalid."
+    assert store.parent.error_code == "invalid_policy_period"
+    assert store.parent.error_summary == "The reform period is invalid."
 
 
 @pytest.mark.parametrize(
@@ -1189,7 +1524,7 @@ def test_coordinator_records_failure_when_child_persistence_fails() -> None:
 
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_code == "report_coordination_failed"
-    assert store.parent.error_summary == "RuntimeError"
+    assert store.parent.error_summary.startswith("Simulation failed (correlation_id=")
 
 
 def test_coordinator_rejects_incompatible_row_identity() -> None:
@@ -1280,9 +1615,13 @@ def test_coordinator_resumes_a_matching_running_child_invocation() -> None:
 class TimeoutCall:
     def __init__(self, object_id):
         self.object_id = object_id
+        self.cancelled = 0
 
     def get(self, *, timeout=None):
         raise TimeoutError("contains sensitive timeout details")
+
+    def cancel(self):
+        self.cancelled += 1
 
 
 class TimeoutInvoker:
@@ -1316,6 +1655,7 @@ def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
             artifacts=artifacts,
             invoker=invoker,
             aggregator=lambda **_: {"must": "not run"},
+            wait_timeout_seconds=0,
         )
 
     assert "sensitive" not in str(error.value)
@@ -1323,7 +1663,15 @@ def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
     assert invoker.events == ["spawn:baseline", "spawn:reform"]
     assert artifacts.aggregate_writes == []
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
-    assert store.parent.error_summary == "TimeoutError"
-    timed_out_child = store.children[BASELINE_ID]
-    assert timed_out_child.status is ComparisonRunLifecycleStatus.FAILED
-    assert timed_out_child.error_summary == "TimeoutError"
+    assert store.parent.error_code == "simulation_wait_timeout"
+    assert store.parent.error_summary == (
+        "Stage 12 simulations did not finish within 0 seconds."
+    )
+    assert all(
+        child.status is ComparisonRunLifecycleStatus.FAILED
+        for child in store.children.values()
+    )
+    assert all(
+        child.error_code == "simulation_wait_timeout"
+        for child in store.children.values()
+    )

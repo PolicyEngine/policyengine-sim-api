@@ -10,6 +10,7 @@ from uuid import UUID
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportPersistenceResult,
     ComparisonReportRecord,
+    ComparisonRunLifecycleStatus,
     ComparisonSimulationPersistenceResult,
     ComparisonSimulationRecord,
 )
@@ -49,6 +50,13 @@ class ComparisonStore(Protocol):
         record: ComparisonSimulationRecord,
     ) -> ComparisonSimulationRecord: ...
 
+    def replace_simulation_if_status(
+        self,
+        record: ComparisonSimulationRecord,
+        *,
+        expected_status: ComparisonRunLifecycleStatus,
+    ) -> tuple[ComparisonSimulationRecord, bool]: ...
+
     def attach_simulation_invocation(
         self,
         simulation_execution_id: UUID,
@@ -63,6 +71,8 @@ class ChildCall(Protocol):
     object_id: str
 
     def get(self, *, timeout: float | None = None) -> object: ...
+
+    def cancel(self) -> None: ...
 
 
 class ChildInvoker(Protocol):

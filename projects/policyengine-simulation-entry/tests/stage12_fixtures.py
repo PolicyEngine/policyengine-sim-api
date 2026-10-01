@@ -97,7 +97,9 @@ def eligible_payload() -> dict:
         "country": "us",
         "scope": "macro",
         "baseline": {},
-        "reform": {"gov.irs.credits.ctc.amount.base[0].amount": {"2026": 3000}},
+        "reform": {
+            "gov.irs.credits.ctc.amount.base[0].amount": {"2026-01-01.2100-12-31": 3000}
+        },
         "time_period": "2026",
         "region": "us",
         "include_cliffs": False,

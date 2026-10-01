@@ -485,6 +485,7 @@ jobs:
           STAGE12_ENVIRONMENT: ${{ inputs.deployment_environment }}
           STAGE12_GCP_PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
           STAGE12_ARTIFACT_BUCKET: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
+          STAGE12_CACHE_BUCKET: ${{ vars.STAGE12_CACHE_BUCKET }}
           STAGE12_ENTRYPOINT_SERVICE_ACCOUNT: ${{ vars.SIMULATION_ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT }}
           STAGE12_DEPLOY_SERVICE_ACCOUNT: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_DEPLOY_SERVICE_ACCOUNT }}
           STAGE12_MODAL_SERVICE_ACCOUNT: ${{ vars.STAGE12_MODAL_SERVICE_ACCOUNT }}
@@ -506,6 +507,7 @@ jobs:
     outputs:
       application_name: ${{ steps.application.outputs.name }}
       validation_file: ${{ steps.validation.outputs.file }}
+      cache_manifest_digest: ${{ steps.stage12_cache.outputs.manifest_digest }}
     steps:
       - uses: actions/checkout@v6
 
@@ -548,10 +550,20 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           STAGE12_ARTIFACT_BUCKET: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
+          STAGE12_CACHE_BUCKET: ${{ vars.STAGE12_CACHE_BUCKET }}
           STAGE12_DATABASE_URL_SECRET_NAME: ${{ vars.STAGE12_DATABASE_URL_SECRET_NAME }}
           STAGE12_GCP_PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
           STAGE12_GCP_CREDENTIALS_SECRET_NAME: ${{ vars.STAGE12_GCP_CREDENTIALS_SECRET_NAME }}
         run: ../../.github/scripts/stage12-sync-modal-secrets.sh "${{ inputs.modal_environment }}"
+
+      - name: Build the independent Stage 12 cache
+        id: stage12_cache
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          STAGE12_CACHE_BUCKET: ${{ vars.STAGE12_CACHE_BUCKET }}
+        run: ../../.github/scripts/stage12-cache-precompute.sh "${{ inputs.modal_environment }}" "${{ inputs.force_recompute }}"
 
       - name: Deploy the additional versioned v2 Modal application
         working-directory: projects/policyengine-simulation-executor
@@ -563,6 +575,8 @@ jobs:
           STAGE12_EXPECT_US_VERSION: ${{ needs.prepare.outputs.us_version }}
           STAGE12_EXPECT_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
           STAGE12_ARTIFACT_BUCKET: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
+          STAGE12_CACHE_BUCKET: ${{ vars.STAGE12_CACHE_BUCKET }}
+          STAGE12_CACHE_MANIFEST_DIGEST: ${{ steps.stage12_cache.outputs.manifest_digest }}
           OBSERVABILITY_SERVICE_NAMESPACE: ${{ vars.OBSERVABILITY_SERVICE_NAMESPACE }}
           OBSERVABILITY_TRACE_PROJECT_ID: ${{ vars.OBSERVABILITY_TRACE_PROJECT_ID }}
           OBSERVABILITY_LOGGING_PROJECT_ID: ${{ vars.OBSERVABILITY_LOGGING_PROJECT_ID }}
@@ -583,6 +597,7 @@ jobs:
           output="${RUNNER_TEMP}/stage12-worker-validation.json"
           uv run python -m src.modal.utils.validate_v2_worker_release \
             --environment "${{ inputs.modal_environment }}" \
+            --cache-manifest-sha256 "${{ steps.stage12_cache.outputs.manifest_digest }}" \
             --output "${output}"
           echo "file=${output}" >> "$GITHUB_OUTPUT"
 

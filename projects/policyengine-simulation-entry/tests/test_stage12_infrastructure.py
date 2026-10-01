@@ -29,9 +29,10 @@ def test_infrastructure_validation_is_bounded_and_valid_shell() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert "STAGE12_ENVIRONMENT" in source
     assert "STAGE12_ARTIFACT_BUCKET" in source
+    assert "STAGE12_CACHE_BUCKET" in source
     assert (
-        "Pre-provisioned Stage 12 database, secret, artifact storage, and UK "
-        "geography lookup access" in source
+        "Pre-provisioned Stage 12 database, secret, report storage, cache storage, "
+        "and UK geography lookup access" in source
     )
     assert "STAGE12_DATABASE_URL_SECRET_NAME" in source
     assert "policyengine_v2_runtime" in source
@@ -60,6 +61,7 @@ def test_infrastructure_validation_is_bounded_and_valid_shell() -> None:
     assert "stage12-evaluation-runtime" in modal_sync
     assert "stage12-evaluation-gcp-credentials" in modal_sync
     assert "STAGE12_DATABASE_URL:" in modal_sync
+    assert "STAGE12_CACHE_BUCKET:" in modal_sync
     assert "GOOGLE_APPLICATION_CREDENTIALS_JSON:" in modal_sync
 
 
@@ -75,7 +77,7 @@ def test_infrastructure_validation_rejects_missing_configuration() -> None:
     assert "STAGE12_ENVIRONMENT is required" in result.stderr
 
 
-def test_storage_validation_uses_only_the_modal_worker_credentials() -> None:
+def test_storage_validation_checks_runtime_and_deployment_credentials() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     helper_start = source.index("runtime_gcloud()")
     helper_end = source.index("\n}\n", helper_start)
@@ -90,8 +92,13 @@ def test_storage_validation_uses_only_the_modal_worker_credentials() -> None:
 
     assert "runtime_gcloud auth activate-service-account" in source
     modal_account = '--account="${STAGE12_MODAL_SERVICE_ACCOUNT}"'
-    assert source.count(f"runtime_gcloud {modal_account} storage cp") == 3
-    assert source.count(f"runtime_gcloud {modal_account} storage rm") == 2
+    assert source.count(f"runtime_gcloud {modal_account} storage cp") == 5
+    assert source.count(f"runtime_gcloud {modal_account} storage rm") == 4
+    assert (
+        'gcloud storage cp \\\n  "${cache_canary_object}" '
+        '"${canary_download_file}" --quiet'
+    ) in source
+    assert "gs://${STAGE12_CACHE_BUCKET}/_deployment-validation" in source
     assert "gs://policyengine-uk-data-private/constituencies_2024.csv" in source
     assert "gs://policyengine-uk-data-private/local_authorities_2021.csv" not in source
     assert "STAGE12_UK_GEOGRAPHY_BUCKET" not in source

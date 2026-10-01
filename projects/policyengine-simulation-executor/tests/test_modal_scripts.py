@@ -731,6 +731,75 @@ class TestModalPrecompute:
         assert "needs: prepare" in executor_job
 
 
+class TestStage12CachePrecompute:
+    """Tests for the independent Stage 12 cache deployment script."""
+
+    script = SCRIPTS_DIR / "stage12-cache-precompute.sh"
+
+    def _run_with_fake_uv(self, tmp_path, output: str, *args):
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        log_path = tmp_path / "uv-calls.log"
+        github_output = tmp_path / "github-output.txt"
+        uv_path = bin_dir / "uv"
+        uv_path.write_text(
+            '#!/bin/bash\nprintf \'%s\\n\' "$*" >> "$UV_FAKE_LOG"\nprintf \'%s\\n\' "$UV_FAKE_OUTPUT"\n',
+            encoding="utf-8",
+        )
+        uv_path.chmod(0o755)
+        env = {
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "UV_FAKE_LOG": str(log_path),
+            "UV_FAKE_OUTPUT": output,
+            "GITHUB_OUTPUT": str(github_output),
+            "STAGE12_CACHE_BUCKET": "policyengine-stage12-cache-staging",
+        }
+        result = subprocess.run(
+            ["bash", str(self.script), "staging", *args],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        calls = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+        emitted = (
+            github_output.read_text(encoding="utf-8") if github_output.exists() else ""
+        )
+        return result, calls, emitted
+
+    def test_validates_syntax_and_exports_exact_manifest_digest(self, tmp_path):
+        syntax = subprocess.run(
+            ["bash", "-n", str(self.script)],
+            capture_output=True,
+            text=True,
+        )
+        assert syntax.returncode == 0, syntax.stderr
+        digest = "a" * 64
+
+        result, calls, emitted = self._run_with_fake_uv(
+            tmp_path,
+            f"progress\nSTAGE12_CACHE_MANIFEST_DIGEST={digest}",
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert (
+            "run modal run --env=staging src/modal/stage12_precompute_app.py" in calls
+        )
+        assert "--force" not in calls
+        assert emitted == f"manifest_digest={digest}\n"
+
+    def test_rejects_invalid_digest_and_passes_force(self, tmp_path):
+        result, calls, emitted = self._run_with_fake_uv(
+            tmp_path,
+            "STAGE12_CACHE_MANIFEST_DIGEST=not-a-digest",
+            "true",
+        )
+
+        assert result.returncode != 0
+        assert calls.rstrip().endswith("--force")
+        assert emitted == ""
+
+
 class TestModalRecordDeployment:
     """Tests for modal-record-deployment.sh"""
 

@@ -52,7 +52,9 @@ jobs:
       entrypoint_min_instances: 0
       entrypoint_max_instances: 2
       promote_entrypoint: false
-      run_full_integration: true
+      # This workflow deploys and validates only the independent Stage 12 path.
+      # The main API deployment continues to run the existing-stack suite.
+      run_full_integration: false
       deploy_existing_stack: false
       deploy_stage12_v2: true
     secrets: inherit

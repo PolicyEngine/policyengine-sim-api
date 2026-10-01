@@ -25,7 +25,12 @@ REQUIRED_SECRET_ALTERNATIVES = (
     ),
     ("STAGE12_DATABASE_URL",),
     ("STAGE12_ARTIFACT_BUCKET",),
+    ("STAGE12_CACHE_BUCKET",),
 )
+
+US_VALIDATION_REFORM = {
+    "gov.irs.credits.ctc.amount.base[0].amount": {"2026-01-01.2100-12-31": 3_000}
+}
 
 
 def _require_secret_environment(environment: Mapping[str, str]) -> None:
@@ -55,16 +60,40 @@ def _check_dataset_access(path: str, expected_sha256: str) -> None:
 
 def _run_non_serving_calculation(country: CountryId) -> None:
     country_module = import_module(f"policyengine.tax_benefit_models.{country}")
-    spm = {"geography_kind": "national"} if country == "us" else None
+    people = [{"age": 40, "employment_income": 50_000}]
+    extra_variables = ["household_net_income"]
+    options: dict[str, Any] = {}
+    if country == "us":
+        from policyengine_simulation_executor.simulation_runtime import (
+            _normalise_policy,
+        )
+
+        people = [
+            {
+                "age": 40,
+                "employment_income": 50_000,
+                "is_tax_unit_head": True,
+            },
+            {"age": 10, "is_tax_unit_dependent": True},
+        ]
+        extra_variables.append("ctc")
+        options["spm"] = {"geography_kind": "national"}
+        options["reform"] = _normalise_policy(US_VALIDATION_REFORM)
     result = country_module.calculate_household(
-        people=[{"age": 40, "employment_income": 50_000}],
-        **({"spm": spm} if spm is not None else {}),
+        people=people,
         year=2026,
-        extra_variables=["household_net_income"],
+        extra_variables=extra_variables,
+        **options,
     )
     household = getattr(result, "household", None)
     if not isinstance(household, Mapping) or "household_net_income" not in household:
         raise RuntimeError("Stage 12 validation calculation returned no net income")
+    if country == "us":
+        tax_unit = getattr(result, "tax_unit", None)
+        if not isinstance(tax_unit, Mapping) or not isinstance(
+            tax_unit.get("ctc"), (int, float)
+        ):
+            raise RuntimeError("Stage 12 validation reform returned no CTC value")
 
 
 def _check_uk_local_authority_resources() -> None:
@@ -86,10 +115,58 @@ def _check_uk_local_authority_dataset(dataset_path: str) -> None:
     detect_uk_local_authority_metadata_from_hdf(dataset_path)
 
 
+def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
+    """Validate the baked manifest and require one real baseline cache hit."""
+
+    from policyengine_simulation_executor.simulation_runtime import resolve_data_folder
+    from policyengine_simulation_executor.stage12_cache.models import CacheManifest
+    from policyengine_simulation_executor.stage12_cache.precompute import (
+        _scoped_planned_simulation,
+    )
+    from policyengine_simulation_executor.stage12_runtime.partition import (
+        US_REGION_GROUPS,
+    )
+    from policyengine_simulation_executor.stage12_runtime.simulation import (
+        calculate_simulation_frames,
+    )
+
+    data_folder = Path(resolve_data_folder())
+    manifest_path = data_folder / ".stage12-cache-manifest.json"
+    payload = manifest_path.read_bytes()
+    if sha256(payload).hexdigest() != expected_manifest_sha256:
+        raise RuntimeError("installed Stage 12 cache manifest digest differs")
+    manifest = CacheManifest.model_validate_json(payload)
+    if manifest.years != (2026, 2027, 2025):
+        raise RuntimeError("installed Stage 12 cache years differ")
+    if len(manifest.artifacts) != 63:
+        raise RuntimeError("installed Stage 12 cache artifact count differs")
+    probe = next(
+        item
+        for item in manifest.artifacts
+        if item.type == "baseline" and item.year == 2026
+    )
+    probe_path = data_folder / probe.filename
+    _check_dataset_access(str(probe_path), probe.content_sha256)
+    calculation = calculate_simulation_frames(
+        _scoped_planned_simulation(2026, US_REGION_GROUPS[0])
+    )
+    if calculation.cache_outcome != "hit":
+        raise RuntimeError("deployed Stage 12 cache probe did not load a cache hit")
+    return {
+        "manifest_sha256": expected_manifest_sha256,
+        "partition_sha256": manifest.partition_sha256,
+        "years": list(manifest.years),
+        "segment_count": 20,
+        "dataset_count": sum(item.type == "dataset" for item in manifest.artifacts),
+        "baseline_count": sum(item.type == "baseline" for item in manifest.artifacts),
+    }
+
+
 def validate_country_worker(
     *,
     country: CountryId,
     expected_bundle_manifest_sha256: str,
+    expected_cache_manifest_sha256: str | None = None,
     environment: Mapping[str, str] | None = None,
     dataset_path_resolver: Callable[[CountryId], str | None] = (
         _resolve_installed_dataset_path
@@ -99,6 +176,7 @@ def validate_country_worker(
     local_authority_resource_check: Callable[[str], None] = (
         _check_uk_local_authority_dataset
     ),
+    cache_check: Callable[[str], dict[str, Any]] = _check_installed_cache,
 ) -> dict[str, Any]:
     """Validate imports, installed bundle, secrets, data, and calculation."""
 
@@ -136,6 +214,9 @@ def validate_country_worker(
     if country == "uk":
         local_authority_resource_check(installed_dataset_path)
     calculation_check(country)
+    cache = None
+    if country == "us" and expected_cache_manifest_sha256:
+        cache = cache_check(expected_cache_manifest_sha256)
     return {
         "validated": True,
         "country": country,
@@ -146,4 +227,5 @@ def validate_country_worker(
         "dataset_uri": country_bundle.default_dataset_uri,
         "data_artifact_revision": country_bundle.data_artifact_revision,
         "bundle_manifest_sha256": resolved.bundle_manifest_sha256,
+        "cache": cache,
     }

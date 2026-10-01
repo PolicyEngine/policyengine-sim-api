@@ -7,10 +7,10 @@ instead of distributing string literals across the gateway and workers.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Mapping
 
 
 class RunConfiguration(StrEnum):
@@ -20,6 +20,7 @@ class RunConfiguration(StrEnum):
     STAGE12_SHADOW_REPORT = "stage12_shadow_report"
     STAGE12_CANONICAL_REPORT = "stage12_canonical_report"
     STAGE12_SIMULATION = "stage12_simulation"
+    STAGE12_SEGMENT = "stage12_segment"
 
 
 class Stage(StrEnum):
@@ -85,6 +86,11 @@ class Stage(StrEnum):
     STAGE12_CHILD_WAIT = "stage12_child_wait"
     STAGE12_INPUT_WRITE = "stage12_input_write"
     STAGE12_SIMULATION_EXECUTION = "stage12_simulation_execution"
+    STAGE12_SEGMENT_EXECUTION = "stage12_segment_execution"
+    STAGE12_SEGMENT_DISPATCH = "stage12_segment_dispatch"
+    STAGE12_SEGMENT_WAIT = "stage12_segment_wait"
+    STAGE12_SEGMENT_MERGE = "stage12_segment_merge"
+    STAGE12_CACHE_LOOKUP = "stage12_cache_lookup"
     STAGE12_CALCULATION = "stage12_calculation"
     STAGE12_SIMULATION_ARTIFACT_WRITE = "stage12_simulation_artifact_write"
     STAGE12_ARTIFACT_READ = "stage12_artifact_read"
@@ -214,6 +220,9 @@ RUN_STAGE_REGISTRY: Mapping[RunConfiguration, StagePlan] = MappingProxyType(
             (
                 Stage.STAGE12_SIMULATION_EXECUTION,
                 Stage.STAGE12_INPUT_WRITE,
+                Stage.STAGE12_SEGMENT_DISPATCH,
+                Stage.STAGE12_SEGMENT_WAIT,
+                Stage.STAGE12_SEGMENT_MERGE,
                 Stage.CREDENTIAL_SETUP,
                 Stage.COUNTRY_MODULE_LOAD,
                 Stage.REGION_RESOLUTION,
@@ -221,8 +230,24 @@ RUN_STAGE_REGISTRY: Mapping[RunConfiguration, StagePlan] = MappingProxyType(
                 Stage.DATASET_LOAD,
                 Stage.POLICY_NORMALIZATION,
                 Stage.SIMULATION_BUILD,
+                Stage.STAGE12_CACHE_LOOKUP,
                 Stage.STAGE12_CALCULATION,
                 Stage.STAGE12_SIMULATION_ARTIFACT_WRITE,
+            ),
+        ),
+        RunConfiguration.STAGE12_SEGMENT: StagePlan(
+            RunConfiguration.STAGE12_SEGMENT,
+            (
+                Stage.STAGE12_SEGMENT_EXECUTION,
+                Stage.CREDENTIAL_SETUP,
+                Stage.COUNTRY_MODULE_LOAD,
+                Stage.REGION_RESOLUTION,
+                Stage.DATASET_RESOLUTION,
+                Stage.DATASET_LOAD,
+                Stage.POLICY_NORMALIZATION,
+                Stage.SIMULATION_BUILD,
+                Stage.STAGE12_CACHE_LOOKUP,
+                Stage.STAGE12_CALCULATION,
             ),
         ),
     }
@@ -238,3 +263,4 @@ STAGE12_CANONICAL_REPORT_STAGES = RUN_STAGE_REGISTRY[
     RunConfiguration.STAGE12_CANONICAL_REPORT
 ]
 STAGE12_SIMULATION_STAGES = RUN_STAGE_REGISTRY[RunConfiguration.STAGE12_SIMULATION]
+STAGE12_SEGMENT_STAGES = RUN_STAGE_REGISTRY[RunConfiguration.STAGE12_SEGMENT]

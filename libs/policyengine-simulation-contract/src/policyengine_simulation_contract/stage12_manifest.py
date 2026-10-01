@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime
 from hashlib import sha256
-import json
-import re
 from typing import Annotated, Literal, Protocol
 
 from packaging.version import InvalidVersion, Version
@@ -39,6 +39,15 @@ class V2CountryWorker(StrictManifestModel):
     single_simulation_callable: CallableName
 
 
+class Stage12CacheRelease(StrictManifestModel):
+    manifest_sha256: Sha256Digest
+    partition_sha256: Sha256Digest
+    years: tuple[int, ...]
+    segment_count: Literal[20] = 20
+    dataset_count: Literal[3] = 3
+    baseline_count: Literal[60] = 60
+
+
 class V2WorkerValidation(StrictManifestModel):
     validated: Literal[True]
     application_name: ManifestText
@@ -46,6 +55,7 @@ class V2WorkerValidation(StrictManifestModel):
     validated_at: datetime
     validation_invocation_id: ManifestText
     country_validation_invocation_ids: dict[CountryId, ManifestText]
+    cache: Stage12CacheRelease | None = None
 
 
 class V2WorkerVersion(StrictManifestModel):
@@ -55,6 +65,7 @@ class V2WorkerVersion(StrictManifestModel):
     bundle: Stage12BundleManifest
     bundle_manifest_sha256: Sha256Digest
     validation: V2WorkerValidation
+    cache: Stage12CacheRelease | None = None
 
     @model_validator(mode="after")
     def validate_worker(self) -> V2WorkerVersion:
@@ -69,6 +80,8 @@ class V2WorkerVersion(StrictManifestModel):
             raise ValueError("worker validation names another application")
         if self.validation.bundle_manifest_sha256 != self.bundle_manifest_sha256:
             raise ValueError("worker validation names another bundle digest")
+        if self.validation.cache != self.cache:
+            raise ValueError("worker cache metadata differs from worker validation")
         countries = tuple(worker.country for worker in self.countries)
         bundle_countries = tuple(country.country for country in self.bundle.countries)
         if len(countries) != len(set(countries)):

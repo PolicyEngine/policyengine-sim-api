@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import pandas as pd
+from policyengine.core import Simulation
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
@@ -33,6 +34,15 @@ def validate_uk_local_authority_metadata(
     if baseline is not None or reform is not None:
         raise ValueError("non-UK simulation artifacts contain UK authority metadata")
     return None
+
+
+class PrecomputedSimulation(Simulation):
+    """A Stage 12 aggregate input whose output dataset is already complete."""
+
+    def ensure(self) -> None:
+        """Do not recalculate frames loaded from Stage 12 artifacts."""
+
+        return
 
 
 def validate_aligned_outputs(
@@ -114,9 +124,6 @@ def build_aggregate_report(
     reform_descriptor: SimulationArtifactDescriptor,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> dict[str, Any]:
-    from policyengine_simulation_executor.segmented_national_reduce import (
-        PrecomputedSimulation,
-    )
     from policyengine_simulation_executor.simulation_output_builder import (
         SimulationOutputBuilder,
     )
@@ -206,13 +213,19 @@ def build_spm_result(
         raise TypeError("SPM calculation selection is invalid")
     if selection != reform_provenance.get("spm_config"):
         raise ValueError("SPM calculation selections do not match")
+    baseline_values = baseline_provenance.get("spm_provenance")
+    reform_values = reform_provenance.get("spm_provenance")
+    baseline_items = (
+        baseline_values if isinstance(baseline_values, list) else [baseline_values]
+    )
+    reform_items = reform_values if isinstance(reform_values, list) else [reform_values]
     return combine_spm_results(
         [
             {
                 "spm_config": selection,
                 "spm_provenance": {
-                    "baseline": [baseline_provenance.get("spm_provenance")],
-                    "reform": [reform_provenance.get("spm_provenance")],
+                    "baseline": baseline_items,
+                    "reform": reform_items,
                 },
             }
         ],

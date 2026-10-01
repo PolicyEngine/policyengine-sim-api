@@ -110,6 +110,48 @@ Operational notes:
   That staleness class predates the artifact pipeline and lives in the
   bundle install, not the fetch.
 
+## Independent Stage 12 segmentation and cache
+
+The separately named Stage 12 v2 application has its own implementation under
+`stage12_runtime/` and `stage12_cache/`. It does not call the v1 segmented-run
+or precompute modules described above.
+
+For an eligible US national report, the coordinator starts baseline and reform
+as separate logical simulations. Each logical simulation starts 20 calls to
+`run_single_simulation_segment_us`, then validates and concatenates their
+dtype-preserving entity tables. This produces 40 region-group calculation
+invocations per report while retaining two simulation records and two private
+simulation artifacts. `segmented=false`, US subnational requests, UK requests,
+cliff analysis, and labor-supply-response calculations use the
+single-container Stage 12 path.
+
+After dispatching both logical simulations, the coordinator checks both Modal
+calls with nonblocking result probes on every polling pass. It does not wait
+for baseline before checking reform. The first failed simulation supplies the
+report's `error_code` and safe `error_summary`; the coordinator marks the
+unresolved peer `incomplete` with `cancelled_after_peer_failure`. A segmented
+peer reads that persisted state, cancels the region-group calls it owns, and
+exits without overwriting the cancellation record. Expected input failures
+retain their typed code and message. Unexpected exceptions are logged in full
+and persisted as a generic message with a correlation ID.
+
+Stage 12 deployments run `src/modal/stage12_precompute_app.py` against the
+dedicated `STAGE12_CACHE_BUCKET`. It publishes three annual datasets plus 60
+current-law US baseline files and emits
+`STAGE12_CACHE_MANIFEST_DIGEST=<sha256>`. The US worker image downloads and
+verifies the manifest's 63 files during image construction. The release
+validation checks the recorded manifest, hashes a baseline file, and requires
+a real calculation to load that file without recomputing it. Worker validation
+also calculates a US household under a nonempty CTC reform using the frontend
+interval format `2026-01-01.2100-12-31`. The cache manifest digest is then
+stored in the separate v2 version manifest.
+
+The cache is an optimization, not required state for a calculation: an absent
+file causes a normal calculation, and a file missing planned output columns is
+recalculated. Only empty-policy baseline region-group calculations against the
+bundle's default dataset are eligible to read it. Reform calculations never
+read a baseline file.
+
 ## Observability
 
 `policyengine-observability` 3.x emits structured request, operation,

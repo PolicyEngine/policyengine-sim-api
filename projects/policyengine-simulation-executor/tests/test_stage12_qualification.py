@@ -14,11 +14,18 @@ from policyengine_simulation_executor.simulation_microdata import (
 )
 from policyengine_simulation_executor.stage12_parity import ParityMismatch
 from policyengine_simulation_executor.stage12_qualification import (
+    _run_stage12_simulation_for_qualification,
     qualify_report_parity,
 )
-from policyengine_simulation_executor.stage12_runtime import SimulationCalculation
+from policyengine_simulation_executor.stage12_runtime import (
+    SimulationCalculation,
+    calculate_segment,
+)
+from policyengine_simulation_executor.stage12_runtime.partition import (
+    US_REGION_GROUPS,
+)
 
-from test_stage12_runtime import _report
+from test_stage12_runtime import _planned_simulation, _report
 
 
 def _frames(value: float) -> dict[str, pd.DataFrame]:
@@ -60,6 +67,44 @@ def _existing_request() -> dict[str, Any]:
         "policyengine_version": report.baseline.bundle.policyengine_version,
         "version": report.baseline.bundle.country_package_version,
     }
+
+
+def test_qualification_runner_exercises_all_segments_and_exact_merge() -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    calls = []
+
+    def run_segment(segment):
+        calls.append(segment.segment_index)
+        index = segment.segment_index
+        frames = {
+            "household": pd.DataFrame(
+                {
+                    "household_id": pd.Series([index], dtype="int64"),
+                    "household_net_income": pd.Series([index + 0.5], dtype="float32"),
+                }
+            ),
+            "person": pd.DataFrame(
+                {
+                    "age": pd.Series([30 + index], dtype="int16"),
+                    "household_id": pd.Series([index], dtype="int64"),
+                    "person_id": pd.Series([100 + index], dtype="int64"),
+                }
+            ),
+        }
+        return calculate_segment(
+            segment,
+            calculator=lambda _: SimulationCalculation(frames=frames),
+        )
+
+    result = _run_stage12_simulation_for_qualification(
+        simulation,
+        groups=US_REGION_GROUPS,
+        segment_runner=run_segment,
+    )
+
+    assert calls == list(range(20))
+    assert result.frames["household"]["household_id"].tolist() == list(range(20))
+    assert str(result.frames["person"]["age"].dtype) == "int16"
 
 
 def test_qualification_runs_matching_inputs_through_both_complete_paths() -> None:
