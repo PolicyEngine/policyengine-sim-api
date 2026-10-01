@@ -1,6 +1,7 @@
 """Dependency-light public models for US SPM selection and calculation receipts."""
 
 import re
+from collections.abc import Sequence
 from datetime import date
 from typing import Any, Literal, Optional
 
@@ -98,19 +99,139 @@ class SPMSelection(BaseModel):
 
 
 class SPMProvenance(BaseModel):
-    """Detached calculation receipt; data certification is a separate claim."""
+    """Compact detached receipt for one SPM calculation configuration."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True, serialize_by_alias=True)
 
-    forecast_id: str
-    forecast_sha256: str
-    scenario: str
-    geography_kind: str
-    runtime_versions: dict[str, Optional[str]]
-    years: dict[str, dict[str, Any]]
-    geographies: list[dict[str, Any]]
-    composition_method: str
-    storage_method: str
+    schema_version: Literal["canonical-spm-provenance-v2"]
+    forecast_id: str = Field(min_length=1, pattern=r"^\S+$")
+    forecast_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    scenario: str = Field(min_length=1, pattern=r"^\S+$")
+    geography_kind: Literal["county", "national", "metro"]
+    geography_id: Optional[str] = Field(min_length=1)
+    county_vintage: str = Field(pattern=r"^[0-9]{4}$")
+    as_of: Optional[date]
+    years: tuple[str, ...]
+    runtime_versions: "SPMRuntimeVersions"
+
+    @field_validator("years")
+    @classmethod
+    def validate_years(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if any(re.fullmatch(r"[0-9]{4}", year) is None for year in value):
+            raise ValueError("SPM provenance years must use four-digit years")
+        if value != tuple(sorted(set(value))):
+            raise ValueError("SPM provenance years must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def validate_provenance_location(self) -> "SPMProvenance":
+        if self.geography_kind == "metro":
+            if self.geography_id is None or not self.geography_id.strip():
+                raise ValueError("An SPM area receipt requires geography_id")
+        elif self.geography_id is not None:
+            raise ValueError("Only an SPM area receipt accepts geography_id")
+        return self
+
+
+class SPMRuntimeVersions(BaseModel):
+    """Package versions needed to reproduce an SPM calculation."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        populate_by_name=True,
+        serialize_by_alias=True,
+    )
+
+    policyengine: Optional[str]
+    policyengine_core: Optional[str] = Field(alias="policyengine-core")
+    policyengine_us: Optional[str] = Field(alias="policyengine-us")
+    spm_calculator: Optional[str] = Field(alias="spm-calculator")
+
+
+class SPMCalculationProvenance(BaseModel):
+    """Resolved SPM selection paired with its compact calculation receipt."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    spm_config: SPMSelection
+    spm_provenance: SPMProvenance
+
+    @model_validator(mode="after")
+    def require_matching_receipt(self) -> "SPMCalculationProvenance":
+        _require_complete_selection(self.spm_config)
+        expected = {
+            "forecast_sha256": self.spm_config.forecast_content_sha256,
+            "scenario": self.spm_config.scenario,
+            "geography_kind": self.spm_config.geography_kind,
+            "geography_id": self.spm_config.geography_id,
+            "county_vintage": self.spm_config.county_vintage,
+            "as_of": (
+                date.fromisoformat(self.spm_config.as_of)
+                if self.spm_config.as_of is not None
+                else None
+            ),
+        }
+        for field_name, expected_value in expected.items():
+            if getattr(self.spm_provenance, field_name) != expected_value:
+                raise ValueError(
+                    f"SPM receipt {field_name} differs from the resolved selection"
+                )
+        return self
+
+
+def _require_complete_selection(selection: SPMSelection) -> None:
+    required = set(SPMSelection.model_fields)
+    missing = required.difference(selection.model_fields_set)
+    if missing:
+        raise ValueError(
+            "Resolved SPM selection is missing " + ", ".join(sorted(missing))
+        )
+    if selection.forecast_content_sha256 is None:
+        raise ValueError("Resolved SPM selection has no artifact hash")
+    if selection.scenario is None:
+        raise ValueError("Resolved SPM selection has no scenario")
+
+
+def build_spm_provenance(
+    *,
+    forecast_id: str,
+    forecast_sha256: str,
+    selection: SPMSelection,
+    years: Sequence[str],
+    runtime_versions: SPMRuntimeVersions,
+) -> SPMProvenance:
+    """Build one compact receipt from resolved calculation inputs."""
+
+    _require_complete_selection(selection)
+    if forecast_sha256 != selection.forecast_content_sha256:
+        raise ValueError("SPM receipt artifact hash differs from the selection")
+    return SPMProvenance(
+        schema_version="canonical-spm-provenance-v2",
+        forecast_id=forecast_id,
+        forecast_sha256=forecast_sha256,
+        scenario=selection.scenario,
+        geography_kind=selection.geography_kind,
+        geography_id=selection.geography_id,
+        county_vintage=selection.county_vintage,
+        as_of=(
+            date.fromisoformat(selection.as_of)
+            if selection.as_of is not None
+            else None
+        ),
+        years=tuple(years),
+        runtime_versions=runtime_versions,
+    )
+
+
+def build_spm_calculation_provenance(
+    *,
+    config: SPMSelection,
+    receipt: SPMProvenance,
+) -> SPMCalculationProvenance:
+    """Pair a resolved selection with a matching compact receipt."""
+
+    return SPMCalculationProvenance(spm_config=config, spm_provenance=receipt)
 
 
 SPM_CONTRACT_VERSION = "canonical-spm-v1"
@@ -177,12 +298,53 @@ class SPMCapability(BaseModel):
         return self
 
 
-class SPMComparisonProvenance(BaseModel):
-    """One receipt per executed regional segment, separately for each policy."""
+class SPMExecutionProvenance(BaseModel):
+    """One shared receipt and the number of executions that produced it."""
 
-    model_config = ConfigDict(extra="forbid")
-    baseline: list[SPMProvenance] = Field(min_length=1)
-    reform: list[SPMProvenance] = Field(min_length=1)
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    receipt: SPMProvenance
+    execution_count: int = Field(ge=1)
+
+
+class SPMComparisonProvenance(BaseModel):
+    """Compact receipts for the baseline and reform execution sets."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["canonical-spm-comparison-v2"]
+    baseline: SPMExecutionProvenance
+    reform: SPMExecutionProvenance
+
+
+def _collapse_spm_receipts(
+    side: str,
+    receipts: Sequence[SPMProvenance],
+) -> SPMExecutionProvenance:
+    if not receipts:
+        raise ValueError(f"{side} receipts must not be empty")
+    first = receipts[0]
+    if any(receipt != first for receipt in receipts[1:]):
+        raise ValueError(f"{side} receipts differ")
+    return SPMExecutionProvenance(receipt=first, execution_count=len(receipts))
+
+
+def build_spm_comparison_provenance(
+    *,
+    baseline_receipts: Sequence[SPMProvenance],
+    reform_receipts: Sequence[SPMProvenance],
+) -> SPMComparisonProvenance:
+    """Collapse identical child receipts into one receipt per policy side."""
+
+    baseline = _collapse_spm_receipts("baseline", baseline_receipts)
+    reform = _collapse_spm_receipts("reform", reform_receipts)
+    if baseline.receipt != reform.receipt:
+        raise ValueError("baseline and reform SPM receipts differ")
+    return SPMComparisonProvenance(
+        schema_version="canonical-spm-comparison-v2",
+        baseline=baseline,
+        reform=reform,
+    )
 
 
 def resolve_spm_selection(
@@ -295,14 +457,15 @@ def validate_spm_result(
         provenance = SPMComparisonProvenance.model_validate(
             result.get("spm_provenance")
         )
-        for receipt in provenance.baseline + provenance.reform:
+        for execution in (provenance.baseline, provenance.reform):
+            build_spm_calculation_provenance(
+                config=chosen,
+                receipt=execution.receipt,
+            )
             if (
-                receipt.forecast_sha256 != selection["forecast_content_sha256"]
-                or receipt.scenario != selection["scenario"]
-                or receipt.geography_kind != selection["geography_kind"]
+                expected_year is not None
+                and str(expected_year) not in execution.receipt.years
             ):
-                raise ValueError("Result SPM provenance differs from the request")
-            if expected_year is not None and str(expected_year) not in receipt.years:
                 raise ValueError(
                     "Result SPM provenance does not cover the requested year"
                 )
@@ -330,8 +493,19 @@ def combine_spm_results(
                 "SPM_CONFIGURATION_UNAVAILABLE", "Missing canonical SPM receipt"
             )
         validated.append(receipt)
-    combined = SPMComparisonProvenance(
-        baseline=[r for item in validated for r in item.baseline],
-        reform=[r for item in validated for r in item.reform],
+    combined = build_spm_comparison_provenance(
+        baseline_receipts=[
+            item.baseline.receipt
+            for item in validated
+            for _ in range(item.baseline.execution_count)
+        ],
+        reform_receipts=[
+            item.reform.receipt
+            for item in validated
+            for _ in range(item.reform.execution_count)
+        ],
     )
-    return {"spm_config": selection, "spm_provenance": combined.model_dump(mode="json")}
+    return {
+        "spm_config": selection,
+        "spm_provenance": combined.model_dump(mode="json", by_alias=True),
+    }

@@ -18,6 +18,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from policyengine_simulation_contract.spm import SPMCalculationProvenance
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion as UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata as UKLocalAuthorityMetadata,
@@ -332,7 +333,7 @@ class SimulationArtifactDescriptor(StrictContractModel):
     output_plan_sha256: Sha256Digest
     row_identity: RowIdentity
     bundle: BundleProvenance
-    calculation_provenance: dict[str, JsonValue] | None = None
+    calculation_provenance: SPMCalculationProvenance | None = None
 
 
 class ReportExecutionInput(StrictContractModel):
