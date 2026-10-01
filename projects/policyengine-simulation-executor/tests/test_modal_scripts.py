@@ -128,6 +128,84 @@ class TestModalHealthCheck:
         assert result.returncode != 0, "Should fail on unreachable URL"
 
 
+class TestModalImageSmoke:
+    """Tests for modal-image-smoke.sh."""
+
+    script = SCRIPTS_DIR / "modal-image-smoke.sh"
+
+    def test_requires_hf_token_before_running_modal(self, tmp_path):
+        """Image validation must not depend on stale Modal secret contents."""
+        uv_calls_log = tmp_path / "uv_calls.log"
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        fake_uv = fake_bin / "uv"
+        fake_uv.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$UV_CALLS_LOG"\n')
+        fake_uv.chmod(0o755)
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{fake_bin}:{env['PATH']}",
+                "UV_CALLS_LOG": str(uv_calls_log),
+            }
+        )
+        env.pop("HF_TOKEN", None)
+
+        result = subprocess.run(
+            ["bash", str(self.script), "staging"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+
+        assert result.returncode != 0
+        assert "HF_TOKEN is required" in result.stderr
+        assert not uv_calls_log.exists()
+
+    def test_syncs_expected_hf_key_before_image_smokes(self, tmp_path):
+        """The image check must rename the GitHub token for Modal consumers."""
+        uv_calls_log = tmp_path / "uv_calls.log"
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        fake_uv = fake_bin / "uv"
+        fake_uv.write_text('#!/bin/bash\nprintf "%s\\n" "$*" >> "$UV_CALLS_LOG"\n')
+        fake_uv.chmod(0o755)
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{fake_bin}:{env['PATH']}",
+                "UV_CALLS_LOG": str(uv_calls_log),
+                "HF_TOKEN": "hf_test",
+            }
+        )
+
+        result = subprocess.run(
+            ["bash", str(self.script), "staging"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+
+        assert result.returncode == 0, result.stderr
+        calls = uv_calls_log.read_text(encoding="utf-8").splitlines()
+        assert calls[0] == (
+            "run modal secret create huggingface-token "
+            "HUGGING_FACE_TOKEN=hf_test --env=staging --force"
+        )
+        assert len(calls) == 4
+
+    def test_workflow_supplies_hf_token(self):
+        """The same repository secret used by deployment must reach the smoke."""
+        workflow = (
+            REPO_ROOT / ".github" / "workflows" / "pr-image-smoke.yml"
+        ).read_text(encoding="utf-8")
+
+        assert "HF_TOKEN: ${{ secrets.HF_TOKEN }}" in workflow
+
+
 class TestSimulationDeploymentSummary:
     """Tests for simulation-deployment-summary.sh"""
 
