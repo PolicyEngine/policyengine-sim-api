@@ -9,6 +9,7 @@ from policyengine_simulation_contract.spm import (
     SPMCalculationProvenance,
     SPMComparisonProvenance,
     SPMProvenance,
+    SPMResolvedConfiguration,
     SPMRuntimeVersions,
     SPMSelection,
     build_spm_calculation_provenance,
@@ -113,9 +114,12 @@ def test_compact_receipt_rejects_old_rich_shape() -> None:
     "package",
     ["policyengine", "policyengine-core", "policyengine-us", "spm-calculator"],
 )
-def test_runtime_versions_reject_null_package_versions(package: str) -> None:
+@pytest.mark.parametrize("invalid_value", [None, ""])
+def test_runtime_versions_reject_invalid_package_versions(
+    package: str, invalid_value: str | None
+) -> None:
     versions = VERSIONS.model_dump(mode="json", by_alias=True)
-    invalid_versions: dict[str, str | None] = {**versions, package: None}
+    invalid_versions: dict[str, str | None] = {**versions, package: invalid_value}
 
     with pytest.raises(ValidationError):
         SPMRuntimeVersions.model_validate(invalid_versions)
@@ -152,12 +156,40 @@ def test_calculation_builder_requires_complete_matching_config() -> None:
         receipt=receipt(),
     )
     assert isinstance(calculated, SPMCalculationProvenance)
+    assert isinstance(calculated.spm_config, SPMResolvedConfiguration)
+    assert calculated.model_dump(mode="json", exclude_none=True)["spm_config"] == {
+        **SELECTION.model_dump(mode="json"),
+        "geography_id": None,
+        "as_of": None,
+    }
 
     with pytest.raises(ValueError, match="scenario"):
         build_spm_calculation_provenance(
             config=SELECTION.model_copy(update={"scenario": "zero_real"}),
             receipt=receipt(),
         )
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "forecast_content_sha256",
+        "scenario",
+        "geography_kind",
+        "geography_id",
+        "county_vintage",
+        "as_of",
+    ],
+)
+def test_completed_calculation_config_requires_every_resolved_field(field: str) -> None:
+    calculated = build_spm_calculation_provenance(
+        config=SELECTION,
+        receipt=receipt(),
+    ).model_dump(mode="json", by_alias=True)
+    del calculated["spm_config"][field]
+
+    with pytest.raises(ValidationError):
+        SPMCalculationProvenance.model_validate(calculated)
 
 
 def test_comparison_collapses_identical_children_and_counts_them() -> None:

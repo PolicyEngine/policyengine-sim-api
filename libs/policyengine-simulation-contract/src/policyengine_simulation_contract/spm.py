@@ -49,13 +49,11 @@ class SPMSelection(BaseModel):
     def serialize_selection(
         self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
     ):
-        """Preserve inherited options through ordinary and nested JSON.
+        """Preserve explicitly selected options through ordinary and nested JSON.
 
         Presence is the contract: an omitted option inherits the bundle
         default, so an option explicitly selected as null has to stay on the
-        wire. ``exclude_none`` would otherwise turn a completed result's
-        resolved selection back into a partial request, and the poll routes
-        apply it to every body via ``response_model_exclude_none``.
+        request wire even when a containing transport excludes null values.
         """
         dumped = handler(self)
         if info.exclude_none:
@@ -98,6 +96,52 @@ class SPMSelection(BaseModel):
         return self
 
 
+class SPMResolvedConfiguration(BaseModel):
+    """The complete six-field SPM selection recorded beside a receipt."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    forecast_content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    scenario: str = Field(min_length=1, pattern=r"^\S+$")
+    geography_kind: Literal["county", "national", "metro"]
+    geography_id: str | None = Field(min_length=1)
+    county_vintage: str = Field(pattern=r"^[0-9]{4}$")
+    as_of: str | None
+
+    @model_serializer(mode="wrap")
+    def serialize_resolved_configuration(
+        self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
+    ):
+        """Keep required nullable fields in completed response bodies."""
+
+        dumped = handler(self)
+        if info.exclude_none:
+            for name in ("geography_id", "as_of"):
+                if (
+                    (info.include is None or name in info.include)
+                    and (info.exclude is None or name not in info.exclude)
+                    and getattr(self, name) is None
+                ):
+                    dumped[name] = None
+        return dumped
+
+    @field_validator("as_of")
+    @classmethod
+    def validate_as_of(cls, value: str | None) -> str | None:
+        if value is not None and date.fromisoformat(value).isoformat() != value:
+            raise ValueError("as_of must be an ISO calendar date (YYYY-MM-DD)")
+        return value
+
+    @model_validator(mode="after")
+    def validate_location(self) -> "SPMResolvedConfiguration":
+        if self.geography_kind == "metro":
+            if self.geography_id is None or not self.geography_id.strip():
+                raise ValueError("An SPM area selection requires geography_id")
+        elif self.geography_id is not None:
+            raise ValueError("Only an SPM area selection accepts geography_id")
+        return self
+
+
 class SPMProvenance(BaseModel):
     """Compact detached receipt for one SPM calculation configuration."""
 
@@ -134,7 +178,7 @@ class SPMProvenance(BaseModel):
 
 
 class SPMRuntimeVersions(BaseModel):
-    """Package versions needed to reproduce an SPM calculation."""
+    """Package versions required to reproduce one certified SPM execution."""
 
     model_config = ConfigDict(
         extra="forbid",
@@ -143,10 +187,10 @@ class SPMRuntimeVersions(BaseModel):
         serialize_by_alias=True,
     )
 
-    policyengine: str
-    policyengine_core: str = Field(alias="policyengine-core")
-    policyengine_us: str = Field(alias="policyengine-us")
-    spm_calculator: str = Field(alias="spm-calculator")
+    policyengine: str = Field(min_length=1)
+    policyengine_core: str = Field(min_length=1, alias="policyengine-core")
+    policyengine_us: str = Field(min_length=1, alias="policyengine-us")
+    spm_calculator: str = Field(min_length=1, alias="spm-calculator")
 
 
 class SPMCalculationProvenance(BaseModel):
@@ -154,12 +198,11 @@ class SPMCalculationProvenance(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    spm_config: SPMSelection
+    spm_config: SPMResolvedConfiguration
     spm_provenance: SPMProvenance
 
     @model_validator(mode="after")
     def require_matching_receipt(self) -> "SPMCalculationProvenance":
-        _require_complete_selection(self.spm_config)
         expected = {
             "forecast_sha256": self.spm_config.forecast_content_sha256,
             "scenario": self.spm_config.scenario,
@@ -191,6 +234,24 @@ def _require_complete_selection(selection: SPMSelection) -> None:
         raise ValueError("Resolved SPM selection has no artifact hash")
     if selection.scenario is None:
         raise ValueError("Resolved SPM selection has no scenario")
+
+
+def _resolved_spm_configuration(
+    selection: SPMSelection,
+) -> SPMResolvedConfiguration:
+    """Convert a resolved request selection to the completed-result contract."""
+
+    _require_complete_selection(selection)
+    assert selection.forecast_content_sha256 is not None
+    assert selection.scenario is not None
+    return SPMResolvedConfiguration(
+        forecast_content_sha256=selection.forecast_content_sha256,
+        scenario=selection.scenario,
+        geography_kind=selection.geography_kind,
+        geography_id=selection.geography_id,
+        county_vintage=selection.county_vintage,
+        as_of=selection.as_of,
+    )
 
 
 def build_spm_provenance(
@@ -231,7 +292,10 @@ def build_spm_calculation_provenance(
 ) -> SPMCalculationProvenance:
     """Pair a resolved selection with a matching compact receipt."""
 
-    return SPMCalculationProvenance(spm_config=config, spm_provenance=receipt)
+    return SPMCalculationProvenance(
+        spm_config=_resolved_spm_configuration(config),
+        spm_provenance=receipt,
+    )
 
 
 SPM_CONTRACT_VERSION = "canonical-spm-v1"
@@ -439,27 +503,18 @@ def validate_spm_result(
             )
         return None
     try:
-        chosen = SPMSelection.model_validate(selection)
-        result_selection = SPMSelection.model_validate(result.get("spm_config"))
-        required = {
-            "forecast_content_sha256",
-            "scenario",
-            "geography_kind",
-            "county_vintage",
-        }
-        if not required <= result_selection.model_fields_set:
-            raise ValueError("Result has no complete resolved SPM selection")
-        selection = {name: getattr(chosen, name) for name in SPMSelection.model_fields}
-        if {
-            name: getattr(result_selection, name) for name in SPMSelection.model_fields
-        } != selection:
+        chosen = _resolved_spm_configuration(SPMSelection.model_validate(selection))
+        result_selection = SPMResolvedConfiguration.model_validate(
+            result.get("spm_config")
+        )
+        if result_selection != chosen:
             raise ValueError("Result SPM selection differs from the request")
         provenance = SPMComparisonProvenance.model_validate(
             result.get("spm_provenance")
         )
         for execution in (provenance.baseline, provenance.reform):
             build_spm_calculation_provenance(
-                config=chosen,
+                config=SPMSelection.model_validate(chosen.model_dump(mode="json")),
                 receipt=execution.receipt,
             )
             if (
@@ -506,6 +561,8 @@ def combine_spm_results(
         ],
     )
     return {
-        "spm_config": selection,
+        "spm_config": _resolved_spm_configuration(
+            SPMSelection.model_validate(selection)
+        ).model_dump(mode="json"),
         "spm_provenance": combined.model_dump(mode="json", by_alias=True),
     }

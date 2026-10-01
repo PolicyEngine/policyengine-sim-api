@@ -6,7 +6,10 @@ from typing import Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, RootModel
 
-from policyengine_simulation_contract.spm import SPMSelection, SPMComparisonProvenance
+from policyengine_simulation_contract.spm import (
+    SPMComparisonProvenance,
+    SPMResolvedConfiguration,
+)
 
 T = TypeVar("T")
 
@@ -189,7 +192,7 @@ class CongressionalDistrictImpactOutput(MacroOutputModel):
 class SingleYearMacroOutput(MacroOutputModel):
     """Completed response returned by a single-year macro simulation."""
 
-    spm_config: SPMSelection | None = None
+    spm_config: SPMResolvedConfiguration | None = None
     spm_provenance: SPMComparisonProvenance | None = None
 
     model_version: str

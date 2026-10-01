@@ -235,24 +235,23 @@ def test_annual_child_and_segment_receipts_must_cover_requested_year():
         combine_spm_results([result(), wrong_year], SELECTION, expected_year=2026)
 
 
-def test_result_transport_may_omit_nulls_but_not_resolved_options():
-    transported = result()
-    transported["spm_config"] = {
-        key: value
-        for key, value in transported["spm_config"].items()
-        if value is not None
-    }
-    assert combine_spm_results([transported], SELECTION)["spm_config"] == SELECTION
-    for field in (
+@pytest.mark.parametrize(
+    "field",
+    [
         "forecast_content_sha256",
         "scenario",
         "geography_kind",
+        "geography_id",
         "county_vintage",
-    ):
-        malformed = deepcopy(transported)
-        del malformed["spm_config"][field]
-        with pytest.raises(SPMInputError, match="complete resolved"):
-            combine_spm_results([malformed], SELECTION)
+        "as_of",
+    ],
+)
+def test_result_transport_requires_every_resolved_option(field):
+    transported = result()
+    del transported["spm_config"][field]
+
+    with pytest.raises(SPMInputError, match="Field required"):
+        combine_spm_results([transported], SELECTION)
 
 
 def test_sync_compatibility_endpoint_preserves_explicit_null(
