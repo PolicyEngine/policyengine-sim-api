@@ -1,7 +1,7 @@
 """Dependency-light public models for US SPM selection and calculation receipts."""
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 from typing import Any, Literal, Optional
 
@@ -254,6 +254,22 @@ def _resolved_spm_configuration(
     )
 
 
+def _validate_completed_spm_configuration(
+    value: object,
+) -> SPMResolvedConfiguration:
+    """Validate child metadata behind a stable typed-error boundary."""
+
+    if not isinstance(value, Mapping):
+        raise ValueError("Result has no complete resolved SPM selection")
+    missing = set(SPMResolvedConfiguration.model_fields).difference(value)
+    if missing:
+        raise ValueError(
+            "Result has no complete resolved SPM selection; missing "
+            + ", ".join(sorted(missing))
+        )
+    return SPMResolvedConfiguration.model_validate(value)
+
+
 def build_spm_provenance(
     *,
     forecast_id: str,
@@ -504,7 +520,7 @@ def validate_spm_result(
         return None
     try:
         chosen = _resolved_spm_configuration(SPMSelection.model_validate(selection))
-        result_selection = SPMResolvedConfiguration.model_validate(
+        result_selection = _validate_completed_spm_configuration(
             result.get("spm_config")
         )
         if result_selection != chosen:

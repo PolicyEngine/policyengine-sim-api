@@ -250,8 +250,9 @@ def test_result_transport_requires_every_resolved_option(field):
     transported = result()
     del transported["spm_config"][field]
 
-    with pytest.raises(SPMInputError, match="Field required"):
+    with pytest.raises(SPMInputError, match="complete resolved") as error:
         combine_spm_results([transported], SELECTION)
+    assert error.value.code == "SPM_CONFIGURATION_UNAVAILABLE"
 
 
 def test_sync_compatibility_endpoint_preserves_explicit_null(
