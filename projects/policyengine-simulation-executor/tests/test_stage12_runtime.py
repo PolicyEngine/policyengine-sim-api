@@ -40,6 +40,12 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12OutputPlan,
     stage12_output_plan_sha256,
 )
+from policyengine_simulation_contract.spm import (
+    SPMRuntimeVersions,
+    SPMSelection,
+    build_spm_calculation_provenance,
+    build_spm_provenance,
+)
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
@@ -68,6 +74,32 @@ NOW = datetime(2026, 9, 15, tzinfo=UTC)
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
 BASELINE_ID = UUID("00000000-0000-0000-0000-000000000002")
 REFORM_ID = UUID("00000000-0000-0000-0000-000000000003")
+
+
+def _spm_calculation_provenance():
+    selection = SPMSelection(
+        forecast_content_sha256="f" * 64,
+        scenario="official",
+        geography_kind="national",
+        geography_id=None,
+        county_vintage="2020",
+        as_of=None,
+    )
+    receipt = build_spm_provenance(
+        forecast_id="forecast-1",
+        forecast_sha256="f" * 64,
+        selection=selection,
+        years=("2026",),
+        runtime_versions=SPMRuntimeVersions.model_validate(
+            {
+                "policyengine": "6.2.1",
+                "policyengine-core": "3.32.10",
+                "policyengine-us": "2.2.1",
+                "spm-calculator": "1.0.0",
+            }
+        ),
+    )
+    return build_spm_calculation_provenance(config=selection, receipt=receipt)
 
 
 def _bundle() -> BundleProvenance:
@@ -561,7 +593,7 @@ def test_single_worker_retains_detached_calculation_provenance() -> None:
     simulation = _planned_simulation(SimulationRole.BASELINE)
     store.children[simulation.simulation_execution_id] = _child(simulation)
     artifacts = FakeArtifacts()
-    provenance = {"receipt": {"version": 1}}
+    provenance = _spm_calculation_provenance()
 
     result = run_single_simulation(
         simulation.model_dump(mode="json"),
@@ -575,7 +607,9 @@ def test_single_worker_retains_detached_calculation_provenance() -> None:
         ),
     )
 
-    assert result["calculation_provenance"] == provenance
+    assert result["calculation_provenance"] == provenance.model_dump(
+        mode="json", by_alias=True
+    )
 
 
 def test_single_worker_exposes_only_a_bounded_failure() -> None:
@@ -628,27 +662,8 @@ def test_single_worker_rejects_frames_that_do_not_satisfy_the_output_plan() -> N
 
 
 def test_aggregate_combines_detached_spm_receipts() -> None:
-    selection = {
-        "forecast_content_sha256": "f" * 64,
-        "scenario": "official",
-        "geography_kind": "national",
-        "geography_id": None,
-        "county_vintage": "2020",
-        "as_of": None,
-    }
-
-    def receipt():
-        return {
-            "forecast_id": "forecast-1",
-            "forecast_sha256": "f" * 64,
-            "scenario": "official",
-            "geography_kind": "national",
-            "runtime_versions": {"spm-calculator": "0.3.1"},
-            "years": {"2026": {}},
-            "geographies": [],
-            "composition_method": "direct",
-            "storage_method": "detached",
-        }
+    provenance = _spm_calculation_provenance()
+    selection = provenance.spm_config.model_dump(mode="json")
 
     report = _report()
     report = report.model_copy(
@@ -664,26 +679,12 @@ def test_aggregate_combines_detached_spm_receipts() -> None:
     baseline = (
         FakeArtifacts()
         .add_simulation(report.baseline)
-        .model_copy(
-            update={
-                "calculation_provenance": {
-                    "spm_config": selection,
-                    "spm_provenance": receipt(),
-                }
-            }
-        )
+        .model_copy(update={"calculation_provenance": provenance})
     )
     reform = (
         FakeArtifacts()
         .add_simulation(report.reform)
-        .model_copy(
-            update={
-                "calculation_provenance": {
-                    "spm_config": selection,
-                    "spm_provenance": receipt(),
-                }
-            }
-        )
+        .model_copy(update={"calculation_provenance": provenance})
     )
 
     result = _build_spm_result(
@@ -693,8 +694,8 @@ def test_aggregate_combines_detached_spm_receipts() -> None:
     )
 
     assert result["spm_config"] == selection
-    assert len(result["spm_provenance"]["baseline"]) == 1
-    assert len(result["spm_provenance"]["reform"]) == 1
+    assert result["spm_provenance"]["baseline"]["execution_count"] == 1
+    assert result["spm_provenance"]["reform"]["execution_count"] == 1
 
 
 def test_aggregate_stand_ins_preserve_policy_and_cliff_options(monkeypatch) -> None:

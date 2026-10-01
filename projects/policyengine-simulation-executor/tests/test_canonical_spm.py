@@ -24,6 +24,7 @@ from policyengine_simulation_contract.spm import (
 )
 from policyengine_simulation_executor import artifact_keys, simulation_runtime
 from policyengine_simulation_executor.simulation import create_router
+from policyengine_simulation_executor.spm import compact_spm_provenance
 from src.modal.budget_window_results import (
     extract_annual_impact,
     build_budget_window_result,
@@ -41,21 +42,64 @@ SELECTION = SPMSelection(
 CAPABILITY = SPMCapability(defaults=SELECTION).model_dump()
 
 
+def test_country_receipt_is_compacted_at_the_executor_boundary():
+    compact = compact_spm_provenance(
+        {
+            "forecast_id": "forecast-2026",
+            "forecast_sha256": "a" * 64,
+            "scenario": "ce_trend",
+            "geography_kind": "national",
+            "runtime_versions": {
+                "policyengine": "6.2.1",
+                "policyengine-core": "3.32.10",
+                "policyengine-us": "2.2.1",
+                "spm-calculator": "1.0.0",
+            },
+            "years": {"2026": {"median_diagnostics": {"large": "value"}}},
+            "geographies": [{"large": "value"}],
+            "composition_method": "internal",
+            "storage_method": "internal",
+        },
+        SELECTION,
+    ).model_dump(mode="json", by_alias=True)
+
+    assert compact["years"] == ["2026"]
+    assert compact["geography_id"] is None
+    assert compact["county_vintage"] == "2020"
+    for excluded in (
+        "geographies",
+        "median_diagnostics",
+        "composition_method",
+        "storage_method",
+    ):
+        assert excluded not in json.dumps(compact)
+
+
 def result(selection=SELECTION, year="2026"):
     receipt = dict(
+        schema_version="canonical-spm-provenance-v2",
         forecast_id="test-only",
         forecast_sha256=selection["forecast_content_sha256"],
         scenario=selection["scenario"],
         geography_kind=selection["geography_kind"],
-        runtime_versions={"policyengine-us": "test-only"},
-        years={year: {"status": "forecast"}},
-        geographies=[],
-        composition_method="classified-inputs",
-        storage_method="formula",
+        geography_id=selection["geography_id"],
+        county_vintage=selection["county_vintage"],
+        as_of=selection["as_of"],
+        years=[year],
+        runtime_versions={
+            "policyengine": "test-only",
+            "policyengine-core": "test-only",
+            "policyengine-us": "test-only",
+            "spm-calculator": "test-only",
+        },
     )
     return {
         "spm_config": deepcopy(selection),
-        "spm_provenance": {"baseline": [receipt], "reform": [deepcopy(receipt)]},
+        "spm_provenance": {
+            "schema_version": "canonical-spm-comparison-v2",
+            "baseline": {"receipt": receipt, "execution_count": 1},
+            "reform": {"receipt": deepcopy(receipt), "execution_count": 1},
+        },
         "budget": {
             "tax_revenue_impact": 1,
             "benefit_spending_impact": 2,
@@ -534,11 +578,11 @@ def test_fanout_and_budget_window_preserve_settings_and_receipts():
         start_year="2026", window_size=2, annual_impacts=rows
     )
     dumped = json.loads(window.model_dump_json())
-    assert dumped["annualImpacts"][1]["spm_provenance"]["baseline"][0]["years"] == {
-        "2027": {"status": "forecast"}
-    }
+    assert dumped["annualImpacts"][1]["spm_provenance"]["baseline"]["receipt"][
+        "years"
+    ] == ["2027"]
     merged = combine_spm_results([result(), result()], SELECTION)
-    assert len(merged["spm_provenance"]["baseline"]) == 2
+    assert merged["spm_provenance"]["baseline"]["execution_count"] == 2
     changed = result({**SELECTION, "scenario": "zero_real"})
     for outputs in ([result(), changed], [result(), {"budget": {}}]):
         with pytest.raises(SPMInputError):

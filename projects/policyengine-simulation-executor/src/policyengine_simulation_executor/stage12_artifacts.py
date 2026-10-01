@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from hashlib import sha256
 from io import BytesIO
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
 import pandas as pd
@@ -24,8 +24,8 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationArtifactDescriptor,
     stage12_output_plan_sha256,
 )
+from policyengine_simulation_contract.spm import SPMCalculationProvenance
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
-from pydantic import JsonValue
 
 from policyengine_simulation_executor.artifact_store import ArtifactStore
 
@@ -118,7 +118,7 @@ def _frame_payload(
 def serialize_simulation_frames(
     frames: Mapping[str, pd.DataFrame],
     *,
-    calculation_provenance: Mapping[str, Any] | None = None,
+    calculation_provenance: SPMCalculationProvenance | None = None,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> tuple[bytes, RowIdentity]:
     combined, dtypes, identifier_values = _frame_payload(frames)
@@ -140,7 +140,9 @@ def serialize_simulation_frames(
     )
     if calculation_provenance is not None:
         metadata[PARQUET_CONTRACT.calculation_provenance_metadata_key.encode()] = (
-            canonical_json_bytes(calculation_provenance)
+            canonical_json_bytes(
+                calculation_provenance.model_dump(mode="json", by_alias=True)
+            )
         )
     if uk_local_authority_metadata is not None:
         metadata[PARQUET_CONTRACT.uk_local_authority_metadata_key.encode()] = (
@@ -210,16 +212,15 @@ def _parquet_schema_metadata(payload: bytes) -> Mapping[bytes, bytes]:
     return parquet_file.schema_arrow.metadata or {}
 
 
-def deserialize_calculation_provenance(payload: bytes) -> dict[str, Any] | None:
+def deserialize_calculation_provenance(
+    payload: bytes,
+) -> SPMCalculationProvenance | None:
     raw = _parquet_schema_metadata(payload).get(
         PARQUET_CONTRACT.calculation_provenance_metadata_key.encode()
     )
     if raw is None:
         return None
-    value = json.loads(raw)
-    if not isinstance(value, dict):
-        raise TypeError("Stage 12 calculation provenance must be an object")
-    return value
+    return SPMCalculationProvenance.model_validate_json(raw)
 
 
 def deserialize_uk_local_authority_metadata(
@@ -288,20 +289,12 @@ class Stage12ArtifactStore:
         prefix: str,
         simulation: PlannedSimulationExecutionInput,
         frames: Mapping[str, pd.DataFrame],
-        calculation_provenance: Mapping[str, Any] | None = None,
+        calculation_provenance: SPMCalculationProvenance | None = None,
         uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
     ) -> SimulationArtifactDescriptor:
-        normalized_provenance = cast(
-            dict[str, JsonValue] | None,
-            (
-                dict(calculation_provenance)
-                if calculation_provenance is not None
-                else None
-            ),
-        )
         payload, row_identity = serialize_simulation_frames(
             frames,
-            calculation_provenance=normalized_provenance,
+            calculation_provenance=calculation_provenance,
             uk_local_authority_metadata=uk_local_authority_metadata,
         )
         artifact = self._write_immutable(
@@ -317,7 +310,7 @@ class Stage12ArtifactStore:
             output_plan_sha256=stage12_output_plan_sha256(simulation.output_plan),
             row_identity=row_identity,
             bundle=simulation.bundle,
-            calculation_provenance=normalized_provenance,
+            calculation_provenance=calculation_provenance,
         )
 
     def write_aggregate(

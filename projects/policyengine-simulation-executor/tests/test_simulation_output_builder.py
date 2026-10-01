@@ -102,7 +102,11 @@ def _assert_macro_result(result, selection):
         assert all(result[key] is None for key in spm_keys)
         return
     assert result["spm_config"] == selection
-    assert set(result["spm_provenance"]) == {"baseline", "reform"}
+    assert set(result["spm_provenance"]) == {
+        "schema_version",
+        "baseline",
+        "reform",
+    }
 
 
 def _load_dataset(params, *, country_module=None, region_resolution=None):

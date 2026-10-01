@@ -21,6 +21,7 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12InvocationContext,
     stage12_output_plan_sha256,
 )
+from policyengine_simulation_contract.spm import SPMCalculationProvenance
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
@@ -43,7 +44,7 @@ from .output_planning import apply_output_plan, validate_output_frames
 @dataclass(frozen=True)
 class SimulationCalculation:
     frames: Mapping[str, pd.DataFrame]
-    calculation_provenance: dict[str, Any] | None = None
+    calculation_provenance: SPMCalculationProvenance | None = None
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
 
 
@@ -221,22 +222,14 @@ def calculate_simulation_frames(
         selection = getattr(model, "spm_config", None)
         calculation_provenance = None
         if selection is not None:
-            from policyengine_simulation_contract.spm import (
-                SPMProvenance,
-                SPMSelection,
+            from policyengine_simulation_executor.spm import (
+                simulation_spm_calculation_provenance,
             )
 
-            receipt = getattr(model, "spm_provenance", None)
-            if not callable(receipt):
-                raise RuntimeError("simulation produced no SPM receipt")
-            calculation_provenance = {
-                "spm_config": SPMSelection.model_validate(selection).model_dump(
-                    mode="json"
-                ),
-                "spm_provenance": SPMProvenance.model_validate(receipt()).model_dump(
-                    mode="json"
-                ),
-            }
+            calculation_provenance = simulation_spm_calculation_provenance(
+                model,
+                selection,
+            )
         return SimulationCalculation(
             frames=frames,
             calculation_provenance=calculation_provenance,

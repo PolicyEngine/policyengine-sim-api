@@ -41,19 +41,29 @@ SPM_SELECTION = SPMSelection(
 def spm_child_result(runtime, simulation_year, *, receipt_year):
     """A child result carrying a canonical SPM receipt for ``receipt_year``."""
     receipt = {
+        "schema_version": "canonical-spm-provenance-v2",
         "forecast_id": "test-only",
         "forecast_sha256": SPM_SELECTION["forecast_content_sha256"],
         "scenario": SPM_SELECTION["scenario"],
         "geography_kind": SPM_SELECTION["geography_kind"],
-        "runtime_versions": {"policyengine-us": "test-only"},
-        "years": {receipt_year: {"status": "forecast"}},
-        "geographies": [],
-        "composition_method": "classified-inputs",
-        "storage_method": "formula",
+        "geography_id": SPM_SELECTION["geography_id"],
+        "county_vintage": SPM_SELECTION["county_vintage"],
+        "as_of": SPM_SELECTION["as_of"],
+        "years": [receipt_year],
+        "runtime_versions": {
+            "policyengine": "test-only",
+            "policyengine-core": "test-only",
+            "policyengine-us": "test-only",
+            "spm-calculator": "test-only",
+        },
     }
     return {
         "spm_config": dict(SPM_SELECTION),
-        "spm_provenance": {"baseline": [receipt], "reform": [dict(receipt)]},
+        "spm_provenance": {
+            "schema_version": "canonical-spm-comparison-v2",
+            "baseline": {"receipt": receipt, "execution_count": 1},
+            "reform": {"receipt": dict(receipt), "execution_count": 1},
+        },
         **runtime.child_result_for_year(simulation_year),
     }
 

@@ -1,13 +1,19 @@
 """Certified SPM runtime selection, independent of caller-supplied metadata."""
 
 import json
+from collections.abc import Mapping
 from functools import lru_cache
 
 from policyengine_simulation_contract.spm import (
     SPMCapability,
+    SPMCalculationProvenance,
     SPMInputError,
     SPMProvenance,
-    combine_spm_results,
+    SPMRuntimeVersions,
+    SPMSelection,
+    build_spm_calculation_provenance,
+    build_spm_comparison_provenance,
+    build_spm_provenance,
     resolve_spm_selection,
     spm_error_detail,
 )
@@ -193,34 +199,112 @@ def normalize_runtime_spm(params):
     return selection
 
 
+def _required_string(source: Mapping[str, object], field_name: str) -> str:
+    value = source.get(field_name)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"SPM calculation receipt has no valid {field_name}")
+    return value
+
+
+def compact_spm_provenance(
+    country_receipt: object,
+    selection: object,
+) -> SPMProvenance:
+    """Extract the stable public receipt from country-owned diagnostics.
+
+    The country package retains rich in-process diagnostic data. This adapter
+    reads only the scalar identity fields, executed-year keys, and explicit
+    package versions that belong on the simulation API wire contract.
+    """
+
+    if not isinstance(country_receipt, Mapping):
+        raise TypeError("SPM calculation receipt must be an object")
+    resolved = SPMSelection.model_validate(selection)
+    forecast_sha256 = _required_string(country_receipt, "forecast_sha256")
+    for field_name, expected_value in (
+        ("forecast_sha256", resolved.forecast_content_sha256),
+        ("scenario", resolved.scenario),
+        ("geography_kind", resolved.geography_kind),
+    ):
+        if country_receipt.get(field_name) != expected_value:
+            raise ValueError(
+                f"SPM calculation receipt {field_name} differs from the selection"
+            )
+    raw_versions = country_receipt.get("runtime_versions")
+    if not isinstance(raw_versions, Mapping):
+        raise TypeError("SPM calculation receipt has no runtime versions")
+    runtime_versions = SPMRuntimeVersions.model_validate(raw_versions)
+    if any(
+        version is None
+        for version in (
+            runtime_versions.policyengine,
+            runtime_versions.policyengine_core,
+            runtime_versions.policyengine_us,
+            runtime_versions.spm_calculator,
+        )
+    ):
+        raise ValueError("Certified SPM calculation runtime versions must be populated")
+    raw_years = country_receipt.get("years")
+    if not isinstance(raw_years, Mapping):
+        raise TypeError("SPM calculation receipt has no executed years")
+    if any(not isinstance(year, str) for year in raw_years):
+        raise TypeError("SPM calculation receipt year keys must be strings")
+    return build_spm_provenance(
+        forecast_id=_required_string(country_receipt, "forecast_id"),
+        forecast_sha256=forecast_sha256,
+        selection=resolved,
+        years=tuple(raw_years),
+        runtime_versions=runtime_versions,
+    )
+
+
+def simulation_spm_calculation_provenance(
+    simulation: object,
+    selection: object,
+) -> SPMCalculationProvenance:
+    """Read and compact one simulation's resolved SPM receipt."""
+
+    resolved = SPMSelection.model_validate(selection)
+    if getattr(simulation, "spm_config", None) != resolved.model_dump(mode="json"):
+        raise SPMInputError(
+            "SPM_CONFIGURATION_UNAVAILABLE",
+            "Simulation ignored the requested SPM selection",
+        )
+    receipt = getattr(simulation, "spm_provenance", None)
+    if not callable(receipt):
+        raise SPMInputError(
+            "SPM_CONFIGURATION_UNAVAILABLE",
+            "Simulation has no valid SPM calculation receipt",
+        )
+    try:
+        return build_spm_calculation_provenance(
+            config=resolved,
+            receipt=compact_spm_provenance(receipt(), resolved),
+        )
+    except (TypeError, ValueError) as exc:
+        raise SPMInputError(
+            "SPM_CONFIGURATION_UNAVAILABLE",
+            "Simulation has no valid SPM calculation receipt",
+        ) from exc
+
+
 def simulation_spm_result(baseline, reform, selection, *, expected_year=None):
     if selection is None:
         return {}
-    receipts = []
-    for simulation in (baseline, reform):
-        if simulation.spm_config != selection:
-            raise SPMInputError(
-                "SPM_CONFIGURATION_UNAVAILABLE",
-                "Simulation ignored the requested SPM selection",
-            )
-        try:
-            receipts.append(
-                SPMProvenance.model_validate(simulation.spm_provenance()).model_dump(
-                    mode="json"
-                )
-            )
-        except ValueError as exc:
-            raise SPMInputError(
-                "SPM_CONFIGURATION_UNAVAILABLE",
-                "Simulation has no valid SPM calculation receipt",
-            ) from exc
-    return combine_spm_results(
-        [
-            {
-                "spm_config": selection,
-                "spm_provenance": {"baseline": [receipts[0]], "reform": [receipts[1]]},
-            }
-        ],
-        selection,
-        expected_year=expected_year,
+    baseline_provenance = simulation_spm_calculation_provenance(baseline, selection)
+    reform_provenance = simulation_spm_calculation_provenance(reform, selection)
+    comparison = build_spm_comparison_provenance(
+        baseline_receipts=[baseline_provenance.spm_provenance],
+        reform_receipts=[reform_provenance.spm_provenance],
     )
+    if expected_year is not None and str(expected_year) not in (
+        comparison.baseline.receipt.years
+    ):
+        raise SPMInputError(
+            "SPM_CONFIGURATION_UNAVAILABLE",
+            "Result SPM provenance does not cover the requested year",
+        )
+    return {
+        "spm_config": baseline_provenance.spm_config.model_dump(mode="json"),
+        "spm_provenance": comparison.model_dump(mode="json", by_alias=True),
+    }

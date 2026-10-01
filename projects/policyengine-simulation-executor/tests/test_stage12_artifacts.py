@@ -13,6 +13,12 @@ from policyengine_simulation_contract.stage12_execution import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
+from policyengine_simulation_contract.spm import (
+    SPMRuntimeVersions,
+    SPMSelection,
+    build_spm_calculation_provenance,
+    build_spm_provenance,
+)
 
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
@@ -40,6 +46,32 @@ def _frames():
             }
         ),
     }
+
+
+def _calculation_provenance():
+    selection = SPMSelection(
+        forecast_content_sha256="a" * 64,
+        scenario="official",
+        geography_kind="national",
+        geography_id=None,
+        county_vintage="2020",
+        as_of=None,
+    )
+    receipt = build_spm_provenance(
+        forecast_id="forecast-2026",
+        forecast_sha256="a" * 64,
+        selection=selection,
+        years=("2026",),
+        runtime_versions=SPMRuntimeVersions.model_validate(
+            {
+                "policyengine": "6.2.1",
+                "policyengine-core": "3.32.10",
+                "policyengine-us": "2.2.1",
+                "spm-calculator": "1.0.0",
+            }
+        ),
+    )
+    return build_spm_calculation_provenance(config=selection, receipt=receipt)
 
 
 def test_parquet_encoding_is_deterministic_and_preserves_rows_and_dtypes() -> None:
@@ -71,10 +103,7 @@ def test_parquet_round_trip_preserves_an_all_null_entity_column() -> None:
 
 
 def test_parquet_retains_detached_calculation_provenance() -> None:
-    provenance = {
-        "spm_config": {"scenario": "official"},
-        "spm_provenance": {"forecast_sha256": "a" * 64},
-    }
+    provenance = _calculation_provenance()
     payload, _ = serialize_simulation_frames(
         _frames(),
         calculation_provenance=provenance,
@@ -103,7 +132,7 @@ def test_parquet_omits_uk_metadata_for_non_uk_simulations() -> None:
 
 
 def test_metadata_reads_do_not_materialize_simulation_rows() -> None:
-    provenance = {"spm_config": {"scenario": "official"}}
+    provenance = _calculation_provenance()
     metadata = UKLocalAuthorityMetadata(
         boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
     )
