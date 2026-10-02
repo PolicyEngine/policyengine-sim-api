@@ -881,8 +881,8 @@ jobs:
           fi
 
   cleanup_entrypoint_revisions:
-    name: Retain three successful Cloud Run revisions
-    if: ${{ !cancelled() && needs.deployment_ready.result == 'success' }}
+    name: Remove superseded Cloud Run revisions
+    if: ${{ !cancelled() && inputs.promote_entrypoint && needs.deployment_ready.result == 'success' }}
     needs: [deployment_ready, deploy_entrypoint]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
@@ -894,8 +894,6 @@ jobs:
       SIMULATION_ENTRYPOINT_GCP_REGION: ${{ vars.SIMULATION_ENTRYPOINT_GCP_REGION || 'us-central1' }}
       SIMULATION_ENTRYPOINT_SERVICE: ${{ inputs.entrypoint_service }}
       SIMULATION_ENTRYPOINT_SUCCESSFUL_REVISION: ${{ needs.deploy_entrypoint.outputs.revision }}
-      SIMULATION_ENTRYPOINT_PREVIOUS_SUCCESSFUL_REVISION: ${{ needs.deploy_entrypoint.outputs.previous_revision }}
-      SIMULATION_ENTRYPOINT_REVISIONS_TO_RETAIN: "3"
     steps:
       - uses: actions/checkout@v6
 
@@ -906,5 +904,5 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Remove Cloud Run revisions older than the successful rollback set
+      - name: Remove superseded Cloud Run revisions
         run: .github/scripts/cleanup-cloud-run-simulation-entry-revisions.sh
