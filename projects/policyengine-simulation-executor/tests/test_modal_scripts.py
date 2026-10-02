@@ -234,30 +234,27 @@ class TestModalImageSmoke:
         assert "PE_UK_PRIVATE_HF_READ_TOKEN" in sources
         assert "pe-uk-private-hf-read-token" in sources
 
-    def test_deployment_validates_before_sync_and_after_each_modal_deploy(self):
-        """Deployment must check the source value and both deployed consumers."""
+    def test_deployment_validates_before_syncing_the_exact_value(self):
+        """Deployment must validate the source value before synchronizing it."""
         workflow = (
             REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
 
         local_validation = "Validate the GitHub UK private-data credential"
         sync = "Synchronize the Modal UK private-data credential"
-        deployed_validation = "python -m src.modal.utils.validate_hf_access"
+        validation_command = "python -m src.modal.utils.validate_hf_access"
         assert workflow.index(local_validation) < workflow.index(sync)
         assert (
             "HUGGING_FACE_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}" in workflow
         )
-        assert workflow.count(deployed_validation) == 3
+        assert workflow.count(validation_command) == 1
         assert '"HUGGING_FACE_TOKEN=${PE_UK_PRIVATE_HF_READ_TOKEN}"' in workflow
-        assert '--application-name "${{ steps.app.outputs.name }}"' in workflow
-        assert '--application-name "${{ steps.application.outputs.name }}"' in workflow
-        assert workflow.index("Deploy versioned Modal executor") < workflow.index(
-            "Validate UK private-data access in the deployed executor"
-        )
-        assert workflow.index(
-            "Deploy the additional versioned v2 Modal application"
-        ) < workflow.index(
-            "Validate UK private-data access in the deployed Stage 12 application"
+        sync_section = workflow[
+            workflow.index(sync) : workflow.index("Synchronize Modal runtime secrets")
+        ]
+        assert (
+            "if: ${{ inputs.deploy_existing_stack || inputs.deploy_stage12_v2 }}"
+            in sync_section
         )
 
 

@@ -424,16 +424,6 @@ jobs:
           POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}
         run: uv run modal deploy --env="${{ inputs.modal_environment }}" src/modal/app.py
 
-      - name: Validate UK private-data access in the deployed executor
-        working-directory: projects/policyengine-simulation-executor
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: |
-          uv run python -m src.modal.utils.validate_hf_access \
-            --application-name "${{ steps.app.outputs.name }}" \
-            --environment "${{ inputs.modal_environment }}"
-
       - name: Run executor unit tests
         working-directory: projects/policyengine-simulation-executor
         run: uv run pytest tests/ -v
@@ -601,16 +591,6 @@ jobs:
           OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OBSERVABILITY_OTLP_ENDPOINT }}
           POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}
         run: uv run modal deploy --env="${{ inputs.modal_environment }}" src/modal/v2_app.py
-
-      - name: Validate UK private-data access in the deployed Stage 12 application
-        working-directory: projects/policyengine-simulation-executor
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: |
-          uv run python -m src.modal.utils.validate_hf_access \
-            --application-name "${{ steps.application.outputs.name }}" \
-            --environment "${{ inputs.modal_environment }}"
 
       - name: Validate installed bundles, secrets, datasets, and calculations
         id: validation

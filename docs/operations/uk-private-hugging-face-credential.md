@@ -29,18 +29,14 @@ Modal secret `pe-uk-private-hf-read-token` in the selected Modal environment.
 That Modal secret contains the `HUGGING_FACE_TOKEN` compatibility key required
 by PolicyEngine Core. No other mounted Modal secret may define that key.
 
-After deploying each simulation application, the workflow invokes its private
-`verify_uk_private_hf_access` Modal function. The existing executor function
-runs in the deployed executor image; the Stage 12 function runs in the deployed
-UK worker image. Each function repeats the complete validation using the Modal
-secret actually injected into that application. Neither function is an HTTP
-endpoint, and neither creates a separate credential-validation application or
-image.
+Unit tests verify the rest of the configuration path: the workflow copies the
+validated value under the `HUGGING_FACE_TOKEN` key, and both the existing
+executor and Stage 12 image and function definitions mount the named
+purpose-specific Modal secret and no other Hugging Face secret. Deployment also
+stops if the Modal secret update command fails.
 
-The pre-deployment check does not rely on Modal image caching. The
-post-deployment checks establish that both deployed applications received the
-same purpose-specific secret and can use it to access every bundled UK
-artifact.
+No separate Modal application, function, or image exists for credential
+validation. The CI access check does not rely on Modal image caching.
 
 The simulation-entry Cloud Run service does not receive the credential. It
 submits work to Modal but does not access Hugging Face.

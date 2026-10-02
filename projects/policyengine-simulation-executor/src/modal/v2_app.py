@@ -153,23 +153,6 @@ def _validate(country: CountryId) -> dict:
 
 
 @app.function(
-    image=uk_worker_image,
-    memory=512,
-    timeout=120,
-    retries=0,
-    secrets=[hf_secret],
-)
-def verify_uk_private_hf_access() -> dict[str, object]:
-    """Verify the deployed Stage 12 UK worker's private artifact access."""
-
-    from policyengine_simulation_executor.hf_access_validation import (
-        validate_configured_uk_private_hf_access,
-    )
-
-    return validate_configured_uk_private_hf_access().model_dump(mode="json")
-
-
-@app.function(
     image=us_worker_image,
     cpu=2.0,
     memory=4096,

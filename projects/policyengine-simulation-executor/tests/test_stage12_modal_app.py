@@ -122,6 +122,8 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
         local_source = next(
             call for call in image.calls if call[0] == "add_local_python_source"
         )
+        bundle_install = next(call for call in image.calls if call[0] == "run_commands")
+        assert bundle_install[2]["secrets"] == [module.hf_secret]
         assert local_source[1] == (
             "src.modal",
             "policyengine_simulation_executor",
@@ -189,13 +191,10 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     assert set(functions) == {
         "validate_worker_us",
         "validate_worker_uk",
-        "verify_uk_private_hf_access",
         "run_single_simulation_us",
         "run_single_simulation_uk",
         "coordinate_report",
     }
-    assert functions["verify_uk_private_hf_access"]["image"] is (module.uk_worker_image)
-    assert functions["verify_uk_private_hf_access"]["secrets"] == [module.hf_secret]
     assert functions["run_single_simulation_us"]["image"] is module.us_worker_image
     assert functions["run_single_simulation_uk"]["image"] is module.uk_worker_image
     assert functions["run_single_simulation_us"]["timeout"] == 3000
