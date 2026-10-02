@@ -208,6 +208,15 @@ metadata so PolicyEngine can correctly recognize conditional labor-supply
 analysis. `include_cliffs=true` is supported by this path and is carried through
 both output planning and aggregation.
 
+For US SPM calculations, each child artifact stores one compact
+`spm_provenance` receipt inside its calculation metadata. The coordinator
+validates the requested selection against the forecast, scenario, geography,
+county-vintage, and date fields in that receipt, then publishes only the
+combined `spm_provenance` object in the completed report. Completed results do
+not contain a sibling `spm_config`; the receipt is the sole source of resolved
+SPM configuration. Request payloads still accept the partial `spm` selection
+and resolve omitted options from the certified bundle before execution.
+
 ### Temporary UK local-authority display metadata
 
 Stage 12 detects the local-authority boundary configuration from the complete

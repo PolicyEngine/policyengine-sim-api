@@ -622,6 +622,20 @@ class TestBudgetWindowBatchSubmitResponse:
 class TestBudgetWindowBatchStatusResponse:
     """Tests for budget-window batch status responses."""
 
+    def test_annual_impact_rejects_legacy_sibling_spm_config(self):
+        with pytest.raises(ValidationError):
+            BudgetWindowAnnualImpact.model_validate(
+                {
+                    "spm_config": {"scenario": "ce_trend"},
+                    "year": "2026",
+                    "taxRevenueImpact": 10,
+                    "federalTaxRevenueImpact": 8,
+                    "stateTaxRevenueImpact": 2,
+                    "benefitSpendingImpact": -3,
+                    "budgetaryImpact": 13,
+                }
+            )
+
     def test_budget_window_batch_status_response_accepts_child_jobs_and_result(self):
         response = BudgetWindowBatchStatusResponse(
             status="complete",

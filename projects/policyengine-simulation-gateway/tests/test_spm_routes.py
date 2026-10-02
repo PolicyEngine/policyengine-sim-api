@@ -238,30 +238,36 @@ RESOLVED_SELECTION = {
 
 def spm_receipt(year):
     return {
+        "schema_version": "canonical-spm-provenance-v2",
         "forecast_id": "ce-forecast",
         "forecast_sha256": "a" * 64,
         "scenario": "ce_trend",
         "geography_kind": "national",
-        "runtime_versions": {"spm_calculator": "0.3.1"},
-        "years": {str(year): {"entry": f"{year}-01-01"}},
-        "geographies": [{"kind": "national"}],
-        "composition_method": "national",
-        "storage_method": "artifact",
+        "geography_id": None,
+        "county_vintage": "2020",
+        "as_of": None,
+        "years": [str(year)],
+        "runtime_versions": {
+            "policyengine": "6.2.1",
+            "policyengine-core": "3.32.10",
+            "policyengine-us": "2.2.1",
+            "spm-calculator": "1.0.0",
+        },
     }
 
 
 def spm_provenance(year):
-    return {"baseline": [spm_receipt(year)], "reform": [spm_receipt(year)]}
+    return {
+        "schema_version": "canonical-spm-comparison-v2",
+        "baseline": {"receipt": spm_receipt(year), "execution_count": 1},
+        "reform": {"receipt": spm_receipt(year), "execution_count": 1},
+    }
 
 
-def test_completed_result_body_keeps_resolved_nulls(mock_modal, client):
-    """A client must be able to replay the selection it was handed back.
-
-    ``response_model_exclude_none`` applies to every poll body, and an
-    omitted option inherits the bundle default. Dropping a resolved null
-    would silently re-resolve ``as_of`` and ``geography_id`` on the next
-    request, changing the baseline key and the receipts.
-    """
+def test_completed_result_publishes_configuration_only_in_provenance(
+    mock_modal, client
+):
+    """The compact receipt is the sole completed-result configuration."""
     shared_app_state(mock_modal, sibling_model="1.824.7")
     submitted = client.post(
         "/simulate/economy/comparison",
@@ -278,17 +284,22 @@ def test_completed_result_body_keeps_resolved_nulls(mock_modal, client):
     call = mock_modal["function_call"].registry[job_id]
     call.result = {
         **call.result,
-        "spm_config": RESOLVED_SELECTION,
         "spm_provenance": spm_provenance(2026),
     }
 
     polled = client.get(f"/jobs/{job_id}")
     assert polled.status_code == 200, polled.text
-    assert polled.json()["result"]["spm_config"] == RESOLVED_SELECTION
+    result = polled.json()["result"]
+    assert "spm_config" not in result
+    receipt = result["spm_provenance"]["baseline"]["receipt"]
+    assert receipt["geography_id"] is None
+    assert receipt["as_of"] is None
 
 
-def test_completed_budget_window_rows_keep_resolved_nulls(mock_modal, client):
-    """Each ``annualImpacts`` row carries the same replayable selection."""
+def test_completed_budget_window_configuration_is_only_in_provenance(
+    mock_modal, client
+):
+    """Each annual row publishes configuration only in its receipt."""
     from policyengine_simulation_contract.budget_window_state import (
         put_batch_job_state,
     )
@@ -302,7 +313,6 @@ def test_completed_budget_window_rows_keep_resolved_nulls(mock_modal, client):
 
     shared_app_state(mock_modal, sibling_model="1.824.7")
     impact = BudgetWindowAnnualImpact(
-        spm_config=RESOLVED_SELECTION,
         spm_provenance=spm_provenance(2026),
         year="2026",
         taxRevenueImpact=10,
@@ -355,7 +365,10 @@ def test_completed_budget_window_rows_keep_resolved_nulls(mock_modal, client):
     polled = client.get("/budget-window-jobs/mock-batch-job-id-123")
     assert polled.status_code == 200, polled.text
     row = polled.json()["result"]["annualImpacts"][0]
-    assert row["spm_config"] == RESOLVED_SELECTION
+    assert "spm_config" not in row
+    receipt = row["spm_provenance"]["baseline"]["receipt"]
+    assert receipt["geography_id"] is None
+    assert receipt["as_of"] is None
 
 
 # Every optional field the pre-SPM gateway emitted in a raw 202/500 body.

@@ -399,17 +399,23 @@ SPM_SELECTION = {
 }
 
 
-def _spm_receipt(label, *, selection=SPM_SELECTION, year="2026"):
+def _spm_receipt(*, selection=SPM_SELECTION, year="2026"):
     return {
-        "forecast_id": label,
+        "schema_version": "canonical-spm-provenance-v2",
+        "forecast_id": "test-only",
         "forecast_sha256": selection["forecast_content_sha256"],
         "scenario": selection["scenario"],
         "geography_kind": selection["geography_kind"],
-        "runtime_versions": {"policyengine-us": "test-only"},
-        "years": {year: {"status": "forecast"}},
-        "geographies": [],
-        "composition_method": "classified-inputs",
-        "storage_method": "formula",
+        "geography_id": selection["geography_id"],
+        "county_vintage": selection["county_vintage"],
+        "as_of": selection["as_of"],
+        "years": [year],
+        "runtime_versions": {
+            "policyengine": "test-only",
+            "policyengine-core": "test-only",
+            "policyengine-us": "test-only",
+            "spm-calculator": "test-only",
+        },
     }
 
 
@@ -417,20 +423,24 @@ def _spm_child(index, *, selection=SPM_SELECTION, year="2026"):
     """One child's result carrying that segment's own SPM receipts."""
     return {
         "child": index,
-        "spm_config": dict(selection),
         "spm_provenance": {
-            "baseline": [
-                _spm_receipt(f"baseline-{index}", selection=selection, year=year)
-            ],
-            "reform": [_spm_receipt(f"reform-{index}", selection=selection, year=year)],
+            "schema_version": "canonical-spm-comparison-v2",
+            "baseline": {
+                "receipt": _spm_receipt(selection=selection, year=year),
+                "execution_count": 1,
+            },
+            "reform": {
+                "receipt": _spm_receipt(selection=selection, year=year),
+                "execution_count": 1,
+            },
         },
     }
 
 
 def _spm_child_missing(index, field):
-    """A child whose transported selection lost a resolved option."""
+    """A child whose canonical receipt lost a resolved option."""
     child = _spm_child(index)
-    del child["spm_config"][field]
+    del child["spm_provenance"]["baseline"]["receipt"][field]
     return child
 
 
@@ -452,20 +462,17 @@ class TestSegmentedNationalSPM:
 
         output = runner.run()
 
-        # The resolved selection rides to every child unchanged and comes
-        # back on the parent as the one national selection.
+        # The resolved selection rides to every child unchanged. Completed
+        # output publishes that configuration only inside the receipt.
         assert all(p["spm"] == SPM_SELECTION for p in fake.spawned_payloads)
-        assert output["spm_config"] == SPM_SELECTION
-        # Every executed segment's receipts survive, baseline and reform
-        # concatenated in group order: a national SPM result must account
-        # for all 20 segments, not just the first.
+        assert "spm_config" not in output
+        # One receipt describes all identical child executions. The counts
+        # prove that every segment contributed without duplicating metadata.
         provenance = output["spm_provenance"]
-        assert [r["forecast_id"] for r in provenance["baseline"]] == [
-            f"baseline-{i}" for i in range(20)
-        ]
-        assert [r["forecast_id"] for r in provenance["reform"]] == [
-            f"reform-{i}" for i in range(20)
-        ]
+        assert provenance["baseline"]["execution_count"] == 20
+        assert provenance["reform"]["execution_count"] == 20
+        assert provenance["baseline"]["receipt"]["forecast_id"] == "test-only"
+        assert provenance["baseline"]["receipt"]["county_vintage"] == "2020"
         assert output["budget"] == {}
 
     @pytest.mark.parametrize(
@@ -473,7 +480,7 @@ class TestSegmentedNationalSPM:
         [
             (
                 _spm_child(7, selection={**SPM_SELECTION, "scenario": "zero_real"}),
-                "selection differs from the request",
+                "differs from the resolved selection",
             ),
             (_spm_child(7, year="2025"), "does not cover the requested year"),
             (_spm_child_missing(7, "county_vintage"), "complete resolved"),

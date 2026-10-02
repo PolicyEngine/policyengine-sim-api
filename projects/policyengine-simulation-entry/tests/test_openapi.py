@@ -88,6 +88,18 @@ def test_canonical_spm_extensions_are_public():
     assert "spm" in schemas["BudgetWindowBatchRequest"]["properties"]
     assert "spm_provenance" in schemas["SingleYearMacroOutput"]["properties"]
     assert "spm_provenance" in schemas["BudgetWindowAnnualImpact"]["properties"]
+    assert "spm_config" not in schemas["SingleYearMacroOutput"]["properties"]
+    assert "spm_config" not in schemas["BudgetWindowAnnualImpact"]["properties"]
+    assert "SPMResolvedConfiguration" not in schemas
+    assert all(
+        schemas["SPMRuntimeVersions"]["properties"][field]["minLength"] == 1
+        for field in (
+            "policyengine",
+            "policyengine-core",
+            "policyengine-us",
+            "spm-calculator",
+        )
+    )
     for path in ("/jobs/{job_id}", "/budget-window-jobs/{batch_job_id}"):
         assert "400" in spec["paths"][path]["get"]["responses"]
 

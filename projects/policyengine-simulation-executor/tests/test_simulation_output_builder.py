@@ -92,7 +92,7 @@ def _params_with_spm(params, selection):
 
 def _assert_macro_result(result, selection):
     """Check the ordinary macro result plus any installed SPM record."""
-    spm_keys = ("spm_config", "spm_provenance")
+    spm_keys = ("spm_provenance",)
     assert {key: value for key, value in result.items() if key not in spm_keys} == {
         key: value
         for key, value in CURRENT_SINGLE_YEAR_MACRO_RESULT.items()
@@ -101,8 +101,11 @@ def _assert_macro_result(result, selection):
     if selection is None:
         assert all(result[key] is None for key in spm_keys)
         return
-    assert result["spm_config"] == selection
-    assert set(result["spm_provenance"]) == {"baseline", "reform"}
+    assert set(result["spm_provenance"]) == {
+        "schema_version",
+        "baseline",
+        "reform",
+    }
 
 
 def _load_dataset(params, *, country_module=None, region_resolution=None):

@@ -638,7 +638,12 @@ def _spm_receipt(selection=None, *, year="2026"):
         "forecast_sha256": selection["forecast_content_sha256"],
         "scenario": selection["scenario"],
         "geography_kind": selection["geography_kind"],
-        "runtime_versions": {"policyengine-us": "test-only"},
+        "runtime_versions": {
+            "policyengine": "test-only",
+            "policyengine-core": "test-only",
+            "policyengine-us": "test-only",
+            "spm-calculator": "test-only",
+        },
         "years": {year: {"status": "forecast"}},
         "geographies": [],
         "composition_method": "classified-inputs",
@@ -819,7 +824,7 @@ class TestEnsureValidatesSPMReceipts:
 
     def test_malformed_receipt_recomputes(self, fresh_cache):
         malformed = _spm_receipt()
-        del malformed["composition_method"]
+        del malformed["runtime_versions"]
         model = SPMModelVersion(
             stored_config=deepcopy(SPM_SELECTION), stored_receipt=malformed
         )

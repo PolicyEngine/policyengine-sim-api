@@ -1,7 +1,6 @@
 """Fixtures for simulation API contract tests."""
 
 CURRENT_SINGLE_YEAR_MACRO_KEYS = {
-    "spm_config",
     "spm_provenance",
     "model_version",
     "data_version",
@@ -32,7 +31,6 @@ CURRENT_REQUIRED_BUDGET_KEYS = {
 }
 
 CURRENT_SINGLE_YEAR_MACRO_RESULT = {
-    "spm_config": None,
     "spm_provenance": None,
     "model_version": "1.715.2",
     "data_version": "1.115.5",
