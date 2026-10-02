@@ -20,10 +20,6 @@ from urllib.request import Request, urlopen
 
 HF_ENDPOINT = os.environ.get("HF_ENDPOINT", "https://huggingface.co").rstrip("/")
 HF_REQUEST_TIMEOUT_SECONDS = 30
-HF_TOKEN_ENV_VARS = (
-    "PE_UK_PRIVATE_HF_READ_TOKEN",
-    "HUGGING_FACE_TOKEN",
-)
 
 
 class HuggingFaceDatasetReferenceError(ValueError):
@@ -38,11 +34,7 @@ class HFDatasetReference:
 
 
 def _hf_token() -> str | None:
-    for env_name in HF_TOKEN_ENV_VARS:
-        value = os.environ.get(env_name)
-        if value:
-            return value
-    return None
+    return os.environ.get("HUGGING_FACE_TOKEN")
 
 
 def parse_hf_dataset_uri(dataset_uri: str) -> HFDatasetReference | None:

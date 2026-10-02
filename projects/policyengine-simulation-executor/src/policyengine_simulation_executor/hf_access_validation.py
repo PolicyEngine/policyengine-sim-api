@@ -15,7 +15,6 @@ from policyengine_simulation_executor.release_bundle import (
     get_country_release_bundle,
 )
 
-GITHUB_SECRET_ENV_NAME = "PE_UK_PRIVATE_HF_READ_TOKEN"
 HF_RUNTIME_ENV_NAME = "HUGGING_FACE_TOKEN"
 HF_MODAL_SECRET_NAME = "pe-uk-private-hf-read-token"
 EXPECTED_HF_TOKEN_DISPLAY_NAME = "pe-uk-private-hf-read-token"
