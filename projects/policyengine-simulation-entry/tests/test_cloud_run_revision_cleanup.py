@@ -76,7 +76,6 @@ def _run_cleanup(
     service_traffic: list[dict],
     revisions: list[dict],
     successful_revision: str,
-    previous_revision: str = "",
 ) -> subprocess.CompletedProcess[str]:
     service_json = tmp_path / "service.json"
     revisions_json = tmp_path / "revisions.json"
@@ -104,93 +103,40 @@ def _run_cleanup(
             "SIMULATION_ENTRYPOINT_GCP_REGION": "us-central1",
             "SIMULATION_ENTRYPOINT_SERVICE": "policyengine-simulation-entry",
             "SIMULATION_ENTRYPOINT_SUCCESSFUL_REVISION": successful_revision,
-            "SIMULATION_ENTRYPOINT_PREVIOUS_SUCCESSFUL_REVISION": previous_revision,
-            "SIMULATION_ENTRYPOINT_REVISIONS_TO_RETAIN": "3",
         },
     )
 
 
-def test_cleanup_retains_three_successful_revisions_and_deletes_older_ones(
+def test_cleanup_retains_only_the_promoted_revision_and_removes_old_tags(
     tmp_path: Path,
 ):
     revisions = [
         _revision("entry-00003-three", "2026-09-03T00:00:00Z"),
-        _revision("entry-00005-five", "2026-09-05T00:00:00Z"),
         _revision("entry-00001-one", "2026-09-01T00:00:00Z"),
-        _revision("entry-00004-four", "2026-09-04T00:00:00Z"),
         _revision("entry-00002-two", "2026-09-02T00:00:00Z"),
     ]
     traffic = [
-        {"revisionName": "entry-00005-five", "percent": 100},
+        {"revisionName": "entry-00003-three", "percent": 100, "tag": "p-3"},
         {"revisionName": "entry-00001-one", "tag": "p-1"},
         {"revisionName": "entry-00002-two", "tag": "p-2"},
-        {"revisionName": "entry-00003-three", "tag": "p-3"},
-        {"revisionName": "entry-00004-four", "tag": "p-4"},
-        {"revisionName": "entry-00005-five", "tag": "p-5"},
     ]
 
     result = _run_cleanup(
         tmp_path,
         service_traffic=traffic,
         revisions=revisions,
-        successful_revision="entry-00005-five",
-        previous_revision="entry-00004-four",
+        successful_revision="entry-00003-three",
     )
 
     assert result.returncode == 0, result.stderr
     update_arguments = (tmp_path / "update-arguments.txt").read_text(encoding="utf-8")
-    tag_argument = update_arguments.splitlines()[
-        update_arguments.splitlines().index("--set-tags") + 1
-    ]
-    assert "p-5=entry-00005-five" in tag_argument
-    assert "p-4=entry-00004-four" in tag_argument
-    assert "p-3=entry-00003-three" in tag_argument
-    assert "pe-retained-1=entry-00005-five" in tag_argument
-    assert "pe-retained-2=entry-00004-four" in tag_argument
-    assert "pe-retained-3=entry-00003-three" in tag_argument
-    assert "p-1=" not in tag_argument
-    assert "p-2=" not in tag_argument
+    assert "--remove-tags\np-1,p-2\n" in update_arguments
+    assert "--set-tags" not in update_arguments
     assert "--to-revisions" not in update_arguments
     assert (tmp_path / "deleted-revisions.txt").read_text(
         encoding="utf-8"
     ).splitlines() == ["entry-00002-two", "entry-00001-one"]
-
-
-def test_cleanup_uses_prior_retention_order_before_ready_revision_fallback(
-    tmp_path: Path,
-):
-    revisions = [
-        _revision("entry-00006-six", "2026-09-06T00:00:00Z"),
-        _revision("entry-00005-five", "2026-09-05T00:00:00Z"),
-        _revision("entry-00004-four", "2026-09-04T00:00:00Z"),
-        _revision("entry-00003-three", "2026-09-03T00:00:00Z"),
-    ]
-    traffic = [
-        {"revisionName": "entry-00006-six", "percent": 100},
-        {"revisionName": "entry-00006-six", "tag": "p-6"},
-        {"revisionName": "entry-00005-five", "tag": "p-5"},
-        {"revisionName": "entry-00004-four", "tag": "p-4"},
-        {"revisionName": "entry-00005-five", "tag": "pe-retained-1"},
-        {"revisionName": "entry-00004-four", "tag": "pe-retained-2"},
-        {"revisionName": "entry-00003-three", "tag": "pe-retained-3"},
-    ]
-
-    result = _run_cleanup(
-        tmp_path,
-        service_traffic=traffic,
-        revisions=revisions,
-        successful_revision="entry-00006-six",
-        previous_revision="entry-00005-five",
-    )
-
-    assert result.returncode == 0, result.stderr
-    update_arguments = (tmp_path / "update-arguments.txt").read_text(encoding="utf-8")
-    assert "pe-retained-1=entry-00006-six" in update_arguments
-    assert "pe-retained-2=entry-00005-five" in update_arguments
-    assert "pe-retained-3=entry-00004-four" in update_arguments
-    assert (tmp_path / "deleted-revisions.txt").read_text(
-        encoding="utf-8"
-    ).splitlines() == ["entry-00003-three"]
+    assert "Retained successful Cloud Run revision entry-00003-three" in result.stdout
 
 
 def test_cleanup_refuses_to_mutate_when_successful_revision_is_not_ready(
@@ -198,13 +144,12 @@ def test_cleanup_refuses_to_mutate_when_successful_revision_is_not_ready(
 ):
     result = _run_cleanup(
         tmp_path,
-        service_traffic=[{"revisionName": "entry-00001-one", "percent": 100}],
+        service_traffic=[{"revisionName": "entry-00002-two", "percent": 100}],
         revisions=[
             _revision("entry-00002-two", "2026-09-02T00:00:00Z", ready=False),
             _revision("entry-00001-one", "2026-09-01T00:00:00Z"),
         ],
         successful_revision="entry-00002-two",
-        previous_revision="entry-00001-one",
     )
 
     assert result.returncode == 1
@@ -213,39 +158,29 @@ def test_cleanup_refuses_to_mutate_when_successful_revision_is_not_ready(
     assert not (tmp_path / "deleted-revisions.txt").exists()
 
 
-def test_cleanup_preserves_a_traffic_revision_for_an_unpromoted_environment(
+def test_cleanup_refuses_when_successful_revision_does_not_have_stable_traffic(
     tmp_path: Path,
 ):
-    revisions = [
-        _revision("entry-00004-four", "2026-09-04T00:00:00Z"),
-        _revision("entry-00003-three", "2026-09-03T00:00:00Z"),
-        _revision("entry-00002-two", "2026-09-02T00:00:00Z"),
-        _revision("entry-00001-one", "2026-09-01T00:00:00Z"),
-    ]
-    traffic = [
-        {"revisionName": "entry-00001-one", "percent": 100},
-        {"revisionName": "entry-00004-four", "tag": "s-4"},
-        {"revisionName": "entry-00003-three", "tag": "pe-retained-1"},
-    ]
-
     result = _run_cleanup(
         tmp_path,
-        service_traffic=traffic,
-        revisions=revisions,
-        successful_revision="entry-00004-four",
+        service_traffic=[
+            {"revisionName": "entry-00001-one", "percent": 100},
+            {"revisionName": "entry-00002-two", "tag": "p-2"},
+        ],
+        revisions=[
+            _revision("entry-00002-two", "2026-09-02T00:00:00Z"),
+            _revision("entry-00001-one", "2026-09-01T00:00:00Z"),
+        ],
+        successful_revision="entry-00002-two",
     )
 
-    assert result.returncode == 0, result.stderr
-    update_arguments = (tmp_path / "update-arguments.txt").read_text(encoding="utf-8")
-    assert "pe-retained-1=entry-00004-four" in update_arguments
-    assert "pe-retained-2=entry-00001-one" in update_arguments
-    assert "pe-retained-3=entry-00003-three" in update_arguments
-    assert (tmp_path / "deleted-revisions.txt").read_text(
-        encoding="utf-8"
-    ).splitlines() == ["entry-00002-two"]
+    assert result.returncode == 1
+    assert "is not the revision receiving stable traffic" in result.stderr
+    assert not (tmp_path / "update-arguments.txt").exists()
+    assert not (tmp_path / "deleted-revisions.txt").exists()
 
 
-def test_revision_cleanup_runs_after_successful_deployment_completion():
+def test_revision_cleanup_runs_after_promoted_deployment_completion():
     workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
     assert workflow.index("\n  deployment_ready:") < workflow.index(
@@ -253,9 +188,10 @@ def test_revision_cleanup_runs_after_successful_deployment_completion():
     )
     cleanup_job = workflow[workflow.index("\n  cleanup_entrypoint_revisions:") :]
     assert "needs: [deployment_ready, deploy_entrypoint]" in cleanup_job
+    assert "inputs.promote_entrypoint" in cleanup_job
     assert "needs.deployment_ready.result == 'success'" in cleanup_job
     assert "id-token: write" in cleanup_job
-    assert 'SIMULATION_ENTRYPOINT_REVISIONS_TO_RETAIN: "3"' in cleanup_job
+    assert "SIMULATION_ENTRYPOINT_REVISIONS_TO_RETAIN" not in cleanup_job
     assert "cleanup-cloud-run-simulation-entry-revisions.sh" in cleanup_job
 
 
