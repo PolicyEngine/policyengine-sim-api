@@ -73,10 +73,10 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
         "https://collector.test"
     )
     assert app.hf_secret == {
-        "args": ("huggingface-token",),
+        "args": ("pe-uk-private-hf-read-token",),
         "kwargs": {"required_keys": ["HUGGING_FACE_TOKEN"]},
     }
-    assert command_calls[0][2]["secrets"] == [app.data_secret, app.hf_secret]
+    assert command_calls[0][2]["secrets"] == [app.hf_secret]
     uv_sync_calls = [
         call for call in app.simulation_image.calls if call[0] == "uv_sync"
     ]
@@ -117,7 +117,6 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     ):
         assert runtime_secret_sets[function_name] == [
             app.gcp_secret,
-            app.data_secret,
             app.hf_secret,
         ]
 

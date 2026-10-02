@@ -21,7 +21,6 @@ import modal
 
 from src.modal.app import (
     build_runtime_simulation_image,
-    data_secret,
     gcp_secret,
     hf_secret,
 )
@@ -36,7 +35,7 @@ precompute_image = build_runtime_simulation_image().add_local_python_source(
     copy=True,
 )
 
-_worker_secrets = [gcp_secret, data_secret, hf_secret]
+_worker_secrets = [gcp_secret, hf_secret]
 
 
 # Wrapper signatures use plain dicts: they sit on Modal's serialization

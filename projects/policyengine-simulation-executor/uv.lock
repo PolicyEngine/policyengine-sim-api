@@ -1843,6 +1843,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "google-cloud-storage" },
+    { name = "huggingface-hub" },
     { name = "modal" },
     { name = "opentelemetry-instrumentation-fastapi" },
     { name = "opentelemetry-instrumentation-sqlalchemy" },
@@ -1876,6 +1877,7 @@ dev = [
 modal-simulation-image = [
     { name = "fastapi" },
     { name = "google-cloud-storage" },
+    { name = "huggingface-hub" },
     { name = "policyengine", extra = ["models"] },
     { name = "policyengine-observability", extra = ["fastapi", "google", "otlp-grpc"] },
     { name = "psycopg", extra = ["binary"] },
@@ -1888,6 +1890,7 @@ modal-simulation-image = [
 requires-dist = [
     { name = "black", marker = "extra == 'build'", specifier = ">=25.1.0" },
     { name = "google-cloud-storage", specifier = ">=2" },
+    { name = "huggingface-hub", specifier = ">=1,<2" },
     { name = "modal", specifier = ">=0.73.0" },
     { name = "openapi-python-client", marker = "extra == 'build'", specifier = ">=0.21.6" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.65b0,<0.66" },
@@ -1913,6 +1916,7 @@ dev = [{ name = "policyengine-simulation-gateway", editable = "../policyengine-s
 modal-simulation-image = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "google-cloud-storage", specifier = ">=2" },
+    { name = "huggingface-hub", specifier = ">=1,<2" },
     { name = "policyengine", extras = ["models"], specifier = "==6.2.1" },
     { name = "policyengine-observability", extras = ["fastapi", "google", "otlp-grpc"], specifier = ">=3.0.1,<4" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },

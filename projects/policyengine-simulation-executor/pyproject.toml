@@ -28,6 +28,8 @@ dependencies = [
     # Imported directly by the artifact store client; do not rely on the
     # transitive pin via policyengine.
     "google-cloud-storage>=2",
+    # Imported directly by the UK private-data credential verifier.
+    "huggingface-hub>=1,<2",
     "pyarrow>=20,<24",
 ]
 
@@ -52,6 +54,8 @@ modal-simulation-image = [
     # transitive dependency of policyengine, but the image must not depend
     # on an upstream package keeping it.
     "google-cloud-storage>=2",
+    # The credential verifier runs in this dependency-only Modal image.
+    "huggingface-hub>=1,<2",
     "pyarrow>=20,<24",
     # The Stage 12 coordinator and child functions use typed SQLAlchemy Core
     # DML against the API-owned temporary tables. These dependencies are

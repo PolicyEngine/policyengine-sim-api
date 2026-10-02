@@ -67,6 +67,18 @@ def test_fetch_hf_dataset_revision_uses_dataset_revision_api(monkeypatch):
     assert seen["timeout"] == hf_dataset.HF_REQUEST_TIMEOUT_SECONDS
 
 
+def test_hf_token_uses_only_explicit_runtime_names(monkeypatch):
+    monkeypatch.setenv("PE_UK_PRIVATE_HF_READ_TOKEN", "managed-token")
+    monkeypatch.setenv("HUGGING_FACE_TOKEN", "compatibility-token")
+    monkeypatch.setenv("HF_TOKEN", "legacy-token")
+
+    assert hf_dataset._hf_token() == "managed-token"
+    assert hf_dataset.HF_TOKEN_ENV_VARS == (
+        "PE_UK_PRIVATE_HF_READ_TOKEN",
+        "HUGGING_FACE_TOKEN",
+    )
+
+
 def test_validate_hf_dataset_uri_rejects_revision_missing_artifact(monkeypatch):
     monkeypatch.setattr(
         hf_dataset,
@@ -99,6 +111,4 @@ def test_with_hf_revision_validates_and_preserves_requested_revision(monkeypatch
         )
         == "hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"
     )
-    assert calls == [
-        "hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"
-    ]
+    assert calls == ["hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"]

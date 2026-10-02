@@ -21,10 +21,8 @@ from urllib.request import Request, urlopen
 HF_ENDPOINT = os.environ.get("HF_ENDPOINT", "https://huggingface.co").rstrip("/")
 HF_REQUEST_TIMEOUT_SECONDS = 30
 HF_TOKEN_ENV_VARS = (
-    "HF_TOKEN",
-    "HUGGING_FACE_HUB_TOKEN",
-    "HUGGINGFACE_HUB_TOKEN",
-    "HUGGINGFACE_TOKEN",
+    "PE_UK_PRIVATE_HF_READ_TOKEN",
+    "HUGGING_FACE_TOKEN",
 )
 
 

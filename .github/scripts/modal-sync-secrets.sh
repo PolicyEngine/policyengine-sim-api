@@ -1,7 +1,7 @@
 #!/bin/bash
 # Sync secrets from GitHub to Modal environment
 # Usage: ./modal-sync-secrets.sh <modal-environment> <gh-environment>
-# Required env vars: HF_TOKEN, GCP_CREDENTIALS_JSON
+# Required env vars: PE_UK_PRIVATE_HF_READ_TOKEN, GCP_CREDENTIALS_JSON
 
 set -euo pipefail
 
@@ -17,9 +17,9 @@ truthy() {
 
 echo "Syncing secrets to Modal environment: $MODAL_ENV"
 
-if [ -z "${HF_TOKEN:-}" ]; then
-  echo "HF_TOKEN is required to sync the Hugging Face dataset secret." >&2
-  echo "Add HF_TOKEN to the GitHub environment secrets for '$GH_ENV'." >&2
+if [ -z "${PE_UK_PRIVATE_HF_READ_TOKEN:-}" ]; then
+  echo "PE_UK_PRIVATE_HF_READ_TOKEN is required to sync the UK private-data Hugging Face credential." >&2
+  echo "Add PE_UK_PRIVATE_HF_READ_TOKEN to the selected-repository GitHub organization secrets for '$GH_ENV'." >&2
   exit 1
 fi
 
@@ -70,10 +70,15 @@ uv run modal secret create gcp-credentials \
 
 # Sync Hugging Face token for private certified datasets used during bundle
 # image build and worker runtime.
-uv run modal secret create huggingface-token \
-  "HUGGING_FACE_TOKEN=$HF_TOKEN" \
+uv run modal secret create pe-uk-private-hf-read-token \
+  "HUGGING_FACE_TOKEN=$PE_UK_PRIVATE_HF_READ_TOKEN" \
   --env="$MODAL_ENV" \
   --force
+
+# Validate the value stored by Modal independently of image-layer caches. The
+# check derives every UK artifact from the installed policyengine.py bundle and
+# returns only safe identity, fingerprint, and artifact metadata.
+uv run modal run --env="$MODAL_ENV" src/modal/hf_access_smoke.py
 
 # Sync gateway auth config. The gateway runtime only needs issuer/audience and
 # the explicit requirement flag; client credentials stay on the GitHub side and

@@ -25,6 +25,10 @@ from policyengine_simulation_observability.telemetry import (
 )
 
 import modal
+from policyengine_simulation_executor.hf_access_validation import (
+    HF_MODAL_SECRET_NAME,
+    HF_RUNTIME_ENV_NAME,
+)
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_country_model_version,
     get_bundled_package_version,
@@ -106,10 +110,9 @@ app = modal.App(APP_NAME)
 # Secrets
 # GCP credentials are shared across environments (always from main)
 gcp_secret = modal.Secret.from_name("gcp-credentials", environment_name="main")
-data_secret = modal.Secret.from_name("policyengine-data-credentials")
 hf_secret = modal.Secret.from_name(
-    "huggingface-token",
-    required_keys=["HUGGING_FACE_TOKEN"],
+    HF_MODAL_SECRET_NAME,
+    required_keys=[HF_RUNTIME_ENV_NAME],
 )
 OBSERVABILITY_ENV = modal_image_environment()
 
@@ -193,7 +196,7 @@ def build_runtime_simulation_image() -> modal.Image:
                 countries=("us", "uk"),
                 data_dir=SIMULATION_BUNDLE_DATA_DIR,
             ),
-            secrets=[data_secret, hf_secret],
+            secrets=[hf_secret],
         )
         .env(VERSION_ENV)
         .env(OBSERVABILITY_ENV)
@@ -262,7 +265,7 @@ def _set_modal_call_attributes(runtime) -> None:
     timeout=3600,
     retries=0,
     max_containers=100,
-    secrets=[gcp_secret, data_secret, hf_secret],
+    secrets=[gcp_secret, hf_secret],
 )
 def run_simulation(
     params: dict,
@@ -318,7 +321,7 @@ def run_simulation(
     timeout=3600,
     retries=0,
     max_containers=300,
-    secrets=[gcp_secret, data_secret, hf_secret],
+    secrets=[gcp_secret, hf_secret],
 )
 def run_simulation_segment(
     params: dict,
@@ -364,7 +367,7 @@ def run_simulation_segment(
     timeout=3600,
     retries=0,
     max_containers=100,
-    secrets=[gcp_secret, data_secret, hf_secret],
+    secrets=[gcp_secret, hf_secret],
 )
 def run_budget_window_batch(
     params: dict,
