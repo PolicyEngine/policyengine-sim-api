@@ -47,6 +47,16 @@ jobs:
       with:
         enable-cache: true
 
+    - name: Install credential validation dependencies
+      working-directory: projects/policyengine-simulation-executor
+      run: uv sync --frozen
+
+    - name: Validate the GitHub UK private-data credential
+      working-directory: projects/policyengine-simulation-executor
+      env:
+        HUGGING_FACE_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}
+      run: uv run python -m src.modal.utils.validate_hf_access
+
     - name: Run image smokes
       env:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}

@@ -197,3 +197,9 @@ def validate_uk_private_hf_access(
         token_display_name=token_identity.display_name,
         artifacts=artifacts,
     )
+
+
+def validate_configured_uk_private_hf_access() -> HFCredentialAudit:
+    """Validate the configured token against every artifact in the UK bundle."""
+
+    return validate_uk_private_hf_access(build_uk_bundle_access_plan())

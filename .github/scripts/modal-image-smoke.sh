@@ -25,7 +25,6 @@ fi
         "HUGGING_FACE_TOKEN=$PE_UK_PRIVATE_HF_READ_TOKEN" \
         --env="$MODAL_ENV" \
         --force
-    uv run modal run --env="$MODAL_ENV" src/modal/hf_access_smoke.py
 )
 
 echo "=== Gateway image smoke (env: $MODAL_ENV) ==="

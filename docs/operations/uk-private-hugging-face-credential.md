@@ -13,23 +13,34 @@ credential.
 
 ## Deployment path
 
-The deployment workflow copies the GitHub value into the Modal secret
-`pe-uk-private-hf-read-token` in the selected Modal environment. That Modal
-secret contains the `HUGGING_FACE_TOKEN` compatibility key required by
-PolicyEngine Core. No other mounted Modal secret may define that key.
-
-Immediately after synchronization, `src/modal/hf_access_smoke.py`:
+Before synchronization, the deployment workflow validates the GitHub secret
+directly on the GitHub Actions runner. The validation:
 
 1. derives the complete UK Hugging Face artifact list from the installed
    policyengine.py bundle;
 2. verifies the expected token display name and fine-grained role;
 3. rejects any write permission;
-4. requests metadata for every pinned artifact from inside Modal;
+4. requests metadata for every pinned artifact;
 5. prints only the account name, token name, a short SHA-256 fingerprint, and
    artifact metadata.
 
-This check does not rely on the Modal image cache. Both the existing versioned
-workers and the Stage 12 workers mount the same purpose-specific secret.
+Only after that check passes does the workflow copy the GitHub value into the
+Modal secret `pe-uk-private-hf-read-token` in the selected Modal environment.
+That Modal secret contains the `HUGGING_FACE_TOKEN` compatibility key required
+by PolicyEngine Core. No other mounted Modal secret may define that key.
+
+After deploying each simulation application, the workflow invokes its private
+`verify_uk_private_hf_access` Modal function. The existing executor function
+runs in the deployed executor image; the Stage 12 function runs in the deployed
+UK worker image. Each function repeats the complete validation using the Modal
+secret actually injected into that application. Neither function is an HTTP
+endpoint, and neither creates a separate credential-validation application or
+image.
+
+The pre-deployment check does not rely on Modal image caching. The
+post-deployment checks establish that both deployed applications received the
+same purpose-specific secret and can use it to access every bundled UK
+artifact.
 
 The simulation-entry Cloud Run service does not receive the credential. It
 submits work to Modal but does not access Hugging Face.

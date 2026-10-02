@@ -107,9 +107,15 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
     assert "uv" not in names
     assert "pip" not in names
 
+    function_options = dict(app.app.function_calls)
     runtime_secret_sets = {
         name: kwargs["secrets"] for name, kwargs in app.app.function_calls
     }
+    assert runtime_secret_sets["verify_uk_private_hf_access"] == [app.hf_secret]
+    assert function_options["verify_uk_private_hf_access"]["image"] is (
+        app.simulation_image
+    )
+    assert function_options["verify_uk_private_hf_access"]["timeout"] == 120
     for function_name in (
         "run_simulation",
         "run_simulation_segment",

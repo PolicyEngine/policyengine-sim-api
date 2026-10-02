@@ -12,6 +12,7 @@ from policyengine_simulation_executor.hf_access_validation import (
     HFArtifactAccess,
     HFAccessTarget,
     build_uk_bundle_access_plan,
+    validate_configured_uk_private_hf_access,
     validate_uk_private_hf_access,
 )
 
@@ -109,3 +110,30 @@ def test_validation_rejects_missing_runtime_credential() -> None:
             whoami_loader=lambda _: pytest.fail("identity must not be requested"),
             metadata_loader=lambda *_: pytest.fail("metadata must not be requested"),
         )
+
+
+def test_configured_validation_uses_the_bundle_access_plan(monkeypatch) -> None:
+    target = _target()
+    expected = validate_uk_private_hf_access(
+        (target,),
+        environment={HF_RUNTIME_ENV_NAME: "token"},
+        whoami_loader=lambda _: _identity(),
+        metadata_loader=lambda checked, _: HFArtifactAccess(
+            target=checked,
+            commit_hash="commit",
+            etag="etag",
+            size=123,
+        ),
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.hf_access_validation."
+        "build_uk_bundle_access_plan",
+        lambda: (target,),
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.hf_access_validation."
+        "validate_uk_private_hf_access",
+        lambda targets: expected if targets == (target,) else pytest.fail(),
+    )
+
+    assert validate_configured_uk_private_hf_access() == expected

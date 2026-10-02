@@ -260,6 +260,23 @@ def _set_modal_call_attributes(runtime) -> None:
 
 @app.function(
     image=simulation_image,
+    memory=512,
+    timeout=120,
+    retries=0,
+    secrets=[hf_secret],
+)
+def verify_uk_private_hf_access() -> dict[str, object]:
+    """Verify the deployed executor's access to every bundled UK artifact."""
+
+    from policyengine_simulation_executor.hf_access_validation import (
+        validate_configured_uk_private_hf_access,
+    )
+
+    return validate_configured_uk_private_hf_access().model_dump(mode="json")
+
+
+@app.function(
+    image=simulation_image,
     cpu=8.0,
     memory=32768,
     timeout=3600,
