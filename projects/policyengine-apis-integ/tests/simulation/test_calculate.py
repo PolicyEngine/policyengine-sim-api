@@ -7,8 +7,9 @@ that economy-wide simulations complete successfully.
 
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from http import HTTPStatus
-from typing import Protocol, TypeGuard
+from typing import Protocol, TypeGuard, cast
 
 import pytest
 
@@ -22,6 +23,8 @@ from policyengine_api_simulation_client.models import (
     JobSubmitResponse,
     SimulationRequest,
 )
+
+from .polling import poll_retry_delay_seconds
 
 _REQUIRED_ECONOMY_RESULT_SECTIONS = {"budget", "poverty", "inequality"}
 _REQUIRED_DISTRICT_RESULT_KEYS = {
@@ -48,9 +51,9 @@ def _as_mapping(value: object, *, label: str) -> Mapping:
     if _has_to_dict(value):
         value = value.to_dict()
 
-    assert isinstance(
-        value, Mapping
-    ), f"Expected {label} to be an object, got {type(value)}"
+    assert isinstance(value, Mapping), (
+        f"Expected {label} to be an object, got {type(value)}"
+    )
     return value
 
 
@@ -85,26 +88,33 @@ def poll_for_completion(
         TimeoutError: If job doesn't complete within max_wait_seconds
         AssertionError: If job fails
     """
-    start_time = time.time()
+    deadline = time.monotonic() + max_wait_seconds
 
-    while time.time() - start_time < max_wait_seconds:
+    while time.monotonic() < deadline:
         response = get_job_status_jobs_job_id_get.sync_detailed(
             job_id=job_id, client=client
         )
 
         if response.status_code == HTTPStatus.OK:
             assert isinstance(response.parsed, JobStatusResponse)
-            assert (
-                response.parsed.status == "complete"
-            ), f"Unexpected status: {response.parsed}"
+            assert response.parsed.status == "complete", (
+                f"Unexpected status: {response.parsed}"
+            )
             return response.parsed
 
         if response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR:
             raise AssertionError(f"Job failed: {response.content}")
 
-        if response.status_code == HTTPStatus.ACCEPTED:
-            # Still running, wait and retry
-            time.sleep(poll_interval)
+        delay_seconds = poll_retry_delay_seconds(
+            response.status_code,
+            response.headers,
+            fallback_seconds=poll_interval,
+        )
+        if delay_seconds is not None:
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                break
+            time.sleep(min(delay_seconds, remaining_seconds))
             continue
 
         # Unexpected status code
@@ -125,9 +135,9 @@ def submit_simulation_request(
         f"Simulation submit failed with status {response.status_code}: "
         f"{response.content!r}"
     )
-    assert isinstance(
-        response.parsed, JobSubmitResponse
-    ), f"Unexpected response type: {type(response.parsed)}"
+    assert isinstance(response.parsed, JobSubmitResponse), (
+        f"Unexpected response type: {type(response.parsed)}"
+    )
     return response.parsed
 
 
@@ -147,9 +157,9 @@ def assert_congressional_district_results(
     expected_district_ids: set[str] | None = None,
 ) -> None:
     economy_result = _as_mapping(economy_result, label="economy result")
-    assert (
-        "congressional_district_impact" in economy_result
-    ), f"Missing 'congressional_district_impact' in result: {economy_result.keys()}"
+    assert "congressional_district_impact" in economy_result, (
+        f"Missing 'congressional_district_impact' in result: {economy_result.keys()}"
+    )
 
     impact = _as_mapping(
         economy_result["congressional_district_impact"],
@@ -230,6 +240,102 @@ def test_result_assertions_accept_generated_client_objects() -> None:
 
     assert_economy_result_sections(result)
     assert_congressional_district_results(result, expected_district_prefix="UT-")
+
+
+@dataclass
+class _StubJobStatusHttpResponse:
+    status_code: HTTPStatus
+    parsed: JobStatusResponse | None = None
+    content: bytes = b""
+    headers: dict[str, str] = field(default_factory=dict)
+
+
+def _poll_with_responses(
+    monkeypatch: pytest.MonkeyPatch,
+    responses: list[_StubJobStatusHttpResponse],
+    *,
+    max_wait_seconds: float,
+    poll_interval: float,
+) -> tuple[JobStatusResponse, list[float]]:
+    response_iterator = iter(responses)
+    sleep_seconds: list[float] = []
+
+    def get_status(
+        *, job_id: str, client: Client | AuthenticatedClient
+    ) -> _StubJobStatusHttpResponse:
+        del job_id, client
+        return next(response_iterator)
+
+    def record_sleep(seconds: float) -> None:
+        sleep_seconds.append(seconds)
+
+    monkeypatch.setattr(
+        get_job_status_jobs_job_id_get,
+        "sync_detailed",
+        get_status,
+    )
+    monkeypatch.setattr(time, "sleep", record_sleep)
+    result = poll_for_completion(
+        cast(Client, object()),
+        "fc-test",
+        max_wait_seconds=max_wait_seconds,
+        poll_interval=poll_interval,
+    )
+    return result, sleep_seconds
+
+
+@pytest.mark.parametrize(
+    "status_code",
+    [
+        HTTPStatus.BAD_GATEWAY,
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        HTTPStatus.GATEWAY_TIMEOUT,
+    ],
+)
+def test_poll_for_completion_retries_transient_gateway_statuses(
+    monkeypatch: pytest.MonkeyPatch,
+    status_code: HTTPStatus,
+) -> None:
+    complete = JobStatusResponse.from_dict({"status": "complete", "result": {}})
+    result, sleep_seconds = _poll_with_responses(
+        monkeypatch,
+        [
+            _StubJobStatusHttpResponse(status_code=status_code),
+            _StubJobStatusHttpResponse(
+                status_code=HTTPStatus.OK,
+                parsed=complete,
+            ),
+        ],
+        max_wait_seconds=1.0,
+        poll_interval=0.25,
+    )
+
+    assert result is complete
+    assert sleep_seconds == [0.25]
+
+
+def test_poll_for_completion_honors_retry_after_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    complete = JobStatusResponse.from_dict({"status": "complete", "result": {}})
+    result, sleep_seconds = _poll_with_responses(
+        monkeypatch,
+        [
+            _StubJobStatusHttpResponse(
+                status_code=HTTPStatus.GATEWAY_TIMEOUT,
+                headers={"retry-after": "10"},
+            ),
+            _StubJobStatusHttpResponse(
+                status_code=HTTPStatus.OK,
+                parsed=complete,
+            ),
+        ],
+        max_wait_seconds=30.0,
+        poll_interval=0.25,
+    )
+
+    assert result is complete
+    assert sleep_seconds == [10.0]
 
 
 @pytest.mark.beta_only
@@ -353,9 +459,9 @@ def test_calculate_specific_model(
 
     # When - submit job
     submit_response = submit_simulation_request(client, request)
-    assert (
-        submit_response.version == us_model_version
-    ), f"Version mismatch: expected {us_model_version}, got {submit_response.version}"
+    assert submit_response.version == us_model_version, (
+        f"Version mismatch: expected {us_model_version}, got {submit_response.version}"
+    )
     job_id = submit_response.job_id
 
     # When - poll for completion
@@ -399,9 +505,9 @@ def test_calculate_uk_model(
 
     # When - submit job
     submit_response = submit_simulation_request(client, request)
-    assert (
-        submit_response.version == uk_model_version
-    ), f"Version mismatch: expected {uk_model_version}, got {submit_response.version}"
+    assert submit_response.version == uk_model_version, (
+        f"Version mismatch: expected {uk_model_version}, got {submit_response.version}"
+    )
     job_id = submit_response.job_id
 
     # When - poll for completion

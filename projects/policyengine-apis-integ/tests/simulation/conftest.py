@@ -16,6 +16,8 @@ from policyengine_api_simulation_client.models import (
     BudgetWindowBatchStatusResponse,
 )
 
+from .polling import poll_retry_delay_seconds
+
 
 BUDGET_WINDOW_YEARS = ["2026", "2027"]
 BUDGET_WINDOW_REFORM = {
@@ -103,10 +105,6 @@ def _poll_budget_window_batch(
         last_status_code = response.status_code
         last_content = response.content
 
-        if response.status_code == HTTPStatus.ACCEPTED:
-            time.sleep(poll_interval)
-            continue
-
         if response.status_code == HTTPStatus.OK:
             assert isinstance(response.parsed, BudgetWindowBatchStatusResponse), (
                 f"Unexpected response type: {type(response.parsed)}"
@@ -121,6 +119,18 @@ def _poll_budget_window_batch(
                 "Budget-window batch failed: "
                 f"{_decode_response_content(response.content)}"
             )
+
+        delay_seconds = poll_retry_delay_seconds(
+            response.status_code,
+            response.headers,
+            fallback_seconds=poll_interval,
+        )
+        if delay_seconds is not None:
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                break
+            time.sleep(min(delay_seconds, remaining_seconds))
+            continue
 
         raise AssertionError(
             "Unexpected budget-window poll status "
