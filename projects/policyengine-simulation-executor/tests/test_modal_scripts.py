@@ -149,7 +149,7 @@ class TestModalImageSmoke:
                 "UV_CALLS_LOG": str(uv_calls_log),
             }
         )
-        env.pop("HF_TOKEN", None)
+        env.pop("PE_UK_PRIVATE_HF_READ_TOKEN", None)
 
         result = subprocess.run(
             ["bash", str(self.script), "staging"],
@@ -160,7 +160,7 @@ class TestModalImageSmoke:
         )
 
         assert result.returncode != 0
-        assert "HF_TOKEN is required" in result.stderr
+        assert "PE_UK_PRIVATE_HF_READ_TOKEN is required" in result.stderr
         assert not uv_calls_log.exists()
 
     def test_syncs_expected_hf_key_before_image_smokes(self, tmp_path):
@@ -177,7 +177,7 @@ class TestModalImageSmoke:
             {
                 "PATH": f"{fake_bin}:{env['PATH']}",
                 "UV_CALLS_LOG": str(uv_calls_log),
-                "HF_TOKEN": "hf_test",
+                "PE_UK_PRIVATE_HF_READ_TOKEN": "hf_test",
             }
         )
 
@@ -192,18 +192,70 @@ class TestModalImageSmoke:
         assert result.returncode == 0, result.stderr
         calls = uv_calls_log.read_text(encoding="utf-8").splitlines()
         assert calls[0] == (
-            "run modal secret create huggingface-token "
+            "run modal secret create pe-uk-private-hf-read-token "
             "HUGGING_FACE_TOKEN=hf_test --env=staging --force"
         )
         assert len(calls) == 4
 
     def test_workflow_supplies_hf_token(self):
-        """The same repository secret used by deployment must reach the smoke."""
+        """CI must validate the GitHub value before synchronizing it to Modal."""
         workflow = (
             REPO_ROOT / ".github" / "workflows" / "pr-image-smoke.yml"
         ).read_text(encoding="utf-8")
 
-        assert "HF_TOKEN: ${{ secrets.HF_TOKEN }}" in workflow
+        assert (
+            "PE_UK_PRIVATE_HF_READ_TOKEN: "
+            "${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}" in workflow
+        )
+        assert (
+            "HUGGING_FACE_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}" in workflow
+        )
+        assert "python -m src.modal.utils.validate_hf_access" in workflow
+        assert workflow.index("Validate the GitHub UK private-data credential") < (
+            workflow.index("Run image smokes")
+        )
+
+    def test_deployment_sources_exclude_legacy_hf_secret_names(self):
+        paths = (
+            REPO_ROOT / ".github/scripts/modal-image-smoke.sh",
+            REPO_ROOT / ".github/scripts/modal-sync-secrets.sh",
+            REPO_ROOT / ".github/workflows/pr-image-smoke.yml",
+            REPO_ROOT / ".github/workflows/simulation-deploy.reusable.yml",
+            REPO_ROOT / "projects/policyengine-simulation-executor/src/modal/app.py",
+            REPO_ROOT / "projects/policyengine-simulation-executor/src/modal/v2_app.py",
+            REPO_ROOT
+            / "projects/policyengine-simulation-executor/src/modal/precompute_app.py",
+        )
+        sources = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+
+        assert "secrets.HF_TOKEN" not in sources
+        assert "huggingface-token" not in sources
+        assert "policyengine-data-credentials" not in sources
+        assert "PE_UK_PRIVATE_HF_READ_TOKEN" in sources
+        assert "pe-uk-private-hf-read-token" in sources
+
+    def test_deployment_validates_before_syncing_the_exact_value(self):
+        """Deployment must validate the source value before synchronizing it."""
+        workflow = (
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
+        ).read_text(encoding="utf-8")
+
+        local_validation = "Validate the GitHub UK private-data credential"
+        sync = "Synchronize the Modal UK private-data credential"
+        validation_command = "python -m src.modal.utils.validate_hf_access"
+        assert workflow.index(local_validation) < workflow.index(sync)
+        assert (
+            "HUGGING_FACE_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}" in workflow
+        )
+        assert workflow.count(validation_command) == 1
+        assert '"HUGGING_FACE_TOKEN=${PE_UK_PRIVATE_HF_READ_TOKEN}"' in workflow
+        sync_section = workflow[
+            workflow.index(sync) : workflow.index("Synchronize Modal runtime secrets")
+        ]
+        assert (
+            "if: ${{ inputs.deploy_existing_stack || inputs.deploy_stage12_v2 }}"
+            in sync_section
+        )
 
 
 class TestSimulationDeploymentSummary:
@@ -310,19 +362,10 @@ class TestModalSyncSecrets:
         )
         assert result.returncode != 0, "Should fail without modal environment"
 
-    def test_requires_gh_environment_argument(self):
-        """Should fail when no GH environment is provided."""
-        result = subprocess.run(
-            ["bash", str(self.script), "staging"],
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode != 0, "Should fail without GH environment"
-
     def test_fails_when_gateway_auth_config_is_partial(self):
         """Should fail before touching Modal when auth config is partial."""
         env = os.environ.copy()
-        env["HF_TOKEN"] = "hf_test"
+        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = "hf_test"
         env["GCP_CREDENTIALS_JSON"] = '{"type":"service_account"}'
         env["GATEWAY_AUTH_ISSUER"] = "https://tenant.auth0.com"
         env.pop("GATEWAY_AUTH_AUDIENCE", None)
@@ -330,7 +373,7 @@ class TestModalSyncSecrets:
         env.pop("GATEWAY_AUTH_CLIENT_SECRET", None)
 
         result = subprocess.run(
-            ["bash", str(self.script), "staging", "beta"],
+            ["bash", str(self.script), "staging"],
             capture_output=True,
             text=True,
             env=env,
@@ -342,7 +385,7 @@ class TestModalSyncSecrets:
     def test_fails_when_auth_required_but_gateway_auth_vars_missing(self):
         """Required auth must refuse deploy when the GitHub secrets are absent."""
         env = os.environ.copy()
-        env["HF_TOKEN"] = "hf_test"
+        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = "hf_test"
         env["GCP_CREDENTIALS_JSON"] = '{"type":"service_account"}'
         env["GATEWAY_AUTH_REQUIRED"] = "1"
         for key in (
@@ -354,7 +397,7 @@ class TestModalSyncSecrets:
             env.pop(key, None)
 
         result = subprocess.run(
-            ["bash", str(self.script), "staging", "beta"],
+            ["bash", str(self.script), "staging"],
             capture_output=True,
             text=True,
             env=env,
@@ -363,29 +406,14 @@ class TestModalSyncSecrets:
         assert result.returncode != 0
         assert "GATEWAY_AUTH_REQUIRED is enabled" in result.stderr
 
-    def test_requires_hf_token(self):
-        """Should fail before touching Modal when HF_TOKEN is absent."""
-        env = os.environ.copy()
-        env.pop("HF_TOKEN", None)
-
-        result = subprocess.run(
-            ["bash", str(self.script), "staging", "beta"],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-
-        assert result.returncode != 0
-        assert "HF_TOKEN is required" in result.stderr
-
     def test_requires_gcp_credentials(self):
         """Artifact credential synchronization must fail before deployment."""
         env = os.environ.copy()
-        env["HF_TOKEN"] = "hf_test"
+        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = "hf_test"
         env.pop("GCP_CREDENTIALS_JSON", None)
 
         result = subprocess.run(
-            ["bash", str(self.script), "staging", "beta"],
+            ["bash", str(self.script), "staging"],
             capture_output=True,
             text=True,
             env=env,
@@ -396,7 +424,7 @@ class TestModalSyncSecrets:
         assert "GCP_CREDENTIALS_JSON is required" in result.stderr
 
     def test_creates_gateway_secret_with_normalized_issuer(self, tmp_path):
-        """Should sync HF and runtime gateway values and normalize issuer."""
+        """Should sync shared storage and gateway values and normalize issuer."""
         uv_calls_log = tmp_path / "uv_calls.log"
         fake_bin = tmp_path / "bin"
         fake_bin.mkdir()
@@ -409,7 +437,7 @@ class TestModalSyncSecrets:
             {
                 "PATH": f"{fake_bin}:{env['PATH']}",
                 "UV_CALLS_LOG": str(uv_calls_log),
-                "HF_TOKEN": "hf_test",
+                "PE_UK_PRIVATE_HF_READ_TOKEN": "hf_test",
                 "GCP_CREDENTIALS_JSON": '{"type":"service_account"}',
                 "GATEWAY_AUTH_ISSUER": "https://tenant.auth0.com",
                 "GATEWAY_AUTH_AUDIENCE": "https://simulation-api-beta.policyengine.org",
@@ -420,7 +448,7 @@ class TestModalSyncSecrets:
         )
 
         result = subprocess.run(
-            ["bash", str(self.script), "staging", "beta"],
+            ["bash", str(self.script), "staging"],
             capture_output=True,
             text=True,
             env=env,
@@ -430,8 +458,6 @@ class TestModalSyncSecrets:
         calls = uv_calls_log.read_text()
         assert "run modal secret create gcp-credentials" in calls
         assert "--env=main --force" in calls
-        assert "run modal secret create huggingface-token" in calls
-        assert "HUGGING_FACE_TOKEN=hf_test" in calls
         assert "run modal secret create policyengine-gateway-auth" in calls
         assert "GATEWAY_AUTH_ISSUER=https://tenant.auth0.com/" in calls
         assert (
@@ -460,7 +486,7 @@ class TestModalSyncSecrets:
             {
                 "PATH": f"{fake_bin}:{env['PATH']}",
                 "UV_CALLS_LOG": str(uv_calls_log),
-                "HF_TOKEN": "hf_test",
+                "PE_UK_PRIVATE_HF_READ_TOKEN": "hf_test",
                 "GCP_CREDENTIALS_JSON": '{"type":"service_account"}',
             }
         )
@@ -474,7 +500,7 @@ class TestModalSyncSecrets:
             env.pop(key, None)
 
         result = subprocess.run(
-            ["bash", str(self.script), "staging", "beta"],
+            ["bash", str(self.script), "staging"],
             capture_output=True,
             text=True,
             env=env,
@@ -485,7 +511,6 @@ class TestModalSyncSecrets:
         calls = uv_calls_log.read_text()
         assert "run modal secret create gcp-credentials" in calls
         assert "--env=main --force" in calls
-        assert "huggingface-token" not in calls
 
 
 class TestModalPrecompute:
@@ -718,10 +743,7 @@ class TestModalPrecompute:
             REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
 
-        sync_invocation = (
-            'modal-sync-secrets.sh "${{ inputs.modal_environment }}" '
-            '"${{ inputs.release_environment }}"'
-        )
+        sync_invocation = 'modal-sync-secrets.sh "${{ inputs.modal_environment }}"'
         assert reusable_workflow.count(sync_invocation) == 1
         executor_job = reusable_workflow[
             reusable_workflow.index("deploy_executor:") : reusable_workflow.index(

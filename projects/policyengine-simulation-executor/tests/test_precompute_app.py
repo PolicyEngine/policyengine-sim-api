@@ -65,6 +65,13 @@ def test_every_worker_function_carries_gcp_secret(precompute_module, name):
         "args": ("gcp-credentials",),
         "kwargs": {"environment_name": "main"},
     } in secrets
+    assert {
+        "args": ("pe-uk-private-hf-read-token",),
+        "kwargs": {"required_keys": ["HUGGING_FACE_TOKEN"]},
+    } in secrets
+    assert all(
+        secret.get("args") != ("policyengine-data-credentials",) for secret in secrets
+    )
 
 
 def test_compute_baseline_matches_segment_worker_shape(precompute_module):

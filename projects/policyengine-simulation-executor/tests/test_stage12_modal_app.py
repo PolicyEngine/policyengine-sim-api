@@ -103,9 +103,13 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
     assert "--venv" not in us_command
     assert module.gcp_secret["args"] == ("stage12-evaluation-gcp-credentials",)
     assert module.hf_secret == {
-        "args": ("huggingface-token",),
+        "args": ("pe-uk-private-hf-read-token",),
         "kwargs": {"required_keys": ["HUGGING_FACE_TOKEN"]},
     }
+    assert all(
+        secret.get("args") != ("policyengine-data-credentials",)
+        for secret in module.worker_secrets
+    )
     assert all(
         secret.get("args") != ("policyengine-logfire",)
         for secret in module.worker_secrets
@@ -118,6 +122,8 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
         local_source = next(
             call for call in image.calls if call[0] == "add_local_python_source"
         )
+        bundle_install = next(call for call in image.calls if call[0] == "run_commands")
+        assert bundle_install[2]["secrets"] == [module.hf_secret]
         assert local_source[1] == (
             "src.modal",
             "policyengine_simulation_executor",

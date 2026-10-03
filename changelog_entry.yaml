@@ -5,3 +5,4 @@
       - Added a Modal app-release bundle backfill for missing data artifact revisions
       - Ensured Stage 12-only deployments run authenticated candidate tests and verify every required deployment phase before reporting success
       - Allowed Cloud Run stable endpoint checks to wait for documented traffic propagation before restoring the previous revision
+      - Added a dedicated read-only Hugging Face credential for private UK runtime datasets, validated it before synchronization, and tested its worker configuration

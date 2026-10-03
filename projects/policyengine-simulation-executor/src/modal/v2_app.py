@@ -28,6 +28,10 @@ from policyengine_simulation_observability.telemetry import (
 )
 
 import modal
+from policyengine_simulation_executor.hf_access_validation import (
+    HF_MODAL_SECRET_NAME,
+    HF_RUNTIME_ENV_NAME,
+)
 from policyengine_simulation_executor.stage12_bundle import (
     assert_expected_bundle_values,
     assertion_values,
@@ -68,15 +72,13 @@ if os.environ.get("MODAL_APP_NAME") not in {None, "", APP_NAME}:
 
 app = modal.App(APP_NAME)
 gcp_secret = modal.Secret.from_name("stage12-evaluation-gcp-credentials")
-data_secret = modal.Secret.from_name("policyengine-data-credentials")
 hf_secret = modal.Secret.from_name(
-    "huggingface-token",
-    required_keys=["HUGGING_FACE_TOKEN"],
+    HF_MODAL_SECRET_NAME,
+    required_keys=[HF_RUNTIME_ENV_NAME],
 )
 comparison_runtime_secret = modal.Secret.from_name("stage12-evaluation-runtime")
 worker_secrets = [
     gcp_secret,
-    data_secret,
     hf_secret,
     comparison_runtime_secret,
 ]
@@ -106,7 +108,7 @@ def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:
                 countries=countries,
                 data_dir=STAGE12_DATA_DIR,
             ),
-            secrets=[data_secret, hf_secret],
+            secrets=[hf_secret],
         )
         .env(
             {

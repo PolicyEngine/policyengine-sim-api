@@ -67,6 +67,40 @@ def test_fetch_hf_dataset_revision_uses_dataset_revision_api(monkeypatch):
     assert seen["timeout"] == hf_dataset.HF_REQUEST_TIMEOUT_SECONDS
 
 
+def test_validate_hf_dataset_uri_uses_runtime_credential(monkeypatch):
+    dataset_uri = "hf://policyengine/private-data/dataset.h5@release"
+    seen = {}
+
+    def fake_fetch(repo_id, revision, token):
+        seen["token"] = token
+        return {"siblings": [{"rfilename": "dataset.h5"}]}
+
+    monkeypatch.setattr(hf_dataset, "_fetch_hf_dataset_revision", fake_fetch)
+    monkeypatch.setenv("HUGGING_FACE_TOKEN", "runtime-token")
+    monkeypatch.setenv("PE_UK_PRIVATE_HF_READ_TOKEN", "deployment-token")
+    monkeypatch.setenv("HF_TOKEN", "legacy-token")
+
+    assert validate_hf_dataset_uri(dataset_uri) == dataset_uri
+    assert seen["token"] == "runtime-token"
+
+
+def test_validate_hf_dataset_uri_ignores_non_runtime_credential_names(monkeypatch):
+    dataset_uri = "hf://policyengine/private-data/dataset.h5@release"
+    seen = {}
+
+    def fake_fetch(repo_id, revision, token):
+        seen["token"] = token
+        return {"siblings": [{"rfilename": "dataset.h5"}]}
+
+    monkeypatch.setattr(hf_dataset, "_fetch_hf_dataset_revision", fake_fetch)
+    monkeypatch.delenv("HUGGING_FACE_TOKEN", raising=False)
+    monkeypatch.setenv("PE_UK_PRIVATE_HF_READ_TOKEN", "deployment-token")
+    monkeypatch.setenv("HF_TOKEN", "legacy-token")
+
+    assert validate_hf_dataset_uri(dataset_uri) == dataset_uri
+    assert seen["token"] is None
+
+
 def test_validate_hf_dataset_uri_rejects_revision_missing_artifact(monkeypatch):
     monkeypatch.setattr(
         hf_dataset,
@@ -99,6 +133,4 @@ def test_with_hf_revision_validates_and_preserves_requested_revision(monkeypatch
         )
         == "hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"
     )
-    assert calls == [
-        "hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"
-    ]
+    assert calls == ["hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"]

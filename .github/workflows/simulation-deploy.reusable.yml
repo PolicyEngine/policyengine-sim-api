@@ -122,20 +122,39 @@ jobs:
         id: versions
         run: .github/scripts/modal-extract-versions.sh projects/policyengine-simulation-executor
 
+      - name: Validate the GitHub UK private-data credential
+        if: ${{ inputs.deploy_existing_stack || inputs.deploy_stage12_v2 }}
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          HUGGING_FACE_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}
+        run: uv run python -m src.modal.utils.validate_hf_access
+
+      - name: Synchronize the Modal UK private-data credential
+        if: ${{ inputs.deploy_existing_stack || inputs.deploy_stage12_v2 }}
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          PE_UK_PRIVATE_HF_READ_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}
+        run: |
+          uv run modal secret create pe-uk-private-hf-read-token \
+            "HUGGING_FACE_TOKEN=${PE_UK_PRIVATE_HF_READ_TOKEN}" \
+            --env="${{ inputs.modal_environment }}" \
+            --force
+
       - name: Synchronize Modal runtime secrets
         if: ${{ inputs.deploy_existing_stack }}
         working-directory: projects/policyengine-simulation-executor
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
           GATEWAY_AUTH_ISSUER: ${{ secrets.GATEWAY_AUTH_ISSUER }}
           GATEWAY_AUTH_AUDIENCE: ${{ secrets.GATEWAY_AUTH_AUDIENCE }}
           GATEWAY_AUTH_CLIENT_ID: ${{ secrets.GATEWAY_AUTH_CLIENT_ID }}
           GATEWAY_AUTH_CLIENT_SECRET: ${{ secrets.GATEWAY_AUTH_CLIENT_SECRET }}
           GATEWAY_AUTH_REQUIRED: ${{ vars.GATEWAY_AUTH_REQUIRED }}
-        run: ../../.github/scripts/modal-sync-secrets.sh "${{ inputs.modal_environment }}" "${{ inputs.release_environment }}"
+        run: ../../.github/scripts/modal-sync-secrets.sh "${{ inputs.modal_environment }}"
 
   deploy_entrypoint:
     name: Deploy and unit test Cloud Run entrypoint
