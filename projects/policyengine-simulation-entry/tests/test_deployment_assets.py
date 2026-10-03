@@ -331,7 +331,7 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert "SIMULATION_ENTRYPOINT_PUBLIC_URL" not in reusable_workflow
     assert "staging.simulation.api.policyengine.org" not in deploy_workflow
     assert (
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 11
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 12
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow
