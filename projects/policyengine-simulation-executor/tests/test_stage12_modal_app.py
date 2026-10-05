@@ -145,6 +145,20 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
         )
         assert static_runtime_files[3] == {"copy": True}
 
+    us_fetches = [
+        call
+        for call in module.us_worker_image.calls
+        if call[0] == "run_function" and call[1] == "fetch_artifacts"
+    ]
+    assert len(us_fetches) == 1
+    assert us_fetches[0][2]["secrets"] == [module.gcp_secret]
+    for image in (module.uk_worker_image, module.coordinator_image):
+        assert not [
+            call
+            for call in image.calls
+            if call[0] == "run_function" and call[1] == "fetch_artifacts"
+        ]
+
 
 def test_v2_image_retains_required_runtime_dependencies() -> None:
     project = tomllib.loads(
@@ -199,6 +213,8 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     assert functions["run_single_simulation_uk"]["image"] is module.uk_worker_image
     assert functions["run_single_simulation_us"]["timeout"] == 3000
     assert functions["run_single_simulation_uk"]["timeout"] == 3000
+    assert functions["run_single_simulation_us"]["memory"] == 65536
+    assert functions["run_single_simulation_uk"]["memory"] == 32768
     assert functions["run_single_simulation_us"]["max_containers"] == 10
     assert functions["run_single_simulation_uk"]["max_containers"] == 10
     assert functions["coordinate_report"]["image"] is module.coordinator_image

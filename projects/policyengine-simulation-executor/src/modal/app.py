@@ -34,6 +34,7 @@ from policyengine_simulation_executor.release_bundle import (
     get_bundled_package_version,
 )
 from src.modal._image_setup import fetch_artifacts, snapshot_models
+from src.modal.artifact_manifest import deploy_time_artifact_inputs
 from src.modal.bundle_data import bundle_data_install_command
 from src.modal.logging_redaction import redact_params_for_logging
 from src.modal.static_runtime_files import add_static_runtime_files
@@ -141,26 +142,7 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
     model by design (the layer is import-restricted), so the dict exists
     only at that serialization boundary.
     """
-    if not modal.is_local():
-        return "", None
-    digest = os.environ.get("POLICYENGINE_MANIFEST_DIGEST")
-    bucket = os.environ.get("POLICYENGINE_ARTIFACT_BUCKET", "")
-    if not digest:
-        return bucket, None
-    from policyengine_simulation_executor.artifact_store import ArtifactStore
-    from policyengine_simulation_executor.precompute_models import ArtifactManifest
-
-    store = ArtifactStore(bucket or None)
-    payload = store.read_manifest(digest)
-    if payload is None:
-        raise RuntimeError(
-            f"Artifact manifest {digest} is not in the store: the deploy "
-            "must consume a digest published by the precompute run."
-        )
-    # Validate on the runner so a corrupt or foreign manifest fails the
-    # deploy here, not mid-image-build.
-    manifest = ArtifactManifest.model_validate(payload)
-    return store.bucket_name, manifest.canonical_payload()
+    return deploy_time_artifact_inputs()
 
 
 _ARTIFACT_BUCKET, _DEPLOY_MANIFEST = _deploy_time_artifact_inputs()
@@ -261,7 +243,7 @@ def _set_modal_call_attributes(runtime) -> None:
 @app.function(
     image=simulation_image,
     cpu=8.0,
-    memory=32768,
+    memory=65536,
     timeout=3600,
     retries=0,
     max_containers=100,
