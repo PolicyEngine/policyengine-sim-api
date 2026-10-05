@@ -131,29 +131,115 @@ def _revision_from_dataset_uri(dataset_uri: str | None) -> str | None:
 def _bundle_response_data_version(
     *,
     country_bundle: dict,
+    dataset_name: str | None,
     resolved_dataset: str | None,
 ) -> str | None:
+    dataset_versions = country_bundle.get("dataset_data_versions")
+    if isinstance(dataset_versions, dict) and isinstance(dataset_name, str):
+        data_version = dataset_versions.get(dataset_name)
+        if isinstance(data_version, str):
+            return data_version
     return _country_bundle_data_version(country_bundle) or _revision_from_dataset_uri(
         resolved_dataset
     )
+
+
+def _regional_dataset_type(
+    *,
+    country: str,
+    region: str | None,
+    region_group: list[str] | None,
+) -> str | None:
+    if region_group is not None or region is None:
+        return None
+    normalized = region.strip().lower()
+    if normalized == country.lower():
+        return None
+    if country.lower() == "us" and len(normalized) == 2 and normalized.isalpha():
+        return "state"
+    region_type, separator, _ = normalized.partition("/")
+    return region_type if separator else None
+
+
+def _resolve_dataset_name_from_app_bundle(
+    *,
+    country_bundle: dict,
+    country: str,
+    region: str | None,
+    region_group: list[str] | None,
+) -> str | None:
+    default_dataset = country_bundle.get("default_dataset")
+    if not isinstance(default_dataset, str):
+        return None
+    region_type = _regional_dataset_type(
+        country=country,
+        region=region,
+        region_group=region_group,
+    )
+    regional_defaults = country_bundle.get("regional_dataset_defaults")
+    if region_type is not None and isinstance(regional_defaults, dict):
+        regional_dataset = regional_defaults.get(region_type)
+        if isinstance(regional_dataset, str):
+            return regional_dataset
+    return default_dataset
 
 
 def _resolve_dataset_uri_from_app_bundle(
     *,
     app_bundle: dict,
     country: str,
-) -> str | None:
+    region: str | None,
+    region_group: list[str] | None,
+) -> tuple[str | None, str | None]:
     country_bundle = app_bundle.get(country.lower())
     if not isinstance(country_bundle, dict):
-        return None
-    dataset_uri = country_bundle.get("default_dataset_uri")
+        return None, None
+    dataset_name = _resolve_dataset_name_from_app_bundle(
+        country_bundle=country_bundle,
+        country=country,
+        region=region,
+        region_group=region_group,
+    )
+    dataset_uris = country_bundle.get("dataset_uris")
+    dataset_uri = (
+        dataset_uris.get(dataset_name)
+        if isinstance(dataset_uris, dict) and isinstance(dataset_name, str)
+        else None
+    )
+    if not isinstance(dataset_uri, str) and dataset_name == country_bundle.get(
+        "default_dataset"
+    ):
+        dataset_uri = country_bundle.get("default_dataset_uri")
     if not isinstance(dataset_uri, str):
-        return None
-    return runtime_dataset_uri(
-        dataset_uri,
-        default_revision=_country_bundle_data_package_version(country_bundle),
-        artifact_revision=_country_bundle_data_artifact_revision(country_bundle),
-        validate_hf=False,
+        return dataset_name, None
+    dataset_versions = country_bundle.get("dataset_data_versions")
+    dataset_revisions = country_bundle.get("dataset_revisions")
+    data_version = (
+        dataset_versions.get(dataset_name)
+        if isinstance(dataset_versions, dict)
+        else None
+    )
+    artifact_revision = (
+        dataset_revisions.get(dataset_name)
+        if isinstance(dataset_revisions, dict)
+        else None
+    )
+    return (
+        dataset_name,
+        runtime_dataset_uri(
+            dataset_uri,
+            default_revision=(
+                data_version
+                if isinstance(data_version, str)
+                else _country_bundle_data_package_version(country_bundle)
+            ),
+            artifact_revision=(
+                artifact_revision
+                if isinstance(artifact_revision, str)
+                else _country_bundle_data_artifact_revision(country_bundle)
+            ),
+            validate_hf=False,
+        ),
     )
 
 
@@ -498,17 +584,23 @@ def _resolve_from_legacy_dicts(
 def _build_policyengine_bundle(
     country: str,
     resolution: RouteResolution,
+    *,
+    region: str | None = None,
+    region_group: list[str] | None = None,
 ) -> PolicyEngineBundle:
     app_bundle = resolution.bundle_manifest
     country_bundle = app_bundle.get(country.lower())
     if not isinstance(country_bundle, dict):
         country_bundle = {}
-    resolved_dataset = _resolve_dataset_uri_from_app_bundle(
+    dataset_name, resolved_dataset = _resolve_dataset_uri_from_app_bundle(
         app_bundle=app_bundle,
         country=country,
+        region=region,
+        region_group=region_group,
     )
     data_version = _bundle_response_data_version(
         country_bundle=country_bundle,
+        dataset_name=dataset_name,
         resolved_dataset=resolved_dataset,
     )
     model_version = country_bundle.get("model_version") or resolution.response_version
@@ -748,6 +840,8 @@ async def submit_simulation(
             bundle = _build_policyengine_bundle(
                 request.country,
                 route,
+                region=request.region,
+                region_group=request.region_group,
             )
         _resolve_request_spm(request, bundle, route)
     except (ValueError, HuggingFaceDatasetReferenceError) as exc:
@@ -844,6 +938,7 @@ async def submit_budget_window_batch(
             bundle = _build_policyengine_bundle(
                 request.country,
                 route,
+                region=request.region,
             )
         _resolve_request_spm(request, bundle, route)
     except (ValueError, HuggingFaceDatasetReferenceError) as exc:

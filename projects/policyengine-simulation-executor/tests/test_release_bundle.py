@@ -108,6 +108,42 @@ def test_country_release_bundle_exposes_model_and_data_versions():
         assert bundle.default_dataset_uri == release["default_dataset_uri"]
 
 
+def test_country_release_bundle_exposes_regional_dataset_provenance(monkeypatch):
+    current = deepcopy(get_current_bundle())
+    local_dataset = "populace_us_2024_acs_local"
+    current["regional_dataset_defaults"] = {
+        "us": {
+            "state": local_dataset,
+            "congressional_district": local_dataset,
+        }
+    }
+    current["data_releases"]["us"]["datasets"][local_dataset] = {
+        "path": f"{local_dataset}.h5",
+        "repo_id": "policyengine/populace-us",
+        "repo_type": "dataset",
+        "revision": "acs-local-release",
+        "sha256": "b" * 64,
+    }
+    local_reference = current["data_releases"]["us"]["datasets"][local_dataset]
+    monkeypatch.setattr(
+        release_bundle_module,
+        "_current_policyengine_bundle",
+        lambda: current,
+    )
+    get_country_release_bundle.cache_clear()
+
+    bundle = get_country_release_bundle("us")
+
+    assert bundle.regional_dataset_defaults == {
+        "state": local_dataset,
+        "congressional_district": local_dataset,
+    }
+    assert bundle.dataset_revisions[local_dataset] == local_reference["revision"]
+    assert bundle.dataset_data_versions[local_dataset] == local_reference["revision"]
+    assert bundle.dataset_sha256s[local_dataset] == local_reference["sha256"]
+    get_country_release_bundle.cache_clear()
+
+
 def test_policyengine_data_release_keeps_build_and_package_versions_distinct(
     policyengine_uk_data_release,
 ):
