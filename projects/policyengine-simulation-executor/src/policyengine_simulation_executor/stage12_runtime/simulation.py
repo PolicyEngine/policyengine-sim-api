@@ -11,7 +11,11 @@ from typing import Any
 
 import pandas as pd
 from policyengine_observability import ObservabilityRuntime
-from policyengine_simulation_contract.stage12_bundle import CountryId
+from policyengine_simulation_contract.stage12_bundle import (
+    CountryId,
+    Stage12Dataset,
+    select_stage12_dataset,
+)
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     ComparisonSimulationRecord,
@@ -76,7 +80,9 @@ def _require_context(
         raise ValueError("single-simulation output plan names another country")
 
 
-def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
+def _require_installed_bundle(
+    simulation: SimulationExecutionInput,
+) -> Stage12Dataset:
     resolved = load_stage12_bundle()
     if resolved.bundle_manifest_sha256 != simulation.bundle.bundle_manifest_sha256:
         raise RuntimeError("installed bundle digest differs from the simulation input")
@@ -87,12 +93,16 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
         for item in resolved.bundle.countries
         if item.country == simulation.geography.country
     )
+    selected_dataset = select_stage12_dataset(
+        country,
+        simulation.geography.region,
+    )
     expected = {
         "country_package_name": country.country_package_name,
         "country_package_version": country.country_package_version,
-        "dataset_identity": country.default_dataset,
-        "dataset_uri": country.default_dataset_uri,
-        "dataset_revision": country.data_artifact_revision,
+        "dataset_identity": selected_dataset.identity,
+        "dataset_uri": selected_dataset.uri,
+        "dataset_revision": selected_dataset.artifact_revision,
     }
     actual = {
         "country_package_name": simulation.bundle.country_package_name,
@@ -103,6 +113,33 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
     }
     if actual != expected:
         raise RuntimeError("simulation provenance differs from the installed bundle")
+    return selected_dataset
+
+
+def _require_runtime_dataset_selection(
+    *,
+    selection,
+    declared_dataset: Stage12Dataset,
+    simulation: SimulationExecutionInput,
+) -> None:
+    actual = {
+        "identity": selection.name,
+        "uri": selection.uri,
+        "artifact_revision": selection.artifact_revision,
+        "sha256": selection.sha256,
+    }
+    expected = {
+        "identity": declared_dataset.identity,
+        "uri": declared_dataset.uri,
+        "artifact_revision": declared_dataset.artifact_revision,
+        "sha256": declared_dataset.sha256,
+    }
+    if actual != expected:
+        raise RuntimeError("runtime dataset selection differs from the Stage 12 bundle")
+    if simulation.population.artifact.content_sha256 != declared_dataset.sha256:
+        raise RuntimeError(
+            "population artifact digest differs from the Stage 12 bundle"
+        )
 
 
 def calculate_simulation_frames(
@@ -116,7 +153,7 @@ def calculate_simulation_frames(
         raise ValueError("Stage 12 society-wide worker requires a dataset population")
     if simulation.population.artifact.uri != simulation.bundle.dataset.uri:
         raise ValueError("population artifact differs from bundle dataset provenance")
-    _require_installed_bundle(simulation)
+    declared_dataset = _require_installed_bundle(simulation)
     country = simulation.geography.country
     params: dict[str, Any] = {
         "country": country,
@@ -169,6 +206,11 @@ def calculate_simulation_frames(
             dataset_selection = _resolve_dataset_selection(
                 params,
                 region_resolution=region,
+            )
+            _require_runtime_dataset_selection(
+                selection=dataset_selection,
+                declared_dataset=declared_dataset,
+                simulation=simulation,
             )
         dataset_span = (
             runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.DATASET_LOAD))

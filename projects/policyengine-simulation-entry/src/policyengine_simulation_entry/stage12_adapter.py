@@ -7,7 +7,10 @@ from enum import StrEnum
 from typing import Any, cast
 from uuid import UUID, uuid5
 
-from policyengine_simulation_contract.stage12_bundle import CountryId
+from policyengine_simulation_contract.stage12_bundle import (
+    CountryId,
+    select_stage12_dataset,
+)
 from policyengine_simulation_contract.stage12_execution import (
     BundleProvenance,
     DatasetArtifactMediaType,
@@ -134,11 +137,7 @@ def adapt_annual_comparison(
     if not isinstance(region, str) or not region:
         return _skip(ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE)
 
-    selected_dataset = next(
-        item
-        for item in bundle_country.datasets
-        if item.identity == bundle_country.default_dataset
-    )
+    selected_dataset = select_stage12_dataset(bundle_country, region)
     requested_dataset = payload.get("data")
     accepted_dataset_values = {
         None,
