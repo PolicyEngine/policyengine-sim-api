@@ -40,6 +40,10 @@ class CountryReleaseBundle:
     default_dataset_uri: str
     dataset_uris: Mapping[str, str]
     dataset_repo_types: Mapping[str, str]
+    dataset_data_versions: Mapping[str, str]
+    dataset_revisions: Mapping[str, str]
+    dataset_sha256s: Mapping[str, str]
+    regional_dataset_defaults: Mapping[str, str]
 
 
 def _normalise_country(country: str) -> str:
@@ -118,6 +122,21 @@ def _dataset_uris_from_manifest(manifest) -> tuple[dict[str, str], dict[str, str
     return dataset_uris, dataset_repo_types
 
 
+def _dataset_provenance_from_manifest(
+    manifest,
+) -> tuple[dict[str, str], dict[str, str]]:
+    revisions: dict[str, str] = {}
+    sha256s: dict[str, str] = {}
+    for name, reference in manifest.datasets.items():
+        revision = _reference_value(reference, "revision")
+        sha256 = _reference_value(reference, "sha256")
+        if isinstance(revision, str) and revision:
+            revisions[name] = revision
+        if isinstance(sha256, str) and sha256:
+            sha256s[name] = sha256
+    return revisions, sha256s
+
+
 def _dataset_uris_from_release(
     *,
     data_release: Mapping,
@@ -158,6 +177,33 @@ def _dataset_uris_from_release(
         )
         dataset_repo_types[str(name)] = str(repo_type)
     return dataset_uris, dataset_repo_types
+
+
+def _dataset_provenance_from_release(
+    data_release: Mapping,
+) -> tuple[dict[str, str], dict[str, str]]:
+    revisions: dict[str, str] = {}
+    sha256s: dict[str, str] = {}
+    for name, reference in _mapping(data_release.get("datasets")).items():
+        if not isinstance(reference, Mapping):
+            continue
+        revision = reference.get("revision")
+        sha256 = reference.get("sha256")
+        if isinstance(revision, str) and revision:
+            revisions[str(name)] = revision
+        if isinstance(sha256, str) and sha256:
+            sha256s[str(name)] = sha256
+    return revisions, sha256s
+
+
+def _regional_dataset_defaults(bundle: Mapping, country: str) -> dict[str, str]:
+    all_defaults = _mapping(bundle.get("regional_dataset_defaults"))
+    country_defaults = _mapping(all_defaults.get(country))
+    return {
+        str(region_type): dataset
+        for region_type, dataset in country_defaults.items()
+        if isinstance(dataset, str) and dataset
+    }
 
 
 def _current_policyengine_bundle() -> Mapping | None:
@@ -250,6 +296,8 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
     default_dataset = manifest.default_dataset
     default_dataset_uri = manifest.default_dataset_uri
     dataset_uris, dataset_repo_types = _dataset_uris_from_manifest(manifest)
+    dataset_revisions, dataset_sha256s = _dataset_provenance_from_manifest(manifest)
+    regional_dataset_defaults: dict[str, str] = {}
     data_package: Mapping = {}
     data_release: Mapping = {}
     if bundle_metadata is not None:
@@ -287,6 +335,12 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
         )
         dataset_uris.update(release_dataset_uris)
         dataset_repo_types.update(release_dataset_repo_types)
+        release_dataset_revisions, release_dataset_sha256s = (
+            _dataset_provenance_from_release(data_release)
+        )
+        dataset_revisions.update(release_dataset_revisions)
+        dataset_sha256s.update(release_dataset_sha256s)
+        regional_dataset_defaults = _regional_dataset_defaults(bundle_manifest, country)
     data_package_version = _derive_data_package_version(
         bundled_data_package=data_package,
         manifest_data_package_version=manifest.data_package.version,
@@ -303,6 +357,18 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
                 else manifest.data_package.repo_type
             ),
         )
+    dataset_revisions.setdefault(default_dataset, str(data_artifact_revision))
+    dataset_data_versions = dict(dataset_revisions)
+    dataset_data_versions[default_dataset] = str(data_version)
+
+    unknown_regional_datasets = set(regional_dataset_defaults.values()).difference(
+        dataset_uris
+    )
+    if unknown_regional_datasets:
+        raise ValueError(
+            "PolicyEngine.py bundle regional defaults reference unknown datasets: "
+            + ", ".join(sorted(unknown_regional_datasets))
+        )
 
     return CountryReleaseBundle(
         country=country,
@@ -317,6 +383,10 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
         default_dataset_uri=str(default_dataset_uri),
         dataset_uris=dataset_uris,
         dataset_repo_types=dataset_repo_types,
+        dataset_data_versions=dataset_data_versions,
+        dataset_revisions=dataset_revisions,
+        dataset_sha256s=dataset_sha256s,
+        regional_dataset_defaults=regional_dataset_defaults,
     )
 
 

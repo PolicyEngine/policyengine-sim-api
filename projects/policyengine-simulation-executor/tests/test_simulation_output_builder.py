@@ -1127,7 +1127,7 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
             "dataset": dataset,
             "baseline": baseline_simulation,
             "reform": reform_simulation,
-            "resolved_data_version": None,
+            "resolved_data_version": get_country_release_bundle("us").data_version,
             "resolved_region_code": "us",
             "runtime": runtime,
             "uk_local_authority_metadata": None,
@@ -1287,8 +1287,11 @@ def test_dataset_selection_identifies_the_actual_bundle_default():
     assert isinstance(omitted, DatasetSelection)
     assert omitted.name == bundle.default_dataset
     assert omitted.is_default
+    assert omitted.data_version == bundle.data_version
+    assert omitted.artifact_revision == bundle.dataset_revisions[bundle.default_dataset]
     assert alternate.name == nondefault
     assert not alternate.is_default
+    assert alternate.data_version == bundle.dataset_data_versions.get(nondefault)
 
 
 def test_dataset_selection_rejects_a_bundled_uri_as_public_data():

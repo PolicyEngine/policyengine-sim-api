@@ -86,6 +86,10 @@ def fake_bundle_metadata(monkeypatch):
             "default_dataset_uri": f"hf://datasets/policyengine/{country}/default",
             "dataset_uris": {"default": f"hf://datasets/policyengine/{country}"},
             "dataset_repo_types": {"default": "dataset"},
+            "dataset_data_versions": {"default": "test-data-version"},
+            "dataset_revisions": {"default": "test-revision"},
+            "dataset_sha256s": {"default": "a" * 64},
+            "regional_dataset_defaults": {},
         }
 
     monkeypatch.setattr(

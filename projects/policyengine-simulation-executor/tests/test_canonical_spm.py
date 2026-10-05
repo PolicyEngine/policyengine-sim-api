@@ -705,7 +705,9 @@ def test_gateway_submission_uses_registry_capability_before_spawn(monkeypatch):
     bundle = PolicyEngineBundle(
         model_version="test-only", policyengine_version="test-only", spm=CAPABILITY
     )
-    monkeypatch.setattr(endpoints, "_build_policyengine_bundle", lambda *args: bundle)
+    monkeypatch.setattr(
+        endpoints, "_build_policyengine_bundle", lambda *args, **kwargs: bundle
+    )
     spawn = Mock(return_value=SimpleNamespace(object_id="job"))
     monkeypatch.setattr(
         endpoints,
