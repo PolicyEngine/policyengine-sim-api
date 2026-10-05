@@ -54,6 +54,9 @@ class DatasetSelection:
     name: str
     uri: str
     is_default: bool
+    data_version: str | None = None
+    artifact_revision: str | None = None
+    sha256: str | None = None
 
 
 def _normalize_credentials_blob(creds_json: str) -> str:
@@ -432,6 +435,36 @@ def _nondefault_data_folder(country: str, name: str, uri: str) -> str:
     return f"/tmp/policyengine-alternate-data/{identity}"
 
 
+def dataset_data_folder(country: str, selection: DatasetSelection) -> str:
+    """Return the runtime folder assigned to a selected managed dataset."""
+
+    return (
+        resolve_data_folder()
+        if selection.is_default
+        else _nondefault_data_folder(country, selection.name, selection.uri)
+    )
+
+
+def bundle_dataset_selection(country: str, name: str) -> DatasetSelection:
+    """Build the complete runtime selection for one certified dataset name."""
+
+    bundle = get_country_release_bundle(country)
+    try:
+        uri = bundle.dataset_uris[name]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported dataset {name!r} for country {country!r}"
+        ) from exc
+    return DatasetSelection(
+        name=name,
+        uri=uri,
+        is_default=name == bundle.default_dataset,
+        data_version=bundle.dataset_data_versions.get(name),
+        artifact_revision=bundle.dataset_revisions.get(name),
+        sha256=bundle.dataset_sha256s.get(name),
+    )
+
+
 def _resolve_dataset_selection(
     params: dict[str, Any],
     *,
@@ -450,7 +483,7 @@ def _resolve_dataset_selection(
     # Region metadata can contain a URI rather than a managed dataset name.
     for name, uri in bundle.dataset_uris.items():
         if dataset_reference == name or dataset_reference == uri:
-            return DatasetSelection(name, uri, name == bundle.default_dataset)
+            return bundle_dataset_selection(country, name)
     for name, uri in bundle.dataset_uris.items():
         if dataset_reference == runtime_dataset_uri(
             uri,
@@ -458,7 +491,7 @@ def _resolve_dataset_selection(
             artifact_revision=bundle.data_artifact_revision,
             validate_hf=False,
         ):
-            return DatasetSelection(name, uri, name == bundle.default_dataset)
+            return bundle_dataset_selection(country, name)
     raise ValueError(
         f"Unsupported dataset {dataset_reference!r} for country {country!r}; "
         "choose a name in the certified release manifest"
@@ -474,11 +507,7 @@ def _load_dataset(
     country = params.get("country", "us").lower()
     year = _parse_year(params)
     country_module = country_module or _country_module(country)
-    data_folder = (
-        resolve_data_folder()
-        if selection.is_default
-        else _nondefault_data_folder(country, selection.name, selection.uri)
-    )
+    data_folder = dataset_data_folder(country, selection)
 
     start = time.monotonic()
     load_options = {"years": [year], "data_folder": data_folder}
@@ -644,7 +673,7 @@ def _run_simulation_impl_core(
         dataset=dataset,
         baseline=baseline,
         reform=reform,
-        resolved_data_version=None,
+        resolved_data_version=dataset_selection.data_version,
         resolved_region_code=region_resolution.code,
         runtime=runtime,
         uk_local_authority_metadata=uk_local_authority_metadata,
