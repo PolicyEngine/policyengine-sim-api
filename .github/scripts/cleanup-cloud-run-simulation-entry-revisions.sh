@@ -33,6 +33,17 @@ revisions_json="$(
     --format=json
 )"
 
+newest_revision="$(
+  jq -er '
+    max_by(.metadata.creationTimestamp)
+    | .metadata.name
+    | select(type == "string" and length > 0)
+  ' <<<"${revisions_json}"
+)" || fail "could not resolve the newest revision of ${service}"
+
+[[ "${newest_revision}" == "${successful_revision}" ]] \
+  || fail "${successful_revision} is not the newest revision of ${service}"
+
 active_revision="$(
   jq -er '
     [

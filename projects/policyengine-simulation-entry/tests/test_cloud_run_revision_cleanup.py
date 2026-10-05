@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import textwrap
 from pathlib import Path
@@ -16,6 +17,12 @@ CLEANUP_SCRIPT = (
 )
 REUSABLE_DEPLOY_WORKFLOW = (
     REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
+)
+SIMULATION_DEPLOY_WORKFLOW = (
+    REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.yml"
+)
+STAGE12_DEPLOY_WORKFLOW = (
+    REPOSITORY_ROOT / ".github" / "workflows" / "stage12-deploy.yml"
 )
 
 
@@ -178,6 +185,46 @@ def test_cleanup_refuses_when_successful_revision_does_not_have_stable_traffic(
     assert "is not the revision receiving stable traffic" in result.stderr
     assert not (tmp_path / "update-arguments.txt").exists()
     assert not (tmp_path / "deleted-revisions.txt").exists()
+
+
+def test_cleanup_refuses_when_a_newer_candidate_revision_exists(tmp_path: Path):
+    result = _run_cleanup(
+        tmp_path,
+        service_traffic=[
+            {"revisionName": "entry-00002-two", "percent": 100, "tag": "p-2"},
+            {"revisionName": "entry-00003-three", "tag": "p-3"},
+        ],
+        revisions=[
+            _revision("entry-00003-three", "2026-09-03T00:00:00Z", ready=False),
+            _revision("entry-00002-two", "2026-09-02T00:00:00Z"),
+        ],
+        successful_revision="entry-00002-two",
+    )
+
+    assert result.returncode == 1
+    assert "is not the newest revision" in result.stderr
+    assert not (tmp_path / "update-arguments.txt").exists()
+    assert not (tmp_path / "deleted-revisions.txt").exists()
+
+
+def test_cloud_run_deployment_workflows_share_one_concurrency_group():
+    concurrency_pattern = re.compile(
+        r"^concurrency:\n(?:  \#.*\n)*  group: (?P<group>[^\n]+)\n"
+        r"  cancel-in-progress: false$",
+        re.MULTILINE,
+    )
+
+    simulation_match = concurrency_pattern.search(
+        SIMULATION_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    )
+    stage12_match = concurrency_pattern.search(
+        STAGE12_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    )
+
+    assert simulation_match is not None
+    assert stage12_match is not None
+    assert simulation_match.group("group") == "simulation-deploy-main"
+    assert stage12_match.group("group") == simulation_match.group("group")
 
 
 def test_revision_cleanup_runs_after_promoted_deployment_completion():
