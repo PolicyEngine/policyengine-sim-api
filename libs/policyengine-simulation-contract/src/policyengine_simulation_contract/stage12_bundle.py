@@ -36,12 +36,15 @@ class Stage12CountryBundle(StrictBundleModel):
     default_dataset: NonEmptyText
     default_dataset_uri: NonEmptyText
     datasets: tuple[Stage12Dataset, ...]
+    regional_dataset_defaults: dict[NonEmptyText, NonEmptyText] = Field(
+        default_factory=dict
+    )
 
 
 class Stage12BundleManifest(StrictBundleModel):
     """Stage 12's normalized subset of a PolicyEngine.py bundle."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     source_bundle_schema_version: Literal[2] = 2
     policyengine_version: NonEmptyText
     policyengine_requirement: NonEmptyText
@@ -54,3 +57,31 @@ class Stage12BundleManifest(StrictBundleModel):
 class ResolvedStage12Bundle(StrictBundleModel):
     bundle: Stage12BundleManifest
     bundle_manifest_sha256: Sha256Digest
+
+
+def select_stage12_dataset(
+    country: Stage12CountryBundle,
+    region: str,
+) -> Stage12Dataset:
+    """Select the certified dataset declared for a concrete region type."""
+
+    normalized_region = region.strip().lower()
+    dataset_identity = country.default_dataset
+    if normalized_region != country.country:
+        if (
+            country.country == "us"
+            and len(normalized_region) == 2
+            and normalized_region.isalpha()
+        ):
+            dataset_identity = country.regional_dataset_defaults.get(
+                "state", country.default_dataset
+            )
+        else:
+            region_type, separator, _ = normalized_region.partition("/")
+            if separator:
+                dataset_identity = country.regional_dataset_defaults.get(
+                    region_type, country.default_dataset
+                )
+    return next(
+        dataset for dataset in country.datasets if dataset.identity == dataset_identity
+    )

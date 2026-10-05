@@ -36,6 +36,32 @@ def worker() -> V2WorkerVersion:
         ("uk", "policyengine-uk", "2.90.2", "populace_uk_2023"),
     ):
         revision = f"{dataset}-revision"
+        datasets = [
+            Stage12Dataset(
+                identity=dataset,
+                uri=f"hf://policyengine/data/{dataset}.h5@{revision}",
+                artifact_revision=revision,
+                sha256="a" * 64,
+                repo_type="dataset",
+            )
+        ]
+        regional_dataset_defaults = {}
+        if country == "us":
+            local_dataset = "populace_us_2024_acs_local"
+            local_revision = f"{local_dataset}-revision"
+            datasets.append(
+                Stage12Dataset(
+                    identity=local_dataset,
+                    uri=(f"hf://policyengine/data/{local_dataset}.h5@{local_revision}"),
+                    artifact_revision=local_revision,
+                    sha256="c" * 64,
+                    repo_type="dataset",
+                )
+            )
+            regional_dataset_defaults = {
+                "state": local_dataset,
+                "congressional_district": local_dataset,
+            }
         countries.append(
             Stage12CountryBundle(
                 country=country,
@@ -48,15 +74,8 @@ def worker() -> V2WorkerVersion:
                 data_artifact_revision=revision,
                 default_dataset=dataset,
                 default_dataset_uri=f"hf://policyengine/data/{dataset}.h5@{revision}",
-                datasets=(
-                    Stage12Dataset(
-                        identity=dataset,
-                        uri=f"hf://policyengine/data/{dataset}.h5@{revision}",
-                        artifact_revision=revision,
-                        sha256="a" * 64,
-                        repo_type="dataset",
-                    ),
-                ),
+                datasets=tuple(datasets),
+                regional_dataset_defaults=regional_dataset_defaults,
             )
         )
         country_workers.append(
