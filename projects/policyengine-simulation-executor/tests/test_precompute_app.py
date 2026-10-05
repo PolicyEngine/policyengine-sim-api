@@ -110,6 +110,10 @@ def _sample_plan():
                     "digest": "d1",
                     "path": "datasets/us/d1/populace_year_2026.h5",
                     "filename": "populace_year_2026.h5",
+                    "dataset": "populace_cps",
+                    "runtime_destination": (
+                        "/opt/policyengine/data/populace_year_2026.h5"
+                    ),
                     "exists": False,
                 }
             ],
@@ -121,6 +125,7 @@ def _sample_plan():
                     "digest": "b1",
                     "path": "baselines/us/b1/bl1-aaaa.h5",
                     "simulation_id": "bl1-aaaa",
+                    "runtime_destination": ("/opt/policyengine/data/bl1-aaaa.h5"),
                     "exists": False,
                 }
             ],

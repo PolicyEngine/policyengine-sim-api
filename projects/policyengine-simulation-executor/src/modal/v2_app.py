@@ -37,10 +37,12 @@ from policyengine_simulation_executor.stage12_bundle import (
     assertion_values,
     load_stage12_bundle,
 )
+from src.modal._image_setup import fetch_artifacts
+from src.modal.artifact_manifest import deploy_time_artifact_inputs
 from src.modal.bundle_data import bundle_data_install_command
 from src.modal.static_runtime_files import add_static_runtime_files
 
-STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
+STAGE12_DATA_DIR = "/opt/policyengine/data"
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
 RESOLVED_BUNDLE = load_stage12_bundle()
 BUNDLE_VALUES = assertion_values(RESOLVED_BUNDLE.bundle)
@@ -82,6 +84,7 @@ worker_secrets = [
     hf_secret,
     comparison_runtime_secret,
 ]
+_ARTIFACT_BUCKET, _DEPLOY_MANIFEST = deploy_time_artifact_inputs()
 
 
 def _country_bundle(country: CountryId):
@@ -90,7 +93,11 @@ def _country_bundle(country: CountryId):
     )
 
 
-def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:
+def build_v2_image(
+    countries: tuple[CountryId, ...],
+    *,
+    include_us_artifacts: bool = False,
+) -> modal.Image:
     country_values = {
         country: _country_bundle(country).model_dump(mode="json")
         for country in countries
@@ -114,6 +121,9 @@ def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:
             {
                 **modal_image_environment(),
                 "POLICYENGINE_DATA_FOLDER": STAGE12_DATA_DIR,
+                "POLICYENGINE_BUNDLE_RECEIPT": (
+                    f"{STAGE12_DATA_DIR}/.policyengine-bundle-receipt.json"
+                ),
                 "STAGE12_BUNDLE_MANIFEST_SHA256": (
                     RESOLVED_BUNDLE.bundle_manifest_sha256
                 ),
@@ -124,19 +134,28 @@ def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:
                 ),
             }
         )
-        .add_local_python_source(
-            "src.modal",
-            "policyengine_simulation_executor",
-            "policyengine_simulation_observability",
-            "policyengine_simulation_contract",
-            "policyengine_stage12_persistence",
-            copy=True,
+    )
+    if include_us_artifacts:
+        image = image.run_function(
+            fetch_artifacts,
+            args=(_ARTIFACT_BUCKET, _DEPLOY_MANIFEST),
+            secrets=[gcp_secret],
+            cpu=2.0,
+            memory=4096,
+            timeout=900,
         )
+    image = image.add_local_python_source(
+        "src.modal",
+        "policyengine_simulation_executor",
+        "policyengine_simulation_observability",
+        "policyengine_simulation_contract",
+        "policyengine_stage12_persistence",
+        copy=True,
     )
     return add_static_runtime_files(image, uv_project_dir=_UV_PROJECT_DIR)
 
 
-us_worker_image = build_v2_image(("us",))
+us_worker_image = build_v2_image(("us",), include_us_artifacts=True)
 uk_worker_image = build_v2_image(("uk",))
 coordinator_image = build_v2_image(("us", "uk"))
 
@@ -179,7 +198,7 @@ def validate_worker_uk() -> dict:
 @app.function(
     image=us_worker_image,
     cpu=8.0,
-    memory=32768,
+    memory=65536,
     timeout=3000,
     retries=0,
     max_containers=10,

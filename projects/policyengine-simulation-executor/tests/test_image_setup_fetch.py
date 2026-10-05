@@ -107,6 +107,28 @@ class TestFetchArtifacts:
             target = data_folder / artifact["filename"]
             assert target.read_bytes() == f"bytes-{artifact['digest']}".encode()
 
+    def test_mf2_downloads_to_each_declared_runtime_destination(
+        self, fake_client, data_folder, tmp_path
+    ):
+        manifest = _manifest()
+        manifest["schema"] = "mf2"
+        destinations = [
+            tmp_path / "national" / "populace_year_2026.h5",
+            tmp_path / "regional" / "bl1-aaaa.h5",
+        ]
+        for artifact, destination in zip(
+            manifest["artifacts"], destinations, strict=True
+        ):
+            artifact["destination"] = str(destination)
+
+        validated = ArtifactManifest.model_validate(manifest).canonical_payload()
+        fetch_artifacts("test-bucket", validated, client=fake_client)
+
+        assert [destination.read_bytes() for destination in destinations] == [
+            b"bytes-d1",
+            b"bytes-b1",
+        ]
+
     def test_missing_store_object_fails_before_any_download(
         self, fake_client, data_folder
     ):

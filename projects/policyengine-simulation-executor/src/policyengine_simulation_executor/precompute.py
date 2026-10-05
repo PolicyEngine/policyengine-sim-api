@@ -61,7 +61,7 @@ PRECOMPUTE_COUNTRY = "us"
 # orders spawn submission, but keep it intentional.
 PRECOMPUTE_YEARS = [2026, 2027, 2025]
 
-MANIFEST_SCHEMA = "mf1"
+MANIFEST_SCHEMA = "mf2"
 
 # The stdout contract the CI deploy job parses; keep format changes in
 # lockstep with the workflow side (covered by a regression test).
@@ -151,6 +151,7 @@ def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
             filename=entry.filename,
             year=entry.year,
             digest=entry.digest,
+            destination=entry.runtime_destination,
         )
         for entry in plan.datasets
     ] + [
@@ -160,6 +161,7 @@ def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
             filename=entry.path.rsplit("/", maxsplit=1)[-1],
             year=entry.year,
             digest=entry.digest,
+            destination=entry.runtime_destination,
         )
         for entry in plan.baselines
     ]
@@ -173,6 +175,8 @@ def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
 
 def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
     """Compute every expected artifact identity and its store presence."""
+    from pathlib import Path
+
     from policyengine_simulation_executor.artifact_keys import (
         collect_dataset_identity,
     )
@@ -183,6 +187,11 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
     from policyengine_simulation_executor.release_bundle import (
         get_country_release_bundle,
     )
+    from policyengine_simulation_executor.simulation_runtime import (
+        bundle_dataset_selection,
+        dataset_data_folder,
+        resolve_data_folder,
+    )
 
     store = ArtifactStore(bucket)
     groups = national_region_groups(PRECOMPUTE_COUNTRY)
@@ -191,17 +200,40 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
 
     datasets: list[DatasetPlanEntry] = []
     baselines: list[BaselinePlanEntry] = []
-    for year in PRECOMPUTE_YEARS:
-        dataset_identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, year)
-        datasets.append(
-            DatasetPlanEntry(
-                year=year,
-                digest=dataset_identity.digest,
-                path=dataset_identity.store_path,
-                filename=dataset_identity.filename,
-                exists=store.exists(dataset_identity.store_path),
+    bundle = get_country_release_bundle(PRECOMPUTE_COUNTRY)
+    dataset_names = [
+        bundle.default_dataset,
+        *sorted(
+            set(bundle.regional_dataset_defaults.values()).difference(
+                {bundle.default_dataset}
             )
-        )
+        ),
+    ]
+    for year in PRECOMPUTE_YEARS:
+        for dataset_name in dataset_names:
+            dataset_identity = collect_dataset_identity(
+                PRECOMPUTE_COUNTRY,
+                year,
+                dataset_name,
+            )
+            selection = bundle_dataset_selection(
+                PRECOMPUTE_COUNTRY,
+                dataset_name,
+            )
+            datasets.append(
+                DatasetPlanEntry(
+                    year=year,
+                    digest=dataset_identity.digest,
+                    path=dataset_identity.store_path,
+                    filename=dataset_identity.filename,
+                    dataset=dataset_name,
+                    runtime_destination=str(
+                        Path(dataset_data_folder(PRECOMPUTE_COUNTRY, selection))
+                        / dataset_identity.filename
+                    ),
+                    exists=store.exists(dataset_identity.store_path),
+                )
+            )
         for group in groups:
             identity = cohort_identity(year, group)
             baselines.append(
@@ -212,11 +244,14 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
                     digest=identity.digest,
                     path=identity.store_path,
                     simulation_id=identity.simulation_id,
+                    runtime_destination=str(
+                        Path(resolve_data_folder())
+                        / identity.store_path.rsplit("/", maxsplit=1)[-1]
+                    ),
                     exists=store.exists(identity.store_path),
                 )
             )
 
-    bundle = get_country_release_bundle(PRECOMPUTE_COUNTRY)
     receipt = BundleVersionIdentity(
         policyengine_version=bundle.policyengine_version,
         model_version=bundle.model_version,
@@ -235,15 +270,17 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
         collect_dataset_identity,
     )
     from policyengine_simulation_executor.artifact_store import ArtifactStore
-    from policyengine_simulation_executor.release_bundle import (
-        get_country_release_bundle,
-    )
     from policyengine_simulation_executor.simulation_runtime import (
         _country_module,
-        resolve_data_folder,
+        bundle_dataset_selection,
+        dataset_data_folder,
     )
 
-    identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, expected.year)
+    identity = collect_dataset_identity(
+        PRECOMPUTE_COUNTRY,
+        expected.year,
+        expected.dataset,
+    )
     if identity.store_path != expected.path:
         raise RuntimeError(
             "Planned and in-container dataset identities disagree "
@@ -251,11 +288,12 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
             "under a mismatched key."
         )
 
-    data_folder = resolve_data_folder()
+    selection = bundle_dataset_selection(PRECOMPUTE_COUNTRY, expected.dataset)
+    data_folder = dataset_data_folder(PRECOMPUTE_COUNTRY, selection)
     country_module = _country_module(PRECOMPUTE_COUNTRY)
     started = time.monotonic()
     country_module.ensure_datasets(
-        datasets=[get_country_release_bundle(PRECOMPUTE_COUNTRY).default_dataset],
+        datasets=[expected.dataset],
         years=[expected.year],
         data_folder=data_folder,
     )

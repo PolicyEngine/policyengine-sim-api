@@ -46,6 +46,8 @@ def _plan() -> PrecomputePlan:
                 digest="d1",
                 path="datasets/us/d1/populace_year_2026.h5",
                 filename="populace_year_2026.h5",
+                dataset="populace_cps",
+                runtime_destination="/opt/policyengine/data/populace_year_2026.h5",
                 exists=True,
             ),
             DatasetPlanEntry(
@@ -53,6 +55,8 @@ def _plan() -> PrecomputePlan:
                 digest="d2",
                 path="datasets/us/d2/populace_year_2027.h5",
                 filename="populace_year_2027.h5",
+                dataset="populace_cps",
+                runtime_destination="/opt/policyengine/data/populace_year_2027.h5",
                 exists=False,
             ),
         ],
@@ -64,6 +68,7 @@ def _plan() -> PrecomputePlan:
                 digest="b1",
                 path="baselines/us/b1/bl1-aaaa.h5",
                 simulation_id="bl1-aaaa",
+                runtime_destination="/opt/policyengine/data/bl1-aaaa.h5",
                 exists=True,
             ),
             BaselinePlanEntry(
@@ -73,6 +78,7 @@ def _plan() -> PrecomputePlan:
                 digest="b2",
                 path="baselines/us/b2/bl1-bbbb.h5",
                 simulation_id="bl1-bbbb",
+                runtime_destination="/opt/policyengine/data/bl1-bbbb.h5",
                 exists=False,
             ),
         ],
@@ -110,6 +116,13 @@ class TestSchemas:
             ba.OUTCOME_INCOMPLETE,
             ba.OUTCOME_MISS,
         }
+
+    def test_mf2_manifest_requires_runtime_destinations(self):
+        manifest = precompute.build_manifest(_plan()).canonical_payload()
+        del manifest["artifacts"][0]["destination"]
+
+        with pytest.raises(ValidationError, match="runtime destination"):
+            ArtifactManifest.model_validate(manifest)
 
 
 class TestPlanning:
@@ -157,7 +170,7 @@ class TestPlanning:
         identically to the raw dict shape already published to the store
         (key names included — note "schema", not "manifest_schema")."""
         raw = {
-            "schema": "mf1",
+            "schema": "mf2",
             "country": "us",
             "receipt": {
                 "policyengine_version": "4.22.0",
@@ -173,6 +186,7 @@ class TestPlanning:
                     "filename": "populace_year_2026.h5",
                     "year": 2026,
                     "digest": "d1",
+                    "destination": "/opt/policyengine/data/populace_year_2026.h5",
                 },
                 {
                     "type": "dataset",
@@ -180,6 +194,7 @@ class TestPlanning:
                     "filename": "populace_year_2027.h5",
                     "year": 2027,
                     "digest": "d2",
+                    "destination": "/opt/policyengine/data/populace_year_2027.h5",
                 },
                 {
                     "type": "baseline",
@@ -187,6 +202,7 @@ class TestPlanning:
                     "filename": "bl1-aaaa.h5",
                     "year": 2026,
                     "digest": "b1",
+                    "destination": "/opt/policyengine/data/bl1-aaaa.h5",
                 },
                 {
                     "type": "baseline",
@@ -194,6 +210,7 @@ class TestPlanning:
                     "filename": "bl1-bbbb.h5",
                     "year": 2027,
                     "digest": "b2",
+                    "destination": "/opt/policyengine/data/bl1-bbbb.h5",
                 },
             ],
         }
@@ -441,6 +458,7 @@ class TestPlanArtifactsImpl:
             artifact_store,
             national_partition,
             release_bundle,
+            simulation_runtime,
         )
 
         existing = {
@@ -464,11 +482,35 @@ class TestPlanArtifactsImpl:
         monkeypatch.setattr(
             artifact_keys,
             "collect_dataset_identity",
-            lambda country, year: SimpleNamespace(
-                digest=f"ds-{year}",
-                store_path=f"datasets/us/ds-{year}/populace_year_{year}.h5",
-                filename=f"populace_year_{year}.h5",
+            lambda country, year, dataset=None: SimpleNamespace(
+                digest=f"ds-{dataset}-{year}",
+                store_path=(
+                    f"datasets/us/ds-{dataset}-{year}/{dataset}_year_{year}.h5"
+                ),
+                filename=f"{dataset}_year_{year}.h5",
             ),
+        )
+        monkeypatch.setattr(
+            simulation_runtime,
+            "bundle_dataset_selection",
+            lambda country, dataset: SimpleNamespace(
+                name=dataset,
+                is_default=dataset == "populace_cps",
+            ),
+        )
+        monkeypatch.setattr(
+            simulation_runtime,
+            "dataset_data_folder",
+            lambda country, selection: (
+                "/opt/policyengine/data"
+                if selection.is_default
+                else "/tmp/policyengine-alternate-data/local"
+            ),
+        )
+        monkeypatch.setattr(
+            simulation_runtime,
+            "resolve_data_folder",
+            lambda: "/opt/policyengine/data",
         )
 
         def fake_cohort_identity(year, group):
@@ -490,6 +532,10 @@ class TestPlanArtifactsImpl:
                 data_version="1.2.3",
                 data_artifact_revision="rev-abc",
                 default_dataset="populace_cps",
+                regional_dataset_defaults={
+                    "state": "populace_us_2024_acs_local",
+                    "congressional_district": "populace_us_2024_acs_local",
+                },
             ),
         )
         return SimpleNamespace(existing=existing)
@@ -497,11 +543,24 @@ class TestPlanArtifactsImpl:
     def test_plan_enumerates_years_and_cohorts_with_presence(self, planning_stubs):
         plan = precompute.plan_artifacts_impl("bucket-x")
 
-        assert [entry.year for entry in plan.datasets] == [2026, 2027, 2025]
-        assert [entry.exists for entry in plan.datasets] == [True, False, False]
-        assert plan.datasets[0].digest == "ds-2026"
-        assert plan.datasets[0].path == "datasets/us/ds-2026/populace_year_2026.h5"
-        assert plan.datasets[0].filename == "populace_year_2026.h5"
+        assert [entry.year for entry in plan.datasets] == [
+            2026,
+            2026,
+            2027,
+            2027,
+            2025,
+            2025,
+        ]
+        assert [entry.dataset for entry in plan.datasets] == [
+            "populace_cps",
+            "populace_us_2024_acs_local",
+        ] * 3
+        assert all(not entry.exists for entry in plan.datasets)
+        assert plan.datasets[0].digest == "ds-populace_cps-2026"
+        assert plan.datasets[0].filename == "populace_cps_year_2026.h5"
+        assert plan.datasets[1].runtime_destination.startswith(
+            "/tmp/policyengine-alternate-data/local/"
+        )
 
         # Year-major, partition order inside each year.
         assert [entry.simulation_id for entry in plan.baselines] == [
@@ -534,7 +593,14 @@ class TestPlanArtifactsImpl:
         # An exists-flag inversion would make select_work recompute (or,
         # worse, skip) the wrong entries — lock the wiring end to end.
         work = precompute.select_work(plan, force=False)
-        assert [entry.year for entry in work.datasets] == [2027, 2025]
+        assert [entry.year for entry in work.datasets] == [
+            2026,
+            2026,
+            2027,
+            2027,
+            2025,
+            2025,
+        ]
         assert len(work.baselines) == 5
 
     def test_empty_partition_fails_loudly(self, planning_stubs, monkeypatch):
@@ -603,10 +669,21 @@ class TestBuildDatasetImpl:
                 (tmp_path / state.identity.filename).write_bytes(b"h5-bytes")
 
         monkeypatch.setattr(
-            artifact_keys, "collect_dataset_identity", lambda c, y: state.identity
+            artifact_keys,
+            "collect_dataset_identity",
+            lambda c, y, dataset=None: state.identity,
         )
         monkeypatch.setattr(artifact_store, "ArtifactStore", FakeStore)
-        monkeypatch.setattr(sr, "resolve_data_folder", lambda: str(tmp_path))
+        monkeypatch.setattr(
+            sr,
+            "bundle_dataset_selection",
+            lambda country, dataset: SimpleNamespace(name=dataset),
+        )
+        monkeypatch.setattr(
+            sr,
+            "dataset_data_folder",
+            lambda country, selection: str(tmp_path),
+        )
         monkeypatch.setattr(
             sr,
             "_country_module",
@@ -625,6 +702,8 @@ class TestBuildDatasetImpl:
             digest="ds-2026",
             path=path,
             filename="populace_year_2026.h5",
+            dataset="populace_cps",
+            runtime_destination="/tmp/populace_year_2026.h5",
             exists=False,
         )
 
@@ -767,6 +846,7 @@ class TestComputeBaselineImpl:
             digest="bl-d",
             path=f"baselines/us/bl-d/{sim_id}.h5",
             simulation_id=sim_id,
+            runtime_destination=f"/opt/policyengine/data/{sim_id}.h5",
             exists=False,
         )
 
@@ -987,6 +1067,7 @@ class TestVerifyDeterminismImpl:
             digest="d",
             path="baselines/us/d/bl1-verify.h5",
             simulation_id="bl1-verify",
+            runtime_destination="/opt/policyengine/data/bl1-verify.h5",
             exists=True,
         )
         verdict = precompute.verify_determinism_impl("bucket-x", entry)

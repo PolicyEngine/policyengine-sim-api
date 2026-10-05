@@ -302,8 +302,12 @@ def _certification_fingerprint(country: str) -> Optional[str]:
     return fingerprint if isinstance(fingerprint, str) and fingerprint else None
 
 
-def collect_dataset_identity(country: str, year: int) -> DatasetArtifactIdentity:
-    """Identity of the default single-year dataset for this installed bundle.
+def collect_dataset_identity(
+    country: str,
+    year: int,
+    dataset: str | None = None,
+) -> DatasetArtifactIdentity:
+    """Identity of one certified single-year dataset for this installed bundle.
 
     Reads the same sources the runtime trusts: the release bundle (versions),
     the bundle receipt (content sha), and the manifest certification
@@ -311,32 +315,47 @@ def collect_dataset_identity(country: str, year: int) -> DatasetArtifactIdentity
     runtime lookup uses, so filename coupling is inherited, not
     re-derived.
     """
-    from policyengine.provenance.manifest import (
-        dataset_logical_name,
-        resolve_dataset_reference,
-    )
+    from policyengine.provenance.manifest import dataset_logical_name
 
     from policyengine_simulation_executor.release_bundle import (
         get_country_release_bundle,
     )
 
     bundle = get_country_release_bundle(country)
-    stem = dataset_logical_name(
-        resolve_dataset_reference(bundle.country, bundle.default_dataset)
-    )
+    selected_dataset = dataset or bundle.default_dataset
+    try:
+        selected_uri = bundle.dataset_uris[selected_dataset]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown certified dataset {selected_dataset!r} for {bundle.country!r}"
+        ) from exc
+    stem = dataset_logical_name(selected_uri)
+    data_version = bundle.dataset_data_versions.get(selected_dataset)
+    artifact_revision = bundle.dataset_revisions.get(selected_dataset)
+    if not data_version or not artifact_revision:
+        raise ValueError(
+            f"Certified dataset {selected_dataset!r} has incomplete provenance"
+        )
+    is_default = selected_dataset == bundle.default_dataset
     from policyengine_simulation_executor.spm import normalize_runtime_spm
 
     selection = normalize_runtime_spm({"country": country, "time_period": year})
     return DatasetArtifactIdentity(
         spm=selection,
         country=bundle.country,
-        dataset=bundle.default_dataset,
+        dataset=selected_dataset,
         stem=stem,
         year=int(year),
-        data_version=bundle.data_version,
-        data_artifact_revision=bundle.data_artifact_revision,
-        source_sha256=_receipt_source_sha256(bundle.country, bundle.data_version),
-        data_build_fingerprint=_certification_fingerprint(bundle.country),
+        data_version=data_version,
+        data_artifact_revision=artifact_revision,
+        source_sha256=(
+            _receipt_source_sha256(bundle.country, bundle.data_version)
+            if is_default
+            else bundle.dataset_sha256s.get(selected_dataset)
+        ),
+        data_build_fingerprint=(
+            _certification_fingerprint(bundle.country) if is_default else None
+        ),
         model_version=bundle.model_version,
         policyengine_version=bundle.policyengine_version,
     )
