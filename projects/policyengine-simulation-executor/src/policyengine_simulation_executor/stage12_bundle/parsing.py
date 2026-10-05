@@ -68,6 +68,7 @@ def normalize_country_bundle(
     countries: Mapping[str, object],
     packages: Mapping[str, object],
     data_releases: Mapping[str, object],
+    regional_dataset_defaults: Mapping[str, object],
 ) -> Stage12CountryBundle:
     """Validate and normalize one country's model and dataset release."""
 
@@ -204,6 +205,29 @@ def normalize_country_bundle(
             f"PolicyEngine.py bundle default dataset URI is inconsistent for {country!r}"
         )
 
+    country_regional_defaults = require_mapping(
+        regional_dataset_defaults.get(country, {}),
+        f"regional_dataset_defaults.{country}",
+    )
+    normalized_regional_defaults: dict[str, str] = {}
+    for region_type, dataset_identity in country_regional_defaults.items():
+        normalized_region_type = require_text(
+            region_type,
+            f"regional_dataset_defaults.{country}.<region_type>",
+        )
+        normalized_dataset_identity = require_text(
+            dataset_identity,
+            f"regional_dataset_defaults.{country}.{normalized_region_type}",
+        )
+        if normalized_dataset_identity not in datasets_by_identity:
+            raise Stage12BundleError(
+                "PolicyEngine.py bundle regional dataset default "
+                f"{country}.{normalized_region_type} names an absent dataset"
+            )
+        normalized_regional_defaults[normalized_region_type] = (
+            normalized_dataset_identity
+        )
+
     certified = require_mapping(
         release.get("certified_data_artifact"),
         f"data_releases.{country}.certified_data_artifact",
@@ -243,4 +267,5 @@ def normalize_country_bundle(
         default_dataset=default_dataset,
         default_dataset_uri=default_dataset_uri,
         datasets=tuple(datasets),
+        regional_dataset_defaults=normalized_regional_defaults,
     )
