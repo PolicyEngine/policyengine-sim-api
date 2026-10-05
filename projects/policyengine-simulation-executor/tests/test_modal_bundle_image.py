@@ -119,6 +119,9 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
             app.gcp_secret,
             app.hf_secret,
         ]
+    function_options = dict(app.app.function_calls)
+    assert function_options["run_simulation"]["memory"] == 65536
+    assert function_options["run_simulation_segment"]["memory"] == 32768
 
 
 def _fake_manifest():

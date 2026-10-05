@@ -728,13 +728,13 @@ class TestModalPrecompute:
         assert "GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}" in (
             deploy_step
         )
-        # The precompute, deploy, and record-marker steps each carry the
-        # bucket var.
+        # The direct precompute, direct deploy, Stage 12 precompute,
+        # Stage 12 deploy, and record-marker steps each carry the bucket var.
         assert (
             reusable_workflow.count(
                 "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}"
             )
-            == 3
+            == 5
         )
 
     def test_precompute_is_gated_by_the_shared_secret_sync(self):
