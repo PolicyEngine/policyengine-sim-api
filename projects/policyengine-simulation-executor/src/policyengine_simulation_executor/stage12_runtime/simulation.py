@@ -130,6 +130,7 @@ def calculate_simulation_frames(
         _country_module,
         _load_dataset,
         _normalise_policy,
+        _require_uk_weight_matrix_matches_dataset,
         _resolve_dataset_selection,
         _resolve_region,
         setup_gcp_credentials,
@@ -184,6 +185,7 @@ def calculate_simulation_frames(
             country,
             dataset,
         )
+        _require_uk_weight_matrix_matches_dataset(region.scoping_strategy, dataset)
         policy_span = (
             runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.POLICY_NORMALIZATION))
             if runtime is not None

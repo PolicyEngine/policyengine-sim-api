@@ -200,6 +200,37 @@ def test_local_authority_output_requires_detected_boundary_metadata(
     with pytest.raises(ValueError, match="boundary metadata is required"):
         simulation_output_geographic.build_uk_local_authority_impact(
             "uk",
-            object(),
-            object(),
+            _uk_simulation("E06000063", 100.0),
+            _uk_simulation("E06000063", 110.0),
         )
+
+
+def test_uk_geographic_outputs_are_omitted_without_area_codes(monkeypatch) -> None:
+    monkeypatch.setattr(
+        simulation_output_geographic,
+        "_required_uk_geography_lookup_csv_path",
+        lambda _: pytest.fail("a dataset without area codes needs no lookup"),
+    )
+    household = pd.DataFrame(
+        {
+            "region": ["LONDON"],
+            "household_net_income": [100.0],
+            "household_weight": [2.0],
+        }
+    )
+    national = SimpleNamespace(
+        output_dataset=SimpleNamespace(data=SimpleNamespace(household=household))
+    )
+
+    assert (
+        simulation_output_geographic.build_uk_constituency_impact(
+            "uk", national, national
+        )
+        is None
+    )
+    assert (
+        simulation_output_geographic.build_uk_local_authority_impact(
+            "uk", national, national
+        )
+        is None
+    )

@@ -22,11 +22,16 @@ def validate_uk_local_authority_metadata(
     baseline: UKLocalAuthorityMetadata | None,
     reform: UKLocalAuthorityMetadata | None,
 ) -> UKLocalAuthorityMetadata | None:
-    """Require matching UK authority metadata and reject it elsewhere."""
+    """Require matching UK authority metadata and reject it elsewhere.
+
+    Both UK artifacts lack it when the dataset carries no local-authority codes.
+    """
 
     if country == "uk":
+        if baseline is None and reform is None:
+            return None
         if baseline is None or reform is None:
-            raise ValueError("UK simulation artifact metadata is missing")
+            raise ValueError("UK simulation artifact metadata is missing on one side")
         if baseline != reform:
             raise ValueError("UK simulation artifact boundary versions do not match")
         return baseline

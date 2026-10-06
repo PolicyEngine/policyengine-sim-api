@@ -564,6 +564,10 @@ def test_country_metadata_alignment_rejects_missing_or_mismatched_uk_values() ->
     assert validate_uk_local_authority_metadata("us", None, None) is None
 
 
+def test_country_metadata_alignment_accepts_uk_artifacts_without_area_codes() -> None:
+    assert validate_uk_local_authority_metadata("uk", None, None) is None
+
+
 def test_single_worker_accepts_one_policy_and_persists_one_artifact() -> None:
     store = FakeStore()
     simulation = _planned_simulation(SimulationRole.BASELINE)

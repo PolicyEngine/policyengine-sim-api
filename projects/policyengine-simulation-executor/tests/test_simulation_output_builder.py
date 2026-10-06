@@ -1752,8 +1752,14 @@ def test_builder_budgetary_impact_propagates_required_calculation_errors(monkeyp
 
 
 def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
-    baseline = object()
-    reform = object()
+    def coded_simulation() -> SimpleNamespace:
+        household = pd.DataFrame({"constituency_code_oa": ["E14001063"]})
+        return SimpleNamespace(
+            output_dataset=SimpleNamespace(data=SimpleNamespace(household=household))
+        )
+
+    baseline = coded_simulation()
+    reform = coded_simulation()
     expected = [_constituency_impact_record().model_dump(mode="json")]
 
     def fake_output_module_function(module_name, name):

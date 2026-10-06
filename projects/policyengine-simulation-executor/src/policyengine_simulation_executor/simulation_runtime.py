@@ -273,6 +273,62 @@ def _build_uk_weight_replacement_region(region_code: str):
     )
 
 
+def _require_uk_weight_matrix_matches_dataset(scoping_strategy, dataset) -> None:
+    """Stop a weight-matrix region whose matrix was built for another dataset.
+
+    UK constituency and local-authority regions that policyengine.py does not
+    list reweight households with enhanced-FRS matrices, one column per
+    household of that file. On any other dataset ``WeightReplacementStrategy``
+    fails inside the run and reports the matrix as out of date; this check
+    stops before the simulations are built and names the cause.
+    """
+
+    from policyengine.core.scoping_strategy import WeightReplacementStrategy
+
+    if not isinstance(scoping_strategy, WeightReplacementStrategy):
+        return
+
+    import h5py
+    import pandas as pd
+    from policyengine.data.uk_geography_assets import (
+        UKGeographyAssetSpec,
+        resolve_uk_geography_asset_paths,
+    )
+
+    paths = resolve_uk_geography_asset_paths(
+        UKGeographyAssetSpec(
+            geography_type="weight replacement",
+            weight_matrix_filename=scoping_strategy.weight_matrix_key,
+            lookup_csv_filename=scoping_strategy.lookup_csv_key,
+            bucket=scoping_strategy.weight_matrix_bucket,
+            weight_matrix_bucket=scoping_strategy.weight_matrix_bucket,
+            lookup_csv_bucket=scoping_strategy.lookup_csv_bucket,
+        ),
+        download_missing_assets=scoping_strategy.download_missing_assets,
+    )
+    region = scoping_strategy.region_code
+    matrix_name = scoping_strategy.weight_matrix_key
+    year = str(dataset.year)
+    with h5py.File(paths.weight_matrix_path, "r") as matrix:
+        weights = matrix.get(year)
+        if not isinstance(weights, h5py.Dataset):
+            covered = ", ".join(sorted(matrix.keys()))
+            raise ValueError(
+                f"UK region {region!r} reweights households with {matrix_name}, "
+                f"which has no weights for {year} (it covers {covered})."
+            )
+        matrix_households = weights.shape[-1]
+    households = len(pd.DataFrame(dataset.data.entity_data["household"]))
+    if households != matrix_households:
+        raise ValueError(
+            f"UK region {region!r} reweights households with {matrix_name}, "
+            f"which was built for {matrix_households} households; the selected "
+            f"UK dataset has {households}. Constituency and local-authority "
+            "runs on this dataset need a local-area dataset that carries "
+            "constituency and local-authority codes."
+        )
+
+
 def _region_parent_dataset_reference(
     country_module,
     country: str,
@@ -606,6 +662,9 @@ def _run_simulation_impl_core(
     )
 
     uk_local_authority_metadata = detect_uk_local_authority_metadata(country, dataset)
+    _require_uk_weight_matrix_matches_dataset(
+        region_resolution.scoping_strategy, dataset
+    )
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.POLICY_NORMALIZATION)):
         baseline_policy = _normalise_policy(simulation_params.get("baseline"))
         reform_policy = _normalise_policy(simulation_params.get("reform"))

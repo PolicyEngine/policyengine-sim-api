@@ -210,10 +210,18 @@ def build_congressional_district_impact(
     return _try_compute_output("congressional district impacts", compute_and_format)
 
 
+def _output_household(simulation) -> pd.DataFrame:
+    return pd.DataFrame(simulation.output_dataset.data.household)
+
+
 def build_uk_constituency_impact(
     country: str, baseline, reform
 ) -> GeographicImpactOutput | None:
     if country != "uk":
+        return None
+    # A UK dataset without area codes (a national-only file) has no
+    # constituency breakdown.
+    if "constituency_code_oa" not in _output_household(baseline).columns:
         return None
 
     lookup_csv_path = _required_uk_geography_lookup_csv_path(CONSTITUENCY_ASSET_SPEC)
@@ -242,6 +250,11 @@ def build_uk_local_authority_impact(
     if country != "uk":
         return None
 
+    baseline_household = _output_household(baseline)
+    # A UK dataset without area codes (a national-only file) has no
+    # local-authority breakdown.
+    if "la_code_oa" not in baseline_household.columns:
+        return None
     if uk_local_authority_metadata is None:
         raise ValueError("UK local-authority boundary metadata is required")
 
@@ -252,8 +265,7 @@ def build_uk_local_authority_impact(
         load_uk_local_authority_resources,
     )
 
-    baseline_household = pd.DataFrame(baseline.output_dataset.data.household)
-    reform_household = pd.DataFrame(reform.output_dataset.data.household)
+    reform_household = _output_household(reform)
     numeric_records = compute_longwise_uk_geography_impacts(
         baseline_household=baseline_household,
         reform_household=reform_household,

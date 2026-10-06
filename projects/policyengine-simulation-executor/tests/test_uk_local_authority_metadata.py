@@ -133,6 +133,16 @@ def test_dataset_detector_skips_non_uk_datasets() -> None:
     assert detect_uk_local_authority_metadata("us", object()) is None
 
 
+def test_dataset_detector_returns_none_without_local_authority_codes() -> None:
+    dataset = SimpleNamespace(
+        data=SimpleNamespace(
+            entity_data={"household": pd.DataFrame({"region": ["LONDON", "WALES"]})}
+        )
+    )
+
+    assert detect_uk_local_authority_metadata("uk", dataset) is None
+
+
 def test_installed_hdf_detector_reads_local_authority_codes(tmp_path) -> None:
     dataset_path = tmp_path / "uk-dataset.h5"
     pd.DataFrame(
@@ -150,6 +160,20 @@ def test_installed_hdf_detector_reads_local_authority_codes(tmp_path) -> None:
     metadata = detect_uk_local_authority_metadata_from_hdf(str(dataset_path))
 
     assert metadata.boundary_version is UKLocalAuthorityBoundaryVersion.LAD22
+
+
+def test_installed_hdf_detector_returns_none_without_local_authority_codes(
+    tmp_path,
+) -> None:
+    dataset_path = tmp_path / "uk-national-dataset.h5"
+    pd.DataFrame({"household_id": [1, 2], "region": ["LONDON", "WALES"]}).to_hdf(
+        dataset_path,
+        key="household",
+        format="table",
+        data_columns=True,
+    )
+
+    assert detect_uk_local_authority_metadata_from_hdf(str(dataset_path)) is None
 
 
 def test_detector_rejects_mixed_authority_configurations() -> None:

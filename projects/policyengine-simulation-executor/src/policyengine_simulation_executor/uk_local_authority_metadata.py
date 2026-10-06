@@ -281,7 +281,12 @@ def detect_uk_local_authority_metadata(
     country: str,
     dataset: object,
 ) -> UKLocalAuthorityMetadata | None:
-    """Inspect a complete dataset before any requested regional scoping."""
+    """Inspect a complete dataset before any requested regional scoping.
+
+    A UK dataset without ``la_code_oa`` (a national file that carries no area
+    codes) has no local-authority metadata, so this returns ``None`` and the
+    constituency and local-authority outputs are omitted for it.
+    """
 
     if country != "uk":
         return None
@@ -294,7 +299,7 @@ def detect_uk_local_authority_metadata(
         raise ValueError("UK dataset contains no household table")
     household_frame = pd.DataFrame(household)
     if "la_code_oa" not in household_frame:
-        raise ValueError("UK dataset household table contains no la_code_oa column")
+        return None
     return detect_uk_local_authority_boundary_version(
         household_frame["la_code_oa"].tolist()
     )
@@ -302,8 +307,11 @@ def detect_uk_local_authority_metadata(
 
 def detect_uk_local_authority_metadata_from_hdf(
     dataset_path: str,
-) -> UKLocalAuthorityMetadata:
-    """Validate an installed UK HDF dataset against the packaged metadata."""
+) -> UKLocalAuthorityMetadata | None:
+    """Validate an installed UK HDF dataset against the packaged metadata.
+
+    Returns ``None`` when the household table carries no ``la_code_oa``.
+    """
 
     observed_codes: set[object] = set()
     with pd.HDFStore(dataset_path, mode="r") as store:
@@ -317,14 +325,10 @@ def detect_uk_local_authority_metadata_from_hdf(
             )
             for chunk in chunks:
                 if "la_code_oa" not in chunk:
-                    raise ValueError(
-                        "UK dataset household table contains no la_code_oa column"
-                    )
+                    return None
                 observed_codes.update(chunk["la_code_oa"].drop_duplicates().tolist())
         except (KeyError, TypeError, ValueError) as error:
             if "la_code_oa" in str(error):
-                raise ValueError(
-                    "UK dataset household table contains no la_code_oa column"
-                ) from error
+                return None
             raise
     return detect_uk_local_authority_boundary_version(observed_codes)
