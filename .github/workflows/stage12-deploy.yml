@@ -21,7 +21,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: stage12-${{ inputs.deployment_environment }}
+  # Share the regular deployment workflow's group because both workflows can
+  # create, promote, and remove revisions of the same Cloud Run services.
+  group: simulation-deploy-main
   cancel-in-progress: false
 
 jobs:
