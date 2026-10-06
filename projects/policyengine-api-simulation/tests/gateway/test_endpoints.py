@@ -8,7 +8,7 @@ simulation requests.
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.fixtures.endpoints import mock_modal  # noqa: F401 - pytest fixture
+pytest_plugins = ("tests.fixtures.endpoints",)
 
 
 class TestGetAppName:
@@ -200,3 +200,77 @@ class TestSubmitSimulationEndpoint:
         assert data["job_id"] == "mock-job-id-123"
         assert data["poll_url"] == "/jobs/mock-job-id-123"
         assert data["status"] == "submitted"
+
+    def test__given_submission_with_data__then_returns_resolved_bundle_metadata(
+        self, mock_modal, client: TestClient
+    ):
+        """
+        Given a simulation submission with an explicit data URI
+        When the request completes
+        Then the response exposes the resolved app and submitted dataset provenance.
+        """
+        # Given
+        mock_modal["dicts"]["simulation-api-us-versions"] = {
+            "latest": "1.500.0",
+            "1.500.0": "policyengine-simulation-us1-500-0-uk2-66-0",
+        }
+
+        request_body = {
+            "country": "us",
+            "scope": "macro",
+            "reform": {},
+            "data": "hf://policyengine/policyengine-us-data/enhanced_cps_2024.h5@1.77.0",
+        }
+
+        # When
+        response = client.post("/simulate/economy/comparison", json=request_body)
+
+        # Then
+        assert response.status_code == 200
+        data = response.json()
+        assert data["resolved_app_name"] == "policyengine-simulation-us1-500-0-uk2-66-0"
+        assert data["policyengine_bundle"] == {
+            "model_version": "1.500.0",
+            "policyengine_version": None,
+            "data_version": None,
+            "dataset": "hf://policyengine/policyengine-us-data/enhanced_cps_2024.h5@1.77.0",
+        }
+
+    def test__given_submitted_job__then_job_status_includes_bundle_metadata(
+        self, mock_modal, client: TestClient
+    ):
+        """
+        Given a submitted simulation job
+        When polling job status
+        Then the resolved bundle metadata is returned with the status response.
+        """
+        # Given
+        mock_modal["dicts"]["simulation-api-us-versions"] = {
+            "latest": "1.500.0",
+            "1.500.0": "policyengine-simulation-us1-500-0-uk2-66-0",
+        }
+
+        submit_response = client.post(
+            "/simulate/economy/comparison",
+            json={
+                "country": "us",
+                "scope": "macro",
+                "reform": {},
+                "data": "hf://policyengine/policyengine-us-data/enhanced_cps_2024.h5@1.77.0",
+            },
+        )
+
+        # When
+        response = client.get(f"/jobs/{submit_response.json()['job_id']}")
+
+        # Then
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "complete"
+        assert data["resolved_app_name"] == "policyengine-simulation-us1-500-0-uk2-66-0"
+        assert data["policyengine_bundle"] == {
+            "model_version": "1.500.0",
+            "policyengine_version": None,
+            "data_version": None,
+            "dataset": "hf://policyengine/policyengine-us-data/enhanced_cps_2024.h5@1.77.0",
+        }

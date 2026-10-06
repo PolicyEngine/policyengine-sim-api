@@ -189,6 +189,13 @@ class TestJobSubmitResponse:
             "poll_url": "/jobs/fc-abc123",
             "country": "us",
             "version": "1.459.0",
+            "resolved_app_name": "policyengine-simulation-us1-459-0-uk2-65-9",
+            "policyengine_bundle": {
+                "model_version": "1.459.0",
+                "policyengine_version": None,
+                "data_version": None,
+                "dataset": "hf://policyengine/policyengine-us-data/enhanced_cps_2024.h5@1.77.0",
+            },
         }
 
         # When
@@ -200,6 +207,12 @@ class TestJobSubmitResponse:
         assert response.poll_url == "/jobs/fc-abc123"
         assert response.country == "us"
         assert response.version == "1.459.0"
+        assert response.resolved_app_name == "policyengine-simulation-us1-459-0-uk2-65-9"
+        assert response.policyengine_bundle.model_version == "1.459.0"
+        assert response.policyengine_bundle.policyengine_version is None
+        assert response.policyengine_bundle.dataset == (
+            "hf://policyengine/policyengine-us-data/enhanced_cps_2024.h5@1.77.0"
+        )
 
 
 class TestJobStatusResponse:
@@ -252,3 +265,22 @@ class TestJobStatusResponse:
         assert response.status == "failed"
         assert response.result is None
         assert response.error == "Simulation timed out"
+
+    def test_job_status_response_accepts_bundle_metadata(self):
+        response = JobStatusResponse(
+            status="complete",
+            result={"budget": {"total": 1000000}},
+            resolved_app_name="policyengine-simulation-us1-459-0-uk2-65-9",
+            policyengine_bundle={
+                "model_version": "1.459.0",
+                "policyengine_version": None,
+                "data_version": None,
+                "dataset": "hf://policyengine/policyengine-us-data/enhanced_cps_2024.h5@1.77.0",
+            },
+        )
+
+        assert response.resolved_app_name == "policyengine-simulation-us1-459-0-uk2-65-9"
+        assert response.policyengine_bundle is not None
+        assert response.policyengine_bundle.dataset == (
+            "hf://policyengine/policyengine-us-data/enhanced_cps_2024.h5@1.77.0"
+        )
