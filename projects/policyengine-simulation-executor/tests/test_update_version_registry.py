@@ -89,7 +89,7 @@ def fake_bundle_metadata(monkeypatch):
             "dataset_data_versions": {"default": "test-data-version"},
             "dataset_revisions": {"default": "test-revision"},
             "dataset_sha256s": {"default": "a" * 64},
-            "regional_dataset_defaults": {},
+            "region_dataset_identities": {"national": "default"},
         }
 
     monkeypatch.setattr(

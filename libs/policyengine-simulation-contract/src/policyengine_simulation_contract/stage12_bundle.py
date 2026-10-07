@@ -36,9 +36,7 @@ class Stage12CountryBundle(StrictBundleModel):
     default_dataset: NonEmptyText
     default_dataset_uri: NonEmptyText
     datasets: tuple[Stage12Dataset, ...]
-    regional_dataset_defaults: dict[NonEmptyText, NonEmptyText] = Field(
-        default_factory=dict
-    )
+    region_dataset_identities: dict[NonEmptyText, NonEmptyText]
 
 
 class Stage12BundleManifest(StrictBundleModel):
@@ -66,22 +64,34 @@ def select_stage12_dataset(
     """Select the certified dataset declared for a concrete region type."""
 
     normalized_region = region.strip().lower()
-    dataset_identity = country.default_dataset
+    region_type = "national"
     if normalized_region != country.country:
         if (
             country.country == "us"
             and len(normalized_region) == 2
             and normalized_region.isalpha()
         ):
-            dataset_identity = country.regional_dataset_defaults.get(
-                "state", country.default_dataset
-            )
+            region_type = "state"
         else:
-            region_type, separator, _ = normalized_region.partition("/")
+            requested_region_type, separator, _ = normalized_region.partition("/")
             if separator:
-                dataset_identity = country.regional_dataset_defaults.get(
-                    region_type, country.default_dataset
-                )
-    return next(
-        dataset for dataset in country.datasets if dataset.identity == dataset_identity
+                region_type = requested_region_type
+    dataset_identity = country.region_dataset_identities.get(region_type)
+    if dataset_identity is None:
+        raise ValueError(
+            f"No certified dataset is declared for region type {region_type!r}."
+        )
+    selected = next(
+        (
+            dataset
+            for dataset in country.datasets
+            if dataset.identity == dataset_identity
+        ),
+        None,
     )
+    if selected is None:
+        raise ValueError(
+            f"Certified region type {region_type!r} names absent dataset "
+            f"{dataset_identity!r}."
+        )
+    return selected

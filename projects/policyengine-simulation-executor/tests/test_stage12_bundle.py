@@ -59,12 +59,12 @@ def test_normalized_bundle_selects_regional_dataset_from_packaged_metadata() -> 
         "revision": "acs-local-release",
         "sha256": "b" * 64,
     }
-    raw["regional_dataset_defaults"] = {
-        "us": {
-            "state": local_identity,
-            "congressional_district": local_identity,
+    raw["data_releases"]["us"]["region_datasets"].update(
+        {
+            "state": {"path_template": f"{local_identity}.h5"},
+            "congressional_district": {"path_template": f"{local_identity}.h5"},
         }
-    }
+    )
 
     bundle = normalize_stage12_bundle(raw)
     us = next(country for country in bundle.countries if country.country == "us")
@@ -101,8 +101,8 @@ def test_normalized_bundle_selects_regional_dataset_from_packaged_metadata() -> 
         lambda bundle: bundle["data_releases"]["us"]["certified_data_artifact"].update(
             {"sha256": "0" * 64}
         ),
-        lambda bundle: bundle.update(
-            {"regional_dataset_defaults": {"us": {"state": "absent"}}}
+        lambda bundle: bundle["data_releases"]["us"]["region_datasets"].update(
+            {"state": {"path_template": "absent.h5"}}
         ),
     ],
     ids=[

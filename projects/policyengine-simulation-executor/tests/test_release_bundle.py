@@ -111,12 +111,6 @@ def test_country_release_bundle_exposes_model_and_data_versions():
 def test_country_release_bundle_exposes_regional_dataset_provenance(monkeypatch):
     current = deepcopy(get_current_bundle())
     local_dataset = "populace_us_2024_acs_local"
-    current["regional_dataset_defaults"] = {
-        "us": {
-            "state": local_dataset,
-            "congressional_district": local_dataset,
-        }
-    }
     current["data_releases"]["us"]["datasets"][local_dataset] = {
         "path": f"{local_dataset}.h5",
         "repo_id": "policyengine/populace-us",
@@ -124,6 +118,12 @@ def test_country_release_bundle_exposes_regional_dataset_provenance(monkeypatch)
         "revision": "acs-local-release",
         "sha256": "b" * 64,
     }
+    current["data_releases"]["us"]["region_datasets"].update(
+        {
+            "state": {"path_template": f"{local_dataset}.h5"},
+            "congressional_district": {"path_template": f"{local_dataset}.h5"},
+        }
+    )
     local_reference = current["data_releases"]["us"]["datasets"][local_dataset]
     monkeypatch.setattr(
         release_bundle_module,
@@ -134,7 +134,8 @@ def test_country_release_bundle_exposes_regional_dataset_provenance(monkeypatch)
 
     bundle = get_country_release_bundle("us")
 
-    assert bundle.regional_dataset_defaults == {
+    assert bundle.region_dataset_identities == {
+        "national": "populace_us_2024",
         "state": local_dataset,
         "congressional_district": local_dataset,
     }

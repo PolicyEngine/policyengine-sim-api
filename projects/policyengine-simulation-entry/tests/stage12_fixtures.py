@@ -45,7 +45,7 @@ def worker() -> V2WorkerVersion:
                 repo_type="dataset",
             )
         ]
-        regional_dataset_defaults = {}
+        region_dataset_identities = {"national": dataset}
         if country == "us":
             local_dataset = "populace_us_2024_acs_local"
             local_revision = f"{local_dataset}-revision"
@@ -58,7 +58,8 @@ def worker() -> V2WorkerVersion:
                     repo_type="dataset",
                 )
             )
-            regional_dataset_defaults = {
+            region_dataset_identities = {
+                "national": dataset,
                 "state": local_dataset,
                 "congressional_district": local_dataset,
             }
@@ -75,7 +76,7 @@ def worker() -> V2WorkerVersion:
                 default_dataset=dataset,
                 default_dataset_uri=f"hf://policyengine/data/{dataset}.h5@{revision}",
                 datasets=tuple(datasets),
-                regional_dataset_defaults=regional_dataset_defaults,
+                region_dataset_identities=region_dataset_identities,
             )
         )
         country_workers.append(
