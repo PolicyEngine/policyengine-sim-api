@@ -86,6 +86,38 @@ When adding a run configuration or runtime stage:
 3. import the plan in runtime code;
 4. add focused tests for the new stage and identifier propagation.
 
+The Stage 12 coordinator measures output preparation with these nested
+operations:
+
+| Stage | Work measured |
+|---|---|
+| `stage12_coordinator_preparation` | The complete interval between acquiring report execution ownership and starting child-state persistence |
+| `stage12_output_planning` | The complete coordinator interval that builds the shared output plan |
+| `stage12_country_model_load` | Loading the country model and its Python modules |
+| `stage12_output_configuration` | Creating planning simulations and configuring requested output groups |
+| `stage12_output_variable_resolution` | Resolving entity variables and constructing the output schema |
+| `stage12_child_input_planning` | Attaching the output plan to one baseline or reform child input |
+
+`stage12_child_input_planning` runs once for each simulation and includes a
+`simulation_role` attribute. The other planning operations include the
+`country` attribute.
+
+## Metric resource identity
+
+Every process that emits OpenTelemetry metrics must have a unique
+`service.instance.id`. A Cloud Run revision name identifies deployed code and
+a Modal task identifier identifies one task; neither value alone identifies a
+Python worker process. Build the resource value with
+`policyengine_observability.process_instance_id`, using the Cloud Run revision
+or Modal task identifier as the platform prefix. The helper adds the process
+ID and a random process value, and returns the same result for later calls in
+that process.
+
+Cloud Run deployments must also provide `CLOUD_RUN_REGION`. Modal provides
+`MODAL_REGION` at runtime. These values populate each workload's
+`cloud.region`. The collector separately adds the central Google Monitoring
+location to metrics before export.
+
 ## Traces and polling
 
 HTTP instrumentation carries W3C trace context across synchronous service

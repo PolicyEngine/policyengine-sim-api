@@ -10,7 +10,7 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115.0",
     "pydantic>=2.0",
-    "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.1,<4",
+    "policyengine-observability[fastapi,google,otlp-grpc]>=3.0.2,<4",
 ]
 
 [project.optional-dependencies]

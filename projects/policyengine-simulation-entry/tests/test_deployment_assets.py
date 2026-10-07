@@ -485,6 +485,7 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
     assert runtime_environment["OBSERVABILITY_TRACE_PROJECT_ID"] == (
         "policyengine-observability"
     )
+    assert runtime_environment["CLOUD_RUN_REGION"] == "us-central1"
     assert runtime_environment["OTEL_EXPORTER_OTLP_ENDPOINT"] == (
         "https://collector.example"
     )
