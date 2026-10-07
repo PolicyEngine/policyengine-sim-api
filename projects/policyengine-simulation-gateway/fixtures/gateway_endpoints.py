@@ -47,7 +47,8 @@ TEST_APP_RELEASE_BUNDLE = {
             "populace_us_2024_acs_local": "b" * 64,
             "calibration_diagnostics": "c" * 64,
         },
-        "regional_dataset_defaults": {
+        "region_dataset_identities": {
+            "national": "populace_us_2024",
             "state": "populace_us_2024_acs_local",
             "congressional_district": "populace_us_2024_acs_local",
         },
@@ -75,7 +76,7 @@ TEST_APP_RELEASE_BUNDLE = {
             "populace_uk_2023": "d" * 64,
             "local_authority_weights": "e" * 64,
         },
-        "regional_dataset_defaults": {},
+        "region_dataset_identities": {"national": "populace_uk_2023"},
     },
 }
 

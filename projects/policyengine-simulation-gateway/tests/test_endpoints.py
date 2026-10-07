@@ -472,7 +472,7 @@ class TestSubmitSimulationEndpoint:
         )
         assert "data" not in mock_modal["func"].last_payload
 
-    def test__given_bundled_us_overlay__then_rejects_data_key(
+    def test__given_certified_us_regional_dataset__then_rejects_data_key(
         self, mock_modal, client: TestClient
     ):
         response = client.post(

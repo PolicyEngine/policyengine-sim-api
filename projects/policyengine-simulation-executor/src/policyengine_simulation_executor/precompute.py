@@ -204,7 +204,7 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
     dataset_names = [
         bundle.default_dataset,
         *sorted(
-            set(bundle.regional_dataset_defaults.values()).difference(
+            set(bundle.region_dataset_identities.values()).difference(
                 {bundle.default_dataset}
             )
         ),

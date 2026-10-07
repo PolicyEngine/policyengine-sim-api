@@ -47,7 +47,7 @@ def install_identity_stubs(monkeypatch):
         dataset_data_versions={"populace_cps": "1.2.3"},
         dataset_revisions={"populace_cps": "rev-abc"},
         dataset_sha256s={"populace_cps": "feedbead" * 8},
-        regional_dataset_defaults={},
+        region_dataset_identities={"national": "populace_cps"},
     )
     receipt_entry = {
         "country": "us",
