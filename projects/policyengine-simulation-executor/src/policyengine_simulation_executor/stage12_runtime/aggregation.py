@@ -24,7 +24,9 @@ def validate_uk_local_authority_metadata(
 ) -> UKLocalAuthorityMetadata | None:
     """Require matching UK authority metadata and reject it elsewhere.
 
-    Both UK artifacts lack it when the dataset carries no local-authority codes.
+    Both UK artifacts lack it for a national dataset without area codes, which
+    detection admits only when the bundle routes constituency and
+    local-authority regions to another dataset.
     """
 
     if country == "uk":

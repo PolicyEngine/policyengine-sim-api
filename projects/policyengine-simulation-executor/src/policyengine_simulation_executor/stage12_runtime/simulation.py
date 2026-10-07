@@ -184,6 +184,7 @@ def calculate_simulation_frames(
         uk_local_authority_metadata = detect_uk_local_authority_metadata(
             country,
             dataset,
+            region_code=region.code,
         )
         _require_uk_weight_matrix_matches_dataset(region.scoping_strategy, dataset)
         policy_span = (

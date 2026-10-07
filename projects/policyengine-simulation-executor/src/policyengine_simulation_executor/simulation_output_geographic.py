@@ -214,15 +214,32 @@ def _output_household(simulation) -> pd.DataFrame:
     return pd.DataFrame(simulation.output_dataset.data.household)
 
 
+def _require_uk_area_column(
+    household: pd.DataFrame, column: str, breakdown: str
+) -> None:
+    """Refuse a UK breakdown over a dataset that lacks its area codes.
+
+    A breakdown is never dropped silently: a dataset without area codes has
+    none of its own, and one built from a routed local-area dataset is a
+    separate run.
+    """
+
+    if column not in household.columns:
+        raise ValueError(
+            f"UK {breakdown} breakdowns need {column} on the simulated dataset, "
+            "which carries no area codes; for such a dataset they need a run on "
+            "the local-area dataset its bundle routes these regions to."
+        )
+
+
 def build_uk_constituency_impact(
     country: str, baseline, reform
 ) -> GeographicImpactOutput | None:
     if country != "uk":
         return None
-    # A UK dataset without area codes (a national-only file) has no
-    # constituency breakdown.
-    if "constituency_code_oa" not in _output_household(baseline).columns:
-        return None
+    _require_uk_area_column(
+        _output_household(baseline), "constituency_code_oa", "constituency"
+    )
 
     lookup_csv_path = _required_uk_geography_lookup_csv_path(CONSTITUENCY_ASSET_SPEC)
     impact = _output_module_function(
@@ -251,10 +268,7 @@ def build_uk_local_authority_impact(
         return None
 
     baseline_household = _output_household(baseline)
-    # A UK dataset without area codes (a national-only file) has no
-    # local-authority breakdown.
-    if "la_code_oa" not in baseline_household.columns:
-        return None
+    _require_uk_area_column(baseline_household, "la_code_oa", "local-authority")
     if uk_local_authority_metadata is None:
         raise ValueError("UK local-authority boundary metadata is required")
 

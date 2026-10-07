@@ -310,13 +310,15 @@ def _require_uk_weight_matrix_matches_dataset(scoping_strategy, dataset) -> None
     matrix_name = scoping_strategy.weight_matrix_key
     year = str(dataset.year)
     with h5py.File(paths.weight_matrix_path, "r") as matrix:
-        weights = matrix.get(year)
-        if not isinstance(weights, h5py.Dataset):
-            covered = ", ".join(sorted(matrix.keys()))
+        if year not in matrix:
+            covered = ", ".join(sorted(matrix))
             raise ValueError(
                 f"UK region {region!r} reweights households with {matrix_name}, "
                 f"which has no weights for {year} (it covers {covered})."
             )
+        weights = matrix[year]
+        if not isinstance(weights, h5py.Dataset):
+            raise TypeError(f"{matrix_name} entry {year} is not a weight matrix")
         matrix_households = weights.shape[-1]
     households = len(pd.DataFrame(dataset.data.entity_data["household"]))
     if households != matrix_households:
@@ -661,7 +663,9 @@ def _run_simulation_impl_core(
         detect_uk_local_authority_metadata,
     )
 
-    uk_local_authority_metadata = detect_uk_local_authority_metadata(country, dataset)
+    uk_local_authority_metadata = detect_uk_local_authority_metadata(
+        country, dataset, region_code=region_resolution.code
+    )
     _require_uk_weight_matrix_matches_dataset(
         region_resolution.scoping_strategy, dataset
     )

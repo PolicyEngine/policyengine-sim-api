@@ -205,7 +205,9 @@ def test_local_authority_output_requires_detected_boundary_metadata(
         )
 
 
-def test_uk_geographic_outputs_are_omitted_without_area_codes(monkeypatch) -> None:
+def test_uk_geographic_outputs_are_never_dropped_for_missing_area_codes(
+    monkeypatch,
+) -> None:
     monkeypatch.setattr(
         simulation_output_geographic,
         "_required_uk_geography_lookup_csv_path",
@@ -222,15 +224,18 @@ def test_uk_geographic_outputs_are_omitted_without_area_codes(monkeypatch) -> No
         output_dataset=SimpleNamespace(data=SimpleNamespace(household=household))
     )
 
-    assert (
+    with pytest.raises(
+        ValueError, match="constituency breakdowns need constituency_code_oa"
+    ):
         simulation_output_geographic.build_uk_constituency_impact(
             "uk", national, national
         )
-        is None
-    )
-    assert (
+    with pytest.raises(ValueError, match="local-authority breakdowns need la_code_oa"):
         simulation_output_geographic.build_uk_local_authority_impact(
-            "uk", national, national
+            "uk",
+            national,
+            national,
+            uk_local_authority_metadata=UKLocalAuthorityMetadata(
+                boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
+            ),
         )
-        is None
-    )
