@@ -21,16 +21,25 @@ def validate_uk_local_authority_metadata(
     country: CountryId,
     baseline: UKLocalAuthorityMetadata | None,
     reform: UKLocalAuthorityMetadata | None,
+    *,
+    region_code: str | None = None,
 ) -> UKLocalAuthorityMetadata | None:
     """Require matching UK authority metadata and reject it elsewhere.
 
-    Both UK artifacts lack it for a national dataset without area codes, which
-    detection admits only when the bundle routes constituency and
-    local-authority regions to another dataset.
+    Retained artifacts are read without rerunning dataset detection, so a UK
+    pair without metadata passes only with the same evidence detection needs:
+    the report's region is national or nation-level and the bundle routes
+    both constituency and local-authority regions to another dataset.
     """
 
     if country == "uk":
         if baseline is None and reform is None:
+            from policyengine_simulation_executor.uk_local_authority_metadata import (
+                uk_area_codes_required,
+            )
+
+            if region_code is None or uk_area_codes_required(region_code):
+                raise ValueError("UK simulation artifact metadata is missing")
             return None
         if baseline is None or reform is None:
             raise ValueError("UK simulation artifact metadata is missing on one side")

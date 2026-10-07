@@ -308,6 +308,7 @@ def qualify_report_parity(
             report.baseline.geography.country,
             baseline_calculation.uk_local_authority_metadata,
             reform_calculation.uk_local_authority_metadata,
+            region_code=report.baseline.geography.region,
         ),
     )
     v2_result = v2_report.get("result")
