@@ -176,9 +176,9 @@ def _resolve_dataset_name_from_app_bundle(
         region=region,
         region_group=region_group,
     )
-    regional_defaults = country_bundle.get("regional_dataset_defaults")
-    if region_type is not None and isinstance(regional_defaults, dict):
-        regional_dataset = regional_defaults.get(region_type)
+    region_dataset_identities = country_bundle.get("region_dataset_identities")
+    if region_type is not None and isinstance(region_dataset_identities, dict):
+        regional_dataset = region_dataset_identities.get(region_type)
         if isinstance(regional_dataset, str):
             return regional_dataset
     return default_dataset

@@ -43,7 +43,7 @@ class CountryReleaseBundle:
     dataset_data_versions: Mapping[str, str]
     dataset_revisions: Mapping[str, str]
     dataset_sha256s: Mapping[str, str]
-    regional_dataset_defaults: Mapping[str, str]
+    region_dataset_identities: Mapping[str, str]
 
 
 def _normalise_country(country: str) -> str:
@@ -196,14 +196,42 @@ def _dataset_provenance_from_release(
     return revisions, sha256s
 
 
-def _regional_dataset_defaults(bundle: Mapping, country: str) -> dict[str, str]:
-    all_defaults = _mapping(bundle.get("regional_dataset_defaults"))
-    country_defaults = _mapping(all_defaults.get(country))
-    return {
-        str(region_type): dataset
-        for region_type, dataset in country_defaults.items()
-        if isinstance(dataset, str) and dataset
+def _region_dataset_identities(
+    *,
+    datasets: Mapping[str, object],
+    templates: Mapping[str, object],
+) -> dict[str, str]:
+    dataset_paths = {
+        name: _reference_value(reference, "path")
+        for name, reference in datasets.items()
     }
+    region_dataset_identities: dict[str, str] = {}
+    for region_type, template in templates.items():
+        path_template = _reference_value(template, "path_template")
+        matching_datasets = [
+            name for name, path in dataset_paths.items() if path == path_template
+        ]
+        if len(matching_datasets) != 1:
+            raise ValueError(
+                "PolicyEngine.py bundle region dataset "
+                f"{region_type!r} must identify exactly one dataset"
+            )
+        region_dataset_identities[region_type] = matching_datasets[0]
+    return region_dataset_identities
+
+
+def _region_dataset_identities_from_manifest(manifest) -> dict[str, str]:
+    return _region_dataset_identities(
+        datasets=manifest.datasets,
+        templates=manifest.region_datasets,
+    )
+
+
+def _region_dataset_identities_from_release(data_release: Mapping) -> dict[str, str]:
+    return _region_dataset_identities(
+        datasets=_mapping(data_release.get("datasets")),
+        templates=_mapping(data_release.get("region_datasets")),
+    )
 
 
 def _current_policyengine_bundle() -> Mapping | None:
@@ -297,7 +325,7 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
     default_dataset_uri = manifest.default_dataset_uri
     dataset_uris, dataset_repo_types = _dataset_uris_from_manifest(manifest)
     dataset_revisions, dataset_sha256s = _dataset_provenance_from_manifest(manifest)
-    regional_dataset_defaults: dict[str, str] = {}
+    region_dataset_identities = _region_dataset_identities_from_manifest(manifest)
     data_package: Mapping = {}
     data_release: Mapping = {}
     if bundle_metadata is not None:
@@ -340,7 +368,9 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
         )
         dataset_revisions.update(release_dataset_revisions)
         dataset_sha256s.update(release_dataset_sha256s)
-        regional_dataset_defaults = _regional_dataset_defaults(bundle_manifest, country)
+        region_dataset_identities = _region_dataset_identities_from_release(
+            data_release
+        )
     data_package_version = _derive_data_package_version(
         bundled_data_package=data_package,
         manifest_data_package_version=manifest.data_package.version,
@@ -361,12 +391,12 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
     dataset_data_versions = dict(dataset_revisions)
     dataset_data_versions[default_dataset] = str(data_version)
 
-    unknown_regional_datasets = set(regional_dataset_defaults.values()).difference(
+    unknown_regional_datasets = set(region_dataset_identities.values()).difference(
         dataset_uris
     )
     if unknown_regional_datasets:
         raise ValueError(
-            "PolicyEngine.py bundle regional defaults reference unknown datasets: "
+            "PolicyEngine.py bundle region mappings reference unknown datasets: "
             + ", ".join(sorted(unknown_regional_datasets))
         )
 
@@ -386,7 +416,7 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
         dataset_data_versions=dataset_data_versions,
         dataset_revisions=dataset_revisions,
         dataset_sha256s=dataset_sha256s,
-        regional_dataset_defaults=regional_dataset_defaults,
+        region_dataset_identities=region_dataset_identities,
     )
 
 

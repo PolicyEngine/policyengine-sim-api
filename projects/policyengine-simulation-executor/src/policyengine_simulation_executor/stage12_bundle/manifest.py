@@ -58,11 +58,6 @@ def _normalize_stage12_bundle(
     )
     countries = require_mapping(bundle.get("countries"), "countries")
     data_releases = require_mapping(bundle.get("data_releases"), "data_releases")
-    regional_dataset_defaults = require_mapping(
-        bundle.get("regional_dataset_defaults", {}),
-        "regional_dataset_defaults",
-    )
-
     normalized_countries = tuple(
         normalize_country_bundle(
             country=country,
@@ -70,7 +65,6 @@ def _normalize_stage12_bundle(
             countries=countries,
             packages=packages,
             data_releases=data_releases,
-            regional_dataset_defaults=regional_dataset_defaults,
         )
         for country in supported_countries
     )

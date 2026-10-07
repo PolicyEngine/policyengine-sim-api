@@ -34,7 +34,7 @@ class CountryBundleMetadata(TypedDict):
     dataset_data_versions: dict[str, str]
     dataset_revisions: dict[str, str]
     dataset_sha256s: dict[str, str]
-    regional_dataset_defaults: dict[str, str]
+    region_dataset_identities: dict[str, str]
 
 
 class BundleManifestMetadata(TypedDict):
@@ -104,7 +104,7 @@ def _country_bundle_metadata(country: str) -> CountryBundleMetadata:
         "dataset_data_versions": dict(bundle.dataset_data_versions),
         "dataset_revisions": dict(bundle.dataset_revisions),
         "dataset_sha256s": dict(bundle.dataset_sha256s),
-        "regional_dataset_defaults": dict(bundle.regional_dataset_defaults),
+        "region_dataset_identities": dict(bundle.region_dataset_identities),
     }
 
 

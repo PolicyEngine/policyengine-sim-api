@@ -69,6 +69,7 @@ def _resolved_bundle(version: str = "5.2.0") -> ResolvedStage12Bundle:
                         repo_type="dataset",
                     ),
                 ),
+                region_dataset_identities={"national": dataset},
             )
         )
     bundle = Stage12BundleManifest(

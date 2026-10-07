@@ -532,7 +532,8 @@ class TestPlanArtifactsImpl:
                 data_version="1.2.3",
                 data_artifact_revision="rev-abc",
                 default_dataset="populace_cps",
-                regional_dataset_defaults={
+                region_dataset_identities={
+                    "national": "populace_cps",
                     "state": "populace_us_2024_acs_local",
                     "congressional_district": "populace_us_2024_acs_local",
                 },
