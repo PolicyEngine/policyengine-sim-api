@@ -142,17 +142,14 @@ def fetch_artifacts(bucket: str, manifest, *, client=None):
     # survive into the image, and the layer starts empty of these
     # files anyway.
     for artifact in artifacts:
-        target = Path(artifact.get("destination") or data_folder / artifact["filename"])
-        target.parent.mkdir(parents=True, exist_ok=True)
+        target = data_folder / artifact["filename"]
         bucket_handle.blob(artifact["path"]).download_to_filename(str(target))
         logger.info("Fetched %s (%.1f MB)", target, target.stat().st_size / 1e6)
 
     absent = [
-        str(Path(artifact.get("destination") or data_folder / artifact["filename"]))
+        str(data_folder / artifact["filename"])
         for artifact in artifacts
-        if not Path(
-            artifact.get("destination") or data_folder / artifact["filename"]
-        ).exists()
+        if not (data_folder / artifact["filename"]).exists()
     ]
     if absent:
         raise RuntimeError(f"Artifact fetch did not produce expected files: {absent}")

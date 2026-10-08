@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 # Mirrors baseline_artifacts.OUTCOME_*; the artifact outcome a worker
 # observed when ensuring a baseline.
@@ -56,8 +56,6 @@ class DatasetPlanEntry(_StrictModel):
     digest: str
     path: str
     filename: str
-    dataset: str
-    runtime_destination: str
     exists: bool
 
 
@@ -70,7 +68,6 @@ class BaselinePlanEntry(_StrictModel):
     digest: str
     path: str
     simulation_id: str
-    runtime_destination: str
     exists: bool
 
 
@@ -97,7 +94,6 @@ class ManifestArtifact(_StrictModel):
     filename: str
     year: int
     digest: str
-    destination: str | None = None
 
 
 class ArtifactManifest(_StrictModel):
@@ -107,22 +103,14 @@ class ArtifactManifest(_StrictModel):
 
     # "schema" is the wire key; the Python name avoids shadowing
     # BaseModel's deprecated .schema attribute.
-    manifest_schema: Literal["mf1", "mf2"] = Field(alias="schema")
+    manifest_schema: str = Field(alias="schema")
     country: str
     receipt: BundleVersionIdentity
     artifacts: list[ManifestArtifact]
 
-    @model_validator(mode="after")
-    def require_mf2_destinations(self) -> "ArtifactManifest":
-        if self.manifest_schema == "mf2" and any(
-            artifact.destination is None for artifact in self.artifacts
-        ):
-            raise ValueError("mf2 artifacts must declare a runtime destination")
-        return self
-
     def canonical_payload(self) -> dict[str, Any]:
         """The exact dict shape that gets digested and stored."""
-        return self.model_dump(by_alias=True, exclude_none=True)
+        return self.model_dump(by_alias=True)
 
 
 class DeployedMarker(_StrictModel):

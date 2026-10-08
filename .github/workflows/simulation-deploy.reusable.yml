@@ -561,15 +561,6 @@ jobs:
           name="$(uv run python -c 'from policyengine_simulation_contract.stage12_manifest import v2_application_name; from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle; print(v2_application_name(load_stage12_bundle().bundle.policyengine_version))')"
           echo "name=${name}" >> "$GITHUB_OUTPUT"
 
-      - name: Run Stage 12 artifact precompute
-        id: precompute
-        working-directory: projects/policyengine-simulation-executor
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}
-        run: ../../.github/scripts/modal-precompute.sh "${{ inputs.modal_environment }}" "${{ inputs.force_recompute }}"
-
       - name: Synchronize the separate Stage 12 runtime secret
         working-directory: projects/policyengine-simulation-executor
         env:
@@ -591,8 +582,6 @@ jobs:
           STAGE12_EXPECT_US_VERSION: ${{ needs.prepare.outputs.us_version }}
           STAGE12_EXPECT_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
           STAGE12_ARTIFACT_BUCKET: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
-          POLICYENGINE_MANIFEST_DIGEST: ${{ steps.precompute.outputs.manifest_digest }}
-          POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}
           OBSERVABILITY_SERVICE_NAMESPACE: ${{ vars.OBSERVABILITY_SERVICE_NAMESPACE }}
           OBSERVABILITY_TRACE_PROJECT_ID: ${{ vars.OBSERVABILITY_TRACE_PROJECT_ID }}
           OBSERVABILITY_LOGGING_PROJECT_ID: ${{ vars.OBSERVABILITY_LOGGING_PROJECT_ID }}

@@ -686,6 +686,19 @@ class TestModalPrecompute:
             in executor_job
         )
 
+    def test_stage12_deploy_does_not_add_another_precompute(self):
+        reusable_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
+        ).read_text(encoding="utf-8")
+        stage12_job = reusable_workflow[
+            reusable_workflow.index(
+                "\n  deploy_stage12_v2:\n"
+            ) : reusable_workflow.index("\n  publish_stage12_v2_manifest:\n")
+        ]
+
+        assert "modal-precompute.sh" not in stage12_job
+        assert "POLICYENGINE_MANIFEST_DIGEST" not in stage12_job
+
     def test_deploy_workflow_threads_force_recompute_to_script(self):
         """The manual recompute flag should reach the precompute script."""
         deploy_workflow = (
@@ -728,13 +741,13 @@ class TestModalPrecompute:
         assert "GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}" in (
             deploy_step
         )
-        # The direct precompute, direct deploy, Stage 12 precompute,
-        # Stage 12 deploy, and record-marker steps each carry the bucket var.
+        # The precompute, deploy, and record-marker steps each carry the
+        # bucket var.
         assert (
             reusable_workflow.count(
                 "POLICYENGINE_ARTIFACT_BUCKET: ${{ vars.POLICYENGINE_ARTIFACT_BUCKET }}"
             )
-            == 5
+            == 3
         )
 
     def test_precompute_is_gated_by_the_shared_secret_sync(self):
