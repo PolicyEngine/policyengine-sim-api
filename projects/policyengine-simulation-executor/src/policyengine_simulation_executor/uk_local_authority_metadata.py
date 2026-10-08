@@ -277,11 +277,55 @@ def detect_uk_local_authority_boundary_version(
     return UKLocalAuthorityMetadata(boundary_version=matches[0].boundary_version)
 
 
+UK_AREA_REGION_TYPES = ("constituency", "local_authority")
+_MISSING_AREA_CODES = (
+    "UK dataset household table contains no la_code_oa column; a UK dataset "
+    "may omit area codes only when the policyengine.py bundle routes "
+    "constituency and local-authority regions to another dataset"
+)
+
+
+def uk_area_regions_routed() -> bool:
+    """Whether the bundle routes UK constituency and local-authority regions.
+
+    policyengine.py lists a region type in ``region_datasets`` when its
+    ``regional_dataset_defaults`` names a dataset for it. Only when both area
+    region types have one may the UK default, a national file, carry no area
+    codes: their runs and breakdowns then belong to that local-area dataset.
+    """
+
+    from policyengine.provenance.manifest import get_release_manifest
+
+    region_datasets = get_release_manifest("uk").region_datasets
+    return all(region_type in region_datasets for region_type in UK_AREA_REGION_TYPES)
+
+
+def uk_area_codes_required(region_code: str | None) -> bool:
+    """Whether a UK run's dataset must carry area codes.
+
+    A constituency or local-authority run always needs them. A national or
+    nation-level run may use a dataset without them only when the bundle
+    routes both area region types to another dataset.
+    """
+
+    region_type = (region_code or "").split("/", maxsplit=1)[0]
+    if region_type in UK_AREA_REGION_TYPES:
+        return True
+    return not uk_area_regions_routed()
+
+
 def detect_uk_local_authority_metadata(
     country: str,
     dataset: object,
+    *,
+    region_code: str | None = None,
 ) -> UKLocalAuthorityMetadata | None:
-    """Inspect a complete dataset before any requested regional scoping."""
+    """Inspect a complete dataset before any requested regional scoping.
+
+    A UK dataset without ``la_code_oa`` passes, as ``None``, only for a run
+    that does not need area codes (see ``uk_area_codes_required``); a missing
+    column is never read as "this dataset is national-only" on its own.
+    """
 
     if country != "uk":
         return None
@@ -294,10 +338,24 @@ def detect_uk_local_authority_metadata(
         raise ValueError("UK dataset contains no household table")
     household_frame = pd.DataFrame(household)
     if "la_code_oa" not in household_frame:
-        raise ValueError("UK dataset household table contains no la_code_oa column")
+        if uk_area_codes_required(region_code):
+            raise ValueError(_MISSING_AREA_CODES)
+        return None
     return detect_uk_local_authority_boundary_version(
         household_frame["la_code_oa"].tolist()
     )
+
+
+def uk_hdf_household_has_local_authority_codes(dataset_path: str) -> bool:
+    """Whether an installed UK HDF dataset's household table has ``la_code_oa``."""
+
+    with pd.HDFStore(dataset_path, mode="r") as store:
+        if "household" not in store:
+            raise ValueError("UK dataset contains no household table")
+        household = store.select("household", stop=0)
+    if not isinstance(household, pd.DataFrame):
+        raise TypeError("UK dataset household table is not a data frame")
+    return "la_code_oa" in household.columns
 
 
 def detect_uk_local_authority_metadata_from_hdf(

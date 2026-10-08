@@ -80,9 +80,18 @@ def _check_uk_local_authority_resources() -> None:
 def _check_uk_local_authority_dataset(dataset_path: str) -> None:
     from policyengine_simulation_executor.uk_local_authority_metadata import (
         detect_uk_local_authority_metadata_from_hdf,
+        uk_area_regions_routed,
+        uk_hdf_household_has_local_authority_codes,
     )
 
     _check_uk_local_authority_resources()
+    # A national default may carry no area codes only when the bundle routes
+    # constituency and local-authority regions to another dataset; anything
+    # else is checked exactly as before.
+    if uk_area_regions_routed() and not uk_hdf_household_has_local_authority_codes(
+        dataset_path
+    ):
+        return
     detect_uk_local_authority_metadata_from_hdf(dataset_path)
 
 

@@ -130,6 +130,7 @@ def calculate_simulation_frames(
         _country_module,
         _load_dataset,
         _normalise_policy,
+        _require_certified_uk_weight_matrix,
         _resolve_dataset_selection,
         _resolve_region,
         setup_gcp_credentials,
@@ -183,6 +184,10 @@ def calculate_simulation_frames(
         uk_local_authority_metadata = detect_uk_local_authority_metadata(
             country,
             dataset,
+            region_code=region.code,
+        )
+        _require_certified_uk_weight_matrix(
+            region.scoping_strategy, dataset, dataset_selection
         )
         policy_span = (
             runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.POLICY_NORMALIZATION))

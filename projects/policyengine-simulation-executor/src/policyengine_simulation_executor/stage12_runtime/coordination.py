@@ -446,6 +446,7 @@ def coordinate_report(
             report.baseline.geography.country,
             deserialize_uk_local_authority_metadata(baseline_payload),
             deserialize_uk_local_authority_metadata(reform_payload),
+            region_code=report.baseline.geography.region,
         )
         validate_output_frames(baseline_frames, output_plan)
         validate_output_frames(reform_frames, output_plan)

@@ -592,6 +592,40 @@ def test_country_metadata_alignment_rejects_missing_or_mismatched_uk_values() ->
     assert validate_uk_local_authority_metadata("us", None, None) is None
 
 
+@pytest.mark.parametrize(
+    ("region_code", "routed", "accepted"),
+    [
+        ("uk", True, True),
+        ("country/england", True, True),
+        ("uk", False, False),
+        ("constituency/E14001063", True, False),
+        ("local_authority/E06000063", True, False),
+        (None, True, False),
+    ],
+)
+def test_uk_artifacts_without_metadata_need_a_routed_national_request(
+    monkeypatch, region_code: str | None, routed: bool, accepted: bool
+) -> None:
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.uk_local_authority_metadata."
+        "uk_area_regions_routed",
+        lambda: routed,
+    )
+
+    if accepted:
+        assert (
+            validate_uk_local_authority_metadata(
+                "uk", None, None, region_code=region_code
+            )
+            is None
+        )
+    else:
+        with pytest.raises(ValueError, match="metadata is missing"):
+            validate_uk_local_authority_metadata(
+                "uk", None, None, region_code=region_code
+            )
+
+
 def test_single_worker_accepts_one_policy_and_persists_one_artifact() -> None:
     store = FakeStore()
     simulation = _planned_simulation(SimulationRole.BASELINE)

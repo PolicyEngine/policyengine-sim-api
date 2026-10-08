@@ -16,6 +16,8 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_boundary_version,
     detect_uk_local_authority_metadata_from_hdf,
     load_uk_local_authority_resources,
+    uk_area_regions_routed,
+    uk_hdf_household_has_local_authority_codes,
 )
 
 LAD22_ONLY_CODES = {
@@ -133,6 +135,80 @@ def test_dataset_detector_skips_non_uk_datasets() -> None:
     assert detect_uk_local_authority_metadata("us", object()) is None
 
 
+def _national_dataset() -> SimpleNamespace:
+    return SimpleNamespace(
+        data=SimpleNamespace(
+            entity_data={"household": pd.DataFrame({"region": ["LONDON", "WALES"]})}
+        )
+    )
+
+
+def _routes_area_regions(monkeypatch, routed: bool) -> None:
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.uk_local_authority_metadata."
+        "uk_area_regions_routed",
+        lambda: routed,
+    )
+
+
+@pytest.mark.parametrize("region_code", [None, "uk", "country/england"])
+def test_dataset_detector_requires_codes_unless_area_regions_are_routed(
+    monkeypatch, region_code: str | None
+) -> None:
+    _routes_area_regions(monkeypatch, False)
+
+    with pytest.raises(ValueError, match="contains no la_code_oa column"):
+        detect_uk_local_authority_metadata(
+            "uk", _national_dataset(), region_code=region_code
+        )
+
+
+def test_dataset_detector_accepts_a_national_run_when_area_regions_are_routed(
+    monkeypatch,
+) -> None:
+    _routes_area_regions(monkeypatch, True)
+
+    assert (
+        detect_uk_local_authority_metadata("uk", _national_dataset(), region_code="uk")
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "region_code", ["constituency/E14001063", "local_authority/E06000063"]
+)
+def test_dataset_detector_requires_codes_for_area_runs_even_when_routed(
+    monkeypatch, region_code: str
+) -> None:
+    _routes_area_regions(monkeypatch, True)
+
+    with pytest.raises(ValueError, match="contains no la_code_oa column"):
+        detect_uk_local_authority_metadata(
+            "uk", _national_dataset(), region_code=region_code
+        )
+
+
+@pytest.mark.parametrize(
+    ("region_types", "routed"),
+    [
+        (("national",), False),
+        (("national", "constituency"), False),
+        (("national", "constituency", "local_authority"), True),
+    ],
+)
+def test_area_regions_count_as_routed_only_when_both_have_a_dataset(
+    monkeypatch, region_types: tuple[str, ...], routed: bool
+) -> None:
+    monkeypatch.setattr(
+        "policyengine.provenance.manifest.get_release_manifest",
+        lambda country: SimpleNamespace(
+            region_datasets={region_type: object() for region_type in region_types}
+        ),
+    )
+
+    assert uk_area_regions_routed() is routed
+
+
 def test_installed_hdf_detector_reads_local_authority_codes(tmp_path) -> None:
     dataset_path = tmp_path / "uk-dataset.h5"
     pd.DataFrame(
@@ -149,7 +225,22 @@ def test_installed_hdf_detector_reads_local_authority_codes(tmp_path) -> None:
 
     metadata = detect_uk_local_authority_metadata_from_hdf(str(dataset_path))
 
+    assert uk_hdf_household_has_local_authority_codes(str(dataset_path))
     assert metadata.boundary_version is UKLocalAuthorityBoundaryVersion.LAD22
+
+
+def test_installed_hdf_detector_rejects_a_dataset_without_codes(tmp_path) -> None:
+    dataset_path = tmp_path / "uk-national-dataset.h5"
+    pd.DataFrame({"household_id": [1, 2], "region": ["LONDON", "WALES"]}).to_hdf(
+        dataset_path,
+        key="household",
+        format="table",
+        data_columns=True,
+    )
+
+    assert not uk_hdf_household_has_local_authority_codes(str(dataset_path))
+    with pytest.raises(ValueError, match="contains no la_code_oa column"):
+        detect_uk_local_authority_metadata_from_hdf(str(dataset_path))
 
 
 def test_detector_rejects_mixed_authority_configurations() -> None:

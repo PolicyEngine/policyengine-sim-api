@@ -172,3 +172,58 @@ def test_dataset_check_verifies_installed_content(tmp_path) -> None:
 
     with pytest.raises(RuntimeError, match="digest differs"):
         _check_dataset_access(str(dataset), "0" * 64)
+
+
+def _uk_household_hdf(tmp_path, columns: dict[str, list]) -> str:
+    import pandas as pd
+
+    dataset = tmp_path / "uk-dataset.h5"
+    pd.DataFrame({"household_id": [1, 2], **columns}).to_hdf(
+        dataset, key="household", format="table", data_columns=True
+    )
+    return str(dataset)
+
+
+@pytest.mark.parametrize("routed", [False, True])
+def test_uk_dataset_check_validates_codes_whenever_present(
+    monkeypatch, tmp_path, routed: bool
+) -> None:
+    from policyengine_simulation_executor.stage12_worker_validation import (
+        _check_uk_local_authority_dataset,
+    )
+
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.uk_local_authority_metadata."
+        "uk_area_regions_routed",
+        lambda: routed,
+    )
+
+    _check_uk_local_authority_dataset(
+        _uk_household_hdf(tmp_path, {"la_code_oa": ["E06000001", "E06000063"]})
+    )
+    with pytest.raises(ValueError, match="unsupported local-authority code"):
+        _check_uk_local_authority_dataset(
+            _uk_household_hdf(tmp_path, {"la_code_oa": ["E06000001", "E06000999"]})
+        )
+
+
+def test_uk_dataset_check_admits_missing_codes_only_when_area_regions_are_routed(
+    monkeypatch, tmp_path
+) -> None:
+    from policyengine_simulation_executor.stage12_worker_validation import (
+        _check_uk_local_authority_dataset,
+    )
+
+    national = _uk_household_hdf(tmp_path, {"region": ["LONDON", "WALES"]})
+    routed = {"value": False}
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.uk_local_authority_metadata."
+        "uk_area_regions_routed",
+        lambda: routed["value"],
+    )
+
+    with pytest.raises(ValueError, match="contains no la_code_oa column"):
+        _check_uk_local_authority_dataset(national)
+
+    routed["value"] = True
+    _check_uk_local_authority_dataset(national)
