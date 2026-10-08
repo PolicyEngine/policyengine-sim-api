@@ -30,9 +30,10 @@ jobs:
     name: Image smoke (staging)
     runs-on: ubuntu-latest
     if: github.event.pull_request.head.repo.full_name == github.repository
-    # Warm cache: ~2 min. After a relock the executor smoke pays the
-    # certified dataset download layer (~15-20 min).
-    timeout-minutes: 45
+    # Image validation plus real US regional preparation/calculation. Prepared
+    # years are never reused; the 30-minute Modal calculation timeout and image
+    # construction must both fit inside this job's hard timeout.
+    timeout-minutes: 60
 
     steps:
     - uses: actions/checkout@v6
