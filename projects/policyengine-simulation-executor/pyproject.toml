@@ -31,6 +31,8 @@ dependencies = [
     # Imported directly by the UK private-data credential verifier.
     "huggingface-hub>=1,<2",
     "pyarrow>=20,<24",
+    # Benchmark instrumentation imports this directly.
+    "psutil>=5.9",
 ]
 
 [tool.hatch.build.targets.wheel]
