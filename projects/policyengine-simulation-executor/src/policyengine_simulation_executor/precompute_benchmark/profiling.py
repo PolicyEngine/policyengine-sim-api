@@ -52,7 +52,7 @@ class Measurement(StrictModel):
     cpu_seconds: float = Field(ge=0)
     requested_cpu: float = Field(gt=0)
     requested_memory_mib: int = Field(gt=0)
-    sample_interval_seconds: Literal[0.1] = 0.1
+    sample_interval_seconds: float = Field(default=0.1, ge=0.1, le=0.1)
     sample_count: int = Field(gt=0)
     initial_rss_bytes: int = Field(gt=0)
     sampled_peak_rss_bytes: int = Field(gt=0)
@@ -156,7 +156,9 @@ class Profiler:
     def __enter__(self) -> Profiler:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         if any(self.output_dir.iterdir()):
-            raise FileExistsError(f"Measurement directory is not empty: {self.output_dir}")
+            raise FileExistsError(
+                f"Measurement directory is not empty: {self.output_dir}"
+            )
         self._process.start()
         if not self._ready.wait(15):
             self._process.terminate()
