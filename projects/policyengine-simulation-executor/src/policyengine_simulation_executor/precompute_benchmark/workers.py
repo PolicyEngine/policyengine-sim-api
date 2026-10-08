@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Callable
 
 from policyengine.provenance.dataset_materialization import MaterializedDataset
 from policyengine.tax_benefit_models.us.state_preparation import (
@@ -76,7 +77,11 @@ def partition_impl(
 
 
 def prepare_impl(
-    task: StateYearTask, code_revision: str, *, hold_seconds: float = 0
+    task: StateYearTask,
+    code_revision: str,
+    *,
+    hold_seconds: float = 0,
+    synchronize: Callable[[], None] | None = None,
 ) -> PreparedTaskResult:
     profiler = Profiler(
         ROOT / f"measurements-{task.partition.state_code.lower()}-{task.year}",
@@ -86,6 +91,9 @@ def prepare_impl(
         input_bytes=task.partition.bytes,
     )
     with profiler:
+        if synchronize is not None:
+            with profiler.phase("testing-only-worker-barrier"):
+                synchronize()
         if hold_seconds:
             # Testing-only controlled interval makes independent worker overlap
             # observable even when preparation of the tiny fixture takes <100 ms.

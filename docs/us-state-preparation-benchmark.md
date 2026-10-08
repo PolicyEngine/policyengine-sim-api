@@ -38,6 +38,10 @@ resources. It must demonstrate all of the following:
 - The real partition function writes all 51 extracts of a small synthetic
   source, preserving every entity relationship.
 - Two real Modal state/year preparation calls execute concurrently.
+  After starting their samplers, both publish readiness on the testing volume
+  and wait at most 120 seconds for one another. This isolates concurrency
+  verification from variation in fresh-container startup. The controlled wait
+  is a separately named phase, not reported as preparation time.
 - Measurement records identify actual package versions, code revision, source
   hash, phase durations, CPU time, input/output bytes, requested resources,
   sample count, and completion or failure.

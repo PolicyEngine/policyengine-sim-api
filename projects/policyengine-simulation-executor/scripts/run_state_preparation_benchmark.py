@@ -31,6 +31,17 @@ from policyengine_simulation_executor.precompute_benchmark.parallel import (
 from policyengine_simulation_executor.precompute_benchmark.profiling import Measurement
 
 
+def download_evidence(volume: modal.Volume, output_dir: Path) -> None:
+    """Preserve reports and active samples even when qualification fails."""
+    for entry in volume.iterdir("/", recursive=True):
+        if entry.path.endswith((".json", ".jsonl")):
+            destination = output_dir / entry.path.lstrip("/")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with destination.open("wb") as output:
+                for chunk in volume.read_file(entry.path):
+                    output.write(chunk)
+
+
 def run(
     analysis_repo: Path, fixture_source: Path, output_dir: Path, suffix: str
 ) -> None:
@@ -156,73 +167,92 @@ def run(
         from policyengine_simulation_executor.precompute_benchmark.workers import (
             prepare_impl,
         )
+        from policyengine_simulation_executor.precompute_benchmark.testing import (
+            synchronize_testing_workers,
+        )
 
         # Each worker sees committed partitions; workers write distinct files.
         volume.reload()
+        task = StateYearTask.model_validate_json(payload)
+
+        def publish_ready() -> None:
+            Path(
+                f"/benchmark/ready-{task.partition.state_code.lower()}-{suffix}"
+            ).touch()
+            volume.commit()
+
+        def both_ready() -> bool:
+            names = {
+                Path(entry.path).name for entry in volume.iterdir("/", recursive=False)
+            }
+            return {f"ready-ca-{suffix}", f"ready-ut-{suffix}"}.issubset(names)
+
+        def synchronize() -> None:
+            synchronize_testing_workers(publish_ready, both_ready, timeout_seconds=120)
+
         try:
             return prepare_impl(
-                StateYearTask.model_validate_json(payload),
+                task,
                 code_revision,
                 hold_seconds=5,
+                synchronize=synchronize,
             ).model_dump_json()
         finally:
             volume.commit()
 
-    with modal.enable_output(), app.run(environment_name="testing"):
-        good = Measurement.model_validate_json(allocation_probe.remote(False))
-        failure = Measurement.model_validate_json(allocation_probe.remote(True))
-        manifest = USPartitionManifest.model_validate_json(partition_source.remote())
-        tasks = tuple(
-            StateYearTask(partition=part, year=2025)
-            for part in manifest.partitions
-            if part.state_code in {"CA", "UT"}
-        )
-        result = prepare_state_years_parallel(
-            USStateYearPlan(tasks=tasks),
-            ModalStateYearWorker(prepare_state_year),
-            max_workers=2,
-        )
-        intervals = [
-            (
-                task.measurement.started_unix_seconds,
-                task.measurement.started_unix_seconds
-                + task.measurement.elapsed_seconds,
+    try:
+        with modal.enable_output(), app.run(environment_name="testing"):
+            good = Measurement.model_validate_json(allocation_probe.remote(False))
+            failure = Measurement.model_validate_json(allocation_probe.remote(True))
+            manifest = USPartitionManifest.model_validate_json(
+                partition_source.remote()
             )
-            for task in result.tasks
-        ]
-        overlap = min(end for _, end in intervals) - max(
-            start for start, _ in intervals
-        )
-        if overlap <= 0:
-            raise RuntimeError("The two real Modal worker intervals did not overlap")
-        (output_dir / "prepared-results.json").write_text(
-            result.model_dump_json(indent=2)
-        )
-        (output_dir / "partition-manifest.json").write_text(
-            manifest.model_dump_json(indent=2)
-        )
-        summary: dict[str, JsonValue] = {
-            "allocation_probe": good.model_dump(mode="json"),
-            "failure_probe": failure.model_dump(mode="json"),
-            "worker_overlap_seconds": overlap,
-            "container_memory_available": all(
-                item.measurement.container_memory_source is not None
-                for item in result.tasks
+            tasks = tuple(
+                StateYearTask(partition=part, year=2025)
+                for part in manifest.partitions
+                if part.state_code in {"CA", "UT"}
             )
-            and good.container_memory_source is not None,
-        }
-        (output_dir / "dry-run-summary.json").write_text(
-            TypeAdapter(dict[str, JsonValue]).dump_json(summary, indent=2).decode()
-        )
-    # Download raw samples and reports; the source and derivative HDF files stay
-    # on the temporary volume until explicitly cleaned up by the operator.
-    for entry in volume.iterdir("/", recursive=True):
-        if entry.path.endswith((".json", ".jsonl")):
-            destination = output_dir / entry.path.lstrip("/")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            with destination.open("wb") as output:
-                for chunk in volume.read_file(entry.path):
-                    output.write(chunk)
+            result = prepare_state_years_parallel(
+                USStateYearPlan(tasks=tasks),
+                ModalStateYearWorker(prepare_state_year),
+                max_workers=2,
+            )
+            intervals = [
+                (
+                    task.measurement.started_unix_seconds,
+                    task.measurement.started_unix_seconds
+                    + task.measurement.elapsed_seconds,
+                )
+                for task in result.tasks
+            ]
+            overlap = min(end for _, end in intervals) - max(
+                start for start, _ in intervals
+            )
+            (output_dir / "prepared-results.json").write_text(
+                result.model_dump_json(indent=2)
+            )
+            (output_dir / "partition-manifest.json").write_text(
+                manifest.model_dump_json(indent=2)
+            )
+            if overlap <= 0:
+                raise RuntimeError(
+                    "The two real Modal worker intervals did not overlap"
+                )
+            summary: dict[str, JsonValue] = {
+                "allocation_probe": good.model_dump(mode="json"),
+                "failure_probe": failure.model_dump(mode="json"),
+                "worker_overlap_seconds": overlap,
+                "container_memory_available": all(
+                    item.measurement.container_memory_source is not None
+                    for item in result.tasks
+                )
+                and good.container_memory_source is not None,
+            }
+            (output_dir / "dry-run-summary.json").write_text(
+                TypeAdapter(dict[str, JsonValue]).dump_json(summary, indent=2).decode()
+            )
+    finally:
+        download_evidence(volume, output_dir)
     print(f"Dry run completed. Evidence: {output_dir}; volume: {volume_name}")
 
 
