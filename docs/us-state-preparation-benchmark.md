@@ -92,3 +92,40 @@ and compare all 153 results with national preparation followed by filtering.
 Production cache selection, shared deployment prerequisites, and API v1 package
 updates must wait for the second checkpoint. The current prototype is not a
 production integration and must not replace the national-only precompute job.
+
+## Approved full-source pilot
+
+On 2026-10-08, the user approved the full ACS partition and six California/Utah
+preparations within an initial $20 spending budget. This approval does not
+include the remaining 147 preparations or national reference builds.
+
+```bash
+PYTHONPATH=/absolute/path/to/policyengine.py/src uv run python \
+  scripts/run_acs_preparation_pilot.py \
+  --analysis-repo /absolute/path/to/policyengine.py \
+  --output-dir /tmp/us-acs-pilot-evidence \
+  --budget-usd 20
+```
+
+This separate command resolves `populace_us_2024_acs_local` by name from the
+installed bundle, downloads and verifies it once, and partitions it in one
+eight-core/128-GiB function. It prepares CA/UT for 2025–2027 using eight-core/
+64-GiB functions with at most two concurrent calls. Each function has a one-hour
+timeout, matching requested and hard-limited memory, an explicit soft CPU limit,
+single-use containers, and no configured retries. It does not use the synthetic
+test's readiness synchronization or artificial holds.
+
+Before partitioning, the command reserves the requested-resource estimate for
+all seven full timeouts plus a five-minute startup allowance per call. It checks
+the estimate again against the budget before launching any preparation. This is
+not a provider-enforced billing ceiling; replacement containers, actual CPU
+usage, image builds, storage, and startup variation can affect billing. Rates
+are tracked in `precompute_benchmark.pilot` and were checked against
+[Modal pricing](https://modal.com/pricing) on 2026-10-08.
+
+The command creates only a uniquely named testing application and volume, with
+the same six-character suffix on its functions. It adds no secrets, runtime
+configuration variables, public endpoints, schedules, or production wiring.
+The application ends after the pilot. JSON/JSONL evidence is downloaded even on
+failure; the volume retains the verified source and derivatives for later
+approved work to avoid another download/partition.

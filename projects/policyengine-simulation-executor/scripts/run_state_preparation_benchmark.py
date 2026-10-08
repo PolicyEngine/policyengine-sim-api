@@ -28,18 +28,11 @@ from policyengine_simulation_executor.precompute_benchmark.parallel import (
     USStateYearPlan,
     prepare_state_years_parallel,
 )
+from policyengine_simulation_executor.precompute_benchmark.modal_helpers import (
+    build_benchmark_image,
+    download_evidence,
+)
 from policyengine_simulation_executor.precompute_benchmark.profiling import Measurement
-
-
-def download_evidence(volume: modal.Volume, output_dir: Path) -> None:
-    """Preserve reports and active samples even when qualification fails."""
-    for entry in volume.iterdir("/", recursive=True):
-        if entry.path.endswith((".json", ".jsonl")):
-            destination = output_dir / entry.path.lstrip("/")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            with destination.open("wb") as output:
-                for chunk in volume.read_file(entry.path):
-                    output.write(chunk)
 
 
 def run(
@@ -62,29 +55,7 @@ def run(
         sha256=sha256_file(fixture_source),
         path=Path("/benchmark/synthetic-source.h5"),
     )
-    image = (
-        modal.Image.debian_slim(python_version="3.13")
-        .uv_sync(
-            str(project),
-            frozen=True,
-            extra_options="--only-group modal-simulation-image",
-        )
-        .add_local_dir(
-            analysis_repo / "src/policyengine",
-            "/opt/prototype/policyengine",
-            copy=True,
-            ignore=["**/__pycache__/**"],
-        )
-        # A namespace parent avoids importing request-serving modules into this
-        # benchmark-only image. Only these independently importable helpers ship.
-        .add_local_dir(
-            project / "src/policyengine_simulation_executor/precompute_benchmark",
-            "/opt/prototype/policyengine_simulation_executor/precompute_benchmark",
-            copy=True,
-            ignore=["**/__pycache__/**"],
-        )
-        .env({"PYTHONPATH": "/opt/prototype", "POLICYENGINE_SKIP_COUNTRY_IMPORTS": "1"})
-    )
+    image = build_benchmark_image(analysis_repo, project)
     app = modal.App(f"policyengine-state-preparation-{suffix}")
     volume_name = f"policyengine-state-preparation-data-{suffix}"
     # Explicit create rejects accidental reuse of evidence or resource names.
