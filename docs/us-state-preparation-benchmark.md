@@ -99,6 +99,11 @@ On 2026-10-08, the user approved the full ACS partition and six California/Utah
 preparations within an initial $20 spending budget. This approval does not
 include the remaining 147 preparations or national reference builds.
 
+The attempted pilot passed partitioning but stopped on missing WIC inputs in
+both 2025 preparations. See [the partial measurements and diagnosis](us-acs-preparation-pilot-results.md).
+The four 2026–2027 jobs were not submitted; no successful preparation forecast
+is available yet.
+
 ```bash
 PYTHONPATH=/absolute/path/to/policyengine.py/src uv run python \
   scripts/run_acs_preparation_pilot.py \

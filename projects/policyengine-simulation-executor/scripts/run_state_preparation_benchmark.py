@@ -30,7 +30,8 @@ from policyengine_simulation_executor.precompute_benchmark.parallel import (
 )
 from policyengine_simulation_executor.precompute_benchmark.modal_helpers import (
     build_benchmark_image,
-    download_evidence,
+    download_evidence as download_evidence,
+    preserve_evidence,
 )
 from policyengine_simulation_executor.precompute_benchmark.profiling import Measurement
 
@@ -171,7 +172,7 @@ def run(
         finally:
             volume.commit()
 
-    try:
+    with preserve_evidence(volume, output_dir):
         with modal.enable_output(), app.run(environment_name="testing"):
             good = Measurement.model_validate_json(allocation_probe.remote(False))
             failure = Measurement.model_validate_json(allocation_probe.remote(True))
@@ -222,8 +223,6 @@ def run(
             (output_dir / "dry-run-summary.json").write_text(
                 TypeAdapter(dict[str, JsonValue]).dump_json(summary, indent=2).decode()
             )
-    finally:
-        download_evidence(volume, output_dir)
     print(f"Dry run completed. Evidence: {output_dir}; volume: {volume_name}")
 
 

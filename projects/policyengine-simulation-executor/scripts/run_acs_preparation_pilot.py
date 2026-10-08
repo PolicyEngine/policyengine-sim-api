@@ -21,7 +21,7 @@ from pydantic import JsonValue, TypeAdapter
 
 from policyengine_simulation_executor.precompute_benchmark.modal_helpers import (
     build_benchmark_image,
-    download_evidence,
+    preserve_evidence,
 )
 from policyengine_simulation_executor.precompute_benchmark.parallel import (
     ModalStateYearWorker,
@@ -135,7 +135,7 @@ def run(
         finally:
             volume.commit()
 
-    try:
+    with preserve_evidence(volume, output_dir):
         with modal.enable_output(), app.run(environment_name="testing"):
             resources["app_id"] = app.app_id
             save_resources()
@@ -178,8 +178,6 @@ def run(
             (output_dir / "pilot-summary.json").write_text(
                 TypeAdapter(dict[str, JsonValue]).dump_json(summary, indent=2).decode()
             )
-    finally:
-        download_evidence(volume, output_dir)
     print(f"Pilot completed. Evidence: {output_dir}; retained volume: {volume_name}")
 
 
