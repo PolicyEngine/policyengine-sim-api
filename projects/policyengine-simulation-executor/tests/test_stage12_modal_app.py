@@ -144,20 +144,10 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
             "/root/policyengine_simulation_executor/static_runtime_files"
         )
         assert static_runtime_files[3] == {"copy": True}
-
-    us_fetches = [
-        call
-        for call in module.us_worker_image.calls
-        if call[0] == "run_function" and call[1] == "fetch_artifacts"
-    ]
-    assert len(us_fetches) == 1
-    assert us_fetches[0][2]["secrets"] == [module.gcp_secret]
-    for image in (module.uk_worker_image, module.coordinator_image):
-        assert not [
-            call
+        assert not any(
+            call[0] == "run_function" and call[1] == "fetch_artifacts"
             for call in image.calls
-            if call[0] == "run_function" and call[1] == "fetch_artifacts"
-        ]
+        )
 
 
 def test_v2_image_retains_required_runtime_dependencies() -> None:
