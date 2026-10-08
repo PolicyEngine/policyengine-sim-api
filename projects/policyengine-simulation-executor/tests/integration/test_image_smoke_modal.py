@@ -28,9 +28,11 @@ def test_executor_image_smoke():
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
-        timeout=2400,
+        timeout=3600,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+    assert "US regional dataset preparation and calculation OK" in result.stdout
     assert "executor image smoke OK" in result.stdout
 
 
@@ -50,6 +52,7 @@ def test_stage12_static_runtime_file_image_smoke():
         capture_output=True,
         text=True,
         timeout=2400,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Stage 12 static runtime file smoke OK" in result.stdout
