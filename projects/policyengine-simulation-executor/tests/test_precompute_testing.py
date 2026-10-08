@@ -16,6 +16,7 @@ def test_waits_until_both_workers_publish_ready():
     synchronize_testing_workers(publish, ready, clock=lambda: 0, sleep=sleep)
     publish.assert_called_once_with()
     assert sleep.call_count == 2
+    sleep.assert_called_with(10)
 
 
 def test_absent_peer_fails_instead_of_claiming_concurrency():

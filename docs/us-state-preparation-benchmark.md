@@ -41,7 +41,8 @@ resources. It must demonstrate all of the following:
   After starting their samplers, both publish readiness on the testing volume
   and wait at most 120 seconds for one another. This isolates concurrency
   verification from variation in fresh-container startup. The controlled wait
-  is a separately named phase, not reported as preparation time.
+  is a separately named phase, not reported as preparation time. Readiness reads
+  occur at most once per ten seconds per worker to avoid Modal API rate limits.
 - Measurement records identify actual package versions, code revision, source
   hash, phase durations, CPU time, input/output bytes, requested resources,
   sample count, and completion or failure.

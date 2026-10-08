@@ -9,6 +9,7 @@ def synchronize_testing_workers(
     both_ready: Callable[[], bool],
     *,
     timeout_seconds: float = 60,
+    poll_interval_seconds: float = 10,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
@@ -22,4 +23,4 @@ def synchronize_testing_workers(
     while not both_ready():
         if clock() >= deadline:
             raise TimeoutError("Second testing worker did not become ready")
-        sleep(0.2)
+        sleep(poll_interval_seconds)
