@@ -29,6 +29,10 @@ at the Modal boundary.
 
 ## Mandatory first checkpoint
 
+The first checkpoint passed on 2026-10-08; see
+[the measurements and limitations](us-state-preparation-dry-run-results.md).
+The full-source benchmark still requires explicit resource and budget approval.
+
 Only run the small synthetic benchmark before agreeing a full-run budget and
 resources. It must demonstrate all of the following:
 
