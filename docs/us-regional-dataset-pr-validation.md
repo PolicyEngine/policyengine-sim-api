@@ -41,6 +41,16 @@ the local Docker integration command that excludes `beta_only` calculations.
 
 With the affected `.py` 6.2.2 release, real preparation is expected to fail on
 missing ACS WIC participation. Do not catch, skip, or mark that failure as
-expected in CI. First publish the narrowly scoped temporary compatibility fix
-in PolicyEngine/policyengine.py#566, then update the executor's two `.py` pins
-and frozen lockfile to that actual published release and rerun the check.
+expected in CI. The executor's two `.py` pins now target 6.2.5, including the
+narrowly scoped temporary compatibility fix in PolicyEngine/policyengine.py#566.
+
+## Pending publication and lockfile refresh
+
+Publish `.py` 6.2.5 before regenerating the executor's `uv.lock` with `uv lock`.
+Commit that generated lockfile, run `uv lock --check`, and rerun the real ACS
+validation before merging or deploying this change. Do not invent package
+URLs, hashes, or release metadata before publication.
+
+Until that refresh, the checked-in lockfile still resolves 6.2.2. Frozen
+installs therefore still use 6.2.2, not the new target; this intermediate state
+is intentionally incomplete and must not be merged or deployed.
