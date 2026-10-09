@@ -686,6 +686,19 @@ class TestModalPrecompute:
             in executor_job
         )
 
+    def test_stage12_deploy_does_not_add_another_precompute(self):
+        reusable_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
+        ).read_text(encoding="utf-8")
+        stage12_job = reusable_workflow[
+            reusable_workflow.index(
+                "\n  deploy_stage12_v2:\n"
+            ) : reusable_workflow.index("\n  publish_stage12_v2_manifest:\n")
+        ]
+
+        assert "modal-precompute.sh" not in stage12_job
+        assert "POLICYENGINE_MANIFEST_DIGEST" not in stage12_job
+
     def test_deploy_workflow_threads_force_recompute_to_script(self):
         """The manual recompute flag should reach the precompute script."""
         deploy_workflow = (

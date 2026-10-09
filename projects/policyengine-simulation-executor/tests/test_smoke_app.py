@@ -2,6 +2,8 @@
 
 import importlib
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
 
 import pytest
 from policyengine_simulation_contract.uk_geography import (
@@ -106,11 +108,68 @@ def test_uk_dataset_smoke_validates_installed_codes_against_packaged_resources(
     monkeypatch.setattr(
         smoke_module,
         "detect_uk_local_authority_metadata_from_hdf",
-        lambda path: observed.append(path)
-        or UKLocalAuthorityMetadata(
-            boundary_version=UKLocalAuthorityBoundaryVersion.LAD22
+        lambda path: (
+            observed.append(path)
+            or UKLocalAuthorityMetadata(
+                boundary_version=UKLocalAuthorityBoundaryVersion.LAD22
+            )
         ),
     )
 
     assert smoke_module._validate_installed_uk_local_authority_dataset() == "lad22"
     assert observed == ["/installed/enhanced_frs_2024_25.h5"]
+
+
+@dataclass
+class StubRemote:
+    callback: Callable[[], dict[str, str | int]]
+
+    def remote(self) -> dict[str, str | int]:
+        return self.callback()
+
+
+def test_image_smoke_requires_real_regional_check_before_success(
+    monkeypatch, smoke_module, capsys
+) -> None:
+    calls: list[str] = []
+
+    def imported() -> dict[str, str | int]:
+        calls.append("imports")
+        return {}
+
+    def calculated() -> dict[str, str | int]:
+        calls.append("regional_calculation")
+        return {}
+
+    monkeypatch.setattr(smoke_module, "smoke_import_executor", StubRemote(imported))
+    monkeypatch.setattr(
+        smoke_module, "smoke_us_regional_dataset", StubRemote(calculated)
+    )
+    smoke_module.main()
+
+    assert calls == ["imports", "regional_calculation"]
+    assert (
+        "US regional dataset preparation and calculation OK" in capsys.readouterr().out
+    )
+
+
+def test_real_regional_failure_cannot_be_reported_as_image_smoke_success(
+    monkeypatch, smoke_module, capsys
+) -> None:
+    def failed() -> dict[str, str | int]:
+        raise ValueError("stored WIC participation has missing values")
+
+    monkeypatch.setattr(smoke_module, "smoke_import_executor", StubRemote(dict))
+    monkeypatch.setattr(smoke_module, "smoke_us_regional_dataset", StubRemote(failed))
+
+    with pytest.raises(ValueError, match="missing values"):
+        smoke_module.main()
+    assert "executor image smoke OK" not in capsys.readouterr().out
+
+
+def test_regional_check_has_bounded_production_sized_resources(smoke_module) -> None:
+    options = dict(smoke_module.app.function_calls)["smoke_us_regional_dataset"]
+    assert options["memory"] == 65536
+    assert options["cpu"] == 8.0
+    assert options["timeout"] == 1800
+    assert options["max_containers"] == 1

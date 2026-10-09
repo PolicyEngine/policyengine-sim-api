@@ -31,6 +31,10 @@ class CountryBundleMetadata(TypedDict):
     default_dataset_uri: str
     dataset_uris: dict[str, str]
     dataset_repo_types: dict[str, str]
+    dataset_data_versions: dict[str, str]
+    dataset_revisions: dict[str, str]
+    dataset_sha256s: dict[str, str]
+    region_dataset_identities: dict[str, str]
 
 
 class BundleManifestMetadata(TypedDict):
@@ -97,6 +101,10 @@ def _country_bundle_metadata(country: str) -> CountryBundleMetadata:
         "default_dataset_uri": bundle.default_dataset_uri,
         "dataset_uris": dict(bundle.dataset_uris),
         "dataset_repo_types": dict(bundle.dataset_repo_types),
+        "dataset_data_versions": dict(bundle.dataset_data_versions),
+        "dataset_revisions": dict(bundle.dataset_revisions),
+        "dataset_sha256s": dict(bundle.dataset_sha256s),
+        "region_dataset_identities": dict(bundle.region_dataset_identities),
     }
 
 

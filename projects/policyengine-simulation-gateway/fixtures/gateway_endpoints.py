@@ -32,6 +32,26 @@ TEST_APP_RELEASE_BUNDLE = {
             "populace_us_2024_acs_local": "hf://policyengine/populace-us/populace_us_2024_acs_local.h5@us-local-revision",
             "calibration_diagnostics": "hf://policyengine/populace-us/calibration_diagnostics.json@us-artifact-revision",
         },
+        "dataset_data_versions": {
+            "populace_us_2024": "populace-us-2024-test",
+            "populace_us_2024_acs_local": "us-local-revision",
+            "calibration_diagnostics": "us-artifact-revision",
+        },
+        "dataset_revisions": {
+            "populace_us_2024": "us-artifact-revision",
+            "populace_us_2024_acs_local": "us-local-revision",
+            "calibration_diagnostics": "us-artifact-revision",
+        },
+        "dataset_sha256s": {
+            "populace_us_2024": "a" * 64,
+            "populace_us_2024_acs_local": "b" * 64,
+            "calibration_diagnostics": "c" * 64,
+        },
+        "region_dataset_identities": {
+            "national": "populace_us_2024",
+            "state": "populace_us_2024_acs_local",
+            "congressional_district": "populace_us_2024_acs_local",
+        },
     },
     "uk": {
         "model_version": "2.66.0",
@@ -44,6 +64,19 @@ TEST_APP_RELEASE_BUNDLE = {
             "populace_uk_2023": "hf://policyengine/populace-uk-private/populace_uk_2023.h5@uk-artifact-revision",
             "local_authority_weights": "hf://policyengine/policyengine-uk-data-private/local_authority_weights.h5@uk-artifact-revision",
         },
+        "dataset_data_versions": {
+            "populace_uk_2023": "populace-uk-2023-test",
+            "local_authority_weights": "uk-artifact-revision",
+        },
+        "dataset_revisions": {
+            "populace_uk_2023": "uk-artifact-revision",
+            "local_authority_weights": "uk-artifact-revision",
+        },
+        "dataset_sha256s": {
+            "populace_uk_2023": "d" * 64,
+            "local_authority_weights": "e" * 64,
+        },
+        "region_dataset_identities": {"national": "populace_uk_2023"},
     },
 }
 

@@ -56,6 +56,26 @@ def test_absent_data_resolves_exact_bundle_default() -> None:
     assert result.report.baseline.bundle.dataset.artifact_revision.endswith("-revision")
 
 
+@pytest.mark.parametrize(
+    "region",
+    ["DC", "state/DC", "congressional_district/DC-01"],
+)
+def test_regional_request_resolves_declared_acs_local_dataset(region: str) -> None:
+    payload = {**eligible_payload(), "region": region}
+
+    result = adapt_annual_comparison(
+        payload,
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert result.report is not None
+    baseline = result.report.baseline
+    assert baseline.bundle.dataset.identity == "populace_us_2024_acs_local"
+    assert baseline.population.artifact.uri == baseline.bundle.dataset.uri
+    assert baseline.population.artifact.content_sha256 == "c" * 64
+
+
 def test_absent_package_versions_resolve_from_the_selected_bundle() -> None:
     payload = eligible_payload()
     payload.pop("version")

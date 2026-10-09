@@ -472,7 +472,7 @@ class TestSubmitSimulationEndpoint:
         )
         assert "data" not in mock_modal["func"].last_payload
 
-    def test__given_bundled_us_overlay__then_rejects_data_key(
+    def test__given_certified_us_regional_dataset__then_rejects_data_key(
         self, mock_modal, client: TestClient
     ):
         response = client.post(
@@ -574,8 +574,9 @@ class TestSubmitSimulationEndpoint:
         assert response.json()["detail"][0]["type"] == "extra_forbidden"
         assert mock_modal["func"].last_payload is None
 
-    def test__given_us_state_region_without_data__then_keeps_contract_and_uses_default_dataset(
-        self, mock_modal, client: TestClient
+    @pytest.mark.parametrize("region", ["UT", "state/UT"])
+    def test__given_us_state_region__then_uses_regional_dataset_without_request_override(
+        self, mock_modal, client: TestClient, region: str
     ):
         mock_modal["dicts"]["simulation-api-us-versions"] = {
             "latest": "1.500.0",
@@ -587,7 +588,53 @@ class TestSubmitSimulationEndpoint:
             json={
                 "country": "us",
                 "scope": "macro",
-                "region": "state/UT",
+                "region": region,
+                "reform": {},
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["policyengine_bundle"] == expected_bundle(
+            "us",
+            "1.500.0",
+            dataset="populace_us_2024_acs_local",
+            data_version="us-local-revision",
+        )
+        assert "data" not in mock_modal["func"].last_payload
+        assert "data_version" not in mock_modal["func"].last_payload
+
+    def test__given_us_congressional_district__then_uses_regional_dataset(
+        self, mock_modal, client: TestClient
+    ):
+        response = client.post(
+            "/simulate/economy/comparison",
+            json={
+                "country": "us",
+                "scope": "macro",
+                "region": "congressional_district/DC-01",
+                "reform": {},
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["policyengine_bundle"] == expected_bundle(
+            "us",
+            "1.500.0",
+            dataset="populace_us_2024_acs_local",
+            data_version="us-local-revision",
+        )
+        assert "data" not in mock_modal["func"].last_payload
+        assert "data_version" not in mock_modal["func"].last_payload
+
+    def test__given_us_region_group__then_keeps_national_dataset(
+        self, mock_modal, client: TestClient
+    ):
+        response = client.post(
+            "/simulate/economy/comparison",
+            json={
+                "country": "us",
+                "scope": "macro",
+                "region_group": ["state/CA", "state/NY"],
                 "reform": {},
             },
         )
@@ -1270,6 +1317,31 @@ class TestBudgetWindowBatchEndpoints:
 
         assert response.status_code == 200
         assert "data" not in mock_modal["func"].last_payload
+
+    def test__given_state_budget_window__then_reports_regional_dataset(
+        self, mock_modal, client: TestClient
+    ):
+        response = client.post(
+            "/simulate/economy/budget-window",
+            json={
+                "country": "us",
+                "region": "state/DC",
+                "scope": "macro",
+                "reform": {},
+                "start_year": "2026",
+                "window_size": 2,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["policyengine_bundle"] == expected_bundle(
+            "us",
+            "1.500.0",
+            dataset="populace_us_2024_acs_local",
+            data_version="us-local-revision",
+        )
+        assert "data" not in mock_modal["func"].last_payload
+        assert "data_version" not in mock_modal["func"].last_payload
 
     def test__given_budget_window_submission__then_returns_parent_batch_job_id(
         self, mock_modal, client: TestClient

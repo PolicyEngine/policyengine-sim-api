@@ -36,12 +36,13 @@ class Stage12CountryBundle(StrictBundleModel):
     default_dataset: NonEmptyText
     default_dataset_uri: NonEmptyText
     datasets: tuple[Stage12Dataset, ...]
+    region_dataset_identities: dict[NonEmptyText, NonEmptyText]
 
 
 class Stage12BundleManifest(StrictBundleModel):
     """Stage 12's normalized subset of a PolicyEngine.py bundle."""
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     source_bundle_schema_version: Literal[2] = 2
     policyengine_version: NonEmptyText
     policyengine_requirement: NonEmptyText
@@ -54,3 +55,43 @@ class Stage12BundleManifest(StrictBundleModel):
 class ResolvedStage12Bundle(StrictBundleModel):
     bundle: Stage12BundleManifest
     bundle_manifest_sha256: Sha256Digest
+
+
+def select_stage12_dataset(
+    country: Stage12CountryBundle,
+    region: str,
+) -> Stage12Dataset:
+    """Select the certified dataset declared for a concrete region type."""
+
+    normalized_region = region.strip().lower()
+    region_type = "national"
+    if normalized_region != country.country:
+        if (
+            country.country == "us"
+            and len(normalized_region) == 2
+            and normalized_region.isalpha()
+        ):
+            region_type = "state"
+        else:
+            requested_region_type, separator, _ = normalized_region.partition("/")
+            if separator:
+                region_type = requested_region_type
+    dataset_identity = country.region_dataset_identities.get(region_type)
+    if dataset_identity is None:
+        raise ValueError(
+            f"No certified dataset is declared for region type {region_type!r}."
+        )
+    selected = next(
+        (
+            dataset
+            for dataset in country.datasets
+            if dataset.identity == dataset_identity
+        ),
+        None,
+    )
+    if selected is None:
+        raise ValueError(
+            f"Certified region type {region_type!r} names absent dataset "
+            f"{dataset_identity!r}."
+        )
+    return selected

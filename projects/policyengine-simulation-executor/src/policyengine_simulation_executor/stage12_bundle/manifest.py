@@ -58,7 +58,6 @@ def _normalize_stage12_bundle(
     )
     countries = require_mapping(bundle.get("countries"), "countries")
     data_releases = require_mapping(bundle.get("data_releases"), "data_releases")
-
     normalized_countries = tuple(
         normalize_country_bundle(
             country=country,

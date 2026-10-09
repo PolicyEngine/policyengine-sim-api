@@ -11,6 +11,10 @@ Before importing worker code, the smoke uses PolicyEngine's bundle status
 check. That compares all selected package versions with the bundle manifest,
 reads the dataset-install receipt, and hashes both installed country datasets.
 
+A separate 64-GiB function prepares the certified US regional dataset from
+scratch and calculates Utah. This is real data/model coverage; package imports
+and national-dataset hashes alone cannot establish ACS compatibility.
+
 Runs the imports the deployed workers perform lazily at request time —
 ``run_simulation_impl``, the budget-window batch, and both shared libraries.
 
@@ -21,15 +25,14 @@ Usage:
 from pathlib import Path
 
 import modal
-from src.modal.app import build_runtime_simulation_image
-from src.modal.static_runtime_files import add_static_runtime_files
-
 from policyengine_simulation_executor.release_bundle import (
     resolve_local_bundle_dataset_path,
 )
 from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata_from_hdf,
 )
+from src.modal.app import build_runtime_simulation_image
+from src.modal.static_runtime_files import add_static_runtime_files
 
 app = modal.App("policyengine-simulation-executor-smoke")
 
@@ -165,4 +168,16 @@ def smoke_import_executor() -> dict:
 def main():
     report = smoke_import_executor.remote()
     print(report)
+    regional_report = smoke_us_regional_dataset.remote()
+    print(regional_report)
+    print("US regional dataset preparation and calculation OK")
     print("executor image smoke OK")
+
+
+@app.function(image=smoke_image, timeout=1800, cpu=8.0, memory=65536, max_containers=1)
+def smoke_us_regional_dataset() -> dict[str, str | int]:
+    """Ephemeral PR check; do not publish outputs or change deployed workers."""
+    from src.modal.us_regional_dataset_check import check_certified_us_regional_dataset
+
+    report = check_certified_us_regional_dataset()
+    return report.model_dump()

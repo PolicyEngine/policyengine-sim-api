@@ -261,7 +261,7 @@ def _set_modal_call_attributes(runtime) -> None:
 @app.function(
     image=simulation_image,
     cpu=8.0,
-    memory=32768,
+    memory=65536,
     timeout=3600,
     retries=0,
     max_containers=100,

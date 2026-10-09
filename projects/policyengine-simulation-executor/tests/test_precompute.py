@@ -490,6 +490,11 @@ class TestPlanArtifactsImpl:
                 data_version="1.2.3",
                 data_artifact_revision="rev-abc",
                 default_dataset="populace_cps",
+                region_dataset_identities={
+                    "national": "populace_cps",
+                    "state": "populace_us_2024_acs_local",
+                    "congressional_district": "populace_us_2024_acs_local",
+                },
             ),
         )
         return SimpleNamespace(existing=existing)
@@ -536,6 +541,20 @@ class TestPlanArtifactsImpl:
         work = precompute.select_work(plan, force=False)
         assert [entry.year for entry in work.datasets] == [2027, 2025]
         assert len(work.baselines) == 5
+
+    @pytest.mark.parametrize("force", [False, True])
+    def test_regional_datasets_are_not_prebuilt(self, planning_stubs, force):
+        plan = precompute.plan_artifacts_impl("bucket-x")
+        work = precompute.select_work(plan, force=force)
+
+        assert len(plan.datasets) == 3
+        assert [entry.year for entry in work.datasets] == (
+            [2026, 2027, 2025] if force else [2027, 2025]
+        )
+        assert all(
+            "acs_local" not in artifact.path
+            for artifact in precompute.build_manifest(plan).artifacts
+        )
 
     def test_empty_partition_fails_loudly(self, planning_stubs, monkeypatch):
         from policyengine_simulation_executor import national_partition

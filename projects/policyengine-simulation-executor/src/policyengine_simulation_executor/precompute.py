@@ -56,6 +56,8 @@ from policyengine_simulation_executor.precompute_models import (
 
 logger = logging.getLogger(__name__)
 
+# Precompute only the national default dataset and its baseline partitions.
+# Regional datasets (including ACS-local) are prepared by the request workers.
 PRECOMPUTE_COUNTRY = "us"
 # The user-facing priority order (2026 first); with parallel waves it only
 # orders spawn submission, but keep it intentional.

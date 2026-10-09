@@ -16,6 +16,7 @@ from policyengine_simulation_executor.stage12_bundle import (
     normalize_stage12_bundle,
     resolve_stage12_bundle,
 )
+from policyengine_simulation_contract.stage12_bundle import select_stage12_dataset
 
 
 def _bundle() -> dict:
@@ -48,6 +49,36 @@ def test_complete_packaged_bundle_selects_every_worker_dependency_and_dataset() 
     assert len(json.dumps(bundle.model_dump(mode="json"), sort_keys=True)) > 100
 
 
+def test_normalized_bundle_selects_regional_dataset_from_packaged_metadata() -> None:
+    raw = _bundle()
+    local_identity = "populace_us_2024_acs_local"
+    raw["data_releases"]["us"]["datasets"][local_identity] = {
+        "path": f"{local_identity}.h5",
+        "repo_id": "policyengine/populace-us",
+        "repo_type": "dataset",
+        "revision": "acs-local-release",
+        "sha256": "b" * 64,
+    }
+    raw["data_releases"]["us"]["region_datasets"].update(
+        {
+            "state": {"path_template": f"{local_identity}.h5"},
+            "congressional_district": {"path_template": f"{local_identity}.h5"},
+        }
+    )
+
+    bundle = normalize_stage12_bundle(raw)
+    us = next(country for country in bundle.countries if country.country == "us")
+
+    assert bundle.schema_version == 2
+    assert select_stage12_dataset(us, "DC").identity == local_identity
+    assert select_stage12_dataset(us, "state/DC").identity == local_identity
+    assert (
+        select_stage12_dataset(us, "congressional_district/DC-01").identity
+        == local_identity
+    )
+    assert select_stage12_dataset(us, "us").identity == us.default_dataset
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -70,6 +101,9 @@ def test_complete_packaged_bundle_selects_every_worker_dependency_and_dataset() 
         lambda bundle: bundle["data_releases"]["us"]["certified_data_artifact"].update(
             {"sha256": "0" * 64}
         ),
+        lambda bundle: bundle["data_releases"]["us"]["region_datasets"].update(
+            {"state": {"path_template": "absent.h5"}}
+        ),
     ],
     ids=[
         "missing-data-releases",
@@ -79,6 +113,7 @@ def test_complete_packaged_bundle_selects_every_worker_dependency_and_dataset() 
         "dataset-uri-revision-mismatch",
         "malformed-dataset-digest",
         "certified-artifact-mismatch",
+        "absent-regional-dataset",
     ],
 )
 def test_missing_or_internally_inconsistent_bundle_values_fail_closed(mutate) -> None:

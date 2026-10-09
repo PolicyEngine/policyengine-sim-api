@@ -11,6 +11,7 @@ from policyengine_simulation_contract.stage12_bundle import (
     Stage12BundleManifest,
     Stage12CountryBundle,
     Stage12Dataset,
+    select_stage12_dataset,
 )
 from policyengine_simulation_contract.stage12_manifest import (
     ACTIVE_MANIFEST_KEY,
@@ -41,13 +42,37 @@ class FakeStore:
         self.values[key] = value
 
 
+def _dataset_fixture(identity: str, sha256: str) -> Stage12Dataset:
+    """Build synthetic provenance without reading deployed dataset metadata."""
+    revision = f"{identity}-revision"
+    return Stage12Dataset(
+        identity=identity,
+        uri=f"hf://policyengine/data/{identity}.h5@{revision}",
+        artifact_revision=revision,
+        sha256=sha256,
+        repo_type="dataset",
+    )
+
+
 def _resolved_bundle(version: str = "5.2.0") -> ResolvedStage12Bundle:
-    countries = []
+    countries: list[Stage12CountryBundle] = []
     for country, package, package_version, dataset in (
         ("us", "policyengine-us", "1.764.6", "populace_us_2024"),
         ("uk", "policyengine-uk", "2.90.2", "populace_uk_2023"),
     ):
-        revision = f"{dataset}-revision"
+        national_dataset = _dataset_fixture(dataset, "a" * 64)
+        datasets = [national_dataset]
+        region_dataset_identities = {"national": dataset}
+        if country == "us":
+            regional_dataset = _dataset_fixture("populace_us_2024_acs_local", "c" * 64)
+            datasets.append(regional_dataset)
+            region_dataset_identities.update(
+                {
+                    "state": regional_dataset.identity,
+                    "congressional_district": regional_dataset.identity,
+                }
+            )
+        revision = national_dataset.artifact_revision
         countries.append(
             Stage12CountryBundle(
                 country=country,
@@ -59,16 +84,9 @@ def _resolved_bundle(version: str = "5.2.0") -> ResolvedStage12Bundle:
                 data_release_version=revision,
                 data_artifact_revision=revision,
                 default_dataset=dataset,
-                default_dataset_uri=f"hf://policyengine/data/{dataset}.h5@{revision}",
-                datasets=(
-                    Stage12Dataset(
-                        identity=dataset,
-                        uri=f"hf://policyengine/data/{dataset}.h5@{revision}",
-                        artifact_revision=revision,
-                        sha256="a" * 64,
-                        repo_type="dataset",
-                    ),
-                ),
+                default_dataset_uri=national_dataset.uri,
+                datasets=tuple(datasets),
+                region_dataset_identities=region_dataset_identities,
             )
         )
     bundle = Stage12BundleManifest(
@@ -129,6 +147,43 @@ def test_publish_writes_one_complete_v2_document() -> None:
     assert store.writes == [(ACTIVE_MANIFEST_KEY, manifest.model_dump(mode="json"))]
     assert manifest.default_version == "5.2.0"
     assert manifest.versions["5.2.0"].validation.validated is True
+
+
+@pytest.mark.parametrize(
+    "region, expected_dataset",
+    [
+        ("us", "populace_us_2024"),
+        ("CA", "populace_us_2024_acs_local"),
+        ("DC", "populace_us_2024_acs_local"),
+        ("state/ca", "populace_us_2024_acs_local"),
+        ("state/DC", "populace_us_2024_acs_local"),
+        ("congressional_district/CA-01", "populace_us_2024_acs_local"),
+        ("congressional_district/DC-01", "populace_us_2024_acs_local"),
+    ],
+)
+def test_manifest_round_trip_preserves_regional_dataset_selection(
+    region: str, expected_dataset: str
+) -> None:
+    store = FakeStore()
+    worker = _worker()
+    publish_v2_manifest(store=store, worker=worker)
+
+    _, loaded_worker, _ = V2ManifestLoader(store).resolve()
+    us = next(
+        country for country in loaded_worker.bundle.countries if country.country == "us"
+    )
+    selected = select_stage12_dataset(us, region)
+
+    assert selected.identity == expected_dataset
+    original_us = next(
+        country for country in worker.bundle.countries if country.country == "us"
+    )
+    assert selected == next(
+        dataset
+        for dataset in original_us.datasets
+        if dataset.identity == expected_dataset
+    )
+    assert us.region_dataset_identities == original_us.region_dataset_identities
 
 
 def test_loader_retains_its_last_valid_v2_document() -> None:

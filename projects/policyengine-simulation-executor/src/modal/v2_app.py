@@ -179,7 +179,7 @@ def validate_worker_uk() -> dict:
 @app.function(
     image=us_worker_image,
     cpu=8.0,
-    memory=32768,
+    memory=65536,
     timeout=3000,
     retries=0,
     max_containers=10,

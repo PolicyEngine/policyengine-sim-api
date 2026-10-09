@@ -23,6 +23,7 @@ from policyengine_observability import (
     StdoutLogDestination,
     configure,
 )
+from policyengine_simulation_contract.stage12_bundle import Stage12Dataset
 from policyengine_simulation_contract.stage12_execution import (
     ArtifactMediaType,
     ArtifactReference,
@@ -472,7 +473,21 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
 
     country_module = object()
     region = type("Region", (), {"code": "us", "scoping_strategy": None})()
-    selection = object()
+    selection = simulation_runtime.DatasetSelection(
+        name="populace_us_2024",
+        uri="hf://policyengine/data/populace_us_2024.h5@revision",
+        is_default=True,
+        data_version="release",
+        artifact_revision="revision",
+        sha256="a" * 64,
+    )
+    declared_dataset = Stage12Dataset(
+        identity=selection.name,
+        uri=selection.uri,
+        artifact_revision="revision",
+        sha256="a" * 64,
+        repo_type="dataset",
+    )
     dataset = object()
     received: dict[str, object] = {}
 
@@ -494,7 +509,11 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
             received["ensured"] = True
             received["extras_at_ensure"] = self.extra_variables.copy()
 
-    monkeypatch.setattr(worker, "_require_installed_bundle", lambda _: None)
+    monkeypatch.setattr(
+        worker,
+        "_require_installed_bundle",
+        lambda _: declared_dataset,
+    )
     monkeypatch.setattr(
         simulation_runtime,
         "setup_gcp_credentials",

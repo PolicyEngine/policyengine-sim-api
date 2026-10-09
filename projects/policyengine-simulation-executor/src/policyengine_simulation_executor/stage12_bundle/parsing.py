@@ -204,6 +204,54 @@ def normalize_country_bundle(
             f"PolicyEngine.py bundle default dataset URI is inconsistent for {country!r}"
         )
 
+    region_dataset_templates = require_mapping(
+        release.get("region_datasets"),
+        f"data_releases.{country}.region_datasets",
+    )
+    dataset_paths = {
+        identity: require_text(
+            require_mapping(
+                dataset_items[identity],
+                f"data_releases.{country}.datasets.{identity}",
+            ).get("path"),
+            f"data_releases.{country}.datasets.{identity}.path",
+        )
+        for identity in dataset_items
+    }
+    normalized_region_dataset_identities: dict[str, str] = {}
+    for region_type, raw_template in region_dataset_templates.items():
+        normalized_region_type = require_text(
+            region_type,
+            f"data_releases.{country}.region_datasets.<region_type>",
+        )
+        template = require_mapping(
+            raw_template,
+            f"data_releases.{country}.region_datasets.{normalized_region_type}",
+        )
+        path_template = require_text(
+            template.get("path_template"),
+            "data_releases."
+            f"{country}.region_datasets.{normalized_region_type}.path_template",
+        )
+        matching_datasets = [
+            identity
+            for identity, path in dataset_paths.items()
+            if path == path_template
+        ]
+        if len(matching_datasets) != 1:
+            raise Stage12BundleError(
+                "PolicyEngine.py bundle region dataset "
+                f"{country}.{normalized_region_type} must identify exactly one dataset"
+            )
+        normalized_region_dataset_identities[normalized_region_type] = (
+            matching_datasets[0]
+        )
+
+    if normalized_region_dataset_identities.get("national") != default_dataset:
+        raise Stage12BundleError(
+            f"PolicyEngine.py bundle national region dataset is inconsistent for {country!r}"
+        )
+
     certified = require_mapping(
         release.get("certified_data_artifact"),
         f"data_releases.{country}.certified_data_artifact",
@@ -243,4 +291,5 @@ def normalize_country_bundle(
         default_dataset=default_dataset,
         default_dataset_uri=default_dataset_uri,
         datasets=tuple(datasets),
+        region_dataset_identities=normalized_region_dataset_identities,
     )
