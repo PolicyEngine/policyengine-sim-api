@@ -51,6 +51,6 @@ Commit that generated lockfile, run `uv lock --check`, and rerun the real ACS
 validation before merging or deploying this change. Do not invent package
 URLs, hashes, or release metadata before publication.
 
-Until that refresh, the checked-in lockfile still resolves 6.2.2. Frozen
-installs therefore still use 6.2.2, not the new target; this intermediate state
+Until that refresh, the checked-in lockfile retains main's published 6.2.3
+release. Frozen installs therefore use 6.2.3, not the new target; this state
 is intentionally incomplete and must not be merged or deployed.
