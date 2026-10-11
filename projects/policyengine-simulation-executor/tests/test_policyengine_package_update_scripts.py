@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import subprocess
+
+import pytest
 import sys
 from pathlib import Path
 
@@ -318,6 +320,7 @@ INSTALLED = "\n".join(
         "policyengine_core_version=3.33.0",
         "uk_version=2.126.8",
         "uk_data_version=policyengine-uk-data-1.58.0",
+        "uk_data_package_version=1.58.0",
         "uk_dataset_sha256=" + "a" * 64,
         "uk_certificate_sha256=",
     ]
@@ -347,7 +350,7 @@ def _payload(**uk: str) -> str:
                 "uk": {
                     "model_version": "2.126.8",
                     "core_version": "3.33.0",
-                    "data_release_version": "policyengine-uk-data-1.58.0",
+                    "data_release_version": "1.58.0",
                     "dataset_sha256": "a" * 64,
                     "certificate_sha256": "c" * 64,
                     **uk,
@@ -380,12 +383,139 @@ def test_verify_dispatch_rejects_another_bundle() -> None:
     for field, value in (
         ("model_version", "2.125.1"),
         ("core_version", "3.32.0"),
-        ("data_release_version", "policyengine-uk-data-1.59.0"),
+        ("data_release_version", "1.59.0"),
         ("dataset_sha256", "b" * 64),
     ):
         result = _verify(_payload(**{field: value}))
         assert result.returncode != 0, field
         assert field in result.stderr
+
+
+def test_verify_dispatch_fails_closed_when_the_installed_bundle_cannot_answer() -> None:
+    """Review M3: a named dataset digest needs an installed one to compare."""
+
+    import os
+
+    installed = INSTALLED.replace("uk_dataset_sha256=" + "a" * 64, "uk_dataset_sha256=")
+    result = subprocess.run(
+        [sys.executable, str(HELPER), "verify-dispatch"],
+        input=installed,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "RELEASE_PAYLOAD": _payload()},
+    )
+    assert result.returncode != 0
+    assert "dataset_sha256: dispatch" in result.stderr
+    assert "installed bundle reports none" in result.stderr
+
+
+def test_verify_dispatch_is_verified_only_when_something_was_compared() -> None:
+    import json
+
+    only_certificate = json.dumps(
+        {"version": "4.1.0", "bundle": {"uk": {"certificate_sha256": "c" * 64}}}
+    )
+    unknown_only = json.dumps({"version": "4.1.0", "bundle": {"uk": {"x": "y"}}})
+    for payload in (only_certificate, unknown_only):
+        result = _verify(payload)
+        assert result.returncode == 0, result.stderr
+        assert "dispatch_verified=false" in result.stdout
+
+
+def test_verify_dispatch_compares_digests_case_insensitively() -> None:
+    result = _verify(_payload(dataset_sha256="A" * 64))
+
+    assert result.returncode == 0, result.stderr
+    assert "dispatch_verified=true" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "qualification",
+    [
+        {"verdict": "rejected"},
+        {"verdict": "incomplete"},
+        {"verdict": "needs_review", "promotable": False},
+        {"verdict": "qualified\ndispatch_verified=true"},
+        {"verdict": "qualified", "receipt_sha256": "not-a-digest"},
+    ],
+    ids=["rejected", "incomplete", "unreviewed", "newline", "receipt"],
+)
+def test_verify_dispatch_refuses_unpromotable_or_malformed_qualifications(
+    qualification,
+) -> None:
+    import json
+
+    payload = json.loads(_payload())
+    payload["qualification"] = {"uk": qualification}
+
+    result = _verify(json.dumps(payload))
+
+    assert result.returncode != 0
+    assert result.stdout.count("dispatch_verified=") == 0
+
+
+def test_verify_dispatch_accepts_a_reviewed_pair() -> None:
+    import json
+
+    payload = json.loads(_payload())
+    payload["qualification"] = {
+        "uk": {"verdict": "needs_review", "promotable": True, "receipt_sha256": "e" * 64}
+    }
+
+    result = _verify(json.dumps(payload))
+
+    assert result.returncode == 0, result.stderr
+    assert "uk_qualification_verdict=needs_review" in result.stdout
+
+
+def test_bundle_versions_matches_policyengine_release_identity() -> None:
+    """Differential: the installed bundle, read two ways, must agree.
+
+    bundle-versions (this helper) and policyengine.py's
+    provenance.uk_qualification.release_bundle_identity derive the dispatch
+    fields from the same manifest. The second derivation is restated here from
+    that function (model_package.version, data_package.version,
+    certified_data_artifact.sha256, packages.policyengine-core.version), so a
+    real dispatch for the locked wrapper verifies.
+    """
+
+    import json
+    import os
+
+    from policyengine.bundle import get_current_bundle
+
+    bundle = get_current_bundle()
+    record = bundle["data_releases"]["uk"]
+    output = subprocess.run(
+        [sys.executable, str(HELPER), "bundle-versions"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    installed = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+    assert len(installed["uk_dataset_sha256"]) == 64
+    payload = {
+        "version": bundle["policyengine_version"],
+        "bundle": {
+            "uk": {
+                "model_version": record["model_package"]["version"],
+                "core_version": bundle["packages"]["policyengine-core"]["version"],
+                "data_release_version": record["data_package"]["version"],
+                "dataset_sha256": record["certified_data_artifact"]["sha256"],
+            }
+        },
+    }
+    result = subprocess.run(
+        [sys.executable, str(HELPER), "verify-dispatch"],
+        input=output,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "RELEASE_PAYLOAD": json.dumps(payload)},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "dispatch_verified=true" in result.stdout
 
 
 def test_verify_dispatch_rejects_another_wrapper_version() -> None:

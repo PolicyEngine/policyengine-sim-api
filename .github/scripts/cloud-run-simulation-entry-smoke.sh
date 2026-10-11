@@ -9,12 +9,19 @@ expected_revision="${2:-}"
 # immediately before a traffic update. Supplying that revision as argument 3
 # enables bounded retries for only that documented transition state.
 previous_revision="${3:-}"
-# Optional production identity: when set, /versions must show that the
-# `latest` route serves this policyengine.py version with this UK model and
-# certified dataset SHA-256 (from the deployed executor's locked bundle).
+# Optional release identity, checked against /versions, whose route maps hold
+# versions as `latest` and app names under each version key:
+# - EXPECTED_POLICYENGINE_VERSION: that policyengine.py version has a route
+#   and a recorded UK bundle identity;
+# - EXPECTED_UK_MODEL_VERSION / EXPECTED_UK_DATASET_SHA256: that bundle's UK
+#   model (routed to the same app) and certified dataset SHA-256;
+# - EXPECTED_LATEST=true: unpinned requests route to that version and model.
+# This is the identity the gateway reports from the routing registry; the
+# numerical release sentinel checks what the worker computes.
 expected_policyengine_version="${EXPECTED_POLICYENGINE_VERSION:-}"
 expected_uk_model_version="${EXPECTED_UK_MODEL_VERSION:-}"
 expected_uk_dataset_sha256="${EXPECTED_UK_DATASET_SHA256:-}"
+expected_latest="${EXPECTED_LATEST:-}"
 routing_max_attempts="${SIMULATION_ENTRYPOINT_ROUTING_MAX_ATTEMPTS:-24}"
 routing_retry_delay_seconds="${SIMULATION_ENTRYPOINT_ROUTING_RETRY_DELAY_SECONDS:-5}"
 
@@ -90,45 +97,47 @@ curl --fail --silent --show-error "${base_url}/ready" |
 curl --fail --silent --show-error "${base_url}/versions" --output "${versions_body}"
 jq -e 'type == "object"' "${versions_body}" >/dev/null
 
+identity_failure() {
+  printf '%s: %s\n' "${base_url}" "$1" >&2
+  exit 1
+}
+
 if [ -n "${expected_policyengine_version}" ]; then
-  if ! jq -e --arg v "${expected_policyengine_version}" '
-    .policyengine[$v] != null and .policyengine.latest == .policyengine[$v]
-  ' "${versions_body}" >/dev/null; then
-    printf '%s: latest does not route to policyengine %s (latest=%s)\n' \
-      "${base_url}" "${expected_policyengine_version}" \
-      "$(jq -r '.policyengine.latest // "none"' "${versions_body}")" >&2
-    exit 1
+  jq -e --arg v "${expected_policyengine_version}" '
+    (.policyengine[$v] | type == "string" and length > 0)
+    and .bundles[$v].uk.policyengine_version == $v
+  ' "${versions_body}" >/dev/null ||
+    identity_failure "/versions has no route and UK bundle identity for policyengine ${expected_policyengine_version}"
+
+  served_uk_model="$(jq -r --arg v "${expected_policyengine_version}" '.bundles[$v].uk.model_version // ""' "${versions_body}")"
+  if [ -n "${expected_uk_model_version}" ]; then
+    [ "${served_uk_model}" = "${expected_uk_model_version}" ] ||
+      identity_failure "policyengine ${expected_policyengine_version} records policyengine-uk ${served_uk_model:-none}, expected ${expected_uk_model_version}"
   fi
-  if ! jq -e --arg v "${expected_policyengine_version}" '
-    .bundles[$v].uk.policyengine_version == $v
-  ' "${versions_body}" >/dev/null; then
-    printf '%s: /versions has no UK bundle identity for policyengine %s\n' \
-      "${base_url}" "${expected_policyengine_version}" >&2
-    exit 1
+  jq -e --arg v "${expected_policyengine_version}" --arg m "${served_uk_model}" '
+    .uk[$m] == .policyengine[$v]
+  ' "${versions_body}" >/dev/null ||
+    identity_failure "policyengine-uk ${served_uk_model} does not route to policyengine ${expected_policyengine_version}'s app"
+
+  if [ -n "${expected_uk_dataset_sha256}" ]; then
+    served_dataset="$(jq -r --arg v "${expected_policyengine_version}" '.bundles[$v].uk.dataset_sha256 // ""' "${versions_body}")"
+    [ "${served_dataset}" = "${expected_uk_dataset_sha256}" ] ||
+      identity_failure "the UK dataset SHA-256 served for policyengine ${expected_policyengine_version} is ${served_dataset:-none}, expected ${expected_uk_dataset_sha256}"
   fi
-  if [ -n "${expected_uk_model_version}" ] && ! jq -e \
-    --arg v "${expected_policyengine_version}" --arg m "${expected_uk_model_version}" '
-    .bundles[$v].uk.model_version == $m and .uk.latest == .policyengine[$v]
-  ' "${versions_body}" >/dev/null; then
-    printf '%s: policyengine %s does not serve policyengine-uk %s as latest (got %s)\n' \
-      "${base_url}" "${expected_policyengine_version}" "${expected_uk_model_version}" \
-      "$(jq -r --arg v "${expected_policyengine_version}" '.bundles[$v].uk.model_version // "none"' "${versions_body}")" >&2
-    exit 1
+
+  if [ "${expected_latest}" = "true" ]; then
+    jq -e --arg v "${expected_policyengine_version}" --arg m "${served_uk_model}" '
+      .policyengine.latest == $v and .uk.latest == $m
+    ' "${versions_body}" >/dev/null ||
+      identity_failure "latest routes to policyengine $(jq -r '.policyengine.latest // "none"' "${versions_body}") and policyengine-uk $(jq -r '.uk.latest // "none"' "${versions_body}"), not ${expected_policyengine_version} and ${served_uk_model}"
   fi
-  if [ -n "${expected_uk_dataset_sha256}" ] && ! jq -e \
-    --arg v "${expected_policyengine_version}" --arg d "${expected_uk_dataset_sha256}" '
-    .bundles[$v].uk.dataset_sha256 == $d
-  ' "${versions_body}" >/dev/null; then
-    printf '%s: the UK dataset SHA-256 served for policyengine %s is %s, expected %s\n' \
-      "${base_url}" "${expected_policyengine_version}" \
-      "$(jq -r --arg v "${expected_policyengine_version}" '.bundles[$v].uk.dataset_sha256 // "none"' "${versions_body}")" \
-      "${expected_uk_dataset_sha256}" >&2
-    exit 1
-  fi
-  printf '%s serves policyengine %s, policyengine-uk %s, UK dataset %s\n' \
-    "${base_url}" "${expected_policyengine_version}" \
-    "$(jq -r --arg v "${expected_policyengine_version}" '.bundles[$v].uk.model_version' "${versions_body}")" \
-    "$(jq -r --arg v "${expected_policyengine_version}" '.bundles[$v].uk.dataset_sha256 // "unrecorded"' "${versions_body}")"
+
+  printf '%s serves policyengine %s, policyengine-uk %s, UK dataset %s%s\n' \
+    "${base_url}" "${expected_policyengine_version}" "${served_uk_model}" \
+    "$(jq -r --arg v "${expected_policyengine_version}" '.bundles[$v].uk.dataset_sha256 // "unrecorded"' "${versions_body}")" \
+    "$([ "${expected_latest}" = "true" ] && printf ' as latest')"
+elif [ -n "${expected_uk_model_version}${expected_uk_dataset_sha256}${expected_latest}" ]; then
+  identity_failure "UK identity expectations need EXPECTED_POLICYENGINE_VERSION"
 fi
 curl --fail --silent --show-error \
   --request POST \

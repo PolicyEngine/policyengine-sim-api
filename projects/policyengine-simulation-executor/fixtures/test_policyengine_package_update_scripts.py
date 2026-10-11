@@ -195,6 +195,7 @@ if [[ "$1" == "run" \
   echo "us_data_version=1.10.0"
   echo "uk_version={bundled_uk_version}"
   echo "uk_data_version=1.20.0"
+  echo "uk_data_package_version=1.20.0"
   echo "us_dataset_sha256="
   echo "uk_dataset_sha256={bundled_uk_dataset_sha256}"
   echo "uk_certificate_sha256="

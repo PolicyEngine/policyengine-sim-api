@@ -558,7 +558,9 @@ def _bundle_identities(state: dict) -> dict[str, dict[str, PolicyEngineBundle]]:
     """Each deployed wrapper version's country bundle identity, for ``/versions``.
 
     Entries without a stated model version are skipped: ``/versions`` reports
-    only identities the registry recorded, never a fallback.
+    only identities the registry recorded, never a fallback. An entry whose
+    dataset cannot be resolved is reported without a dataset rather than
+    failing the whole response.
     """
 
     identities: dict[str, dict[str, PolicyEngineBundle]] = {}
@@ -573,9 +575,20 @@ def _bundle_identities(state: dict) -> dict[str, dict[str, PolicyEngineBundle]]:
             model_version = country_bundle.get("model_version")
             if not isinstance(model_version, str) or not model_version.strip():
                 continue
-            resolved_dataset = _resolve_dataset_uri_from_app_bundle(
-                app_bundle=app_bundle, country=country
-            )
+            try:
+                resolved_dataset = _resolve_dataset_uri_from_app_bundle(
+                    app_bundle=app_bundle, country=country
+                )
+            except (ValueError, HuggingFaceDatasetReferenceError) as exc:
+                # One historical entry with an unresolvable dataset must not
+                # take /versions down for every caller; report it without one.
+                logger.warning(
+                    "Cannot resolve the %s dataset of policyengine %s for /versions: %s",
+                    country,
+                    policyengine_version,
+                    exc,
+                )
+                resolved_dataset = None
             data_version = _bundle_response_data_version(
                 country_bundle=country_bundle, resolved_dataset=resolved_dataset
             )

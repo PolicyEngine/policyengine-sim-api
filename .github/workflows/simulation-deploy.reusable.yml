@@ -698,11 +698,13 @@ jobs:
 
       - name: Verify the complete deployed request path
         env:
-          # Routing moved to this bundle only when the existing stack was
-          # deployed; then /versions must show its exact identity.
+          # Only existing-stack deployments publish routing for this bundle;
+          # then /versions must show its route, UK model and dataset digest,
+          # and latest must route to it.
           EXPECTED_POLICYENGINE_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.policyengine_version || '' }}
           EXPECTED_UK_MODEL_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_version || '' }}
           EXPECTED_UK_DATASET_SHA256: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_dataset_sha256 || '' }}
+          EXPECTED_LATEST: ${{ inputs.deploy_existing_stack && 'true' || '' }}
         run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.deploy_entrypoint.outputs.revision }}"
 
       - name: Generate API clients for complete integration tests
@@ -790,6 +792,7 @@ jobs:
       EXPECTED_POLICYENGINE_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.policyengine_version || '' }}
       EXPECTED_UK_MODEL_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_version || '' }}
       EXPECTED_UK_DATASET_SHA256: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_dataset_sha256 || '' }}
+      EXPECTED_LATEST: ${{ inputs.deploy_existing_stack && 'true' || '' }}
       REGION: ${{ vars.SIMULATION_ENTRYPOINT_GCP_REGION || 'us-central1' }}
       PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
       SERVICE: ${{ inputs.entrypoint_service }}

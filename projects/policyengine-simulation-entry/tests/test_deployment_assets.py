@@ -911,30 +911,11 @@ def test_client_publication_checks_out_the_deployed_commit():
     assert "github.event.workflow_run.head_sha" in workflow
 
 
-VERSIONS_BODY = {
-    "spm_capabilities": {},
-    "policyengine": {
-        "latest": "policyengine-simulation-py6-2-7",
-        "6.2.7": "policyengine-simulation-py6-2-7",
-        "6.2.6": "policyengine-simulation-py6-2-6",
-    },
-    "us": {"latest": "policyengine-simulation-py6-2-7"},
-    "uk": {
-        "latest": "policyengine-simulation-py6-2-7",
-        "2.126.8": "policyengine-simulation-py6-2-7",
-    },
-    "bundles": {
-        "6.2.7": {
-            "uk": {
-                "model_version": "2.126.8",
-                "policyengine_version": "6.2.7",
-                "data_version": "policyengine-uk-data-1.58.0",
-                "dataset": "hf://policyengine/policyengine-uk-data-private/enhanced_frs_2024_25.h5@1.58.0",
-                "dataset_sha256": "a" * 64,
-            }
-        }
-    },
-}
+# The gateway's real /versions response for two published releases (6.2.7
+# latest); test_versions_fixture.py in the gateway project keeps it current.
+VERSIONS_BODY = json.loads(
+    (Path(__file__).parent / "fixtures" / "versions_body.json").read_text()
+)
 
 
 def _run_identity_smoke(tmp_path: Path, versions: dict, **expected: str):
@@ -962,14 +943,31 @@ IDENTITY = {
     "EXPECTED_POLICYENGINE_VERSION": "6.2.7",
     "EXPECTED_UK_MODEL_VERSION": "2.126.8",
     "EXPECTED_UK_DATASET_SHA256": "a" * 64,
+    "EXPECTED_LATEST": "true",
 }
 
 
-def test_smoke_accepts_the_expected_served_identity(tmp_path: Path):
+def test_smoke_accepts_the_gateway_identity_of_a_new_release(tmp_path: Path):
     result = _run_identity_smoke(tmp_path, VERSIONS_BODY, **IDENTITY)
 
     assert result.returncode == 0, result.stderr
-    assert "serves policyengine 6.2.7, policyengine-uk 2.126.8" in result.stdout
+    assert (
+        "serves policyengine 6.2.7, policyengine-uk 2.126.8, UK dataset "
+        + "a" * 64
+        + " as latest"
+    ) in result.stdout
+
+
+def test_smoke_accepts_an_older_release_by_its_route(tmp_path: Path):
+    result = _run_identity_smoke(
+        tmp_path,
+        VERSIONS_BODY,
+        EXPECTED_POLICYENGINE_VERSION="6.2.6",
+        EXPECTED_UK_MODEL_VERSION="2.125.1",
+        EXPECTED_UK_DATASET_SHA256="5" * 64,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_smoke_without_expectations_only_requires_versions_json(tmp_path: Path):
@@ -982,12 +980,51 @@ def test_smoke_rejects_latest_routing_to_another_version(tmp_path: Path):
     import copy
 
     versions = copy.deepcopy(VERSIONS_BODY)
-    versions["policyengine"]["latest"] = "policyengine-simulation-py6-2-6"
+    versions["policyengine"]["latest"] = "6.2.6"
+    versions["uk"]["latest"] = "2.125.1"
 
     result = _run_identity_smoke(tmp_path, versions, **IDENTITY)
 
     assert result.returncode == 1
-    assert "latest does not route to policyengine 6.2.7" in result.stderr
+    assert "latest routes to policyengine 6.2.6 and policyengine-uk 2.125.1" in (
+        result.stderr
+    )
+
+
+def test_smoke_rejects_a_uk_latest_that_lags_the_wrapper(tmp_path: Path):
+    import copy
+
+    versions = copy.deepcopy(VERSIONS_BODY)
+    versions["uk"]["latest"] = "2.125.1"
+
+    result = _run_identity_smoke(tmp_path, versions, **IDENTITY)
+
+    assert result.returncode == 1
+    assert "latest routes to" in result.stderr
+
+
+def test_smoke_rejects_a_release_without_a_route(tmp_path: Path):
+    import copy
+
+    versions = copy.deepcopy(VERSIONS_BODY)
+    del versions["policyengine"]["6.2.7"]
+
+    result = _run_identity_smoke(tmp_path, versions, **IDENTITY)
+
+    assert result.returncode == 1
+    assert "no route and UK bundle identity for policyengine 6.2.7" in result.stderr
+
+
+def test_smoke_rejects_a_uk_model_routed_to_another_app(tmp_path: Path):
+    import copy
+
+    versions = copy.deepcopy(VERSIONS_BODY)
+    versions["uk"]["2.126.8"] = "policyengine-simulation-py6-2-6"
+
+    result = _run_identity_smoke(tmp_path, versions, **IDENTITY)
+
+    assert result.returncode == 1
+    assert "does not route to policyengine 6.2.7's app" in result.stderr
 
 
 def test_smoke_rejects_another_uk_dataset(tmp_path: Path):
@@ -999,13 +1036,59 @@ def test_smoke_rejects_another_uk_dataset(tmp_path: Path):
     assert "UK dataset SHA-256" in result.stderr
 
 
+def test_smoke_rejects_identity_expectations_without_a_version(tmp_path: Path):
+    result = _run_identity_smoke(
+        tmp_path, VERSIONS_BODY, EXPECTED_UK_DATASET_SHA256="a" * 64
+    )
+
+    assert result.returncode == 1
+    assert "need EXPECTED_POLICYENGINE_VERSION" in result.stderr
+
+
+def test_deploy_gates_pass_the_release_identity_to_the_smoke():
+    """Review M2: removing any of this wiring silently disables the gate."""
+
+    workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    prepare = workflow[
+        workflow.index("\n  prepare:") : workflow.index("\n  deploy_entrypoint:")
+    ]
+    assert (
+        "uk_dataset_sha256: ${{ steps.versions.outputs.uk_dataset_sha256 }}" in prepare
+    )
+    integration = workflow[
+        workflow.index("\n  integration:") : workflow.index("\n  authenticated_test:")
+    ]
+    promote = workflow[workflow.index("\n  promote_entrypoint:") :]
+    for section in (integration, promote):
+        assert (
+            "EXPECTED_POLICYENGINE_VERSION: ${{ inputs.deploy_existing_stack && "
+            "needs.prepare.outputs.policyengine_version || '' }}"
+        ) in section
+        assert (
+            "EXPECTED_UK_MODEL_VERSION: ${{ inputs.deploy_existing_stack && "
+            "needs.prepare.outputs.uk_version || '' }}"
+        ) in section
+        assert (
+            "EXPECTED_UK_DATASET_SHA256: ${{ inputs.deploy_existing_stack && "
+            "needs.prepare.outputs.uk_dataset_sha256 || '' }}"
+        ) in section
+        assert (
+            "EXPECTED_LATEST: ${{ inputs.deploy_existing_stack && 'true' || '' }}"
+            in section
+        )
+    updates = (
+        REPOSITORY_ROOT / ".github" / "workflows" / "check-policyengine-updates.yml"
+    ).read_text(encoding="utf-8")
+    assert "RELEASE_PAYLOAD: ${{ toJSON(github.event.client_payload) }}" in updates
+
+
 def test_smoke_rejects_another_uk_model(tmp_path: Path):
     result = _run_identity_smoke(
         tmp_path, VERSIONS_BODY, **{**IDENTITY, "EXPECTED_UK_MODEL_VERSION": "2.125.1"}
     )
 
     assert result.returncode == 1
-    assert "does not serve policyengine-uk 2.125.1" in result.stderr
+    assert "records policyengine-uk 2.126.8, expected 2.125.1" in result.stderr
 
 
 def test_smoke_rejects_a_missing_bundle_identity(tmp_path: Path):
@@ -1017,4 +1100,4 @@ def test_smoke_rejects_a_missing_bundle_identity(tmp_path: Path):
     result = _run_identity_smoke(tmp_path, versions, **IDENTITY)
 
     assert result.returncode == 1
-    assert "no UK bundle identity" in result.stderr
+    assert "no route and UK bundle identity for policyengine 6.2.7" in result.stderr

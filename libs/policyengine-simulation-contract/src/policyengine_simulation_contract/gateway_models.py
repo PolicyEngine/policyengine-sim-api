@@ -164,9 +164,10 @@ class PolicyEngineBundle(BaseModel):
         default=None,
         pattern=r"^[0-9a-f]{64}$",
         description=(
-            "Certified SHA-256 of the dataset named in `dataset`, from the "
-            "policyengine.py bundle the worker installed. Absent for workers "
-            "deployed before this field existed."
+            "SHA-256 the policyengine.py bundle records for the dataset named "
+            "in `dataset` (its certified artifact's, or else its dataset "
+            "entry's), as registered when this bundle's app was deployed. "
+            "Absent for apps deployed before this field existed."
         ),
     )
     spm: Optional[SPMCapability] = None
@@ -392,9 +393,9 @@ class VersionsResponse(BaseModel):
         description=(
             "Deployed bundle identity keyed by exact PolicyEngine wrapper "
             "version, then country: model and data versions, the default "
-            "dataset and its certified SHA-256. Resolve `policyengine.latest` "
-            "to an app, find that app's wrapper version in the policyengine "
-            "map, and read its identity here."
+            "dataset and the SHA-256 the bundle records for it (the certified "
+            "artifact's, or the dataset entry's). `policyengine.latest` is a "
+            "wrapper version: read its identity at `bundles[latest]`."
         ),
     )
 

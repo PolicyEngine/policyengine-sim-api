@@ -209,14 +209,24 @@ def bundle_versions() -> None:
             raise SystemExit(f"Bundle has no data release version for {country}")
         return version
 
+    def data_package_version(country: str) -> str:
+        release = _mapping(data_releases.get(country))
+        version = _mapping(release.get("data_package")).get("version")
+        return version if isinstance(version, str) else ""
+
     def dataset_sha256(country: str) -> str:
         release = _mapping(data_releases.get(country))
         default = release.get("default_dataset")
         certified = _mapping(release.get("certified_data_artifact"))
         if certified.get("dataset") == default and certified.get("sha256"):
-            return str(certified["sha256"])
-        reference = _mapping(_mapping(release.get("datasets")).get(default))
-        return str(reference.get("sha256") or "")
+            value = certified["sha256"]
+        else:
+            reference = _mapping(_mapping(release.get("datasets")).get(default))
+            value = reference.get("sha256") or ""
+        digest = str(value).strip().lower()
+        if digest and not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise SystemExit(f"Bundle records a malformed {country} dataset SHA-256")
+        return digest
 
     def certificate_sha256(country: str) -> str:
         # Receipt-v1 certificate digest; older wrappers lack the helper.
@@ -237,6 +247,7 @@ def bundle_versions() -> None:
         "us_data_version": data_release_version("us"),
         "uk_version": package_version("policyengine-uk"),
         "uk_data_version": data_release_version("uk"),
+        "uk_data_package_version": data_package_version("uk"),
         "us_dataset_sha256": dataset_sha256("us"),
         "uk_dataset_sha256": dataset_sha256("uk"),
         "uk_certificate_sha256": certificate_sha256("uk"),
@@ -246,14 +257,20 @@ def bundle_versions() -> None:
 
 
 #: Release-dispatch fields compared with the installed bundle: (payload key
-#: under client_payload.bundle.uk, bundle-versions output key).
+#: under client_payload.bundle.uk, bundle-versions output key). policyengine.py
+#: sends data_release_version as the data package version ("1.58.0"), not the
+#: release record's build-style version.
 DISPATCH_CHECKS = (
     ("model_version", "uk_version"),
     ("core_version", "policyengine_core_version"),
-    ("data_release_version", "uk_data_version"),
+    ("data_release_version", "uk_data_package_version"),
     ("dataset_sha256", "uk_dataset_sha256"),
     ("certificate_sha256", "uk_certificate_sha256"),
 )
+#: Checks an installed wrapper may be too old to report; skipped when empty.
+OPTIONAL_INSTALLED_CHECKS = frozenset({"certificate_sha256"})
+#: Qualification verdicts a promoted pair can carry.
+PROMOTABLE_VERDICTS = frozenset({"qualified", "needs_review"})
 
 
 def verify_dispatch() -> None:
@@ -262,8 +279,11 @@ def verify_dispatch() -> None:
     Reads the dispatch ``client_payload`` JSON from ``RELEASE_PAYLOAD`` and
     ``bundle-versions`` output from stdin. A payload without ``bundle.uk``
     (older releases, manual runs) is accepted. A field the payload names
-    must equal the installed bundle's; a field the installed wrapper cannot
-    report is skipped. Prints digests for the PR body.
+    must equal the installed bundle's, and an installed bundle that cannot
+    report it is a mismatch, except for the certificate digest, which older
+    wrappers cannot compute. A qualification that says the pair was not
+    promotable is refused. ``dispatch_verified`` is true only when at least
+    one field was compared. Prints digests for the PR body.
     """
 
     raw = os.environ.get("RELEASE_PAYLOAD", "").strip()
@@ -282,12 +302,24 @@ def verify_dispatch() -> None:
         )
     expected = _mapping(_mapping(payload.get("bundle")).get("uk"))
     mismatches = []
+    compared = 0
     for payload_key, installed_key in DISPATCH_CHECKS:
         claimed = expected.get(payload_key)
         actual = installed.get(installed_key, "")
-        if claimed in (None, "") or actual == "":
+        if claimed in (None, ""):
             continue
-        if str(claimed) != actual:
+        if actual == "":
+            if payload_key in OPTIONAL_INSTALLED_CHECKS:
+                continue
+            mismatches.append(
+                f"{payload_key}: dispatch {claimed}, installed bundle reports none"
+            )
+            continue
+        compared += 1
+        claimed_text = str(claimed).strip()
+        if payload_key.endswith("sha256"):
+            claimed_text = claimed_text.lower()
+        if claimed_text != actual:
             mismatches.append(f"{payload_key}: dispatch {claimed}, installed {actual}")
     if mismatches:
         raise SystemExit(
@@ -295,11 +327,23 @@ def verify_dispatch() -> None:
             "wheel: " + "; ".join(mismatches)
         )
     qualification = _mapping(_mapping(payload.get("qualification")).get("uk"))
-    print(f"dispatch_verified={'true' if expected else 'false'}")
-    print(f"uk_qualification_verdict={qualification.get('verdict') or ''}")
-    print(
-        f"uk_qualification_receipt_sha256={qualification.get('receipt_sha256') or ''}"
-    )
+    verdict = qualification.get("verdict") or ""
+    receipt_sha256 = qualification.get("receipt_sha256") or ""
+    if not isinstance(verdict, str) or not re.fullmatch(r"[a-z_]*", verdict):
+        raise SystemExit("The release dispatch carries a malformed verdict")
+    if not isinstance(receipt_sha256, str) or not re.fullmatch(
+        r"(?:[0-9a-f]{64})?", receipt_sha256
+    ):
+        raise SystemExit("The release dispatch carries a malformed receipt digest")
+    if qualification.get("promotable") is False or (
+        verdict and verdict not in PROMOTABLE_VERDICTS
+    ):
+        raise SystemExit(
+            f"The release dispatch says the UK pair was not promotable ({verdict})"
+        )
+    print(f"dispatch_verified={'true' if compared else 'false'}")
+    print(f"uk_qualification_verdict={verdict}")
+    print(f"uk_qualification_receipt_sha256={receipt_sha256}")
 
 
 def _parser() -> argparse.ArgumentParser:
