@@ -110,7 +110,15 @@ def _write_fake_smoke_curl(tmp_path: Path, revisions: list[str]) -> tuple[Path, 
                 printf '{"status":"ready"}'
                 ;;
               */versions)
-                printf '{}'
+                versions='{}'
+                if [ -n "${FAKE_CURL_VERSIONS:-}" ]; then
+                  versions="$(cat "${FAKE_CURL_VERSIONS}")"
+                fi
+                if [ -n "${body_file}" ]; then
+                  printf '%s' "${versions}" > "${body_file}"
+                else
+                  printf '%s' "${versions}"
+                fi
                 ;;
               */ping)
                 printf '{"incremented":2}'
@@ -588,7 +596,9 @@ def test_full_stack_promotion_order_is_explicit():
     assert reusable_workflow.index("\n  authenticated_test:") < reusable_workflow.index(
         "\n  promote_entrypoint:"
     )
-    assert "needs: [deploy_entrypoint, authenticated_test]" in reusable_workflow
+    assert (
+        "needs: [prepare, deploy_entrypoint, authenticated_test]" in reusable_workflow
+    )
     assert (
         'cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"'
         in reusable_workflow
@@ -899,3 +909,112 @@ def test_client_publication_checks_out_the_deployed_commit():
     workflow = PUBLISH_WORKFLOW.read_text(encoding="utf-8")
 
     assert "github.event.workflow_run.head_sha" in workflow
+
+
+VERSIONS_BODY = {
+    "spm_capabilities": {},
+    "policyengine": {
+        "latest": "policyengine-simulation-py6-2-7",
+        "6.2.7": "policyengine-simulation-py6-2-7",
+        "6.2.6": "policyengine-simulation-py6-2-6",
+    },
+    "us": {"latest": "policyengine-simulation-py6-2-7"},
+    "uk": {
+        "latest": "policyengine-simulation-py6-2-7",
+        "2.126.8": "policyengine-simulation-py6-2-7",
+    },
+    "bundles": {
+        "6.2.7": {
+            "uk": {
+                "model_version": "2.126.8",
+                "policyengine_version": "6.2.7",
+                "data_version": "policyengine-uk-data-1.58.0",
+                "dataset": "hf://policyengine/policyengine-uk-data-private/enhanced_frs_2024_25.h5@1.58.0",
+                "dataset_sha256": "a" * 64,
+            }
+        }
+    },
+}
+
+
+def _run_identity_smoke(tmp_path: Path, versions: dict, **expected: str):
+    import json
+
+    revision = "policyengine-simulation-entry-00002-new"
+    state_file, revisions_file = _write_fake_smoke_curl(tmp_path, [revision])
+    versions_file = tmp_path / "versions.json"
+    versions_file.write_text(json.dumps(versions), encoding="utf-8")
+    env = {
+        **_smoke_test_env(tmp_path, state_file, revisions_file),
+        "FAKE_CURL_VERSIONS": str(versions_file),
+        **expected,
+    }
+    return subprocess.run(
+        ["bash", SMOKE_SCRIPT, "https://simulation.example.test", revision],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+IDENTITY = {
+    "EXPECTED_POLICYENGINE_VERSION": "6.2.7",
+    "EXPECTED_UK_MODEL_VERSION": "2.126.8",
+    "EXPECTED_UK_DATASET_SHA256": "a" * 64,
+}
+
+
+def test_smoke_accepts_the_expected_served_identity(tmp_path: Path):
+    result = _run_identity_smoke(tmp_path, VERSIONS_BODY, **IDENTITY)
+
+    assert result.returncode == 0, result.stderr
+    assert "serves policyengine 6.2.7, policyengine-uk 2.126.8" in result.stdout
+
+
+def test_smoke_without_expectations_only_requires_versions_json(tmp_path: Path):
+    result = _run_identity_smoke(tmp_path, {})
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_smoke_rejects_latest_routing_to_another_version(tmp_path: Path):
+    import copy
+
+    versions = copy.deepcopy(VERSIONS_BODY)
+    versions["policyengine"]["latest"] = "policyengine-simulation-py6-2-6"
+
+    result = _run_identity_smoke(tmp_path, versions, **IDENTITY)
+
+    assert result.returncode == 1
+    assert "latest does not route to policyengine 6.2.7" in result.stderr
+
+
+def test_smoke_rejects_another_uk_dataset(tmp_path: Path):
+    result = _run_identity_smoke(
+        tmp_path, VERSIONS_BODY, **{**IDENTITY, "EXPECTED_UK_DATASET_SHA256": "b" * 64}
+    )
+
+    assert result.returncode == 1
+    assert "UK dataset SHA-256" in result.stderr
+
+
+def test_smoke_rejects_another_uk_model(tmp_path: Path):
+    result = _run_identity_smoke(
+        tmp_path, VERSIONS_BODY, **{**IDENTITY, "EXPECTED_UK_MODEL_VERSION": "2.125.1"}
+    )
+
+    assert result.returncode == 1
+    assert "does not serve policyengine-uk 2.125.1" in result.stderr
+
+
+def test_smoke_rejects_a_missing_bundle_identity(tmp_path: Path):
+    import copy
+
+    versions = copy.deepcopy(VERSIONS_BODY)
+    versions["bundles"] = {}
+
+    result = _run_identity_smoke(tmp_path, versions, **IDENTITY)
+
+    assert result.returncode == 1
+    assert "no UK bundle identity" in result.stderr

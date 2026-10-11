@@ -1633,6 +1633,19 @@
             ],
             "title": "Dataset"
           },
+          "dataset_sha256": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Sha256",
+            "description": "Certified SHA-256 of the dataset named in `dataset`, from the policyengine.py bundle the worker installed. Absent for workers deployed before this field existed."
+          },
           "spm": {
             "anyOf": [
               {
@@ -2462,6 +2475,17 @@
           },
           "uk": {
             "$ref": "#/components/schemas/VersionMap"
+          },
+          "bundles": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/PolicyEngineBundle"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Bundles",
+            "description": "Deployed bundle identity keyed by exact PolicyEngine wrapper version, then country: model and data versions, the default dataset and its certified SHA-256. Resolve `policyengine.latest` to an app, find that app's wrapper version in the policyengine map, and read its identity here."
           }
         },
         "type": "object",

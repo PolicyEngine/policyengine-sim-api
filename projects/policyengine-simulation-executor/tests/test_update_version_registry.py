@@ -464,3 +464,30 @@ def test_main_publishes_routing_state(
     assert active["latest"]["policyengine"] == "4.19.1"
     assert active["latest"]["us"] == "1.687.0"
     assert active["latest"]["uk"] == "2.88.14"
+
+
+def test_country_bundle_metadata_records_the_certified_dataset_sha256(monkeypatch):
+    from types import SimpleNamespace
+
+    bundle = SimpleNamespace(
+        country="uk",
+        model_package_name="policyengine-uk",
+        model_version="2.126.8",
+        data_package_name="policyengine-uk-data",
+        data_package_version="1.58.0",
+        data_version="policyengine-uk-data-1.58.0",
+        data_artifact_revision="1.58.0",
+        default_dataset="enhanced_frs_2024_25",
+        default_dataset_uri="hf://policyengine/policyengine-uk-data-private/enhanced_frs_2024_25.h5@1.58.0",
+        dataset_uris={},
+        dataset_repo_types={},
+        default_dataset_sha256="a" * 64,
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.release_bundle.get_country_release_bundle",
+        lambda country: bundle,
+    )
+
+    metadata = registry._country_bundle_metadata("uk")
+
+    assert metadata["default_dataset_sha256"] == "a" * 64

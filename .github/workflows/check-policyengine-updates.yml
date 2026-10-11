@@ -56,4 +56,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           LATEST_OVERRIDE: ${{ github.event.client_payload.version || inputs.version }}
+          # The whole dispatch payload, verified against the installed wheel's
+          # bundle by the helper; never interpolated into shell.
+          RELEASE_PAYLOAD: ${{ toJSON(github.event.client_payload) }}
         run: bash .github/scripts/update-policyengine-package.sh

@@ -40,6 +40,50 @@ class CountryReleaseBundle:
     default_dataset_uri: str
     dataset_uris: Mapping[str, str]
     dataset_repo_types: Mapping[str, str]
+    default_dataset_sha256: str | None = None
+
+
+def _sha256_or_none(value: object) -> str | None:
+    if isinstance(value, str) and len(value) == 64:
+        try:
+            int(value, 16)
+        except ValueError:
+            return None
+        return value.lower()
+    return None
+
+
+def _default_dataset_sha256(
+    *,
+    default_dataset: str,
+    data_release: Mapping,
+    manifest,
+) -> str | None:
+    """The certified SHA-256 of the default dataset, from the bundle.
+
+    The certified data artifact's hash counts only when that artifact is the
+    default dataset; otherwise the default dataset's own artifact pin is used.
+    """
+
+    certified = _mapping(data_release.get("certified_data_artifact"))
+    if certified.get("dataset") == default_dataset:
+        digest = _sha256_or_none(certified.get("sha256"))
+        if digest is not None:
+            return digest
+    reference = _mapping(_mapping(data_release.get("datasets")).get(default_dataset))
+    digest = _sha256_or_none(reference.get("sha256"))
+    if digest is not None:
+        return digest
+    manifest_certified = getattr(manifest, "certified_data_artifact", None)
+    if (
+        manifest_certified is not None
+        and getattr(manifest_certified, "dataset", None) == default_dataset
+    ):
+        digest = _sha256_or_none(getattr(manifest_certified, "sha256", None))
+        if digest is not None:
+            return digest
+    manifest_reference = getattr(manifest, "datasets", {}).get(default_dataset)
+    return _sha256_or_none(_reference_value(manifest_reference, "sha256"))
 
 
 def _normalise_country(country: str) -> str:
@@ -304,6 +348,12 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
             ),
         )
 
+    default_dataset_sha256 = _default_dataset_sha256(
+        default_dataset=str(default_dataset),
+        data_release=_mapping(data_release),
+        manifest=manifest,
+    )
+
     return CountryReleaseBundle(
         country=country,
         policyengine_version=str(policyengine_version),
@@ -317,6 +367,7 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
         default_dataset_uri=str(default_dataset_uri),
         dataset_uris=dataset_uris,
         dataset_repo_types=dataset_repo_types,
+        default_dataset_sha256=default_dataset_sha256,
     )
 
 

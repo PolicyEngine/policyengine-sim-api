@@ -3,6 +3,7 @@ FastAPI endpoints for the Gateway API.
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import TypedDict
 
@@ -495,6 +496,23 @@ def _resolve_from_legacy_dicts(
     )
 
 
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _certified_dataset_sha256(country_bundle: dict) -> str | None:
+    """The certified SHA-256 of the app's default dataset, if recorded.
+
+    ``dataset`` in a bundle response is always the app's default dataset URI
+    (``_resolve_dataset_uri_from_app_bundle``), so the digest describes it.
+    Malformed or missing values are omitted rather than repeated.
+    """
+
+    digest = country_bundle.get("default_dataset_sha256")
+    if isinstance(digest, str) and _SHA256_HEX.match(digest):
+        return digest
+    return None
+
+
 def _build_policyengine_bundle(
     country: str,
     resolution: RouteResolution,
@@ -531,8 +549,53 @@ def _build_policyengine_bundle(
         ),
         data_version=str(data_version) if isinstance(data_version, str) else None,
         dataset=resolved_dataset,
+        dataset_sha256=_certified_dataset_sha256(country_bundle),
         spm=capability,
     )
+
+
+def _bundle_identities(state: dict) -> dict[str, dict[str, PolicyEngineBundle]]:
+    """Each deployed wrapper version's country bundle identity, for ``/versions``.
+
+    Entries without a stated model version are skipped: ``/versions`` reports
+    only identities the registry recorded, never a fallback.
+    """
+
+    identities: dict[str, dict[str, PolicyEngineBundle]] = {}
+    for policyengine_version, app_bundle in _routing_state_bundles(state).items():
+        if not isinstance(app_bundle, dict):
+            continue
+        countries: dict[str, PolicyEngineBundle] = {}
+        for country in ("us", "uk"):
+            country_bundle = app_bundle.get(country)
+            if not isinstance(country_bundle, dict):
+                continue
+            model_version = country_bundle.get("model_version")
+            if not isinstance(model_version, str) or not model_version.strip():
+                continue
+            resolved_dataset = _resolve_dataset_uri_from_app_bundle(
+                app_bundle=app_bundle, country=country
+            )
+            data_version = _bundle_response_data_version(
+                country_bundle=country_bundle, resolved_dataset=resolved_dataset
+            )
+            wrapper_version = app_bundle.get(
+                "policyengine_version", policyengine_version
+            )
+            countries[country] = PolicyEngineBundle(
+                model_version=model_version,
+                policyengine_version=(
+                    str(wrapper_version) if isinstance(wrapper_version, str) else None
+                ),
+                data_version=str(data_version)
+                if isinstance(data_version, str)
+                else None,
+                dataset=resolved_dataset,
+                dataset_sha256=_certified_dataset_sha256(country_bundle),
+            )
+        if countries:
+            identities[str(policyengine_version)] = countries
+    return identities
 
 
 def _certified_model_version(country: str, route: RouteResolution) -> str | None:
@@ -569,16 +632,16 @@ def _resolve_request_spm(request, bundle, route):
 
 
 def _bundle_payload(bundle: PolicyEngineBundle, **dump_kwargs) -> dict:
-    """Dump a bundle, omitting ``spm`` when the route has no capability.
+    """Dump a bundle, omitting fields added after the legacy body when unset.
 
     The 202 and 500 job bodies splat this dict in directly, bypassing the
     routes' ``response_model_exclude_none``. Every other optional bundle
     field was already emitted as an explicit null before canonical SPM, so
-    only the new key is dropped: a legacy no-SPM body stays byte-identical.
+    only the newer keys (``spm``, ``dataset_sha256``) are dropped when they
+    are unset: a legacy body stays byte-identical.
     """
-    return bundle.model_dump(
-        exclude=None if bundle.spm is not None else {"spm"}, **dump_kwargs
-    )
+    exclude = {key for key in ("spm", "dataset_sha256") if getattr(bundle, key) is None}
+    return bundle.model_dump(exclude=exclude or None, **dump_kwargs)
 
 
 def _serialize_job_metadata(
@@ -1115,6 +1178,7 @@ async def list_versions(request: Request) -> VersionsResponse:
             policyengine=_version_map_from_state(state, "policyengine"),
             us=_version_map_from_state(state, "us"),
             uk=_version_map_from_state(state, "uk"),
+            bundles=_bundle_identities(state),
         )
 
     # ``Dict.from_name`` is a lazy handle; the RPCs fire during the

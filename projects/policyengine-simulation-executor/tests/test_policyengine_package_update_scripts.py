@@ -309,3 +309,147 @@ def test_update_policyengine_package_rejects_direct_component_requirements(
     assert "git commit" not in git_calls
     assert "git push" not in git_calls
     assert "pr create" not in gh_log.read_text(encoding="utf-8")
+
+
+HELPER = SCRIPT.with_name("update_policyengine_package.py")
+INSTALLED = "\n".join(
+    [
+        "policyengine_version=4.1.0",
+        "policyengine_core_version=3.33.0",
+        "uk_version=2.126.8",
+        "uk_data_version=policyengine-uk-data-1.58.0",
+        "uk_dataset_sha256=" + "a" * 64,
+        "uk_certificate_sha256=",
+    ]
+)
+
+
+def _verify(payload: str) -> subprocess.CompletedProcess[str]:
+    import os
+
+    return subprocess.run(
+        [sys.executable, str(HELPER), "verify-dispatch"],
+        input=INSTALLED,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "RELEASE_PAYLOAD": payload},
+    )
+
+
+def _payload(**uk: str) -> str:
+    import json
+
+    return json.dumps(
+        {
+            "version": "4.1.0",
+            "bundle": {
+                "uk": {
+                    "model_version": "2.126.8",
+                    "core_version": "3.33.0",
+                    "data_release_version": "policyengine-uk-data-1.58.0",
+                    "dataset_sha256": "a" * 64,
+                    "certificate_sha256": "c" * 64,
+                    **uk,
+                }
+            },
+            "qualification": {
+                "uk": {"verdict": "qualified", "receipt_sha256": "e" * 64}
+            },
+        }
+    )
+
+
+def test_verify_dispatch_accepts_a_matching_bundle() -> None:
+    result = _verify(_payload())
+
+    assert result.returncode == 0, result.stderr
+    assert "dispatch_verified=true" in result.stdout
+    assert "uk_qualification_verdict=qualified" in result.stdout
+    assert "uk_qualification_receipt_sha256=" + "e" * 64 in result.stdout
+
+
+def test_verify_dispatch_accepts_legacy_and_manual_payloads() -> None:
+    for payload in ("", "null", '{"version": "4.1.0"}'):
+        result = _verify(payload)
+        assert result.returncode == 0, result.stderr
+        assert "dispatch_verified=false" in result.stdout
+
+
+def test_verify_dispatch_rejects_another_bundle() -> None:
+    for field, value in (
+        ("model_version", "2.125.1"),
+        ("core_version", "3.32.0"),
+        ("data_release_version", "policyengine-uk-data-1.59.0"),
+        ("dataset_sha256", "b" * 64),
+    ):
+        result = _verify(_payload(**{field: value}))
+        assert result.returncode != 0, field
+        assert field in result.stderr
+
+
+def test_verify_dispatch_rejects_another_wrapper_version() -> None:
+    import json
+
+    payload = json.loads(_payload())
+    payload["version"] = "4.2.0"
+
+    result = _verify(json.dumps(payload))
+
+    assert result.returncode != 0
+    assert "Dispatch is for policyengine 4.2.0" in result.stderr
+
+
+def test_update_policyengine_package_stops_when_dispatch_names_another_dataset(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    git_log = tmp_path / "git.log"
+    gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
+    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=uv_log)
+
+    result = run_updater(
+        env=updater_env(
+            fake_bin,
+            LATEST_OVERRIDE="4.1.0",
+            RELEASE_PAYLOAD=_payload(
+                dataset_sha256="b" * 64,
+                model_version="2.1.0",
+                core_version="999.999.999",
+                data_release_version="1.20.0",
+            ),
+        ),
+    )
+
+    assert result.returncode != 0
+    assert "does not match the release dispatch" in result.stderr
+    assert "git commit" not in git_log.read_text(encoding="utf-8")
+    assert "pr create" not in gh_log.read_text(encoding="utf-8")
+
+
+def test_update_policyengine_package_accepts_a_matching_dispatch(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    git_log = tmp_path / "git.log"
+    gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
+    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=uv_log)
+
+    result = run_updater(
+        env=updater_env(
+            fake_bin,
+            LATEST_OVERRIDE="4.1.0",
+            RELEASE_PAYLOAD=_payload(
+                model_version="2.1.0",
+                core_version="999.999.999",
+                data_release_version="1.20.0",
+            ),
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "pr create" in gh_log.read_text(encoding="utf-8")

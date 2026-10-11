@@ -117,6 +117,12 @@ create_pr_body_file() {
     echo "- US: ${BUNDLED_US_DATA_VERSION:-resolved from bundle during update}"
     echo "- UK: ${BUNDLED_UK_DATA_VERSION:-resolved from bundle during update}"
     echo
+    echo "UK release identity:"
+    echo "- certified dataset SHA-256: ${BUNDLED_UK_DATASET_SHA256:-not recorded by this bundle}"
+    echo "- certificate digest (receipt v1): ${BUNDLED_UK_CERTIFICATE_SHA256:-not reported by this wrapper}"
+    echo "- release dispatch verified against the installed wheel: ${DISPATCH_VERIFIED:-false}"
+    echo "- qualification: ${UK_QUALIFICATION_VERDICT:-none recorded}${UK_QUALIFICATION_RECEIPT_SHA256:+ (receipt ${UK_QUALIFICATION_RECEIPT_SHA256})}"
+    echo
     echo "---"
     echo "Generated automatically by GitHub Actions."
   } > "$pr_body_file"
@@ -238,6 +244,18 @@ if [[ "$BUNDLED_POLICYENGINE_VERSION" != "$LATEST" ]]; then
   echo "ERROR: Installed policyengine.py reports bundle ${BUNDLED_POLICYENGINE_VERSION}, expected ${LATEST}." >&2
   exit 1
 fi
+BUNDLED_UK_DATASET_SHA256=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "uk_dataset_sha256" {print $2}')
+BUNDLED_UK_CERTIFICATE_SHA256=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "uk_certificate_sha256" {print $2}')
+
+# A policyengine-release dispatch may name the UK bundle it certified; the
+# installed wheel must carry exactly that bundle.
+if ! DISPATCH_OUTPUT=$(printf '%s\n' "$BUNDLE_OUTPUT" | python3 "$PYTHON_HELPER" verify-dispatch); then
+  echo "ERROR: The installed policyengine ${LATEST} bundle does not match the release dispatch." >&2
+  exit 1
+fi
+DISPATCH_VERIFIED=$(printf '%s\n' "$DISPATCH_OUTPUT" | awk -F= '$1 == "dispatch_verified" {print $2}')
+UK_QUALIFICATION_VERDICT=$(printf '%s\n' "$DISPATCH_OUTPUT" | awk -F= '$1 == "uk_qualification_verdict" {print $2}')
+UK_QUALIFICATION_RECEIPT_SHA256=$(printf '%s\n' "$DISPATCH_OUTPUT" | awk -F= '$1 == "uk_qualification_receipt_sha256" {print $2}')
 
 echo "Bundled runtime pins:"
 echo "  policyengine==${BUNDLED_POLICYENGINE_VERSION}"

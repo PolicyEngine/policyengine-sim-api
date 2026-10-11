@@ -177,6 +177,7 @@ def install_fake_uv(
     bundled_uk_version: str = "2.1.0",
     bundled_policyengine_version: str = "4.1.0",
     bundled_spm_version: str = "1.0.0",
+    bundled_uk_dataset_sha256: str = "a" * 64,
 ) -> None:
     write_executable(
         fake_bin / "uv",
@@ -194,6 +195,9 @@ if [[ "$1" == "run" \
   echo "us_data_version=1.10.0"
   echo "uk_version={bundled_uk_version}"
   echo "uk_data_version=1.20.0"
+  echo "us_dataset_sha256="
+  echo "uk_dataset_sha256={bundled_uk_dataset_sha256}"
+  echo "uk_certificate_sha256="
   exit 0
 fi
 

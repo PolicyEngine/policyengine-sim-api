@@ -31,6 +31,7 @@ class CountryBundleMetadata(TypedDict):
     default_dataset_uri: str
     dataset_uris: dict[str, str]
     dataset_repo_types: dict[str, str]
+    default_dataset_sha256: NotRequired[str | None]
 
 
 class BundleManifestMetadata(TypedDict):
@@ -97,6 +98,7 @@ def _country_bundle_metadata(country: str) -> CountryBundleMetadata:
         "default_dataset_uri": bundle.default_dataset_uri,
         "dataset_uris": dict(bundle.dataset_uris),
         "dataset_repo_types": dict(bundle.dataset_repo_types),
+        "default_dataset_sha256": bundle.default_dataset_sha256,
     }
 
 

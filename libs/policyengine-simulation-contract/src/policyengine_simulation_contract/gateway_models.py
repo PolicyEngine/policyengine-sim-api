@@ -160,6 +160,15 @@ class PolicyEngineBundle(BaseModel):
     policyengine_version: Optional[str] = None
     data_version: Optional[str] = None
     dataset: Optional[str] = None
+    dataset_sha256: Optional[str] = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+        description=(
+            "Certified SHA-256 of the dataset named in `dataset`, from the "
+            "policyengine.py bundle the worker installed. Absent for workers "
+            "deployed before this field existed."
+        ),
+    )
     spm: Optional[SPMCapability] = None
 
 
@@ -378,6 +387,16 @@ class VersionsResponse(BaseModel):
     policyengine: VersionMap
     us: VersionMap
     uk: VersionMap
+    bundles: dict[str, dict[str, PolicyEngineBundle]] = Field(
+        default_factory=dict,
+        description=(
+            "Deployed bundle identity keyed by exact PolicyEngine wrapper "
+            "version, then country: model and data versions, the default "
+            "dataset and its certified SHA-256. Resolve `policyengine.latest` "
+            "to an app, find that app's wrapper version in the policyengine "
+            "map, and read its identity here."
+        ),
+    )
 
 
 class HealthResponse(BaseModel):

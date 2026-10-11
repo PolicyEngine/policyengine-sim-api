@@ -209,6 +209,26 @@ def bundle_versions() -> None:
             raise SystemExit(f"Bundle has no data release version for {country}")
         return version
 
+    def dataset_sha256(country: str) -> str:
+        release = _mapping(data_releases.get(country))
+        default = release.get("default_dataset")
+        certified = _mapping(release.get("certified_data_artifact"))
+        if certified.get("dataset") == default and certified.get("sha256"):
+            return str(certified["sha256"])
+        reference = _mapping(_mapping(release.get("datasets")).get(default))
+        return str(reference.get("sha256") or "")
+
+    def certificate_sha256(country: str) -> str:
+        # Receipt-v1 certificate digest; older wrappers lack the helper.
+        try:
+            from policyengine.provenance.receipt import (
+                certificate_sha256 as digest,
+            )
+        except ImportError:
+            return ""
+        release = data_releases.get(country)
+        return digest(release) if isinstance(release, Mapping) else ""
+
     outputs = {
         "policyengine_version": package_version("policyengine"),
         "policyengine_core_version": package_version("policyengine-core"),
@@ -217,9 +237,69 @@ def bundle_versions() -> None:
         "us_data_version": data_release_version("us"),
         "uk_version": package_version("policyengine-uk"),
         "uk_data_version": data_release_version("uk"),
+        "us_dataset_sha256": dataset_sha256("us"),
+        "uk_dataset_sha256": dataset_sha256("uk"),
+        "uk_certificate_sha256": certificate_sha256("uk"),
     }
     for name, version in outputs.items():
         print(f"{name}={version}")
+
+
+#: Release-dispatch fields compared with the installed bundle: (payload key
+#: under client_payload.bundle.uk, bundle-versions output key).
+DISPATCH_CHECKS = (
+    ("model_version", "uk_version"),
+    ("core_version", "policyengine_core_version"),
+    ("data_release_version", "uk_data_version"),
+    ("dataset_sha256", "uk_dataset_sha256"),
+    ("certificate_sha256", "uk_certificate_sha256"),
+)
+
+
+def verify_dispatch() -> None:
+    """Check a policyengine-release payload against the installed bundle.
+
+    Reads the dispatch ``client_payload`` JSON from ``RELEASE_PAYLOAD`` and
+    ``bundle-versions`` output from stdin. A payload without ``bundle.uk``
+    (older releases, manual runs) is accepted. A field the payload names
+    must equal the installed bundle's; a field the installed wrapper cannot
+    report is skipped. Prints digests for the PR body.
+    """
+
+    raw = os.environ.get("RELEASE_PAYLOAD", "").strip()
+    payload = json.loads(raw) if raw and raw != "null" else {}
+    installed = {}
+    for line in sys.stdin.read().splitlines():
+        key, _, value = line.partition("=")
+        if key:
+            installed[key.strip()] = value.strip()
+    if payload.get("version") and payload["version"] != installed.get(
+        "policyengine_version"
+    ):
+        raise SystemExit(
+            f"Dispatch is for policyengine {payload['version']}, but "
+            f"{installed.get('policyengine_version')} is installed."
+        )
+    expected = _mapping(_mapping(payload.get("bundle")).get("uk"))
+    mismatches = []
+    for payload_key, installed_key in DISPATCH_CHECKS:
+        claimed = expected.get(payload_key)
+        actual = installed.get(installed_key, "")
+        if claimed in (None, "") or actual == "":
+            continue
+        if str(claimed) != actual:
+            mismatches.append(f"{payload_key}: dispatch {claimed}, installed {actual}")
+    if mismatches:
+        raise SystemExit(
+            "The release dispatch names a different UK bundle from the installed "
+            "wheel: " + "; ".join(mismatches)
+        )
+    qualification = _mapping(_mapping(payload.get("qualification")).get("uk"))
+    print(f"dispatch_verified={'true' if expected else 'false'}")
+    print(f"uk_qualification_verdict={qualification.get('verdict') or ''}")
+    print(
+        f"uk_qualification_receipt_sha256={qualification.get('receipt_sha256') or ''}"
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -250,6 +330,7 @@ def _parser() -> argparse.ArgumentParser:
     pypi.add_argument("--package", required=True)
 
     commands.add_parser("bundle-versions")
+    commands.add_parser("verify-dispatch")
     return parser
 
 
@@ -269,6 +350,8 @@ def main() -> None:
         latest_version(args.package)
     elif args.command == "bundle-versions":
         bundle_versions()
+    elif args.command == "verify-dispatch":
+        verify_dispatch()
 
 
 if __name__ == "__main__":

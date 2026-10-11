@@ -603,3 +603,26 @@ def test_a_bundle_that_states_no_model_version_contradicts_nothing(
     )
     assert response.status_code == 200, response.text
     assert response.json()["policyengine_bundle"]["policyengine_version"] == "3.9.0"
+
+
+def test_poll_bodies_carry_the_dataset_sha256_only_when_recorded(mock_modal, client):
+    """A worker bundle with a certified dataset digest reports it in raw
+    202 bodies; one without keeps the legacy key set."""
+    from copy import deepcopy
+
+    from fixtures.gateway_endpoints import TEST_ROUTING_STATE
+
+    state = deepcopy(TEST_ROUTING_STATE)
+    state["bundles"]["4.10.0"]["uk"] = {
+        **state["bundles"]["4.10.0"]["uk"],
+        "default_dataset_sha256": "d" * 64,
+    }
+    mock_modal["dicts"]["simulation-api-routing-state"] = {"active": state}
+    submitted = client.post("/simulate/economy/comparison", json={"country": "uk"})
+    assert submitted.status_code == 200, submitted.text
+    job_id = submitted.json()["job_id"]
+    call = mock_modal["function_call"].registry[job_id]
+    call.running = True
+    running = client.get(f"/jobs/{job_id}")
+    assert running.status_code == 202
+    assert running.json()["policyengine_bundle"]["dataset_sha256"] == "d" * 64
