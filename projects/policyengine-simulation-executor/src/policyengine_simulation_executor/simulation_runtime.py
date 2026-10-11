@@ -188,9 +188,9 @@ def _parse_policy_period(period_key: Any) -> tuple[datetime, datetime | None]:
     try:
         if len(parts) not in {1, 2}:
             raise ValueError
+        # The wrapper has always parsed dates with strptime, which also takes
+        # unpadded months and days ("2027-4-6"); accept what it accepted.
         dates = [datetime.strptime(part, "%Y-%m-%d") for part in parts]
-        if any(date.date().isoformat() != part for date, part in zip(dates, parts)):
-            raise ValueError
         start = dates[0]
         stop = dates[1] if len(dates) == 2 else None
         if stop is not None and stop < start:
@@ -257,6 +257,18 @@ def _compile_interval_policy(policy, *, country_module, year: int):
                 )
             )
     return Policy(name="Reform", parameter_values=parameter_values)
+
+
+def _runtime_policy(policy, *, country_module, year: int):
+    """A request's policy as the wrapper must receive it.
+
+    Normalises the period keys, then compiles a policy with interval keys
+    into wrapper parameter values (see ``_compile_interval_policy``). Every
+    path that hands a request policy to the wrapper goes through this.
+    """
+    return _compile_interval_policy(
+        _normalise_policy(policy), country_module=country_module, year=year
+    )
 
 
 def _resolve_dataset_reference(country: str) -> str:

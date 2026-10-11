@@ -116,7 +116,6 @@ def test_unknown_parameter_retains_wrapper_error_and_close_match_hint(uk):
     [
         "2027",
         "2027-02-30",
-        "2027-4-06",
         "2027-04-06.",
         ".2028-04-05",
         "2027-04-06.2028-04-05.extra",
@@ -234,3 +233,21 @@ def test_policy_without_intervals_keeps_original_wrapper_compilation(
     assert reform_dict_from_parameter_values(
         simulation.policy.parameter_values
     ) == reform_dict_from_parameter_values(expected.parameter_values)
+
+
+@pytest.mark.parametrize(
+    "key, start, stop",
+    [
+        ("2027-4-6", datetime(2027, 4, 6), None),
+        ("2027-4-6.2028-4-5", datetime(2027, 4, 6), datetime(2028, 4, 5)),
+    ],
+)
+def test_unpadded_dates_are_accepted_as_the_wrapper_always_accepted_them(
+    key, start, stop
+):
+    from policyengine_simulation_executor.simulation_runtime import (
+        _parse_policy_period,
+    )
+
+    assert _normalise_policy({UK_RATE: {key: 0.21}}) == {UK_RATE: {key: 0.21}}
+    assert _parse_policy_period(key) == (start, stop)
