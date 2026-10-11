@@ -435,6 +435,11 @@ jobs:
     needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
+    outputs:
+      # What unpinned requests were routed to before and after this release;
+      # revert_routing restores the former if any later gate fails.
+      previous_latest: ${{ steps.before.outputs.latest }}
+      published_latest: ${{ steps.after.outputs.latest }}
     steps:
       - uses: actions/checkout@v6
 
@@ -447,6 +452,18 @@ jobs:
       - name: Install routing publisher dependencies
         working-directory: projects/policyengine-simulation-executor
         run: uv sync --frozen
+
+      - name: Record the routing this release replaces
+        id: before
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          latest="$(uv run python -m src.modal.utils.update_version_registry \
+            --environment "${{ inputs.modal_environment }}" --print-latest | tail -n 1)"
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "Unpinned requests route to policyengine ${latest:-nothing} before this release."
 
       - name: Publish active routing state
         working-directory: projects/policyengine-simulation-executor
@@ -470,6 +487,67 @@ jobs:
             args+=(--force-latest)
           fi
           uv run python -m src.modal.utils.update_version_registry "${args[@]}"
+
+      - name: Record the routing this release published
+        id: after
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          latest="$(uv run python -m src.modal.utils.update_version_registry \
+            --environment "${{ inputs.modal_environment }}" --print-latest | tail -n 1)"
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+
+  sentinel_expected:
+    name: Compute the numerical release sentinel
+    # Runs the sentinel requests in-process with the exact bundle this
+    # deployment installs, in parallel with the service deployments.
+    if: ${{ inputs.deploy_existing_stack }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install executor dependencies
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --frozen
+
+      - name: Run the sentinel requests in-process
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          HUGGING_FACE_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}
+          GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
+        run: uv run python -m src.modal.utils.release_sentinel expected --output "${RUNNER_TEMP}/release-sentinel.json"
+
+      - name: Check the sentinel names this deployment's bundle
+        env:
+          EXPECTED_POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
+          EXPECTED_UK_MODEL_VERSION: ${{ needs.prepare.outputs.uk_version }}
+          EXPECTED_UK_DATASET_SHA256: ${{ needs.prepare.outputs.uk_dataset_sha256 }}
+        run: |
+          jq -e \
+            --arg p "${EXPECTED_POLICYENGINE_VERSION}" \
+            --arg m "${EXPECTED_UK_MODEL_VERSION}" \
+            --arg d "${EXPECTED_UK_DATASET_SHA256}" '
+              .policyengine_version == $p and .uk.model_version == $m
+              and .uk.dataset_sha256 == $d and (.cases | length) > 0
+            ' "${RUNNER_TEMP}/release-sentinel.json"
+
+      - name: Retain the sentinel for the deployed-stack checks
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-sentinel-${{ inputs.release_environment }}
+          path: ${{ runner.temp }}/release-sentinel.json
+          if-no-files-found: error
 
   configure_stage12_v2:
     name: Validate pre-provisioned Stage 12 runtime access
@@ -675,7 +753,7 @@ jobs:
 
   integration:
     name: Verify deployed three-service stack
-    if: ${{ always() && needs.prepare.result == 'success' && needs.deploy_entrypoint.result == 'success' && needs.stage12_v2_ready.result == 'success' && ((inputs.deploy_existing_stack && needs.deploy_gateway.result == 'success' && needs.deploy_executor.result == 'success' && needs.update_routing.result == 'success') || (!inputs.deploy_existing_stack && needs.deploy_gateway.result == 'skipped' && needs.deploy_executor.result == 'skipped' && needs.update_routing.result == 'skipped')) }}
+    if: ${{ always() && needs.prepare.result == 'success' && needs.deploy_entrypoint.result == 'success' && needs.stage12_v2_ready.result == 'success' && ((inputs.deploy_existing_stack && needs.deploy_gateway.result == 'success' && needs.deploy_executor.result == 'success' && needs.update_routing.result == 'success' && needs.sentinel_expected.result == 'success') || (!inputs.deploy_existing_stack && needs.deploy_gateway.result == 'skipped' && needs.deploy_executor.result == 'skipped' && needs.update_routing.result == 'skipped' && needs.sentinel_expected.result == 'skipped')) }}
     needs:
       [
         prepare,
@@ -683,6 +761,7 @@ jobs:
         deploy_gateway,
         deploy_executor,
         update_routing,
+        sentinel_expected,
         stage12_v2_ready,
       ]
     runs-on: ubuntu-latest
@@ -709,6 +788,27 @@ jobs:
           EXPECTED_UK_DATASET_SHA256: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_dataset_sha256 || '' }}
           EXPECTED_LATEST: ${{ inputs.deploy_existing_stack && 'true' || '' }}
         run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.deploy_entrypoint.outputs.revision }}"
+
+      - name: Download the numerical release sentinel
+        if: ${{ inputs.deploy_existing_stack }}
+        uses: actions/download-artifact@v4
+        with:
+          name: release-sentinel-${{ inputs.release_environment }}
+          path: ${{ runner.temp }}/sentinel
+
+      - name: Check the deployed stack reproduces the sentinel numbers
+        if: ${{ inputs.deploy_existing_stack }}
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          SIMULATION_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+          SIMULATION_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+          SIMULATION_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+          SIMULATION_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+        run: |
+          uv sync --frozen
+          uv run python -m src.modal.utils.release_sentinel check \
+            --base-url "${{ needs.deploy_entrypoint.outputs.candidate_url }}" \
+            --expected "${RUNNER_TEMP}/sentinel/release-sentinel.json"
 
       - name: Generate API clients for complete integration tests
         if: ${{ inputs.run_full_integration }}
@@ -785,7 +885,8 @@ jobs:
         needs.deploy_entrypoint.result == 'success' &&
         needs.authenticated_test.result == 'success'
       }}
-    needs: [prepare, deploy_entrypoint, deploy_executor, authenticated_test]
+    needs:
+      [prepare, deploy_entrypoint, deploy_executor, authenticated_test, sentinel_expected]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
     permissions:
@@ -838,6 +939,27 @@ jobs:
       - name: Verify stable service routing
         run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"
 
+      - name: Download the numerical release sentinel
+        if: ${{ inputs.deploy_existing_stack }}
+        uses: actions/download-artifact@v4
+        with:
+          name: release-sentinel-${{ inputs.release_environment }}
+          path: ${{ runner.temp }}/sentinel
+
+      - name: Verify the stable service reproduces the sentinel numbers
+        if: ${{ inputs.deploy_existing_stack }}
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          SIMULATION_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+          SIMULATION_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+          SIMULATION_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+          SIMULATION_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+        run: |
+          uv sync --frozen
+          uv run python -m src.modal.utils.release_sentinel check \
+            --base-url "${STABLE_URL}" \
+            --expected "${RUNNER_TEMP}/sentinel/release-sentinel.json"
+
       - name: Verify stable service authentication
         working-directory: projects/policyengine-simulation-entry
         env:
@@ -872,6 +994,58 @@ jobs:
           SIMULATION_ENTRYPOINT_TARGET_REVISION: ${{ env.PREVIOUS_REVISION }}
           SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION: ${{ env.TARGET_REVISION }}
         run: .github/scripts/set-cloud-run-simulation-entry-revision.sh
+
+  revert_routing:
+    name: Restore the previous Modal routing after a failed release
+    # update_routing moves unpinned traffic before the deployed-stack gates
+    # run. When any later gate fails or the run is cancelled, put latest back
+    # to what it was and withdraw the failed release's routes. The restore is
+    # conditional on latest still being this release, so it never overwrites
+    # a newer release.
+    if: >-
+      ${{
+        always() &&
+        inputs.deploy_existing_stack &&
+        needs.update_routing.result == 'success' &&
+        needs.update_routing.outputs.previous_latest != '' &&
+        needs.update_routing.outputs.published_latest == needs.prepare.outputs.policyengine_version &&
+        needs.update_routing.outputs.previous_latest != needs.update_routing.outputs.published_latest &&
+        (
+          needs.integration.result != 'success' ||
+          needs.authenticated_test.result != 'success' ||
+          (inputs.promote_entrypoint && needs.promote_entrypoint.result != 'success')
+        )
+      }}
+    needs:
+      [prepare, update_routing, integration, authenticated_test, promote_entrypoint]
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install routing publisher dependencies
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --frozen
+
+      - name: Restore the previous latest and withdraw the failed release
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          PREVIOUS_LATEST: ${{ needs.update_routing.outputs.previous_latest }}
+          FAILED_RELEASE: ${{ needs.update_routing.outputs.published_latest }}
+        run: |
+          uv run python -m src.modal.utils.update_version_registry \
+            --environment "${{ inputs.modal_environment }}" \
+            --restore-latest "${PREVIOUS_LATEST}" \
+            --expected-latest "${FAILED_RELEASE}" \
+            --withdraw "${FAILED_RELEASE}"
 
   deployment_ready:
     name: Require requested deployment to complete
@@ -912,6 +1086,8 @@ jobs:
       SIMULATION_ENTRYPOINT_GCP_REGION: ${{ vars.SIMULATION_ENTRYPOINT_GCP_REGION || 'us-central1' }}
       SIMULATION_ENTRYPOINT_SERVICE: ${{ inputs.entrypoint_service }}
       SIMULATION_ENTRYPOINT_SUCCESSFUL_REVISION: ${{ needs.deploy_entrypoint.outputs.revision }}
+      # Kept so simulation-rollback.yml can move traffic back to it.
+      SIMULATION_ENTRYPOINT_ROLLBACK_REVISION: ${{ needs.deploy_entrypoint.outputs.previous_revision }}
     steps:
       - uses: actions/checkout@v6
 

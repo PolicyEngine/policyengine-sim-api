@@ -1,0 +1,133 @@
+name: Roll back Simulation API
+
+# Route unpinned requests back to a policyengine.py release that is already
+# published in the Modal routing state, optionally withdraw a failed release
+# and move Cloud Run entrypoint traffic back to a retained revision, then
+# verify the stable service serves the restored release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Environment to roll back"
+        required: true
+        type: choice
+        options:
+          - beta
+          - prod
+      policyengine_version:
+        description: "Published policyengine.py version to restore as latest"
+        required: true
+        type: string
+      expected_latest:
+        description: "Refuse unless latest is currently this version (blank: no check)"
+        required: false
+        type: string
+      withdraw_version:
+        description: "Failed release whose routes to remove (blank: keep it pinnable)"
+        required: false
+        type: string
+      entrypoint_revision:
+        description: "Retained Cloud Run revision to route to (blank: leave traffic)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Shared with the deployments so a rollback never races a release.
+  group: simulation-deploy-main
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Restore ${{ inputs.target }} to policyengine ${{ inputs.policyengine_version }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TARGET: ${{ inputs.target }}
+      POLICYENGINE_VERSION: ${{ inputs.policyengine_version }}
+      EXPECTED_LATEST: ${{ inputs.expected_latest }}
+      WITHDRAW_VERSION: ${{ inputs.withdraw_version }}
+      ENTRYPOINT_REVISION: ${{ inputs.entrypoint_revision }}
+      MODAL_ENVIRONMENT: ${{ inputs.target == 'prod' && 'main' || 'staging' }}
+      SERVICE: ${{ inputs.target == 'prod' && 'policyengine-simulation-entry' || 'policyengine-simulation-entry-staging' }}
+      REGION: ${{ vars.SIMULATION_ENTRYPOINT_GCP_REGION || 'us-central1' }}
+      PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate the requested rollback
+        run: .github/scripts/validate-simulation-rollback-inputs.sh
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install routing publisher dependencies
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --frozen
+
+      - name: Restore Modal routing
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          args=(--environment "${MODAL_ENVIRONMENT}" --restore-latest "${POLICYENGINE_VERSION}")
+          if [[ -n "${EXPECTED_LATEST}" ]]; then
+            args+=(--expected-latest "${EXPECTED_LATEST}")
+          fi
+          if [[ -n "${WITHDRAW_VERSION}" ]]; then
+            args+=(--withdraw "${WITHDRAW_VERSION}")
+          fi
+          uv run python -m src.modal.utils.update_version_registry "${args[@]}"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve the stable service
+        id: service
+        run: |
+          service_json="$(gcloud run services describe "${SERVICE}" \
+            --project "${PROJECT_ID}" --region "${REGION}" --format=json)"
+          echo "url=$(jq -er '.status.url' <<<"${service_json}")" >> "$GITHUB_OUTPUT"
+          echo "revision=$(jq -er '
+            [.status.traffic[]? | select((.percent // 0) == 100) | .revisionName]
+            | if length == 1 then .[0] else error("no single 100 percent revision") end
+          ' <<<"${service_json}")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore entrypoint traffic
+        if: ${{ inputs.entrypoint_revision != '' }}
+        env:
+          SIMULATION_ENTRYPOINT_GCP_PROJECT_ID: ${{ env.PROJECT_ID }}
+          SIMULATION_ENTRYPOINT_GCP_REGION: ${{ env.REGION }}
+          SIMULATION_ENTRYPOINT_SERVICE: ${{ env.SERVICE }}
+          SIMULATION_ENTRYPOINT_TARGET_REVISION: ${{ inputs.entrypoint_revision }}
+          SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION: ${{ steps.service.outputs.revision }}
+        run: |
+          if [[ "${SIMULATION_ENTRYPOINT_TARGET_REVISION}" == "${SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION}" ]]; then
+            echo "${SERVICE} already serves ${SIMULATION_ENTRYPOINT_TARGET_REVISION}."
+          else
+            .github/scripts/set-cloud-run-simulation-entry-revision.sh
+          fi
+
+      - name: Verify the stable service serves the restored release
+        env:
+          EXPECTED_POLICYENGINE_VERSION: ${{ inputs.policyengine_version }}
+          STABLE_URL: ${{ steps.service.outputs.url }}
+          EXPECTED_REVISION: ${{ inputs.entrypoint_revision }}
+          PREVIOUS_REVISION: ${{ steps.service.outputs.revision }}
+        run: |
+          .github/scripts/cloud-run-simulation-entry-smoke.sh \
+            "${STABLE_URL}" "${EXPECTED_REVISION}" "${PREVIOUS_REVISION}"

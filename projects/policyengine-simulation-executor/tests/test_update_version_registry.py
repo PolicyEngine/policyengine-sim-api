@@ -491,3 +491,184 @@ def test_country_bundle_metadata_records_the_certified_dataset_sha256(monkeypatc
     metadata = registry._country_bundle_metadata("uk")
 
     assert metadata["default_dataset_sha256"] == "a" * 64
+
+
+# --- Rollback: restoring latest and withdrawing a failed release -------------
+#
+# Invariants:
+# - publishing release R and then restoring the previous latest with R
+#   withdrawn returns routes, bundles and latest to their state before R;
+# - after any restore, latest and every route name an app that still has a
+#   policyengine route and manifest (validate_routing_state holds), and no
+#   route reaches a withdrawn app;
+# - a restore conditioned on expected_latest never changes a state whose
+#   latest is something else.
+
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+
+def _country(country: str, model_version: str) -> registry.CountryBundleMetadata:
+    return {
+        "country": country,
+        "model_package_name": f"policyengine-{country}",
+        "model_version": model_version,
+        "data_package_name": "populace-data",
+        "data_package_version": "0.1.0",
+        "data_version": f"populace-{country}-build",
+        "data_artifact_revision": f"populace-{country}-build",
+        "default_dataset": f"populace_{country}",
+        "default_dataset_uri": f"hf://datasets/policyengine/{country}/default",
+        "dataset_uris": {},
+        "dataset_repo_types": {},
+    }
+
+
+def _app(policyengine_version: str) -> str:
+    return "policyengine-simulation-py" + policyengine_version.replace(".", "-")
+
+
+def _publish(monkeypatch, state, policyengine_version, us_version, uk_version):
+    def manifest(*, app_name, policyengine_version):
+        return {
+            "app_name": app_name,
+            "policyengine_version": policyengine_version,
+            "us": _country("us", us_version),
+            "uk": _country("uk", uk_version),
+        }
+
+    monkeypatch.setattr(registry, "build_bundle_manifest_metadata", manifest)
+    return registry.build_next_routing_state(
+        current_state=state,
+        app_name=_app(policyengine_version),
+        policyengine_version=policyengine_version,
+        us_version=us_version,
+        uk_version=uk_version,
+    )
+
+
+def _without_generation(state):
+    return {key: value for key, value in state.items() if key != "generation"}
+
+
+RELEASES = st.lists(
+    st.tuples(st.sampled_from(["1.1.0", "1.2.0"]), st.sampled_from(["2.1.0", "2.2.0"])),
+    min_size=2,
+    max_size=6,
+)
+
+
+@settings(max_examples=60, deadline=None)
+@given(releases=RELEASES)
+def test_publish_then_rollback_returns_the_previous_routing(releases):
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        state = None
+        for index, (us, uk) in enumerate(releases[:-1]):
+            state = _publish(monkeypatch, state, f"6.{index}.0", us, uk)
+        before = registry._coerce_routing_state(state)
+        failed = f"6.{len(releases) - 1}.0"
+        after = _publish(monkeypatch, state, failed, *releases[-1])
+        restored = registry.build_restored_routing_state(
+            current_state=after,
+            policyengine_version=before["latest"]["policyengine"],
+            expected_latest=failed,
+            withdraw_version=failed,
+        )
+    finally:
+        monkeypatch.undo()
+    assert _without_generation(restored) == _without_generation(before)
+    apps = set(restored["routes"]["policyengine"].values())
+    for country in ("us", "uk"):
+        assert set(restored["routes"][country].values()) <= apps
+    assert _app(failed) not in apps
+
+
+def test_restore_without_withdrawal_keeps_the_newer_release_pinnable(monkeypatch):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    state = _publish(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
+    restored = registry.build_restored_routing_state(
+        current_state=state, policyengine_version="6.2.6"
+    )
+    assert restored["latest"] == {"policyengine": "6.2.6", "us": "1.1.0", "uk": "2.1.0"}
+    assert restored["routes"]["policyengine"]["6.3.0"] == _app("6.3.0")
+    assert restored["routes"]["uk"] == {"2.1.0": _app("6.2.6"), "2.2.0": _app("6.3.0")}
+    assert restored["generation"] == f"rollback:6.2.6:{_app('6.2.6')}"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"policyengine_version": "6.1.0"}, "no published route"),
+        (
+            {"policyengine_version": "6.2.6", "expected_latest": "6.2.6"},
+            "another release changed routing",
+        ),
+        (
+            {"policyengine_version": "6.2.6", "withdraw_version": "6.2.6"},
+            "same version",
+        ),
+        (
+            {"policyengine_version": "6.2.6", "withdraw_version": "6.9.9"},
+            "no route to withdraw",
+        ),
+    ],
+)
+def test_unsafe_restores_are_refused(monkeypatch, kwargs, message):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    state = _publish(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
+    with pytest.raises(ValueError, match=message):
+        registry.build_restored_routing_state(current_state=state, **kwargs)
+
+
+def test_a_restore_needs_a_manifest_that_matches_its_route(monkeypatch):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    state = _publish(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
+    state["bundles"]["6.2.6"]["app_name"] = "someone-else"
+    with pytest.raises(ValueError, match="manifest names app"):
+        registry.build_restored_routing_state(
+            current_state=state, policyengine_version="6.2.6"
+        )
+
+
+def test_main_prints_and_restores_latest(patched_modal, monkeypatch, capsys):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    state = _publish(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
+    patched_modal["staging/simulation-api-routing-state"] = FakeDict({"active": state})
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["update_version_registry", "--environment", "staging", "--print-latest"],
+    )
+    registry.main()
+    assert capsys.readouterr().out.strip() == "6.3.0"
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "update_version_registry",
+            "--environment",
+            "staging",
+            "--restore-latest",
+            "6.2.6",
+            "--expected-latest",
+            "6.3.0",
+            "--withdraw",
+            "6.3.0",
+        ],
+    )
+    registry.main()
+    active = patched_modal["staging/simulation-api-routing-state"].snapshot()["active"]
+    assert active["latest"]["policyengine"] == "6.2.6"
+    assert "6.3.0" not in active["routes"]["policyengine"]
+    assert active["routes"]["uk"] == {"2.1.0": _app("6.2.6")}
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["update_version_registry", "--environment", "staging", "--withdraw", "6.2.6"],
+    )
+    with pytest.raises(SystemExit):
+        registry.main()

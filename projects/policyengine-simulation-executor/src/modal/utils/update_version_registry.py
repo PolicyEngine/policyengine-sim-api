@@ -281,6 +281,123 @@ def build_next_routing_state(
     return state
 
 
+def _newest_app_serving(
+    state: RoutingState,
+    *,
+    country: str,
+    model_version: str,
+    preferred: str,
+) -> str | None:
+    """The app of the newest routed bundle with this country model version."""
+
+    candidates = [
+        version
+        for version, manifest in state["bundles"].items()
+        if isinstance(manifest, dict)
+        and (manifest.get(country) or {}).get("model_version") == model_version
+        and state["routes"]["policyengine"].get(version) == manifest.get("app_name")
+    ]
+    if not candidates:
+        return None
+    if preferred in candidates:
+        return state["routes"]["policyengine"][preferred]
+    newest = candidates[0]
+    for version in candidates[1:]:
+        if _is_newer_version(version, newest):
+            newest = version
+    return state["routes"]["policyengine"][newest]
+
+
+def build_restored_routing_state(
+    *,
+    current_state: object,
+    policyengine_version: str,
+    expected_latest: str | None = None,
+    withdraw_version: str | None = None,
+) -> RoutingState:
+    """Point ``latest`` back at a policyengine.py version that was already published.
+
+    The restored version must still have its route and bundle manifest in the
+    state; ``latest.us`` and ``latest.uk`` become that manifest's model
+    versions, so unpinned requests are served by exactly that bundle again.
+
+    ``expected_latest`` makes the rollback conditional: it is refused unless
+    ``latest.policyengine`` is still that version (the release being rolled
+    back), so a rollback never overwrites a newer release published meanwhile.
+
+    ``withdraw_version`` removes a failed release: its policyengine route and
+    bundle manifest, and every country route to its app. Each such country
+    route goes back to the newest remaining bundle with that model version
+    (the restored one first), or is removed when none has it, so no
+    model-version pin is left dangling or served by the withdrawn app.
+    Publishing a release and then rolling it back this way returns the
+    routes and ``latest`` to what they were before it was published.
+    """
+
+    state = _coerce_routing_state(current_state)
+    current_latest = state["latest"].get("policyengine")
+    if expected_latest is not None and current_latest != expected_latest:
+        raise ValueError(
+            f"latest.policyengine is {current_latest!r}, not {expected_latest!r}; "
+            "another release changed routing, so this rollback was not applied"
+        )
+    if withdraw_version is not None and withdraw_version == policyengine_version:
+        raise ValueError("Cannot restore and withdraw the same version")
+    app_name = state["routes"]["policyengine"].get(policyengine_version)
+    manifest = state["bundles"].get(policyengine_version)
+    if not app_name or not isinstance(manifest, dict):
+        raise ValueError(
+            f"policyengine {policyengine_version!r} has no published route and "
+            "bundle manifest to restore"
+        )
+    if manifest.get("app_name") != app_name:
+        raise ValueError(
+            f"policyengine {policyengine_version!r}'s manifest names app "
+            f"{manifest.get('app_name')!r}, but its route is {app_name!r}"
+        )
+    restored_models = {
+        country: manifest[country]["model_version"] for country in ("us", "uk")
+    }
+
+    if withdraw_version is not None:
+        withdrawn_app = state["routes"]["policyengine"].pop(withdraw_version, None)
+        state["bundles"].pop(withdraw_version, None)
+        if withdrawn_app is None:
+            raise ValueError(
+                f"policyengine {withdraw_version!r} has no route to withdraw"
+            )
+        for country in ("us", "uk"):
+            routes = state["routes"][country]
+            for model_version, routed_app in list(routes.items()):
+                if routed_app != withdrawn_app:
+                    continue
+                replacement = _newest_app_serving(
+                    state,
+                    country=country,
+                    model_version=model_version,
+                    preferred=policyengine_version,
+                )
+                if replacement is None:
+                    del routes[model_version]
+                else:
+                    routes[model_version] = replacement
+
+    # As publishing does, the restored bundle serves its model-version pins.
+    for country, model_version in restored_models.items():
+        state["routes"][country][model_version] = app_name
+    state["latest"] = {
+        "policyengine": policyengine_version,
+        "us": restored_models["us"],
+        "uk": restored_models["uk"],
+    }
+    state["generation"] = f"rollback:{policyengine_version}:{app_name}"
+    validate_routing_state(
+        state,
+        required_policyengine_manifests=(policyengine_version,),
+    )
+    return state
+
+
 def _modal_dict_snapshot(
     *,
     name: str,
@@ -529,6 +646,38 @@ def publish_routing_state(
     return next_state
 
 
+def read_latest_policyengine_version(*, environment: str) -> str | None:
+    """The policyengine.py version unpinned requests are routed to now."""
+
+    snapshot = _modal_dict_snapshot(
+        name=ROUTING_STATE_DICT_NAME, environment=environment
+    )
+    state = _coerce_routing_state(snapshot.get(ROUTING_STATE_ACTIVE_KEY))
+    return state["latest"].get("policyengine")
+
+
+def restore_routing_state(
+    *,
+    environment: str,
+    policyengine_version: str,
+    expected_latest: str | None = None,
+    withdraw_version: str | None = None,
+) -> RoutingState:
+    store = modal.Dict.from_name(
+        ROUTING_STATE_DICT_NAME,
+        environment_name=environment,
+        create_if_missing=False,
+    )
+    next_state = build_restored_routing_state(
+        current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
+        policyengine_version=policyengine_version,
+        expected_latest=expected_latest,
+        withdraw_version=withdraw_version,
+    )
+    store[ROUTING_STATE_ACTIVE_KEY] = next_state
+    return next_state
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Publish the active routing state after Modal deployment"
@@ -570,7 +719,51 @@ def main():
             "legacy policyengine/us/uk Modal dicts without publishing a new app."
         ),
     )
+    parser.add_argument(
+        "--print-latest",
+        action="store_true",
+        help="Print latest.policyengine (empty when unset) and change nothing.",
+    )
+    parser.add_argument(
+        "--restore-latest",
+        metavar="POLICYENGINE_VERSION",
+        help=(
+            "Point latest back at this already-published policyengine.py "
+            "version instead of publishing a new app."
+        ),
+    )
+    parser.add_argument(
+        "--expected-latest",
+        metavar="POLICYENGINE_VERSION",
+        help="With --restore-latest: refuse unless latest is still this version.",
+    )
+    parser.add_argument(
+        "--withdraw",
+        metavar="POLICYENGINE_VERSION",
+        help="With --restore-latest: remove this failed release's routes.",
+    )
     args = parser.parse_args()
+
+    if args.print_latest:
+        print(read_latest_policyengine_version(environment=args.environment) or "")
+        return
+
+    if args.restore_latest:
+        state = restore_routing_state(
+            environment=args.environment,
+            policyengine_version=args.restore_latest,
+            expected_latest=args.expected_latest,
+            withdraw_version=args.withdraw,
+        )
+        print(f"Restored routing state in Modal environment: {args.environment}")
+        print(f"  latest.policyengine: {state['latest']['policyengine']}")
+        print(f"  latest.us: {state['latest']['us']}")
+        print(f"  latest.uk: {state['latest']['uk']}")
+        if args.withdraw:
+            print(f"  withdrawn: policyengine {args.withdraw}")
+        return
+    if args.expected_latest or args.withdraw:
+        parser.error("--expected-latest and --withdraw need --restore-latest")
 
     if args.seed_active_from_legacy:
         print(

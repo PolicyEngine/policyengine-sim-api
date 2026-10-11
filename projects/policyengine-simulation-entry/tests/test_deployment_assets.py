@@ -340,7 +340,8 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert "SIMULATION_ENTRYPOINT_PUBLIC_URL" not in reusable_workflow
     assert "staging.simulation.api.policyengine.org" not in deploy_workflow
     assert (
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 12
+        # sentinel_expected and revert_routing read environment secrets too.
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 14
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow
@@ -598,7 +599,8 @@ def test_full_stack_promotion_order_is_explicit():
         "\n  promote_entrypoint:"
     )
     assert (
-        "needs: [prepare, deploy_entrypoint, deploy_executor, authenticated_test]"
+        "[prepare, deploy_entrypoint, deploy_executor, authenticated_test, "
+        "sentinel_expected]"
         in reusable_workflow
     )
     assert (
@@ -736,9 +738,78 @@ def test_stage12_only_deployment_cannot_redeploy_existing_modal_resources():
         section = match.group("body")
         assert "if: ${{ inputs.deploy_existing_stack }}" in section
 
-    stage12_start = reusable_workflow.index("\n  deploy_stage12_v2:")
-    stage12_section = reusable_workflow[stage12_start:]
+    stage12_section = reusable_workflow[
+        reusable_workflow.index("\n  deploy_stage12_v2:") : reusable_workflow.index(
+            "\n  integration:"
+        )
+    ]
     assert "src.modal.utils.update_version_registry" not in stage12_section
+    revert_job = _job_section(reusable_workflow, "revert_routing")
+    assert "inputs.deploy_existing_stack &&" in revert_job
+    sentinel_job = _job_section(reusable_workflow, "sentinel_expected")
+    assert "if: ${{ inputs.deploy_existing_stack }}" in sentinel_job
+
+
+def _job_section(workflow: str, job_name: str) -> str:
+    match = re.search(
+        rf"^  {job_name}:\n(?P<body>.*?)(?=^  [a-z0-9_-]+:\n|\Z)",
+        workflow,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert match is not None, job_name
+    return match.group("body")
+
+
+def test_deployed_stack_must_reproduce_the_numerical_sentinel():
+    workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    sentinel_job = _job_section(workflow, "sentinel_expected")
+    assert "needs: prepare" in sentinel_job
+    assert "release_sentinel expected" in sentinel_job
+    assert "secrets.PE_UK_PRIVATE_HF_READ_TOKEN" in sentinel_job
+    assert "secrets.GCP_CREDENTIALS_JSON" in sentinel_job
+    assert ".uk.dataset_sha256 == $d" in sentinel_job
+
+    integration = _job_section(workflow, "integration")
+    assert "needs.sentinel_expected.result == 'success'" in integration
+    assert "needs.sentinel_expected.result == 'skipped'" in integration
+    smoke = integration.index("cloud-run-simulation-entry-smoke.sh")
+    check = integration.index("release_sentinel check")
+    assert smoke < check
+    assert "needs.deploy_entrypoint.outputs.candidate_url" in integration[check:]
+
+    promote = _job_section(workflow, "promote_entrypoint")
+    stable_check = promote.index("release_sentinel check")
+    assert promote.index('--base-url "${STABLE_URL}"') > stable_check
+    # A failing stable sentinel triggers the existing traffic restore step.
+    assert stable_check < promote.index("Restore previous revision after failed")
+
+
+def test_failed_releases_restore_routing_and_keep_a_rollback_revision():
+    workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    routing = _job_section(workflow, "update_routing")
+    assert routing.index("--print-latest") < routing.index(
+        'src.modal.utils.update_version_registry "${args[@]}"'
+    )
+    assert "previous_latest: ${{ steps.before.outputs.latest }}" in routing
+    assert "published_latest: ${{ steps.after.outputs.latest }}" in routing
+
+    revert = _job_section(workflow, "revert_routing")
+    assert "always() &&" in revert
+    for gate in ("integration", "authenticated_test", "promote_entrypoint"):
+        assert f"needs.{gate}.result != 'success'" in revert
+    assert '--restore-latest "${PREVIOUS_LATEST}"' in revert
+    assert '--expected-latest "${FAILED_RELEASE}"' in revert
+    assert '--withdraw "${FAILED_RELEASE}"' in revert
+    assert (
+        "needs.update_routing.outputs.previous_latest != "
+        "needs.update_routing.outputs.published_latest"
+    ) in revert
+
+    cleanup = _job_section(workflow, "cleanup_entrypoint_revisions")
+    assert (
+        "SIMULATION_ENTRYPOINT_ROLLBACK_REVISION: "
+        "${{ needs.deploy_entrypoint.outputs.previous_revision }}"
+    ) in cleanup
 
 
 def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):

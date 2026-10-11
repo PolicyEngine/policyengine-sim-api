@@ -1,0 +1,236 @@
+"""The numerical release sentinel (src.modal.utils.release_sentinel).
+
+Invariants:
+- the in-process run receives exactly the payload the gateway forwards to the
+  worker for the same request (differential against the gateway's model);
+- a deployment passes only when it serves the expected policyengine version,
+  UK model and dataset SHA-256 and every value agrees within tolerance;
+- agreement is symmetric and admits only floating-point reordering: values
+  within REL_TOL pass and anything beyond fails;
+- a failed, missing or late job, or a malformed result, is a failure, never a
+  pass.
+"""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
+from src.modal.utils import release_sentinel as sentinel
+
+IDENTITY = {
+    "policyengine_version": "6.2.6",
+    "uk": {
+        "model_version": "2.125.1",
+        "dataset": "enhanced_frs_2024_25",
+        "dataset_sha256": "5" * 64,
+    },
+}
+RESULT = {
+    "budget": {
+        "budgetary_impact": 6.1e9,
+        "tax_revenue_impact": 6.3e9,
+        "benefit_spending_impact": 0.2e9,
+        "households": 2.9e7,
+        "baseline_net_income": 1.4e12,
+    },
+    "poverty": {},
+}
+
+
+def _expected():
+    received = []
+
+    def runner(payload):
+        received.append(payload)
+        return RESULT
+
+    expected = sentinel.compute_expected(runner=runner, identity=IDENTITY)
+    return expected, received
+
+
+def test_expected_values_come_from_the_gateway_payload():
+    from policyengine_simulation_contract.gateway_models import SimulationRequest
+
+    expected, received = _expected()
+    request = sentinel.SENTINEL_CASES[0]["request"]
+    gateway_payload = SimulationRequest.model_validate(
+        {**request, "policyengine_version": "6.2.6", "version": "2.125.1"}
+    ).model_dump(
+        exclude={"version", "policyengine_version", "telemetry"},
+        mode="json",
+        exclude_none=True,
+    )
+    assert received == [gateway_payload]
+    assert expected["schema"] == sentinel.SCHEMA
+    assert expected["cases"][0]["values"]["budget.budgetary_impact"] == 6.1e9
+    assert json.loads(json.dumps(expected)) == expected
+
+
+def test_expected_needs_the_bundle_dataset_digest():
+    identity = {**IDENTITY, "uk": {**IDENTITY["uk"], "dataset_sha256": None}}
+    with pytest.raises(sentinel.SentinelError, match="dataset SHA-256"):
+        sentinel.compute_expected(runner=lambda payload: RESULT, identity=identity)
+
+
+class FakeAPI:
+    """Submit returns a job; polling returns 202 ``pending`` times, then a result."""
+
+    def __init__(self, *, bundle=None, result=RESULT, pending=2, job_status=200):
+        self.bundle = {
+            "policyengine_version": "6.2.6",
+            "model_version": "2.125.1",
+            "dataset_sha256": "5" * 64,
+            **(bundle or {}),
+        }
+        self.result = result
+        self.pending = pending
+        self.job_status = job_status
+        self.calls = []
+
+    def __call__(self, method, url, *, token=None, body=None, timeout=60):
+        self.calls.append((method, url, token, body))
+        if method == "POST":
+            return 200, {}, {"job_id": "fc-1", "policyengine_bundle": self.bundle}
+        if self.pending:
+            self.pending -= 1
+            return 202, {"Retry-After": "1"}, {"status": "submitted"}
+        if self.job_status != 200:
+            return self.job_status, {}, {"status": "failed", "error": "boom"}
+        return 200, {}, {"status": "complete", "result": self.result}
+
+
+def _check(api, **kwargs):
+    expected, _ = _expected()
+    sleeps = []
+    problems = sentinel.check_deployment(
+        "https://candidate.example/",
+        expected,
+        token="t0ken",
+        http=api,
+        sleep=sleeps.append,
+        **kwargs,
+    )
+    return problems, sleeps
+
+
+def test_a_deployment_that_reproduces_the_numbers_passes():
+    api = FakeAPI()
+    problems, sleeps = _check(api)
+    assert problems == []
+    method, url, token, body = api.calls[0]
+    assert (method, url, token) == (
+        "POST",
+        "https://candidate.example/simulate/economy/comparison",
+        "t0ken",
+    )
+    assert body["policyengine_version"] == "6.2.6"
+    assert sleeps == [1.0, 1.0]
+
+
+@pytest.mark.parametrize(
+    ("api", "fragment"),
+    [
+        (
+            FakeAPI(bundle={"policyengine_version": "6.2.3"}),
+            "served policyengine_version",
+        ),
+        (FakeAPI(bundle={"model_version": "2.102.3"}), "served model_version"),
+        (FakeAPI(bundle={"dataset_sha256": "e" * 64}), "served dataset_sha256"),
+        (
+            FakeAPI(result={"budget": {**RESULT["budget"], "budgetary_impact": 6.2e9}}),
+            "budget.budgetary_impact served",
+        ),
+        (FakeAPI(result={"budget": {}}), "the result has no budget.budgetary_impact"),
+        (
+            FakeAPI(
+                result={"budget": {**RESULT["budget"], "baseline_net_income": "many"}}
+            ),
+            "not a number",
+        ),
+        (FakeAPI(job_status=500), "job returned HTTP 500"),
+    ],
+    ids=["wrapper", "model", "dataset", "value", "missing", "type", "failed job"],
+)
+def test_any_disagreement_fails(api, fragment):
+    problems, _ = _check(api)
+    assert any(fragment in problem for problem in problems), problems
+
+
+def test_a_job_that_never_finishes_fails():
+    ticks = iter(range(0, 10_000, 100))
+    problems, _ = _check(
+        FakeAPI(pending=10_000), timeout_seconds=250, clock=lambda: next(ticks)
+    )
+    assert any("no result within 250s" in problem for problem in problems)
+
+
+def test_a_rejected_submit_fails():
+    def api(method, url, **kwargs):
+        return 400, {}, {"detail": "unknown policyengine_version"}
+
+    problems, _ = _check(api)
+    assert problems and "submit returned HTTP 400" in problems[0]
+
+
+def test_an_expected_file_of_another_schema_is_refused():
+    with pytest.raises(sentinel.SentinelError):
+        sentinel.check_deployment("https://x", {"schema": "other", "cases": []})
+
+
+@settings(max_examples=200, deadline=None)
+@given(
+    value=st.floats(min_value=-1e13, max_value=1e13, allow_nan=False),
+    factor=st.floats(min_value=0, max_value=0.99),
+)
+def test_agreement_admits_only_reordering_error(value, factor):
+    tolerance = max(sentinel.ABS_TOL, sentinel.REL_TOL * abs(value))
+    near = value + factor * tolerance * 0.5
+    assert sentinel.agree(value, near) and sentinel.agree(near, value)
+    far = value + 3 * tolerance
+    assert not sentinel.agree(value, far) and not sentinel.agree(far, value)
+
+
+def test_access_token_follows_the_auth_configuration(monkeypatch):
+    assert sentinel.access_token({}) is None
+    with pytest.raises(sentinel.SentinelError, match="REQUIRED"):
+        sentinel.access_token({"SIMULATION_TEST_AUTH_REQUIRED": "1"})
+    with pytest.raises(sentinel.SentinelError, match="partial"):
+        sentinel.access_token({"SIMULATION_TEST_AUTH_ISSUER": "https://issuer"})
+    seen = {}
+
+    def http(method, url, *, body=None, **kwargs):
+        seen.update(method=method, url=url, body=body)
+        return 200, {}, {"access_token": "minted"}
+
+    monkeypatch.setattr(sentinel, "_http", http)
+    environ = {name: "x" for name in sentinel._AUTH_VARS}
+    environ["SIMULATION_TEST_AUTH_ISSUER"] = "https://issuer/"
+    assert sentinel.access_token(environ) == "minted"
+    assert seen["url"] == "https://issuer/oauth/token"
+    assert seen["body"]["grant_type"] == "client_credentials"
+
+
+def test_main_check_exit_codes(tmp_path, monkeypatch, capsys):
+    expected, _ = _expected()
+    path = tmp_path / "sentinel.json"
+    path.write_text(json.dumps(expected))
+    monkeypatch.setattr(sentinel, "access_token", lambda: None)
+    monkeypatch.setattr(sentinel, "_http", FakeAPI(pending=0))
+    assert (
+        sentinel.main(["check", "--base-url", "https://x", "--expected", str(path)])
+        == 0
+    )
+    monkeypatch.setattr(
+        sentinel,
+        "_http",
+        FakeAPI(pending=0, bundle={"dataset_sha256": "e" * 64}),
+    )
+    assert (
+        sentinel.main(["check", "--base-url", "https://x", "--expected", str(path)])
+        == 1
+    )
+    assert "does not reproduce" in capsys.readouterr().err
