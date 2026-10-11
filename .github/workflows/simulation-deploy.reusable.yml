@@ -440,6 +440,8 @@ jobs:
       # revert_routing restores the former if any later gate fails.
       previous_latest: ${{ steps.before.outputs.latest }}
       published_latest: ${{ steps.after.outputs.latest }}
+      # Whether this release should now be latest (newer, or forced).
+      advances_latest: ${{ steps.after.outputs.advances }}
     steps:
       - uses: actions/checkout@v6
 
@@ -494,10 +496,26 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
+          PREVIOUS_LATEST: ${{ steps.before.outputs.latest }}
+          FORCE_LATEST: ${{ inputs.force_latest }}
         run: |
           latest="$(uv run python -m src.modal.utils.update_version_registry \
             --environment "${{ inputs.modal_environment }}" --print-latest | tail -n 1)"
+          advances="$(uv run python -c '
+          import os
+          from packaging.version import Version
+          previous = os.environ["PREVIOUS_LATEST"]
+          forced = os.environ["FORCE_LATEST"] == "true"
+          newer = not previous or Version(os.environ["POLICYENGINE_VERSION"]) > Version(previous)
+          print("true" if forced or newer else "false")
+          ')"
+          if [[ "${advances}" == "true" && "${latest}" != "${POLICYENGINE_VERSION}" ]]; then
+            echo "Publishing should have made policyengine ${POLICYENGINE_VERSION} latest, but latest is ${latest:-unset}." >&2
+            exit 1
+          fi
           echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "advances=${advances}" >> "$GITHUB_OUTPUT"
 
   sentinel_expected:
     name: Compute the numerical release sentinel
@@ -786,7 +804,8 @@ jobs:
           EXPECTED_POLICYENGINE_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.policyengine_version || '' }}
           EXPECTED_UK_MODEL_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_version || '' }}
           EXPECTED_UK_DATASET_SHA256: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_dataset_sha256 || '' }}
-          EXPECTED_LATEST: ${{ inputs.deploy_existing_stack && 'true' || '' }}
+          # Latest must route to this release only when it should advance it.
+          EXPECTED_LATEST: ${{ inputs.deploy_existing_stack && needs.update_routing.outputs.advances_latest == 'true' && 'true' || '' }}
         run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.deploy_entrypoint.outputs.revision }}"
 
       - name: Download the numerical release sentinel
@@ -886,7 +905,14 @@ jobs:
         needs.authenticated_test.result == 'success'
       }}
     needs:
-      [prepare, deploy_entrypoint, deploy_executor, authenticated_test, sentinel_expected]
+      [
+        prepare,
+        deploy_entrypoint,
+        deploy_executor,
+        authenticated_test,
+        sentinel_expected,
+        update_routing,
+      ]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
     permissions:
@@ -898,7 +924,7 @@ jobs:
       EXPECTED_POLICYENGINE_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.policyengine_version || '' }}
       EXPECTED_UK_MODEL_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_version || '' }}
       EXPECTED_UK_DATASET_SHA256: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_dataset_sha256 || '' }}
-      EXPECTED_LATEST: ${{ inputs.deploy_existing_stack && 'true' || '' }}
+      EXPECTED_LATEST: ${{ inputs.deploy_existing_stack && needs.update_routing.outputs.advances_latest == 'true' && 'true' || '' }}
       REGION: ${{ vars.SIMULATION_ENTRYPOINT_GCP_REGION || 'us-central1' }}
       PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
       SERVICE: ${{ inputs.entrypoint_service }}

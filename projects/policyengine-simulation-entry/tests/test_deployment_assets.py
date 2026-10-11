@@ -598,11 +598,15 @@ def test_full_stack_promotion_order_is_explicit():
     assert reusable_workflow.index("\n  authenticated_test:") < reusable_workflow.index(
         "\n  promote_entrypoint:"
     )
-    assert (
-        "[prepare, deploy_entrypoint, deploy_executor, authenticated_test, "
-        "sentinel_expected]"
-        in reusable_workflow
-    )
+    promote_needs = set(_workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["promote_entrypoint"]["needs"])
+    assert {
+        "prepare",
+        "deploy_entrypoint",
+        "deploy_executor",
+        "authenticated_test",
+        "sentinel_expected",
+        "update_routing",
+    } <= promote_needs
     assert (
         'cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"'
         in reusable_workflow
@@ -782,6 +786,16 @@ def test_deployed_stack_must_reproduce_the_numerical_sentinel():
     assert promote.index('--base-url "${STABLE_URL}"') > stable_check
     # A failing stable sentinel triggers the existing traffic restore step.
     assert stable_check < promote.index("Restore previous revision after failed")
+
+
+def test_routing_records_whether_the_release_should_be_latest():
+    workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    routing = _job_section(workflow, "update_routing")
+    assert "advances_latest: ${{ steps.after.outputs.advances }}" in routing
+    assert 'Version(os.environ["POLICYENGINE_VERSION"]) > Version(previous)' in routing
+    assert 'forced = os.environ["FORCE_LATEST"] == "true"' in routing
+    # A release that should advance latest but did not fails here.
+    assert "Publishing should have made policyengine" in routing
 
 
 def test_failed_releases_restore_routing_and_keep_a_rollback_revision():
@@ -1243,13 +1257,19 @@ def test_deploy_gates_pass_the_release_identity_to_the_smoke():
             "${{ inputs.deploy_existing_stack && "
             "needs.prepare.outputs.uk_dataset_sha256 || '' }}"
         ),
-        "EXPECTED_LATEST": "${{ inputs.deploy_existing_stack && 'true' || '' }}",
+        # Latest must route to this release only when it should advance it.
+        "EXPECTED_LATEST": (
+            "${{ inputs.deploy_existing_stack && "
+            "needs.update_routing.outputs.advances_latest == 'true' && 'true' || '' }}"
+        ),
     }
     promote = jobs["promote_entrypoint"]
     for environment in (smoke_step["env"], promote["env"]):
         assert {key: environment.get(key) for key in expected} == expected
     for job in ("integration", "promote_entrypoint"):
-        assert {"prepare", "deploy_executor"} <= set(jobs[job]["needs"])
+        assert {"prepare", "deploy_executor", "update_routing"} <= set(
+            jobs[job]["needs"]
+        )
     # The promotion smoke runs inherit the job environment; no step overrides it.
     for step in promote["steps"]:
         if "cloud-run-simulation-entry-smoke.sh" in step.get("run", ""):

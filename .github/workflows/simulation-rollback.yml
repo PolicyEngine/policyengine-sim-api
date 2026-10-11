@@ -125,6 +125,7 @@ jobs:
       - name: Verify the stable service serves the restored release
         env:
           EXPECTED_POLICYENGINE_VERSION: ${{ inputs.policyengine_version }}
+          EXPECTED_LATEST: "true"
           STABLE_URL: ${{ steps.service.outputs.url }}
           EXPECTED_REVISION: ${{ inputs.entrypoint_revision }}
           PREVIOUS_REVISION: ${{ steps.service.outputs.revision }}
