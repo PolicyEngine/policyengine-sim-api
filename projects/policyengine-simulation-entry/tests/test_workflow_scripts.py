@@ -283,3 +283,82 @@ def test_create_pr_requires_the_repository(fakes, tmp_path):
     assert result.returncode != 0
     assert "GITHUB_REPOSITORY is required" in result.stderr
     assert fakes.calls() == []
+
+
+# --- pr.yml ---------------------------------------------------------------
+
+START_LOCAL_SERVICES = "start-local-services.sh"
+
+FAKE_CURL_READY_AFTER = """\
+count=$(($(cat "$FAKE_CURL_COUNT" 2>/dev/null || echo 0) + 1))
+echo "$count" > "$FAKE_CURL_COUNT"
+[[ "$count" -ge "${FAKE_CURL_READY_AT:-999}" ]]
+"""
+
+
+def test_pr_workflow_starts_local_services_with_the_tested_script():
+    workflow = (WORKFLOWS_DIR / "pr.yml").read_text(encoding="utf-8")
+
+    assert (
+        f"run: .github/scripts/{START_LOCAL_SERVICES} deployment/docker-compose.yml"
+        in workflow
+    )
+
+
+def _start_local_services(fakes: FakeCommands, tmp_path: Path, *args: str, **env):
+    fakes.add("docker", 'exit "${FAKE_DOCKER_EXIT:-0}"\n')
+    fakes.add("curl", FAKE_CURL_READY_AFTER)
+    fakes.add("sleep")
+    return run_script(
+        START_LOCAL_SERVICES,
+        *args,
+        env=fakes.env(FAKE_CURL_COUNT=str(tmp_path / "curl-count"), **env),
+    )
+
+
+def test_start_local_services_waits_until_the_gateway_answers(fakes, tmp_path):
+    result = _start_local_services(
+        fakes, tmp_path, "deployment/docker-compose.yml", FAKE_CURL_READY_AT="3"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Waiting for services... (attempt 2/30)" in result.stdout
+    assert "Services are ready!" in result.stdout
+    alive = ["curl", "-f", "http://localhost:8082/ping/alive"]
+    assert fakes.calls() == [
+        ["docker", "compose", "-f", "deployment/docker-compose.yml", "up", "-d"],
+        ["sleep", "10"],
+        alive,
+        ["sleep", "2"],
+        alive,
+        ["sleep", "2"],
+        alive,
+    ]
+
+
+def test_start_local_services_gives_up_quietly_after_thirty_attempts(fakes, tmp_path):
+    """Unchanged from the inline step: the integration tests report the outage."""
+    result = _start_local_services(fakes, tmp_path, "deployment/docker-compose.yml")
+
+    assert result.returncode == 0, result.stderr
+    assert "Waiting for services... (attempt 30/30)" in result.stdout
+    assert "Services are ready!" not in result.stdout
+    assert len(fakes.calls("curl")) == 30
+    assert len(fakes.calls("sleep")) == 31
+
+
+def test_start_local_services_fails_when_compose_fails(fakes, tmp_path):
+    result = _start_local_services(
+        fakes, tmp_path, "deployment/docker-compose.yml", FAKE_DOCKER_EXIT="1"
+    )
+
+    assert result.returncode == 1
+    assert fakes.calls("curl") == []
+
+
+def test_start_local_services_requires_a_compose_file(fakes, tmp_path):
+    result = _start_local_services(fakes, tmp_path)
+
+    assert result.returncode != 0
+    assert "Docker Compose file required" in result.stderr
+    assert fakes.calls() == []
