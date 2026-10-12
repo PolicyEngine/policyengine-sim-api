@@ -1038,9 +1038,9 @@ def test_builder_serializes_cliff_impact_when_requested(monkeypatch):
     }
 
 
-def test_normalise_policy_converts_legacy_period_range_keys():
+def test_normalise_policy_preserves_legacy_period_range_keys():
     assert _normalise_policy({"gov.test.parameter": {"2026-01-01.2100-12-31": 1}}) == {
-        "gov.test.parameter": {"2026-01-01": 1}
+        "gov.test.parameter": {"2026-01-01.2100-12-31": 1}
     }
 
 
@@ -1108,8 +1108,8 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
     )
 
     _assert_macro_result(result, selection)
-    assert build_calls[0][2] == {"gov.test.parameter": {"2026-01-01": 1}}
-    assert build_calls[1][2] == {"gov.test.parameter": {"2026-01-01": 2}}
+    assert build_calls[0][2] == {"gov.test.parameter": {"2026-01-01.2100-12-31": 1}}
+    assert build_calls[1][2] == {"gov.test.parameter": {"2026-01-01.2100-12-31": 2}}
     assert build_calls[0][3] is None
     assert build_calls[1][3] is None
     assert builder_calls == [

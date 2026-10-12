@@ -825,6 +825,61 @@ def test_aggregate_stand_ins_preserve_policy_and_cliff_options(monkeypatch) -> N
     )
 
 
+def test_aggregate_stand_ins_keep_bounded_policy_end_dates(monkeypatch) -> None:
+    from datetime import datetime
+
+    from policyengine_simulation_executor import simulation_output_builder
+
+    path = "gov.simulation.labor_supply_responses.elasticities.income"
+    report = _report()
+    report = report.model_copy(
+        update={
+            "baseline": report.baseline.model_copy(
+                update={"policy": {path: {"2026-01-01.2026-12-31": 0.05}}}
+            ),
+            "reform": report.reform.model_copy(
+                update={"policy": {path: {"2026-01-01.2027-12-31": 0.1}}}
+            ),
+        }
+    )
+    frames = {
+        entity: pd.DataFrame({f"{entity}_id": [1]})
+        for entity in (
+            "person",
+            "marital_unit",
+            "family",
+            "spm_unit",
+            "tax_unit",
+            "household",
+        )
+    }
+    observed = {}
+
+    class CapturingBuilder:
+        def __init__(self, **values):
+            observed.update(values)
+
+        def serialize(self):
+            return {"captured": True}
+
+    monkeypatch.setattr(
+        simulation_output_builder, "SimulationOutputBuilder", CapturingBuilder
+    )
+    artifacts = FakeArtifacts()
+
+    build_aggregate_report(
+        report=report,
+        baseline_frames=frames,
+        reform_frames=frames,
+        baseline_descriptor=artifacts.add_simulation(report.baseline),
+        reform_descriptor=artifacts.add_simulation(report.reform),
+    )
+
+    for role, stop in (("baseline", "2026-12-31"), ("reform", "2027-12-31")):
+        (value,) = observed[role].policy.parameter_values
+        assert value.end_date == datetime.strptime(stop, "%Y-%m-%d"), role
+
+
 def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:
     payload = _planned_simulation(SimulationRole.BASELINE).model_dump(mode="json")
     payload["baseline"] = {}

@@ -14,6 +14,7 @@ import os
 import tempfile
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from importlib import import_module
 from typing import Any, Iterator
 
@@ -180,12 +181,29 @@ def _parse_year(params: dict[str, Any]) -> int:
     return int(value)
 
 
-def _normalise_period_key(period_key: Any) -> str:
-    """Convert legacy ``start.stop`` period keys to v4 effective dates."""
+def _parse_policy_period(period_key: Any) -> tuple[datetime, datetime | None]:
+    """Parse effective dates or inclusive ``start.stop`` policy periods."""
     text = str(period_key)
     parts = text.split(".")
-    if len(parts) > 1 and len(parts[0]) == 10:
-        return parts[0]
+    try:
+        if len(parts) not in {1, 2}:
+            raise ValueError
+        # The wrapper has always parsed dates with strptime, which also takes
+        # unpadded months and days ("2027-4-6"); accept what it accepted.
+        dates = [datetime.strptime(part, "%Y-%m-%d") for part in parts]
+        start = dates[0]
+        stop = dates[1] if len(dates) == 2 else None
+        if stop is not None and stop < start:
+            raise ValueError
+    except ValueError:
+        raise ValueError(f"Invalid policy period key: {text!r}") from None
+    return start, stop
+
+
+def _normalise_period_key(period_key: Any) -> str:
+    """Validate policy period keys without discarding their stop dates."""
+    text = str(period_key)
+    _parse_policy_period(text)
     return text
 
 
@@ -203,6 +221,54 @@ def _normalise_policy(policy: dict[str, Any] | None) -> dict[str, Any] | None:
         else:
             normalised[parameter] = value
     return normalised
+
+
+def _compile_interval_policy(policy, *, country_module, year: int):
+    """Use public wrapper values for intervals its dict compiler cannot parse."""
+    if not policy or not any(
+        isinstance(value, dict) and any("." in str(key) for key in value)
+        for value in policy.values()
+    ):
+        return policy
+
+    from policyengine.core import ParameterValue, Policy
+    from policyengine.core.parameter import Parameter
+    from policyengine.tax_benefit_models.common.reform import compile_reform
+
+    compiled = compile_reform(policy, year=year, model_version=country_module.model)
+    parameter_values = []
+    for path, periods in compiled.items():
+        dated_values = [
+            (*_parse_policy_period(key), value) for key, value in periods.items()
+        ]
+        for start, stop, value in sorted(dated_values, key=lambda item: item[0]):
+            # Match the wrapper's scalar type selection and effective dates.
+            data_type = type(value) if isinstance(value, (int, float, bool)) else float
+            parameter_values.append(
+                ParameterValue(
+                    parameter=Parameter(
+                        name=path,
+                        tax_benefit_model_version=country_module.model,
+                        data_type=data_type,
+                    ),
+                    start_date=start,
+                    end_date=stop,
+                    value=value,
+                )
+            )
+    return Policy(name="Reform", parameter_values=parameter_values)
+
+
+def _runtime_policy(policy, *, country_module, year: int):
+    """A request's policy as the wrapper must receive it.
+
+    Normalises the period keys, then compiles a policy with interval keys
+    into wrapper parameter values (see ``_compile_interval_policy``). Every
+    path that hands a request policy to the wrapper goes through this.
+    """
+    return _compile_interval_policy(
+        _normalise_policy(policy), country_module=country_module, year=year
+    )
 
 
 def _resolve_dataset_reference(country: str) -> str:
@@ -631,6 +697,9 @@ def _build_simulation(
     spm_kwargs = {"spm": selection} if selection is not None else {}
     country = params.get("country", "us")
     country_module = _country_module(country)
+    policy = _compile_interval_policy(
+        policy, country_module=country_module, year=_parse_year(params)
+    )
     simulation_id = deterministic_baseline_id(
         params,
         country=country,

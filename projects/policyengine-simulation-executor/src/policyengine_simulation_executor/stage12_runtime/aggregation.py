@@ -138,7 +138,7 @@ def build_aggregate_report(
     )
     from policyengine_simulation_executor.simulation_runtime import (
         _country_module,
-        _normalise_policy,
+        _runtime_policy,
     )
 
     country = report.baseline.geography.country
@@ -160,7 +160,11 @@ def build_aggregate_report(
         simulation = PrecomputedSimulation(
             dataset=dataset,
             tax_benefit_model_version=country_module.model,
-            policy=_normalise_policy(policy),
+            # Interval keys need compiling: the wrapper's dict compiler
+            # rejects them.
+            policy=_runtime_policy(
+                policy, country_module=country_module, year=dataset.year
+            ),
         )
         simulation.output_dataset = dataset
         return simulation

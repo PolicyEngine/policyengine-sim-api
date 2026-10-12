@@ -85,6 +85,36 @@ class TestDeterministicBaselineId:
     def test_reform_policy_disqualifies(self, collected):
         assert self._id(collected, policy={"gov.x": 1}) is None
 
+    @pytest.mark.parametrize("kind", ["bounded_dict", "bounded_policy", "scalar"])
+    def test_reforms_keep_current_law_artifact_identity_separate(self, collected, kind):
+        from policyengine_simulation_executor import simulation_runtime as sr
+
+        path = "gov.hmrc.income_tax.rates.uk[0].rate"
+        policy = {path: {"2027-04-06.2028-04-05": 0.21}}
+        if kind == "bounded_policy":
+            policy = sr._compile_interval_policy(
+                policy, country_module=sr._country_module("uk"), year=2027
+            )
+        elif kind == "scalar":
+            policy = {path: 0.21}
+
+        assert self._id(collected) == "bl1-deadbeefdeadbeef"
+        baseline_calls = list(collected)
+        assert self._id(collected, policy=policy) is None
+        assert (
+            ba.qualifying_baseline_identity(
+                {"scope": "macro"},
+                country="us",
+                dataset_is_default=True,
+                policy=policy,
+                region_code="us",
+                scoping_strategy=None,
+                year=2026,
+            )
+            is None
+        )
+        assert collected == baseline_calls
+
     @pytest.mark.parametrize("scope", [None, "", "household"])
     def test_non_macro_scope_disqualifies(self, collected, scope):
         params = {} if scope is None else {"scope": scope}
@@ -422,6 +452,60 @@ class TestBuildSimulationSelection:
         # The reform's own policy reaches the predicate (which returns a
         # random id for it) — not a hardwired None.
         assert wired.id_kwargs["policy"] == {"gov.x": 1}
+
+
+def test_bounded_reform_build_keeps_current_law_artifact_reuse(monkeypatch):
+    from policyengine import core as policyengine_core
+
+    from policyengine_simulation_executor import simulation_runtime as sr
+    from policyengine_simulation_executor import spm as executor_spm
+
+    installed_capability = executor_spm.runtime_spm_capability()
+    monkeypatch.setattr(
+        executor_spm, "runtime_spm_capability", lambda: installed_capability
+    )
+    monkeypatch.setattr(
+        ba,
+        "ArtifactBaselineSimulation",
+        lambda **kwargs: SimpleNamespace(kind="artifact", **kwargs),
+    )
+    monkeypatch.setattr(
+        policyengine_core,
+        "Simulation",
+        lambda **kwargs: SimpleNamespace(kind="plain", **kwargs),
+    )
+    identities = []
+
+    def collect_identity(*args, **kwargs):
+        identities.append((args, kwargs))
+        return SimpleNamespace(simulation_id="bl1-current-law")
+
+    monkeypatch.setattr(ak, "collect_baseline_identity", collect_identity)
+    kwargs = {
+        "dataset": "dataset",
+        "dataset_selection": sr.DatasetSelection("default", "default", True),
+        "region_code": "uk",
+    }
+    params = {"country": "uk", "scope": "macro", "time_period": 2027}
+    baseline = sr._build_simulation(params, policy=None, **kwargs)
+    reform = sr._build_simulation(
+        params,
+        policy={
+            "gov.hmrc.income_tax.rates.uk[0].rate": {"2027-04-06.2028-04-05": 0.21}
+        },
+        **kwargs,
+    )
+
+    assert baseline.kind == "artifact"
+    assert baseline.id == "bl1-current-law"
+    assert baseline.policy is None
+    assert reform.kind == "plain"
+    assert isinstance(reform.policy, policyengine_core.Policy)
+    assert (
+        reform.policy.parameter_values[0].end_date.isoformat() == "2028-04-05T00:00:00"
+    )
+    assert not hasattr(reform, "id")
+    assert len(identities) == 1
 
 
 class TestIdentityErrorContract:
