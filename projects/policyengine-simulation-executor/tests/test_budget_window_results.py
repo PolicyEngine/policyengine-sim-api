@@ -1,13 +1,12 @@
 """Tests for budget-window batch result helpers."""
 
 import pytest
-
+from policyengine_simulation_contract.gateway_models import BudgetWindowAnnualImpact
 from src.modal.budget_window_results import (
     build_budget_window_result,
     extract_annual_impact,
     sum_annual_impacts,
 )
-from policyengine_simulation_contract.gateway_models import BudgetWindowAnnualImpact
 
 
 def test_extract_annual_impact_matches_v1_shape():

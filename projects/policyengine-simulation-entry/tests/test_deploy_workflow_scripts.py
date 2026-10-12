@@ -12,7 +12,6 @@ import re
 from pathlib import Path
 
 import pytest
-
 from workflow_script_support import (
     WORKFLOWS_DIR,
     FakeCommands,

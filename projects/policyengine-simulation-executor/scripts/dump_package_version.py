@@ -1,5 +1,6 @@
-import tomllib
 import sys
+
+import tomllib
 
 
 def get_package_version_from_lock(package_name, lock_file_path="poetry.lock"):

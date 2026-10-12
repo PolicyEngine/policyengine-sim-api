@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import datetime
 from hashlib import sha256
-import json
-import re
 from typing import Annotated, Literal, Protocol
 
 from packaging.version import InvalidVersion, Version

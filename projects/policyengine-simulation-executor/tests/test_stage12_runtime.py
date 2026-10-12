@@ -24,6 +24,13 @@ from policyengine_observability import (
     configure,
 )
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
+from policyengine_simulation_contract.spm import (
+    SPMComparisonProvenance,
+    SPMRuntimeVersions,
+    SPMSelection,
+    build_spm_provenance,
+    validate_spm_calculation_provenance,
+)
 from policyengine_simulation_contract.stage12_execution import (
     AggregateReportArtifactPayload,
     ArtifactMediaType,
@@ -52,13 +59,6 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12InvocationContext,
     Stage12OutputPlan,
     stage12_output_plan_sha256,
-)
-from policyengine_simulation_contract.spm import (
-    SPMComparisonProvenance,
-    SPMRuntimeVersions,
-    SPMSelection,
-    build_spm_provenance,
-    validate_spm_calculation_provenance,
 )
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,

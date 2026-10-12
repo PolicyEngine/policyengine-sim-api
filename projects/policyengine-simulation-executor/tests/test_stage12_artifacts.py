@@ -12,18 +12,16 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
-from policyengine_simulation_contract.stage12_execution import (
-    UKLocalAuthorityBoundaryVersion,
-    UKLocalAuthorityMetadata,
-)
 from policyengine_simulation_contract.spm import (
     SPMRuntimeVersions,
     SPMSelection,
     build_spm_provenance,
     validate_spm_calculation_provenance,
 )
-from pydantic import ValidationError
-
+from policyengine_simulation_contract.stage12_execution import (
+    UKLocalAuthorityBoundaryVersion,
+    UKLocalAuthorityMetadata,
+)
 from fixtures.fake_object_store import InMemoryObjectStore
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
@@ -33,6 +31,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
     deserialize_uk_local_authority_metadata,
     serialize_simulation_frames,
 )
+from pydantic import ValidationError
 
 
 def _frames():

@@ -6,8 +6,6 @@ from typing import cast
 from uuid import UUID
 
 import pytest
-from pydantic import JsonValue
-
 from policyengine_simulation_contract.spm import (
     SPMRuntimeVersions,
     SPMSelection,
@@ -30,6 +28,7 @@ from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
+from pydantic import JsonValue
 
 
 def _plan() -> Stage12OutputPlan:

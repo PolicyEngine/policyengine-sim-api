@@ -6,10 +6,10 @@ without importing this project's test tree.
 """
 
 from fastapi import FastAPI
-
 from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
+
 from policyengine_simulation_gateway.auth import require_auth
 from policyengine_simulation_gateway.correlation import (
     install_observability_id_middleware,

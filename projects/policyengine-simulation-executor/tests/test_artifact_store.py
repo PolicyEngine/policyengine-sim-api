@@ -10,7 +10,6 @@ from types import SimpleNamespace
 
 import pytest
 from google.api_core.exceptions import NotFound, PreconditionFailed
-
 from policyengine_simulation_executor import artifact_keys as ak
 from policyengine_simulation_executor.artifact_store import (
     ARTIFACT_BUCKET_ENV,

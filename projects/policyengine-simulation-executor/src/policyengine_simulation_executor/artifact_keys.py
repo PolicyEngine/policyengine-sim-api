@@ -36,7 +36,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 DATASET_KEY_SCHEMA = "ds1"
 BASELINE_KEY_SCHEMA = "bl1"
@@ -70,11 +70,11 @@ def dataset_key(
     year: int,
     data_version: str,
     data_artifact_revision: str,
-    source_sha256: Optional[str],
-    data_build_fingerprint: Optional[str],
+    source_sha256: str | None,
+    data_build_fingerprint: str | None,
     model_version: str,
     policyengine_version: str,
-    spm: Optional[dict] = None,
+    spm: dict | None = None,
 ) -> str:
     """Digest identifying one single-year dataset artifact.
 
@@ -106,11 +106,11 @@ def baseline_key(
     *,
     country: str,
     region: str,
-    scope_key: Optional[str],
+    scope_key: str | None,
     dataset_digest: str,
     model_version: str,
     policyengine_version: str,
-    spm: Optional[dict] = None,
+    spm: dict | None = None,
     policy: str = CURRENT_LAW_POLICY,
 ) -> str:
     """Digest identifying one precomputed baseline simulation artifact.
@@ -206,11 +206,11 @@ class DatasetArtifactIdentity:
     year: int
     data_version: str
     data_artifact_revision: str
-    source_sha256: Optional[str]
-    data_build_fingerprint: Optional[str]
+    source_sha256: str | None
+    data_build_fingerprint: str | None
     model_version: str
     policyengine_version: str
-    spm: Optional[dict] = None
+    spm: dict | None = None
 
     @property
     def digest(self) -> str:
@@ -242,9 +242,9 @@ class BaselineArtifactIdentity:
 
     country: str
     region: str
-    scope_key: Optional[str]
+    scope_key: str | None
     dataset: DatasetArtifactIdentity
-    spm: Optional[dict] = None
+    spm: dict | None = None
 
     @property
     def digest(self) -> str:
@@ -273,7 +273,7 @@ class BaselineArtifactIdentity:
         return baseline_artifact_path(self.country, self.digest, self.storage_id)
 
 
-def _receipt_source_sha256(country: str, data_version: str) -> Optional[str]:
+def _receipt_source_sha256(country: str, data_version: str) -> str | None:
     """Content hash of the installed multi-year source, when certifiable.
 
     Only trusted when the receipt entry's version matches the bundle's data
@@ -294,7 +294,7 @@ def _receipt_source_sha256(country: str, data_version: str) -> Optional[str]:
     return None
 
 
-def _certification_fingerprint(country: str) -> Optional[str]:
+def _certification_fingerprint(country: str) -> str | None:
     from policyengine.provenance.manifest import get_release_manifest
 
     certification = getattr(get_release_manifest(country), "certification", None)
@@ -347,8 +347,8 @@ def collect_baseline_identity(
     year: int,
     *,
     region: str,
-    scope_key: Optional[str],
-    spm: Optional[dict] = None,
+    scope_key: str | None,
+    spm: dict | None = None,
 ) -> BaselineArtifactIdentity:
     from policyengine_simulation_executor.spm import normalize_runtime_spm
 

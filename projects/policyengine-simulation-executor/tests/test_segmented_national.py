@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import pytest
 from conftest import NoOpObservabilityRuntime
 from policyengine_simulation_contract.spm import SPMInputError
-
 from policyengine_simulation_executor import simulation_runtime as sr
 from policyengine_simulation_executor import spm as executor_spm
 from policyengine_simulation_executor.national_partition import (

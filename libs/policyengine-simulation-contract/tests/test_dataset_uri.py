@@ -1,7 +1,6 @@
 """Tests for dataset URI normalization."""
 
 import pytest
-
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 
 

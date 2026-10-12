@@ -25,12 +25,10 @@ Two hazards this module exists to handle:
 import logging
 from typing import Any
 
-from policyengine_observability import ObservabilityRuntime
-
 import pandas as pd
 from microdf import MicroDataFrame
-
 from policyengine.core import Simulation
+from policyengine_observability import ObservabilityRuntime
 
 from policyengine_simulation_executor.simulation_microdata import (
     rebuild_entity_frame,

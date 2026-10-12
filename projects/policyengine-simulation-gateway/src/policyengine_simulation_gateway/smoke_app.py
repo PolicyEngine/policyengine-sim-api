@@ -27,8 +27,9 @@ def smoke_import_gateway() -> dict:
     import pkgutil
 
     import policyengine_simulation_contract
-    import policyengine_simulation_gateway
     import policyengine_simulation_observability
+
+    import policyengine_simulation_gateway
 
     imported = []
     for package in (
@@ -53,7 +54,7 @@ def smoke_import_gateway() -> dict:
     return {
         "modules_imported": len(imported),
         "routes": sorted(
-            f"{sorted(route.methods)[0]} {route.path}"
+            f"{min(route.methods)} {route.path}"
             for route in asgi_app.routes
             if hasattr(route, "methods")
         ),

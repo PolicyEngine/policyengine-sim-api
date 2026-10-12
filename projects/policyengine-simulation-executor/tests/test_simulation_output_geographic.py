@@ -12,7 +12,6 @@ from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
-
 from policyengine_simulation_executor import simulation_output_geographic
 
 

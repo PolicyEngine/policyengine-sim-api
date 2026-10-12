@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from time import time
 from typing import Any
+
 from fastapi import FastAPI, Request
 from fastapi.routing import APIRoute
 from opentelemetry import metrics

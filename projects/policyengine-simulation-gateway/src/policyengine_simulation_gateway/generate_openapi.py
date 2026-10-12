@@ -13,7 +13,6 @@ import json
 from pathlib import Path
 
 from fastapi import FastAPI
-
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,

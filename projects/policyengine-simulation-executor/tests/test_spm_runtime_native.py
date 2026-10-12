@@ -51,8 +51,8 @@ def _worker_entrypoint(params, monkeypatch):
 def test_worker_year_boundary_matches_real_provider(
     forecast, period, unavailable_year, monkeypatch
 ):
-    from spm_calculator.policyengine_adapter import PolicyEngineSPMProvider
     from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
+    from spm_calculator.policyengine_adapter import PolicyEngineSPMProvider
 
     provider = PolicyEngineSPMProvider(forecast, geography_kind="national")
     with pytest.raises(ValueError) as provider_error:
@@ -78,8 +78,8 @@ def test_worker_year_boundary_matches_real_provider(
 def test_worker_scenario_boundary_matches_real_calculator_contract(
     forecast, period, monkeypatch
 ):
-    from spm_calculator.axiom_adapter import export_build_spec
     from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
+    from spm_calculator.axiom_adapter import export_build_spec
 
     scenario = "scenario-not-in-the-pinned-forecast"
     with pytest.raises(ValueError) as adapter_error:
@@ -100,8 +100,8 @@ def test_worker_scenario_boundary_matches_real_calculator_contract(
 
 
 def test_valid_worker_prevalidation_does_not_evaluate_amounts(forecast, monkeypatch):
-    from spm_calculator.policyengine_adapter import PolicyEngineSPMProvider
     from policyengine_simulation_executor.spm import normalize_runtime_spm
+    from spm_calculator.policyengine_adapter import PolicyEngineSPMProvider
 
     calculate = Mock(side_effect=AssertionError("Prevalidation is not measurement"))
     monkeypatch.setattr(PolicyEngineSPMProvider, "calculate_unit", calculate)

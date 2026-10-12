@@ -21,11 +21,10 @@ which is what makes it safe to ship before any artifacts exist.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
-
-from pydantic import PrivateAttr
+from typing import Any
 
 from policyengine.core import Simulation
+from pydantic import PrivateAttr
 
 from policyengine_simulation_executor import artifact_keys
 
@@ -47,10 +46,10 @@ def qualifying_baseline_identity(
     country: str,
     dataset_is_default: bool,
     policy: Any,
-    region_code: Optional[str],
+    region_code: str | None,
     scoping_strategy: Any,
     year: int,
-) -> Optional[artifact_keys.BaselineArtifactIdentity]:
+) -> artifact_keys.BaselineArtifactIdentity | None:
     """Full artifact identity for a qualifying baseline, else None.
 
     Qualifying means the simulation's bytes are a pure function of the
@@ -105,10 +104,10 @@ def deterministic_baseline_id(
     country: str,
     dataset_is_default: bool,
     policy: Any,
-    region_code: Optional[str],
+    region_code: str | None,
     scoping_strategy: Any,
     year: int,
-) -> Optional[str]:
+) -> str | None:
     """The runtime wrapper: id for a qualifying baseline, else None.
 
     Unlike the writer, the read path must never fail a request over
@@ -144,10 +143,10 @@ class ArtifactBaselineSimulation(Simulation):
     """A Simulation whose ``ensure()`` validates what it loads."""
 
     _computed_this_process: bool = PrivateAttr(default=False)
-    _artifact_outcome: Optional[str] = PrivateAttr(default=None)
+    _artifact_outcome: str | None = PrivateAttr(default=None)
 
     @property
-    def artifact_outcome(self) -> Optional[str]:
+    def artifact_outcome(self) -> str | None:
         """Set by ``ensure()``; None until then."""
         return self._artifact_outcome
 

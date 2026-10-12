@@ -8,10 +8,10 @@ The gateway looks up the appropriate versioned app from the version dicts
 and spawns jobs on those apps.
 """
 
-import modal
 import os
 from pathlib import Path
 
+import modal
 from policyengine_simulation_observability.observability import (
     modal_image_environment,
 )
@@ -75,18 +75,18 @@ def web_app():
       GET /health - Health check
     """
     from fastapi import FastAPI
-
     from policyengine_simulation_observability.observability import (
         init_simulation_observability,
     )
+
     from policyengine_simulation_gateway.auth import (
         enforce_auth_configured_guard,
         enforce_production_auth_guard,
     )
-    from policyengine_simulation_gateway.endpoints import router
     from policyengine_simulation_gateway.correlation import (
         install_observability_id_middleware,
     )
+    from policyengine_simulation_gateway.endpoints import router
 
     api = FastAPI(
         title="PolicyEngine Simulation Gateway",

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
 from policyengine_simulation_contract.spm import SPMSelection
+from pydantic import BaseModel, ConfigDict
 
 from policyengine_simulation_executor.simulation_macro_output import (
     SingleYearMacroOutput,
@@ -16,20 +16,20 @@ class SimulationOptions(BaseModel):
     """Legacy request schema name kept for generated clients."""
 
     country: str
-    spm: Optional[SPMSelection] = None
-    scope: Optional[str] = None
-    time_period: Optional[str | int] = None
-    reform: Optional[dict[str, Any]] = None
-    baseline: Optional[dict[str, Any]] = None
-    region: Optional[str] = None
-    region_group: Optional[list[str]] = None
-    title: Optional[str] = None
-    include_cliffs: Optional[bool] = None
-    model_version: Optional[str] = None
+    spm: SPMSelection | None = None
+    scope: str | None = None
+    time_period: str | int | None = None
+    reform: dict[str, Any] | None = None
+    baseline: dict[str, Any] | None = None
+    region: str | None = None
+    region_group: list[str] | None = None
+    title: str | None = None
+    include_cliffs: bool | None = None
+    model_version: str | None = None
     # Accepted for parity with the gateway contract. The synchronous
     # surface always runs monolithically, so segmented=false is trivially
     # honored and segmented=true has no effect here.
-    segmented: Optional[bool] = None
+    segmented: bool | None = None
 
     model_config = ConfigDict(extra="forbid")
 
