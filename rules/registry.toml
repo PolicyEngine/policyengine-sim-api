@@ -760,7 +760,7 @@ job = "quality-guards"
 invocation = "run_quality_guards.py"
 [rule.baseline]
 file = "rules/baselines/ci-multiline-run.txt"
-count = 27
+count = 25
 [rule.proof]
 bad_fixture = "scripts/rules/tests/fixtures/ci_scripts/multiline_bad"
 good_fixture = "scripts/rules/tests/fixtures/ci_scripts/multiline_good"

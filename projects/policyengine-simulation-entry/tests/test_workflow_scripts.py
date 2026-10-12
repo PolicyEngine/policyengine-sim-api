@@ -3,11 +3,14 @@ test covers: each runs the script with fake commands first on PATH."""
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 
 import pytest
 
 from workflow_script_support import (
+    REPOSITORY_ROOT,
     WORKFLOWS_DIR,
     FakeCommands,
     github_output,
@@ -18,6 +21,20 @@ from workflow_script_support import (
 @pytest.fixture
 def fakes(tmp_path: Path) -> FakeCommands:
     return FakeCommands.create(tmp_path)
+
+
+def test_scripts_that_workflows_run_directly_are_executable():
+    """A step that runs a script without ``bash`` needs its executable bit."""
+    direct = re.compile(r"^\s*run: (\.github/scripts/[\w.-]+\.sh)\b", re.MULTILINE)
+    scripts = {
+        script
+        for workflow in WORKFLOWS_DIR.glob("*.yml")
+        for script in direct.findall(workflow.read_text(encoding="utf-8"))
+    }
+
+    assert ".github/scripts/modal-image-smoke.sh" in scripts
+    for script in sorted(scripts):
+        assert os.access(REPOSITORY_ROOT / script, os.X_OK), script
 
 
 # --- update-dependencies.yml ----------------------------------------------
@@ -362,3 +379,81 @@ def test_start_local_services_requires_a_compose_file(fakes, tmp_path):
     assert result.returncode != 0
     assert "Docker Compose file required" in result.stderr
     assert fakes.calls() == []
+
+
+# --- publish-clients.yml --------------------------------------------------
+
+BUILD_CLIENT = "build-simulation-api-client.sh"
+CLIENT_DIR = "projects/policyengine-simulation-entry/artifacts/clients/python"
+CLIENT_PYPROJECT = """\
+[project]
+name = "policyengine_api_simulation_client"
+version = "0.1.0"
+description = "A client library for accessing PolicyEngine simulation API"
+"""
+
+
+def test_publish_workflow_builds_the_client_with_the_tested_script():
+    workflow = (WORKFLOWS_DIR / "publish-clients.yml").read_text(encoding="utf-8")
+
+    assert f"run: .github/scripts/{BUILD_CLIENT} {CLIENT_DIR}" in workflow
+    assert "RUN_NUMBER: ${{ github.run_number }}" in workflow
+    assert f"packages-dir: {CLIENT_DIR}/dist/" in workflow
+
+
+def _build_client(fakes: FakeCommands, tmp_path: Path, *args: str, **env):
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "pyproject.toml").write_text(CLIENT_PYPROJECT, encoding="utf-8")
+    fakes.add("date", "echo 20261013\n")
+    fakes.add("uv", 'pwd > "$FAKE_UV_CWD"\nexit "${FAKE_UV_EXIT:-0}"\n')
+    result = run_script(
+        BUILD_CLIENT,
+        *(args or (str(client),)),
+        env=fakes.env(FAKE_UV_CWD=str(tmp_path / "uv-cwd"), **env),
+    )
+    return result, client
+
+
+def test_build_client_versions_the_client_by_date_and_run_number(fakes, tmp_path):
+    result, client = _build_client(fakes, tmp_path, RUN_NUMBER="57")
+
+    assert result.returncode == 0, result.stderr
+    assert (client / "pyproject.toml").read_text(
+        encoding="utf-8"
+    ) == CLIENT_PYPROJECT.replace('version = "0.1.0"', 'version = "0.20261013.57"')
+    assert sorted(path.name for path in client.iterdir()) == ["pyproject.toml"]
+    assert fakes.calls() == [["date", "+%Y%m%d"], ["uv", "build"]]
+    uv_cwd = (tmp_path / "uv-cwd").read_text(encoding="utf-8").strip()
+    assert Path(uv_cwd).resolve() == client.resolve()
+
+
+def test_build_client_fails_when_the_build_fails(fakes, tmp_path):
+    result, _ = _build_client(fakes, tmp_path, RUN_NUMBER="57", FAKE_UV_EXIT="1")
+
+    assert result.returncode == 1
+
+
+def test_build_client_requires_the_run_number(fakes, tmp_path):
+    env = fakes.env()
+    env.pop("RUN_NUMBER", None)
+    client = tmp_path / "client"
+    client.mkdir()
+    (client / "pyproject.toml").write_text(CLIENT_PYPROJECT, encoding="utf-8")
+    fakes.add("uv")
+
+    result = run_script(BUILD_CLIENT, str(client), env=env)
+
+    assert result.returncode != 0
+    assert "RUN_NUMBER is required" in result.stderr
+    assert (client / "pyproject.toml").read_text(encoding="utf-8") == CLIENT_PYPROJECT
+    assert fakes.calls() == []
+
+
+def test_build_client_fails_without_the_generated_client(fakes, tmp_path):
+    result, _ = _build_client(
+        fakes, tmp_path, str(tmp_path / "missing"), RUN_NUMBER="57"
+    )
+
+    assert result.returncode != 0
+    assert fakes.calls("uv") == []
