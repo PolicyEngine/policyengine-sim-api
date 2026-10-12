@@ -41,16 +41,15 @@ the local Docker integration command that excludes `beta_only` calculations.
 
 With the affected `.py` 6.2.2 release, real preparation is expected to fail on
 missing ACS WIC participation. Do not catch, skip, or mark that failure as
-expected in CI. The executor's two `.py` pins now target 6.2.5, including the
-narrowly scoped temporary compatibility fix in PolicyEngine/policyengine.py#566.
+expected in CI. The executor's two `.py` pins and frozen lockfile use 6.2.7,
+which retains the narrowly scoped temporary compatibility fix in
+PolicyEngine/policyengine.py#566.
 
-## Pending publication and lockfile refresh
+## Published bundle and validation
 
-Publish `.py` 6.2.5 before regenerating the executor's `uv.lock` with `uv lock`.
-Commit that generated lockfile, run `uv lock --check`, and rerun the real ACS
-validation before merging or deploying this change. Do not invent package
-URLs, hashes, or release metadata before publication.
-
-Until that refresh, the checked-in lockfile retains main's published 6.2.3
-release. Frozen installs therefore use 6.2.3, not the new target; this state
-is intentionally incomplete and must not be merged or deployed.
+PolicyEngine/policyengine-sim-api#746 supplied the published 6.2.7 pins and
+generated lockfile on main. This change retains those exact dependencies rather
+than downgrading to the original 6.2.5 target. Run `uv lock --check`, install
+from the frozen lockfile, and require the real ACS validation to pass before
+merging or deploying the regional dataset changes. A dependency update alone
+does not validate the regional preparation and calculation path.
