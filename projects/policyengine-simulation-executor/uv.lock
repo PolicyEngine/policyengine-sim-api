@@ -1693,7 +1693,7 @@ wheels = [
 
 [[package]]
 name = "policyengine"
-version = "6.2.7"
+version = "6.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "h5py" },
@@ -1705,9 +1705,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7c/89/279956ab5dbd114a06a3469e1adaa1a4b3240d437ab108bdb5e8237666be/policyengine-6.2.7.tar.gz", hash = "sha256:0aae30ce689198c89234007407fc2578081474dc2f372a76e3fd0cea6d7596a4", size = 797356, upload-time = "2026-10-12T04:33:09.186Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/48/c8/be0011b114d0d6ffd0920a46d424001cfe22931129d7e55761dacf58f1ad/policyengine-6.3.0.tar.gz", hash = "sha256:4360cabcfb510a3ce91c136392967fa5b8cb082d4570d43e1acfecf308593d5f", size = 823863, upload-time = "2026-10-12T11:58:40.533Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/62/f4d6d228fb62809cbbe5adbbfdb081e81887108e3f2c26a52d17fbbc6ee0/policyengine-6.2.7-py3-none-any.whl", hash = "sha256:e0dcc8979dba6cf9ad649cac827e2ab2adba8cd84b443bd482e8a2fbc2764050", size = 259644, upload-time = "2026-10-12T04:33:07.577Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/30/89324a47c208d21a190bbbf3685aea2ca992df50fbafa47b4210568c636a/policyengine-6.3.0-py3-none-any.whl", hash = "sha256:5cfb3c10bd721a9816d4bdf5594b6612bdc9b59f3c3500d091f0b9378c8dfad3", size = 281915, upload-time = "2026-10-12T11:58:38.824Z" },
 ]
 
 [package.optional-dependencies]
@@ -1895,7 +1895,7 @@ requires-dist = [
     { name = "openapi-python-client", marker = "extra == 'build'", specifier = ">=0.21.6" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.65b0,<0.66" },
     { name = "opentelemetry-instrumentation-sqlalchemy", specifier = ">=0.65b0,<0.66" },
-    { name = "policyengine", extras = ["models"], specifier = "==6.2.7" },
+    { name = "policyengine", extras = ["models"], specifier = "==6.3.0" },
     { name = "policyengine-fastapi", editable = "../../libs/policyengine-fastapi" },
     { name = "policyengine-observability", extras = ["fastapi", "google", "otlp-grpc"], specifier = ">=3.0.2,<4" },
     { name = "policyengine-simulation-contract", extras = ["modal"], editable = "../../libs/policyengine-simulation-contract" },
@@ -1917,7 +1917,7 @@ modal-simulation-image = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "google-cloud-storage", specifier = ">=2" },
     { name = "huggingface-hub", specifier = ">=1,<2" },
-    { name = "policyengine", extras = ["models"], specifier = "==6.2.7" },
+    { name = "policyengine", extras = ["models"], specifier = "==6.3.0" },
     { name = "policyengine-observability", extras = ["fastapi", "google", "otlp-grpc"], specifier = ">=3.0.2,<4" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
     { name = "pyarrow", specifier = ">=20,<24" },
