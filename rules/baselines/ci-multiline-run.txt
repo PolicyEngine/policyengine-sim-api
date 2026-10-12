@@ -1,0 +1,17 @@
+# Tolerated existing violations. This list may only shrink.
+.github/workflows/pr-image-smoke.yml :: image-smoke :: Run image smokes
+.github/workflows/pr.yml :: lint :: Run ruff format check
+.github/workflows/pr.yml :: test :: Install dependencies
+.github/workflows/pr.yml :: test :: Run tests
+.github/workflows/pr.yml :: test-integration :: Run integration tests (local services only)
+.github/workflows/pr.yml :: test-integration :: Start services
+.github/workflows/publish-clients.yml :: publish :: Build simulation API client from the entrypoint contract
+.github/workflows/simulation-deploy.reusable.yml :: deploy_entrypoint :: Build and push entrypoint image
+.github/workflows/simulation-deploy.reusable.yml :: deploy_entrypoint :: Capture stable service state before deployment
+.github/workflows/simulation-deploy.reusable.yml :: deploy_entrypoint :: Resolve exact candidate metadata
+.github/workflows/simulation-deploy.reusable.yml :: deploy_executor :: Select versioned executor app
+.github/workflows/simulation-deploy.reusable.yml :: deploy_stage12_v2 :: Select the bundle-derived v2 application name
+.github/workflows/simulation-deploy.reusable.yml :: deploy_stage12_v2 :: Validate installed bundles, secrets, datasets, and calculations
+.github/workflows/simulation-deploy.reusable.yml :: deployment_ready :: Check deployment result
+.github/workflows/simulation-deploy.reusable.yml :: stage12_v2_ready :: Check Stage 12 deployment result
+.github/workflows/simulation-deploy.reusable.yml :: update_routing :: Publish active routing state

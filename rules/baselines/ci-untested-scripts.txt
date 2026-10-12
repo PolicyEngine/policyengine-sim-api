@@ -1,0 +1,5 @@
+# Tolerated existing violations. This list may only shrink.
+.github/scripts/dependency-update-commit-and-push.sh
+.github/scripts/dependency-update-create-pr.sh
+.github/scripts/dependency-update-prepare-branch.sh
+.github/scripts/update-policyengine-package.sh
