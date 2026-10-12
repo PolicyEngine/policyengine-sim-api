@@ -77,6 +77,36 @@ def test_stage12_enabled_rejects_every_value_other_than_zero_or_one(monkeypatch,
         Settings.from_env()
 
 
+def test_permission_enforcement_defaults_to_log_only(monkeypatch):
+    from policyengine_simulation_entry.config import Settings
+
+    monkeypatch.delenv("SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS", raising=False)
+    assert Settings.from_env().enforce_permissions is False
+
+
+@pytest.mark.parametrize(("value", "expected"), [("0", False), ("1", True)])
+def test_permission_enforcement_accepts_zero_or_one(monkeypatch, value, expected):
+    from policyengine_simulation_entry.config import Settings
+
+    monkeypatch.setenv("SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS", value)
+    assert Settings.from_env().enforce_permissions is expected
+
+
+@pytest.mark.parametrize("value", ["", "true", "yes", "2", " 1"])
+def test_permission_enforcement_rejects_every_value_other_than_zero_or_one(
+    monkeypatch,
+    value,
+):
+    from policyengine_simulation_entry.config import Settings
+
+    monkeypatch.setenv("SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS", value)
+    with pytest.raises(
+        ConfigurationError,
+        match="SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS must be exactly 0 or 1",
+    ):
+        Settings.from_env()
+
+
 def test_enabled_stage12_requires_independent_runtime_configuration():
     with pytest.raises(ConfigurationError, match="STAGE12_ENABLED=1 requires"):
         make_settings(stage12_enabled=True).validate()

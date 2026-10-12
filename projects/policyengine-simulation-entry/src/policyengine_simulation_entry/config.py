@@ -26,12 +26,13 @@ def _truthy(value: str | None, *, default: bool = False) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
-def _stage12_enabled(value: str | None) -> bool:
+def _binary_flag(name: str) -> bool:
+    value = os.getenv(name)
     if value is None or value == "0":
         return False
     if value == "1":
         return True
-    raise ConfigurationError("STAGE12_ENABLED must be exactly 0 or 1.")
+    raise ConfigurationError(f"{name} must be exactly 0 or 1.")
 
 
 def _normalized_issuer(value: str) -> str:
@@ -75,6 +76,9 @@ class Settings:
     old_gateway_auth_audience: str
     old_gateway_auth_client_id: str
     old_gateway_auth_client_secret: str
+    # False records callers that lack a route permission and lets them
+    # through; True rejects them with 403.
+    enforce_permissions: bool = False
     connect_timeout_seconds: float = 5.0
     request_timeout_seconds: float = 25.0
     stage12_enabled: bool = False
@@ -107,13 +111,16 @@ class Settings:
             old_gateway_auth_client_secret=os.getenv(
                 "OLD_GATEWAY_AUTH_CLIENT_SECRET", ""
             ),
+            enforce_permissions=_binary_flag(
+                "SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS"
+            ),
             connect_timeout_seconds=float(
                 os.getenv("OLD_GATEWAY_CONNECT_TIMEOUT_SECONDS", "5")
             ),
             request_timeout_seconds=float(
                 os.getenv("OLD_GATEWAY_REQUEST_TIMEOUT_SECONDS", "25")
             ),
-            stage12_enabled=_stage12_enabled(os.getenv("STAGE12_ENABLED")),
+            stage12_enabled=_binary_flag("STAGE12_ENABLED"),
             stage12_v2_manifest_name=os.getenv(
                 "STAGE12_V2_MANIFEST_NAME",
                 V2_VERSION_MANIFEST_NAME,

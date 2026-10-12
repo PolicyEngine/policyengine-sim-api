@@ -6,7 +6,6 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Callable
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Protocol
 from uuid import UUID
@@ -46,7 +45,11 @@ from policyengine_simulation_observability.observability import (
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from starlette.datastructures import MutableHeaders
 
-from policyengine_simulation_entry.auth import CallerAuthenticator
+from policyengine_simulation_entry.auth import (
+    AuthenticationDependency,
+    CallerAuthenticator,
+    CallerAuthorizer,
+)
 from policyengine_simulation_entry.backend import (
     BackendResponse,
     BackendTimeout,
@@ -73,7 +76,6 @@ BACKEND_RESPONSE_HEADER = {
     "X-PolicyEngine-Simulation-Backend": "old_gateway",
 }
 _json_object_adapter = TypeAdapter(JsonObject)
-type AuthenticationDependency = Callable[[], CallerIdentity | None]
 type ResponseIdentifier = Literal["job_id", "batch_job_id"]
 STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS = 5.0
 
@@ -227,6 +229,14 @@ def create_app(
 
     runtime_backend = backend or OldGatewayBackend(runtime_settings, runtime=runtime)
     authenticate = auth_dependency or CallerAuthenticator(runtime_settings, runtime)
+    authorizer = CallerAuthorizer(
+        authenticate=authenticate,
+        enforce=runtime_settings.enforce_permissions,
+        runtime=runtime,
+    )
+    simulation_submitter = authorizer.require_permission("simulation:submit")
+    simulation_reader = authorizer.require_permission("simulation:read")
+    stage12_operator = authorizer.require_permission("stage12:operate")
     runtime_comparison = comparison_backend
     if runtime_comparison is None and runtime_settings.stage12_resources_configured:
         from policyengine_simulation_entry.stage12_backend import (
@@ -382,8 +392,6 @@ def create_app(
                 },
             )
 
-    protected = [Depends(authenticate)]
-
     def temporary_submission_payload(
         report: ComparisonReportRecord,
     ) -> TemporaryStage12SubmissionResponse:
@@ -399,11 +407,11 @@ def create_app(
     @app.post(
         "/internal/stage12/reports",
         include_in_schema=False,
-        dependencies=protected,
     )
     async def submit_temporary_stage12_report(
         body: SimulationRequest,
         request: Request,
+        caller: CallerIdentity | None = Depends(stage12_operator),
     ) -> Response:
         if not runtime_settings.stage12_enabled:
             return JSONResponse(
@@ -478,11 +486,11 @@ def create_app(
     @app.get(
         "/internal/stage12/reports/{evaluation_id}",
         include_in_schema=False,
-        dependencies=protected,
     )
     async def get_temporary_stage12_report(
         evaluation_id: UUID,
         request: Request,
+        caller: CallerIdentity | None = Depends(stage12_operator),
     ) -> Response:
         comparison = runtime_comparison
         if comparison is None:
@@ -557,11 +565,11 @@ def create_app(
                 "model": SimulationErrorResponse,
             },
         },
-        dependencies=protected,
     )
     async def submit_comparison(
         body: SimulationRequest,
         request: Request,
+        caller: CallerIdentity | None = Depends(simulation_submitter),
     ) -> Response:
         observability_id = start_workflow_observability(request)
         request_payload = _model_json(body)
@@ -626,11 +634,11 @@ def create_app(
                 "model": SimulationErrorResponse,
             },
         },
-        dependencies=protected,
     )
     async def submit_budget_window(
         body: BudgetWindowBatchRequest,
         request: Request,
+        caller: CallerIdentity | None = Depends(simulation_submitter),
     ) -> Response:
         start_workflow_observability(request)
         return await forward(
@@ -665,9 +673,12 @@ def create_app(
             404: {"description": "Job not found"},
             500: {"description": "Job failed"},
         },
-        dependencies=protected,
     )
-    async def get_job(job_id: str, request: Request) -> Response:
+    async def get_job(
+        job_id: str,
+        request: Request,
+        caller: CallerIdentity | None = Depends(simulation_reader),
+    ) -> Response:
         return await forward(
             request,
             "GET",
@@ -697,11 +708,11 @@ def create_app(
             404: {"description": "Batch job not found"},
             500: {"description": "Batch failed"},
         },
-        dependencies=protected,
     )
     async def get_budget_window_job(
         batch_job_id: str,
         request: Request,
+        caller: CallerIdentity | None = Depends(simulation_reader),
     ) -> Response:
         return await forward(
             request,
