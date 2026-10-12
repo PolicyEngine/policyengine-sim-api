@@ -155,23 +155,72 @@ def _restore_script() -> str:
     return script.replace("uv run python", "printf '%s\\n'")
 
 
-def _fake_gh(bin_dir: Path, attempts: int, kept: dict[int, int]) -> None:
-    """A gh that reports a run's attempts and whether each kept a plan."""
+def _inventory_job(*, job=None, step=None, conclusion="success", target="prod"):
+    return {
+        "name": job
+        or f"Complete {target} deployment / Publish routing after all services pass",
+        "steps": [
+            {
+                "name": step or "Keep the plan for a guarded restore",
+                "conclusion": conclusion,
+            }
+        ],
+    }
 
-    lines = ["#!/usr/bin/env bash", 'args="$*"']
-    lines.append(
-        f'if [[ "$args" != *"/attempts/"* ]]; then echo {attempts}; exit 0; fi'
-    )
-    for attempt, count in kept.items():
-        lines.append(
-            f'if [[ "$args" == *"/attempts/{attempt}/jobs"* ]]; then echo {count}; exit 0; fi'
+
+def _fake_gh(
+    bin_dir: Path,
+    attempts: int,
+    kept: dict[int, int],
+    inventory: dict[int, list[dict]] | None = None,
+) -> None:
+    """Return API JSON and execute the workflow's real --jq filter with jq."""
+
+    payloads = {}
+    for attempt in range(1, attempts + 1):
+        jobs = [_inventory_job() for _ in range(kept.get(attempt, 0))]
+        # These are real-looking jobs/steps which must never count as a kept
+        # plan. Dropping any job, step, or success selector changes the result.
+        jobs.extend(
+            [
+                _inventory_job(
+                    job="Complete beta deployment / Publish routing after all services pass"
+                ),
+                _inventory_job(step="Record the plan artifact"),
+                _inventory_job(conclusion="failure"),
+                _inventory_job(conclusion="skipped"),
+            ]
         )
-    lines.append("echo 0")
-    (bin_dir / "gh").write_text("\n".join(lines) + "\n")
+        payloads[str(attempt)] = {"jobs": jobs}
+    if inventory is not None:
+        payloads.update(
+            {str(attempt): {"jobs": jobs} for attempt, jobs in inventory.items()}
+        )
+    script = f"""#!/usr/bin/env python3
+import json
+import re
+import subprocess
+import sys
+
+args = sys.argv[1:]
+attempt = re.search(r"/attempts/(\\d+)/jobs", " ".join(args))
+payloads = {payloads!r}
+payload = payloads[attempt.group(1)] if attempt else {{"run_attempt": {attempts}}}
+query = args[args.index("--jq") + 1]
+result = subprocess.run(["jq", "-r", query], input=json.dumps(payload), text=True)
+sys.exit(result.returncode)
+"""
+    (bin_dir / "gh").write_text(script)
     (bin_dir / "gh").chmod(0o755)
 
 
-def _run_restore(tmp_path: Path, attempts: int, kept: dict, present: list[int]):
+def _run_restore(
+    tmp_path: Path,
+    attempts: int,
+    kept: dict,
+    present: list[int],
+    inventory: dict[int, list[dict]] | None = None,
+):
     runner_temp = tmp_path / "runner-temp-with-dashes"
     (runner_temp / "routing-plans").mkdir(parents=True)
     for attempt in present:
@@ -180,9 +229,10 @@ def _run_restore(tmp_path: Path, attempts: int, kept: dict, present: list[int]):
         (directory / "plan.json").write_text("{}")
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    _fake_gh(bin_dir, attempts, kept)
+    _fake_gh(bin_dir, attempts, kept, inventory)
     return subprocess.run(
         ["bash", "-eo", "pipefail", "-c", _restore_script()],
+        check=False,
         capture_output=True,
         text=True,
         env={
@@ -211,7 +261,6 @@ def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
         "routing-plan-prod-9",
         "routing-plan-prod-10",
     ]
-    assert "--lock-wait-seconds\n420" in result.stdout
 
 
 def test_rollback_refuses_when_an_attempts_plan_is_missing(tmp_path):
@@ -237,8 +286,39 @@ def test_rollback_with_no_plan_at_all_fails(tmp_path):
     assert "kept no prod routing plan" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "ignored_job",
+    [
+        _inventory_job(
+            job="Complete beta deployment / Publish routing after all services pass"
+        ),
+        _inventory_job(job="Complete prod deployment / Read the release identity"),
+        _inventory_job(step="Record the plan artifact"),
+        _inventory_job(conclusion="failure"),
+        _inventory_job(conclusion="skipped"),
+    ],
+    ids=["other-environment", "other-job", "other-step", "failed-step", "skipped-step"],
+)
+def test_inventory_jq_selects_only_successfully_kept_target_plans(
+    tmp_path, ignored_job
+):
+    """The workflow's job/step/conclusion jq selectors all run, not a stub."""
+
+    result = _run_restore(
+        tmp_path,
+        2,
+        {2: 1},
+        present=[2],
+        inventory={1: [ignored_job]},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "routing-plan-prod-2/plan.json" in result.stdout
+
+
 def test_rollbacks_share_the_deployment_concurrency_group():
-    group = re.compile(r"^concurrency:\n(?:  #.*\n)*  group: (?P<group>\S+)\n", re.M)
+    group = re.compile(
+        r"^concurrency:\n(?:  #.*\n)*  group: (?P<group>\S+)\n", re.MULTILINE
+    )
     rollback = group.search(ROLLBACK_WORKFLOW.read_text(encoding="utf-8"))
     deploy = group.search(DEPLOY_WORKFLOW.read_text(encoding="utf-8"))
     assert rollback and deploy

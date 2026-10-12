@@ -45,7 +45,7 @@ permissions:
   contents: read
 
 concurrency:
-  # Shared with the deployments so a rollback never races a release.
+  # Serialize routing writes with both deployment workflows, including restores.
   group: simulation-deploy-main
   cancel-in-progress: false
 
@@ -132,7 +132,7 @@ jobs:
               exit 1
             fi
             uv run python -m src.modal.utils.update_version_registry \
-              --environment "${MODAL_ENVIRONMENT}" --lock-wait-seconds 420 \
+              --environment "${MODAL_ENVIRONMENT}" \
               --restore-plan "${plans[@]}"
           else
             args=(--environment "${MODAL_ENVIRONMENT}" --restore-latest "${POLICYENGINE_VERSION}")

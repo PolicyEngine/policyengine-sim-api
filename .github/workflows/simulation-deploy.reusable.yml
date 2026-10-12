@@ -1073,11 +1073,10 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
         run: |
-          # Wait past the lock's 300-second expiry, so a lock left by a
-          # publisher that died mid-write never blocks the restore.
+          # Caller workflows serialize routing writes and restores in the
+          # repository-wide simulation-deploy-main concurrency group.
           uv run python -m src.modal.utils.update_version_registry \
             --environment "${MODAL_ENVIRONMENT}" \
-            --lock-wait-seconds 420 \
             --restore-plan "${RUNNER_TEMP}/routing-plan/plan.json"
 
   deployment_ready:

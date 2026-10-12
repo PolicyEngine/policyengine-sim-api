@@ -1,10 +1,15 @@
-"""Publish the Modal routing state after a simulation API deployment."""
+"""Publish the Modal routing state after a simulation API deployment.
+
+Routing writes are serialized by the repository-wide GitHub Actions concurrency
+group ``simulation-deploy-main`` (with ``cancel-in-progress: false``). The CLI
+permits writes only from its deployment and rollback workflows; read-only and
+plan modes remain available locally.
+"""
 
 import argparse
-import contextlib
 import hashlib
 import json
-import time
+import os
 import uuid
 from copy import deepcopy
 from typing import Iterable, NotRequired, TypedDict
@@ -447,133 +452,71 @@ def _routing_store(environment: str, *, create_if_missing: bool):
         raise
 
 
-#: Every writer of the routing state holds this lock while it reads, checks
-#: and writes, so a check is never stale by the time its write lands.
-#: ``modal.Dict.put(..., skip_if_exists=True)`` inserts atomically.
-ROUTING_WRITE_LOCK_KEY = "write-lock"
-#: A routing write takes seconds; a lock older than this was left by a writer
-#: that died, and the next writer may reclaim it.
-ROUTING_LOCK_TTL_SECONDS = 300
-#: How long a writer waits for the lock by default. A restore after a failed
-#: release waits longer than the TTL (see the CLI's --lock-wait-seconds), so a
-#: lock left by a writer that died never blocks it.
-ROUTING_LOCK_WAIT_SECONDS = 180
+CANONICAL_GITHUB_REPOSITORY = "PolicyEngine/policyengine-sim-api"
+SERIALIZED_ROUTING_WORKFLOW_FILES = frozenset(
+    {
+        ".github/workflows/simulation-deploy.yml",
+        ".github/workflows/stage12-deploy.yml",
+        ".github/workflows/simulation-rollback.yml",
+    }
+)
 
 
-class RoutingLockHeld(RoutingConflict):
-    """Another writer holds the routing lock and did not release it in time."""
+def _require_serialized_routing_workflow() -> None:
+    """Refuse routing writes outside the workflows that serialize them."""
 
-
-def _lock_owner(record: object) -> str:
-    if isinstance(record, dict) and isinstance(record.get("owner"), str):
-        return record["owner"]
-    return "unreadable-" + hashlib.sha256(repr(record).encode()).hexdigest()[:16]
-
-
-def _reclaim_expired_lock(store, held: object) -> None:
-    """Remove an expired lock, letting exactly one waiter do it.
-
-    The waiter that inserts the reclaim token for that lock's owner (an
-    atomic insert) removes the lock; any other waiter retries. If the lock
-    it removes is not the expired one it read (that owner released it and
-    someone else took it), it is put straight back.
-    """
-
-    token = f"{ROUTING_WRITE_LOCK_KEY}:reclaim:{_lock_owner(held)}"
-    if not store.put(token, {"at": time.time()}, skip_if_exists=True):
+    # GitHub associates a reusable workflow's github context with its caller,
+    # so GITHUB_WORKFLOW_REF identifies the caller, not the reusable file:
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#github-context
+    # GITHUB_WORKFLOW_REF is owner/repo/path@ref:
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/variables
+    workflow_path, separator, ref = os.environ.get("GITHUB_WORKFLOW_REF", "").partition(
+        "@"
+    )
+    repository_prefix = f"{CANONICAL_GITHUB_REPOSITORY}/"
+    workflow_file = (
+        workflow_path.removeprefix(repository_prefix)
+        if workflow_path.startswith(repository_prefix)
+        else None
+    )
+    if (
+        os.environ.get("GITHUB_ACTIONS") == "true"
+        and os.environ.get("GITHUB_REPOSITORY") == CANONICAL_GITHUB_REPOSITORY
+        and workflow_file in SERIALIZED_ROUTING_WORKFLOW_FILES
+        and separator
+        and ref
+        and "@" not in ref
+        and not any(character.isspace() for character in ref)
+    ):
         return
-    try:
-        removed = store.pop(ROUTING_WRITE_LOCK_KEY)
-    except KeyError:
-        removed = None
-    if removed is not None and _lock_owner(removed) != _lock_owner(held):
-        store.put(ROUTING_WRITE_LOCK_KEY, removed, skip_if_exists=True)
-    with contextlib.suppress(KeyError):
-        store.pop(token)
+    workflows = ", ".join(sorted(SERIALIZED_ROUTING_WORKFLOW_FILES))
+    raise RuntimeError(
+        "Routing writes require GitHub Actions in "
+        f"{CANONICAL_GITHUB_REPOSITORY} through {workflows}. "
+        "Use those workflows, whose simulation-deploy-main concurrency group "
+        "serializes routing writes. Read-only, --dry-run and --plan-out modes are available "
+        "locally."
+    )
 
 
-@contextlib.contextmanager
-def routing_write_lock(
-    store,
-    *,
-    purpose: str,
-    wait_seconds: float | None = None,
-    clock=time.time,
-    sleep=time.sleep,
-):
-    """Hold the routing write lock for the body, then release it.
-
-    Acquiring is an atomic insert. A lock that is absent when read was just
-    released, so the insert is retried at once; only a lock past its expiry
-    is reclaimed, by a single waiter (:func:`_reclaim_expired_lock`). A lock
-    that is someone else's is never removed on release.
-    """
-
-    owner = uuid.uuid4().hex
-    if wait_seconds is None:
-        wait_seconds = ROUTING_LOCK_WAIT_SECONDS
-    deadline = clock() + wait_seconds
-    while True:
-        now = clock()
-        record = {
-            "owner": owner,
-            "purpose": purpose,
-            "acquired_at": now,
-            "expires_at": now + ROUTING_LOCK_TTL_SECONDS,
-        }
-        if store.put(ROUTING_WRITE_LOCK_KEY, record, skip_if_exists=True):
-            break
-        held = store.get(ROUTING_WRITE_LOCK_KEY)
-        if held is None:
-            continue
-        expires = held.get("expires_at") if isinstance(held, dict) else None
-        if not isinstance(expires, (int, float)) or expires < now:
-            _reclaim_expired_lock(store, held)
-            continue
-        if clock() >= deadline:
-            raise RoutingLockHeld(
-                f"routing is locked for {held.get('purpose')!r} until "
-                f"{held.get('expires_at')}; nothing was changed"
-            )
-        sleep(2)
-    try:
-        yield owner
-    finally:
-        try:
-            removed = store.pop(ROUTING_WRITE_LOCK_KEY)
-        except KeyError:
-            removed = None
-        if removed is not None and _lock_owner(removed) != owner:
-            store.put(ROUTING_WRITE_LOCK_KEY, removed, skip_if_exists=True)
-
-
-def apply_routing_plan(
-    *, environment: str, plan: dict, lock_wait_seconds: float | None = None
-) -> None:
+def apply_routing_plan(*, environment: str, plan: dict) -> None:
     """Publish ``plan``'s state if the live state is still its starting point."""
 
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=True)
-    with routing_write_lock(
-        store,
-        purpose=f"apply {plan['policyengine_version']}",
-        wait_seconds=lock_wait_seconds,
-    ):
-        current = store.get(ROUTING_STATE_ACTIVE_KEY)
-        if routing_state_digest(current) != plan["before_sha256"]:
-            raise RoutingConflict(
-                "the routing state changed after this release was planned; "
-                "nothing was published"
-            )
-        store[ROUTING_STATE_ACTIVE_KEY] = plan["after"]
-        written = store.get(ROUTING_STATE_ACTIVE_KEY)
+    current = store.get(ROUTING_STATE_ACTIVE_KEY)
+    if routing_state_digest(current) != plan["before_sha256"]:
+        raise RoutingConflict(
+            "the routing state changed after this release was planned; "
+            "nothing was published"
+        )
+    store[ROUTING_STATE_ACTIVE_KEY] = plan["after"]
+    written = store.get(ROUTING_STATE_ACTIVE_KEY)
     if routing_state_digest(written) != plan["after_sha256"]:
         raise RoutingConflict("the published routing state reads back differently")
 
 
-def restore_routing_plans(
-    *, environment: str, plans: list[dict], lock_wait_seconds: float | None = None
-) -> str:
+def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
     """Undo a deployment's plans (one per run attempt): ``restored`` or ``unchanged``.
 
     Repeatedly restores the starting state of a plan whose published state is
@@ -596,35 +539,30 @@ def restore_routing_plans(
         plan for plan in plans if plan["before_sha256"] != plan["after_sha256"]
     ]
     outcome = "unchanged"
-    with routing_write_lock(
-        store, purpose="restore a release's routing", wait_seconds=lock_wait_seconds
-    ):
-        while True:
-            digest = routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
-            live = [plan for plan in remaining if plan["after_sha256"] == digest]
-            if not live:
-                break
-            plan = live[-1]
-            remaining.remove(plan)
-            if plan["before"] is None:
-                store.pop(ROUTING_STATE_ACTIVE_KEY)
-            else:
-                store[ROUTING_STATE_ACTIVE_KEY] = plan["before"]
-            if (
-                routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
-                != plan["before_sha256"]
-            ):
-                raise RoutingConflict(
-                    "the restored routing state reads back differently"
-                )
-            outcome = "restored"
-        if outcome == "unchanged" and not any(
-            plan["before_sha256"] == digest for plan in plans
+    while True:
+        digest = routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
+        live = [plan for plan in remaining if plan["after_sha256"] == digest]
+        if not live:
+            break
+        plan = live[-1]
+        remaining.remove(plan)
+        if plan["before"] is None:
+            store.pop(ROUTING_STATE_ACTIVE_KEY)
+        else:
+            store[ROUTING_STATE_ACTIVE_KEY] = plan["before"]
+        if (
+            routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
+            != plan["before_sha256"]
         ):
-            raise RoutingConflict(
-                "the routing state is neither what this release replaced nor what "
-                "it published; another change was made, so nothing was restored"
-            )
+            raise RoutingConflict("the restored routing state reads back differently")
+        outcome = "restored"
+    if outcome == "unchanged" and not any(
+        plan["before_sha256"] == digest for plan in plans
+    ):
+        raise RoutingConflict(
+            "the routing state is neither what this release replaced nor what "
+            "it published; another change was made, so nothing was restored"
+        )
     return outcome
 
 
@@ -863,12 +801,11 @@ def seed_active_routing_state_from_legacy(*, environment: str) -> RoutingState:
             environment=environment,
         ),
     )
-    with routing_write_lock(store, purpose="seed from the legacy dicts"):
-        next_state = _merge_legacy_seed_into_current(
-            current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
-            legacy_seed=legacy_seed,
-        )
-        store[ROUTING_STATE_ACTIVE_KEY] = next_state
+    next_state = _merge_legacy_seed_into_current(
+        current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
+        legacy_seed=legacy_seed,
+    )
+    store[ROUTING_STATE_ACTIVE_KEY] = next_state
     return next_state
 
 
@@ -886,16 +823,15 @@ def publish_routing_state(
         environment_name=environment,
         create_if_missing=True,
     )
-    with routing_write_lock(store, purpose=f"publish {policyengine_version}"):
-        next_state = build_next_routing_state(
-            current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
-            app_name=app_name,
-            policyengine_version=policyengine_version,
-            us_version=us_version,
-            uk_version=uk_version,
-            force_latest=force_latest,
-        )
-        store[ROUTING_STATE_ACTIVE_KEY] = next_state
+    next_state = build_next_routing_state(
+        current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
+        app_name=app_name,
+        policyengine_version=policyengine_version,
+        us_version=us_version,
+        uk_version=uk_version,
+        force_latest=force_latest,
+    )
+    store[ROUTING_STATE_ACTIVE_KEY] = next_state
     return next_state
 
 
@@ -920,19 +856,26 @@ def restore_routing_state(
         environment_name=environment,
         create_if_missing=False,
     )
-    with routing_write_lock(store, purpose=f"restore latest {policyengine_version}"):
-        next_state = build_restored_routing_state(
-            current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
-            policyengine_version=policyengine_version,
-            expected_latest=expected_latest,
-        )
-        store[ROUTING_STATE_ACTIVE_KEY] = next_state
+    next_state = build_restored_routing_state(
+        current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
+        policyengine_version=policyengine_version,
+        expected_latest=expected_latest,
+    )
+    store[ROUTING_STATE_ACTIVE_KEY] = next_state
     return next_state
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Publish the active routing state after Modal deployment"
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "Publish the active routing state after Modal deployment.\n"
+            "The simulation-deploy-main concurrency group serializes routing writes.\n"
+            f"Writes require GitHub Actions in {CANONICAL_GITHUB_REPOSITORY}\n"
+            "through one of these workflows:\n"
+            + "\n".join(sorted(SERIALIZED_ROUTING_WORKFLOW_FILES))
+            + "\nRead-only, --dry-run and --plan-out modes are available locally."
+        ),
     )
     parser.add_argument(
         "--app-name",
@@ -985,6 +928,11 @@ def main():
         ),
     )
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With publishing arguments: print a routing plan's digests; change nothing.",
+    )
+    parser.add_argument(
         "--plan-out",
         metavar="FILE",
         help=(
@@ -1008,15 +956,7 @@ def main():
     )
     parser.add_argument(
         "--publication-id",
-        help="With --plan-out: a unique id for this publication (default random).",
-    )
-    parser.add_argument(
-        "--lock-wait-seconds",
-        type=float,
-        help=(
-            "How long to wait for the routing write lock. A restore after a "
-            f"failed release should exceed the lock TTL ({ROUTING_LOCK_TTL_SECONDS}s)."
-        ),
+        help="With --plan-out or --dry-run: a unique publication id (default random).",
     )
     parser.add_argument(
         "--restore-latest",
@@ -1048,13 +988,25 @@ def main():
             print(f"{key}={value}")
         return
 
+    writes_routing = (
+        args.apply_plan
+        or args.restore_plan
+        or args.restore_latest
+        or args.seed_active_from_legacy
+        or not (args.plan_out or args.dry_run)
+    )
+    if writes_routing:
+        try:
+            _require_serialized_routing_workflow()
+        except RuntimeError as exc:
+            parser.error(str(exc))
+
     if args.apply_plan:
         with open(args.apply_plan) as handle:
             plan = json.load(handle)
         apply_routing_plan(
             environment=args.environment,
             plan=plan,
-            lock_wait_seconds=args.lock_wait_seconds,
         )
         print(
             f"Published policyengine {plan['policyengine_version']} routing "
@@ -1070,7 +1022,6 @@ def main():
         outcome = restore_routing_plans(
             environment=args.environment,
             plans=plans,
-            lock_wait_seconds=args.lock_wait_seconds,
         )
         print(
             f"Routing for policyengine {plans[-1]['policyengine_version']}: "
@@ -1118,7 +1069,7 @@ def main():
     if missing_args:
         parser.error(f"the following arguments are required: {', '.join(missing_args)}")
 
-    if args.plan_out:
+    if args.plan_out or args.dry_run:
         plan = plan_routing_publication(
             current_state=active_state(),
             app_name=args.app_name,
@@ -1128,8 +1079,9 @@ def main():
             force_latest=args.force_latest,
             publication_id=args.publication_id,
         )
-        with open(args.plan_out, "w") as handle:
-            json.dump(plan, handle, indent=2, sort_keys=True)
+        if args.plan_out:
+            with open(args.plan_out, "w") as handle:
+                json.dump(plan, handle, indent=2, sort_keys=True)
         print(f"before_sha256={plan['before_sha256']}")
         print(f"after_sha256={plan['after_sha256']}")
         print(f"advances_latest={'true' if plan['advances_latest'] else 'false'}")

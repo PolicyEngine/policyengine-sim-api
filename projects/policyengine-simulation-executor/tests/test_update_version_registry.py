@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from src.modal.utils import update_version_registry as registry
 
 
@@ -34,14 +37,19 @@ class FakeDict:
     def pop(self, key):
         return self._data.pop(key)
 
-    def put(self, key, value, *, skip_if_exists=False):
-        if skip_if_exists and key in self._data:
-            return False
-        self._data[key] = value
-        return True
-
     def snapshot(self) -> dict:
         return dict(self._data)
+
+
+@pytest.fixture
+def serialized_workflow(monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "PolicyEngine/policyengine-sim-api")
+    monkeypatch.setenv(
+        "GITHUB_WORKFLOW_REF",
+        "PolicyEngine/policyengine-sim-api/.github/workflows/"
+        "simulation-deploy.yml@refs/heads/main",
+    )
 
 
 @pytest.fixture
@@ -446,6 +454,7 @@ def test_main_publishes_routing_state(
     patched_modal,
     fake_bundle_metadata,
     monkeypatch,
+    serialized_workflow,
 ):
     monkeypatch.setattr(
         sys,
@@ -512,11 +521,6 @@ def test_country_bundle_metadata_records_the_certified_dataset_sha256(monkeypatc
 #   nothing, and restoring a plan that was never applied changes nothing;
 # - restoring latest to a published version points latest and that bundle's
 #   model pins at it and leaves every other route pinnable.
-
-import json
-
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
 
 def _country(country: str, model_version: str) -> registry.CountryBundleMetadata:
@@ -777,7 +781,9 @@ def _main(monkeypatch, *args):
     registry.main()
 
 
-def test_main_plans_applies_and_restores(patched_modal, monkeypatch, capsys, tmp_path):
+def test_main_plans_applies_and_restores(
+    patched_modal, monkeypatch, capsys, tmp_path, serialized_workflow
+):
     state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
     store = _store(patched_modal, state)
     _manifests(monkeypatch, {"6.3.0": ("1.1.0", "2.2.0")})
@@ -818,7 +824,9 @@ def test_main_plans_applies_and_restores(patched_modal, monkeypatch, capsys, tmp
     assert store.get("active") == json.loads(json.dumps(state))
 
 
-def test_main_prints_and_restores_latest(patched_modal, monkeypatch, capsys):
+def test_main_prints_and_restores_latest(
+    patched_modal, monkeypatch, capsys, serialized_workflow
+):
     state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
     state = _publish(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
     store = _store(patched_modal, state)
@@ -839,87 +847,6 @@ def test_latest_identity_of_an_empty_or_legacy_state_is_blank():
         "uk_model_version": "",
         "uk_dataset_sha256": "",
     }
-
-
-# --- The routing write lock and multi-attempt restores --------------------------
-
-
-def test_a_writer_cannot_change_routing_while_a_restore_holds_the_lock(
-    monkeypatch, patched_modal
-):
-    """#744 review: a publisher between a restore's check and write is refused."""
-
-    state = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
-    store = _store(patched_modal, state)
-    plan = _plan(monkeypatch, state, "6.1.0", "1.1.0", "2.2.0")
-    registry.apply_routing_plan(environment="staging", plan=plan)
-    monkeypatch.setattr(registry, "ROUTING_LOCK_WAIT_SECONDS", 0)
-    _manifests(monkeypatch, {"6.2.0": ("1.2.0", "2.2.0")})
-    original_get = store.get
-    interleaved = []
-
-    def get(key, default=None):
-        if key == "active" and not interleaved:
-            interleaved.append(True)
-            with pytest.raises(registry.RoutingLockHeld):
-                registry.publish_routing_state(
-                    environment="staging",
-                    app_name=_app("6.2.0"),
-                    policyengine_version="6.2.0",
-                    us_version="1.2.0",
-                    uk_version="2.2.0",
-                )
-        return original_get(key, default)
-
-    monkeypatch.setattr(store, "get", get)
-    assert registry.restore_routing_plan(environment="staging", plan=plan) == "restored"
-    assert interleaved
-    assert original_get("active") == json.loads(json.dumps(state))
-    assert original_get(registry.ROUTING_WRITE_LOCK_KEY) is None
-
-
-def test_the_lock_is_released_when_a_write_fails(monkeypatch, patched_modal):
-    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
-    store = _store(patched_modal, state)
-    plan = _plan(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
-    store["active"] = _publish(monkeypatch, state, "6.2.7", "1.1.0", "2.1.0")
-    with pytest.raises(registry.RoutingConflict):
-        registry.apply_routing_plan(environment="staging", plan=plan)
-    assert store.get(registry.ROUTING_WRITE_LOCK_KEY) is None
-
-
-def test_a_held_lock_waits_then_refuses_and_an_expired_one_is_broken():
-    store = FakeDict()
-    now = [1000.0]
-    store.put(
-        registry.ROUTING_WRITE_LOCK_KEY,
-        {"owner": "x", "purpose": "other", "expires_at": now[0] + 60},
-    )
-
-    def sleep(seconds):
-        now[0] += seconds
-
-    with pytest.raises(registry.RoutingLockHeld, match="locked for 'other'"):
-        with registry.routing_write_lock(
-            store, purpose="me", wait_seconds=10, clock=lambda: now[0], sleep=sleep
-        ):
-            pass  # pragma: no cover
-    assert store.get(registry.ROUTING_WRITE_LOCK_KEY)["owner"] == "x"
-    now[0] += 100  # past the other writer's expiry
-    with registry.routing_write_lock(
-        store, purpose="me", wait_seconds=10, clock=lambda: now[0], sleep=sleep
-    ) as owner:
-        assert store.get(registry.ROUTING_WRITE_LOCK_KEY)["owner"] == owner
-    assert store.get(registry.ROUTING_WRITE_LOCK_KEY) is None
-
-
-def test_readers_ignore_the_lock_record(monkeypatch, patched_modal):
-    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
-    store = _store(patched_modal, state)
-    with registry.routing_write_lock(store, purpose="test"):
-        assert registry.read_latest_policyengine_version(environment="staging") == (
-            "6.2.6"
-        )
 
 
 def test_a_failed_retry_attempt_cannot_hide_the_publication(monkeypatch, patched_modal):
@@ -978,7 +905,9 @@ def test_a_chain_of_attempts_is_undone_in_order(monkeypatch, patched_modal):
     )
 
 
-def test_main_restores_several_plans(patched_modal, monkeypatch, capsys, tmp_path):
+def test_main_restores_several_plans(
+    patched_modal, monkeypatch, capsys, tmp_path, serialized_workflow
+):
     a = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
     store = _store(patched_modal, a)
     first = _plan(monkeypatch, a, "6.1.0", "1.1.0", "2.2.0")
@@ -992,92 +921,6 @@ def test_main_restores_several_plans(patched_modal, monkeypatch, capsys, tmp_pat
     _main(monkeypatch, "--restore-plan", *files)
     assert "restored" in capsys.readouterr().out
     assert store.get("active") == json.loads(json.dumps(a))
-
-
-def test_a_waiter_never_removes_a_lock_taken_after_a_release():
-    """#744 review: an absent lock is retried by insertion, never deleted."""
-
-    class Racing(FakeDict):
-        def __init__(self):
-            super().__init__()
-            self.puts = 0
-            self.gets = 0
-
-        def put(self, key, value, *, skip_if_exists=False):
-            if key == registry.ROUTING_WRITE_LOCK_KEY and self.puts == 0:
-                self.puts += 1
-                return False  # the previous holder still had it
-            return super().put(key, value, skip_if_exists=skip_if_exists)
-
-        def get(self, key, default=None):
-            if key == registry.ROUTING_WRITE_LOCK_KEY and self.gets == 0:
-                self.gets += 1
-                # The previous holder released; another publisher takes it at
-                # once, after this read.
-                answer = super().get(key, default)
-                super().put(
-                    key,
-                    {"owner": "publisher", "purpose": "publish", "expires_at": 1e12},
-                )
-                return answer
-            return super().get(key, default)
-
-    store = Racing()
-    now = [1000.0]
-    with pytest.raises(registry.RoutingLockHeld):
-        with registry.routing_write_lock(
-            store,
-            purpose="restore",
-            wait_seconds=10,
-            clock=lambda: now[0],
-            sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
-        ):
-            pass  # pragma: no cover
-    assert store.get(registry.ROUTING_WRITE_LOCK_KEY)["owner"] == "publisher"
-
-
-def test_only_the_reclaim_winner_removes_an_expired_lock():
-    store = FakeDict()
-    expired = {"owner": "dead", "purpose": "x", "expires_at": 0}
-    store.put(registry.ROUTING_WRITE_LOCK_KEY, expired)
-    store.put(f"{registry.ROUTING_WRITE_LOCK_KEY}:reclaim:dead", {"at": 1})
-    registry._reclaim_expired_lock(store, expired)  # another waiter is reclaiming
-    assert store.get(registry.ROUTING_WRITE_LOCK_KEY) == expired
-    store.pop(f"{registry.ROUTING_WRITE_LOCK_KEY}:reclaim:dead")
-    registry._reclaim_expired_lock(store, expired)
-    assert store.get(registry.ROUTING_WRITE_LOCK_KEY) is None
-    assert store.get(f"{registry.ROUTING_WRITE_LOCK_KEY}:reclaim:dead") is None
-
-
-def test_reclaiming_puts_back_a_lock_that_changed_hands():
-    store = FakeDict()
-    store.put(registry.ROUTING_WRITE_LOCK_KEY, {"owner": "fresh", "expires_at": 1e12})
-    registry._reclaim_expired_lock(store, {"owner": "dead", "expires_at": 0})
-    assert store.get(registry.ROUTING_WRITE_LOCK_KEY)["owner"] == "fresh"
-
-
-def test_release_never_removes_someone_elses_lock():
-    store = FakeDict()
-    with registry.routing_write_lock(store, purpose="mine"):
-        store[registry.ROUTING_WRITE_LOCK_KEY] = {"owner": "other", "expires_at": 1e12}
-    assert store.get(registry.ROUTING_WRITE_LOCK_KEY)["owner"] == "other"
-
-
-def test_apply_waits_for_and_then_refuses_a_held_lock(monkeypatch, patched_modal):
-    """#744 review: removing the apply lock must fail a test."""
-
-    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
-    store = _store(patched_modal, state)
-    plan = _plan(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
-    store.put(
-        registry.ROUTING_WRITE_LOCK_KEY,
-        {"owner": "other", "purpose": "restore", "expires_at": 1e12},
-    )
-    with pytest.raises(registry.RoutingLockHeld):
-        registry.apply_routing_plan(
-            environment="staging", plan=plan, lock_wait_seconds=0
-        )
-    assert store.get("active") == json.loads(json.dumps(state))
 
 
 def test_plans_carry_their_publication_id(monkeypatch):
@@ -1094,3 +937,245 @@ def test_plans_carry_their_publication_id(monkeypatch):
     assert plan["publication_id"] == "run-7-attempt-2-prod"
     assert plan["after"]["generation"] == f"6.3.0:{_app('6.3.0')}:run-7-attempt-2-prod"
     registry.validate_routing_plan(plan)
+
+
+@pytest.mark.parametrize(
+    "workflow",
+    ["simulation-deploy.yml", "stage12-deploy.yml", "simulation-rollback.yml"],
+)
+@pytest.mark.parametrize("ref", ["refs/heads/main", "refs/tags/v6.3.0", "a" * 40])
+def test_routing_guard_accepts_the_serialized_caller_workflows(
+    monkeypatch, serialized_workflow, workflow, ref
+):
+    monkeypatch.setenv(
+        "GITHUB_WORKFLOW_REF",
+        f"PolicyEngine/policyengine-sim-api/.github/workflows/{workflow}@{ref}",
+    )
+    registry._require_serialized_routing_workflow()
+
+
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        ("GITHUB_ACTIONS", None),
+        ("GITHUB_ACTIONS", "false"),
+        ("GITHUB_ACTIONS", "True"),
+        ("GITHUB_REPOSITORY", None),
+        ("GITHUB_REPOSITORY", "a-fork/policyengine-sim-api"),
+        ("GITHUB_REPOSITORY", "policyengine/policyengine-sim-api"),
+        ("GITHUB_WORKFLOW_REF", None),
+        (
+            "GITHUB_WORKFLOW_REF",
+            "PolicyEngine/policyengine-sim-api/.github/workflows/ci.yml@refs/heads/main",
+        ),
+        (
+            "GITHUB_WORKFLOW_REF",
+            "PolicyEngine/policyengine-sim-api/.github/workflows/"
+            "simulation-deploy.reusable.yml@refs/heads/main",
+        ),
+        (
+            "GITHUB_WORKFLOW_REF",
+            "a-fork/policyengine-sim-api/.github/workflows/"
+            "simulation-deploy.yml@refs/heads/main",
+        ),
+        (
+            "GITHUB_WORKFLOW_REF",
+            "PolicyEngine/policyengine-sim-api/.github/workflows/simulation-deploy.yml",
+        ),
+        (
+            "GITHUB_WORKFLOW_REF",
+            "PolicyEngine/policyengine-sim-api/.github/workflows/simulation-deploy.yml@",
+        ),
+        (
+            "GITHUB_WORKFLOW_REF",
+            "PolicyEngine/policyengine-sim-api/.github/workflows/"
+            "simulation-deploy.yml@refs/heads/main@extra",
+        ),
+        (
+            "GITHUB_WORKFLOW_REF",
+            "PolicyEngine/policyengine-sim-api/.github/workflows/"
+            "simulation-deploy.yml@refs/heads/main extra",
+        ),
+        (
+            "GITHUB_WORKFLOW_REF",
+            "PolicyEngine/policyengine-sim-api/.github/workflows/"
+            "simulation-deploy.yml.extra@refs/heads/main",
+        ),
+    ],
+)
+def test_routing_guard_requires_every_condition(
+    monkeypatch, serialized_workflow, variable, value
+):
+    if value is None:
+        monkeypatch.delenv(variable, raising=False)
+    else:
+        monkeypatch.setenv(variable, value)
+    with pytest.raises(RuntimeError, match="Routing writes require GitHub Actions"):
+        registry._require_serialized_routing_workflow()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        (
+            "--app-name",
+            "policyengine-simulation-py6-3-0",
+            "--policyengine-version",
+            "6.3.0",
+            "--us-version",
+            "1.1.0",
+            "--uk-version",
+            "2.2.0",
+        ),
+        ("--apply-plan", "missing-plan.json"),
+        ("--restore-plan", "missing-plan.json"),
+        ("--restore-latest", "6.2.6"),
+        ("--seed-active-from-legacy",),
+        ("--apply-plan", "missing-plan.json", "--plan-out", "unused-plan.json"),
+        ("--restore-latest", "6.2.6", "--dry-run"),
+    ],
+    ids=[
+        "publish",
+        "apply",
+        "restore-plan",
+        "rollback-version",
+        "seed",
+        "apply-with-plan-out",
+        "restore-with-dry-run",
+    ],
+)
+@pytest.mark.parametrize(
+    ("variable", "value"),
+    [
+        (None, None),
+        ("GITHUB_ACTIONS", "false"),
+        ("GITHUB_REPOSITORY", "a-fork/policyengine-sim-api"),
+        (
+            "GITHUB_WORKFLOW_REF",
+            "PolicyEngine/policyengine-sim-api/.github/workflows/ci.yml@refs/heads/main",
+        ),
+    ],
+    ids=["local", "not-actions", "fork", "unserialized-workflow"],
+)
+def test_main_refuses_unserialized_writes_before_accessing_modal_or_plan_files(
+    monkeypatch, patched_modal, capsys, serialized_workflow, args, variable, value
+):
+    if variable is None:
+        for name in ("GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_REF"):
+            monkeypatch.delenv(name, raising=False)
+    else:
+        monkeypatch.setenv(variable, value)
+
+    def forbidden_modal_access(*args, **kwargs):
+        pytest.fail("a refused CLI write accessed Modal")
+
+    monkeypatch.setattr(registry.modal.Dict, "from_name", forbidden_modal_access)
+    with pytest.raises(SystemExit) as refusal:
+        _main(monkeypatch, *args)
+    assert refusal.value.code == 2
+    error = capsys.readouterr().err
+    assert "simulation-deploy-main" in error
+    for workflow in (
+        "simulation-deploy.yml",
+        "stage12-deploy.yml",
+        "simulation-rollback.yml",
+    ):
+        assert workflow in error
+    assert patched_modal == {}
+
+
+@pytest.mark.parametrize(
+    "mode", ["--print-latest", "--print-identity", "--plan-out", "--dry-run"]
+)
+def test_main_keeps_read_only_and_plan_modes_available_locally(
+    monkeypatch, patched_modal, capsys, tmp_path, mode
+):
+    for variable in ("GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_REF"):
+        monkeypatch.delenv(variable, raising=False)
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    store = _store(patched_modal, state)
+    args = [mode]
+    if mode in {"--plan-out", "--dry-run"}:
+        if mode == "--plan-out":
+            args.append(str(tmp_path / "local-plan.json"))
+        args.extend(
+            [
+                "--app-name",
+                _app("6.3.0"),
+                "--policyengine-version",
+                "6.3.0",
+                "--us-version",
+                "1.1.0",
+                "--uk-version",
+                "2.2.0",
+            ]
+        )
+        _manifests(monkeypatch, {"6.3.0": ("1.1.0", "2.2.0")})
+    _main(monkeypatch, *args)
+    assert capsys.readouterr().out
+    assert store.snapshot() == {"active": json.loads(json.dumps(state))}
+    if mode == "--plan-out":
+        plan = json.loads((tmp_path / "local-plan.json").read_text())
+        assert plan["before"] == state
+        assert plan["after"]["latest"]["policyengine"] == "6.3.0"
+
+
+def test_cli_help_explains_serialized_writes_and_has_no_lease_option(
+    monkeypatch, capsys
+):
+    with pytest.raises(SystemExit) as help_exit:
+        _main(monkeypatch, "--help")
+    assert help_exit.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "simulation-deploy-main" in help_text
+    assert "--lock-wait-seconds" not in help_text
+    for workflow in (
+        "simulation-deploy.yml",
+        "stage12-deploy.yml",
+        "simulation-rollback.yml",
+    ):
+        assert workflow in help_text
+
+
+def test_applying_a_plan_verifies_the_written_state(monkeypatch, patched_modal):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    plan = _plan(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
+
+    class DroppedWrite(FakeDict):
+        def __setitem__(self, key, value):
+            pass
+
+    store = DroppedWrite({"active": state})
+    patched_modal["staging/simulation-api-routing-state"] = store
+    with pytest.raises(
+        registry.RoutingConflict, match="published routing state reads back differently"
+    ):
+        registry.apply_routing_plan(environment="staging", plan=plan)
+    assert store.get("active") == state
+
+
+@pytest.mark.parametrize("first_publication", [False, True])
+def test_restoring_a_plan_verifies_the_written_or_removed_state(
+    monkeypatch, patched_modal, first_publication
+):
+    state = (
+        None
+        if first_publication
+        else _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    )
+    plan = _plan(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
+
+    class DroppedRestore(FakeDict):
+        def __setitem__(self, key, value):
+            pass
+
+        def pop(self, key):
+            return self._data[key]
+
+    store = DroppedRestore({"active": plan["after"]})
+    patched_modal["staging/simulation-api-routing-state"] = store
+    with pytest.raises(
+        registry.RoutingConflict, match="restored routing state reads back differently"
+    ):
+        registry.restore_routing_plan(environment="staging", plan=plan)
+    assert store.get("active") == plan["after"]

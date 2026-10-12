@@ -14,6 +14,8 @@ Invariants:
 from __future__ import annotations
 
 import json
+import sys
+from types import SimpleNamespace
 
 import pytest
 from hypothesis import given, settings
@@ -67,6 +69,77 @@ def test_expected_values_come_from_the_gateway_payload():
     assert expected["schema"] == sentinel.SCHEMA
     assert expected["cases"][0]["values"]["budget.budgetary_impact"] == 6.1e9
     assert json.loads(json.dumps(expected)) == expected
+
+
+def test_expected_defaults_to_the_worker_implementation_and_local_runtime(monkeypatch):
+    runtime = object()
+    created_runtimes = []
+    runs = []
+
+    def local_runtime():
+        created_runtimes.append(runtime)
+        return runtime
+
+    def run_simulation(payload, *, runtime):
+        runs.append((payload, runtime))
+        return RESULT
+
+    monkeypatch.setitem(
+        sys.modules,
+        "policyengine_simulation_executor.stage12_qualification",
+        SimpleNamespace(_local_qualification_runtime=local_runtime),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "policyengine_simulation_executor.simulation_runtime",
+        SimpleNamespace(run_simulation_impl=run_simulation),
+    )
+
+    expected = sentinel.compute_expected(identity=IDENTITY)
+
+    assert created_runtimes == [runtime]
+    assert runs == [
+        (sentinel.worker_payload(sentinel.SENTINEL_CASES[0]["request"]), runtime)
+    ]
+    assert expected["cases"][0]["values"] == {
+        path: RESULT["budget"][path.split(".")[1]] for path in COMPARED
+    }
+
+
+def test_expected_defaults_to_the_installed_package_and_uk_bundle_identity(monkeypatch):
+    distributions = []
+    countries = []
+    uk = SimpleNamespace(
+        model_version="2.126.4",
+        default_dataset="enhanced_frs_2025_26",
+        default_dataset_sha256="a" * 64,
+    )
+
+    def package_version(distribution):
+        distributions.append(distribution)
+        return "6.2.7"
+
+    def country_bundle(country):
+        countries.append(country)
+        return uk
+
+    monkeypatch.setattr(sentinel.metadata, "version", package_version)
+    monkeypatch.setitem(
+        sys.modules,
+        "policyengine_simulation_executor.release_bundle",
+        SimpleNamespace(get_country_release_bundle=country_bundle),
+    )
+
+    expected = sentinel.compute_expected(runner=lambda payload: RESULT)
+
+    assert distributions == ["policyengine"]
+    assert countries == ["uk"]
+    assert expected["policyengine_version"] == "6.2.7"
+    assert expected["uk"] == {
+        "model_version": uk.model_version,
+        "dataset": uk.default_dataset,
+        "dataset_sha256": uk.default_dataset_sha256,
+    }
 
 
 def test_expected_needs_the_bundle_dataset_digest():

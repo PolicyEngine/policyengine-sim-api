@@ -1117,7 +1117,6 @@ def test_a_failing_restore_fails_the_revert_job(tmp_path):
     step = next(
         step for step in revert["steps"] if "--restore-plan" in step.get("run", "")
     )
-    assert "--lock-wait-seconds 420" in step["run"]
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "uv").write_text("#!/usr/bin/env bash\nexit 3\n")
