@@ -1,27 +1,8 @@
 # Claude Instructions
 
-These instructions apply repository-wide.
+Repository-wide guidance for AI agents lives in `AGENTS.md`. Read it first: it
+lists the engineering skill to read for each kind of change, and its generated
+Rules section lists every rule that governs this repository.
 
-## Canonical Guidance
-
-Repository-wide AI-facing engineering guidance lives in `AGENTS.md`.
-Canonical skills live under `docs/engineering/skills/`.
-
-Use those files as the source of truth. This file is a Claude adapter and should
-stay thin; do not duplicate detailed testing, CI, formatting, or architecture
-rules here.
-
-## Required Skill Lookup
-
-Before opening, replacing, or sharing a PR, read
-`docs/engineering/skills/github-prs.md`.
-
-When adding, moving, or reviewing tests, read
-`docs/engineering/skills/testing.md`.
-
-## Safety Boundaries
-
-Do not commit directly to `main`.
-
-Do not make production deployment changes or publish clients unless the user
-explicitly asks for that operation.
+This file is a Claude adapter. Keep it a pointer: put guidance in `AGENTS.md` or
+in a skill under `docs/engineering/skills/`, never here.

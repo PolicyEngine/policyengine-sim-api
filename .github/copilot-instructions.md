@@ -1,11 +1,8 @@
 # Copilot Instructions
 
-Follow the repository's canonical engineering skills under
-`docs/engineering/skills/`.
+Repository-wide guidance for AI agents lives in `AGENTS.md`. Read it first: it
+lists the engineering skill to read for each kind of change, and its generated
+Rules section lists every rule that governs this repository.
 
-For tests, read `docs/engineering/skills/testing.md` before adding, moving, or
-reviewing test files. Do not duplicate or override that testing guidance here.
-
-For pull requests, read `docs/engineering/skills/github-prs.md` before opening,
-replacing, or sharing a PR. This repository only accepts same-repository PRs
-from branches in `PolicyEngine/policyengine-sim-api`; never create fork PRs.
+This file is a Copilot adapter. Keep it a pointer: put guidance in `AGENTS.md`
+or in a skill under `docs/engineering/skills/`, never here.
