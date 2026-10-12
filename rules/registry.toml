@@ -803,7 +803,7 @@ statement = "Every shell script under .github/scripts/ passes shellcheck."
 rationale = "docs/engineering/skills/ci-workflows.md#writing-a-workflow-script"
 scope = [".github/scripts/*.sh"]
 tier = "mechanical"
-status = "ratcheted"
+status = "enforced"
 autofix = false
 [rule.enforcer]
 kind = "quality-guard"
@@ -812,9 +812,6 @@ name = "ci-scripts"
 workflow = ".github/workflows/pr.yml"
 job = "quality-guards"
 invocation = "run_quality_guards.py"
-[rule.baseline]
-file = "rules/baselines/ci-shellcheck.txt"
-count = 1
 [rule.proof]
 bad_fixture = "scripts/rules/tests/fixtures/ci_scripts/shellcheck/bad_script.sh"
 good_fixture = "scripts/rules/tests/fixtures/ci_scripts/shellcheck/good_script.sh"
