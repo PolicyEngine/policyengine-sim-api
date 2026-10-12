@@ -776,7 +776,7 @@ statement = "Every shell script a workflow calls is run by at least one test."
 rationale = "docs/engineering/skills/ci-workflows.md#testing-a-workflow-script"
 scope = [".github/scripts/*.sh"]
 tier = "mechanical"
-status = "ratcheted"
+status = "enforced"
 autofix = false
 [rule.enforcer]
 kind = "quality-guard"
@@ -785,9 +785,6 @@ name = "ci-scripts"
 workflow = ".github/workflows/pr.yml"
 job = "quality-guards"
 invocation = "run_quality_guards.py"
-[rule.baseline]
-file = "rules/baselines/ci-untested-scripts.txt"
-count = 4
 [rule.proof]
 bad_fixture = "scripts/rules/tests/fixtures/ci_scripts/untested_bad"
 good_fixture = "scripts/rules/tests/fixtures/ci_scripts/untested_good"

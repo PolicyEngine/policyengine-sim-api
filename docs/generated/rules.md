@@ -8,7 +8,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 30 | 2 | 1 | 14 | 47 |
+| mechanical | 31 | 1 | 1 | 14 | 47 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
@@ -64,7 +64,6 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 ### Ratcheted (existing violations still tolerated)
 
 - `sim.ci.multiline-run-is-script`: 32 remaining in `rules/baselines/ci-multiline-run.txt`
-- `sim.ci.workflow-scripts-tested`: 4 remaining in `rules/baselines/ci-untested-scripts.txt`
 
 ### Exceptions and review dates
 
@@ -279,7 +278,7 @@ flowchart LR
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sim.ci.multiline-run-is-script` | A GitHub Actions run: block holds one line of code and no chained commands (&&, \|\|, ;); anything more lives in a tested script under .github/scripts/, called from a single-line step. | mechanical | ratcheted | yes | quality guard `ci-scripts` | `pr.yml:quality-guards` | yes |
 | `sim.ci.shell-scripts-pass-shellcheck` | Every shell script under .github/scripts/ passes shellcheck. | mechanical | enforced | yes | quality guard `ci-scripts` | `pr.yml:quality-guards` | yes |
-| `sim.ci.workflow-scripts-tested` | Every shell script a workflow calls is run by at least one test. | mechanical | ratcheted | yes | quality guard `ci-scripts` | `pr.yml:quality-guards` | yes |
+| `sim.ci.workflow-scripts-tested` | Every shell script a workflow calls is run by at least one test. | mechanical | enforced | yes | quality guard `ci-scripts` | `pr.yml:quality-guards` | yes |
 
 ```mermaid
 flowchart LR
@@ -287,7 +286,7 @@ flowchart LR
   e_quality_guard_ci_scripts["quality guard ci-scripts"]
   j_CI_pr_yml_quality_guards["CI pr.yml:quality-guards"]
   r_sim_ci_shell_scripts_pass_shellcheck("sim.ci.shell-scripts-pass-shellcheck (enforced)")
-  r_sim_ci_workflow_scripts_tested("sim.ci.workflow-scripts-tested (ratcheted)")
+  r_sim_ci_workflow_scripts_tested("sim.ci.workflow-scripts-tested (enforced)")
   r_sim_ci_multiline_run_is_script --> e_quality_guard_ci_scripts
   e_quality_guard_ci_scripts --> j_CI_pr_yml_quality_guards
   r_sim_ci_shell_scripts_pass_shellcheck --> e_quality_guard_ci_scripts
