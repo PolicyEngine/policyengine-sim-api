@@ -458,7 +458,20 @@ def test_default_dataset_sha256_rules():
         == "d" * 64
     )
     # Malformed values are dropped, never reported.
-    assert _helper({"certified_data_artifact": {**certified, "sha256": "XYZ"}}) is None
+    for malformed in (
+        "XYZ",
+        "-" + "a" * 63,  # int(value, 16) accepts a sign
+        "a" * 32 + "_" + "a" * 31,  # and underscores
+        " " + "a" * 63,
+        "a" * 64 + "\n",
+        "a" * 63,
+        "g" * 64,
+        64,
+    ):
+        assert (
+            _helper({"certified_data_artifact": {**certified, "sha256": malformed}})
+            is None
+        ), malformed
     # The manifest model is the last resort.
     manifest = SimpleNamespace(
         certified_data_artifact=SimpleNamespace(

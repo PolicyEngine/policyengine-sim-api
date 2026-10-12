@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
@@ -43,12 +44,17 @@ class CountryReleaseBundle:
     default_dataset_sha256: str | None = None
 
 
+_SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}")
+
+
 def _sha256_or_none(value: object) -> str | None:
-    if isinstance(value, str) and len(value) == 64:
-        try:
-            int(value, 16)
-        except ValueError:
-            return None
+    """A SHA-256 as 64 lowercase hex digits, or ``None`` when malformed.
+
+    Only hexadecimal digits count: ``int(value, 16)`` would also accept a
+    sign, underscores or surrounding whitespace.
+    """
+
+    if isinstance(value, str) and _SHA256_HEX.fullmatch(value):
         return value.lower()
     return None
 

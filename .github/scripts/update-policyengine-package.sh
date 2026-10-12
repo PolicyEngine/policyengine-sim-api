@@ -191,23 +191,8 @@ if [[ -n "$EXISTING_PR" ]]; then
   exit 0
 fi
 
-if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
-  echo "Remote branch '${BRANCH}' already exists without an open PR. Creating PR."
-  create_update_pr
-  echo "PR created for existing branch ${BRANCH}"
-  exit 0
-fi
-
-git config user.name "github-actions[bot]"
-git config user.email "github-actions[bot]@users.noreply.github.com"
-git checkout -b "$BRANCH"
-
-python3 "$PYTHON_HELPER" update-requirements \
-  --pyproject "$PYPROJECT" \
-  --package "$PACKAGE" \
-  --current "$CURRENT" \
-  --latest "$LATEST"
-
+# Every PR, including one for a branch left by an earlier run, is opened only
+# after the target wrapper's bundle and the release dispatch have been verified.
 # Read the target wrapper's release manifest without resolving the project.
 for attempt in 1 2 3; do
   if BUNDLE_OUTPUT=$(
@@ -266,6 +251,35 @@ echo "  spm-calculator==${BUNDLED_SPM_VERSION}"
 echo "Certified data releases:"
 echo "  us=${BUNDLED_US_DATA_VERSION}"
 echo "  uk=${BUNDLED_UK_DATA_VERSION}"
+
+if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+  echo "Remote branch '${BRANCH}' already exists without an open PR. Verifying it."
+  git fetch --no-tags origin "refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+  BRANCH_PYPROJECT="$(mktemp)"
+  git show "origin/${BRANCH}:${PROJECT_DIR}/pyproject.toml" > "$BRANCH_PYPROJECT"
+  BRANCH_PIN=$(python3 "$PYTHON_HELPER" current-version \
+    --pyproject "$BRANCH_PYPROJECT" \
+    --package "$PACKAGE")
+  rm -f "$BRANCH_PYPROJECT"
+  if [[ "$BRANCH_PIN" != "$LATEST" ]]; then
+    echo "ERROR: ${BRANCH} pins ${PACKAGE} ${BRANCH_PIN:-nothing}, expected ${LATEST}." >&2
+    exit 1
+  fi
+  echo "Creating PR for verified branch ${BRANCH}."
+  create_update_pr
+  echo "PR created for existing branch ${BRANCH}"
+  exit 0
+fi
+
+git config user.name "github-actions[bot]"
+git config user.email "github-actions[bot]@users.noreply.github.com"
+git checkout -b "$BRANCH"
+
+python3 "$PYTHON_HELPER" update-requirements \
+  --pyproject "$PYPROJECT" \
+  --package "$PACKAGE" \
+  --current "$CURRENT" \
+  --latest "$LATEST"
 
 # The PyPI Simple index can briefly lag the JSON API after a release, so retry
 # the final project lock as well.

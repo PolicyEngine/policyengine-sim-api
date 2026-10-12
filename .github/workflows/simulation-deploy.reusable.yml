@@ -699,8 +699,11 @@ jobs:
       - name: Verify the complete deployed request path
         env:
           # Only existing-stack deployments publish routing for this bundle;
-          # then /versions must show its route, UK model and dataset digest,
-          # and latest must route to it.
+          # then /versions must route its version and UK model to the app just
+          # deployed, show its dataset digest, and route latest to it. The
+          # smoke refuses an incomplete identity when it is required.
+          EXPECTED_IDENTITY: ${{ inputs.deploy_existing_stack && 'required' || 'none' }}
+          EXPECTED_APP_NAME: ${{ inputs.deploy_existing_stack && needs.deploy_executor.outputs.app_name || '' }}
           EXPECTED_POLICYENGINE_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.policyengine_version || '' }}
           EXPECTED_UK_MODEL_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_version || '' }}
           EXPECTED_UK_DATASET_SHA256: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_dataset_sha256 || '' }}
@@ -782,13 +785,15 @@ jobs:
         needs.deploy_entrypoint.result == 'success' &&
         needs.authenticated_test.result == 'success'
       }}
-    needs: [prepare, deploy_entrypoint, authenticated_test]
+    needs: [prepare, deploy_entrypoint, deploy_executor, authenticated_test]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
     permissions:
       contents: read
       id-token: write
     env:
+      EXPECTED_IDENTITY: ${{ inputs.deploy_existing_stack && 'required' || 'none' }}
+      EXPECTED_APP_NAME: ${{ inputs.deploy_existing_stack && needs.deploy_executor.outputs.app_name || '' }}
       EXPECTED_POLICYENGINE_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.policyengine_version || '' }}
       EXPECTED_UK_MODEL_VERSION: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_version || '' }}
       EXPECTED_UK_DATASET_SHA256: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_dataset_sha256 || '' }}

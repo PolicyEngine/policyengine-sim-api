@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import subprocess
-
-import pytest
 import sys
 from pathlib import Path
 
+import pytest
 from fixtures.test_policyengine_package_update_scripts import (
     SCRIPT,
     install_fake_gh,
@@ -142,6 +141,7 @@ def test_update_policyengine_package_opens_pr_for_existing_branch_without_open_p
 ) -> None:
     git_log = tmp_path / "git.log"
     gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
     install_fake_git(
         fake_bin,
         root=fake_repo,
@@ -149,18 +149,83 @@ def test_update_policyengine_package_opens_pr_for_existing_branch_without_open_p
         remote_branch_exists=True,
     )
     install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=uv_log)
 
     result = run_updater(
         env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"),
     )
 
     assert result.returncode == 0, result.stderr
-    assert "already exists without an open PR. Creating PR." in result.stdout
+    assert "already exists without an open PR. Verifying it." in result.stdout
+    assert "Creating PR for verified branch" in result.stdout
+    assert "bundle-versions" in uv_log.read_text(encoding="utf-8")
+    assert "show origin/auto/update-policyengine-4.1.0:simulation/pyproject.toml" in (
+        git_log.read_text(encoding="utf-8")
+    )
     gh_calls = gh_log.read_text(encoding="utf-8")
     assert "pr view" in gh_calls
     assert "pr create --draft --repo PolicyEngine/policyengine-sim-api" in gh_calls
     assert "--head auto/update-policyengine-4.1.0" in gh_calls
     assert "pr-body-first-line Fixes #679" in gh_calls
+
+
+@pytest.mark.parametrize(
+    ("uv_kwargs", "git_kwargs", "payload", "message"),
+    [
+        (
+            {"bundled_uk_version": "2.0.9"},
+            {},
+            '{"version":"4.1.0","bundle":{"uk":{"model_version":"2.1.0"}}}',
+            "does not match the release dispatch",
+        ),
+        (
+            {},
+            {},
+            '{"version":"4.1.0","qualification":{"uk":{"verdict":"rejected",'
+            '"promotable":false}}}',
+            "does not match the release dispatch",
+        ),
+        (
+            {"bundled_policyengine_version": "4.0.9"},
+            {},
+            "",
+            "reports bundle 4.0.9, expected 4.1.0",
+        ),
+        ({}, {"branch_pin": "4.0.5"}, "", "pins policyengine 4.0.5, expected 4.1.0"),
+    ],
+    ids=["bundle-mismatch", "rejected-verdict", "wrong-wrapper", "stale-branch"],
+)
+def test_a_recovered_branch_gets_no_pr_without_verification(
+    fake_bin: Path,
+    fake_repo: Path,
+    tmp_path: Path,
+    uv_kwargs: dict,
+    git_kwargs: dict,
+    payload: str,
+    message: str,
+) -> None:
+    """#743 round-2 review: branch recovery may not bypass validation."""
+
+    gh_log = tmp_path / "gh.log"
+    install_fake_git(
+        fake_bin,
+        root=fake_repo,
+        log=tmp_path / "git.log",
+        remote_branch_exists=True,
+        **git_kwargs,
+    )
+    install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=tmp_path / "uv.log", **uv_kwargs)
+
+    result = run_updater(
+        env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0", RELEASE_PAYLOAD=payload),
+    )
+
+    assert result.returncode != 0
+    assert message in result.stderr
+    gh_calls = gh_log.read_text(encoding="utf-8") if gh_log.exists() else ""
+    assert "pr create" not in gh_calls
+    assert "issue create" not in gh_calls
 
 
 def test_update_policyengine_package_updates_only_wrapper_requirements(
@@ -391,6 +456,31 @@ def test_verify_dispatch_rejects_another_bundle() -> None:
         assert field in result.stderr
 
 
+def test_verify_dispatch_compares_the_certificate_when_installed_reports_one() -> None:
+    """#743 round-2 review: removing the certificate comparison must fail a test."""
+
+    import os
+
+    installed = INSTALLED.replace(
+        "uk_certificate_sha256=", "uk_certificate_sha256=" + "c" * 64
+    )
+
+    def verify(payload: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(HELPER), "verify-dispatch"],
+            input=installed,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "RELEASE_PAYLOAD": payload},
+        )
+
+    assert verify(_payload()).returncode == 0
+    result = verify(_payload(certificate_sha256="d" * 64))
+    assert result.returncode != 0
+    assert "certificate_sha256: dispatch " + "d" * 64 in result.stderr
+
+
 def test_verify_dispatch_fails_closed_when_the_installed_bundle_cannot_answer() -> None:
     """Review M3: a named dataset digest needs an installed one to compare."""
 
@@ -460,7 +550,11 @@ def test_verify_dispatch_accepts_a_reviewed_pair() -> None:
 
     payload = json.loads(_payload())
     payload["qualification"] = {
-        "uk": {"verdict": "needs_review", "promotable": True, "receipt_sha256": "e" * 64}
+        "uk": {
+            "verdict": "needs_review",
+            "promotable": True,
+            "receipt_sha256": "e" * 64,
+        }
     }
 
     result = _verify(json.dumps(payload))

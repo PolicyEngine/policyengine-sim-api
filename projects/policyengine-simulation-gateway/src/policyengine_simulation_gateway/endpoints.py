@@ -496,7 +496,7 @@ def _resolve_from_legacy_dicts(
     )
 
 
-_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 
 def _certified_dataset_sha256(country_bundle: dict) -> str | None:
@@ -508,7 +508,8 @@ def _certified_dataset_sha256(country_bundle: dict) -> str | None:
     """
 
     digest = country_bundle.get("default_dataset_sha256")
-    if isinstance(digest, str) and _SHA256_HEX.match(digest):
+    # fullmatch: ``$`` would also accept a trailing newline.
+    if isinstance(digest, str) and _SHA256_HEX.fullmatch(digest):
         return digest
     return None
 

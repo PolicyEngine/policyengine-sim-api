@@ -7,6 +7,7 @@ import subprocess
 import textwrap
 from pathlib import Path
 
+import pytest
 import tomllib
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -597,7 +598,8 @@ def test_full_stack_promotion_order_is_explicit():
         "\n  promote_entrypoint:"
     )
     assert (
-        "needs: [prepare, deploy_entrypoint, authenticated_test]" in reusable_workflow
+        "needs: [prepare, deploy_entrypoint, deploy_executor, authenticated_test]"
+        in reusable_workflow
     )
     assert (
         'cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"'
@@ -940,7 +942,9 @@ def _run_identity_smoke(tmp_path: Path, versions: dict, **expected: str):
 
 
 IDENTITY = {
+    "EXPECTED_IDENTITY": "required",
     "EXPECTED_POLICYENGINE_VERSION": "6.2.7",
+    "EXPECTED_APP_NAME": "policyengine-simulation-py6-2-7",
     "EXPECTED_UK_MODEL_VERSION": "2.126.8",
     "EXPECTED_UK_DATASET_SHA256": "a" * 64,
     "EXPECTED_LATEST": "true",
@@ -952,9 +956,8 @@ def test_smoke_accepts_the_gateway_identity_of_a_new_release(tmp_path: Path):
 
     assert result.returncode == 0, result.stderr
     assert (
-        "serves policyengine 6.2.7, policyengine-uk 2.126.8, UK dataset "
-        + "a" * 64
-        + " as latest"
+        "serves policyengine 6.2.7 from policyengine-simulation-py6-2-7, "
+        "policyengine-uk 2.126.8, UK dataset " + "a" * 64 + " as latest"
     ) in result.stdout
 
 
@@ -962,7 +965,9 @@ def test_smoke_accepts_an_older_release_by_its_route(tmp_path: Path):
     result = _run_identity_smoke(
         tmp_path,
         VERSIONS_BODY,
+        EXPECTED_IDENTITY="required",
         EXPECTED_POLICYENGINE_VERSION="6.2.6",
+        EXPECTED_APP_NAME="policyengine-simulation-py6-2-6",
         EXPECTED_UK_MODEL_VERSION="2.125.1",
         EXPECTED_UK_DATASET_SHA256="5" * 64,
     )
@@ -1024,7 +1029,10 @@ def test_smoke_rejects_a_uk_model_routed_to_another_app(tmp_path: Path):
     result = _run_identity_smoke(tmp_path, versions, **IDENTITY)
 
     assert result.returncode == 1
-    assert "does not route to policyengine 6.2.7's app" in result.stderr
+    assert (
+        "policyengine-uk 2.126.8 routes to policyengine-simulation-py6-2-6, "
+        "expected policyengine-simulation-py6-2-7"
+    ) in result.stderr
 
 
 def test_smoke_rejects_another_uk_dataset(tmp_path: Path):
@@ -1041,45 +1049,152 @@ def test_smoke_rejects_identity_expectations_without_a_version(tmp_path: Path):
         tmp_path, VERSIONS_BODY, EXPECTED_UK_DATASET_SHA256="a" * 64
     )
 
+    assert result.returncode == 2
+    assert "EXPECTED_POLICYENGINE_VERSION is required" in result.stderr
+
+
+def test_smoke_rejects_worker_routes_to_an_old_app(tmp_path: Path):
+    """#743 round-2 review: the version and its model route to the new app."""
+
+    import copy
+
+    versions = copy.deepcopy(VERSIONS_BODY)
+    versions["policyengine"]["6.2.7"] = "policyengine-simulation-py6-2-6"
+    versions["uk"]["2.126.8"] = "policyengine-simulation-py6-2-6"
+
+    result = _run_identity_smoke(tmp_path, versions, **IDENTITY)
+
     assert result.returncode == 1
-    assert "need EXPECTED_POLICYENGINE_VERSION" in result.stderr
+    assert (
+        "policyengine 6.2.7 routes to policyengine-simulation-py6-2-6, "
+        "expected policyengine-simulation-py6-2-7"
+    ) in result.stderr
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "EXPECTED_POLICYENGINE_VERSION",
+        "EXPECTED_APP_NAME",
+        "EXPECTED_UK_MODEL_VERSION",
+        "EXPECTED_UK_DATASET_SHA256",
+    ],
+)
+@pytest.mark.parametrize("how", ["unset", "empty"])
+def test_smoke_refuses_an_incomplete_identity(tmp_path: Path, missing, how):
+    """#743 round-2 review: an absent expectation never weakens the gate."""
+
+    expected = dict(IDENTITY)
+    if how == "unset":
+        del expected[missing]
+    else:
+        expected[missing] = ""
+
+    result = _run_identity_smoke(tmp_path, VERSIONS_BODY, **expected)
+
+    assert result.returncode == 2
+    assert f"{missing} is required" in result.stderr
+
+
+def test_smoke_requires_every_expectation_when_identity_is_required(tmp_path: Path):
+    result = _run_identity_smoke(tmp_path, VERSIONS_BODY, EXPECTED_IDENTITY="required")
+
+    assert result.returncode == 2
+    assert "is required" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("EXPECTED_IDENTITY", "optional"),
+        ("EXPECTED_LATEST", "yes"),
+        ("EXPECTED_UK_DATASET_SHA256", "A" * 64),
+        ("EXPECTED_UK_DATASET_SHA256", "a" * 63),
+    ],
+)
+def test_smoke_refuses_malformed_expectations(tmp_path: Path, name, value):
+    result = _run_identity_smoke(tmp_path, VERSIONS_BODY, **{**IDENTITY, name: value})
+
+    assert result.returncode == 2
+
+
+def test_smoke_rejects_a_bundle_recorded_for_another_wrapper(tmp_path: Path):
+    """#743 round-2 review: the bundle must be the expected version's own."""
+
+    import copy
+
+    versions = copy.deepcopy(VERSIONS_BODY)
+    versions["bundles"]["6.2.7"]["uk"]["policyengine_version"] = "6.2.6"
+
+    result = _run_identity_smoke(tmp_path, versions, **IDENTITY)
+
+    assert result.returncode == 1
+    assert "no route and UK bundle identity for policyengine 6.2.7" in result.stderr
+
+
+def _workflow_jobs(path: Path) -> dict:
+    import yaml
+
+    return yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]
 
 
 def test_deploy_gates_pass_the_release_identity_to_the_smoke():
-    """Review M2: removing any of this wiring silently disables the gate."""
+    """Review M2: the active workflow (not comments) wires the whole identity."""
 
-    workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
-    prepare = workflow[
-        workflow.index("\n  prepare:") : workflow.index("\n  deploy_entrypoint:")
-    ]
+    jobs = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)
     assert (
-        "uk_dataset_sha256: ${{ steps.versions.outputs.uk_dataset_sha256 }}" in prepare
+        jobs["prepare"]["outputs"]["uk_dataset_sha256"]
+        == "${{ steps.versions.outputs.uk_dataset_sha256 }}"
     )
-    integration = workflow[
-        workflow.index("\n  integration:") : workflow.index("\n  authenticated_test:")
-    ]
-    promote = workflow[workflow.index("\n  promote_entrypoint:") :]
-    for section in (integration, promote):
-        assert (
-            "EXPECTED_POLICYENGINE_VERSION: ${{ inputs.deploy_existing_stack && "
+    assert (
+        jobs["deploy_executor"]["outputs"]["app_name"]
+        == "${{ steps.app.outputs.name }}"
+    )
+    smoke_step = next(
+        step
+        for step in jobs["integration"]["steps"]
+        if "cloud-run-simulation-entry-smoke.sh" in step.get("run", "")
+    )
+    expected = {
+        "EXPECTED_IDENTITY": "${{ inputs.deploy_existing_stack && 'required' || 'none' }}",
+        "EXPECTED_APP_NAME": (
+            "${{ inputs.deploy_existing_stack && "
+            "needs.deploy_executor.outputs.app_name || '' }}"
+        ),
+        "EXPECTED_POLICYENGINE_VERSION": (
+            "${{ inputs.deploy_existing_stack && "
             "needs.prepare.outputs.policyengine_version || '' }}"
-        ) in section
-        assert (
-            "EXPECTED_UK_MODEL_VERSION: ${{ inputs.deploy_existing_stack && "
-            "needs.prepare.outputs.uk_version || '' }}"
-        ) in section
-        assert (
-            "EXPECTED_UK_DATASET_SHA256: ${{ inputs.deploy_existing_stack && "
+        ),
+        "EXPECTED_UK_MODEL_VERSION": (
+            "${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_version || '' }}"
+        ),
+        "EXPECTED_UK_DATASET_SHA256": (
+            "${{ inputs.deploy_existing_stack && "
             "needs.prepare.outputs.uk_dataset_sha256 || '' }}"
-        ) in section
-        assert (
-            "EXPECTED_LATEST: ${{ inputs.deploy_existing_stack && 'true' || '' }}"
-            in section
-        )
-    updates = (
+        ),
+        "EXPECTED_LATEST": "${{ inputs.deploy_existing_stack && 'true' || '' }}",
+    }
+    promote = jobs["promote_entrypoint"]
+    for environment in (smoke_step["env"], promote["env"]):
+        assert {key: environment.get(key) for key in expected} == expected
+    for job in ("integration", "promote_entrypoint"):
+        assert {"prepare", "deploy_executor"} <= set(jobs[job]["needs"])
+    # The promotion smoke runs inherit the job environment; no step overrides it.
+    for step in promote["steps"]:
+        if "cloud-run-simulation-entry-smoke.sh" in step.get("run", ""):
+            assert not set(step.get("env") or {}) & set(expected)
+    updates = _workflow_jobs(
         REPOSITORY_ROOT / ".github" / "workflows" / "check-policyengine-updates.yml"
-    ).read_text(encoding="utf-8")
-    assert "RELEASE_PAYLOAD: ${{ toJSON(github.event.client_payload) }}" in updates
+    )
+    update_envs = [
+        step.get("env") or {}
+        for job in updates.values()
+        for step in job.get("steps", [])
+    ]
+    assert any(
+        env.get("RELEASE_PAYLOAD") == "${{ toJSON(github.event.client_payload) }}"
+        for env in update_envs
+    )
 
 
 def test_smoke_rejects_another_uk_model(tmp_path: Path):

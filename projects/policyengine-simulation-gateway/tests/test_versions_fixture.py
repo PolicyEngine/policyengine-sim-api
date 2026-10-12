@@ -101,7 +101,11 @@ def test_versions_survives_an_unresolvable_historical_dataset(mock_modal, client
     assert response.status_code == 200
     bundles = response.json()["bundles"]
     assert bundles["6.2.7"]["uk"]["dataset_sha256"] == "a" * 64
-    assert "6.2.6" in bundles
+    # The bad entry keeps its model identity but never names the bad dataset.
+    historical = bundles["6.2.6"]["uk"]
+    assert historical["model_version"] == "2.125.1"
+    assert historical.get("dataset") is None
+    assert "gs://" not in json.dumps(historical)
 
 
 def test_versions_skips_country_entries_without_a_model_version(mock_modal, client):

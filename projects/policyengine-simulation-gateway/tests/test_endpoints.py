@@ -1131,11 +1131,21 @@ class TestVersionEndpoints:
         assert bundles["3.9.0"]["uk"].get("dataset_sha256") is None
         assert bundles["4.10.0"]["us"]["model_version"] == "1.500.0"
 
+    @pytest.mark.parametrize(
+        "malformed",
+        ["not-a-digest", "a" * 64 + "\n", "A" * 64, "a" * 63, 7],
+        ids=["text", "trailing-newline", "uppercase", "short", "number"],
+    )
     def test__given_malformed_dataset_sha__then_versions_omit_it(
-        self, mock_modal, client: TestClient
+        self, mock_modal, client: TestClient, malformed
     ):
+        """#743 round-2 review: a digest with a trailing newline gave a 500."""
+
         state = deepcopy(TEST_ROUTING_STATE)
-        state["bundles"]["4.10.0"]["uk"]["default_dataset_sha256"] = "not-a-digest"
+        state["bundles"]["4.10.0"]["uk"] = {
+            **state["bundles"]["4.10.0"]["uk"],
+            "default_dataset_sha256": malformed,
+        }
         mock_modal["dicts"]["simulation-api-routing-state"] = {"active": state}
 
         response = client.get("/versions")
