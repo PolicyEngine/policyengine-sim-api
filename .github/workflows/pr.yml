@@ -107,6 +107,27 @@ jobs:
           fi
         done
 
+  quality-guards:
+    name: Quality guards
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        # The rules registry guard compares baselines with the base branch.
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - name: Test the rules registry tool
+      run: python -m unittest discover -s scripts/rules/tests -t .
+
+    - name: Run quality guards
+      run: python scripts/run_quality_guards.py
+
   docker-build:
     name: Docker build
     needs: [test, lint]  # Only run if tests and linting pass
