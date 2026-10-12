@@ -23,3 +23,39 @@ deployment checks can prove which revision a tagged or stable URL serves.
 Live caller/backend authentication checks are isolated in `authenticated_tests`.
 They qualify tagged Cloud Run candidates before production traffic changes and
 verify the stable production endpoint immediately after promotion.
+
+## Caller authentication and permissions
+
+Protected routes accept Auth0 RS256 access tokens issued by
+`SIMULATION_ENTRYPOINT_AUTH_ISSUER` for `SIMULATION_ENTRYPOINT_AUTH_AUDIENCE`.
+A missing or invalid token returns 403. Each protected route also requires one
+Auth0 permission:
+
+| Route | Permission |
+|---|---|
+| `POST /simulate/economy/comparison` | `simulation:submit` |
+| `POST /simulate/economy/budget-window` | `simulation:submit` |
+| `GET /jobs/{job_id}` | `simulation:read` |
+| `GET /budget-window-jobs/{batch_job_id}` | `simulation:read` |
+| `POST /internal/stage12/reports` | `stage12:operate` |
+| `GET /internal/stage12/reports/{evaluation_id}` | `stage12:operate` |
+
+`GET /health`, `GET /ready`, `GET /versions`, `GET /versions/{kind}` and
+`POST /ping` stay public.
+
+A caller holds a permission when it appears in the token's `permissions` claim
+(Auth0 RBAC) or as an entry in its space-delimited `scope` claim.
+`SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS` decides what happens when the
+permission is missing:
+
+- `0`, or unset: log only. The request proceeds, and the service emits a
+  `simulation_entry_permission_missing` event with the `permission`,
+  `enforced=false`, and the token's `azp` as `client_id`. Tokens and other
+  claims are never recorded.
+- `1`: the request is rejected with 403, and the same event is emitted with
+  `enforced=true`.
+
+Any other value stops the service from starting. When caller authentication is
+disabled (`SIMULATION_ENTRYPOINT_AUTH_REQUIRED=0`, which production refuses),
+there is no caller identity and every protected route is allowed. The Auth0
+setup required before enforcement is described in `DEPLOYMENT.md`.
