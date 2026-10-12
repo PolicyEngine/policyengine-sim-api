@@ -14,6 +14,10 @@ jobs:
     name: Publish API clients
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
     - name: Checkout repo
@@ -43,8 +47,9 @@ jobs:
         sed -i "s/^version = .*/version = \"${NEW_VERSION}\"/" pyproject.toml
         uv build
 
+    # PyPI trusted publishing: uploads accepted only from this workflow in the
+    # pypi environment (limited to main). No stored token.
     - name: Publish simulation API client to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
-        password: ${{ secrets.PYPI }}
         packages-dir: projects/policyengine-simulation-entry/artifacts/clients/python/dist/
