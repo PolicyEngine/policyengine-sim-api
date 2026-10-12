@@ -64,7 +64,8 @@ jobs:
       uses: astral-sh/setup-uv@v8.1.0
 
     - name: Install ruff
-      run: uv tool install ruff
+      # Pinned so a ruff release cannot change CI results; see ruff.toml.
+      run: uv tool install ruff==0.15.22
 
     - name: Run ruff format check
       run: |
