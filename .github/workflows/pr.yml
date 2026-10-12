@@ -24,6 +24,7 @@ jobs:
           - libs/policyengine-simulation-contract
           - libs/policyengine-simulation-observability
           - libs/policyengine-stage12-persistence
+          - libs/policyengine-fastapi
 
     steps:
     - uses: actions/checkout@v6

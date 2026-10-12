@@ -18,6 +18,7 @@ on:
       - 'libs/policyengine-simulation-contract/**'
       - 'libs/policyengine-simulation-observability/**'
       - 'libs/policyengine-fastapi/**'
+      - 'libs/policyengine-stage12-persistence/**'
       - '.github/workflows/pr-image-smoke.yml'
       - '.github/scripts/modal-image-smoke.sh'
 
