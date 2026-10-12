@@ -34,6 +34,12 @@ class FakeDict:
     def pop(self, key):
         return self._data.pop(key)
 
+    def put(self, key, value, *, skip_if_exists=False):
+        if skip_if_exists and key in self._data:
+            return False
+        self._data[key] = value
+        return True
+
     def snapshot(self) -> dict:
         return dict(self._data)
 
@@ -833,3 +839,135 @@ def test_latest_identity_of_an_empty_or_legacy_state_is_blank():
         "uk_model_version": "",
         "uk_dataset_sha256": "",
     }
+
+
+# --- The routing write lock and multi-attempt restores --------------------------
+
+
+def test_a_writer_cannot_change_routing_while_a_restore_holds_the_lock(
+    monkeypatch, patched_modal
+):
+    """#744 review: a publisher between a restore's check and write is refused."""
+
+    state = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
+    store = _store(patched_modal, state)
+    plan = _plan(monkeypatch, state, "6.1.0", "1.1.0", "2.2.0")
+    registry.apply_routing_plan(environment="staging", plan=plan)
+    monkeypatch.setattr(registry, "ROUTING_LOCK_WAIT_SECONDS", 0)
+    _manifests(monkeypatch, {"6.2.0": ("1.2.0", "2.2.0")})
+    original_get = store.get
+    interleaved = []
+
+    def get(key, default=None):
+        if key == "active" and not interleaved:
+            interleaved.append(True)
+            with pytest.raises(registry.RoutingLockHeld):
+                registry.publish_routing_state(
+                    environment="staging",
+                    app_name=_app("6.2.0"),
+                    policyengine_version="6.2.0",
+                    us_version="1.2.0",
+                    uk_version="2.2.0",
+                )
+        return original_get(key, default)
+
+    monkeypatch.setattr(store, "get", get)
+    assert registry.restore_routing_plan(environment="staging", plan=plan) == "restored"
+    assert interleaved
+    assert original_get("active") == json.loads(json.dumps(state))
+    assert original_get(registry.ROUTING_WRITE_LOCK_KEY) is None
+
+
+def test_the_lock_is_released_when_a_write_fails(monkeypatch, patched_modal):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    store = _store(patched_modal, state)
+    plan = _plan(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
+    store["active"] = _publish(monkeypatch, state, "6.2.7", "1.1.0", "2.1.0")
+    with pytest.raises(registry.RoutingConflict):
+        registry.apply_routing_plan(environment="staging", plan=plan)
+    assert store.get(registry.ROUTING_WRITE_LOCK_KEY) is None
+
+
+def test_a_held_lock_waits_then_refuses_and_an_expired_one_is_broken():
+    store = FakeDict()
+    now = [1000.0]
+    store.put(
+        registry.ROUTING_WRITE_LOCK_KEY,
+        {"owner": "x", "purpose": "other", "expires_at": now[0] + 60},
+    )
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    with pytest.raises(registry.RoutingLockHeld, match="locked for 'other'"):
+        with registry.routing_write_lock(
+            store, purpose="me", wait_seconds=10, clock=lambda: now[0], sleep=sleep
+        ):
+            pass  # pragma: no cover
+    assert store.get(registry.ROUTING_WRITE_LOCK_KEY)["owner"] == "x"
+    now[0] += 100  # past the other writer's expiry
+    with registry.routing_write_lock(
+        store, purpose="me", wait_seconds=10, clock=lambda: now[0], sleep=sleep
+    ) as owner:
+        assert store.get(registry.ROUTING_WRITE_LOCK_KEY)["owner"] == owner
+    assert store.get(registry.ROUTING_WRITE_LOCK_KEY) is None
+
+
+def test_readers_ignore_the_lock_record(monkeypatch, patched_modal):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    store = _store(patched_modal, state)
+    with registry.routing_write_lock(store, purpose="test"):
+        assert registry.read_latest_policyengine_version(environment="staging") == (
+            "6.2.6"
+        )
+
+
+def test_a_failed_retry_attempt_cannot_hide_the_publication(monkeypatch, patched_modal):
+    """#744 review: attempt 1 published A to B; attempt 2 planned B to B."""
+
+    a = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
+    store = _store(patched_modal, a)
+    first = _plan(monkeypatch, a, "6.1.0", "1.1.0", "2.2.0")
+    registry.apply_routing_plan(environment="staging", plan=first)
+    second = _plan(monkeypatch, first["after"], "6.1.0", "1.1.0", "2.2.0")
+    assert second["before_sha256"] == second["after_sha256"]
+    assert (
+        registry.restore_routing_plans(environment="staging", plans=[first, second])
+        == "restored"
+    )
+    assert store.get("active") == json.loads(json.dumps(a))
+
+
+def test_a_chain_of_attempts_is_undone_in_order(monkeypatch, patched_modal):
+    a = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
+    store = _store(patched_modal, a)
+    first = _plan(monkeypatch, a, "6.1.0", "1.1.0", "2.2.0")
+    registry.apply_routing_plan(environment="staging", plan=first)
+    second = _plan(monkeypatch, first["after"], "6.1.1", "1.2.0", "2.2.0")
+    registry.apply_routing_plan(environment="staging", plan=second)
+    assert (
+        registry.restore_routing_plans(environment="staging", plans=[first, second])
+        == "restored"
+    )
+    assert store.get("active") == json.loads(json.dumps(a))
+    # Done again, nothing is left to undo.
+    assert (
+        registry.restore_routing_plans(environment="staging", plans=[first, second])
+        == "unchanged"
+    )
+
+
+def test_main_restores_several_plans(patched_modal, monkeypatch, capsys, tmp_path):
+    a = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
+    store = _store(patched_modal, a)
+    first = _plan(monkeypatch, a, "6.1.0", "1.1.0", "2.2.0")
+    registry.apply_routing_plan(environment="staging", plan=first)
+    second = _plan(monkeypatch, first["after"], "6.1.0", "1.1.0", "2.2.0")
+    files = []
+    for index, plan in enumerate((first, second), start=1):
+        path = tmp_path / f"plan-{index}.json"
+        path.write_text(json.dumps(plan))
+        files.append(str(path))
+    _main(monkeypatch, "--restore-plan", *files)
+    assert "restored" in capsys.readouterr().out
+    assert store.get("active") == json.loads(json.dumps(a))

@@ -7,9 +7,10 @@ name: Roll back Simulation API
 #
 # Two ways to restore routing (give exactly one):
 # - deploy_run_id: restore exactly the routing state that deployment replaced,
-#   from the plan it kept as an artifact. Applied only while the live state is
-#   still what that deployment published, so it never overwrites a later
-#   release; the failed release's routes go too.
+#   from the plans it kept as artifacts (one per run attempt). Each attempt's
+#   change is undone only while the live state is what that attempt
+#   published, so it never overwrites a later release; the failed release's
+#   routes go too.
 # - policyengine_version: point latest at that published release. Other
 #   releases, including the failed one, stay pinnable.
 
@@ -99,24 +100,25 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
           if [[ -n "${DEPLOY_RUN_ID}" ]]; then
-            # One artifact per run attempt; the latest attempt published last.
-            plan=""
-            latest_attempt=0
-            for directory in "${RUNNER_TEMP}"/routing-plans/routing-plan-"${TARGET}"-*/; do
-              attempt="${directory%/}"
-              attempt="${attempt##*-}"
-              [[ "${attempt}" =~ ^[0-9]+$ ]] || continue
-              if (( attempt > latest_attempt )); then
-                latest_attempt="${attempt}"
-                plan="${directory}plan.json"
-              fi
+            # One plan per run attempt, passed oldest first. The restore undoes
+            # every attempt's change that is still live, newest first, and skips
+            # attempts that changed nothing.
+            plans=()
+            for attempt in $(
+              for directory in "${RUNNER_TEMP}"/routing-plans/routing-plan-"${TARGET}"-*/; do
+                name="${directory%/}"
+                name="${name##*-}"
+                if [[ "${name}" =~ ^[0-9]+$ ]]; then echo "${name}"; fi
+              done | sort -n
+            ); do
+              plans+=("${RUNNER_TEMP}/routing-plans/routing-plan-${TARGET}-${attempt}/plan.json")
             done
-            if [[ ! -f "${plan}" ]]; then
+            if [[ ${#plans[@]} -eq 0 ]]; then
               echo "Deployment run ${DEPLOY_RUN_ID} kept no ${TARGET} routing plan." >&2
               exit 1
             fi
             uv run python -m src.modal.utils.update_version_registry \
-              --environment "${MODAL_ENVIRONMENT}" --restore-plan "${plan}"
+              --environment "${MODAL_ENVIRONMENT}" --restore-plan "${plans[@]}"
           else
             args=(--environment "${MODAL_ENVIRONMENT}" --restore-latest "${POLICYENGINE_VERSION}")
             if [[ -n "${EXPECTED_LATEST}" ]]; then

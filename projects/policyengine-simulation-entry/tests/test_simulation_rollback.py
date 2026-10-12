@@ -149,29 +149,53 @@ def test_rollback_verifies_the_whole_restored_identity():
     )
 
 
-def test_rollback_picks_the_latest_attempts_plan(tmp_path):
-    """The plan-selection shell picks the highest run attempt, whatever the path."""
+def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
+    """#744 review: a later no-op attempt must not hide an earlier publication."""
 
     restore = _rollback_steps()[_step_index(_rollback_steps(), "--restore-plan")]
-    selection = restore["run"].split('if [[ ! -f "${plan}" ]]')[0]
-    selection = selection.split("then\n", 1)[1]
+    script = restore["run"].split("\nelse\n")[0].split("then\n", 1)[1]
+    script = script.replace("uv run python", "printf '%s\\n'")
     runner_temp = tmp_path / "runner-temp-with-dashes"
-    for attempt in (1, 3, 2):
+    for attempt in (1, 10, 2, 9):
         directory = runner_temp / "routing-plans" / f"routing-plan-prod-{attempt}"
         directory.mkdir(parents=True)
         (directory / "plan.json").write_text("{}")
+    (runner_temp / "routing-plans" / "routing-plan-prod-x").mkdir()
     result = subprocess.run(
-        ["bash", "-c", selection + 'printf "%s" "${plan}"'],
+        ["bash", "-e", "-c", script],
         capture_output=True,
         text=True,
-        check=True,
         env={
             "PATH": os.environ["PATH"],
             "RUNNER_TEMP": str(runner_temp),
             "TARGET": "prod",
+            "MODAL_ENVIRONMENT": "main",
+            "DEPLOY_RUN_ID": "1",
         },
     )
-    assert result.stdout.endswith("routing-plan-prod-3/plan.json")
+    assert result.returncode == 0, result.stderr
+    passed = result.stdout.split("--restore-plan\n", 1)[1].split()
+    assert [Path(path).parent.name for path in passed] == [
+        "routing-plan-prod-1",
+        "routing-plan-prod-2",
+        "routing-plan-prod-9",
+        "routing-plan-prod-10",
+    ]
+    empty = tmp_path / "empty"
+    (empty / "routing-plans").mkdir(parents=True)
+    missing = subprocess.run(
+        ["bash", "-e", "-c", script],
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": os.environ["PATH"],
+            "RUNNER_TEMP": str(empty),
+            "TARGET": "prod",
+            "DEPLOY_RUN_ID": "1",
+        },
+    )
+    assert missing.returncode == 1
+    assert "kept no prod routing plan" in missing.stderr
 
 
 def test_rollbacks_share_the_deployment_concurrency_group():

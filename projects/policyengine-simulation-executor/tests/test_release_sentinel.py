@@ -191,6 +191,15 @@ def test_every_compared_value_must_agree(path):
     ]
 
 
+@pytest.mark.parametrize("value", [True, False, "6.1e9", None, [6.1e9]])
+def test_a_value_that_is_not_a_number_fails(value):
+    """#744 review: a boolean is not a number, whatever Python says."""
+
+    result = {**RESULT, "budget": {**RESULT["budget"], "budgetary_impact": value}}
+    problems, _ = _check(FakeAPI(result=result))
+    assert any("not a number" in problem for problem in problems), problems
+
+
 @pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
 def test_a_non_finite_value_fails(value):
     result = {**RESULT, "budget": {**RESULT["budget"], "budgetary_impact": value}}

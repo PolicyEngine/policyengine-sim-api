@@ -1,8 +1,11 @@
 """Publish the Modal routing state after a simulation API deployment."""
 
 import argparse
+import contextlib
 import hashlib
 import json
+import time
+import uuid
 from copy import deepcopy
 from typing import Iterable, NotRequired, TypedDict
 
@@ -437,47 +440,149 @@ def _routing_store(environment: str, *, create_if_missing: bool):
         raise
 
 
+#: Every writer of the routing state holds this lock while it reads, checks
+#: and writes, so a check is never stale by the time its write lands.
+#: ``modal.Dict.put(..., skip_if_exists=True)`` inserts atomically.
+ROUTING_WRITE_LOCK_KEY = "write-lock"
+#: A routing write takes seconds; a lock older than this was left by a writer
+#: that died, and the next writer breaks it.
+ROUTING_LOCK_TTL_SECONDS = 900
+ROUTING_LOCK_WAIT_SECONDS = 180
+
+
+class RoutingLockHeld(RoutingConflict):
+    """Another writer holds the routing lock and did not release it in time."""
+
+
+@contextlib.contextmanager
+def routing_write_lock(
+    store,
+    *,
+    purpose: str,
+    wait_seconds: float | None = None,
+    clock=time.time,
+    sleep=time.sleep,
+):
+    """Hold the routing write lock for the body, then release it.
+
+    A lock past its expiry is broken: removed, then taken by an atomic
+    insert. Two writers that find the same expired lock at the same moment
+    could both proceed; that needs a writer to have died holding the lock
+    and two others to arrive within the same few seconds afterwards.
+    """
+
+    owner = uuid.uuid4().hex
+    if wait_seconds is None:
+        wait_seconds = ROUTING_LOCK_WAIT_SECONDS
+    deadline = clock() + wait_seconds
+    while True:
+        now = clock()
+        record = {
+            "owner": owner,
+            "purpose": purpose,
+            "acquired_at": now,
+            "expires_at": now + ROUTING_LOCK_TTL_SECONDS,
+        }
+        if store.put(ROUTING_WRITE_LOCK_KEY, record, skip_if_exists=True):
+            break
+        held = store.get(ROUTING_WRITE_LOCK_KEY)
+        expired = not isinstance(held, dict) or not isinstance(
+            held.get("expires_at"), (int, float)
+        )
+        if expired or held["expires_at"] < now:
+            with contextlib.suppress(KeyError):
+                store.pop(ROUTING_WRITE_LOCK_KEY)
+            continue
+        if clock() >= deadline:
+            raise RoutingLockHeld(
+                f"routing is locked for {held.get('purpose')!r} until "
+                f"{held.get('expires_at')}; nothing was changed"
+            )
+        sleep(2)
+    try:
+        yield owner
+    finally:
+        held = store.get(ROUTING_WRITE_LOCK_KEY)
+        if isinstance(held, dict) and held.get("owner") == owner:
+            with contextlib.suppress(KeyError):
+                store.pop(ROUTING_WRITE_LOCK_KEY)
+
+
 def apply_routing_plan(*, environment: str, plan: dict) -> None:
     """Publish ``plan``'s state if the live state is still its starting point."""
 
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=True)
-    current = store.get(ROUTING_STATE_ACTIVE_KEY)
-    if routing_state_digest(current) != plan["before_sha256"]:
-        raise RoutingConflict(
-            "the routing state changed after this release was planned; "
-            "nothing was published"
-        )
-    store[ROUTING_STATE_ACTIVE_KEY] = plan["after"]
-    written = store.get(ROUTING_STATE_ACTIVE_KEY)
+    with routing_write_lock(store, purpose=f"apply {plan['policyengine_version']}"):
+        current = store.get(ROUTING_STATE_ACTIVE_KEY)
+        if routing_state_digest(current) != plan["before_sha256"]:
+            raise RoutingConflict(
+                "the routing state changed after this release was planned; "
+                "nothing was published"
+            )
+        store[ROUTING_STATE_ACTIVE_KEY] = plan["after"]
+        written = store.get(ROUTING_STATE_ACTIVE_KEY)
     if routing_state_digest(written) != plan["after_sha256"]:
         raise RoutingConflict("the published routing state reads back differently")
 
 
-def restore_routing_plan(*, environment: str, plan: dict) -> str:
-    """Undo ``plan``: ``restored``, ``unchanged`` (never applied) or a conflict."""
+def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
+    """Undo a deployment's plans (one per run attempt): ``restored`` or ``unchanged``.
 
-    validate_routing_plan(plan)
+    Repeatedly restores the starting state of a plan whose published state is
+    live, newest attempt first, skipping plans that changed nothing, until no
+    plan's published state is live. ``unchanged`` means the live state is a
+    starting state no plan replaced (nothing was applied, or it was already
+    undone). Any other live state is a conflict and nothing is changed.
+    """
+
+    for plan in plans:
+        validate_routing_plan(plan)
+    if not plans:
+        raise ValueError("no routing plan to restore")
     store = _routing_store(environment, create_if_missing=False)
-    current = store.get(ROUTING_STATE_ACTIVE_KEY) if store is not None else None
-    digest = routing_state_digest(current)
-    if digest == plan["before_sha256"]:
-        return "unchanged"
-    if digest != plan["after_sha256"]:
-        raise RoutingConflict(
-            "the routing state is neither what this release replaced nor what it "
-            "published; another change was made, so nothing was restored"
-        )
-    if plan["before"] is None:
-        store.pop(ROUTING_STATE_ACTIVE_KEY)
-    else:
-        store[ROUTING_STATE_ACTIVE_KEY] = plan["before"]
-    if (
-        routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
-        != plan["before_sha256"]
-    ):
-        raise RoutingConflict("the restored routing state reads back differently")
-    return "restored"
+    if store is None:
+        if all(plan["before"] is None for plan in plans):
+            return "unchanged"
+        raise RoutingConflict("there is no routing state to restore into")
+    remaining = [
+        plan for plan in plans if plan["before_sha256"] != plan["after_sha256"]
+    ]
+    outcome = "unchanged"
+    with routing_write_lock(store, purpose="restore a release's routing"):
+        while True:
+            digest = routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
+            live = [plan for plan in remaining if plan["after_sha256"] == digest]
+            if not live:
+                break
+            plan = live[-1]
+            remaining.remove(plan)
+            if plan["before"] is None:
+                store.pop(ROUTING_STATE_ACTIVE_KEY)
+            else:
+                store[ROUTING_STATE_ACTIVE_KEY] = plan["before"]
+            if (
+                routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
+                != plan["before_sha256"]
+            ):
+                raise RoutingConflict(
+                    "the restored routing state reads back differently"
+                )
+            outcome = "restored"
+        if outcome == "unchanged" and not any(
+            plan["before_sha256"] == digest for plan in plans
+        ):
+            raise RoutingConflict(
+                "the routing state is neither what this release replaced nor what "
+                "it published; another change was made, so nothing was restored"
+            )
+    return outcome
+
+
+def restore_routing_plan(*, environment: str, plan: dict) -> str:
+    """Undo one plan: ``restored``, ``unchanged`` (never applied) or a conflict."""
+
+    return restore_routing_plans(environment=environment, plans=[plan])
 
 
 def latest_release_identity(state: object) -> dict[str, str]:
@@ -709,11 +814,12 @@ def seed_active_routing_state_from_legacy(*, environment: str) -> RoutingState:
             environment=environment,
         ),
     )
-    next_state = _merge_legacy_seed_into_current(
-        current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
-        legacy_seed=legacy_seed,
-    )
-    store[ROUTING_STATE_ACTIVE_KEY] = next_state
+    with routing_write_lock(store, purpose="seed from the legacy dicts"):
+        next_state = _merge_legacy_seed_into_current(
+            current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
+            legacy_seed=legacy_seed,
+        )
+        store[ROUTING_STATE_ACTIVE_KEY] = next_state
     return next_state
 
 
@@ -731,15 +837,16 @@ def publish_routing_state(
         environment_name=environment,
         create_if_missing=True,
     )
-    next_state = build_next_routing_state(
-        current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
-        app_name=app_name,
-        policyengine_version=policyengine_version,
-        us_version=us_version,
-        uk_version=uk_version,
-        force_latest=force_latest,
-    )
-    store[ROUTING_STATE_ACTIVE_KEY] = next_state
+    with routing_write_lock(store, purpose=f"publish {policyengine_version}"):
+        next_state = build_next_routing_state(
+            current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
+            app_name=app_name,
+            policyengine_version=policyengine_version,
+            us_version=us_version,
+            uk_version=uk_version,
+            force_latest=force_latest,
+        )
+        store[ROUTING_STATE_ACTIVE_KEY] = next_state
     return next_state
 
 
@@ -764,12 +871,13 @@ def restore_routing_state(
         environment_name=environment,
         create_if_missing=False,
     )
-    next_state = build_restored_routing_state(
-        current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
-        policyengine_version=policyengine_version,
-        expected_latest=expected_latest,
-    )
-    store[ROUTING_STATE_ACTIVE_KEY] = next_state
+    with routing_write_lock(store, purpose=f"restore latest {policyengine_version}"):
+        next_state = build_restored_routing_state(
+            current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
+            policyengine_version=policyengine_version,
+            expected_latest=expected_latest,
+        )
+        store[ROUTING_STATE_ACTIVE_KEY] = next_state
     return next_state
 
 
@@ -843,9 +951,10 @@ def main():
     parser.add_argument(
         "--restore-plan",
         metavar="FILE",
+        nargs="+",
         help=(
-            "Undo a plan: restore its starting state while the live state is "
-            "still what it published."
+            "Undo a deployment's plans (one per run attempt): restore each "
+            "starting state while the live state is what that plan published."
         ),
     )
     parser.add_argument(
@@ -878,21 +987,26 @@ def main():
             print(f"{key}={value}")
         return
 
-    if args.apply_plan or args.restore_plan:
-        with open(args.apply_plan or args.restore_plan) as handle:
+    if args.apply_plan:
+        with open(args.apply_plan) as handle:
             plan = json.load(handle)
-        if args.apply_plan:
-            apply_routing_plan(environment=args.environment, plan=plan)
-            print(
-                f"Published policyengine {plan['policyengine_version']} routing "
-                f"({plan['after_sha256']}) in Modal environment {args.environment}"
-            )
-        else:
-            outcome = restore_routing_plan(environment=args.environment, plan=plan)
-            print(
-                f"Routing for policyengine {plan['policyengine_version']}: {outcome} "
-                f"({plan['before_sha256']}) in Modal environment {args.environment}"
-            )
+        apply_routing_plan(environment=args.environment, plan=plan)
+        print(
+            f"Published policyengine {plan['policyengine_version']} routing "
+            f"({plan['after_sha256']}) in Modal environment {args.environment}"
+        )
+        return
+
+    if args.restore_plan:
+        plans = []
+        for path in args.restore_plan:
+            with open(path) as handle:
+                plans.append(json.load(handle))
+        outcome = restore_routing_plans(environment=args.environment, plans=plans)
+        print(
+            f"Routing for policyengine {plans[-1]['policyengine_version']}: "
+            f"{outcome} in Modal environment {args.environment}"
+        )
         return
 
     if args.restore_latest:

@@ -816,12 +816,42 @@ def test_deployed_stack_must_reproduce_the_numerical_sentinel():
 
 
 # A small evaluator for the GitHub Actions expression subset these workflows
-# use (&&, ||, !, ==, !=, parentheses, always(), property access and string
-# literals), so conditions are tested by what they decide, not by their text.
+# use (&&, ||, !, ==, !=, parentheses, status functions, property access and
+# string literals), so conditions are tested by what they decide, not by
+# their text. It follows GitHub's rules where they matter here: a job ``if``
+# with no status function is implicitly ``success() && (...)``; ``==``
+# compares strings case-insensitively and converts mismatched types to
+# numbers (true is 1, null is 0, a non-numeric string is NaN, so
+# ``true == 'true'`` is false).
 _TOKEN = re.compile(r"\s*(\$\{\{|\}\}|&&|\|\||==|!=|!|\(|\)|'[^']*'|[A-Za-z_][\w.-]*)")
+_STATUS_FUNCTIONS = ("always", "success", "failure", "cancelled")
 
 
-def _gh_eval(expression: str, context: dict):
+def _gh_number(value):
+    if value is None:
+        return 0.0
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if text == "":
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return float("nan")
+
+
+def _gh_equal(left, right) -> bool:
+    if isinstance(left, str) and isinstance(right, str):
+        return left.lower() == right.lower()
+    if type(left) is type(right):
+        return left == right
+    return _gh_number(left) == _gh_number(right)
+
+
+def _gh_eval(expression: str, context: dict, *, job_if: bool = False):
     tokens = []
     position = 0
     text = expression.strip()
@@ -831,6 +861,22 @@ def _gh_eval(expression: str, context: dict):
         tokens.append(match.group(1))
         position = match.end()
     tokens = [token for token in tokens if token not in ("${{", "}}")]
+    if job_if and not any(
+        token in _STATUS_FUNCTIONS and tokens[index + 1 : index + 2] == ["("]
+        for index, token in enumerate(tokens)
+    ):
+        tokens = ["success", "(", ")", "&&", "(", *tokens, ")"]
+    results = [job.get("result") for job in (context.get("needs") or {}).values()]
+
+    def status(name):
+        cancelled = bool(context.get("cancelled"))
+        if name == "always":
+            return True
+        if name == "cancelled":
+            return cancelled
+        if name == "failure":
+            return "failure" in results
+        return not cancelled and all(result == "success" for result in results)
 
     def truthy(value):
         return value not in (None, False, "", 0)
@@ -862,10 +908,7 @@ def _gh_eval(expression: str, context: dict):
         while index < len(tokens) and tokens[index] in ("==", "!="):
             operator = tokens[index]
             right, index = parse_unary(index + 1)
-            equal = (
-                str("" if left is None else left).lower()
-                == str("" if right is None else right).lower()
-            )
+            equal = _gh_equal(left, right)
             left = equal if operator == "==" else not equal
         return left, index
 
@@ -880,14 +923,26 @@ def _gh_eval(expression: str, context: dict):
         token = tokens[index]
         if token.startswith("'"):
             return token[1:-1], index + 1
-        if index + 2 < len(tokens) + 1 and tokens[index + 1 : index + 3] == ["(", ")"]:
-            assert token in ("always", "cancelled"), token
-            return (token == "always") or bool(context.get("cancelled")), index + 3
+        if tokens[index + 1 : index + 3] == ["(", ")"]:
+            assert token in _STATUS_FUNCTIONS, token
+            return status(token), index + 3
         return lookup(token), index + 1
 
     value, index = parse_or(0)
     assert index == len(tokens), tokens[index:]
     return value
+
+
+def test_the_expression_evaluator_follows_github_semantics():
+    context = {"inputs": {"flag": True}, "needs": {"a": {"result": "failure"}}}
+    assert _gh_eval("${{ inputs.flag == 'true' }}", context) is False
+    assert _gh_eval("${{ inputs.flag == true }}", context) is True
+    assert _gh_eval("${{ 'SUCCESS' == 'success' }}", context) is True
+    assert _gh_eval("${{ inputs.missing == '' }}", context) is True
+    # No status function: implicitly success() first, so a failed need skips it.
+    assert not _gh_eval("${{ inputs.flag }}", context, job_if=True)
+    assert _gh_eval("${{ always() && inputs.flag }}", context, job_if=True)
+    assert not _gh_eval("${{ !cancelled() }}", {**context, "cancelled": True})
 
 
 def _routing_context(**overrides):
@@ -956,6 +1011,16 @@ def _routing_context(**overrides):
             },
             False,
         ),
+        # A cancelled run after publication must still restore routing.
+        (
+            {
+                "cancelled": True,
+                "needs__integration__result": "cancelled",
+                "needs__authenticated_test__result": "skipped",
+                "needs__promote_entrypoint__result": "skipped",
+            },
+            True,
+        ),
     ],
     ids=[
         "all-pass",
@@ -967,11 +1032,82 @@ def _routing_context(**overrides):
         "never-planned",
         "no-routing-change",
         "stage12-only",
+        "cancelled",
     ],
 )
 def test_revert_runs_exactly_when_published_routing_must_be_undone(overrides, reverts):
     revert = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["revert_routing"]
-    assert bool(_gh_eval(revert["if"], _routing_context(**overrides))) is reverts
+    decided = _gh_eval(revert["if"], _routing_context(**overrides), job_if=True)
+    assert bool(decided) is reverts
+
+
+@pytest.mark.parametrize("job", ["integration", "promote_entrypoint"])
+def test_a_failing_sentinel_fails_its_step(tmp_path, job):
+    """#744 review: `|| true` on the sentinel command must not pass a failure."""
+
+    step = _sentinel_check_step(_workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)[job])
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "uv").write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "$*" == *"release_sentinel check"* ]]; then exit 9; fi\n'
+        "exit 0\n"
+    )
+    (bin_dir / "uv").chmod(0o755)
+    script = step["run"].replace(
+        "${{ needs.deploy_entrypoint.outputs.candidate_url }}", "https://candidate"
+    )
+    result = subprocess.run(
+        # GitHub runs `run` blocks with bash -e -o pipefail.
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "RUNNER_TEMP": str(tmp_path),
+            "STABLE_URL": "https://stable",
+        },
+    )
+    assert result.returncode == 9
+
+
+def test_stage12_only_promotion_runs_whatever_the_skipped_stack_jobs():
+    """#743 review: the explicit status function must stay active."""
+
+    promote = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["promote_entrypoint"]
+    context = {
+        "inputs": {"promote_entrypoint": True, "deploy_existing_stack": False},
+        "needs": {
+            "prepare": {"result": "success"},
+            "deploy_entrypoint": {"result": "success"},
+            "deploy_executor": {"result": "skipped"},
+            "authenticated_test": {"result": "success"},
+            "sentinel_expected": {"result": "skipped"},
+            "update_routing": {"result": "skipped"},
+        },
+    }
+    assert _gh_eval(promote["if"], context, job_if=True)
+    context["needs"]["authenticated_test"]["result"] = "failure"
+    assert not _gh_eval(promote["if"], context, job_if=True)
+    context["needs"]["authenticated_test"]["result"] = "success"
+    context["inputs"]["promote_entrypoint"] = False
+    assert not _gh_eval(promote["if"], context, job_if=True)
+
+
+def test_smoke_rejects_a_latest_wrapper_that_lags_alone(tmp_path: Path):
+    """#743 review: the wrapper's latest is checked, not only the model's."""
+
+    import copy
+
+    versions = copy.deepcopy(VERSIONS_BODY)
+    versions["policyengine"]["latest"] = "6.2.6"
+
+    result = _run_identity_smoke(tmp_path, versions, **IDENTITY)
+
+    assert result.returncode == 1
+    assert "latest routes to policyengine 6.2.6 and policyengine-uk 2.126.8" in (
+        result.stderr
+    )
 
 
 def test_revert_restores_the_plan_this_release_kept():

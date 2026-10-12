@@ -12,6 +12,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 FIXTURE = (
     Path(__file__).resolve().parents[2]
     / "policyengine-simulation-entry"
@@ -108,9 +110,17 @@ def test_versions_survives_an_unresolvable_historical_dataset(mock_modal, client
     assert "gs://" not in json.dumps(historical)
 
 
-def test_versions_skips_country_entries_without_a_model_version(mock_modal, client):
+@pytest.mark.parametrize("model_version", ["missing", "", "   ", None, 2.1])
+def test_versions_skips_country_entries_without_a_model_version(
+    mock_modal, client, model_version
+):
+    """#743 review: a blank or non-string model is no identity at all."""
+
     state = routing_state()
-    del state["bundles"]["6.2.6"]["uk"]["model_version"]
+    if model_version == "missing":
+        del state["bundles"]["6.2.6"]["uk"]["model_version"]
+    else:
+        state["bundles"]["6.2.6"]["uk"]["model_version"] = model_version
     mock_modal["dicts"]["simulation-api-routing-state"]["active"] = state
     bundles = client.get("/versions").json()["bundles"]
     assert "uk" not in bundles["6.2.6"]
