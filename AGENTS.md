@@ -96,7 +96,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 - `sim.deploy.container-context-minimal`: Container builds exclude local environments and unrelated projects, and the entrypoint container builds for the requested target platform. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
 - `sim.deploy.docker-images-build`: The simulation entry and executor Docker images build. (blocking: CI job `docker-build`)
 - `sim.deploy.gcloud-without-terraform`: Deployment uses the gcloud-based workflow, not Terraform. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.deploy.image-smoke-covers-every-image-lib`: The image smoke path filter includes every library mounted into a Modal image; libs/policyengine-stage12-persistence is currently missing, so Stage 12-only changes skip the smoke. (doc-only, not checked: follow it yourself)
+- `sim.deploy.image-smoke-covers-every-image-lib`: The image smoke path filter includes every library mounted into a Modal image, so a change to any of them runs the smoke. (doc-only, not checked: follow it yourself)
 - `sim.deploy.modal-image-smoke`: App entrypoints import inside the real Modal images before merge, whenever a library baked into an image changes. (blocking: CI job `image-smoke`)
 - `sim.deploy.promotion-order-explicit`: Full-stack promotion order is explicit, and the reusable deployment rejects unexpectedly skipped phases. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
 - `sim.deploy.revision-tags-valid`: Cloud Run revision tags are valid on a workflow's first run and fit the existing service names. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
@@ -122,13 +122,16 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Code quality and tests
 
-- `sim.quality.every-project-tested`: Every project and library runs its tests in PR CI; libs/policyengine-fastapi is not yet in the test matrix. (doc-only, not checked: follow it yourself)
+- `sim.quality.every-project-tested`: Every project and library with unit tests runs them in the PR test matrix. (doc-only, not checked: follow it yourself)
 - `sim.quality.ruff-format-src`: Source code under projects/*/src and libs/*/src is formatted with ruff format. (blocking: ruff format)
 - `sim.quality.ruff-format-tests`: Test code is formatted with ruff format too; CI currently checks only src directories. (doc-only, not checked: follow it yourself)
+- `sim.quality.ruff-lint`: Python code passes ruff check with the rules selected in ruff.toml (ruff's defaults, made explicit); CI does not run ruff check yet. (advisory: ruff check (E4, E7, E9, F), not blocking)
 - `sim.quality.tests-pass`: Each project's unit tests pass in its own locked environment. (blocking: CI job `test`)
 
 ### Process and repository hygiene
 
+- `sim.process.agents-never-bypass`: Agents never bypass branch rules, even with admin credentials: no gh pr merge --admin and no bypass option; a blocked merge is reported to a human. (doc-only, not checked: follow it yourself)
+- `sim.process.rule-machinery-code-owned`: Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author. (doc-only, not checked: follow it yourself)
 - `sim.process.rules-registry`: Every rule is registered in rules/registry.toml, is enforced where it claims to be, and its rendered views are current. (blocking: quality guard `rules-registry`)
 - `sim.process.same-repo-draft-prs`: PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks, and start with 'Fixes #<issue>'. (doc-only, not checked: follow it yourself)
 
