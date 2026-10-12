@@ -436,12 +436,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
     outputs:
-      # What unpinned requests were routed to before and after this release;
-      # revert_routing restores the former if any later gate fails.
-      previous_latest: ${{ steps.before.outputs.latest }}
-      published_latest: ${{ steps.after.outputs.latest }}
-      # Whether this release should now be latest (newer, or forced).
-      advances_latest: ${{ steps.after.outputs.advances }}
+      # The routing plan (state before and after publishing) is written and
+      # kept as an artifact before anything changes, so revert_routing can
+      # restore exactly what this release replaced even if a step after the
+      # write fails.
+      plan_artifact: ${{ steps.keep.outputs.artifact }}
+      before_sha256: ${{ steps.plan.outputs.before_sha256 }}
+      after_sha256: ${{ steps.plan.outputs.after_sha256 }}
+      # Whether unpinned requests route to this release once it is published.
+      advances_latest: ${{ steps.plan.outputs.advances_latest }}
     steps:
       - uses: actions/checkout@v6
 
@@ -455,67 +458,60 @@ jobs:
         working-directory: projects/policyengine-simulation-executor
         run: uv sync --frozen
 
-      - name: Record the routing this release replaces
-        id: before
+      - name: Plan the routing change
+        id: plan
         working-directory: projects/policyengine-simulation-executor
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: |
-          latest="$(uv run python -m src.modal.utils.update_version_registry \
-            --environment "${{ inputs.modal_environment }}" --print-latest | tail -n 1)"
-          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
-          echo "Unpinned requests route to policyengine ${latest:-nothing} before this release."
-
-      - name: Publish active routing state
-        working-directory: projects/policyengine-simulation-executor
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
           APP_NAME: ${{ needs.deploy_executor.outputs.app_name }}
           POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
           POLICYENGINE_US_VERSION: ${{ needs.prepare.outputs.us_version }}
           POLICYENGINE_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
           FORCE_LATEST: ${{ inputs.force_latest }}
         run: |
+          mkdir -p "${RUNNER_TEMP}/routing-plan"
           args=(
             --app-name "${APP_NAME}"
             --policyengine-version "${POLICYENGINE_VERSION}"
             --us-version "${POLICYENGINE_US_VERSION}"
             --uk-version "${POLICYENGINE_UK_VERSION}"
-            --environment "${{ inputs.modal_environment }}"
+            --environment "${MODAL_ENVIRONMENT}"
+            --plan-out "${RUNNER_TEMP}/routing-plan/plan.json"
           )
           if [[ "${FORCE_LATEST}" == "true" ]]; then
             args+=(--force-latest)
           fi
-          uv run python -m src.modal.utils.update_version_registry "${args[@]}"
+          uv run python -m src.modal.utils.update_version_registry "${args[@]}" \
+            | tee "${RUNNER_TEMP}/routing-plan.out"
+          grep -E '^(before_sha256|after_sha256|advances_latest)=' \
+            "${RUNNER_TEMP}/routing-plan.out" >> "$GITHUB_OUTPUT"
 
-      - name: Record the routing this release published
-        id: after
+      - name: Keep the plan for a guarded restore
+        uses: actions/upload-artifact@v4
+        with:
+          name: routing-plan-${{ inputs.release_environment }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/routing-plan/plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Record the plan artifact
+        id: keep
+        env:
+          ARTIFACT: routing-plan-${{ inputs.release_environment }}-${{ github.run_attempt }}
+        run: echo "artifact=${ARTIFACT}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the planned routing
         working-directory: projects/policyengine-simulation-executor
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
-          PREVIOUS_LATEST: ${{ steps.before.outputs.latest }}
-          FORCE_LATEST: ${{ inputs.force_latest }}
+          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
         run: |
-          latest="$(uv run python -m src.modal.utils.update_version_registry \
-            --environment "${{ inputs.modal_environment }}" --print-latest | tail -n 1)"
-          advances="$(uv run python -c '
-          import os
-          from packaging.version import Version
-          previous = os.environ["PREVIOUS_LATEST"]
-          forced = os.environ["FORCE_LATEST"] == "true"
-          newer = not previous or Version(os.environ["POLICYENGINE_VERSION"]) > Version(previous)
-          print("true" if forced or newer else "false")
-          ')"
-          if [[ "${advances}" == "true" && "${latest}" != "${POLICYENGINE_VERSION}" ]]; then
-            echo "Publishing should have made policyengine ${POLICYENGINE_VERSION} latest, but latest is ${latest:-unset}." >&2
-            exit 1
-          fi
-          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
-          echo "advances=${advances}" >> "$GITHUB_OUTPUT"
+          uv run python -m src.modal.utils.update_version_registry \
+            --environment "${MODAL_ENVIRONMENT}" \
+            --apply-plan "${RUNNER_TEMP}/routing-plan/plan.json"
 
   sentinel_expected:
     name: Compute the numerical release sentinel
@@ -1023,27 +1019,30 @@ jobs:
 
   revert_routing:
     name: Restore the previous Modal routing after a failed release
-    # update_routing moves unpinned traffic before the deployed-stack gates
-    # run. When any later gate fails or the run is cancelled, put latest back
-    # to what it was and withdraw the failed release's routes. The restore is
-    # conditional on latest still being this release, so it never overwrites
-    # a newer release.
+    # update_routing publishes before the deployed-stack gates run. When it
+    # fails after planning, any later gate fails, or the run is cancelled,
+    # restore exactly the routing state this release replaced. The restore
+    # applies only while the live state is still what this release published:
+    # it never overwrites another change, and a plan that was never applied
+    # restores nothing. This covers first publications, older releases that
+    # do not move latest, and every route the release touched. A same-version
+    # redeploy changes no routing (both digests are equal) but replaces that
+    # version's Modal app in place, which routing cannot undo: redeploy the
+    # previous commit instead.
     if: >-
       ${{
         always() &&
         inputs.deploy_existing_stack &&
-        needs.update_routing.result == 'success' &&
-        needs.update_routing.outputs.previous_latest != '' &&
-        needs.update_routing.outputs.published_latest == needs.prepare.outputs.policyengine_version &&
-        needs.update_routing.outputs.previous_latest != needs.update_routing.outputs.published_latest &&
+        needs.update_routing.outputs.plan_artifact != '' &&
+        needs.update_routing.outputs.before_sha256 != needs.update_routing.outputs.after_sha256 &&
         (
+          needs.update_routing.result != 'success' ||
           needs.integration.result != 'success' ||
           needs.authenticated_test.result != 'success' ||
           (inputs.promote_entrypoint && needs.promote_entrypoint.result != 'success')
         )
       }}
-    needs:
-      [prepare, update_routing, integration, authenticated_test, promote_entrypoint]
+    needs: [update_routing, integration, authenticated_test, promote_entrypoint]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
     steps:
@@ -1059,19 +1058,22 @@ jobs:
         working-directory: projects/policyengine-simulation-executor
         run: uv sync --frozen
 
-      - name: Restore the previous latest and withdraw the failed release
+      - name: Download this release's routing plan
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.update_routing.outputs.plan_artifact }}
+          path: ${{ runner.temp }}/routing-plan
+
+      - name: Restore the routing this release replaced
         working-directory: projects/policyengine-simulation-executor
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          PREVIOUS_LATEST: ${{ needs.update_routing.outputs.previous_latest }}
-          FAILED_RELEASE: ${{ needs.update_routing.outputs.published_latest }}
+          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
         run: |
           uv run python -m src.modal.utils.update_version_registry \
-            --environment "${{ inputs.modal_environment }}" \
-            --restore-latest "${PREVIOUS_LATEST}" \
-            --expected-latest "${FAILED_RELEASE}" \
-            --withdraw "${FAILED_RELEASE}"
+            --environment "${MODAL_ENVIRONMENT}" \
+            --restore-plan "${RUNNER_TEMP}/routing-plan/plan.json"
 
   deployment_ready:
     name: Require requested deployment to complete

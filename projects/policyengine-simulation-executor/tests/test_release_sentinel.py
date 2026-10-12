@@ -18,7 +18,6 @@ import json
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
-
 from src.modal.utils import release_sentinel as sentinel
 
 IDENTITY = {
@@ -79,7 +78,11 @@ def test_expected_needs_the_bundle_dataset_digest():
 class FakeAPI:
     """Submit returns a job; polling returns 202 ``pending`` times, then a result."""
 
-    def __init__(self, *, bundle=None, result=RESULT, pending=2, job_status=200):
+    def __init__(
+        self, *, bundle=None, result=RESULT, pending=2, job_status=200, job=None
+    ):
+        #: ``job`` replaces the whole completed job body when given.
+        self.job = job
         self.bundle = {
             "policyengine_version": "6.2.6",
             "model_version": "2.125.1",
@@ -100,6 +103,8 @@ class FakeAPI:
             return 202, {"Retry-After": "1"}, {"status": "submitted"}
         if self.job_status != 200:
             return self.job_status, {}, {"status": "failed", "error": "boom"}
+        if self.job is not None:
+            return 200, {}, self.job
         return 200, {}, {"status": "complete", "result": self.result}
 
 
@@ -158,6 +163,64 @@ def test_a_deployment_that_reproduces_the_numbers_passes():
 def test_any_disagreement_fails(api, fragment):
     problems, _ = _check(api)
     assert any(fragment in problem for problem in problems), problems
+
+
+LABEL = sentinel.SENTINEL_CASES[0]["case_id"]
+COMPARED = (
+    "budget.budgetary_impact",
+    "budget.tax_revenue_impact",
+    "budget.benefit_spending_impact",
+    "budget.baseline_net_income",
+)
+
+
+def test_the_sentinel_compares_the_budget_and_net_income():
+    assert tuple(sentinel.SENTINEL_CASES[0]["values"]) == COMPARED
+
+
+@pytest.mark.parametrize("path", COMPARED)
+def test_every_compared_value_must_agree(path):
+    """#744 review: removing any one comparison must fail a test."""
+
+    section, key = path.split(".")
+    result = {**RESULT, section: {**RESULT[section], key: RESULT[section][key] * 1.01}}
+    problems, _ = _check(FakeAPI(result=result))
+    assert problems == [
+        f"{LABEL}: {path} served {result[section][key]!r}, "
+        f"computed {RESULT[section][key]!r}"
+    ]
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_a_non_finite_value_fails(value):
+    result = {**RESULT, "budget": {**RESULT["budget"], "budgetary_impact": value}}
+    problems, _ = _check(FakeAPI(result=result))
+    assert any("not a finite number" in problem for problem in problems), problems
+
+
+@pytest.mark.parametrize("status", ["failed", "cancelled", None, "COMPLETE"])
+def test_a_job_that_did_not_complete_fails_even_with_the_right_numbers(status):
+    problems, _ = _check(FakeAPI(job={"status": status, "result": RESULT}))
+    assert problems == [f"{LABEL}: job ended {status!r}"]
+
+
+@pytest.mark.parametrize(
+    "job",
+    [
+        {"status": "complete"},
+        {"status": "complete", "result": None},
+        {"status": "complete", "result": []},
+        {"status": "complete", "result": "done"},
+        {"status": "complete", "result": 6.1e9},
+    ],
+    ids=["missing", "null", "list", "string", "number"],
+)
+def test_a_complete_job_without_an_object_result_fails(job):
+    """#744 review: a worker returning None must not pass the sentinel."""
+
+    problems, _ = _check(FakeAPI(job=job))
+    assert len(problems) == 1
+    assert "result, not an object" in problems[0]
 
 
 def test_a_job_that_never_finishes_fails():

@@ -1,11 +1,13 @@
 """Publish the Modal routing state after a simulation API deployment."""
 
 import argparse
+import hashlib
+import json
 from copy import deepcopy
+from typing import Iterable, NotRequired, TypedDict
 
 import modal
 from packaging.version import InvalidVersion, Version
-from typing import Iterable, TypedDict, NotRequired
 
 POLICYENGINE_VERSION_DICT_NAME = "simulation-api-policyengine-versions"
 US_VERSION_DICT_NAME = "simulation-api-us-versions"
@@ -281,57 +283,27 @@ def build_next_routing_state(
     return state
 
 
-def _newest_app_serving(
-    state: RoutingState,
-    *,
-    country: str,
-    model_version: str,
-    preferred: str,
-) -> str | None:
-    """The app of the newest routed bundle with this country model version."""
-
-    candidates = [
-        version
-        for version, manifest in state["bundles"].items()
-        if isinstance(manifest, dict)
-        and (manifest.get(country) or {}).get("model_version") == model_version
-        and state["routes"]["policyengine"].get(version) == manifest.get("app_name")
-    ]
-    if not candidates:
-        return None
-    if preferred in candidates:
-        return state["routes"]["policyengine"][preferred]
-    newest = candidates[0]
-    for version in candidates[1:]:
-        if _is_newer_version(version, newest):
-            newest = version
-    return state["routes"]["policyengine"][newest]
-
-
 def build_restored_routing_state(
     *,
     current_state: object,
     policyengine_version: str,
     expected_latest: str | None = None,
-    withdraw_version: str | None = None,
 ) -> RoutingState:
     """Point ``latest`` back at a policyengine.py version that was already published.
 
     The restored version must still have its route and bundle manifest in the
     state; ``latest.us`` and ``latest.uk`` become that manifest's model
-    versions, so unpinned requests are served by exactly that bundle again.
+    versions, and those model-version pins route to its app, so unpinned
+    requests are served by exactly that bundle again. Every other route is
+    left as it is: other releases stay pinnable.
 
     ``expected_latest`` makes the rollback conditional: it is refused unless
     ``latest.policyengine`` is still that version (the release being rolled
     back), so a rollback never overwrites a newer release published meanwhile.
 
-    ``withdraw_version`` removes a failed release: its policyengine route and
-    bundle manifest, and every country route to its app. Each such country
-    route goes back to the newest remaining bundle with that model version
-    (the restored one first), or is removed when none has it, so no
-    model-version pin is left dangling or served by the withdrawn app.
-    Publishing a release and then rolling it back this way returns the
-    routes and ``latest`` to what they were before it was published.
+    To undo a release completely (its routes as well as ``latest``), restore
+    the routing plan its deployment recorded (:func:`restore_routing_plan`):
+    which app served a model version before cannot be read from the state.
     """
 
     state = _coerce_routing_state(current_state)
@@ -341,8 +313,6 @@ def build_restored_routing_state(
             f"latest.policyengine is {current_latest!r}, not {expected_latest!r}; "
             "another release changed routing, so this rollback was not applied"
         )
-    if withdraw_version is not None and withdraw_version == policyengine_version:
-        raise ValueError("Cannot restore and withdraw the same version")
     app_name = state["routes"]["policyengine"].get(policyengine_version)
     manifest = state["bundles"].get(policyengine_version)
     if not app_name or not isinstance(manifest, dict):
@@ -358,30 +328,6 @@ def build_restored_routing_state(
     restored_models = {
         country: manifest[country]["model_version"] for country in ("us", "uk")
     }
-
-    if withdraw_version is not None:
-        withdrawn_app = state["routes"]["policyengine"].pop(withdraw_version, None)
-        state["bundles"].pop(withdraw_version, None)
-        if withdrawn_app is None:
-            raise ValueError(
-                f"policyengine {withdraw_version!r} has no route to withdraw"
-            )
-        for country in ("us", "uk"):
-            routes = state["routes"][country]
-            for model_version, routed_app in list(routes.items()):
-                if routed_app != withdrawn_app:
-                    continue
-                replacement = _newest_app_serving(
-                    state,
-                    country=country,
-                    model_version=model_version,
-                    preferred=policyengine_version,
-                )
-                if replacement is None:
-                    del routes[model_version]
-                else:
-                    routes[model_version] = replacement
-
     # As publishing does, the restored bundle serves its model-version pins.
     for country, model_version in restored_models.items():
         state["routes"][country][model_version] = app_name
@@ -396,6 +342,157 @@ def build_restored_routing_state(
         required_policyengine_manifests=(policyengine_version,),
     )
     return state
+
+
+# --- Routing plans: publish exactly once, restore exactly what was replaced ---
+#
+# A deployment writes its plan (the routing state before and after publishing)
+# before it changes anything, keeps it as a workflow artifact, then applies
+# it. A failed release is undone by restoring the plan's "before" state, but
+# only while the live state is still the plan's "after" state: a restore never
+# overwrites a change made by anyone else, and a plan that was never applied
+# restores nothing.
+
+ROUTING_PLAN_SCHEMA = "policyengine-simulation.routing-plan/v1"
+
+
+class RoutingConflict(RuntimeError):
+    """The live routing state is not the one a plan expects."""
+
+
+def routing_state_digest(state: object) -> str:
+    """SHA-256 of a routing state's canonical JSON (``null`` when absent)."""
+
+    text = json.dumps(state, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _json_copy(value: object) -> object:
+    return json.loads(json.dumps(value))
+
+
+def plan_routing_publication(
+    *,
+    current_state: object,
+    app_name: str,
+    policyengine_version: str,
+    us_version: str,
+    uk_version: str,
+    force_latest: bool = False,
+) -> dict:
+    """The routing state before and after publishing a release, with digests.
+
+    ``advances_latest`` says whether unpinned requests route to this release
+    once the plan is applied.
+    """
+
+    before = _json_copy(current_state) if current_state is not None else None
+    after = _json_copy(
+        build_next_routing_state(
+            current_state=deepcopy(current_state),
+            app_name=app_name,
+            policyengine_version=policyengine_version,
+            us_version=us_version,
+            uk_version=uk_version,
+            force_latest=force_latest,
+        )
+    )
+    return {
+        "schema": ROUTING_PLAN_SCHEMA,
+        "policyengine_version": policyengine_version,
+        "app_name": app_name,
+        "before": before,
+        "after": after,
+        "before_sha256": routing_state_digest(before),
+        "after_sha256": routing_state_digest(after),
+        "advances_latest": after["latest"]["policyengine"] == policyengine_version,
+    }
+
+
+def validate_routing_plan(plan: object) -> dict:
+    """A plan whose digests match its states, or ``ValueError``."""
+
+    if not isinstance(plan, dict) or plan.get("schema") != ROUTING_PLAN_SCHEMA:
+        raise ValueError(f"not a {ROUTING_PLAN_SCHEMA} routing plan")
+    for side in ("before", "after"):
+        if routing_state_digest(plan.get(side)) != plan.get(f"{side}_sha256"):
+            raise ValueError(f"the plan's {side} state does not match its digest")
+    if not isinstance(plan["after"], dict):
+        raise ValueError("the plan publishes no routing state")
+    return plan
+
+
+def _routing_store(environment: str, *, create_if_missing: bool):
+    try:
+        return modal.Dict.from_name(
+            ROUTING_STATE_DICT_NAME,
+            environment_name=environment,
+            create_if_missing=create_if_missing,
+        )
+    except KeyError:
+        return None
+    except Exception as exc:
+        if exc.__class__.__name__ == "NotFoundError":
+            return None
+        raise
+
+
+def apply_routing_plan(*, environment: str, plan: dict) -> None:
+    """Publish ``plan``'s state if the live state is still its starting point."""
+
+    validate_routing_plan(plan)
+    store = _routing_store(environment, create_if_missing=True)
+    current = store.get(ROUTING_STATE_ACTIVE_KEY)
+    if routing_state_digest(current) != plan["before_sha256"]:
+        raise RoutingConflict(
+            "the routing state changed after this release was planned; "
+            "nothing was published"
+        )
+    store[ROUTING_STATE_ACTIVE_KEY] = plan["after"]
+    written = store.get(ROUTING_STATE_ACTIVE_KEY)
+    if routing_state_digest(written) != plan["after_sha256"]:
+        raise RoutingConflict("the published routing state reads back differently")
+
+
+def restore_routing_plan(*, environment: str, plan: dict) -> str:
+    """Undo ``plan``: ``restored``, ``unchanged`` (never applied) or a conflict."""
+
+    validate_routing_plan(plan)
+    store = _routing_store(environment, create_if_missing=False)
+    current = store.get(ROUTING_STATE_ACTIVE_KEY) if store is not None else None
+    digest = routing_state_digest(current)
+    if digest == plan["before_sha256"]:
+        return "unchanged"
+    if digest != plan["after_sha256"]:
+        raise RoutingConflict(
+            "the routing state is neither what this release replaced nor what it "
+            "published; another change was made, so nothing was restored"
+        )
+    if plan["before"] is None:
+        store.pop(ROUTING_STATE_ACTIVE_KEY)
+    else:
+        store[ROUTING_STATE_ACTIVE_KEY] = plan["before"]
+    if (
+        routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
+        != plan["before_sha256"]
+    ):
+        raise RoutingConflict("the restored routing state reads back differently")
+    return "restored"
+
+
+def latest_release_identity(state: object) -> dict[str, str]:
+    """What unpinned requests are routed to: version, app, UK model and dataset."""
+
+    routing = _coerce_routing_state(state)
+    version = routing["latest"].get("policyengine") or ""
+    manifest = routing["bundles"].get(version) or {}
+    uk = manifest.get("uk") or {}
+    return {
+        "policyengine_version": version,
+        "app_name": routing["routes"]["policyengine"].get(version, ""),
+        "uk_model_version": routing["latest"].get("uk") or "",
+        "uk_dataset_sha256": uk.get("default_dataset_sha256") or "",
+    }
 
 
 def _modal_dict_snapshot(
@@ -661,7 +758,6 @@ def restore_routing_state(
     environment: str,
     policyengine_version: str,
     expected_latest: str | None = None,
-    withdraw_version: str | None = None,
 ) -> RoutingState:
     store = modal.Dict.from_name(
         ROUTING_STATE_DICT_NAME,
@@ -672,7 +768,6 @@ def restore_routing_state(
         current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
         policyengine_version=policyengine_version,
         expected_latest=expected_latest,
-        withdraw_version=withdraw_version,
     )
     store[ROUTING_STATE_ACTIVE_KEY] = next_state
     return next_state
@@ -725,6 +820,35 @@ def main():
         help="Print latest.policyengine (empty when unset) and change nothing.",
     )
     parser.add_argument(
+        "--print-identity",
+        action="store_true",
+        help=(
+            "Print what unpinned requests route to (policyengine_version, "
+            "app_name, uk_model_version, uk_dataset_sha256) and change nothing."
+        ),
+    )
+    parser.add_argument(
+        "--plan-out",
+        metavar="FILE",
+        help=(
+            "With the publishing arguments: write the routing plan (state "
+            "before and after) to FILE and print its digests; change nothing."
+        ),
+    )
+    parser.add_argument(
+        "--apply-plan",
+        metavar="FILE",
+        help="Publish a plan, refusing unless the live state is its starting point.",
+    )
+    parser.add_argument(
+        "--restore-plan",
+        metavar="FILE",
+        help=(
+            "Undo a plan: restore its starting state while the live state is "
+            "still what it published."
+        ),
+    )
+    parser.add_argument(
         "--restore-latest",
         metavar="POLICYENGINE_VERSION",
         help=(
@@ -737,15 +861,38 @@ def main():
         metavar="POLICYENGINE_VERSION",
         help="With --restore-latest: refuse unless latest is still this version.",
     )
-    parser.add_argument(
-        "--withdraw",
-        metavar="POLICYENGINE_VERSION",
-        help="With --restore-latest: remove this failed release's routes.",
-    )
     args = parser.parse_args()
+
+    def active_state():
+        snapshot = _modal_dict_snapshot(
+            name=ROUTING_STATE_DICT_NAME, environment=args.environment
+        )
+        return snapshot.get(ROUTING_STATE_ACTIVE_KEY)
 
     if args.print_latest:
         print(read_latest_policyengine_version(environment=args.environment) or "")
+        return
+
+    if args.print_identity:
+        for key, value in latest_release_identity(active_state()).items():
+            print(f"{key}={value}")
+        return
+
+    if args.apply_plan or args.restore_plan:
+        with open(args.apply_plan or args.restore_plan) as handle:
+            plan = json.load(handle)
+        if args.apply_plan:
+            apply_routing_plan(environment=args.environment, plan=plan)
+            print(
+                f"Published policyengine {plan['policyengine_version']} routing "
+                f"({plan['after_sha256']}) in Modal environment {args.environment}"
+            )
+        else:
+            outcome = restore_routing_plan(environment=args.environment, plan=plan)
+            print(
+                f"Routing for policyengine {plan['policyengine_version']}: {outcome} "
+                f"({plan['before_sha256']}) in Modal environment {args.environment}"
+            )
         return
 
     if args.restore_latest:
@@ -753,17 +900,14 @@ def main():
             environment=args.environment,
             policyengine_version=args.restore_latest,
             expected_latest=args.expected_latest,
-            withdraw_version=args.withdraw,
         )
         print(f"Restored routing state in Modal environment: {args.environment}")
         print(f"  latest.policyengine: {state['latest']['policyengine']}")
         print(f"  latest.us: {state['latest']['us']}")
         print(f"  latest.uk: {state['latest']['uk']}")
-        if args.withdraw:
-            print(f"  withdrawn: policyengine {args.withdraw}")
         return
-    if args.expected_latest or args.withdraw:
-        parser.error("--expected-latest and --withdraw need --restore-latest")
+    if args.expected_latest:
+        parser.error("--expected-latest needs --restore-latest")
 
     if args.seed_active_from_legacy:
         print(
@@ -790,6 +934,22 @@ def main():
     missing_args = [name for name, value in required_args.items() if not value]
     if missing_args:
         parser.error(f"the following arguments are required: {', '.join(missing_args)}")
+
+    if args.plan_out:
+        plan = plan_routing_publication(
+            current_state=active_state(),
+            app_name=args.app_name,
+            policyengine_version=args.policyengine_version,
+            us_version=args.us_version,
+            uk_version=args.uk_version,
+            force_latest=args.force_latest,
+        )
+        with open(args.plan_out, "w") as handle:
+            json.dump(plan, handle, indent=2, sort_keys=True)
+        print(f"before_sha256={plan['before_sha256']}")
+        print(f"after_sha256={plan['after_sha256']}")
+        print(f"advances_latest={'true' if plan['advances_latest'] else 'false'}")
+        return
 
     print(f"Publishing routing state in Modal environment: {args.environment}")
     print(f"  App name: {args.app_name}")

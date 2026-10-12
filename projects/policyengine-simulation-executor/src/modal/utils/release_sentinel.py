@@ -278,6 +278,7 @@ def check_deployment(
                 )
         deadline = clock() + timeout_seconds
         result = None
+        completed = False
         while True:
             status, headers, job = http(
                 "GET", f"{base_url}/jobs/{submitted['job_id']}", token=token
@@ -285,6 +286,8 @@ def check_deployment(
             if status == 200 and isinstance(job, Mapping):
                 if job.get("status") != "complete":
                     problems.append(f"{label}: job ended {job.get('status')!r}")
+                else:
+                    completed = True
                 result = job.get("result")
                 break
             if status not in (202, 429, 503):
@@ -295,6 +298,13 @@ def check_deployment(
                 break
             sleep(_retry_after(headers, poll_seconds))
         if not isinstance(result, Mapping):
+            # A complete job must carry an object result; anything else
+            # (missing, null, a list or a string) compares nothing.
+            if completed:
+                problems.append(
+                    f"{label}: complete job returned a {type(result).__name__} "
+                    "result, not an object"
+                )
             continue
         for path, wanted in case["values"].items():
             try:

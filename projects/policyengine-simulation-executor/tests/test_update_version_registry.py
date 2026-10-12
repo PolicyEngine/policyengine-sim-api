@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 
 import pytest
-
 from src.modal.utils import update_version_registry as registry
 
 
@@ -31,6 +30,9 @@ class FakeDict:
 
     def items(self):
         return self._data.items()
+
+    def pop(self, key):
+        return self._data.pop(key)
 
     def snapshot(self) -> dict:
         return dict(self._data)
@@ -127,7 +129,6 @@ def test_bundle_manifest_records_policyengine_6_spm_capability(
 ):
     from policyengine.bundle import get_current_bundle
     from policyengine_simulation_contract.spm import SPM_CONTRACT_VERSION
-
     from policyengine_simulation_executor import spm as executor_spm
 
     monkeypatch.setattr(
@@ -493,16 +494,20 @@ def test_country_bundle_metadata_records_the_certified_dataset_sha256(monkeypatc
     assert metadata["default_dataset_sha256"] == "a" * 64
 
 
-# --- Rollback: restoring latest and withdrawing a failed release -------------
+# --- Rollback: routing plans and restoring latest -----------------------------
 #
 # Invariants:
-# - publishing release R and then restoring the previous latest with R
-#   withdrawn returns routes, bundles and latest to their state before R;
-# - after any restore, latest and every route name an app that still has a
-#   policyengine route and manifest (validate_routing_state holds), and no
-#   route reaches a withdrawn app;
-# - a restore conditioned on expected_latest never changes a state whose
-#   latest is something else.
+# - applying a release's plan and then restoring it returns the routing state
+#   to exactly what it was (equal digests), whatever came before: no state, a
+#   redeploy of the same version, an older release that does not move latest,
+#   or legacy routes without manifests;
+# - a plan is applied only onto its own starting state, and restored only
+#   from its own published state; anything else is a conflict that changes
+#   nothing, and restoring a plan that was never applied changes nothing;
+# - restoring latest to a published version points latest and that bundle's
+#   model pins at it and leaves every other route pinnable.
+
+import json
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -528,16 +533,21 @@ def _app(policyengine_version: str) -> str:
     return "policyengine-simulation-py" + policyengine_version.replace(".", "-")
 
 
-def _publish(monkeypatch, state, policyengine_version, us_version, uk_version):
+def _manifests(monkeypatch, models: dict[str, tuple[str, str]]):
     def manifest(*, app_name, policyengine_version):
+        us_version, uk_version = models[policyengine_version]
         return {
             "app_name": app_name,
             "policyengine_version": policyengine_version,
             "us": _country("us", us_version),
-            "uk": _country("uk", uk_version),
+            "uk": {**_country("uk", uk_version), "default_dataset_sha256": "5" * 64},
         }
 
     monkeypatch.setattr(registry, "build_bundle_manifest_metadata", manifest)
+
+
+def _publish(monkeypatch, state, policyengine_version, us_version, uk_version):
+    _manifests(monkeypatch, {policyengine_version: (us_version, uk_version)})
     return registry.build_next_routing_state(
         current_state=state,
         app_name=_app(policyengine_version),
@@ -547,44 +557,175 @@ def _publish(monkeypatch, state, policyengine_version, us_version, uk_version):
     )
 
 
-def _without_generation(state):
-    return {key: value for key, value in state.items() if key != "generation"}
+def _plan(monkeypatch, state, version, us_version, uk_version, force=False):
+    _manifests(monkeypatch, {version: (us_version, uk_version)})
+    return registry.plan_routing_publication(
+        current_state=state,
+        app_name=_app(version),
+        policyengine_version=version,
+        us_version=us_version,
+        uk_version=uk_version,
+        force_latest=force,
+    )
 
 
+def _store(patched_modal, state):
+    store = FakeDict({} if state is None else {"active": json.loads(json.dumps(state))})
+    patched_modal["staging/simulation-api-routing-state"] = store
+    return store
+
+
+VERSIONS = [f"6.{minor}.0" for minor in range(5)]
 RELEASES = st.lists(
-    st.tuples(st.sampled_from(["1.1.0", "1.2.0"]), st.sampled_from(["2.1.0", "2.2.0"])),
-    min_size=2,
+    st.tuples(
+        st.sampled_from(VERSIONS),
+        st.sampled_from(["1.1.0", "1.2.0"]),
+        st.sampled_from(["2.1.0", "2.2.0"]),
+        st.booleans(),
+    ),
+    min_size=1,
     max_size=6,
 )
 
 
-@settings(max_examples=60, deadline=None)
-@given(releases=RELEASES)
-def test_publish_then_rollback_returns_the_previous_routing(releases):
+@settings(max_examples=80, deadline=None)
+@given(releases=RELEASES, legacy=st.booleans())
+def test_publish_then_restore_returns_exactly_the_previous_state(releases, legacy):
+    """#744 review: first, repeat and older releases are all undone exactly."""
+
     monkeypatch = pytest.MonkeyPatch()
+    stores: dict = {}
     try:
+
+        class _Dict:
+            @staticmethod
+            def from_name(name, environment_name, create_if_missing):
+                key = f"{environment_name}/{name}"
+                if key not in stores:
+                    if not create_if_missing:
+                        raise KeyError(key)
+                    stores[key] = FakeDict()
+                return stores[key]
+
+        monkeypatch.setattr(registry, "modal", type("M", (), {"Dict": _Dict}))
         state = None
-        for index, (us, uk) in enumerate(releases[:-1]):
-            state = _publish(monkeypatch, state, f"6.{index}.0", us, uk)
-        before = registry._coerce_routing_state(state)
-        failed = f"6.{len(releases) - 1}.0"
-        after = _publish(monkeypatch, state, failed, *releases[-1])
-        restored = registry.build_restored_routing_state(
-            current_state=after,
-            policyengine_version=before["latest"]["policyengine"],
-            expected_latest=failed,
-            withdraw_version=failed,
+        if legacy:
+            # A route seeded from the legacy dicts, with no manifest.
+            state = registry._coerce_routing_state(None)
+            state["routes"]["policyengine"]["5.9.0"] = _app("5.9.0")
+            state["routes"]["uk"]["2.1.0"] = _app("5.9.0")
+        for version, us, uk, force in releases[:-1]:
+            state = _plan(monkeypatch, state, version, us, uk, force)["after"]
+        version, us, uk, force = releases[-1]
+        plan = _plan(monkeypatch, state, version, us, uk, force)
+        if state is not None:
+            stores["staging/simulation-api-routing-state"] = FakeDict(
+                {"active": json.loads(json.dumps(state))}
+            )
+        before = registry.routing_state_digest(state)
+        registry.apply_routing_plan(environment="staging", plan=plan)
+        live = stores["staging/simulation-api-routing-state"]
+        assert registry.routing_state_digest(live.get("active")) == plan["after_sha256"]
+        outcome = registry.restore_routing_plan(environment="staging", plan=plan)
+        assert registry.routing_state_digest(live.get("active")) == before
+        assert outcome == (
+            "unchanged" if plan["after_sha256"] == before else "restored"
         )
     finally:
         monkeypatch.undo()
-    assert _without_generation(restored) == _without_generation(before)
-    apps = set(restored["routes"]["policyengine"].values())
-    for country in ("us", "uk"):
-        assert set(restored["routes"][country].values()) <= apps
-    assert _app(failed) not in apps
 
 
-def test_restore_without_withdrawal_keeps_the_newer_release_pinnable(monkeypatch):
+def test_the_review_counterexample_restores_every_pin(monkeypatch, patched_modal):
+    """Legacy 6.0/model1, then 6.1/model2, then a failed 6.2/model1."""
+
+    state = registry._coerce_routing_state(None)
+    state["routes"]["policyengine"]["6.0.0"] = _app("6.0.0")
+    state["routes"]["uk"]["2.1.0"] = _app("6.0.0")
+    state["latest"]["policyengine"] = "6.0.0"
+    state = _publish(monkeypatch, state, "6.1.0", "1.1.0", "2.2.0")
+    store = _store(patched_modal, state)
+    plan = _plan(monkeypatch, state, "6.2.0", "1.1.0", "2.1.0")
+    registry.apply_routing_plan(environment="staging", plan=plan)
+    assert store.get("active")["routes"]["uk"]["2.1.0"] == _app("6.2.0")
+    assert registry.restore_routing_plan(environment="staging", plan=plan) == "restored"
+    assert store.get("active") == json.loads(json.dumps(state))
+    assert store.get("active")["routes"]["uk"]["2.1.0"] == _app("6.0.0")
+
+
+def test_a_first_publication_is_undone_by_removing_the_state(
+    monkeypatch, patched_modal
+):
+    plan = _plan(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    registry.apply_routing_plan(environment="staging", plan=plan)
+    store = patched_modal["staging/simulation-api-routing-state"]
+    assert store.get("active") == plan["after"]
+    assert registry.restore_routing_plan(environment="staging", plan=plan) == "restored"
+    assert store.get("active") is None
+
+
+def test_a_plan_that_was_never_applied_restores_nothing(monkeypatch, patched_modal):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    store = _store(patched_modal, state)
+    plan = _plan(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
+    assert (
+        registry.restore_routing_plan(environment="staging", plan=plan) == "unchanged"
+    )
+    assert store.get("active") == json.loads(json.dumps(state))
+
+
+def test_a_plan_is_applied_only_onto_its_own_starting_state(monkeypatch, patched_modal):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    plan = _plan(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
+    moved = _publish(monkeypatch, state, "6.2.7", "1.1.0", "2.1.0")
+    store = _store(patched_modal, moved)
+    with pytest.raises(registry.RoutingConflict, match="nothing was published"):
+        registry.apply_routing_plan(environment="staging", plan=plan)
+    assert store.get("active") == json.loads(json.dumps(moved))
+
+
+def test_a_restore_never_overwrites_a_later_change(monkeypatch, patched_modal):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    store = _store(patched_modal, state)
+    plan = _plan(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
+    registry.apply_routing_plan(environment="staging", plan=plan)
+    later = _publish(monkeypatch, store.get("active"), "6.4.0", "1.2.0", "2.2.0")
+    store["active"] = later
+    with pytest.raises(registry.RoutingConflict, match="nothing was restored"):
+        registry.restore_routing_plan(environment="staging", plan=plan)
+    assert store.get("active") == later
+
+
+@pytest.mark.parametrize("side", ["before", "after"])
+def test_a_tampered_plan_is_refused(monkeypatch, patched_modal, side):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    _store(patched_modal, state)
+    plan = _plan(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
+    plan[side] = {**(plan[side] or {}), "generation": "edited"}
+    with pytest.raises(ValueError, match=f"{side} state does not match"):
+        registry.apply_routing_plan(environment="staging", plan=plan)
+    with pytest.raises(ValueError, match=f"{side} state does not match"):
+        registry.restore_routing_plan(environment="staging", plan=plan)
+
+
+@pytest.mark.parametrize(
+    ("version", "force", "advances"),
+    [
+        ("6.3.0", False, True),
+        ("6.2.5", False, False),
+        ("6.2.5", True, True),
+        ("6.2.6", False, True),
+    ],
+    ids=["newer", "older", "forced", "redeploy"],
+)
+def test_plans_say_whether_latest_routes_to_the_release(
+    monkeypatch, version, force, advances
+):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    plan = _plan(monkeypatch, state, version, "1.1.0", "2.1.0", force)
+    assert plan["advances_latest"] is advances
+
+
+def test_restore_keeps_the_newer_release_pinnable(monkeypatch):
     state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
     state = _publish(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
     restored = registry.build_restored_routing_state(
@@ -603,14 +744,6 @@ def test_restore_without_withdrawal_keeps_the_newer_release_pinnable(monkeypatch
         (
             {"policyengine_version": "6.2.6", "expected_latest": "6.2.6"},
             "another release changed routing",
-        ),
-        (
-            {"policyengine_version": "6.2.6", "withdraw_version": "6.2.6"},
-            "same version",
-        ),
-        (
-            {"policyengine_version": "6.2.6", "withdraw_version": "6.9.9"},
-            "no route to withdraw",
         ),
     ],
 )
@@ -631,44 +764,72 @@ def test_a_restore_needs_a_manifest_that_matches_its_route(monkeypatch):
         )
 
 
+def _main(monkeypatch, *args):
+    monkeypatch.setattr(
+        sys, "argv", ["update_version_registry", "--environment", "staging", *args]
+    )
+    registry.main()
+
+
+def test_main_plans_applies_and_restores(patched_modal, monkeypatch, capsys, tmp_path):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    store = _store(patched_modal, state)
+    _manifests(monkeypatch, {"6.3.0": ("1.1.0", "2.2.0")})
+    plan_file = tmp_path / "plan.json"
+    _main(
+        monkeypatch,
+        "--app-name",
+        _app("6.3.0"),
+        "--policyengine-version",
+        "6.3.0",
+        "--us-version",
+        "1.1.0",
+        "--uk-version",
+        "2.2.0",
+        "--plan-out",
+        str(plan_file),
+    )
+    plan = json.loads(plan_file.read_text())
+    assert capsys.readouterr().out.splitlines() == [
+        f"before_sha256={plan['before_sha256']}",
+        f"after_sha256={plan['after_sha256']}",
+        "advances_latest=true",
+    ]
+    assert store.get("active") == json.loads(
+        json.dumps(state)
+    )  # planning changes nothing
+    _main(monkeypatch, "--apply-plan", str(plan_file))
+    assert store.get("active")["latest"]["policyengine"] == "6.3.0"
+    _main(monkeypatch, "--print-identity")
+    assert capsys.readouterr().out.splitlines()[-4:] == [
+        "policyengine_version=6.3.0",
+        f"app_name={_app('6.3.0')}",
+        "uk_model_version=2.2.0",
+        "uk_dataset_sha256=" + "5" * 64,
+    ]
+    _main(monkeypatch, "--restore-plan", str(plan_file))
+    assert "restored" in capsys.readouterr().out
+    assert store.get("active") == json.loads(json.dumps(state))
+
+
 def test_main_prints_and_restores_latest(patched_modal, monkeypatch, capsys):
     state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
     state = _publish(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
-    patched_modal["staging/simulation-api-routing-state"] = FakeDict({"active": state})
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["update_version_registry", "--environment", "staging", "--print-latest"],
-    )
-    registry.main()
+    store = _store(patched_modal, state)
+    _main(monkeypatch, "--print-latest")
     assert capsys.readouterr().out.strip() == "6.3.0"
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "update_version_registry",
-            "--environment",
-            "staging",
-            "--restore-latest",
-            "6.2.6",
-            "--expected-latest",
-            "6.3.0",
-            "--withdraw",
-            "6.3.0",
-        ],
-    )
-    registry.main()
-    active = patched_modal["staging/simulation-api-routing-state"].snapshot()["active"]
+    _main(monkeypatch, "--restore-latest", "6.2.6", "--expected-latest", "6.3.0")
+    active = store.get("active")
     assert active["latest"]["policyengine"] == "6.2.6"
-    assert "6.3.0" not in active["routes"]["policyengine"]
-    assert active["routes"]["uk"] == {"2.1.0": _app("6.2.6")}
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["update_version_registry", "--environment", "staging", "--withdraw", "6.2.6"],
-    )
+    assert active["routes"]["policyengine"]["6.3.0"] == _app("6.3.0")
     with pytest.raises(SystemExit):
-        registry.main()
+        _main(monkeypatch, "--expected-latest", "6.2.6")
+
+
+def test_latest_identity_of_an_empty_or_legacy_state_is_blank():
+    assert registry.latest_release_identity(None) == {
+        "policyengine_version": "",
+        "app_name": "",
+        "uk_model_version": "",
+        "uk_dataset_sha256": "",
+    }
