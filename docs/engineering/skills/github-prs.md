@@ -33,6 +33,13 @@ repository, stop and ask for access. Do not create a fork PR as a fallback. If
 you accidentally create one, close it immediately and replace it with a
 same-repository draft PR.
 
+## Branch Rules
+
+Agents must never bypass branch rules, even when their credentials have admin
+rights: do not merge with `gh pr merge --admin`, and do not use GitHub's option
+to bypass rules. If a required check or review blocks a merge, report it to a
+human instead.
+
 ## PR Title
 
 Do not add `[codex]`, `[claude]`, `[copilot]`, or other agent labels to PR
