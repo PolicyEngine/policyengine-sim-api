@@ -7,6 +7,7 @@ import subprocess
 import textwrap
 from pathlib import Path
 
+import pytest
 import tomllib
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -394,7 +395,9 @@ def test_cloud_run_deployment_does_not_interpolate_github_values_in_shell():
     assert ":latest" not in deployment_script
 
 
-def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_path):
+def _cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
+    """Return a complete deployment environment backed by a fake gcloud."""
+
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
@@ -427,13 +430,16 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
-    arguments_capture = tmp_path / "gcloud-arguments.txt"
-    env_capture = tmp_path / "runtime-environment.json"
-    command_environment = os.environ | {
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name != "SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"
+    }
+    return environment | {
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "RUNNER_TEMP": str(tmp_path),
-        "GCLOUD_ARGUMENTS_CAPTURE": str(arguments_capture),
-        "GCLOUD_ENV_FILE_CAPTURE": str(env_capture),
+        "GCLOUD_ARGUMENTS_CAPTURE": str(tmp_path / "gcloud-arguments.txt"),
+        "GCLOUD_ENV_FILE_CAPTURE": str(tmp_path / "runtime-environment.json"),
         "PROJECT_ID": "policyengine-staging",
         "REGION": "us-central1",
         "IMAGE": "us-central1-docker.pkg.dev/project/repository/image:sha",
@@ -466,6 +472,12 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
         "MODAL_TOKEN_ID_SECRET_NAME": "modal-token-id",
         "MODAL_TOKEN_SECRET_SECRET_NAME": "modal-token-secret",
     }
+
+
+def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_path):
+    command_environment = _cloud_run_deploy_environment(tmp_path)
+    arguments_capture = Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"])
+    env_capture = Path(command_environment["GCLOUD_ENV_FILE_CAPTURE"])
 
     subprocess.run(
         [CLOUD_RUN_DEPLOY_SCRIPT],
@@ -502,6 +514,83 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
         "STAGE12_DATABASE_URL=stage12-staging-database-url:3"
     )
     assert ":latest" not in secrets_argument
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [(None, "0"), ("", "0"), ("0", "0"), ("1", "1")],
+    ids=["unset", "empty", "log-only", "enforced"],
+)
+def test_cloud_run_deployment_defaults_permission_enforcement_to_log_only(
+    tmp_path,
+    configured,
+    expected,
+):
+    command_environment = _cloud_run_deploy_environment(tmp_path)
+    if configured is not None:
+        command_environment["SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"] = (
+            configured
+        )
+
+    subprocess.run(
+        [CLOUD_RUN_DEPLOY_SCRIPT],
+        check=True,
+        env=command_environment,
+    )
+
+    runtime_environment = json.loads(
+        Path(command_environment["GCLOUD_ENV_FILE_CAPTURE"]).read_text(encoding="utf-8")
+    )
+    assert runtime_environment["SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS"] == expected
+
+
+@pytest.mark.parametrize("configured", ["true", "yes", "2", " 1"])
+def test_cloud_run_deployment_rejects_invalid_permission_enforcement(
+    tmp_path,
+    configured,
+):
+    command_environment = _cloud_run_deploy_environment(tmp_path)
+    command_environment["SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"] = configured
+
+    result = subprocess.run(
+        [CLOUD_RUN_DEPLOY_SCRIPT],
+        check=False,
+        env=command_environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert (
+        "SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE must be 0 or 1"
+        in result.stderr
+    )
+    assert not Path(command_environment["GCLOUD_ENV_FILE_CAPTURE"]).exists()
+
+
+def test_permission_enforcement_reaches_candidate_and_authenticated_tests():
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    assert (
+        reusable_workflow.count(
+            "SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE: "
+            "${{ vars.SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS }}"
+        )
+        == 1
+    )
+    # Every deployed authentication run must know whether the target revision
+    # enforces permissions, so its enforcement check runs or skips correctly.
+    authenticated_runs = reusable_workflow.count(
+        "run: uv run pytest authenticated_tests/ -v"
+    )
+    assert authenticated_runs == 3
+    assert (
+        reusable_workflow.count(
+            "SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS: "
+            "${{ vars.SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS }}"
+        )
+        == authenticated_runs
+    )
 
 
 def test_cloud_run_revision_tags_are_valid_on_the_first_workflow_run():
