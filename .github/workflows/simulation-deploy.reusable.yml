@@ -590,19 +590,12 @@ jobs:
 
       - name: Validate the packaged PolicyEngine.py bundle
         working-directory: projects/policyengine-simulation-executor
-        run: |
-          uv run python -m src.modal.utils.extract_stage12_bundle \
-            --expect "policyengine_version=${{ needs.prepare.outputs.policyengine_version }}" \
-            --expect "countries.us.country_package_version=${{ needs.prepare.outputs.us_version }}" \
-            --expect "countries.uk.country_package_version=${{ needs.prepare.outputs.uk_version }}" \
-            --output stage12-bundle.json
+        run: uv run python -m src.modal.utils.extract_stage12_bundle --expect "policyengine_version=${{ needs.prepare.outputs.policyengine_version }}" --expect "countries.us.country_package_version=${{ needs.prepare.outputs.us_version }}" --expect "countries.uk.country_package_version=${{ needs.prepare.outputs.uk_version }}" --output stage12-bundle.json
 
       - name: Select the bundle-derived v2 application name
         id: application
         working-directory: projects/policyengine-simulation-executor
-        run: |
-          name="$(uv run python -c 'from policyengine_simulation_contract.stage12_manifest import v2_application_name; from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle; print(v2_application_name(load_stage12_bundle().bundle.policyengine_version))')"
-          echo "name=${name}" >> "$GITHUB_OUTPUT"
+        run: ../../.github/scripts/stage12-v2-application-name.sh
 
       - name: Synchronize the separate Stage 12 runtime secret
         working-directory: projects/policyengine-simulation-executor
@@ -641,12 +634,7 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: |
-          output="${RUNNER_TEMP}/stage12-worker-validation.json"
-          uv run python -m src.modal.utils.validate_v2_worker_release \
-            --environment "${{ inputs.modal_environment }}" \
-            --output "${output}"
-          echo "file=${output}" >> "$GITHUB_OUTPUT"
+        run: ../../.github/scripts/stage12-validate-v2-workers.sh "${{ inputs.modal_environment }}"
 
       - name: Retain worker validation for manifest publication
         uses: actions/upload-artifact@v7
@@ -685,11 +673,7 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: |
-          uv run python -m src.modal.utils.update_v2_version_manifest \
-            --environment "${{ inputs.modal_environment }}" \
-            --manifest-name simulation-api-v2-version-manifest \
-            --validation-file "${RUNNER_TEMP}/stage12-worker-validation/stage12-worker-validation.json"
+        run: uv run python -m src.modal.utils.update_v2_version_manifest --environment "${{ inputs.modal_environment }}" --manifest-name simulation-api-v2-version-manifest --validation-file "${RUNNER_TEMP}/stage12-worker-validation/stage12-worker-validation.json"
 
   stage12_v2_ready:
     name: Require requested Stage 12 v2 deployment to succeed
@@ -704,16 +688,7 @@ jobs:
           CONFIGURATION_RESULT: ${{ needs.configure_stage12_v2.result }}
           DEPLOYMENT_RESULT: ${{ needs.deploy_stage12_v2.result }}
           PUBLICATION_RESULT: ${{ needs.publish_stage12_v2_manifest.result }}
-        run: |
-          if [[ "${REQUESTED}" != "true" ]]; then
-            test "${CONFIGURATION_RESULT}" = "skipped"
-            test "${DEPLOYMENT_RESULT}" = "skipped"
-            test "${PUBLICATION_RESULT}" = "skipped"
-            exit 0
-          fi
-          test "${CONFIGURATION_RESULT}" = "success"
-          test "${DEPLOYMENT_RESULT}" = "success"
-          test "${PUBLICATION_RESULT}" = "success"
+        run: .github/scripts/stage12-deployment-ready.sh
 
   integration:
     name: Verify deployed three-service stack

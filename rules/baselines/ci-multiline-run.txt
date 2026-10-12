@@ -1,14 +1,9 @@
 # Tolerated existing violations. This list may only shrink.
-.github/workflows/simulation-deploy.reusable.yml :: deploy_stage12_v2 :: Select the bundle-derived v2 application name
-.github/workflows/simulation-deploy.reusable.yml :: deploy_stage12_v2 :: Validate installed bundles, secrets, datasets, and calculations
-.github/workflows/simulation-deploy.reusable.yml :: deploy_stage12_v2 :: Validate the packaged PolicyEngine.py bundle
 .github/workflows/simulation-deploy.reusable.yml :: deployment_ready :: Check deployment result
 .github/workflows/simulation-deploy.reusable.yml :: finalize_routing :: Finalize the routing publication
 .github/workflows/simulation-deploy.reusable.yml :: integration :: Check the deployed stack reproduces the sentinel numbers
 .github/workflows/simulation-deploy.reusable.yml :: promote_entrypoint :: Verify the stable service reproduces the sentinel numbers
-.github/workflows/simulation-deploy.reusable.yml :: publish_stage12_v2_manifest :: Publish only the separate v2 manifest
 .github/workflows/simulation-deploy.reusable.yml :: sentinel_expected :: Check the sentinel names this deployment's bundle
-.github/workflows/simulation-deploy.reusable.yml :: stage12_v2_ready :: Check Stage 12 deployment result
 .github/workflows/simulation-deploy.reusable.yml :: update_routing :: Plan the routing change
 .github/workflows/simulation-deploy.reusable.yml :: update_routing :: Publish the planned routing
 .github/workflows/simulation-deploy.reusable.yml :: update_routing :: Record the unfinished routing publication

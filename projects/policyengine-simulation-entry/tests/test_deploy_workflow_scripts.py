@@ -275,3 +275,164 @@ def test_candidate_fails_when_the_tag_is_not_deployed(fakes, tmp_path):
     assert result.returncode != 0
     assert output == ""
     assert fakes.calls() == [_describe_service()]
+
+
+# --- deploy_stage12_v2 and stage12_v2_ready -------------------------------
+
+V2_APPLICATION_NAME = "stage12-v2-application-name.sh"
+VALIDATE_V2_WORKERS = "stage12-validate-v2-workers.sh"
+STAGE12_READY = "stage12-deployment-ready.sh"
+V2_APPLICATION_CODE = (
+    "from policyengine_simulation_contract.stage12_manifest import "
+    "v2_application_name; from policyengine_simulation_executor.stage12_bundle "
+    "import load_stage12_bundle; print(v2_application_name("
+    "load_stage12_bundle().bundle.policyengine_version))"
+)
+
+
+def test_deploy_workflow_runs_the_stage12_worker_scripts():
+    workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    application = _step(workflow, "Select the bundle-derived v2 application name")
+    assert "id: application" in application
+    assert "working-directory: projects/policyengine-simulation-executor" in (
+        application
+    )
+    assert f"run: ../../.github/scripts/{V2_APPLICATION_NAME}\n" in application
+
+    validation = _step(
+        workflow, "Validate installed bundles, secrets, datasets, and calculations"
+    )
+    assert "id: validation" in validation
+    assert "working-directory: projects/policyengine-simulation-executor" in (
+        validation
+    )
+    assert (
+        f'run: ../../.github/scripts/{VALIDATE_V2_WORKERS} "${{{{ inputs.modal_environment }}}}"'
+        in validation
+    )
+
+    assert "application_name: ${{ steps.application.outputs.name }}" in workflow
+    assert "validation_file: ${{ steps.validation.outputs.file }}" in workflow
+    assert "path: ${{ steps.validation.outputs.file }}" in workflow
+
+
+def test_v2_application_name_comes_from_the_packaged_bundle(fakes, tmp_path):
+    output = tmp_path / "github-output"
+    fakes.add("uv", "echo policyengine-simulation-v2-py4-1-0\n")
+
+    result = run_script(V2_APPLICATION_NAME, env=fakes.env(GITHUB_OUTPUT=str(output)))
+
+    assert result.returncode == 0, result.stderr
+    assert _output(output) == "name=policyengine-simulation-v2-py4-1-0\n"
+    assert fakes.calls() == [["uv", "run", "python", "-c", V2_APPLICATION_CODE]]
+
+
+def test_v2_application_name_fails_without_writing_when_the_bundle_fails(
+    fakes, tmp_path
+):
+    output = tmp_path / "github-output"
+    fakes.add("uv", "exit 1\n")
+
+    result = run_script(V2_APPLICATION_NAME, env=fakes.env(GITHUB_OUTPUT=str(output)))
+
+    assert result.returncode == 1
+    assert _output(output) == ""
+
+
+def _validate_v2_workers(fakes: FakeCommands, tmp_path: Path, *args: str):
+    output = tmp_path / "github-output"
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    result = run_script(
+        VALIDATE_V2_WORKERS,
+        *args,
+        env=fakes.env(GITHUB_OUTPUT=str(output), RUNNER_TEMP=str(runner_temp)),
+    )
+    return result, _output(output), runner_temp / "stage12-worker-validation.json"
+
+
+def test_validate_v2_workers_records_the_validation_file(fakes, tmp_path):
+    fakes.add("uv")
+
+    result, output, validation_file = _validate_v2_workers(fakes, tmp_path, "main")
+
+    assert result.returncode == 0, result.stderr
+    assert output == f"file={validation_file}\n"
+    assert fakes.calls() == [
+        [
+            "uv",
+            "run",
+            "python",
+            "-m",
+            "src.modal.utils.validate_v2_worker_release",
+            "--environment",
+            "main",
+            "--output",
+            str(validation_file),
+        ]
+    ]
+
+
+def test_validate_v2_workers_fails_without_writing_when_validation_fails(
+    fakes, tmp_path
+):
+    fakes.add("uv", "exit 1\n")
+
+    result, output, _ = _validate_v2_workers(fakes, tmp_path, "main")
+
+    assert result.returncode == 1
+    assert output == ""
+
+
+def test_validate_v2_workers_requires_the_modal_environment(fakes, tmp_path):
+    fakes.add("uv")
+
+    result, output, _ = _validate_v2_workers(fakes, tmp_path)
+
+    assert result.returncode != 0
+    assert "Modal environment required" in result.stderr
+    assert output == ""
+    assert fakes.calls() == []
+
+
+def test_deploy_workflow_checks_stage12_results_with_the_tested_script():
+    workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    step = _step(workflow, "Check Stage 12 deployment result")
+
+    for declaration in (
+        "REQUESTED: ${{ inputs.deploy_stage12_v2 }}",
+        "CONFIGURATION_RESULT: ${{ needs.configure_stage12_v2.result }}",
+        "DEPLOYMENT_RESULT: ${{ needs.deploy_stage12_v2.result }}",
+        "PUBLICATION_RESULT: ${{ needs.publish_stage12_v2_manifest.result }}",
+        f"run: .github/scripts/{STAGE12_READY}\n",
+    ):
+        assert declaration in step
+
+
+@pytest.mark.parametrize(
+    ("requested", "configuration", "deployment", "publication", "passes"),
+    [
+        ("true", "success", "success", "success", True),
+        ("true", "success", "success", "failure", False),
+        ("true", "success", "skipped", "skipped", False),
+        ("true", "skipped", "skipped", "skipped", False),
+        ("false", "skipped", "skipped", "skipped", True),
+        ("false", "success", "skipped", "skipped", False),
+        ("false", "skipped", "skipped", "failure", False),
+    ],
+)
+def test_stage12_ready_requires_all_or_none_of_the_v2_jobs(
+    fakes, requested, configuration, deployment, publication, passes
+):
+    result = run_script(
+        STAGE12_READY,
+        env=fakes.env(
+            REQUESTED=requested,
+            CONFIGURATION_RESULT=configuration,
+            DEPLOYMENT_RESULT=deployment,
+            PUBLICATION_RESULT=publication,
+        ),
+    )
+
+    assert result.returncode == (0 if passes else 1)
