@@ -7,7 +7,16 @@ from hashlib import sha256
 import pandas as pd
 import pytest
 
-from policyengine_simulation_contract.stage12_execution import SimulationRole
+from policyengine_simulation_contract.stage12_execution import (
+    PlannedSimulationExecutionInput,
+    SimulationRole,
+)
+from policyengine_simulation_contract.spm import (
+    SPMProvenance,
+    SPMRuntimeVersions,
+    SPMSelection,
+    build_spm_provenance,
+)
 from policyengine_simulation_executor.stage12_artifacts import (
     serialize_simulation_frames,
 )
@@ -40,10 +49,14 @@ def _frames(index: int) -> dict[str, pd.DataFrame]:
     }
 
 
-def _results(simulation):
+def _results(
+    simulation: PlannedSimulationExecutionInput, provenance: SPMProvenance | None = None
+) -> list[Stage12SegmentResult]:
     results = []
     for segment in build_segment_inputs(simulation):
-        payload, _ = serialize_simulation_frames(_frames(segment.segment_index))
+        payload, _ = serialize_simulation_frames(
+            _frames(segment.segment_index), calculation_provenance=provenance
+        )
         results.append(
             Stage12SegmentResult(
                 segment_index=segment.segment_index,
@@ -54,6 +67,73 @@ def _results(simulation):
             )
         )
     return results
+
+
+def _spm_provenance() -> SPMProvenance:
+    """Build an explicit test fixture, not installed runtime version metadata."""
+    selection = SPMSelection(
+        forecast_content_sha256="f" * 64,
+        scenario="official",
+        geography_kind="national",
+        geography_id=None,
+        county_vintage="2020",
+        as_of=None,
+    )
+    return build_spm_provenance(
+        forecast_id="test-forecast",
+        forecast_sha256="f" * 64,
+        selection=selection,
+        years=("2026",),
+        runtime_versions=SPMRuntimeVersions(
+            policyengine="test-fixture",
+            policyengine_core="test-fixture",
+            policyengine_us="test-fixture",
+            spm_calculator="test-fixture",
+        ),
+    )
+
+
+def test_merge_preserves_one_identical_compact_spm_receipt() -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    receipt = _spm_provenance()
+
+    calculated = merge_segment_results(simulation, _results(simulation, receipt))
+
+    assert calculated.calculation_provenance == receipt
+    assert isinstance(calculated.calculation_provenance, SPMProvenance)
+
+
+@pytest.mark.parametrize("difference", ["missing", "scenario", "versions", "years"])
+def test_merge_rejects_missing_or_incompatible_segment_spm_receipts(
+    difference: str,
+) -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    receipt = _spm_provenance()
+    results = _results(simulation, receipt)
+    alternative = {
+        "missing": None,
+        "scenario": receipt.model_copy(update={"scenario": "alternative"}),
+        "versions": receipt.model_copy(
+            update={
+                "runtime_versions": receipt.runtime_versions.model_copy(
+                    update={"policyengine": "different-test-fixture"}
+                )
+            }
+        ),
+        "years": receipt.model_copy(update={"years": ("2027",)}),
+    }[difference]
+    payload, _ = serialize_simulation_frames(
+        _frames(0), calculation_provenance=alternative
+    )
+    results[0] = results[0].model_copy(
+        update={
+            "parquet_payload": payload,
+            "payload_sha256": sha256(payload).hexdigest(),
+        }
+    )
+
+    with pytest.raises(ValueError, match="segment calculation"):
+        merge_segment_results(simulation, results)
 
 
 def test_eligibility_matches_stage12_supported_national_shape() -> None:

@@ -513,14 +513,16 @@ def coordinate_report(
                     )
                 else:
                     output_plan = output_plan_resolver(report)
-            simulations = []
+            planned_inputs: list[PlannedSimulationExecutionInput] = []
             for simulation in (report.baseline, report.reform):
                 with stage_scope(
                     Stage.STAGE12_CHILD_INPUT_PLANNING,
                     {"simulation_role": simulation.role.value},
                 ):
-                    simulations.append(plan_simulation_input(simulation, output_plan))
-            planned_simulations = tuple(simulations)
+                    planned_inputs.append(
+                        plan_simulation_input(simulation, output_plan)
+                    )
+            planned_simulations = tuple(planned_inputs)
         simulations = {
             simulation.role.value: simulation for simulation in planned_simulations
         }

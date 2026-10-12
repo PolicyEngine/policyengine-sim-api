@@ -82,7 +82,7 @@ def test_non_serving_us_calculation_selects_national_without_county(
     assert "household" not in calls[0]
 
 
-def test_us_validation_normalizes_the_frontend_reform_interval(monkeypatch) -> None:
+def test_us_validation_preserves_the_frontend_reform_interval(monkeypatch) -> None:
     from policyengine_simulation_executor import stage12_worker_validation
 
     received = {}
@@ -103,7 +103,9 @@ def test_us_validation_normalizes_the_frontend_reform_interval(monkeypatch) -> N
     _run_non_serving_calculation("us")
 
     assert received["reform"] == {
-        "gov.irs.credits.ctc.amount.base[0].amount": {"2026-01-01": 3_000}
+        # The current wrapper compiles the complete interval; do not discard
+        # its end date while passing the front-end reform to calculate_household.
+        "gov.irs.credits.ctc.amount.base[0].amount": {"2026-01-01.2100-12-31": 3_000}
     }
     assert received["people"][1]["is_tax_unit_dependent"] is True
     assert "ctc" in received["extra_variables"]

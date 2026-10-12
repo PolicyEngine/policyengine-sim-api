@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from hashlib import sha256
-from typing import Any
 
 import pandas as pd
 from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     PlannedSimulationExecutionInput,
 )
+from policyengine_simulation_contract.spm import SPMProvenance
 from policyengine_simulation_observability.stages import STAGE12_SEGMENT_STAGES
 
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -116,20 +116,18 @@ def calculate_segment(
 
 
 def _merge_calculation_provenance(
-    values: Sequence[dict[str, Any] | None],
-) -> dict[str, Any] | None:
+    values: Sequence[SPMProvenance | None],
+) -> SPMProvenance | None:
+    """Keep one shared compact receipt only when every segment agrees."""
     present = [value for value in values if value is not None]
     if not present:
         return None
     if len(present) != len(values):
         raise ValueError("segment calculation metadata is incomplete")
-    selection = present[0].get("spm_config")
-    if any(value.get("spm_config") != selection for value in present[1:]):
-        raise ValueError("segment calculation selections do not match")
-    return {
-        "spm_config": selection,
-        "spm_provenance": [value.get("spm_provenance") for value in present],
-    }
+    receipt = present[0]
+    if any(value != receipt for value in present[1:]):
+        raise ValueError("segment calculation provenance does not match")
+    return receipt
 
 
 def merge_segment_results(
@@ -155,7 +153,7 @@ def merge_segment_results(
         by_index[result.segment_index] = result
 
     decoded: list[dict[str, pd.DataFrame]] = []
-    provenance: list[dict[str, Any] | None] = []
+    provenance: list[SPMProvenance | None] = []
     for segment in expected:
         result = by_index.get(segment.segment_index)
         if result is None:
