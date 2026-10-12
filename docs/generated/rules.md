@@ -63,7 +63,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 ### Ratcheted (existing violations still tolerated)
 
-- `sim.ci.multiline-run-is-script`: 25 remaining in `rules/baselines/ci-multiline-run.txt`
+- `sim.ci.multiline-run-is-script`: 22 remaining in `rules/baselines/ci-multiline-run.txt`
 
 ### Exceptions and review dates
 

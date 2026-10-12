@@ -1,7 +1,4 @@
 # Tolerated existing violations. This list may only shrink.
-.github/workflows/simulation-deploy.reusable.yml :: deploy_entrypoint :: Build and push entrypoint image
-.github/workflows/simulation-deploy.reusable.yml :: deploy_entrypoint :: Capture stable service state before deployment
-.github/workflows/simulation-deploy.reusable.yml :: deploy_entrypoint :: Resolve exact candidate metadata
 .github/workflows/simulation-deploy.reusable.yml :: deploy_executor :: Select versioned executor app
 .github/workflows/simulation-deploy.reusable.yml :: deploy_stage12_v2 :: Select the bundle-derived v2 application name
 .github/workflows/simulation-deploy.reusable.yml :: deploy_stage12_v2 :: Validate installed bundles, secrets, datasets, and calculations

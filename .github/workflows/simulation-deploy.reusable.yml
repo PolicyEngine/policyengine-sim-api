@@ -200,39 +200,19 @@ jobs:
 
       - name: Capture stable service state before deployment
         id: previous
-        run: |
-          service_json="$(gcloud run services describe "${{ inputs.entrypoint_service }}" \
-            --project "${PROJECT_ID}" \
-            --region "${REGION}" \
-            --format=json)"
-          stable_url="$(jq -er '.status.url | select(type == "string" and length > 0)' <<<"${service_json}")"
-          revision="$(jq -er '
-            [
-              .status.traffic[]?
-              | select((.percent // 0) == 100)
-              | .revisionName
-              | select(type == "string" and length > 0)
-            ]
-            | if length == 1 then .[0]
-              else error("service must have exactly one revision at 100 percent")
-              end
-          ' <<<"${service_json}")"
-          {
-            echo "stable_url=${stable_url}"
-            echo "revision=${revision}"
-          } >> "$GITHUB_OUTPUT"
+        env:
+          ENTRYPOINT_SERVICE: ${{ inputs.entrypoint_service }}
+        run: .github/scripts/cloud-run-simulation-entry-stable-state.sh
 
       - name: Select immutable image
         id: image
         run: echo "uri=${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push entrypoint image
-        run: |
-          docker build \
-            --file "${PROJECT_DIR}/Dockerfile" \
-            --tag "${{ steps.image.outputs.uri }}" \
-            .
-          docker push "${{ steps.image.outputs.uri }}"
+      - name: Build entrypoint image
+        run: docker build --file "${PROJECT_DIR}/Dockerfile" --tag "${{ steps.image.outputs.uri }}" .
+
+      - name: Push entrypoint image
+        run: docker push "${{ steps.image.outputs.uri }}"
 
       - name: Select no-traffic revision tag
         id: metadata
@@ -270,40 +250,9 @@ jobs:
       - name: Resolve exact candidate metadata
         id: candidate
         env:
+          ENTRYPOINT_SERVICE: ${{ inputs.entrypoint_service }}
           TAG: ${{ steps.metadata.outputs.tag }}
-        run: |
-          service_json="$(gcloud run services describe "${{ inputs.entrypoint_service }}" \
-            --project "${PROJECT_ID}" \
-            --region "${REGION}" \
-            --format=json)"
-          url="$(jq -er --arg tag "${TAG}" '
-            .status.traffic[]
-            | select(.tag == $tag)
-            | .url
-            | select(type == "string" and length > 0)
-          ' <<<"${service_json}")"
-          revision="$(jq -er --arg tag "${TAG}" '
-            .status.traffic[]
-            | select(.tag == $tag)
-            | .revisionName
-            | select(type == "string" and length > 0)
-          ' <<<"${service_json}")"
-          revision_json="$(gcloud run revisions describe "${revision}" \
-            --project "${PROJECT_ID}" \
-            --region "${REGION}" \
-            --format=json)"
-          image="$(jq -er '
-            (.status.imageDigest // .spec.containers[0].image)
-            | select(
-                type == "string"
-                and contains("@sha256:")
-              )
-          ' <<<"${revision_json}")"
-          {
-            echo "url=${url}"
-            echo "revision=${revision}"
-            echo "image=${image}"
-          } >> "$GITHUB_OUTPUT"
+        run: .github/scripts/cloud-run-simulation-entry-candidate.sh
 
       - name: Install entrypoint unit-test dependencies
         working-directory: ${{ env.PROJECT_DIR }}
