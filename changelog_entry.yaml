@@ -1,6 +1,7 @@
 - bump: patch
   changes:
     added:
+      - Made CLAUDE.md and the Copilot instructions thin pointers to AGENTS.md, required workflow logic longer than one line to live in tested and shellchecked scripts, and registered the tracking-issue rule
       - Added a rules registry (rules/registry.toml) with a standard-library tool that validates it, checks every rule is enforced where it claims, and renders docs/generated/rules.md and the Rules block in AGENTS.md
     changed:
       - Added CODEOWNERS for the rule machinery, pinned CI's ruff to 0.15.22 with an explicit rule selection, and documented that agents never bypass branch rules
