@@ -470,6 +470,7 @@ jobs:
           POLICYENGINE_US_VERSION: ${{ needs.prepare.outputs.us_version }}
           POLICYENGINE_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
           FORCE_LATEST: ${{ inputs.force_latest }}
+          RELEASE_ENVIRONMENT: ${{ inputs.release_environment }}
         run: |
           mkdir -p "${RUNNER_TEMP}/routing-plan"
           args=(
@@ -479,6 +480,7 @@ jobs:
             --uk-version "${POLICYENGINE_UK_VERSION}"
             --environment "${MODAL_ENVIRONMENT}"
             --plan-out "${RUNNER_TEMP}/routing-plan/plan.json"
+            --publication-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RELEASE_ENVIRONMENT}"
           )
           if [[ "${FORCE_LATEST}" == "true" ]]; then
             args+=(--force-latest)
@@ -1071,8 +1073,11 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
         run: |
+          # Wait past the lock's 300-second expiry, so a lock left by a
+          # publisher that died mid-write never blocks the restore.
           uv run python -m src.modal.utils.update_version_registry \
             --environment "${MODAL_ENVIRONMENT}" \
+            --lock-wait-seconds 420 \
             --restore-plan "${RUNNER_TEMP}/routing-plan/plan.json"
 
   deployment_ready:

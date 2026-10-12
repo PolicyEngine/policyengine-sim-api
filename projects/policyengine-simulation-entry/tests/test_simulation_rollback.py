@@ -149,29 +149,59 @@ def test_rollback_verifies_the_whole_restored_identity():
     )
 
 
-def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
-    """#744 review: a later no-op attempt must not hide an earlier publication."""
-
+def _restore_script() -> str:
     restore = _rollback_steps()[_step_index(_rollback_steps(), "--restore-plan")]
     script = restore["run"].split("\nelse\n")[0].split("then\n", 1)[1]
-    script = script.replace("uv run python", "printf '%s\\n'")
+    return script.replace("uv run python", "printf '%s\\n'")
+
+
+def _fake_gh(bin_dir: Path, attempts: int, kept: dict[int, int]) -> None:
+    """A gh that reports a run's attempts and whether each kept a plan."""
+
+    lines = ["#!/usr/bin/env bash", 'args="$*"']
+    lines.append(
+        f'if [[ "$args" != *"/attempts/"* ]]; then echo {attempts}; exit 0; fi'
+    )
+    for attempt, count in kept.items():
+        lines.append(
+            f'if [[ "$args" == *"/attempts/{attempt}/jobs"* ]]; then echo {count}; exit 0; fi'
+        )
+    lines.append("echo 0")
+    (bin_dir / "gh").write_text("\n".join(lines) + "\n")
+    (bin_dir / "gh").chmod(0o755)
+
+
+def _run_restore(tmp_path: Path, attempts: int, kept: dict, present: list[int]):
     runner_temp = tmp_path / "runner-temp-with-dashes"
-    for attempt in (1, 10, 2, 9):
+    (runner_temp / "routing-plans").mkdir(parents=True)
+    for attempt in present:
         directory = runner_temp / "routing-plans" / f"routing-plan-prod-{attempt}"
         directory.mkdir(parents=True)
         (directory / "plan.json").write_text("{}")
-    (runner_temp / "routing-plans" / "routing-plan-prod-x").mkdir()
-    result = subprocess.run(
-        ["bash", "-e", "-c", script],
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _fake_gh(bin_dir, attempts, kept)
+    return subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", _restore_script()],
         capture_output=True,
         text=True,
         env={
-            "PATH": os.environ["PATH"],
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             "RUNNER_TEMP": str(runner_temp),
             "TARGET": "prod",
             "MODAL_ENVIRONMENT": "main",
             "DEPLOY_RUN_ID": "1",
+            "GITHUB_REPOSITORY": "PolicyEngine/policyengine-sim-api",
         },
+    )
+
+
+def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
+    """#744 review: a later attempt must not hide an earlier publication."""
+
+    attempts = [1, 10, 2, 9]
+    result = _run_restore(
+        tmp_path, 10, {attempt: 1 for attempt in attempts}, present=attempts
     )
     assert result.returncode == 0, result.stderr
     passed = result.stdout.split("--restore-plan\n", 1)[1].split()
@@ -181,21 +211,30 @@ def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
         "routing-plan-prod-9",
         "routing-plan-prod-10",
     ]
-    empty = tmp_path / "empty"
-    (empty / "routing-plans").mkdir(parents=True)
-    missing = subprocess.run(
-        ["bash", "-e", "-c", script],
-        capture_output=True,
-        text=True,
-        env={
-            "PATH": os.environ["PATH"],
-            "RUNNER_TEMP": str(empty),
-            "TARGET": "prod",
-            "DEPLOY_RUN_ID": "1",
-        },
+    assert "--lock-wait-seconds\n420" in result.stdout
+
+
+def test_rollback_refuses_when_an_attempts_plan_is_missing(tmp_path):
+    """#744 review: attempt 1 published but its plan is gone; attempt 2's is not."""
+
+    result = _run_restore(tmp_path, 2, {1: 1, 2: 1}, present=[2])
+    assert result.returncode == 1
+    assert "Attempt 1 of run 1 kept a prod routing plan that cannot be found" in (
+        result.stderr
     )
-    assert missing.returncode == 1
-    assert "kept no prod routing plan" in missing.stderr
+    assert "--restore-plan" not in result.stdout
+
+
+def test_rollback_ignores_attempts_that_kept_no_plan(tmp_path):
+    result = _run_restore(tmp_path, 2, {1: 0, 2: 1}, present=[2])
+    assert result.returncode == 0, result.stderr
+    assert "routing-plan-prod-2/plan.json" in result.stdout
+
+
+def test_rollback_with_no_plan_at_all_fails(tmp_path):
+    result = _run_restore(tmp_path, 1, {1: 0}, present=[])
+    assert result.returncode == 1
+    assert "kept no prod routing plan" in result.stderr
 
 
 def test_rollbacks_share_the_deployment_concurrency_group():

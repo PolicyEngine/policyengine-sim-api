@@ -923,19 +923,40 @@ def test_readers_ignore_the_lock_record(monkeypatch, patched_modal):
 
 
 def test_a_failed_retry_attempt_cannot_hide_the_publication(monkeypatch, patched_modal):
-    """#744 review: attempt 1 published A to B; attempt 2 planned B to B."""
+    """#744 review: attempt 1 published A to B; attempt 2 republished B."""
 
     a = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
     store = _store(patched_modal, a)
     first = _plan(monkeypatch, a, "6.1.0", "1.1.0", "2.2.0")
     registry.apply_routing_plan(environment="staging", plan=first)
     second = _plan(monkeypatch, first["after"], "6.1.0", "1.1.0", "2.2.0")
-    assert second["before_sha256"] == second["after_sha256"]
+    # Each publication is its own state, even of the same release.
+    assert second["before_sha256"] != second["after_sha256"]
+    registry.apply_routing_plan(environment="staging", plan=second)
     assert (
         registry.restore_routing_plans(environment="staging", plans=[first, second])
         == "restored"
     )
     assert store.get("active") == json.loads(json.dumps(a))
+
+
+def test_an_old_plan_cannot_withdraw_a_healthy_republication(
+    monkeypatch, patched_modal
+):
+    """#744 review: A to B failed and was restored; a healthy run republished B."""
+
+    a = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
+    store = _store(patched_modal, a)
+    failed = _plan(monkeypatch, a, "6.1.0", "1.1.0", "2.2.0")
+    registry.apply_routing_plan(environment="staging", plan=failed)
+    assert (
+        registry.restore_routing_plan(environment="staging", plan=failed) == "restored"
+    )
+    healthy = _plan(monkeypatch, a, "6.1.0", "1.1.0", "2.2.0")
+    registry.apply_routing_plan(environment="staging", plan=healthy)
+    with pytest.raises(registry.RoutingConflict, match="nothing was restored"):
+        registry.restore_routing_plan(environment="staging", plan=failed)
+    assert store.get("active") == healthy["after"]
 
 
 def test_a_chain_of_attempts_is_undone_in_order(monkeypatch, patched_modal):
@@ -971,3 +992,105 @@ def test_main_restores_several_plans(patched_modal, monkeypatch, capsys, tmp_pat
     _main(monkeypatch, "--restore-plan", *files)
     assert "restored" in capsys.readouterr().out
     assert store.get("active") == json.loads(json.dumps(a))
+
+
+def test_a_waiter_never_removes_a_lock_taken_after_a_release():
+    """#744 review: an absent lock is retried by insertion, never deleted."""
+
+    class Racing(FakeDict):
+        def __init__(self):
+            super().__init__()
+            self.puts = 0
+            self.gets = 0
+
+        def put(self, key, value, *, skip_if_exists=False):
+            if key == registry.ROUTING_WRITE_LOCK_KEY and self.puts == 0:
+                self.puts += 1
+                return False  # the previous holder still had it
+            return super().put(key, value, skip_if_exists=skip_if_exists)
+
+        def get(self, key, default=None):
+            if key == registry.ROUTING_WRITE_LOCK_KEY and self.gets == 0:
+                self.gets += 1
+                # The previous holder released; another publisher takes it at
+                # once, after this read.
+                answer = super().get(key, default)
+                super().put(
+                    key,
+                    {"owner": "publisher", "purpose": "publish", "expires_at": 1e12},
+                )
+                return answer
+            return super().get(key, default)
+
+    store = Racing()
+    now = [1000.0]
+    with pytest.raises(registry.RoutingLockHeld):
+        with registry.routing_write_lock(
+            store,
+            purpose="restore",
+            wait_seconds=10,
+            clock=lambda: now[0],
+            sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
+        ):
+            pass  # pragma: no cover
+    assert store.get(registry.ROUTING_WRITE_LOCK_KEY)["owner"] == "publisher"
+
+
+def test_only_the_reclaim_winner_removes_an_expired_lock():
+    store = FakeDict()
+    expired = {"owner": "dead", "purpose": "x", "expires_at": 0}
+    store.put(registry.ROUTING_WRITE_LOCK_KEY, expired)
+    store.put(f"{registry.ROUTING_WRITE_LOCK_KEY}:reclaim:dead", {"at": 1})
+    registry._reclaim_expired_lock(store, expired)  # another waiter is reclaiming
+    assert store.get(registry.ROUTING_WRITE_LOCK_KEY) == expired
+    store.pop(f"{registry.ROUTING_WRITE_LOCK_KEY}:reclaim:dead")
+    registry._reclaim_expired_lock(store, expired)
+    assert store.get(registry.ROUTING_WRITE_LOCK_KEY) is None
+    assert store.get(f"{registry.ROUTING_WRITE_LOCK_KEY}:reclaim:dead") is None
+
+
+def test_reclaiming_puts_back_a_lock_that_changed_hands():
+    store = FakeDict()
+    store.put(registry.ROUTING_WRITE_LOCK_KEY, {"owner": "fresh", "expires_at": 1e12})
+    registry._reclaim_expired_lock(store, {"owner": "dead", "expires_at": 0})
+    assert store.get(registry.ROUTING_WRITE_LOCK_KEY)["owner"] == "fresh"
+
+
+def test_release_never_removes_someone_elses_lock():
+    store = FakeDict()
+    with registry.routing_write_lock(store, purpose="mine"):
+        store[registry.ROUTING_WRITE_LOCK_KEY] = {"owner": "other", "expires_at": 1e12}
+    assert store.get(registry.ROUTING_WRITE_LOCK_KEY)["owner"] == "other"
+
+
+def test_apply_waits_for_and_then_refuses_a_held_lock(monkeypatch, patched_modal):
+    """#744 review: removing the apply lock must fail a test."""
+
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    store = _store(patched_modal, state)
+    plan = _plan(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
+    store.put(
+        registry.ROUTING_WRITE_LOCK_KEY,
+        {"owner": "other", "purpose": "restore", "expires_at": 1e12},
+    )
+    with pytest.raises(registry.RoutingLockHeld):
+        registry.apply_routing_plan(
+            environment="staging", plan=plan, lock_wait_seconds=0
+        )
+    assert store.get("active") == json.loads(json.dumps(state))
+
+
+def test_plans_carry_their_publication_id(monkeypatch):
+    state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
+    _manifests(monkeypatch, {"6.3.0": ("1.1.0", "2.2.0")})
+    plan = registry.plan_routing_publication(
+        current_state=state,
+        app_name=_app("6.3.0"),
+        policyengine_version="6.3.0",
+        us_version="1.1.0",
+        uk_version="2.2.0",
+        publication_id="run-7-attempt-2-prod",
+    )
+    assert plan["publication_id"] == "run-7-attempt-2-prod"
+    assert plan["after"]["generation"] == f"6.3.0:{_app('6.3.0')}:run-7-attempt-2-prod"
+    registry.validate_routing_plan(plan)

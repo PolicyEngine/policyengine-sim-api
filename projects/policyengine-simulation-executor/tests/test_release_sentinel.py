@@ -232,6 +232,16 @@ def test_a_complete_job_without_an_object_result_fails(job):
     assert "result, not an object" in problems[0]
 
 
+@pytest.mark.parametrize(
+    ("relative", "agrees"), [(1e-10, True), (5e-10, True), (2e-9, False), (1e-6, False)]
+)
+def test_the_tolerance_is_floating_point_reordering_only(relative, agrees):
+    """#744 review: a looser REL_TOL (a 1e-3 mismatch is £4m) must fail a test."""
+
+    value = 4e9
+    assert sentinel.agree(value, value * (1 + relative)) is agrees
+
+
 def test_a_job_that_never_finishes_fails():
     ticks = iter(range(0, 10_000, 100))
     problems, _ = _check(

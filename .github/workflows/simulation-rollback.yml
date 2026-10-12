@@ -98,8 +98,22 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [[ -n "${DEPLOY_RUN_ID}" ]]; then
+            # Every attempt whose routing job kept a plan must have one here:
+            # restoring without an attempt's plan would stop short of what
+            # the run replaced and still look complete.
+            attempts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}" --jq .run_attempt)"
+            for attempt in $(seq 1 "${attempts}"); do
+              kept="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}/attempts/${attempt}/jobs" \
+                --jq "[.jobs[] | select(.name == \"Complete ${TARGET} deployment / Publish routing after all services pass\") | .steps[] | select(.name == \"Keep the plan for a guarded restore\" and .conclusion == \"success\")] | length" \
+                | awk '{total += $1} END {print total + 0}')"
+              if [[ "${kept}" -gt 0 && ! -f "${RUNNER_TEMP}/routing-plans/routing-plan-${TARGET}-${attempt}/plan.json" ]]; then
+                echo "Attempt ${attempt} of run ${DEPLOY_RUN_ID} kept a ${TARGET} routing plan that cannot be found; restore by policyengine_version instead." >&2
+                exit 1
+              fi
+            done
             # One plan per run attempt, passed oldest first. The restore undoes
             # every attempt's change that is still live, newest first, and skips
             # attempts that changed nothing.
@@ -118,7 +132,8 @@ jobs:
               exit 1
             fi
             uv run python -m src.modal.utils.update_version_registry \
-              --environment "${MODAL_ENVIRONMENT}" --restore-plan "${plans[@]}"
+              --environment "${MODAL_ENVIRONMENT}" --lock-wait-seconds 420 \
+              --restore-plan "${plans[@]}"
           else
             args=(--environment "${MODAL_ENVIRONMENT}" --restore-latest "${POLICYENGINE_VERSION}")
             if [[ -n "${EXPECTED_LATEST}" ]]; then

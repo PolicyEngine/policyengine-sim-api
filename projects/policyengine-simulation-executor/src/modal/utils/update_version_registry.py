@@ -382,13 +382,18 @@ def plan_routing_publication(
     us_version: str,
     uk_version: str,
     force_latest: bool = False,
+    publication_id: str | None = None,
 ) -> dict:
     """The routing state before and after publishing a release, with digests.
 
-    ``advances_latest`` says whether unpinned requests route to this release
-    once the plan is applied.
+    The published state's ``generation`` names this publication uniquely
+    (``publication_id``, by default a random one), so a later publication of
+    the same release is a different state and an old plan can never be
+    restored over it. ``advances_latest`` says whether unpinned requests
+    route to this release once the plan is applied.
     """
 
+    publication_id = publication_id or uuid.uuid4().hex
     before = _json_copy(current_state) if current_state is not None else None
     after = _json_copy(
         build_next_routing_state(
@@ -400,8 +405,10 @@ def plan_routing_publication(
             force_latest=force_latest,
         )
     )
+    after["generation"] = f"{policyengine_version}:{app_name}:{publication_id}"
     return {
         "schema": ROUTING_PLAN_SCHEMA,
+        "publication_id": publication_id,
         "policyengine_version": policyengine_version,
         "app_name": app_name,
         "before": before,
@@ -445,13 +452,44 @@ def _routing_store(environment: str, *, create_if_missing: bool):
 #: ``modal.Dict.put(..., skip_if_exists=True)`` inserts atomically.
 ROUTING_WRITE_LOCK_KEY = "write-lock"
 #: A routing write takes seconds; a lock older than this was left by a writer
-#: that died, and the next writer breaks it.
-ROUTING_LOCK_TTL_SECONDS = 900
+#: that died, and the next writer may reclaim it.
+ROUTING_LOCK_TTL_SECONDS = 300
+#: How long a writer waits for the lock by default. A restore after a failed
+#: release waits longer than the TTL (see the CLI's --lock-wait-seconds), so a
+#: lock left by a writer that died never blocks it.
 ROUTING_LOCK_WAIT_SECONDS = 180
 
 
 class RoutingLockHeld(RoutingConflict):
     """Another writer holds the routing lock and did not release it in time."""
+
+
+def _lock_owner(record: object) -> str:
+    if isinstance(record, dict) and isinstance(record.get("owner"), str):
+        return record["owner"]
+    return "unreadable-" + hashlib.sha256(repr(record).encode()).hexdigest()[:16]
+
+
+def _reclaim_expired_lock(store, held: object) -> None:
+    """Remove an expired lock, letting exactly one waiter do it.
+
+    The waiter that inserts the reclaim token for that lock's owner (an
+    atomic insert) removes the lock; any other waiter retries. If the lock
+    it removes is not the expired one it read (that owner released it and
+    someone else took it), it is put straight back.
+    """
+
+    token = f"{ROUTING_WRITE_LOCK_KEY}:reclaim:{_lock_owner(held)}"
+    if not store.put(token, {"at": time.time()}, skip_if_exists=True):
+        return
+    try:
+        removed = store.pop(ROUTING_WRITE_LOCK_KEY)
+    except KeyError:
+        removed = None
+    if removed is not None and _lock_owner(removed) != _lock_owner(held):
+        store.put(ROUTING_WRITE_LOCK_KEY, removed, skip_if_exists=True)
+    with contextlib.suppress(KeyError):
+        store.pop(token)
 
 
 @contextlib.contextmanager
@@ -465,10 +503,10 @@ def routing_write_lock(
 ):
     """Hold the routing write lock for the body, then release it.
 
-    A lock past its expiry is broken: removed, then taken by an atomic
-    insert. Two writers that find the same expired lock at the same moment
-    could both proceed; that needs a writer to have died holding the lock
-    and two others to arrive within the same few seconds afterwards.
+    Acquiring is an atomic insert. A lock that is absent when read was just
+    released, so the insert is retried at once; only a lock past its expiry
+    is reclaimed, by a single waiter (:func:`_reclaim_expired_lock`). A lock
+    that is someone else's is never removed on release.
     """
 
     owner = uuid.uuid4().hex
@@ -486,12 +524,11 @@ def routing_write_lock(
         if store.put(ROUTING_WRITE_LOCK_KEY, record, skip_if_exists=True):
             break
         held = store.get(ROUTING_WRITE_LOCK_KEY)
-        expired = not isinstance(held, dict) or not isinstance(
-            held.get("expires_at"), (int, float)
-        )
-        if expired or held["expires_at"] < now:
-            with contextlib.suppress(KeyError):
-                store.pop(ROUTING_WRITE_LOCK_KEY)
+        if held is None:
+            continue
+        expires = held.get("expires_at") if isinstance(held, dict) else None
+        if not isinstance(expires, (int, float)) or expires < now:
+            _reclaim_expired_lock(store, held)
             continue
         if clock() >= deadline:
             raise RoutingLockHeld(
@@ -502,18 +539,26 @@ def routing_write_lock(
     try:
         yield owner
     finally:
-        held = store.get(ROUTING_WRITE_LOCK_KEY)
-        if isinstance(held, dict) and held.get("owner") == owner:
-            with contextlib.suppress(KeyError):
-                store.pop(ROUTING_WRITE_LOCK_KEY)
+        try:
+            removed = store.pop(ROUTING_WRITE_LOCK_KEY)
+        except KeyError:
+            removed = None
+        if removed is not None and _lock_owner(removed) != owner:
+            store.put(ROUTING_WRITE_LOCK_KEY, removed, skip_if_exists=True)
 
 
-def apply_routing_plan(*, environment: str, plan: dict) -> None:
+def apply_routing_plan(
+    *, environment: str, plan: dict, lock_wait_seconds: float | None = None
+) -> None:
     """Publish ``plan``'s state if the live state is still its starting point."""
 
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=True)
-    with routing_write_lock(store, purpose=f"apply {plan['policyengine_version']}"):
+    with routing_write_lock(
+        store,
+        purpose=f"apply {plan['policyengine_version']}",
+        wait_seconds=lock_wait_seconds,
+    ):
         current = store.get(ROUTING_STATE_ACTIVE_KEY)
         if routing_state_digest(current) != plan["before_sha256"]:
             raise RoutingConflict(
@@ -526,7 +571,9 @@ def apply_routing_plan(*, environment: str, plan: dict) -> None:
         raise RoutingConflict("the published routing state reads back differently")
 
 
-def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
+def restore_routing_plans(
+    *, environment: str, plans: list[dict], lock_wait_seconds: float | None = None
+) -> str:
     """Undo a deployment's plans (one per run attempt): ``restored`` or ``unchanged``.
 
     Repeatedly restores the starting state of a plan whose published state is
@@ -549,7 +596,9 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
         plan for plan in plans if plan["before_sha256"] != plan["after_sha256"]
     ]
     outcome = "unchanged"
-    with routing_write_lock(store, purpose="restore a release's routing"):
+    with routing_write_lock(
+        store, purpose="restore a release's routing", wait_seconds=lock_wait_seconds
+    ):
         while True:
             digest = routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
             live = [plan for plan in remaining if plan["after_sha256"] == digest]
@@ -958,6 +1007,18 @@ def main():
         ),
     )
     parser.add_argument(
+        "--publication-id",
+        help="With --plan-out: a unique id for this publication (default random).",
+    )
+    parser.add_argument(
+        "--lock-wait-seconds",
+        type=float,
+        help=(
+            "How long to wait for the routing write lock. A restore after a "
+            f"failed release should exceed the lock TTL ({ROUTING_LOCK_TTL_SECONDS}s)."
+        ),
+    )
+    parser.add_argument(
         "--restore-latest",
         metavar="POLICYENGINE_VERSION",
         help=(
@@ -990,7 +1051,11 @@ def main():
     if args.apply_plan:
         with open(args.apply_plan) as handle:
             plan = json.load(handle)
-        apply_routing_plan(environment=args.environment, plan=plan)
+        apply_routing_plan(
+            environment=args.environment,
+            plan=plan,
+            lock_wait_seconds=args.lock_wait_seconds,
+        )
         print(
             f"Published policyengine {plan['policyengine_version']} routing "
             f"({plan['after_sha256']}) in Modal environment {args.environment}"
@@ -1002,7 +1067,11 @@ def main():
         for path in args.restore_plan:
             with open(path) as handle:
                 plans.append(json.load(handle))
-        outcome = restore_routing_plans(environment=args.environment, plans=plans)
+        outcome = restore_routing_plans(
+            environment=args.environment,
+            plans=plans,
+            lock_wait_seconds=args.lock_wait_seconds,
+        )
         print(
             f"Routing for policyengine {plans[-1]['policyengine_version']}: "
             f"{outcome} in Modal environment {args.environment}"
@@ -1057,6 +1126,7 @@ def main():
             us_version=args.us_version,
             uk_version=args.uk_version,
             force_latest=args.force_latest,
+            publication_id=args.publication_id,
         )
         with open(args.plan_out, "w") as handle:
             json.dump(plan, handle, indent=2, sort_keys=True)

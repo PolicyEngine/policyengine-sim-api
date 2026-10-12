@@ -1110,6 +1110,45 @@ def test_smoke_rejects_a_latest_wrapper_that_lags_alone(tmp_path: Path):
     )
 
 
+def test_a_failing_restore_fails_the_revert_job(tmp_path):
+    """#744 review: a restore failure must not be swallowed."""
+
+    revert = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["revert_routing"]
+    step = next(
+        step for step in revert["steps"] if "--restore-plan" in step.get("run", "")
+    )
+    assert "--lock-wait-seconds 420" in step["run"]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "uv").write_text("#!/usr/bin/env bash\nexit 3\n")
+    (bin_dir / "uv").chmod(0o755)
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "RUNNER_TEMP": str(tmp_path),
+            "MODAL_ENVIRONMENT": "main",
+        },
+    )
+    assert result.returncode == 3
+
+
+def test_each_publication_is_named_by_its_run_attempt_and_environment():
+    routing = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["update_routing"]
+    plan = next(
+        step
+        for step in routing["steps"]
+        if step.get("name") == "Plan the routing change"
+    )
+    assert (
+        '--publication-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RELEASE_ENVIRONMENT}"'
+        in plan["run"]
+    )
+    assert plan["env"]["RELEASE_ENVIRONMENT"] == "${{ inputs.release_environment }}"
+
+
 def test_revert_restores_the_plan_this_release_kept():
     jobs = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)
     routing = jobs["update_routing"]
