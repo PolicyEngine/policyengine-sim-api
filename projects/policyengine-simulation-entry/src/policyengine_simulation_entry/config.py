@@ -170,7 +170,10 @@ class Settings:
             raise ConfigurationError(msg)
 
         if bool(self.auth_issuer) != bool(self.auth_audience):
-            msg = "Set both SIMULATION_ENTRYPOINT_AUTH_ISSUER and SIMULATION_ENTRYPOINT_AUTH_AUDIENCE."
+            msg = (
+                "Set both SIMULATION_ENTRYPOINT_AUTH_ISSUER and "
+                "SIMULATION_ENTRYPOINT_AUTH_AUDIENCE."
+            )
             raise ConfigurationError(msg)
         if self.auth_required and not self.auth_issuer:
             msg = "Caller authentication is required but issuer/audience are missing."

@@ -47,7 +47,10 @@ class FakeCommands:
         path.chmod(0o755)
 
     def calls(self, name: str | None = None) -> list[list[str]]:
-        """Every recorded call (``[command, *arguments]``), optionally of one command."""
+        """Return each recorded call as ``[command, *arguments]``.
+
+        Given ``name``, return only that command's calls.
+        """
         if not self.log.exists():
             return []
         recorded = [
