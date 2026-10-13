@@ -113,10 +113,11 @@ def _poll_budget_window_batch(
             return response.parsed
 
         if response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR:
-            raise AssertionError(
+            msg = (
                 "Budget-window batch failed: "
                 f"{_decode_response_content(response.content)}"
             )
+            raise AssertionError(msg)
 
         delay_seconds = poll_retry_delay_seconds(
             response.status_code,
@@ -130,16 +131,18 @@ def _poll_budget_window_batch(
             time.sleep(min(delay_seconds, remaining_seconds))
             continue
 
-        raise AssertionError(
+        msg = (
             "Unexpected budget-window poll status "
             f"{response.status_code}: {_decode_response_content(response.content)}"
         )
+        raise AssertionError(msg)
 
-    raise TimeoutError(
+    msg = (
         f"Budget-window batch {batch_job_id} did not complete within "
         f"{max_wait_seconds}s; last response was "
         f"{last_status_code}: {_decode_response_content(last_content)}"
     )
+    raise TimeoutError(msg)
 
 
 @pytest.fixture()

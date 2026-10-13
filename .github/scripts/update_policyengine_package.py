@@ -51,10 +51,11 @@ def current_version(pyproject: Path, package: str) -> str:
         if isinstance(dependency, str) and dependency.startswith(prefix)
     ]
     if len(matches) != 1:
-        raise SystemExit(
+        msg = (
             f"Expected one {package}[models] requirement in project.dependencies; "
             f"found {matches!r}"
         )
+        raise SystemExit(msg)
     return matches[0]
 
 
@@ -86,9 +87,8 @@ def update_requirements(
             and dependency.startswith(f"{package}[models]==")
         ]
         if matches != [old_requirement]:
-            raise SystemExit(
-                f"Expected {old_requirement} in {location}; found {matches!r}"
-            )
+            msg = f"Expected {old_requirement} in {location}; found {matches!r}"
+            raise SystemExit(msg)
 
         redundant_wrapper_requirements = [
             dependency
@@ -98,10 +98,11 @@ def update_requirements(
             and _requirement_name(dependency) == package
         ]
         if redundant_wrapper_requirements:
-            raise SystemExit(
+            msg = (
                 f"Expected only {old_requirement} for {package} in {location}; "
                 f"found {redundant_wrapper_requirements!r}"
             )
+            raise SystemExit(msg)
 
         direct_component_requirements = [
             dependency
@@ -110,18 +111,20 @@ def update_requirements(
             and _requirement_name(dependency) in COMPONENT_PACKAGES
         ]
         if direct_component_requirements:
-            raise SystemExit(
+            msg = (
                 f"Expected {location} to obtain component packages from "
                 f"{package}[models]; found {direct_component_requirements!r}"
             )
+            raise SystemExit(msg)
 
     old_pin = f'"{old_requirement}"'
     new_pin = f'"{new_requirement}"'
     if text.count(old_pin) != len(requirements):
-        raise SystemExit(
+        msg = (
             f"Expected {old_pin} {len(requirements)} times in {pyproject}; "
             f"found {text.count(old_pin)}"
         )
+        raise SystemExit(msg)
 
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -139,7 +142,8 @@ def find_issue(title: str) -> None:
     """Print the lowest matching issue number from paginated GitHub output."""
     pages = _json_from_stdin()
     if not isinstance(pages, list):
-        raise SystemExit("GitHub issue response must be a list of pages")
+        msg = "GitHub issue response must be a list of pages"
+        raise SystemExit(msg)
     matches = sorted(
         item["number"]
         for page in pages
@@ -158,23 +162,26 @@ def verify_issue(expected_number: int, expected_title: str) -> None:
     """Validate the issue selected for an automated update."""
     issue = _mapping(_json_from_stdin())
     if issue.get("number") != expected_number:
-        raise SystemExit("Resolved update issue has an unexpected number")
+        msg = "Resolved update issue has an unexpected number"
+        raise SystemExit(msg)
     if issue.get("state") != "OPEN":
-        raise SystemExit("Resolved update issue is not open")
+        msg = "Resolved update issue is not open"
+        raise SystemExit(msg)
     if issue.get("title") != expected_title:
-        raise SystemExit("Resolved update issue has an unexpected title")
+        msg = "Resolved update issue has an unexpected title"
+        raise SystemExit(msg)
 
 
 def verify_pr(expected_repository: str) -> None:
     """Validate that an automated pull request is a canonical draft."""
     pull_request = _mapping(_json_from_stdin())
     if pull_request.get("isDraft") is not True:
-        raise SystemExit("Automated policyengine update PR is not a draft")
+        msg = "Automated policyengine update PR is not a draft"
+        raise SystemExit(msg)
     head_repository = _mapping(pull_request.get("headRepository"))
     if head_repository.get("nameWithOwner") != expected_repository:
-        raise SystemExit(
-            "Automated policyengine update PR is not from the canonical repository"
-        )
+        msg = "Automated policyengine update PR is not from the canonical repository"
+        raise SystemExit(msg)
 
 
 def latest_version(package: str) -> None:
@@ -182,7 +189,8 @@ def latest_version(package: str) -> None:
     payload = _mapping(_json_from_stdin())
     version = _mapping(payload.get("info")).get("version")
     if not isinstance(version, str) or not version:
-        raise SystemExit(f"PyPI response has no latest version for {package}")
+        msg = f"PyPI response has no latest version for {package}"
+        raise SystemExit(msg)
     print(version)
 
 
@@ -197,7 +205,8 @@ def bundle_versions() -> None:
     def package_version(name: str) -> str:
         version = _mapping(packages.get(name)).get("version")
         if not isinstance(version, str) or not version:
-            raise SystemExit(f"Bundle has no version for {name}")
+            msg = f"Bundle has no version for {name}"
+            raise SystemExit(msg)
         return version
 
     def data_release_version(country: str) -> str:
@@ -206,7 +215,8 @@ def bundle_versions() -> None:
             "version"
         )
         if not isinstance(version, str) or not version:
-            raise SystemExit(f"Bundle has no data release version for {country}")
+            msg = f"Bundle has no data release version for {country}"
+            raise SystemExit(msg)
         return version
 
     def data_package_version(country: str) -> str:
