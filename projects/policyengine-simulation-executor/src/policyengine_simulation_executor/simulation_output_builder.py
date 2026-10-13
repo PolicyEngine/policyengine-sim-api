@@ -50,6 +50,12 @@ if TYPE_CHECKING:
 
 @dataclass
 class SimulationOutputBuilder:
+    """Assemble one year's macro output from a computed baseline and reform.
+
+    Each output segment is built inside its own observability span when a
+    ``runtime`` is given.
+    """
+
     country: str
     simulation_params: dict[str, Any]
     country_module: Any
@@ -64,6 +70,7 @@ class SimulationOutputBuilder:
     _analysis: Any = field(default=None, init=False)
 
     def __post_init__(self) -> None:
+        """Normalize ``country`` to lower case."""
         self.country = self.country.lower()
 
     def _span(self, name: str) -> AbstractContextManager[object]:
@@ -71,6 +78,11 @@ class SimulationOutputBuilder:
 
     @property
     def analysis(self) -> object:
+        """Country economic impact analysis, computed on first access and reused.
+
+        Cliff impacts are included only when the request sets
+        ``include_cliffs`` to True.
+        """
         if self._analysis is None:
             with self._span(ANNUAL_IMPACT_STAGES.name(Stage.ECONOMIC_IMPACT_ANALYSIS)):
                 self._analysis = self.country_module.economic_impact_analysis(
@@ -86,6 +98,7 @@ class SimulationOutputBuilder:
         return self.simulation_params.get("include_cliffs") is True
 
     def build(self) -> SingleYearMacroOutput:
+        """Build every output segment into the typed single-year macro output."""
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_BUILD)):
             poverty_outputs = self._build_poverty_outputs()
             wealth_decile = getattr(self.analysis, "wealth_decile_impacts", None)
@@ -118,6 +131,7 @@ class SimulationOutputBuilder:
             )
 
     def serialize(self) -> dict[str, Any]:
+        """Build the output and dump it to JSON-compatible data."""
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.CALCULATION)):
             output = self.build()
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):

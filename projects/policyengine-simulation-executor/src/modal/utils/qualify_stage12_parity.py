@@ -39,6 +39,7 @@ def _tolerances(path: Path | None) -> dict[str, NumericalTolerance]:
 
 
 def main() -> None:
+    """Qualify one report against the existing executor and print the receipt JSON."""
     parser = argparse.ArgumentParser(
         description=(
             "Compare the existing combined executor with the Stage 12 independent "

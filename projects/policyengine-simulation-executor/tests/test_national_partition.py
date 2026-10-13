@@ -41,10 +41,13 @@ class TestPartitionInvariants:
 
 class TestPartitionMatchesModelRegistry:
     def test__partition_covers_exactly_the_registry_state_regions(self):
-        """A policyengine pin bump that adds/renames a state-level region
-        must fail here, forcing a measured partition rebalance. (At runtime
-        the runner also assigns uncovered registry states to the last group
-        as a stopgap — this test is what makes the drift loud in CI.)"""
+        """The partition must cover exactly the model registry's state regions.
+
+        A policyengine pin bump that adds/renames a state-level region must
+        fail here, forcing a measured partition rebalance. (At runtime the
+        runner also assigns uncovered registry states to the last group as a
+        stopgap — this test is what makes the drift loud in CI.)
+        """
         from policyengine_simulation_executor.simulation_runtime import (
             _country_module,
         )

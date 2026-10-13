@@ -56,6 +56,11 @@ def build_batch_context(
     *,
     batch_job_id: str,
 ) -> BudgetWindowBatchContext:
+    """Validate batch params and the gateway's routing ``_metadata`` into a context.
+
+    Raises ValueError when ``_metadata`` lacks the resolved app name, the
+    resolved version, or the PolicyEngine bundle.
+    """
     request = BudgetWindowBatchRequest.model_validate(params)
     metadata = params.get("_metadata")
     if not isinstance(metadata, dict):
@@ -87,6 +92,11 @@ def build_child_simulation_request(
     *,
     simulation_year: str,
 ) -> ChildSimulationRequest:
+    """Build the single-year child request for ``simulation_year``.
+
+    Batch-only fields are stripped and the child is pinned to a monolithic
+    (non-segmented) run.
+    """
     payload = build_child_payload(
         context.raw_params,
         strip_fields=BATCH_ONLY_FIELDS,

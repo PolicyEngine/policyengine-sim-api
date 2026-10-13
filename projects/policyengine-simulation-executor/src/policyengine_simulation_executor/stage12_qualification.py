@@ -82,7 +82,6 @@ AggregateBuilder = Callable[..., dict[str, Any]]
 
 def _local_qualification_runtime() -> ObservabilityRuntime:
     """Create a local runtime that cannot send qualification data remotely."""
-
     return ObservabilityRuntime(
         ObservabilityConfig(
             service=ServiceIdentity(
@@ -106,7 +105,6 @@ def _validate_matching_input(
     report: ReportExecutionInput,
 ) -> None:
     """Reject a qualification that does not compare the same calculation."""
-
     baseline = report.baseline
     reform = report.reform
     bundle = baseline.bundle
@@ -223,7 +221,6 @@ def qualify_report_parity(
     aggregate_tolerances: Mapping[str, NumericalTolerance] | None = None,
 ) -> Stage12ParityReceipt:
     """Run both implementations and fail on every unexplained difference."""
-
     report = ReportExecutionInput.model_validate(report_payload)
     _validate_matching_input(existing_request, report)
     output_plan = resolve_report_output_plan(report)

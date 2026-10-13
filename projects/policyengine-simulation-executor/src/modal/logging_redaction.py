@@ -31,7 +31,6 @@ def redact_params_for_logging(params: object) -> dict:
     dict so callers can splat the result into operation attributes without
     additional guards.
     """
-
     if not isinstance(params, dict):
         return {}
     return {

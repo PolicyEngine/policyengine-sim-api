@@ -37,10 +37,12 @@ def test_redact_params_strips_signed_urls_and_reform_bodies():
 
 
 def test_redact_params_strips_all_underscore_prefixed_keys():
-    """Underscore-prefixed internal keys must never reach observability
-    attributes: the backend rejects attribute keys starting with '_', so a
-    leaked key crashes the span. Regression for the segmented-national
-    child failure where `_emit_microdata` reached operation() (#640)."""
+    """Underscore-prefixed internal keys must never reach observability attributes.
+
+    The backend rejects attribute keys starting with '_', so a leaked key
+    crashes the span. Regression for the segmented-national child failure
+    where `_emit_microdata` reached operation() (#640).
+    """
     params = {
         "country": "us",
         "scope": "macro",

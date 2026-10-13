@@ -33,6 +33,7 @@ import json
 
 
 def wrapper_storage_id(simulation_id: str, spm_config: dict | None) -> str:
+    """Return the wrapper's ``storage_id`` for an already-resolved SPM config."""
     if spm_config is None:
         return simulation_id
     encoded = json.dumps(spm_config, sort_keys=True, separators=(",", ":")).encode()

@@ -27,10 +27,15 @@ INTRA_DECILE_COLUMNS = {
 
 
 def build_decile(analysis: object) -> DecileOutput:
+    """Return the income-decile changes from the analysis's ``decile_impacts``."""
     return build_decile_output(getattr(analysis, "decile_impacts", None))
 
 
 def build_decile_output(collection: object) -> DecileOutput:
+    """Key absolute and relative changes by decile number (``"1"``..``"10"``).
+
+    Rows with a decile of 0 or below are dropped; missing values become 0.0.
+    """
     if isinstance(collection, DecileOutput):
         return collection
     average: dict[str, float] = {}
@@ -51,6 +56,11 @@ def build_decile_output(collection: object) -> DecileOutput:
 def build_intra_decile_output(
     baseline: Simulation, reform: Simulation
 ) -> IntraDecileOutput:
+    """Compute household net income winners and losers within each income decile.
+
+    A calculation failure is logged and yields empty deciles with zero overall
+    shares rather than failing the request; SPM selection errors propagate.
+    """
     from policyengine.outputs.intra_decile_impact import (
         compute_intra_decile_impacts,
     )
@@ -67,6 +77,7 @@ def build_intra_decile_output(
 
 
 def build_wealth_decile(country: str, wealth_decile: object) -> DecileOutput | None:
+    """Return wealth-decile changes for the UK; None for other countries."""
     if country != "uk":
         return None
     return build_decile_output(wealth_decile)
@@ -75,6 +86,7 @@ def build_wealth_decile(country: str, wealth_decile: object) -> DecileOutput | N
 def build_intra_wealth_decile(
     country: str, intra_wealth_decile: object
 ) -> IntraDecileOutput | None:
+    """Return within-wealth-decile winners and losers for the UK; None elsewhere."""
     if country != "uk":
         return None
     return build_intra_decile_output_from_collection(intra_wealth_decile)
@@ -83,6 +95,10 @@ def build_intra_wealth_decile(
 def build_intra_decile_output_from_collection(
     collection: object,
 ) -> IntraDecileOutput:
+    """Reshape intra-decile rows into per-category decile lists plus overall shares.
+
+    The ``all`` share for each category is the unweighted mean across deciles.
+    """
     if isinstance(collection, IntraDecileOutput):
         return collection
     deciles: dict[str, list[float]] = {label: [] for label in INTRA_DECILE_COLUMNS}

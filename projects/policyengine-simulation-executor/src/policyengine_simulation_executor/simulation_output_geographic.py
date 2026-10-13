@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 
 def _required_uk_geography_lookup_csv_path(spec: UKGeographyAssetSpec) -> str:
     """Resolve one required lookup under the runtime GCP identity."""
-
     from policyengine.outputs.uk_geography_impact import (
         resolve_uk_geography_lookup_csv_path,
     )
@@ -60,7 +59,6 @@ def _complete_uk_geography_output(
     name_field: str,
 ) -> GeographicImpactOutput:
     """Require every UK geography record to contain lookup-owned metadata."""
-
     output = build_geographic_impact_output(value)
     if output is None or not output.root:
         raise ValueError("UK geography output did not contain result records")
@@ -91,6 +89,10 @@ def _policyengine_us_district_metadata() -> tuple[dict[int, str], frozenset[str]
 
 
 def build_geographic_impact_output(value: object) -> GeographicImpactOutput | None:
+    """Validate a list of per-area records (or a model dumping to one) into the output.
+
+    Non-mapping items are dropped; None means ``value`` held no record list.
+    """
     if isinstance(value, GeographicImpactOutput):
         return value
     records = _output_model_dump(value)
@@ -108,6 +110,11 @@ def build_geographic_impact_output(value: object) -> GeographicImpactOutput | No
 def build_congressional_district_impact_output(
     value: object,
 ) -> CongressionalDistrictImpactOutput | None:
+    """Convert per-district records into public ``"ST-NN"`` district rows.
+
+    Returns None when ``value`` holds no record list; raises ``ValueError`` when
+    a record's state FIPS or district number cannot be determined.
+    """
     if isinstance(value, CongressionalDistrictImpactOutput):
         return value
     records = _output_model_dump(value)
@@ -194,6 +201,11 @@ def build_congressional_district_impact(
     *,
     region_code: str | None = None,
 ) -> CongressionalDistrictImpactOutput | None:
+    """Compute US congressional district impacts for national, state or group runs.
+
+    None for other countries or regions, and when the calculation fails (the
+    failure is logged; SPM selection errors still propagate).
+    """
     if country != "us":
         return None
     if not _should_build_us_congressional_district_impact(region_code):
@@ -225,7 +237,6 @@ def _require_uk_area_column(
     none of its own, and one built from a routed local-area dataset is a
     separate run.
     """
-
     if column not in household.columns:
         raise ValueError(
             f"UK {breakdown} breakdowns need {column} on the simulated dataset, "
@@ -237,6 +248,11 @@ def _require_uk_area_column(
 def build_uk_constituency_impact(
     country: str, baseline: Simulation, reform: Simulation
 ) -> GeographicImpactOutput | None:
+    """Compute UK parliamentary constituency impacts; None for other countries.
+
+    Downloads the constituency lookup if needed and raises when the dataset
+    lacks constituency codes or a record lacks lookup name or coordinates.
+    """
     if country != "uk":
         return None
     _require_uk_area_column(
@@ -266,6 +282,11 @@ def build_uk_local_authority_impact(
     *,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> GeographicImpactOutput | None:
+    """Compute UK local authority impacts, named and placed for the detected boundaries.
+
+    None for other countries. For the UK, ``uk_local_authority_metadata`` is
+    required, and a code outside its boundary version raises ``ValueError``.
+    """
     if country != "uk":
         return None
 

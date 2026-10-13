@@ -1,10 +1,10 @@
-"""Precompute library: planning, manifest assembly, orchestration, and the
-writer==reader identity contract.
+"""Tests for the precompute library's planning, manifests and orchestration.
 
-No Modal involved — the library takes function handles as parameters, so
-the orchestration runs against plain fakes here. Everything structured is
-a strict model from precompute_models; the fakes speak dicts, exactly
-like Modal's serialization boundary does.
+They also pin the writer==reader identity contract. No Modal involved —
+the library takes function handles as parameters, so the orchestration runs
+against plain fakes here. Everything structured is a strict model from
+precompute_models; the fakes speak dicts, exactly like Modal's
+serialization boundary does.
 """
 
 import sys
@@ -97,8 +97,11 @@ class TestSchemas:
             PrecomputePlan.model_validate(payload)
 
     def test_artifact_outcome_mirrors_runtime_constants(self):
-        """The Literal must track baseline_artifacts.OUTCOME_*: drift would
-        surface as a ValidationError mid-precompute-run, not in review."""
+        """The outcome Literal must track baseline_artifacts.OUTCOME_*.
+
+        Drift would surface as a ValidationError mid-precompute-run, not in
+        review.
+        """
         from typing import get_args
 
         from policyengine_simulation_executor import baseline_artifacts as ba
@@ -126,9 +129,11 @@ class TestPlanning:
         assert precompute.PRECOMPUTE_YEARS == [2026, 2027, 2025]
 
     def test_precompute_years_cover_runtime_default_year(self):
-        """The image bakes exactly the precomputed years, so the runtime
-        default year must be one of them or every default request pays a
-        runtime dataset build."""
+        """The runtime default year must be one of the precomputed years.
+
+        The image bakes exactly the precomputed years, so otherwise every
+        default request pays a runtime dataset build.
+        """
         from policyengine_simulation_executor.simulation_runtime import DEFAULT_YEAR
 
         assert DEFAULT_YEAR in precompute.PRECOMPUTE_YEARS
@@ -152,9 +157,11 @@ class TestPlanning:
         ]
 
     def test_manifest_payload_is_wire_compatible(self):
-        """The manifest is content-addressed: the typed model must digest
-        identically to the raw dict shape already published to the store
-        (key names included — note "schema", not "manifest_schema")."""
+        """The typed manifest must digest identically to the published dict shape.
+
+        The manifest is content-addressed, so key names matter too — note
+        "schema", not "manifest_schema".
+        """
         raw = {
             "schema": "mf1",
             "country": "us",
@@ -401,8 +408,11 @@ class TestWriterReaderContract:
         assert writer_identity.store_path.endswith(f"/{writer_identity.storage_id}.h5")
 
     def test_dataset_filename_matches_runtime_stem_lookup(self, monkeypatch):
-        """Real-manifest coverage: the artifact filename equals the exact
-        name the runtime's ensure_datasets existence check resolves."""
+        """The dataset artifact filename is the name the runtime looks for.
+
+        Real-manifest coverage: it equals the exact name the runtime's
+        ensure_datasets existence check resolves.
+        """
         from policyengine.provenance.manifest import (
             dataset_logical_name,
             resolve_dataset_reference,
@@ -812,7 +822,7 @@ class TestComputeBaselineImpl:
 
     @staticmethod
     def _planned_identity(selection):
-        """A real ``BaselineArtifactIdentity``, not a restated expression.
+        """Return a real ``BaselineArtifactIdentity``, not a restated expression.
 
         The plan the deploy publishes comes from this object's properties,
         so keying the test off them is what makes the write path a
@@ -896,9 +906,12 @@ class TestComputeBaselineImpl:
     def test_refuses_a_selection_scoped_plan_the_container_does_not_share(
         self, cohort_stubs
     ):
-        """The abort the review worried about, under a real selection: a
+        """Abort when the container resolved a different SPM selection than the plan.
+
+        This is the abort the review worried about, under a real selection: a
         container that resolved a different selection names a different
-        artifact, and nothing is published."""
+        artifact, and nothing is published.
+        """
         cohort_stubs.spm = {"scenario": "zero_real"}
         cohort_stubs.baseline = cohort_stubs.make_spm()
         entry = self._entry()
@@ -925,8 +938,10 @@ class TestComputeBaselineImpl:
 
 
 class TestVerifyDeterminismImpl:
-    """The gate's comparator: the pipeline's only correctness check must
-    never fail open."""
+    """The determinism gate's comparator must never fail open.
+
+    It is the pipeline's only correctness check.
+    """
 
     def _run(
         self,

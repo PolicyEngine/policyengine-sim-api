@@ -100,7 +100,6 @@ def _validate_submitted_parent(
     parent: ComparisonReportRecord,
 ) -> None:
     """Reject dispatch metadata that does not describe this exact report."""
-
     bundle = report.baseline.bundle
     expected = {
         "evaluation_id": report.evaluation_id,
@@ -152,7 +151,6 @@ def _claim_parent(
     store: ComparisonStore,
 ) -> tuple[ComparisonReportRecord, bool]:
     """Create the parent in Modal or claim a retry; reject duplicate execution."""
-
     coordinating_at = datetime.now(UTC)
     candidate = submitted.model_copy(
         update={
@@ -249,6 +247,16 @@ def coordinate_report(
     | None = None,
     runtime: ObservabilityRuntime | None = None,
 ) -> dict[str, Any]:
+    """Run one Stage 12 comparison report end to end; return its aggregate descriptor.
+
+    Claims the parent report (one already running or finished returns a
+    ``deduplicated`` summary instead), starts or reattaches the baseline and
+    reform child simulations, and aggregates their digest-checked artifacts;
+    shadow runs are then compared with the production result. A dispatch
+    context that disagrees with the report raises ``ValueError`` before the
+    claim; any later failure marks the report FAILED and raises a
+    ``RuntimeError`` that carries no calculation detail.
+    """
     report = ReportExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
     submitted_parent = ComparisonReportRecord.model_validate(parent_payload)

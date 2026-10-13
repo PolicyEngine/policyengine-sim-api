@@ -16,7 +16,6 @@ def add_static_runtime_files(
     uv_project_dir: str,
 ) -> modal.Image:
     """Copy executor static files into a Modal image at the importable path."""
-
     local_directory = (
         str(
             Path(uv_project_dir)

@@ -25,6 +25,11 @@ def _expectations(values: list[str]) -> dict[str, str]:
 
 
 def main() -> None:
+    """Check ``--expect`` assertions, then emit the resolved bundle as canonical JSON.
+
+    The JSON goes to stdout, or to ``--output`` with only the bundle manifest
+    digest printed.
+    """
     parser = argparse.ArgumentParser(
         description="Export the packaged PolicyEngine.py bundle for Stage 12",
     )

@@ -19,7 +19,7 @@ TEST_RUNTIME = NoOpObservabilityRuntime()
 
 
 def _bare_country_module():
-    """A country module whose model has no loadable region registry."""
+    """Return a country module whose model has no loadable region registry."""
     return SimpleNamespace(
         model=SimpleNamespace(get_region=lambda code: None, region_registry=None)
     )
@@ -822,7 +822,7 @@ def _spm_child(index, *, selection=SPM_SELECTION, year="2026"):
 
 
 def _spm_child_missing(index, field):
-    """A child whose canonical receipt lost a resolved option."""
+    """Return a child whose canonical receipt lost a resolved option."""
     child = _spm_child(index)
     del child["spm_provenance"]["baseline"]["receipt"][field]
     return child
@@ -830,8 +830,10 @@ def _spm_child_missing(index, field):
 
 @pytest.fixture
 def stub_reduce(monkeypatch):
-    """The microdata reduce itself is covered by
-    test_segmented_national_reduce; these tests pin the SPM merge."""
+    """Stub out the microdata reduce so these tests pin only the SPM merge.
+
+    The reduce itself is covered by test_segmented_national_reduce.
+    """
     monkeypatch.setattr(
         sn, "build_national_output", lambda children, **kwargs: {"budget": {}}
     )

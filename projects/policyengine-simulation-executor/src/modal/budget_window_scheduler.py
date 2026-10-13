@@ -63,6 +63,7 @@ def serialize_batch_status(
     *,
     runtime: ObservabilityRuntime,
 ) -> dict[str, Any]:
+    """Render ``state`` as the JSON-ready batch status response."""
     with runtime.span(
         BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
     ):
@@ -74,6 +75,7 @@ def load_or_create_batch_state(
     *,
     runtime: ObservabilityRuntime,
 ) -> BudgetWindowBatchState:
+    """Return the batch's submit-time seed state, creating and storing it if absent."""
     with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)):
         state = get_batch_job_seed(context.batch_job_id)
     if state is None:
@@ -102,6 +104,11 @@ class BudgetWindowBatchRunner:
         poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
         poll_interval_backoff_factor: float = POLL_INTERVAL_BACKOFF_FACTOR,
     ) -> None:
+        """Load or seed the batch state and resolve a lazy child-function handle.
+
+        Children run on the resolved app's ``run_simulation`` function.
+        ``modal_module`` replaces the ``modal`` module in tests.
+        """
         self.context = context
         self.runtime = runtime
         self.modal = modal if modal_module is None else modal_module
@@ -135,6 +142,12 @@ class BudgetWindowBatchRunner:
         self._backoff_sleep_count = 0
 
     def run(self) -> dict[str, Any]:
+        """Spawn and poll children until all finish or one fails; return the status.
+
+        At most ``max_parallel`` children run at once. Polling backs off
+        exponentially while no child makes progress, and the first child
+        failure fails the whole batch.
+        """
         mark_batch_running(self.state)
         with self.runtime.span(
             BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
@@ -164,9 +177,14 @@ class BudgetWindowBatchRunner:
         return self.complete_batch()
 
     def has_pending_work(self) -> bool:
+        """Return True while any year is queued or running."""
         return bool(self.state.queued_years or self.state.running_years)
 
     def spawn_until_capacity(self) -> None:
+        """Spawn queued years until ``max_parallel`` children are running.
+
+        Each spawn is recorded in the stored batch state before the next one.
+        """
         while (
             len(self.state.running_years) < self.state.max_parallel
             and self.state.queued_years
@@ -205,6 +223,11 @@ class BudgetWindowBatchRunner:
                 put_batch_job_state(self.state)
 
     def poll_running_children_once(self) -> bool:
+        """Probe each running child once without blocking; return True if any finished.
+
+        A failed child, or a result that cannot be parsed, fails the batch and
+        returns False immediately.
+        """
         progress_made = False
 
         for simulation_year in list(self.state.running_years):
@@ -293,6 +316,7 @@ class BudgetWindowBatchRunner:
         return progress_made
 
     def resolve_child_handle(self, simulation_year: str) -> ChildSimulationHandle:
+        """Return the year's call handle, rebuilt from the stored job id if needed."""
         handle = self.child_handles.get(simulation_year)
         if handle is not None and handle.call is not None:
             return handle
@@ -324,6 +348,7 @@ class BudgetWindowBatchRunner:
         simulation_year: str,
         error: str,
     ) -> None:
+        """Mark the year's child and the whole batch failed and store the state."""
         mark_child_failed(self.state, year=simulation_year, error=error)
         mark_batch_failed(self.state, error=error)
         with self.runtime.span(
@@ -332,6 +357,7 @@ class BudgetWindowBatchRunner:
             put_batch_job_state(self.state)
 
     def complete_batch(self) -> dict[str, Any]:
+        """Aggregate annual impacts, mark the batch complete, and return its status."""
         with self.runtime.span(
             BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_AGGREGATION)
         ):

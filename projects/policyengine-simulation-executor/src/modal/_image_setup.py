@@ -1,5 +1,4 @@
-"""
-Standalone image setup functions.
+"""Standalone image setup functions.
 
 These functions are executed during Modal image build and must not
 import any other modules from this package to avoid dependency issues.

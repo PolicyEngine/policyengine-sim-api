@@ -41,7 +41,6 @@ def compare_completed_report(
     stage_plan: StagePlan | None = None,
 ) -> None:
     """Persist an isolated production/Stage 12 comparison after aggregation."""
-
     production_job_id = context.production_function_call_id
     if production_job_id is None:
         return

@@ -122,9 +122,12 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
 
 
 def _fake_manifest():
-    """A schema-valid store payload: app.py validates what it reads, so
-    the fake must satisfy ArtifactManifest — deriving it from the model
-    keeps the test from drifting off the wire shape."""
+    """Return a schema-valid store manifest payload.
+
+    app.py validates what it reads, so the fake must satisfy
+    ArtifactManifest — deriving it from the model keeps the test from
+    drifting off the wire shape.
+    """
     from policyengine_simulation_executor.precompute_models import ArtifactManifest
 
     return ArtifactManifest.model_validate(
@@ -243,11 +246,13 @@ def test_modal_image_fetches_artifacts_between_env_and_local_source(monkeypatch)
 
 
 def test_modal_image_uses_failing_sentinel_without_manifest_digest(monkeypatch):
-    """Without a digest the app must still import — the precompute and
-    smoke apps import it where no digest can exist — but the fetch layer
-    args must carry a None manifest, which makes fetch_artifacts fail the
-    build loudly. A digest-less deploy cannot silently ship an
-    artifact-less image."""
+    """Without a digest the app imports, but its fetch layer fails the build.
+
+    The precompute and smoke apps import the app where no digest can exist,
+    so the import must succeed. The fetch layer args must carry a None
+    manifest, which makes fetch_artifacts fail the build loudly: a
+    digest-less deploy cannot silently ship an artifact-less image.
+    """
     install_fake_modal(monkeypatch)
     monkeypatch.setenv("POLICYENGINE_VERSION", "4.19.1")
     monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.27.1")

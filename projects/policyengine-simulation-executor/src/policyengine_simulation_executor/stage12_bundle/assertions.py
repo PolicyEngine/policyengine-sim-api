@@ -13,6 +13,10 @@ if TYPE_CHECKING:
 
 
 def assertion_values(bundle: Stage12BundleManifest) -> dict[str, str]:
+    """Flatten the bundle's assertable versions under dotted names.
+
+    Per-country fields are named ``countries.<country>.<field>``.
+    """
     values = {
         "policyengine_version": bundle.policyengine_version,
         "policyengine_requirement": bundle.policyengine_requirement,
@@ -41,7 +45,6 @@ def assert_expected_bundle_values(
     expected: Mapping[str, str],
 ) -> None:
     """Check external values without allowing them to select bundle content."""
-
     actual = assertion_values(bundle)
     for name, expected_value in expected.items():
         if name not in actual:

@@ -79,11 +79,12 @@ MANIFEST_DIGEST_PREFIX = "MANIFEST_DIGEST="
 
 
 def manifest_digest_line(digest: str) -> str:
+    """Format the ``MANIFEST_DIGEST=<digest>`` line the CI deploy job parses."""
     return f"{MANIFEST_DIGEST_PREFIX}{digest}"
 
 
 def cohort_params(year: int, group: list[str]) -> dict:
-    """The synthetic request a segmented-national child would receive."""
+    """Return the synthetic request a segmented-national child would receive."""
     return {
         "country": PRECOMPUTE_COUNTRY,
         "scope": "macro",
@@ -155,7 +156,7 @@ def select_work(plan: PrecomputePlan, *, force: bool) -> WorkSelection:
 
 
 def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
-    """The deploy manifest: receipt + every artifact the image must fetch."""
+    """Build the deploy manifest: the receipt and each artifact the image must fetch."""
     artifacts = [
         ManifestArtifact(
             type="dataset",
@@ -448,6 +449,7 @@ def verify_determinism_impl(
 
 
 def publish_manifest_impl(bucket: str, plan: PrecomputePlan) -> str:
+    """Store the plan's manifest write-once and return its content digest."""
     from policyengine_simulation_executor.artifact_store import ArtifactStore
 
     manifest = build_manifest(plan)
@@ -465,7 +467,7 @@ def run_precompute(
     publish_manifest: RemoteFunction,
     echo: Callable[[str], None] = print,
 ) -> str:
-    """The local-entrypoint orchestration: plan, spawn misses, gate, publish.
+    """Orchestrate the local entrypoint: plan, spawn misses, gate, publish.
 
     Takes the five Modal function handles as parameters (each offering
     ``.remote``/``.spawn``) so the flow is testable with plain fakes.

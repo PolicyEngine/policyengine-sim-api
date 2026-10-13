@@ -107,7 +107,6 @@ class UKLocalAuthorityResources:
         boundary_version: UKLocalAuthorityBoundaryVersion,
     ) -> Mapping[str, LocalAuthorityDisplayMetadata]:
         """Combine common names with one boundary version's rendering coordinates."""
-
         return MappingProxyType(
             {
                 code: LocalAuthorityDisplayMetadata(
@@ -195,7 +194,6 @@ def _load_coordinates(filename: str) -> Mapping[str, LocalAuthorityCoordinate]:
 @lru_cache(maxsize=1)
 def load_uk_local_authority_resources() -> UKLocalAuthorityResources:
     """Load and validate every packaged local-authority resource."""
-
     names = _load_names()
     lad22 = _load_coordinates("coordinates_lad22.csv")
     lad23 = _load_coordinates("coordinates_lad23.csv")
@@ -252,7 +250,6 @@ def detect_uk_local_authority_boundary_version(
     values: Iterable[object],
 ) -> UKLocalAuthorityMetadata:
     """Identify LAD22 or LAD23 from the unscoped dataset's authority codes."""
-
     observed_codes = frozenset(
         code
         for value in values
@@ -298,7 +295,6 @@ def uk_area_regions_routed() -> bool:
     region types have one may the UK default, a national file, carry no area
     codes: their runs and breakdowns then belong to that local-area dataset.
     """
-
     from policyengine.provenance.manifest import get_release_manifest
 
     region_datasets = get_release_manifest("uk").region_datasets
@@ -312,7 +308,6 @@ def uk_area_codes_required(region_code: str | None) -> bool:
     nation-level run may use a dataset without them only when the bundle
     routes both area region types to another dataset.
     """
-
     region_type = (region_code or "").split("/", maxsplit=1)[0]
     if region_type in UK_AREA_REGION_TYPES:
         return True
@@ -331,7 +326,6 @@ def detect_uk_local_authority_metadata(
     that does not need area codes (see ``uk_area_codes_required``); a missing
     column is never read as "this dataset is national-only" on its own.
     """
-
     if country != "uk":
         return None
     data = getattr(dataset, "data", None)
@@ -353,7 +347,6 @@ def detect_uk_local_authority_metadata(
 
 def uk_hdf_household_has_local_authority_codes(dataset_path: str) -> bool:
     """Whether an installed UK HDF dataset's household table has ``la_code_oa``."""
-
     with pd.HDFStore(dataset_path, mode="r") as store:
         if "household" not in store:
             raise ValueError("UK dataset contains no household table")
@@ -367,7 +360,6 @@ def detect_uk_local_authority_metadata_from_hdf(
     dataset_path: str,
 ) -> UKLocalAuthorityMetadata:
     """Validate an installed UK HDF dataset against the packaged metadata."""
-
     observed_codes: set[object] = set()
     with pd.HDFStore(dataset_path, mode="r") as store:
         if "/household" not in store.keys():

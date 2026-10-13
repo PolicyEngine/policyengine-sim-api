@@ -129,7 +129,7 @@ def build_national_output(
     resolved_data_version: str | None = None,
     runtime: ObservabilityRuntime | None = None,
 ) -> dict[str, Any]:
-    """The reduce: children's microdata -> full national macro output dict.
+    """Reduce the children's microdata into the full national macro output dict.
 
     Runs the existing ``SimulationOutputBuilder`` over stand-in simulations
     with ``resolved_region_code=country`` so the national congressional

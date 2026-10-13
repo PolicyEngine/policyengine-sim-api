@@ -302,11 +302,12 @@ def test_run_budget_window_batch_impl_marks_failure(
 def test_scheduler_sleep_exponentially_backs_off_then_resets_on_progress(
     monkeypatch, mock_batch_modal, observability_runtime
 ):
-    """When every poll sees nothing resolve the runner should sleep with
+    """Back off exponentially while polls see no progress; reset on progress.
+
+    When every poll sees nothing resolve, the runner should sleep with
     increasing intervals, capped at the configured max. Any progress in a
     subsequent poll should reset the cadence to the initial interval.
     """
-
     request, payload = _build_parent_payload(window_size=1)
     _seed_parent_batch(request, mock_batch_modal["parent_call_id"])
 
@@ -362,13 +363,13 @@ def test_scheduler_sleep_exponentially_backs_off_then_resets_on_progress(
 def test_scheduler_publishes_bounded_poll_aggregates(
     monkeypatch, mock_batch_modal, observability_runtime
 ):
-    """Poll/sleep telemetry must be published as overwriting aggregate
-    attributes, not one segment per probe: segments append nodes to the
-    operation's in-memory segment tree, so a near-timeout batch polling for
-    an hour would grow memory without bound and emit a final operation log
-    line large enough for Modal's log pipeline to truncate.
-    """
+    """Publish poll/sleep telemetry as overwriting aggregates, not per-probe segments.
 
+    Segments append nodes to the operation's in-memory segment tree, so a
+    near-timeout batch polling for an hour would grow memory without bound
+    and emit a final operation log line large enough for Modal's log
+    pipeline to truncate.
+    """
     request, payload = _build_parent_payload(window_size=1)
     _seed_parent_batch(request, mock_batch_modal["parent_call_id"])
 

@@ -97,7 +97,6 @@ def _summarize_bundle_status(status: dict) -> dict:
 
 def _validate_installed_uk_local_authority_dataset() -> str:
     """Require the installed UK dataset to match one packaged boundary version."""
-
     dataset_path = resolve_local_bundle_dataset_path("uk", None)
     if dataset_path is None:
         raise RuntimeError("installed certified UK dataset is unavailable")
@@ -107,6 +106,11 @@ def _validate_installed_uk_local_authority_dataset() -> str:
 
 @app.function(image=smoke_image, timeout=600, memory=8192)
 def smoke_import_executor() -> dict:
+    """Check the installed bundle, then import the workers' lazy request-time modules.
+
+    Raises on any bundle mismatch or import failure; otherwise returns the
+    bundle summary and how many shared-library modules imported.
+    """
     import importlib
     import os
     import pkgutil
@@ -162,6 +166,7 @@ def smoke_import_executor() -> dict:
 
 @app.local_entrypoint()
 def main() -> None:
+    """Run the image smoke remotely and print its report."""
     report = smoke_import_executor.remote()
     print(report)
     print("executor image smoke OK")

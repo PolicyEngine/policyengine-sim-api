@@ -37,6 +37,10 @@ PARQUET_CONTRACT = SIMULATION_PARQUET_PAYLOAD_CONTRACT
 
 
 def canonical_json_bytes(value: object) -> bytes:
+    """Encode ``value`` as compact, key-sorted UTF-8 JSON so equal values hash equally.
+
+    NaN and infinity raise ``ValueError`` rather than producing non-standard JSON.
+    """
     return json.dumps(
         value,
         sort_keys=True,
@@ -52,6 +56,11 @@ def comparison_run_prefix(
     created_at: datetime,
     evaluation_id: UUID,
 ) -> str:
+    """Return ``stage-12-runs/<environment>/<YYYY>/<MM>/<evaluation_id>`` for one run.
+
+    Raises ``ValueError`` for an environment that could escape the prefix or a
+    naive ``created_at``.
+    """
     if not environment or "/" in environment or ".." in environment:
         raise ValueError("invalid Stage 12 artifact environment")
     if created_at.tzinfo is None:
@@ -62,18 +71,22 @@ def comparison_run_prefix(
 
 
 def input_path(*, prefix: str, role: str) -> str:
+    """Return the key of the planned execution input JSON for one simulation role."""
     return f"{prefix}/inputs/{role}.json"
 
 
 def simulation_path(*, prefix: str, role: str) -> str:
+    """Return the key of the Parquet output for one simulation role."""
     return f"{prefix}/simulations/{role}.parquet"
 
 
 def aggregate_path(*, prefix: str) -> str:
+    """Return the key of the run's aggregate report JSON."""
     return f"{prefix}/reports/aggregate.json"
 
 
 def comparison_path(*, prefix: str) -> str:
+    """Return the key of the run's result-comparison report JSON."""
     return f"{prefix}/reports/comparison.json"
 
 
@@ -123,6 +136,12 @@ def serialize_simulation_frames(
     calculation_provenance: SPMProvenance | None = None,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> tuple[bytes, RowIdentity]:
+    """Encode entity frames as one deterministic Parquet payload plus its row identity.
+
+    Rows are ordered by each entity's ``<entity>_id`` column, which must exist
+    and be unique (``ValueError`` otherwise). Source dtypes and any SPM or UK
+    local authority metadata travel in the Parquet schema metadata.
+    """
     combined, dtypes, identifier_values = _frame_payload(frames)
     identity_payload = canonical_json_bytes(identifier_values)
     row_identity = RowIdentity(
@@ -166,6 +185,11 @@ def serialize_simulation_frames(
 
 
 def deserialize_simulation_frames(payload: bytes) -> dict[str, pd.DataFrame]:
+    """Decode a simulation payload back into per-entity frames with their source dtypes.
+
+    Raises ``ValueError`` for an unsupported schema version or missing dtype
+    metadata.
+    """
     table = pq.read_table(BytesIO(payload))
     metadata = table.schema.metadata or {}
     if (
@@ -209,7 +233,6 @@ def deserialize_simulation_frames(payload: bytes) -> dict[str, pd.DataFrame]:
 
 def _parquet_schema_metadata(payload: bytes) -> Mapping[bytes, bytes]:
     """Read artifact metadata without materializing its simulation rows."""
-
     parquet_file = pq.ParquetFile(BytesIO(payload))
     return parquet_file.schema_arrow.metadata or {}
 
@@ -217,6 +240,7 @@ def _parquet_schema_metadata(payload: bytes) -> Mapping[bytes, bytes]:
 def deserialize_calculation_provenance(
     payload: bytes,
 ) -> SPMProvenance | None:
+    """Read a simulation artifact's SPM calculation receipt, or None if absent."""
     raw = _parquet_schema_metadata(payload).get(
         PARQUET_CONTRACT.calculation_provenance_metadata_key.encode()
     )
@@ -229,7 +253,6 @@ def deserialize_uk_local_authority_metadata(
     payload: bytes,
 ) -> UKLocalAuthorityMetadata | None:
     """Read typed UK authority metadata from a Stage 12 simulation artifact."""
-
     raw = _parquet_schema_metadata(payload).get(
         PARQUET_CONTRACT.uk_local_authority_metadata_key.encode()
     )
@@ -239,7 +262,14 @@ def deserialize_uk_local_authority_metadata(
 
 
 class Stage12ArtifactStore:
+    """Write-once storage for one private bucket's Stage 12 run artifacts.
+
+    A write to a path already holding identical bytes succeeds; different
+    bytes raise ``RuntimeError``.
+    """
+
     def __init__(self, bucket_name: str, *, store: ArtifactStore | None = None) -> None:
+        """Bind to ``bucket_name``, which must be non-empty (there is no default)."""
         if not bucket_name:
             raise ValueError(
                 "Stage 12 requires an explicitly configured private bucket"
@@ -279,6 +309,7 @@ class Stage12ArtifactStore:
         prefix: str,
         simulation: PlannedSimulationExecutionInput,
     ) -> ArtifactReference:
+        """Store a simulation's planned execution input as canonical JSON."""
         return self._write_immutable(
             input_path(prefix=prefix, role=simulation.role.value),
             canonical_json_bytes(simulation.model_dump(mode="json")),
@@ -294,6 +325,7 @@ class Stage12ArtifactStore:
         calculation_provenance: SPMProvenance | None = None,
         uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
     ) -> SimulationArtifactDescriptor:
+        """Store a simulation's output frames and describe the artifact for reports."""
         payload, row_identity = serialize_simulation_frames(
             frames,
             calculation_provenance=calculation_provenance,
@@ -321,6 +353,7 @@ class Stage12ArtifactStore:
         prefix: str,
         payload: Mapping[str, Any],
     ) -> ArtifactReference:
+        """Validate and store the run's aggregate report."""
         validated = AggregateReportArtifactPayload.model_validate(payload)
         return self._write_immutable(
             aggregate_path(prefix=prefix),
@@ -334,6 +367,7 @@ class Stage12ArtifactStore:
         prefix: str,
         payload: Mapping[str, Any],
     ) -> ArtifactReference:
+        """Validate and store the run's result-comparison report."""
         validated = ResultComparisonArtifactPayload.model_validate(payload)
         return self._write_immutable(
             comparison_path(prefix=prefix),
@@ -342,6 +376,11 @@ class Stage12ArtifactStore:
         )
 
     def read(self, uri: str) -> bytes:
+        """Return the bytes at a ``gs://`` URI in this store's bucket.
+
+        Raises ``ValueError`` for another bucket and ``FileNotFoundError`` when
+        the object is missing.
+        """
         expected_prefix = f"gs://{self.bucket_name}/"
         if not uri.startswith(expected_prefix):
             raise ValueError("Stage 12 artifact URI names another bucket")

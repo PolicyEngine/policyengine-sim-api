@@ -19,6 +19,10 @@ app = modal.App("policyengine-stage12-v2-static-runtime-files-smoke")
 
 
 def validate_installed_uk_local_authority_dataset() -> str:
+    """Return the local authority boundary version of the installed UK dataset.
+
+    Raises if the image has no installed certified UK dataset.
+    """
     dataset_path = resolve_local_bundle_dataset_path("uk", None)
     if dataset_path is None:
         raise RuntimeError("installed certified UK dataset is unavailable")
@@ -29,7 +33,7 @@ def validate_installed_uk_local_authority_dataset() -> str:
 
 @app.function(image=uk_worker_image, timeout=600, memory=512)
 def smoke_stage12_static_runtime_files() -> dict[str, int | str]:
-
+    """Count the UK local authority files inside the UK worker image."""
     resources = load_uk_local_authority_resources()
     return {
         "names": len(resources.names),
@@ -47,6 +51,7 @@ def smoke_stage12_static_runtime_files() -> dict[str, int | str]:
 
 @app.local_entrypoint()
 def main() -> None:
+    """Run the smoke remotely and raise unless counts and boundary version match."""
     observed = smoke_stage12_static_runtime_files.remote()
     expected_counts = {
         "names": 378,

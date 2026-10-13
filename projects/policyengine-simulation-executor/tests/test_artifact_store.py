@@ -115,8 +115,11 @@ def test_download_creates_parent_dirs(store, fake_client, tmp_path):
 
 
 def test_failed_download_leaves_no_file_at_the_final_name(store, fake_client, tmp_path):
-    """Callers guard on exists(): a truncated file surviving at the final
-    name would be trusted as complete by the next run in the container."""
+    """A failed download must not leave a truncated file at the final name.
+
+    Callers guard on exists(), so a truncated file surviving at the final
+    name would be trusted as complete by the next run in the container.
+    """
     fake_client.objects["datasets/us/d/populace_year_2026.h5"] = b"content"
     fake_client.broken_downloads.add("datasets/us/d/populace_year_2026.h5")
     destination = tmp_path / "populace_year_2026.h5"

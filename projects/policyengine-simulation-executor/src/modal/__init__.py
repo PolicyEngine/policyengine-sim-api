@@ -1,5 +1,4 @@
-"""
-Modal deployment package for PolicyEngine Simulation API.
+"""Modal deployment package for PolicyEngine Simulation API.
 
 Deploy with: modal deploy src/modal/app.py
 

@@ -22,6 +22,11 @@ def build_child_payload(
     strip_fields: Iterable[str],
     overrides: dict[str, Any],
 ) -> dict[str, Any]:
+    """Copy parent params minus ``strip_fields`` and apply the child ``overrides``.
+
+    ``_telemetry`` is always re-attached from the parent (when it is a dict),
+    even if ``overrides`` sets it, so children join the parent's trace.
+    """
     strip = set(strip_fields) | {"_telemetry"}
     payload = {key: value for key, value in raw_params.items() if key not in strip}
     payload.update(overrides)
@@ -32,5 +37,5 @@ def build_child_payload(
 
 
 def next_backoff(current: float, *, factor: float, maximum: float) -> float:
-    """The next sleep in an exponential backoff walk."""
+    """Return the next sleep in an exponential backoff walk, capped at ``maximum``."""
     return min(current * factor, maximum)

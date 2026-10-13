@@ -1,3 +1,5 @@
+"""Write the executor app's OpenAPI spec to ``artifacts/openapi.json`` when imported."""
+
 import json
 from pathlib import Path
 

@@ -14,12 +14,14 @@ from .errors import Stage12BundleError
 
 
 def require_mapping(value: object, path: str) -> Mapping[str, object]:
+    """Return ``value`` as a string-keyed mapping, or raise naming ``path``."""
     if not isinstance(value, Mapping):
         raise Stage12BundleError(f"PolicyEngine.py bundle field {path} is missing")
     return {str(key): item for key, item in value.items()}
 
 
 def require_text(value: object, path: str) -> str:
+    """Return ``value`` if a non-empty string without outer whitespace, else raise."""
     if not isinstance(value, str) or not value.strip():
         raise Stage12BundleError(
             f"PolicyEngine.py bundle field {path} must be a non-empty string"
@@ -35,6 +37,11 @@ def require_exact_package(
     packages: Mapping[str, object],
     package_name: str,
 ) -> tuple[str, str]:
+    """Return a package's version and its exact ``name==version`` install requirement.
+
+    Raises ``Stage12BundleError`` unless the entry names itself consistently and
+    its requirement pins exactly that version.
+    """
     package = require_mapping(packages.get(package_name), f"packages.{package_name}")
     name = require_text(package.get("name"), f"packages.{package_name}.name")
     version = require_text(
@@ -70,7 +77,6 @@ def normalize_country_bundle(
     data_releases: Mapping[str, object],
 ) -> Stage12CountryBundle:
     """Validate and normalize one country's model and dataset release."""
-
     country_metadata = require_mapping(countries.get(country), f"countries.{country}")
     country_package_name = require_text(
         country_metadata.get("model_package"),

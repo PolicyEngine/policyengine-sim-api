@@ -112,9 +112,9 @@ def _activates_labor_supply_response(params: dict[str, Any]) -> bool:
 
 
 def is_plain_national_macro(params: dict[str, Any]) -> bool:
-    """The request SHAPE of a plain US national macro run (ignores the
-    eligibility knobs — see ``should_run_segmented_national``).
+    """Return whether ``params`` has the request SHAPE of a plain US national macro run.
 
+    Ignores the eligibility knobs (see ``should_run_segmented_national``).
     National is spelled two ways in the wild: region omitted (the sim API's
     own convention) and ``region: "us"`` (what API v1 sends on every
     national run). Both must match, mirroring the worker's normalisation
@@ -132,7 +132,7 @@ def is_plain_national_macro(params: dict[str, Any]) -> bool:
 
 
 def should_run_segmented_national(params: dict[str, Any]) -> bool:
-    """True when a request should fan out across the national partition.
+    """Return True when a request should fan out across the national partition.
 
     Eligible: a plain US national macro shape, not opted out via
     ``segmented: false``. Falls back to monolithic for ``include_cliffs``
@@ -196,6 +196,10 @@ class SegmentedNationalRunner:
         clock: Callable[[], float] = time.monotonic,
         progress: JobProgressReporter = NULL_JOB_PROGRESS,
     ) -> None:
+        """Resolve the country's region groups and a lazy segment-worker handle.
+
+        Raises ValueError when the country has no national partition.
+        """
         self.params = params
         self.app_name = app_name
         self.runtime = runtime
@@ -232,6 +236,10 @@ class SegmentedNationalRunner:
             self.runtime.set_context(simulation_year=str(params["time_period"]))
 
     def run(self) -> dict[str, Any]:
+        """Spawn a child per region group, wait for all, and reduce to national output.
+
+        Any child failure cancels the remaining children and raises.
+        """
         country_module = self._country_module()
         self._extend_last_group_with_uncovered_states(country_module)
         self.progress.start_segments(len(self.groups))
@@ -250,11 +258,13 @@ class SegmentedNationalRunner:
     def _extend_last_group_with_uncovered_states(
         self, country_module: ModuleType
     ) -> None:
-        """Registry state regions missing from the static partition ride in
-        the last group, loudly, so a new state-level region added to the
-        model cannot silently drop its households from national results.
-        (Households whose state has NO registered region remain invisible
-        here; the partition test pins the registry at pin-bump time.)
+        """Append registry state regions missing from the partition to the last group.
+
+        They ride along loudly (a warning and a run attribute) so a new
+        state-level region added to the model cannot silently drop its
+        households from national results. (Households whose state has NO
+        registered region remain invisible here; the partition test pins the
+        registry at pin-bump time.)
         """
         # region_registry is populated eagerly in the model version's
         # __init__; None only occurs for stub models (unit tests).
@@ -561,6 +571,7 @@ def run_segmented_national_impl(
     runtime: ObservabilityRuntime,
     progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict[str, Any]:
+    """Run ``params`` as a segmented national fan-out on ``app_name``'s segment pool."""
     return SegmentedNationalRunner(
         params,
         app_name=app_name,
@@ -576,8 +587,11 @@ def dispatch_run_simulation(
     runtime: ObservabilityRuntime,
     progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict[str, Any]:
-    """The run_simulation entrypoint's routing: segmented national fan-out
-    for eligible requests, the monolithic path for everything else."""
+    """Route a ``run_simulation`` request to segmented fan-out or the monolithic path.
+
+    Segmented national fan-out serves eligible requests (see
+    ``should_run_segmented_national``); everything else runs monolithically.
+    """
     from policyengine_simulation_executor.spm import normalize_runtime_spm
 
     selection = normalize_runtime_spm(params)

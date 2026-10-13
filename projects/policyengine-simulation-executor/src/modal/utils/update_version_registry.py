@@ -32,6 +32,8 @@ ROUTING_PUBLICATION_KEY = "publication"
 
 
 class CountryBundleMetadata(TypedDict):
+    """One country's model package, data release and dataset URIs in a bundle."""
+
     country: str
     model_package_name: str
     model_version: str
@@ -47,6 +49,11 @@ class CountryBundleMetadata(TypedDict):
 
 
 class BundleManifestMetadata(TypedDict):
+    """The release bundle served by one deployed app, keyed by its policyengine version.
+
+    ``spm`` is present only when the runtime reports an SPM capability.
+    """
+
     app_name: str
     policyengine_version: str
     us: CountryBundleMetadata
@@ -58,18 +65,24 @@ class BundleManifestMetadata(TypedDict):
 
 
 class LatestVersions(TypedDict):
+    """The versions that unpinned requests route to, per route kind."""
+
     policyengine: str
     us: str
     uk: str
 
 
 class RouteMaps(TypedDict):
+    """Version-to-app-name routes for each route kind."""
+
     policyengine: dict[str, str]
     us: dict[str, str]
     uk: dict[str, str]
 
 
 class RoutingState(TypedDict):
+    """The routing snapshot stored as one value under the routing Dict's active key."""
+
     schema_version: int
     generation: str
     latest: LatestVersions
@@ -86,7 +99,6 @@ def _is_newer_version(candidate: str, current: str | None) -> bool:
     opted in via ``--force-latest``. That decision is made by the caller;
     this helper answers the strict-greater-than question for valid versions.
     """
-
     if current is None:
         return True
     try:
@@ -122,6 +134,7 @@ def build_bundle_manifest_metadata(
     app_name: str,
     policyengine_version: str,
 ) -> BundleManifestMetadata:
+    """Describe the installed release bundle as served by ``app_name``."""
     from policyengine_simulation_contract.job_progress import (
         JOB_PROGRESS_CAPABILITY_VERSION,
     )
@@ -200,6 +213,12 @@ def validate_routing_state(
     *,
     required_policyengine_manifests: Iterable[str] = (),
 ) -> None:
+    """Raise ValueError unless ``state`` is a consistent schema-1 routing snapshot.
+
+    Each required ``latest`` entry must have a route, and every stored bundle
+    manifest must match its policyengine route. A policyengine route may lack
+    a manifest unless its version is in ``required_policyengine_manifests``.
+    """
     if state.get("schema_version") != 1:
         raise ValueError("Routing state schema_version must be 1")
 
@@ -260,6 +279,12 @@ def build_next_routing_state(
     uk_version: str,
     force_latest: bool = False,
 ) -> RoutingState:
+    """Return ``current_state`` with routes and the bundle manifest for a new app added.
+
+    ``latest`` advances only to a newer policyengine version, unless
+    ``force_latest`` (an intentional rollback). Raises ValueError when the US
+    or UK version differs from the installed bundle's model version.
+    """
     manifest = build_bundle_manifest_metadata(
         app_name=app_name,
         policyengine_version=policyengine_version,
@@ -874,6 +899,12 @@ def build_legacy_seed_routing_state(
     uk_versions: dict,
     app_release_bundles: dict | None = None,
 ) -> RoutingState:
+    """Build a routing state from snapshots of the legacy per-kind version Dicts.
+
+    Policyengine routes missing from the legacy Dict are inferred from
+    country app names, and a missing policyengine ``latest`` is inferred from
+    the countries' latest apps, falling back to the newest route.
+    """
     state = _empty_routing_state()
     state["generation"] = "legacy-seed"
     state["routes"]["us"] = _version_routes(us_versions)
@@ -944,6 +975,11 @@ def _merge_legacy_seed_into_current(
 
 
 def seed_active_routing_state_from_legacy(*, environment: str) -> RoutingState:
+    """Seed the active routing state from the legacy Dicts and store it.
+
+    Routes and ``latest`` entries already in the active state win over the
+    legacy seed.
+    """
     _require_serialized_routing_workflow()
     store = modal.Dict.from_name(
         ROUTING_STATE_DICT_NAME,
@@ -986,6 +1022,7 @@ def publish_routing_state(
     uk_version: str,
     force_latest: bool = False,
 ) -> RoutingState:
+    """Add a deployed app to the active routing state and store it in one write."""
     _require_serialized_routing_workflow()
     store = modal.Dict.from_name(
         ROUTING_STATE_DICT_NAME,
@@ -1038,6 +1075,7 @@ def restore_routing_state(
 
 
 def main() -> None:
+    """Publish a deployed app's routes, or seed the state from legacy Dicts."""
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(

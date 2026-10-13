@@ -12,6 +12,7 @@ from policyengine_simulation_executor.simulation_output_common import _output_mo
 
 
 def build_cliff_impact(analysis: object) -> CliffImpactOutput | None:
+    """Return the baseline and reform cliff impact, or None if it was not computed."""
     cliff_impact = getattr(analysis, "cliff_impact", None)
     if isinstance(cliff_impact, CliffImpactOutput):
         return cliff_impact

@@ -1,5 +1,4 @@
-"""
-Simulation implementation - pure logic with snapshotted imports.
+"""Simulation implementation - pure logic with snapshotted imports.
 
 This module avoids importing policyengine at module level so the worker can
 load the requested country module without triggering cross-country imports.
@@ -63,6 +62,12 @@ DEFAULT_YEAR = 2026
 
 @dataclass(frozen=True)
 class RegionResolution:
+    """A request's normalized region code, the dataset to load, and how to scope it.
+
+    ``scoping_strategy`` narrows the simulation to the region; None simulates
+    the whole dataset, as a national run does.
+    """
+
     code: str
     dataset_reference: str | None = None
     scoping_strategy: Any | None = None
@@ -84,8 +89,8 @@ def _normalize_credentials_blob(creds_json: str) -> str:
     double-encoded (the entire JSON object is wrapped in quotes with
     backslash-escaped interior quotes). Historically we always attempted
     the unescape as a fallback which could accidentally parse an already
-    clean blob. Only unwrap when the payload looks wrapped."""
-
+    clean blob. Only unwrap when the payload looks wrapped.
+    """
     try:
         json.loads(creds_json)
     except json.JSONDecodeError:
@@ -100,8 +105,7 @@ def _normalize_credentials_blob(creds_json: str) -> str:
 def setup_gcp_credentials(
     runtime: ObservabilityRuntime | None = None,
 ) -> Iterator[None]:
-    """
-    Set up GCP credentials from environment variable.
+    """Set up GCP credentials from environment variable.
 
     Modal secrets are injected as environment variables. The GCP library
     expects GOOGLE_APPLICATION_CREDENTIALS to point to a file path. If
@@ -172,8 +176,7 @@ def run_simulation_impl(
     runtime: ObservabilityRuntime,
     progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict:
-    """
-    Execute economic simulation.
+    """Execute economic simulation.
 
     Pure implementation with no Modal dependencies.
     Accepts the gateway simulation payload and returns the legacy macro result dict.
@@ -285,7 +288,7 @@ def _compile_interval_policy(
 def _runtime_policy(
     policy: dict[str, Any] | None, *, country_module: ModuleType, year: int
 ) -> dict[str, Any] | Policy | None:
-    """A request's policy as the wrapper must receive it.
+    """Convert a request's policy into the form the wrapper must receive.
 
     Normalises the period keys, then compiles a policy with interval keys
     into wrapper parameter values (see ``_compile_interval_policy``). Every
@@ -386,7 +389,6 @@ def _require_certified_uk_weight_matrix(
     release replaces, is never downloaded (see
     ``_build_uk_weight_replacement_region``).
     """
-
     from policyengine.core.scoping_strategy import WeightReplacementStrategy
 
     if not isinstance(scoping_strategy, WeightReplacementStrategy):
@@ -574,10 +576,9 @@ def _resolve_region_group(
     country: str,
     params: dict[str, Any],
 ) -> RegionResolution:
-    """Resolve a ``region_group`` (list of member region codes) to one
-    ``RegionGroupStrategy`` that scopes a single simulation to the union of the
-    members.
+    """Resolve a ``region_group`` list of region codes to one ``RegionGroupStrategy``.
 
+    The strategy scopes a single simulation to the union of the members.
     Members must be row-filter regions (states/CDs) so national weights are
     preserved (INV-5); the group filters the national dataset.
     """
@@ -623,7 +624,7 @@ def _country_module(country: str) -> ModuleType:
 
 
 def resolve_data_folder() -> str:
-    """The folder datasets and baseline artifacts are read from and saved to.
+    """Return the folder datasets and baseline artifacts are read from and saved to.
 
     One home for the default: the precompute downloads store artifacts into
     this folder for ``ensure_datasets``/``Simulation.ensure()`` to find, so
