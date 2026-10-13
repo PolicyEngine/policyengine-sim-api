@@ -103,7 +103,6 @@ SIMULATION_MUTABLE_COLUMNS = (
 
 def normalized_database_url(database_url: str) -> URL:
     """Select psycopg 3 without changing the stored secret's URL format."""
-
     if not database_url or database_url != database_url.strip():
         raise ValueError("Stage 12 database URL is missing or malformed")
     try:
@@ -119,7 +118,6 @@ def normalized_database_url(database_url: str) -> URL:
 
 def create_stage12_engine(database_url: str) -> Engine:
     """Build the DML-only runtime engine; this never creates database objects."""
-
     return create_engine(
         normalized_database_url(database_url),
         # Coordinators and workers spend most of their lifetime calculating
@@ -194,6 +192,10 @@ class Stage12PersistenceStore:
         engine: Engine | None = None,
         open_connection: ConnectionOpener = open_connection_once,
     ) -> None:
+        """Use ``engine`` if given, else build one from ``database_url``.
+
+        Raises ValueError when neither is given or the URL is invalid.
+        """
         if engine is None:
             if database_url is None:
                 raise ValueError("Stage 12 database URL is required")
@@ -222,6 +224,11 @@ class Stage12PersistenceStore:
         self,
         record: ComparisonReportRecord,
     ) -> ComparisonReportPersistenceResult:
+        """Insert the report, or return the stored one with the same identity.
+
+        ``created`` on the result says which happened. A stored report must match
+        ``record``'s provenance, else ValueError.
+        """
         values = _record_values(record)
         statement = (
             insert(comparison_reports)
@@ -258,6 +265,7 @@ class Stage12PersistenceStore:
             return ComparisonReportPersistenceResult(record=resolved, created=False)
 
     def get_report(self, evaluation_id: UUID) -> ComparisonReportRecord:
+        """Return the stored report; raise LookupError if there is none."""
         with self._connection("get_report") as connection:
             row = (
                 connection.execute(
@@ -276,6 +284,7 @@ class Stage12PersistenceStore:
         self,
         evaluation_id: UUID,
     ) -> tuple[ComparisonSimulationRecord, ...]:
+        """Return the report's simulations ordered by role, then execution ID."""
         statement = (
             select(comparison_simulations)
             .where(comparison_simulations.c.evaluation_id == evaluation_id)
@@ -292,6 +301,13 @@ class Stage12PersistenceStore:
         self,
         record: ComparisonReportRecord,
     ) -> ComparisonReportRecord:
+        """Write ``record``'s lifecycle and aggregation fields over the stored report.
+
+        The row is locked for the update. Raises LookupError if the report is missing,
+        and ValueError for an identity or result-comparison change or a disallowed
+        status move. A succeeded report is returned as stored when ``record`` replays
+        it exactly.
+        """
         values = _record_values(record)
         with self._transaction("replace_report") as connection:
             row = (
@@ -334,6 +350,13 @@ class Stage12PersistenceStore:
         self,
         record: ComparisonReportRecord,
     ) -> ComparisonReportRecord:
+        """Write ``record``'s result-comparison fields over the stored report.
+
+        The row is locked for the update and every other field must be unchanged.
+        Once the comparison is MATCHED or DIFFERENT the stored report is returned
+        as-is, provided ``record`` repeats its result. Raises LookupError if the
+        report is missing and ValueError for any other change or disallowed move.
+        """
         values = _record_values(record)
         with self._transaction("replace_report_result_comparison") as connection:
             row = (
@@ -379,6 +402,11 @@ class Stage12PersistenceStore:
         self,
         record: ComparisonSimulationRecord,
     ) -> ComparisonSimulationPersistenceResult:
+        """Insert the simulation, or return the stored one with the same identity.
+
+        The parent report must exist (else LookupError) and share ``record``'s
+        provenance; a stored simulation must match ``record`` (else ValueError).
+        """
         values = _record_values(record)
         statement = (
             insert(comparison_simulations)
@@ -435,6 +463,7 @@ class Stage12PersistenceStore:
         self,
         simulation_execution_id: UUID,
     ) -> ComparisonSimulationRecord:
+        """Return the stored simulation; raise LookupError if there is none."""
         with self._connection("get_simulation") as connection:
             row = (
                 connection.execute(
@@ -456,6 +485,12 @@ class Stage12PersistenceStore:
         self,
         record: ComparisonSimulationRecord,
     ) -> ComparisonSimulationRecord:
+        """Write ``record``'s mutable fields over the stored simulation.
+
+        The row is locked for the update. Raises LookupError if the simulation is
+        missing, and ValueError for an identity change or a disallowed status move. A
+        succeeded simulation is returned as stored when ``record`` replays it exactly.
+        """
         values = _record_values(record)
         with self._transaction("replace_simulation") as connection:
             row = (
@@ -506,6 +541,13 @@ class Stage12PersistenceStore:
         modal_invocation_id: str,
         updated_at: datetime,
     ) -> ComparisonSimulationRecord:
+        """Replace the placeholder invocation ID with the real Modal invocation ID.
+
+        The update applies only while ``expected_placeholder`` is still stored, so
+        repeating an attach that already succeeded returns the stored record. Raises
+        LookupError if the simulation is missing and ValueError if a different
+        invocation ID is already attached.
+        """
         statement = (
             update(comparison_simulations)
             .where(
