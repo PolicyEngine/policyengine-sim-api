@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class ServerErrorResponse(JSONResponse):
     """Shared 500 JSON response."""
 
-    def __init__(self, content: dict):
+    def __init__(self, content: dict) -> None:
         super().__init__(status_code=500, content=content)
 
 
@@ -38,7 +38,7 @@ def batch_status_response(
     response: BudgetWindowBatchStatusResponse,
     *,
     headers: dict[str, str] | None = None,
-):
+) -> JSONResponse:
     payload = batch_status_payload(response)
     if response.status in {"submitted", "running"}:
         return JSONResponse(status_code=202, content=payload, headers=headers)

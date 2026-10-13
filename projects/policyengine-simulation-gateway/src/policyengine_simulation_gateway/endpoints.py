@@ -6,10 +6,11 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TypedDict
+from typing import Any, TypedDict
 
 import modal
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.budget_window_state import (
     build_batch_status_response,
@@ -24,6 +25,7 @@ from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
     BudgetWindowBatchSubmitResponse,
+    GatewayRequestBase,
     HealthResponse,
     JobStatusResponse,
     JobSubmitResponse,
@@ -44,6 +46,7 @@ from policyengine_simulation_contract.job_progress import (
     supported_job_progress_capability,
 )
 from policyengine_simulation_contract.job_progress_state import get_job_progress
+from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_contract.spm import (
     SPMCapability,
     SPMInputError,
@@ -103,7 +106,7 @@ class RouteResolution:
     country_model_version: str | None = None
 
 
-def _job_metadata_store():
+def _job_metadata_store() -> "modal.Dict":
     return modal.Dict.from_name(JOB_METADATA_DICT_NAME, create_if_missing=True)
 
 
@@ -170,7 +173,7 @@ def _resolve_dataset_uri_from_app_bundle(
     )
 
 
-def _modal_exception_class(name: str):
+def _modal_exception_class(name: str) -> type[BaseException] | None:
     exception_module = getattr(modal, "exception", None)
     if exception_module is None:
         return None
@@ -188,7 +191,7 @@ def _is_modal_job_not_found(exc: BaseException) -> bool:
     )
 
 
-def _optional_modal_dict(name: str):
+def _optional_modal_dict(name: str) -> "modal.Dict | None":
     try:
         return modal.Dict.from_name(name)
     except KeyError:
@@ -641,7 +644,11 @@ def _certified_model_version(country: str, route: RouteResolution) -> str | None
     return route.country_model_version
 
 
-def _resolve_request_spm(request, bundle, route):
+def _resolve_request_spm(
+    request: GatewayRequestBase,
+    bundle: PolicyEngineBundle,
+    route: RouteResolution,
+) -> JsonObject | None:
     selection = resolve_spm_selection(
         request.country,
         request.spm,
@@ -657,7 +664,10 @@ def _resolve_request_spm(request, bundle, route):
     return selection
 
 
-def _bundle_payload(bundle: PolicyEngineBundle, **dump_kwargs) -> dict:
+def _bundle_payload(
+    bundle: PolicyEngineBundle,
+    **dump_kwargs: Any,  # noqa: ANN401  # forwarded unchanged to BaseModel.model_dump
+) -> dict:
     """Dump a bundle, omitting fields added after the legacy body when unset.
 
     The 202 and 500 job bodies splat this dict in directly, bypassing the
@@ -837,7 +847,7 @@ async def submit_simulation(
     request: SimulationRequest,
     http_request: Request,
     response: Response,
-):
+) -> JobSubmitResponse | JSONResponse:
     """
     Submit a simulation job.
 
@@ -954,7 +964,7 @@ async def submit_budget_window_batch(
     request: BudgetWindowBatchRequest,
     http_request: Request,
     response: Response,
-):
+) -> BudgetWindowBatchSubmitResponse | JSONResponse:
     """
     Submit a budget-window batch job.
     """
@@ -1047,7 +1057,9 @@ async def submit_budget_window_batch(
     response_model_exclude_none=True,
     dependencies=[Depends(require_auth)],
 )
-async def get_job_status(job_id: str, request: Request, response: Response):
+async def get_job_status(
+    job_id: str, request: Request, response: Response
+) -> JobStatusResponse | JSONResponse:
     """
     Poll for job status.
 
@@ -1139,7 +1151,7 @@ async def get_budget_window_job_status(
     batch_job_id: str,
     request: Request,
     response: Response,
-):
+) -> JSONResponse:
     """
     Poll for budget-window batch status.
     """

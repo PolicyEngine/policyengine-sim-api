@@ -1,6 +1,8 @@
 """Fixtures for gateway endpoint tests."""
 
+from collections.abc import ItemsView, KeysView
 from copy import deepcopy
+from typing import Self
 
 import pytest
 from policyengine_simulation_contract.macro_output import (
@@ -159,28 +161,28 @@ def resolve_test_dataset_uri(
 class MockDict:
     """Mock for Modal.Dict to simulate version registry."""
 
-    def __init__(self, data: dict):
+    def __init__(self, data: dict) -> None:
         self._data = data
 
-    def __getitem__(self, key: str):
+    def __getitem__(self, key: str) -> object:
         if key not in self._data:
             raise KeyError(key)
         return self._data[key]
 
-    def __setitem__(self, key: str, value):
+    def __setitem__(self, key: str, value: object) -> None:
         self._data[key] = value
 
-    def get(self, key: str, default=None):
+    def get(self, key: str, default: object = None) -> object:
         return self._data.get(key, default)
 
-    def keys(self):
+    def keys(self) -> KeysView[str]:
         return self._data.keys()
 
-    def items(self):
+    def items(self) -> ItemsView[str, object]:
         return self._data.items()
 
     @classmethod
-    def from_name(cls, name: str):
+    def from_name(cls, name: str) -> Self:
         """Mock from_name that returns a MockDict based on name."""
         raise NotImplementedError("Mock not configured")
 
@@ -191,7 +193,7 @@ class MockFunctionCall:
     registry = {}
     from_id_errors = {}
 
-    def __init__(self, object_id: str = "mock-job-id-123"):
+    def __init__(self, object_id: str = "mock-job-id-123") -> None:
         self.object_id = object_id
         value = BaselineReformValue(baseline=0.0, reform=0.0)
         age_poverty = AgePovertyOutput(
@@ -241,7 +243,7 @@ class MockFunctionCall:
         self.running = False
         self.__class__.registry[object_id] = self
 
-    def get(self, timeout: int = 0):
+    def get(self, timeout: int = 0) -> object:
         if self.running:
             raise TimeoutError
         if self.error is not None:
@@ -249,7 +251,7 @@ class MockFunctionCall:
         return self.result
 
     @classmethod
-    def from_id(cls, object_id: str):
+    def from_id(cls, object_id: str) -> "MockFunctionCall":
         if object_id in cls.from_id_errors:
             raise cls.from_id_errors[object_id]
         if object_id not in cls.registry:
@@ -260,7 +262,7 @@ class MockFunctionCall:
 class MockFunction:
     """Mock for Modal Function."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.last_payload = None
         self.last_observability_context = None
         self.last_from_name_call = None
@@ -279,7 +281,7 @@ class MockFunction:
 class BoundMockFunction:
     """Function handle returned by Modal.Function.from_name."""
 
-    def __init__(self, recorder: MockFunction, app_name: str, func_name: str):
+    def __init__(self, recorder: MockFunction, app_name: str, func_name: str) -> None:
         self.recorder = recorder
         self.app_name = app_name
         self.func_name = func_name
@@ -318,7 +320,7 @@ class MockModalException:
 
 
 @pytest.fixture
-def mock_modal(monkeypatch):
+def mock_modal(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """Patch Modal calls in the gateway endpoints module."""
     from policyengine_simulation_contract import (
         budget_window_state,
@@ -337,7 +339,7 @@ def mock_modal(monkeypatch):
 
     class MockModalDict:
         @staticmethod
-        def from_name(name: str, create_if_missing: bool = False):
+        def from_name(name: str, create_if_missing: bool = False) -> MockDict:
             if create_if_missing and name not in mock_dicts:
                 mock_dicts[name] = {}
             if name not in mock_dicts:
@@ -346,7 +348,7 @@ def mock_modal(monkeypatch):
 
     class MockModalFunction:
         @staticmethod
-        def from_name(app_name: str, func_name: str):
+        def from_name(app_name: str, func_name: str) -> BoundMockFunction:
             mock_func.last_from_name_call = (app_name, func_name)
             return mock_func.bind(app_name, func_name)
 

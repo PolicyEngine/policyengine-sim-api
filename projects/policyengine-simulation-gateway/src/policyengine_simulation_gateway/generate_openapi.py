@@ -137,7 +137,7 @@ def create_openapi_app() -> FastAPI:
     return app
 
 
-def main():
+def main() -> None:
     """Generate OpenAPI spec and write to artifacts."""
     app = create_openapi_app()
     openapi_spec = app.openapi()
