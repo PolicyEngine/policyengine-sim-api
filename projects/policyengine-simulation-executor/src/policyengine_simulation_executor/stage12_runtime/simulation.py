@@ -6,8 +6,10 @@ from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from hashlib import sha256
 from typing import Any
+from uuid import UUID
 
 import pandas as pd
 from policyengine_observability import ObservabilityRuntime
@@ -37,7 +39,9 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata,
 )
 
+from .database_retry import retry_when_connection_unavailable
 from .dependencies import ComparisonStore, artifact_store, runtime_store
+from .failure_recording import persist_failure_record, report_original_failure
 from .output_planning import apply_output_plan, validate_output_frames
 
 
@@ -288,6 +292,29 @@ def descriptor_from_record(
     )
 
 
+def _claim_simulation(
+    persistence: ComparisonStore,
+    simulation_execution_id: UUID,
+) -> tuple[ComparisonSimulationRecord, ComparisonSimulationRecord | None]:
+    """Return the stored child and, unless it already succeeded, mark it running."""
+
+    child = persistence.get_simulation(simulation_execution_id)
+    if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
+        return child, None
+    started = datetime.now(UTC)
+    running = child.model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.RUNNING,
+            "started_at": child.started_at or started,
+            "updated_at": started,
+            "error_code": None,
+            "error_summary": None,
+        }
+    )
+    persistence.replace_simulation(running)
+    return child, running
+
+
 def run_single_simulation(
     payload: object,
     context_payload: object,
@@ -306,20 +333,13 @@ def run_single_simulation(
     _require_context(simulation, context, required_country=required_country)
     persistence = store or runtime_store()
     artifact_storage = artifacts or artifact_store()
-    child = persistence.get_simulation(simulation.simulation_execution_id)
-    if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
-        return descriptor_from_record(child, simulation).model_dump(mode="json")
-    started = datetime.now(UTC)
-    running = child.model_copy(
-        update={
-            "status": ComparisonRunLifecycleStatus.RUNNING,
-            "started_at": child.started_at or started,
-            "updated_at": started,
-            "error_code": None,
-            "error_summary": None,
-        }
+    child, running = retry_when_connection_unavailable(
+        partial(_claim_simulation, persistence, simulation.simulation_execution_id),
+        operation_name="simulation_claim",
+        runtime=runtime,
     )
-    persistence.replace_simulation(running)
+    if running is None:
+        return descriptor_from_record(child, simulation).model_dump(mode="json")
     try:
         input_span = (
             runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_INPUT_WRITE))
@@ -385,16 +405,27 @@ def run_single_simulation(
     # Persist any country-package calculation failure before returning a
     # stable exception to Modal.
     except Exception as error:  # noqa: BLE001
+        report_original_failure(
+            error,
+            runtime=runtime,
+            failure_scope="simulation_execution",
+            attributes={"simulation_role": simulation.role.value},
+        )
         failed_at = datetime.now(UTC)
-        persistence.replace_simulation(
-            running.model_copy(
-                update={
-                    "status": ComparisonRunLifecycleStatus.FAILED,
-                    "error_code": "simulation_execution_failed",
-                    "error_summary": type(error).__name__,
-                    "updated_at": failed_at,
-                    "completed_at": failed_at,
-                }
-            )
+        persist_failure_record(
+            partial(
+                persistence.replace_simulation,
+                running.model_copy(
+                    update={
+                        "status": ComparisonRunLifecycleStatus.FAILED,
+                        "error_code": "simulation_execution_failed",
+                        "error_summary": type(error).__name__,
+                        "updated_at": failed_at,
+                        "completed_at": failed_at,
+                    }
+                ),
+            ),
+            runtime=runtime,
+            failure_scope="simulation_execution",
         )
         raise RuntimeError("Stage 12 simulation execution failed") from None

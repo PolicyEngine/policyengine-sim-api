@@ -1,0 +1,76 @@
+"""Failure reporting that does not depend on the Stage 12 database."""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable, Mapping
+from contextlib import suppress
+
+from policyengine_observability import ObservabilityRuntime
+
+logger = logging.getLogger(__name__)
+
+
+def report_original_failure(
+    error: Exception,
+    *,
+    runtime: ObservabilityRuntime | None,
+    failure_scope: str,
+    attributes: Mapping[str, object] | None = None,
+) -> None:
+    """Emit the original failure before any database write is attempted.
+
+    Recording a failure in the database can itself fail, for example when the
+    session pooler has no free connections. Telemetry therefore receives the
+    original cause first, so it survives a failed or hung database write.
+    """
+
+    _emit_error(
+        "Stage 12 execution failed",
+        error=error,
+        runtime=runtime,
+        attributes={"stage12_failure_scope": failure_scope, **(attributes or {})},
+    )
+
+
+def persist_failure_record(
+    write_failure_record: Callable[[], object],
+    *,
+    runtime: ObservabilityRuntime | None,
+    failure_scope: str,
+) -> None:
+    """Attempt a failure write without letting its error replace the original.
+
+    The caller re-raises the original failure after this returns, whether or
+    not the record was written.
+    """
+
+    try:
+        write_failure_record()
+    except Exception as persistence_error:  # noqa: BLE001
+        _emit_error(
+            "Stage 12 failure record could not be persisted",
+            error=persistence_error,
+            runtime=runtime,
+            attributes={"stage12_failure_scope": failure_scope},
+        )
+
+
+def _emit_error(
+    message: str,
+    *,
+    error: Exception,
+    runtime: ObservabilityRuntime | None,
+    attributes: Mapping[str, object],
+) -> None:
+    if runtime is None:
+        logger.error(
+            "%s (%s)",
+            message,
+            attributes.get("stage12_failure_scope"),
+            exc_info=error,
+        )
+        return
+    # Telemetry must not change the failure the caller propagates.
+    with suppress(Exception):
+        runtime.log(message, severity="ERROR", attributes=attributes, error=error)

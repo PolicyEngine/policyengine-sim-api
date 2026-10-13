@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -12,14 +13,84 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonSimulationRecord,
     SimulationRole,
 )
-from policyengine_stage12_persistence import Stage12PersistenceStore
+from policyengine_stage12_persistence import (
+    Stage12PersistenceStore,
+    is_connection_unavailable_error,
+)
+from policyengine_stage12_persistence import store as store_module
 from policyengine_stage12_persistence.store import normalized_database_url
+from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.pool import QueuePool
 from sqlalchemy.sql import ClauseElement
 
 NOW = datetime(2026, 9, 22, tzinfo=UTC)
 REPORT_ID = UUID("00000000-0000-0000-0000-000000000001")
 SIMULATION_ID = UUID("00000000-0000-0000-0000-000000000002")
 OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000012"
+
+
+@pytest.mark.parametrize("fail_transaction", [False, True])
+def test_runtime_engine_closes_connections_between_transactions(
+    monkeypatch, fail_transaction
+) -> None:
+    def local_engine(_url, **options):
+        # Exercise the runtime pooling configuration with a real local DBAPI.
+        # PostgreSQL's default is QueuePool; SQLite's memory default differs.
+        options.pop("connect_args")
+        options.setdefault("poolclass", QueuePool)
+        return create_engine("sqlite://", **options)
+
+    monkeypatch.setattr(store_module, "create_engine", local_engine)
+    engine = store_module.create_stage12_engine(
+        "postgresql://runtime:secret@db.example/postgres"
+    )
+    try:
+        try:
+            with engine.begin() as connection:
+                physical_connection = connection.connection.driver_connection
+                assert connection.exec_driver_sql("SELECT 1").scalar_one() == 1
+                if fail_transaction:
+                    raise RuntimeError("calculation failed")
+        except RuntimeError:
+            assert fail_transaction
+
+        # Long calculations must not hold an idle session after DB work ends.
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            physical_connection.execute("SELECT 1")
+
+        with engine.begin() as connection:
+            assert connection.connection.driver_connection is not physical_connection
+            assert connection.exec_driver_sql("SELECT 1").scalar_one() == 1
+    finally:
+        engine.dispose()
+
+
+def test_connection_failures_are_distinguished_from_failed_statements(
+    tmp_path,
+) -> None:
+    unreachable_database = tmp_path / "missing-directory" / "stage12.db"
+    unreachable_engine = create_engine(f"sqlite:///{unreachable_database}")
+    reachable_engine = create_engine("sqlite://")
+    try:
+        with (
+            pytest.raises(OperationalError) as connection_failure,
+            unreachable_engine.begin(),
+        ):
+            pass
+        with (
+            pytest.raises(OperationalError) as statement_failure,
+            reachable_engine.begin() as connection,
+        ):
+            connection.exec_driver_sql("SELECT * FROM missing_table")
+    finally:
+        unreachable_engine.dispose()
+        reachable_engine.dispose()
+
+    # No statement reached the database, so the operation is safe to retry.
+    assert is_connection_unavailable_error(connection_failure.value)
+    assert not is_connection_unavailable_error(statement_failure.value)
+    assert not is_connection_unavailable_error(RuntimeError("not a database error"))
 
 
 def _report() -> ComparisonReportRecord:

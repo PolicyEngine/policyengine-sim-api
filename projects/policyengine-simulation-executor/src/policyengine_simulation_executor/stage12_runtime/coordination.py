@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from datetime import UTC, datetime
+from functools import partial
 from hashlib import sha256
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
@@ -43,6 +44,7 @@ from .aggregation import (
     validate_uk_local_authority_metadata,
 )
 from .comparison import compare_completed_report
+from .database_retry import retry_when_connection_unavailable
 from .dependencies import (
     ChildCall,
     ChildInvoker,
@@ -51,6 +53,7 @@ from .dependencies import (
     artifact_store,
     runtime_store,
 )
+from .failure_recording import persist_failure_record, report_original_failure
 from .output_planning import (
     plan_simulation_input,
     resolve_report_output_plan,
@@ -187,6 +190,30 @@ def _claim_parent(
     return claimed, True
 
 
+def _mark_child_failed(
+    persistence: ComparisonStore,
+    simulation_execution_id: UUID,
+    *,
+    error_code: str,
+    error_summary: str,
+) -> None:
+    latest = persistence.get_simulation(simulation_execution_id)
+    if latest.status is ComparisonRunLifecycleStatus.SUCCEEDED:
+        return
+    failed_at = datetime.now(UTC)
+    persistence.replace_simulation(
+        latest.model_copy(
+            update={
+                "status": ComparisonRunLifecycleStatus.FAILED,
+                "error_code": error_code,
+                "error_summary": error_summary,
+                "updated_at": failed_at,
+                "completed_at": failed_at,
+            }
+        )
+    )
+
+
 def coordinate_report(
     payload: object,
     context_payload: object,
@@ -230,10 +257,15 @@ def coordinate_report(
         else nullcontext()
     )
     with claim_span:
-        parent, should_execute = _claim_parent(
-            submitted=submitted_parent,
-            coordinator_invocation_id=coordinator_invocation_id,
-            store=persistence,
+        parent, should_execute = retry_when_connection_unavailable(
+            partial(
+                _claim_parent,
+                submitted=submitted_parent,
+                coordinator_invocation_id=coordinator_invocation_id,
+                store=persistence,
+            ),
+            operation_name="coordinator_claim",
+            runtime=runtime,
         )
     if not should_execute:
         return {
@@ -243,6 +275,9 @@ def coordinate_report(
         }
     descriptors: dict[str, SimulationArtifactDescriptor] = {}
     calls: dict[str, ChildCall] = {}
+    # A child failure is reported where it occurs and then propagates to the
+    # report handler below, which must not report the same error twice.
+    reported_child_failure: Exception | None = None
     try:
 
         def stage_scope(
@@ -369,20 +404,24 @@ def coordinate_report(
                         observability_context=child_observability_context,
                     )
             except Exception as error:
-                failed_at = datetime.now(UTC)
-                latest = persistence.get_simulation(simulation.simulation_execution_id)
-                if latest.status is not ComparisonRunLifecycleStatus.SUCCEEDED:
-                    persistence.replace_simulation(
-                        latest.model_copy(
-                            update={
-                                "status": ComparisonRunLifecycleStatus.FAILED,
-                                "error_code": "simulation_dispatch_failed",
-                                "error_summary": type(error).__name__,
-                                "updated_at": failed_at,
-                                "completed_at": failed_at,
-                            }
-                        )
-                    )
+                report_original_failure(
+                    error,
+                    runtime=runtime,
+                    failure_scope="child_dispatch",
+                    attributes={"simulation_role": simulation.role.value},
+                )
+                reported_child_failure = error
+                persist_failure_record(
+                    partial(
+                        _mark_child_failed,
+                        persistence,
+                        simulation.simulation_execution_id,
+                        error_code="simulation_dispatch_failed",
+                        error_summary=type(error).__name__,
+                    ),
+                    runtime=runtime,
+                    failure_scope="child_dispatch",
+                )
                 raise
             calls[simulation.role.value] = call
             persistence.attach_simulation_invocation(
@@ -407,23 +446,27 @@ def coordinate_report(
                         call.get(timeout=SIMULATION_WAIT_TIMEOUT_SECONDS)
                     )
             except Exception as error:
+                report_original_failure(
+                    error,
+                    runtime=runtime,
+                    failure_scope="child_wait",
+                    attributes={"simulation_role": role},
+                )
+                reported_child_failure = error
                 simulation = next(
                     item for item in simulations if item.role.value == role
                 )
-                child = persistence.get_simulation(simulation.simulation_execution_id)
-                if child.status is not ComparisonRunLifecycleStatus.SUCCEEDED:
-                    failed_at = datetime.now(UTC)
-                    persistence.replace_simulation(
-                        child.model_copy(
-                            update={
-                                "status": ComparisonRunLifecycleStatus.FAILED,
-                                "error_code": "simulation_invocation_failed",
-                                "error_summary": type(error).__name__,
-                                "updated_at": failed_at,
-                                "completed_at": failed_at,
-                            }
-                        )
-                    )
+                persist_failure_record(
+                    partial(
+                        _mark_child_failed,
+                        persistence,
+                        simulation.simulation_execution_id,
+                        error_code="simulation_invocation_failed",
+                        error_summary=type(error).__name__,
+                    ),
+                    runtime=runtime,
+                    failure_scope="child_wait",
+                )
                 raise
         baseline = descriptors["baseline"]
         reform = descriptors["reform"]
@@ -509,17 +552,28 @@ def coordinate_report(
     # Persist any coordinator, child-call, aggregation, or artifact failure
     # before returning a stable exception to Modal.
     except Exception as error:  # noqa: BLE001
-        failed_at = datetime.now(UTC)
-        persistence.replace_report(
-            parent.model_copy(
-                update={
-                    "status": ComparisonRunLifecycleStatus.FAILED,
-                    "aggregation_status": ComparisonRunAggregationStatus.FAILED,
-                    "error_code": "report_coordination_failed",
-                    "error_summary": type(error).__name__,
-                    "updated_at": failed_at,
-                    "completed_at": failed_at,
-                }
+        if error is not reported_child_failure:
+            report_original_failure(
+                error,
+                runtime=runtime,
+                failure_scope="report_coordination",
             )
+        failed_at = datetime.now(UTC)
+        persist_failure_record(
+            partial(
+                persistence.replace_report,
+                parent.model_copy(
+                    update={
+                        "status": ComparisonRunLifecycleStatus.FAILED,
+                        "aggregation_status": ComparisonRunAggregationStatus.FAILED,
+                        "error_code": "report_coordination_failed",
+                        "error_summary": type(error).__name__,
+                        "updated_at": failed_at,
+                        "completed_at": failed_at,
+                    }
+                ),
+            ),
+            runtime=runtime,
+            failure_scope="report_coordination",
         )
         raise RuntimeError("Stage 12 report coordination failed") from None

@@ -69,6 +69,7 @@ from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
     _build_spm_result,
     build_aggregate_report,
+    database_retry,
     run_single_simulation,
     simulation_input_sha256,
 )
@@ -81,6 +82,7 @@ from policyengine_simulation_executor.stage12_runtime.aggregation import (
 from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata,
 )
+from sqlalchemy.exc import OperationalError
 
 NOW = datetime(2026, 9, 15, tzinfo=UTC)
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -700,6 +702,108 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
     assert child.status is ComparisonRunLifecycleStatus.FAILED
     assert child.error_code == "simulation_execution_failed"
     assert child.error_summary == "RuntimeError"
+
+
+def _connection_limit_error() -> OperationalError:
+    # SQLAlchemy wraps a failure to open a connection without a statement.
+    return OperationalError(
+        None,
+        None,
+        Exception("(EMAXCONNSESSION) max clients reached in session mode"),
+    )
+
+
+class TelemetryRecordingRuntime(RecordingRuntime):
+    """Record telemetry in the same ordered list as database writes."""
+
+    def __init__(self, ordered_events: list[tuple[str, object]]) -> None:
+        super().__init__()
+        self.ordered_events = ordered_events
+
+    def log(self, message, *, severity="INFO", attributes=None, error=None):
+        self.ordered_events.append(
+            ("telemetry", (message, dict(attributes or {}), error))
+        )
+
+
+def test_single_worker_retries_a_claim_that_could_not_connect(monkeypatch) -> None:
+    monkeypatch.setattr(database_retry, "INITIAL_RETRY_DELAY_SECONDS", 0.0)
+
+    class BusyPoolerStore(FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.read_attempts = 0
+
+        def get_simulation(self, simulation_execution_id):
+            self.read_attempts += 1
+            if self.read_attempts == 1:
+                raise _connection_limit_error()
+            return super().get_simulation(simulation_execution_id)
+
+    store = BusyPoolerStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+
+    result = run_single_simulation(
+        simulation.model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        required_country="us",
+        store=store,
+        artifacts=FakeArtifacts(),
+        calculator=lambda _: _frames(),
+    )
+
+    assert store.read_attempts == 2
+    assert result["role"] == "baseline"
+    child = store.children[simulation.simulation_execution_id]
+    assert child.status is ComparisonRunLifecycleStatus.SUCCEEDED
+
+
+def test_single_worker_reports_failure_before_an_unwritable_failure_record() -> None:
+    ordered_events: list[tuple[str, object]] = []
+
+    class UnwritableFailureStore(FakeStore):
+        def replace_simulation(self, record):
+            if record.status is ComparisonRunLifecycleStatus.FAILED:
+                ordered_events.append(("failure_write", record.error_summary))
+                raise _connection_limit_error()
+            return super().replace_simulation(record)
+
+    store = UnwritableFailureStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    calculation_error = ValueError("country column missing from household data")
+
+    def fail(_simulation):
+        raise calculation_error
+
+    with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=fail,
+            runtime=TelemetryRecordingRuntime(ordered_events),
+        )
+
+    original_report, failure_write, persistence_report = ordered_events
+    assert original_report[0] == "telemetry"
+    _message, attributes, reported_error = original_report[1]
+    assert reported_error is calculation_error
+    assert attributes == {
+        "stage12_failure_scope": "simulation_execution",
+        "simulation_role": "baseline",
+    }
+    assert failure_write == ("failure_write", "ValueError")
+    assert persistence_report[0] == "telemetry"
+    assert persistence_report[1][0] == (
+        "Stage 12 failure record could not be persisted"
+    )
+    assert isinstance(persistence_report[1][2], OperationalError)
+    child = store.children[simulation.simulation_execution_id]
+    assert child.status is ComparisonRunLifecycleStatus.RUNNING
 
 
 def test_single_worker_rejects_frames_that_do_not_satisfy_the_output_plan() -> None:
@@ -1410,6 +1514,156 @@ def test_coordinator_records_failure_when_child_persistence_fails() -> None:
 
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_code == "report_coordination_failed"
+    assert store.parent.error_summary == "RuntimeError"
+
+
+def test_coordinator_retries_a_claim_that_could_not_connect(monkeypatch) -> None:
+    monkeypatch.setattr(database_retry, "INITIAL_RETRY_DELAY_SECONDS", 0.0)
+
+    class BusyPoolerStore(FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.claim_attempts = 0
+
+        def create_or_resolve_report(self, record):
+            self.claim_attempts += 1
+            if self.claim_attempts <= 2:
+                raise _connection_limit_error()
+            return super().create_or_resolve_report(record)
+
+    store = BusyPoolerStore()
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts)
+
+    coordinate_report(
+        _report().model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        _parent().model_dump(mode="json"),
+        application_name=_context().modal_application,
+        coordinator_invocation_id="coordinator-1",
+        store=store,
+        artifacts=artifacts,
+        invoker=invoker,
+        aggregator=lambda **_: {"result": "complete"},
+    )
+
+    assert store.claim_attempts == 3
+    assert invoker.events == ["spawn:baseline", "spawn:reform"]
+    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
+
+
+def test_coordinator_does_not_retry_a_claim_that_failed_after_connecting() -> None:
+    class RejectingStore(FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.claim_attempts = 0
+
+        def create_or_resolve_report(self, record):
+            self.claim_attempts += 1
+            raise OperationalError(
+                "INSERT INTO comparison_reports",
+                {},
+                Exception("server closed the connection unexpectedly"),
+            )
+
+    store = RejectingStore()
+
+    with pytest.raises(OperationalError):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=FakeArtifacts(),
+            invoker=ConcurrentInvoker(FakeArtifacts()),
+        )
+
+    assert store.claim_attempts == 1
+
+
+def test_coordinator_reports_failure_before_an_unwritable_failure_record() -> None:
+    ordered_events: list[tuple[str, object]] = []
+    aggregation_error = ValueError("aggregate failed validation")
+
+    class UnwritableFailureStore(FakeStore):
+        def replace_report(self, record):
+            if record.status is ComparisonRunLifecycleStatus.FAILED:
+                ordered_events.append(("failure_write", record.error_summary))
+                raise _connection_limit_error()
+            return super().replace_report(record)
+
+    def fail_aggregation(**_):
+        raise aggregation_error
+
+    store = UnwritableFailureStore()
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(
+        RuntimeError, match="Stage 12 report coordination failed"
+    ) as error:
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=ConcurrentInvoker(artifacts),
+            aggregator=fail_aggregation,
+            runtime=TelemetryRecordingRuntime(ordered_events),
+        )
+
+    assert error.value.__cause__ is None
+    original_report, failure_write, persistence_report = ordered_events
+    assert original_report[1][1] == {"stage12_failure_scope": "report_coordination"}
+    assert original_report[1][2] is aggregation_error
+    assert failure_write == ("failure_write", "ValueError")
+    assert isinstance(persistence_report[1][2], OperationalError)
+    assert store.parent.status is ComparisonRunLifecycleStatus.RUNNING
+
+
+def test_coordinator_reports_a_child_failure_once_when_its_record_is_unwritable() -> (
+    None
+):
+    ordered_events: list[tuple[str, object]] = []
+
+    class UnreadableChildStore(FakeStore):
+        def get_simulation(self, simulation_execution_id):
+            ordered_events.append(("child_read", str(simulation_execution_id)))
+            raise _connection_limit_error()
+
+    store = UnreadableChildStore()
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=ConcurrentInvoker(artifacts, fail_role="baseline"),
+            aggregator=lambda **_: {"must": "not run"},
+            runtime=TelemetryRecordingRuntime(ordered_events),
+        )
+
+    failure_reports = [
+        event[1]
+        for event in ordered_events
+        if event[0] == "telemetry" and event[1][0] == "Stage 12 execution failed"
+    ]
+    assert [report[1] for report in failure_reports] == [
+        {"stage12_failure_scope": "child_wait", "simulation_role": "baseline"}
+    ]
+    assert ordered_events[0][0] == "telemetry"
+    assert ordered_events[1] == ("child_read", str(BASELINE_ID))
+    # The report record is still written after the child record could not be.
+    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_summary == "RuntimeError"
 
 

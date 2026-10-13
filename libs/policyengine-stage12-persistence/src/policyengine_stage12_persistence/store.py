@@ -18,6 +18,8 @@ from policyengine_simulation_contract.stage12_execution import (
 from sqlalchemy import Engine, create_engine, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import URL, make_url
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.pool import NullPool
 
 from policyengine_stage12_persistence.tables import (
     REPORT_IDENTITY_CONSTRAINT,
@@ -115,12 +117,25 @@ def create_stage12_engine(database_url: str) -> Engine:
 
     return create_engine(
         normalized_database_url(database_url),
-        pool_pre_ping=True,
-        pool_recycle=300,
-        pool_size=5,
-        max_overflow=5,
+        # Coordinators and workers spend most of their lifetime calculating
+        # or waiting. Release each database session after its short operation
+        # instead of reserving a pooler slot throughout that idle interval.
+        poolclass=NullPool,
         connect_args={"connect_timeout": 10},
     )
+
+
+def is_connection_unavailable_error(error: BaseException) -> bool:
+    """Return whether a database connection could not be opened.
+
+    SQLAlchemy wraps a DBAPI failure raised while opening a connection without
+    a statement. The database therefore received no work, so the operation can
+    be retried without risking a duplicate write. Session-pooler connection
+    limits (``EMAXCONNSESSION``) and connect timeouts fail this way; a failed
+    statement does not.
+    """
+
+    return isinstance(error, OperationalError) and error.statement is None
 
 
 def _database_value(value: Any) -> Any:

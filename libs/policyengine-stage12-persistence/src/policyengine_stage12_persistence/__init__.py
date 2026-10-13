@@ -3,6 +3,7 @@
 from policyengine_stage12_persistence.store import (
     Stage12PersistenceStore,
     create_stage12_engine,
+    is_connection_unavailable_error,
     normalized_database_url,
 )
 from policyengine_stage12_persistence.validation import (
@@ -14,6 +15,7 @@ __all__ = [
     "Stage12PersistenceStore",
     "Stage12RuntimeAccessError",
     "create_stage12_engine",
+    "is_connection_unavailable_error",
     "normalized_database_url",
     "validate_runtime_database",
 ]
