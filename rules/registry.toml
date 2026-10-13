@@ -654,6 +654,33 @@ job = "quality-guards"
 invocation = "run_quality_guards.py"
 
 [[rule]]
+id = "sim.process.stacked-prs-full-ci-at-bottom"
+category = "process"
+statement = "In a stack of pull requests, only the lowest unmerged one runs the full PR workflow and the Modal image smoke. Every pr.yml job is needed by the CI complete gate, which fails on the pull requests above it and otherwise passes only when every job passed, so a stack merges bottom-up and nothing merges untested."
+rationale = "docs/engineering/skills/github-prs.md#stacked-prs-and-ci"
+scope = [".github/workflows/pr.yml", ".github/workflows/pr-image-smoke.yml", ".github/scripts/check_ci_complete.sh"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-executor"
+nodes = ["tests/test_ci_complete_gate.py::test_pr_workflow_is_gated", "tests/test_ci_complete_gate.py::test_image_smoke_runs_only_at_the_bottom_of_a_stack"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "ci-complete"
+invocation = "check_ci_complete.sh"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.process.stacked-prs-full-ci-at-bottom/bad_pr.yml"
+good_fixture = "rules/fixtures/sim.process.stacked-prs-full-ci-at-bottom/good_pr.yml"
+project = "projects/policyengine-simulation-executor"
+test = "tests/test_ci_complete_gate.py::test_rule_proof_gate_check"
+
+[[rule]]
 id = "sim.process.rule-machinery-code-owned"
 category = "process"
 statement = "Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author."

@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 24 | 0 | 1 | 13 | 38 |
+| mechanical | 25 | 0 | 1 | 13 | 39 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 24 of 38 rules.
+**Blocking:** 25 of 39 rules.
 
 ## Gaps
 
@@ -267,6 +267,7 @@ flowchart LR
 | `sim.process.rule-machinery-code-owned` | Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author. | mechanical | doc-only | no | nothing | — | — |
 | `sim.process.rules-registry` | Every rule is registered in rules/registry.toml, is enforced where it claims to be, and its rendered views are current. | mechanical | enforced | yes | quality guard `rules-registry` | `pr.yml:quality-guards` | **unproven** |
 | `sim.process.same-repo-draft-prs` | PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks, and start with 'Fixes #<issue>'. | mechanical | doc-only | no | nothing | — | — |
+| `sim.process.stacked-prs-full-ci-at-bottom` | In a stack of pull requests, only the lowest unmerged one runs the full PR workflow and the Modal image smoke. Every pr.yml job is needed by the CI complete gate, which fails on the pull requests above it and otherwise passes only when every job passed, so a stack merges bottom-up and nothing merges untested. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-executor/tests/test_ci_complete_gate.py` | `pr.yml:test`, `pr.yml:ci-complete` | yes |
 
 ```mermaid
 flowchart LR
@@ -277,9 +278,16 @@ flowchart LR
   e_quality_guard_rules_registry["quality guard rules-registry"]
   j_CI_pr_yml_quality_guards["CI pr.yml:quality-guards"]
   r_sim_process_same_repo_draft_prs("sim.process.same-repo-draft-prs (doc-only)")
+  r_sim_process_stacked_prs_full_ci_at_bottom("sim.process.stacked-prs-full-ci-at-bottom (enforced)")
+  e_pytest_projects_policyengine_simulation_executor_tests_test_ci_complete_gate_py["pytest projects/policyengine-simulation-executor/tests/test_ci_complete_gate.py"]
+  j_CI_pr_yml_test["CI pr.yml:test"]
+  j_CI_pr_yml_ci_complete["CI pr.yml:ci-complete"]
   r_sim_process_agents_never_bypass -.-> gap_unenforced
   r_sim_process_rule_machinery_code_owned -.-> gap_unenforced
   r_sim_process_rules_registry --> e_quality_guard_rules_registry
   e_quality_guard_rules_registry --> j_CI_pr_yml_quality_guards
   r_sim_process_same_repo_draft_prs -.-> gap_unenforced
+  r_sim_process_stacked_prs_full_ci_at_bottom --> e_pytest_projects_policyengine_simulation_executor_tests_test_ci_complete_gate_py
+  e_pytest_projects_policyengine_simulation_executor_tests_test_ci_complete_gate_py --> j_CI_pr_yml_test
+  e_pytest_projects_policyengine_simulation_executor_tests_test_ci_complete_gate_py --> j_CI_pr_yml_ci_complete
 ```

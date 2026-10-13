@@ -16,7 +16,7 @@ jobs:
     # every job passed. See docs/engineering/skills/github-prs.md.
     name: CI complete
     if: ${{ always() }}
-    needs: [test, lint, docker-build, test-integration]
+    needs: [test, lint, quality-guards, docker-build, test-integration]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -109,6 +109,8 @@ jobs:
 
   quality-guards:
     name: Quality guards
+    # Full CI runs only on the lowest unmerged pull request in a stack.
+    if: ${{ !github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref }}
     runs-on: ubuntu-latest
 
     steps:
