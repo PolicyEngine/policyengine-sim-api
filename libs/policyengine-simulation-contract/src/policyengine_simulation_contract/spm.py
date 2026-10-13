@@ -229,7 +229,8 @@ class SPMRuntimeVersions(BaseModel):
     spm_calculator: str = Field(min_length=1, alias="spm-calculator")
 
 
-def _require_complete_selection(selection: SPMSelection) -> None:
+def _require_complete_selection(selection: SPMSelection) -> tuple[str, str]:
+    """Return a complete selection's artifact hash and scenario, else raise ValueError."""
     required = set(SPMSelection.model_fields)
     missing = required.difference(selection.model_fields_set)
     if missing:
@@ -242,18 +243,17 @@ def _require_complete_selection(selection: SPMSelection) -> None:
     if selection.scenario is None:
         msg = "Resolved SPM selection has no scenario"
         raise ValueError(msg)
+    return selection.forecast_content_sha256, selection.scenario
 
 
 def _resolved_spm_configuration(
     selection: SPMSelection,
 ) -> SPMResolvedConfiguration:
     """Convert a resolved request selection to the completed-result contract."""
-    _require_complete_selection(selection)
-    assert selection.forecast_content_sha256 is not None
-    assert selection.scenario is not None
+    forecast_content_sha256, scenario = _require_complete_selection(selection)
     return SPMResolvedConfiguration(
-        forecast_content_sha256=selection.forecast_content_sha256,
-        scenario=selection.scenario,
+        forecast_content_sha256=forecast_content_sha256,
+        scenario=scenario,
         geography_kind=selection.geography_kind,
         geography_id=selection.geography_id,
         county_vintage=selection.county_vintage,
@@ -284,17 +284,15 @@ def build_spm_provenance(
     runtime_versions: SPMRuntimeVersions,
 ) -> SPMProvenance:
     """Build one compact receipt from resolved calculation inputs."""
-    _require_complete_selection(selection)
-    assert selection.forecast_content_sha256 is not None
-    assert selection.scenario is not None
-    if forecast_sha256 != selection.forecast_content_sha256:
+    forecast_content_sha256, scenario = _require_complete_selection(selection)
+    if forecast_sha256 != forecast_content_sha256:
         msg = "SPM receipt artifact hash differs from the selection"
         raise ValueError(msg)
     return SPMProvenance(
         schema_version="canonical-spm-provenance-v2",
         forecast_id=forecast_id,
         forecast_sha256=forecast_sha256,
-        scenario=selection.scenario,
+        scenario=scenario,
         geography_kind=selection.geography_kind,
         geography_id=selection.geography_id,
         county_vintage=selection.county_vintage,

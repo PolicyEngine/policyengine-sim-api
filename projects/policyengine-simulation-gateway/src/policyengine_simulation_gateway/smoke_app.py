@@ -70,6 +70,10 @@ def main() -> None:
     """Run the in-image smoke remotely; fail unless modules and /health loaded."""
     report = smoke_import_gateway.remote()
     print(report)
-    assert report["modules_imported"] > 0
-    assert any("/health" in route for route in report["routes"])
+    if report["modules_imported"] <= 0:
+        msg = f"Gateway image smoke imported no modules: {report!r}"
+        raise RuntimeError(msg)
+    if not any("/health" in route for route in report["routes"]):
+        msg = f"Gateway image smoke found no /health route: {report!r}"
+        raise RuntimeError(msg)
     print("gateway image smoke OK")

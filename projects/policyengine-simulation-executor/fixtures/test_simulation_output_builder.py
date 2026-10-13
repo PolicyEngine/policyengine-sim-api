@@ -24,7 +24,9 @@ class FakeModelOutput:
 
     def model_dump(self, *, mode: str) -> dict[str, object]:
         """Return the payload; fails unless the adapter asks for JSON mode."""
-        assert mode == "json"
+        if mode != "json":
+            msg = f"The adapter must dump outputs in JSON mode, not {mode!r}"
+            raise AssertionError(msg)
         return self.payload
 
 

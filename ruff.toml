@@ -28,6 +28,9 @@ ignore = ["D203", "D213"]
 # Tests may use pytest's bare assert, and need no docstrings, annotations or
 # named constants for magic numbers. Every other rule applies to tests.
 "**/tests/**" = ["ANN", "D1", "PLR2004", "S101"]
+# The deployed-service test suite (pytest, run against a live candidate) gets
+# the same test exemptions.
+"**/authenticated_tests/**" = ["ANN", "D1", "PLR2004", "S101"]
 
 [lint.flake8-type-checking]
 # Classes whose annotations Pydantic evaluates at runtime, so their imports must
