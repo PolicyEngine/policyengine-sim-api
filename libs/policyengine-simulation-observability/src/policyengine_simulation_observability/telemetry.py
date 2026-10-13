@@ -60,7 +60,7 @@ class TelemetryEnvelope(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def discard_noncanonical_context_fields(cls, value: Any) -> Any:
+    def discard_noncanonical_context_fields(cls, value: object) -> object:
         """Ignore old body fields without using them as correlation inputs.
 
         This keeps the receiver compatible with the deployed API during the
