@@ -39,6 +39,9 @@ class BundleManifestMetadata(TypedDict):
     us: CountryBundleMetadata
     uk: CountryBundleMetadata
     spm: NotRequired[dict]
+    # Apps deployed before stage reporting have no key; the gateway then
+    # reports no stage for their jobs.
+    job_progress: NotRequired[int]
 
 
 class LatestVersions(TypedDict):
@@ -105,6 +108,9 @@ def build_bundle_manifest_metadata(
     app_name: str,
     policyengine_version: str,
 ) -> BundleManifestMetadata:
+    from policyengine_simulation_contract.job_progress import (
+        JOB_PROGRESS_CAPABILITY_VERSION,
+    )
     from policyengine_simulation_executor.spm import runtime_spm_capability
 
     capability = runtime_spm_capability()
@@ -113,6 +119,7 @@ def build_bundle_manifest_metadata(
         "policyengine_version": policyengine_version,
         "us": _country_bundle_metadata("us"),
         "uk": _country_bundle_metadata("uk"),
+        "job_progress": JOB_PROGRESS_CAPABILITY_VERSION,
     }
     if capability is not None:
         metadata["spm"] = capability.model_dump(mode="json")

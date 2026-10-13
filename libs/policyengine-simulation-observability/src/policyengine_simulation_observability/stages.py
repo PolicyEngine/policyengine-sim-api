@@ -57,6 +57,7 @@ class Stage(StrEnum):
     SEGMENTED_NATIONAL_CHILD_SPAWN = "segmented_national_child_spawn"
     SEGMENTED_NATIONAL_REDUCE = "segmented_national_reduce"
     MODAL_JOB_METADATA_READ = "modal_job_metadata_read"
+    MODAL_JOB_PROGRESS_READ = "modal_job_progress_read"
 
     SIMULATION_OUTPUT_BUILD = "simulation_output_build"
     SIMULATION_OUTPUT_MODEL_DUMP = "simulation_output_model_dump"
@@ -153,6 +154,7 @@ _ANNUAL_IMPACT = (
     Stage.MODAL_JOB_METADATA_WRITE,
     Stage.MODAL_JOB_METADATA_READ,
     Stage.MODAL_JOB_STATUS_POLL,
+    Stage.MODAL_JOB_PROGRESS_READ,
     Stage.MODAL_DICT_READ,
     *_COMMON_SIMULATION,
 )

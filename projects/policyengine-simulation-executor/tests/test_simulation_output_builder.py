@@ -29,6 +29,7 @@ from fixtures.test_simulation_output_builder import (
     FakeModelOutput,
     fake_analysis,
 )
+from policyengine_simulation_executor.job_progress import NULL_JOB_PROGRESS
 from policyengine_simulation_executor.release_bundle import BUNDLE_RECEIPT_FILENAME
 from policyengine_simulation_executor.release_bundle import get_country_release_bundle
 from policyengine_simulation_executor.release_bundle import (
@@ -1131,6 +1132,7 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
             "resolved_region_code": "us",
             "runtime": runtime,
             "uk_local_authority_metadata": None,
+            "progress": NULL_JOB_PROGRESS,
         }
     ]
 
@@ -1246,7 +1248,7 @@ def test_run_simulation_impl_core_passes_detected_uk_boundary_to_builder(monkeyp
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
-        lambda *args, **kwargs: object(),
+        lambda *args, **kwargs: SimpleNamespace(on_first_ensure=lambda callback: None),
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime.SimulationOutputBuilder",

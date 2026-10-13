@@ -258,6 +258,30 @@ def _set_modal_call_attributes(runtime) -> None:
         pass
 
 
+def _job_progress_reporter():
+    """A stage reporter for this call, keyed by its public ``job_id``.
+
+    The gateway's ``job_id`` is the spawned call's ``object_id``, which is
+    this call's ``current_function_call_id()``. Without one there is nothing
+    to key the record by, so nothing is reported.
+    """
+    from policyengine_simulation_contract.job_progress_state import (
+        put_job_progress,
+    )
+    from policyengine_simulation_executor.job_progress import (
+        NULL_JOB_PROGRESS,
+        StoredJobProgressReporter,
+    )
+
+    try:
+        job_id = modal.current_function_call_id()
+    except Exception:  # noqa: BLE001 - stage reporting is non-fatal
+        job_id = None
+    if not job_id:
+        return NULL_JOB_PROGRESS
+    return StoredJobProgressReporter(job_id, write=put_job_progress)
+
+
 @app.function(
     image=simulation_image,
     cpu=8.0,
@@ -277,7 +301,10 @@ def run_simulation(
 
     Imports the snapshotted implementation at runtime.
     Emits redacted operation data through the shared observability runtime.
+    Records the job's stage for status polls (see ``job_progress``).
     """
+    progress = _job_progress_reporter()
+    progress.start()
     runtime = _configure_modal_observability(service_role="simulation_worker")
 
     # We deliberately avoid sending full ``params`` or ``result`` blobs to
@@ -309,8 +336,10 @@ def run_simulation(
                 params,
                 app_name=APP_NAME,
                 runtime=runtime,
+                progress=progress,
             )
     finally:
+        progress.finish()
         runtime.shutdown()
 
 

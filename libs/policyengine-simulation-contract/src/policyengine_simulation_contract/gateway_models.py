@@ -6,6 +6,7 @@ import json
 from typing import ClassVar, Literal, Optional
 
 from pydantic import (
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
@@ -14,6 +15,10 @@ from pydantic import (
     model_validator,
 )
 
+from policyengine_simulation_contract.job_progress import (
+    JobSegmentProgress,
+    JobStage,
+)
 from policyengine_simulation_contract.spm import (
     SPMSelection,
     SPMCapability,
@@ -194,6 +199,45 @@ class JobStatusResponse(BaseModel):
     error: Optional[str] = None
     resolved_app_name: Optional[str] = None
     policyengine_bundle: Optional[PolicyEngineBundle] = None
+    # Stage reporting. Present only for jobs whose worker reports stages;
+    # see policyengine_simulation_contract.job_progress.
+    stage: JobStage | None = Field(
+        default=None,
+        description=(
+            "Current stage of a running job, or the stage in which a failed "
+            "job stopped. Absent for complete jobs."
+        ),
+    )
+    progress: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description=(
+            "Coarse completion percent. It advances at stage boundaries and "
+            "as national segments complete, stays below 100 while running, "
+            "and is 100 when complete."
+        ),
+    )
+    submitted_at: AwareDatetime | None = Field(
+        default=None, description="When the gateway accepted the job."
+    )
+    started_at: AwareDatetime | None = Field(
+        default=None, description="When a worker started the job."
+    )
+    stage_started_at: AwareDatetime | None = Field(
+        default=None, description="When the current stage started."
+    )
+    finished_at: AwareDatetime | None = Field(
+        default=None, description="When the worker finished or stopped the job."
+    )
+    segments: JobSegmentProgress | None = Field(
+        default=None,
+        description="Region segments of a segmented US national run.",
+    )
+    stage_durations: dict[JobStage, float] | None = Field(
+        default=None,
+        description="Seconds spent in each stage that has ended.",
+    )
 
 
 class BudgetWindowBatchRequest(GatewayRequestBase):

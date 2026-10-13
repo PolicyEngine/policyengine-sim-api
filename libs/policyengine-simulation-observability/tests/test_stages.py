@@ -49,3 +49,9 @@ def test_stage12_report_plans_include_output_planning_breakdown(
     assert Stage.STAGE12_OUTPUT_CONFIGURATION in stages
     assert Stage.STAGE12_OUTPUT_VARIABLE_RESOLUTION in stages
     assert Stage.STAGE12_CHILD_INPUT_PLANNING in stages
+
+
+def test_annual_status_polls_measure_the_job_progress_read() -> None:
+    annual = RUN_STAGE_REGISTRY[RunConfiguration.ANNUAL_IMPACT]
+
+    assert annual.name(Stage.MODAL_JOB_PROGRESS_READ) == "modal_job_progress_read"

@@ -1246,6 +1246,40 @@
         ],
         "title": "IntraDecileOutput"
       },
+      "JobSegmentProgress": {
+        "properties": {
+          "completed": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Completed"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "completed",
+          "total"
+        ],
+        "title": "JobSegmentProgress",
+        "description": "Completed region segments of a segmented national run."
+      },
+      "JobStage": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "loading_data",
+          "baseline",
+          "reform",
+          "simulating",
+          "outputs"
+        ],
+        "title": "JobStage",
+        "description": "Coarse stages of an annual economy job, in the order they run.\n\nA monolithic run moves through ``loading_data``, ``baseline``, ``reform``\nand ``outputs``. A segmented US national run computes baseline and reform\ntogether in parallel region segments, so it moves through\n``loading_data``, ``simulating`` and ``outputs``."
+      },
       "JobStatusResponse": {
         "properties": {
           "status": {
@@ -1312,6 +1346,112 @@
                 "type": "null"
               }
             ]
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobStage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current stage of a running job, or the stage in which a failed job stopped. Absent for complete jobs."
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress",
+            "description": "Coarse completion percent. It advances at stage boundaries and as national segments complete, stays below 100 while running, and is 100 when complete."
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At",
+            "description": "When the gateway accepted the job."
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At",
+            "description": "When a worker started the job."
+          },
+          "stage_started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Started At",
+            "description": "When the current stage started."
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At",
+            "description": "When the worker finished or stopped the job."
+          },
+          "segments": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobSegmentProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Region segments of a segmented US national run."
+          },
+          "stage_durations": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "propertyNames": {
+                  "$ref": "#/components/schemas/JobStage"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Durations",
+            "description": "Seconds spent in each stage that has ended."
           }
         },
         "type": "object",

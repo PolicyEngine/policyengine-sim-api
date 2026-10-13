@@ -601,8 +601,8 @@ def test_fanout_and_budget_window_preserve_settings_and_receipts():
 
 
 def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
-    import policyengine.core
     from policyengine_simulation_executor import baseline_artifacts
+    from policyengine_simulation_executor import stage_reporting_simulation
     import policyengine_simulation_executor.spm as spm
 
     calls = []
@@ -618,7 +618,11 @@ def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
     monkeypatch.setattr(
         baseline_artifacts, "ArtifactBaselineSimulation", lambda **k: calls.append(k)
     )
-    monkeypatch.setattr(policyengine.core, "Simulation", lambda **k: calls.append(k))
+    monkeypatch.setattr(
+        stage_reporting_simulation,
+        "StageReportingSimulation",
+        lambda **k: calls.append(k),
+    )
     for policy in (None, {"test": 123}):
         simulation_runtime._build_simulation(
             {"country": "us", "spm": SELECTION},

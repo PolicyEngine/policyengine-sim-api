@@ -350,9 +350,10 @@ class TestArtifactBaselineSimulation:
 class TestBuildSimulationSelection:
     @pytest.fixture
     def wired(self, monkeypatch):
-        from policyengine import core as policyengine_core
-
         from policyengine_simulation_executor import simulation_runtime as sr
+        from policyengine_simulation_executor import (
+            stage_reporting_simulation as srs,
+        )
 
         recorded = SimpleNamespace(
             artifact_kwargs=None,
@@ -370,15 +371,14 @@ class TestBuildSimulationSelection:
             def __init__(self, **kwargs):
                 recorded.plain_kwargs = kwargs
 
-        # Replacing ``Simulation`` also replaces a class inspected by the SPM
-        # capability resolver. Preserve the capability derived from the real
-        # installed class before installing the test double.
+        # Preserve the SPM capability derived from the real installed
+        # Simulation class before installing the test doubles.
         from policyengine_simulation_executor import spm as executor_spm
 
         installed_capability = executor_spm.runtime_spm_capability()
 
         monkeypatch.setattr(ba, "ArtifactBaselineSimulation", FakeArtifactSimulation)
-        monkeypatch.setattr(policyengine_core, "Simulation", FakePlainSimulation)
+        monkeypatch.setattr(srs, "StageReportingSimulation", FakePlainSimulation)
         monkeypatch.setattr(
             executor_spm,
             "runtime_spm_capability",
@@ -459,6 +459,7 @@ def test_bounded_reform_build_keeps_current_law_artifact_reuse(monkeypatch):
 
     from policyengine_simulation_executor import simulation_runtime as sr
     from policyengine_simulation_executor import spm as executor_spm
+    from policyengine_simulation_executor import stage_reporting_simulation as srs
 
     installed_capability = executor_spm.runtime_spm_capability()
     monkeypatch.setattr(
@@ -470,8 +471,8 @@ def test_bounded_reform_build_keeps_current_law_artifact_reuse(monkeypatch):
         lambda **kwargs: SimpleNamespace(kind="artifact", **kwargs),
     )
     monkeypatch.setattr(
-        policyengine_core,
-        "Simulation",
+        srs,
+        "StageReportingSimulation",
         lambda **kwargs: SimpleNamespace(kind="plain", **kwargs),
     )
     identities = []

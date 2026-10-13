@@ -148,6 +148,27 @@ def test_bundle_manifest_records_policyengine_6_spm_capability(
     }
 
 
+def test_bundle_manifest_declares_job_progress_capability(
+    fake_bundle_metadata,
+    monkeypatch,
+):
+    from policyengine_simulation_contract.job_progress import (
+        JOB_PROGRESS_CAPABILITY_VERSION,
+    )
+
+    from policyengine_simulation_executor import spm as executor_spm
+
+    monkeypatch.setattr(executor_spm, "runtime_spm_capability", lambda: None)
+
+    metadata = registry.build_bundle_manifest_metadata(
+        app_name="policyengine-simulation-py6-2-7",
+        policyengine_version="6.2.7",
+    )
+
+    # The gateway reports a queued stage only for workers that declare this.
+    assert metadata["job_progress"] == JOB_PROGRESS_CAPABILITY_VERSION
+
+
 def test_validate_routing_state_rejects_missing_latest_route(fake_bundle_metadata):
     state = registry.build_next_routing_state(
         current_state=None,

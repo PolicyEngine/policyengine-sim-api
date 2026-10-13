@@ -25,6 +25,7 @@ import time
 from typing import Any
 
 from policyengine_observability import ObservabilityRuntime
+from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_contract.spm import (
     SPMInputError,
     combine_spm_results,
@@ -38,6 +39,10 @@ from policyengine_simulation_observability.stages import (
 from policyengine_simulation_observability.telemetry import split_internal_payload
 
 import modal
+from policyengine_simulation_executor.job_progress import (
+    NULL_JOB_PROGRESS,
+    JobProgressReporter,
+)
 from policyengine_simulation_executor.national_partition import (
     national_region_groups,
 )
@@ -145,10 +150,12 @@ class SegmentedNationalRunner:
         modal_module=None,
         poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
         poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
+        progress: JobProgressReporter = NULL_JOB_PROGRESS,
     ):
         self.params = params
         self.app_name = app_name
         self.runtime = runtime
+        self.progress = progress
         self.modal = modal if modal_module is None else modal_module
         self.poll_interval_initial_seconds = poll_interval_seconds
         self.poll_interval_max_seconds = poll_interval_max_seconds
@@ -171,8 +178,10 @@ class SegmentedNationalRunner:
     def run(self) -> dict[str, Any]:
         country_module = self._country_module()
         self._extend_last_group_with_uncovered_states(country_module)
+        self.progress.start_segments(len(self.groups))
         handles = self._spawn_all_children()
         child_results = self._collect(handles)
+        self.progress.enter(JobStage.OUTPUTS)
         return self._reduce(child_results, country_module=country_module)
 
     def _country_module(self):
@@ -283,6 +292,7 @@ class SegmentedNationalRunner:
                 pending.discard(index)
                 poll_errors.pop(index, None)
                 progress_made = True
+                self.progress.segment_completed()
             # Bounded aggregate instead of one segment per probe (see the
             # Stage registry note about long poll loops).
             self.runtime.set_context(segmented_poll_count=poll_count)
@@ -339,12 +349,17 @@ class SegmentedNationalRunner:
 
 
 def run_segmented_national_impl(
-    params: dict[str, Any], *, app_name: str, runtime: ObservabilityRuntime
+    params: dict[str, Any],
+    *,
+    app_name: str,
+    runtime: ObservabilityRuntime,
+    progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict[str, Any]:
     return SegmentedNationalRunner(
         params,
         app_name=app_name,
         runtime=runtime,
+        progress=progress,
     ).run()
 
 
@@ -353,6 +368,7 @@ def dispatch_run_simulation(
     *,
     app_name: str,
     runtime: ObservabilityRuntime,
+    progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict[str, Any]:
     """The run_simulation entrypoint's routing: segmented national fan-out
     for eligible requests, the monolithic path for everything else."""
@@ -366,6 +382,7 @@ def dispatch_run_simulation(
             params,
             app_name=app_name,
             runtime=runtime,
+            progress=progress,
         )
 
     from policyengine_simulation_executor.simulation_runtime import (
@@ -376,4 +393,4 @@ def dispatch_run_simulation(
     # and UK requests must not pollute the segmented-vs-monolithic metric.
     if is_plain_national_macro(params):
         runtime.set_context(national_execution="monolithic")
-    return run_simulation_impl(params, runtime=runtime)
+    return run_simulation_impl(params, runtime=runtime, progress=progress)

@@ -37,6 +37,38 @@ A manifest that states *no* model version for the country — entry absent,
 or the value absent, non-string, empty or whitespace — contradicts nothing
 and still routes.
 
+## Job stage reporting
+
+`GET /jobs/{job_id}` adds optional fields to annual economy jobs, so a
+client can show real progress instead of a fixed duration estimate. Clients
+that read only `status` see no change.
+
+| Field | Meaning |
+|---|---|
+| `stage` | `queued`, `loading_data`, `baseline`, `reform`, `simulating` or `outputs`. Running jobs report their current stage; failed jobs report the stage they stopped in; complete jobs omit it. |
+| `progress` | Coarse percent, 0–100. It advances at stage boundaries and as national segments complete, stays below 100 while running, and is 100 when complete. |
+| `submitted_at`, `started_at`, `stage_started_at`, `finished_at` | UTC timestamps. `started_at - submitted_at` is the queue time. |
+| `segments` | `{completed, total}` region segments of a segmented US national run. |
+| `stage_durations` | Seconds spent in each stage that has ended. |
+
+A monolithic run moves through `loading_data`, `baseline`, `reform` and
+`outputs`. A segmented US national run computes baseline and reform together
+in 20 region segments, so it moves through `loading_data`, `simulating` and
+`outputs`.
+
+The `run_simulation` worker writes a stage record to the Modal Dict
+`simulation-api-job-progress`, keyed by `job_id`. The gateway reports
+`queued` for a job without a record only when the worker app's bundle
+manifest declares `job_progress`; apps deployed before stage reporting never
+write a record, so their jobs get no stage fields. A failed read or a
+malformed record drops the stage fields; it never changes the status, the
+result or the HTTP status code.
+
+The `progress` value at each stage start (`STAGE_PROGRESS_FLOOR` in
+`policyengine_simulation_contract.job_progress`) is provisional and chosen by
+hand. Replace it with measured stage shares once per-stage runtime
+statistics exist (#780, phase 2).
+
 ## Image dependencies
 
 The Modal image installs with `uv_sync(frozen=True)` from this project's
