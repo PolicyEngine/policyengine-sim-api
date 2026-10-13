@@ -1,3 +1,5 @@
+"""Construction of the observability runtime for each simulation service."""
+
 from __future__ import annotations
 
 import os
@@ -41,7 +43,6 @@ DISPATCH_ATTRIBUTE_KEYS = frozenset({"job_id", "observability_id", "simulation_i
 
 def modal_image_environment() -> dict[str, str]:
     """Return deployment-provided settings to bake into a Modal image."""
-
     configured = {
         name: value
         for name in MODAL_IMAGE_ENV_NAMES
@@ -65,7 +66,6 @@ def build_runtime(
     service_version: str | None = None,
 ) -> ObservabilityRuntime:
     """Create one explicitly owned simulation observability runtime."""
-
     platform_instance_id = (
         os.getenv("MODAL_TASK_ID") if platform == "modal" else os.getenv("K_REVISION")
     )
@@ -129,6 +129,10 @@ def init_simulation_observability(
     environment: str,
     service_version: str | None = None,
 ) -> ObservabilityRuntime:
+    """Build the service's observability runtime and instrument ``app`` with it.
+
+    The caller owns the returned runtime and must shut it down on exit.
+    """
     runtime = build_runtime(
         service_name=service_name,
         service_role=service_role,
@@ -147,6 +151,10 @@ def init_process_observability(
     environment: str,
     service_version: str | None = None,
 ) -> ObservabilityRuntime:
+    """Build the observability runtime for a process with no FastAPI app.
+
+    Used by Modal workers; the caller owns the runtime and must shut it down.
+    """
     return build_runtime(
         service_name=service_name,
         service_role=service_role,

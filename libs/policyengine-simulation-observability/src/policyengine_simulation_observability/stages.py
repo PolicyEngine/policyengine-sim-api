@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 
 class RunConfiguration(StrEnum):
+    """Kind of simulation run; each has a fixed stage plan in ``RUN_STAGE_REGISTRY``."""
+
     ANNUAL_IMPACT = "annual_impact"
     BUDGET_WINDOW = "budget_window"
     SEGMENTED_NATIONAL = "segmented_national"
@@ -26,6 +28,8 @@ class RunConfiguration(StrEnum):
 
 
 class Stage(StrEnum):
+    """Every traced stage of any run; each value is the span name."""
+
     ANNUAL_EXECUTION = "run_simulation"
     BUDGET_WINDOW_EXECUTION = "run_budget_window_batch"
     SEGMENTED_NATIONAL_EXECUTION = "run_simulation_segment"
@@ -105,12 +109,13 @@ class Stage(StrEnum):
 
 @dataclass(frozen=True)
 class StagePlan:
+    """Stages one run configuration may emit, in their expected order."""
+
     configuration: RunConfiguration
     stages: tuple[Stage, ...]
 
     def name(self, stage: Stage) -> str:
         """Return a configured stage name, rejecting unregistered use."""
-
         if stage not in self.stages:
             raise ValueError(
                 f"{stage.value!r} is not registered for {self.configuration.value!r}"
