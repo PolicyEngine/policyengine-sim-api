@@ -733,7 +733,7 @@ autofix = true
 [rule.enforcer]
 kind = "ruff"
 mode = "lint"
-codes = ["ANN", "BLE", "D", "E4", "E7", "E9", "EM", "F", "FLY", "FURB", "I", "PIE", "PYI", "RET", "RSE", "TC", "TRY", "UP", "W"]
+codes = ["ANN", "BLE", "D", "DTZ", "E4", "E7", "E9", "EM", "ERA", "EXE", "F", "FIX", "FLY", "FURB", "G", "I", "LOG", "PIE", "PYI", "RET", "RSE", "S", "T20", "TC", "TD", "TRY", "UP", "W"]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "lint"
@@ -752,6 +752,25 @@ autofix = false
 kind = "ruff"
 mode = "per-file-ignore"
 pattern = "**/tests/**"
+codes = ["ANN", "D1", "PLR2004", "S101"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "lint"
+invocation = "ruff check ."
+
+[[rule]]
+id = "sim.quality.deployed-tests-ruff-exemptions"
+category = "quality"
+statement = "The deployed-service test suite (projects/*/authenticated_tests, pytest run against a live candidate) gets the same ruff exemptions as unit tests (S101, D1, ANN, PLR2004); every other ruff rule applies to it."
+rationale = "docs/engineering/skills/rules-registry.md#baselines"
+scope = ["projects/*/authenticated_tests/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "ruff"
+mode = "per-file-ignore"
+pattern = "**/authenticated_tests/**"
 codes = ["ANN", "D1", "PLR2004", "S101"]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"

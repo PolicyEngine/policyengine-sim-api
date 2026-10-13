@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 35 | 1 | 0 | 14 | 50 |
+| mechanical | 36 | 1 | 0 | 14 | 51 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 36 of 50 rules.
+**Blocking:** 37 of 51 rules.
 
 ## Gaps
 
@@ -246,24 +246,27 @@ flowchart LR
 
 | Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `sim.quality.deployed-tests-ruff-exemptions` | The deployed-service test suite (projects/*/authenticated_tests, pytest run against a live candidate) gets the same ruff exemptions as unit tests (S101, D1, ANN, PLR2004); every other ruff rule applies to it. | mechanical | enforced | yes | ruff per-file ignore of ANN, D1, PLR2004, S101 for `**/authenticated_tests/**` | `pr.yml:lint` | — |
 | `sim.quality.every-project-tested` | Every project and library with unit tests runs them in the PR test matrix. | mechanical | doc-only | no | nothing | — | — |
 | `sim.quality.ruff-format-src` | Source code under projects/*/src and libs/*/src is formatted with ruff format. | mechanical | enforced | yes | ruff format | `pr.yml:lint` | — |
 | `sim.quality.ruff-format-tests` | Test code is formatted with ruff format too; CI currently checks only src directories. | mechanical | doc-only | no | nothing | — | — |
-| `sim.quality.ruff-lint` | All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. | mechanical | enforced | yes | ruff check (ANN, BLE, D, E4, E7, E9, EM, F, FLY, FURB, I, PIE, PYI, RET, RSE, TC, TRY, UP, W) | `pr.yml:lint` | — |
+| `sim.quality.ruff-lint` | All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. | mechanical | enforced | yes | ruff check (ANN, BLE, D, DTZ, E4, E7, E9, EM, ERA, EXE, F, FIX, FLY, FURB, G, I, LOG, PIE, PYI, RET, RSE, S, T20, TC, TD, TRY, UP, W) | `pr.yml:lint` | — |
 | `sim.quality.runtime-evaluated-models-resolve` | Every Pydantic model is runtime-evaluated for ruff: one of its bases, read through the imports of the model's own module, is listed in ruff.toml's runtime-evaluated-base-classes or is a runtime-evaluated class in that same module; and every Pydantic model resolves its annotations once its package is imported. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py`, `projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py` | `pr.yml:test` | yes |
 | `sim.quality.tests-pass` | Each project's unit tests pass in its own locked environment. | mechanical | enforced | yes | CI job `test` | `pr.yml:test` | — |
 | `sim.quality.tests-ruff-exemptions` | Test files may use pytest's bare assert and need no docstrings, annotations or named constants for magic numbers (S101, D1, ANN, PLR2004); every other ruff rule applies to tests. | mechanical | enforced | yes | ruff per-file ignore of ANN, D1, PLR2004, S101 for `**/tests/**` | `pr.yml:lint` | — |
 
 ```mermaid
 flowchart LR
+  r_sim_quality_deployed_tests_ruff_exemptions("sim.quality.deployed-tests-ruff-exemptions (enforced)")
+  e_ruff_per_file_ignore_of_ANN__D1__PLR2004__S101_for____authenticated_tests___["ruff per-file ignore of ANN, D1, PLR2004, S101 for **/authenticated_tests/**"]
+  j_CI_pr_yml_lint["CI pr.yml:lint"]
   r_sim_quality_every_project_tested("sim.quality.every-project-tested (doc-only)")
   gap_unenforced>"not enforced"]
   r_sim_quality_ruff_format_src("sim.quality.ruff-format-src (enforced)")
   e_ruff_format["ruff format"]
-  j_CI_pr_yml_lint["CI pr.yml:lint"]
   r_sim_quality_ruff_format_tests("sim.quality.ruff-format-tests (doc-only)")
   r_sim_quality_ruff_lint("sim.quality.ruff-lint (enforced)")
-  e_ruff_check__ANN__BLE__D__E4__E7__E9__EM__F__FLY__FURB__I__PIE__PYI__RET__RSE__TC__TRY__UP__W_["ruff check (ANN, BLE, D, E4, E7, E9, EM, F, FLY, FURB, I, PIE, PYI, RET, RSE, TC, TRY, UP, W)"]
+  e_ruff_check__ANN__BLE__D__DTZ__E4__E7__E9__EM__ERA__EXE__F__FIX__FLY__FURB__G__I__LOG__PIE__PYI__RET__RSE__S__T20__TC__TD__TRY__UP__W_["ruff check (ANN, BLE, D, DTZ, E4, E7, E9, EM, ERA, EXE, F, FIX, FLY, FURB, G, I, LOG, PIE, PYI, RET, RSE, S, T20, TC, TD, TRY, UP, W)"]
   r_sim_quality_runtime_evaluated_models_resolve("sim.quality.runtime-evaluated-models-resolve (enforced)")
   e_pytest_projects_policyengine_simulation_entry_tests_test_runtime_evaluated_annotations_py__projects_policyengine_simulation_executor_tests_test_runtime_evaluated_annotations_py["pytest projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py, projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py"]
   j_CI_pr_yml_test["CI pr.yml:test"]
@@ -271,12 +274,14 @@ flowchart LR
   e_CI_job_test["CI job test"]
   r_sim_quality_tests_ruff_exemptions("sim.quality.tests-ruff-exemptions (enforced)")
   e_ruff_per_file_ignore_of_ANN__D1__PLR2004__S101_for____tests___["ruff per-file ignore of ANN, D1, PLR2004, S101 for **/tests/**"]
+  r_sim_quality_deployed_tests_ruff_exemptions --> e_ruff_per_file_ignore_of_ANN__D1__PLR2004__S101_for____authenticated_tests___
+  e_ruff_per_file_ignore_of_ANN__D1__PLR2004__S101_for____authenticated_tests___ --> j_CI_pr_yml_lint
   r_sim_quality_every_project_tested -.-> gap_unenforced
   r_sim_quality_ruff_format_src --> e_ruff_format
   e_ruff_format --> j_CI_pr_yml_lint
   r_sim_quality_ruff_format_tests -.-> gap_unenforced
-  r_sim_quality_ruff_lint --> e_ruff_check__ANN__BLE__D__E4__E7__E9__EM__F__FLY__FURB__I__PIE__PYI__RET__RSE__TC__TRY__UP__W_
-  e_ruff_check__ANN__BLE__D__E4__E7__E9__EM__F__FLY__FURB__I__PIE__PYI__RET__RSE__TC__TRY__UP__W_ --> j_CI_pr_yml_lint
+  r_sim_quality_ruff_lint --> e_ruff_check__ANN__BLE__D__DTZ__E4__E7__E9__EM__ERA__EXE__F__FIX__FLY__FURB__G__I__LOG__PIE__PYI__RET__RSE__S__T20__TC__TD__TRY__UP__W_
+  e_ruff_check__ANN__BLE__D__DTZ__E4__E7__E9__EM__ERA__EXE__F__FIX__FLY__FURB__G__I__LOG__PIE__PYI__RET__RSE__S__T20__TC__TD__TRY__UP__W_ --> j_CI_pr_yml_lint
   r_sim_quality_runtime_evaluated_models_resolve --> e_pytest_projects_policyengine_simulation_entry_tests_test_runtime_evaluated_annotations_py__projects_policyengine_simulation_executor_tests_test_runtime_evaluated_annotations_py
   e_pytest_projects_policyengine_simulation_entry_tests_test_runtime_evaluated_annotations_py__projects_policyengine_simulation_executor_tests_test_runtime_evaluated_annotations_py --> j_CI_pr_yml_test
   r_sim_quality_tests_pass --> e_CI_job_test
