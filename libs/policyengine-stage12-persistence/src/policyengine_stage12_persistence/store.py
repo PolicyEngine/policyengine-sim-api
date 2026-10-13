@@ -104,15 +104,19 @@ SIMULATION_MUTABLE_COLUMNS = (
 def normalized_database_url(database_url: str) -> URL:
     """Select psycopg 3 without changing the stored secret's URL format."""
     if not database_url or database_url != database_url.strip():
-        raise ValueError("Stage 12 database URL is missing or malformed")
+        msg = "Stage 12 database URL is missing or malformed"
+        raise ValueError(msg)
     try:
         parsed = make_url(database_url)
     except Exception as error:
-        raise ValueError("Stage 12 database URL is malformed") from error
+        msg = "Stage 12 database URL is malformed"
+        raise ValueError(msg) from error
     if parsed.drivername != "postgresql":
-        raise ValueError("Stage 12 database URL must use postgresql://")
+        msg = "Stage 12 database URL must use postgresql://"
+        raise ValueError(msg)
     if not parsed.username or not parsed.host or not parsed.database:
-        raise ValueError("Stage 12 database URL is incomplete")
+        msg = "Stage 12 database URL is incomplete"
+        raise ValueError(msg)
     return parsed.set(drivername="postgresql+psycopg")
 
 
@@ -199,7 +203,8 @@ class Stage12PersistenceStore:
         """
         if engine is None:
             if database_url is None:
-                raise ValueError("Stage 12 database URL is required")
+                msg = "Stage 12 database URL is required"
+                raise ValueError(msg)
             engine = create_stage12_engine(database_url)
         self.engine = engine
         self._open_connection = open_connection
@@ -258,9 +263,10 @@ class Stage12PersistenceStore:
                 .one_or_none()
             )
             if existing is None:
-                raise ValueError(
+                msg = (
                     "comparison report conflict did not resolve to an existing identity"
                 )
+                raise ValueError(msg)
             resolved = _report(existing)
             require_report_conflict_matches(resolved, record)
             return ComparisonReportPersistenceResult(record=resolved, created=False)
@@ -278,7 +284,8 @@ class Stage12PersistenceStore:
                 .one_or_none()
             )
         if row is None:
-            raise LookupError(f"comparison report {evaluation_id} does not exist")
+            msg = f"comparison report {evaluation_id} does not exist"
+            raise LookupError(msg)
         return _report(row)
 
     def list_simulations(
@@ -321,9 +328,8 @@ class Stage12PersistenceStore:
                 .one_or_none()
             )
             if row is None:
-                raise LookupError(
-                    f"comparison report {record.evaluation_id} does not exist"
-                )
+                msg = f"comparison report {record.evaluation_id} does not exist"
+                raise LookupError(msg)
             existing = _report(row)
             require_report_identity(existing, record)
             require_result_comparison_unchanged(existing, record)
@@ -370,9 +376,8 @@ class Stage12PersistenceStore:
                 .one_or_none()
             )
             if row is None:
-                raise LookupError(
-                    f"comparison report {record.evaluation_id} does not exist"
-                )
+                msg = f"comparison report {record.evaluation_id} does not exist"
+                raise LookupError(msg)
             existing = _report(row)
             require_comparison_update_only(existing, record)
             require_result_comparison_transition(
@@ -426,9 +431,8 @@ class Stage12PersistenceStore:
                 .one_or_none()
             )
             if parent_row is None:
-                raise LookupError(
-                    f"comparison report {record.evaluation_id} does not exist"
-                )
+                msg = f"comparison report {record.evaluation_id} does not exist"
+                raise LookupError(msg)
             require_simulation_parent_matches(_report(parent_row), record)
             created = connection.execute(statement).mappings().one_or_none()
             if created is not None:
@@ -450,9 +454,8 @@ class Stage12PersistenceStore:
                 .one_or_none()
             )
             if existing is None:
-                raise ValueError(
-                    "comparison simulation conflict did not resolve to an existing identity"
-                )
+                msg = "comparison simulation conflict did not resolve to an existing identity"
+                raise ValueError(msg)
             resolved = _simulation(existing)
             require_simulation_conflict_matches(resolved, record)
             return ComparisonSimulationPersistenceResult(
@@ -477,9 +480,8 @@ class Stage12PersistenceStore:
                 .one_or_none()
             )
         if row is None:
-            raise LookupError(
-                f"comparison simulation {simulation_execution_id} does not exist"
-            )
+            msg = f"comparison simulation {simulation_execution_id} does not exist"
+            raise LookupError(msg)
         return _simulation(row)
 
     def replace_simulation(
@@ -507,10 +509,11 @@ class Stage12PersistenceStore:
                 .one_or_none()
             )
             if row is None:
-                raise LookupError(
+                msg = (
                     "comparison simulation "
                     f"{record.simulation_execution_id} does not exist"
                 )
+                raise LookupError(msg)
             existing = _simulation(row)
             require_simulation_identity(existing, record)
             require_lifecycle_transition(existing.status, record.status)
@@ -576,10 +579,10 @@ class Stage12PersistenceStore:
                     .one_or_none()
                 )
             if row is None:
-                raise LookupError(
-                    f"comparison simulation {simulation_execution_id} does not exist"
-                )
+                msg = f"comparison simulation {simulation_execution_id} does not exist"
+                raise LookupError(msg)
             resolved = _simulation(row)
             if resolved.modal_invocation_id != modal_invocation_id:
-                raise ValueError("comparison simulation invocation identity changed")
+                msg = "comparison simulation invocation identity changed"
+                raise ValueError(msg)
             return resolved
