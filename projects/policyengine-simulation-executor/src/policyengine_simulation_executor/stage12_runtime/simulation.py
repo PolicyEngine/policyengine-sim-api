@@ -382,7 +382,7 @@ def run_single_simulation(
         return descriptor.model_dump(mode="json")
     # Persist a redacted cause for any country-package calculation failure
     # before returning a stable exception to Modal.
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001  # every calculation failure is persisted before a stable exception returns to Modal
         report_original_failure(
             error,
             runtime=runtime,

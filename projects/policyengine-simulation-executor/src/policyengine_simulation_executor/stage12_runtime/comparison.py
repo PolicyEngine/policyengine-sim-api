@@ -109,7 +109,7 @@ def compare_completed_report(
         )
     # Result retrieval, validation, artifact storage, and persistence are all
     # deliberately isolated from the successful Stage 12 calculation.
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001  # comparison failures are recorded, never allowed to fail the Stage 12 calculation
         failed_at = datetime.now(UTC)
         try:
             latest = store.get_report(parent.evaluation_id)

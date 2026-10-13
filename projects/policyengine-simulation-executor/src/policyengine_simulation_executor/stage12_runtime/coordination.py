@@ -564,7 +564,7 @@ def coordinate_report(
         return descriptor.model_dump(mode="json")
     # Persist a redacted cause for any coordinator, child-call, aggregation, or
     # artifact failure before returning a stable exception to Modal.
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001  # every failure is persisted before a stable exception returns to Modal
         if error is not reported_child_failure:
             report_original_failure(
                 error,

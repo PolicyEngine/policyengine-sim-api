@@ -207,7 +207,7 @@ def create_app(
         if observability_id is not None:
             try:
                 runtime.set_context(observability_id=observability_id)
-            except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+            except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
                 pass
         return observability_id
 
@@ -243,7 +243,7 @@ def create_app(
                         "reason": "downstream_identifier_differed",
                     },
                 )
-            except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+            except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
                 pass
             return current
         return bind_observability_id(request, current or downstream)
@@ -327,7 +327,7 @@ def create_app(
         event_identifiers: RequestIdentifiers = identifiers or {}
         try:
             runtime.set_context(backend="old_gateway", **event_identifiers)
-        except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+        except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
             pass
         try:
             result = await runtime_backend.request(
@@ -483,7 +483,7 @@ def create_app(
             )
         # This temporary diagnostic route must convert every integration
         # failure into an HTTP response rather than crash the application.
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001  # every integration failure becomes a 503
             logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
                 "stage12_direct_submission_failed",
                 extra={
@@ -536,7 +536,7 @@ def create_app(
             )
         # Reading temporary diagnostic state crosses an internal HTTP boundary
         # whose concrete exception types are implementation details.
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001  # any status-read failure becomes a 503
             logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
                 "stage12_direct_status_failed",
                 extra={
@@ -631,7 +631,7 @@ def create_app(
                 )
             # Automatic Stage 12 work must never change the production v1
             # response, including for unexpected integration failures.
-            except Exception as error:  # noqa: BLE001
+            except Exception as error:  # noqa: BLE001  # Stage 12 dispatch must never change the v1 response
                 logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
                     "stage12_comparison_dispatch_failed",
                     extra={

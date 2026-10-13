@@ -230,7 +230,7 @@ def _current_policyengine_bundle() -> Mapping | None:
         from policyengine.bundle import get_current_bundle
 
         return get_current_bundle()
-    except Exception:  # noqa: BLE001 - preserve fallback for invalid legacy bundles
+    except Exception:  # noqa: BLE001  # preserve the fallback for invalid legacy bundles
         return None
 
 

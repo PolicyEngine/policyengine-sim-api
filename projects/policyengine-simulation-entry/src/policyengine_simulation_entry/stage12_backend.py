@@ -529,7 +529,7 @@ class Stage12ComparisonBackend:
                         ),
                     },
                 )
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001  # any dispatch failure is recorded on the parent run, then re-raised as TemporaryStage12DispatchFailed
             failed_at = datetime.now(UTC)
             failed = parent.model_copy(
                 update={
