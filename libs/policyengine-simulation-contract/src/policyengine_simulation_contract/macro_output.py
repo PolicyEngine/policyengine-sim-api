@@ -21,7 +21,16 @@ class MacroRootModel(RootModel[T], Generic[T]):
     """Base model for named map and list output schemas."""
 
 
-class BudgetaryImpact(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class BudgetaryImpact(MacroOutputModel):
+    """Headline budget effect of the reform for the simulated year.
+
+    Impacts are reform minus baseline totals in the country's currency.
+    ``budgetary_impact`` is ``tax_revenue_impact`` minus
+    ``benefit_spending_impact``; ``state_tax_revenue_impact`` covers US state
+    income tax and is 0 for the UK. ``households`` is the weighted number of
+    households and ``baseline_net_income`` their total baseline net income.
+    """
+
     tax_revenue_impact: float
     state_tax_revenue_impact: float
     benefit_spending_impact: float
@@ -33,7 +42,12 @@ class BudgetaryImpact(MacroOutputModel):  # noqa: D101  # docstring would change
 BudgetaryOutput = BudgetaryImpact
 
 
-class DetailedBudgetProgramOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class DetailedBudgetProgramOutput(MacroOutputModel):
+    """Baseline and reform totals for one program.
+
+    ``difference`` is reform minus baseline.
+    """
+
     baseline: float
     reform: float
     difference: float
@@ -43,82 +57,142 @@ class DetailedBudgetOutput(MacroRootModel[dict[str, DetailedBudgetProgramOutput]
     """Program name mapped to its baseline and reform totals."""
 
 
-class DecileOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class DecileOutput(MacroOutputModel):
+    """Change in average household net income in each decile.
+
+    Keys are decile numbers from ``"1"`` (lowest) to ``"10"`` (highest); the same
+    shape is used for income deciles and UK wealth deciles. ``average`` is the
+    absolute change and ``relative`` the change relative to the decile's
+    baseline average.
+    """
+
     average: dict[str, float]
     relative: dict[str, float]
 
 
-class IntraDecileOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class IntraDecileOutput(MacroOutputModel):
+    """Share of people in each decile who gain or lose, grouped by size of change.
+
+    The categories are gaining or losing more or less than 5% of household net
+    income, or no change. ``deciles`` lists each category's share for deciles 1
+    to 10 in order, and ``all`` gives each category's average across the deciles.
+    """
+
     deciles: dict[str, list[float]]
     all: dict[str, float]
 
 
-class BaselineReformValue(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class BaselineReformValue(MacroOutputModel):
+    """A metric's value under the baseline and under the reform."""
+
     baseline: float
     reform: float
 
 
-class AgePovertyOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class AgePovertyOutput(MacroOutputModel):
+    """Baseline and reform poverty rates for children, adults, seniors and everyone."""
+
     child: BaselineReformValue
     adult: BaselineReformValue
     senior: BaselineReformValue
     all: BaselineReformValue
 
 
-class GenderPovertyOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class GenderPovertyOutput(MacroOutputModel):
+    """Baseline and reform poverty rates for males and females."""
+
     male: BaselineReformValue
     female: BaselineReformValue
 
 
-class RacePovertyOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class RacePovertyOutput(MacroOutputModel):
+    """Baseline and reform poverty rates by race and ethnicity (US only)."""
+
     white: BaselineReformValue
     black: BaselineReformValue
     hispanic: BaselineReformValue
     other: BaselineReformValue
 
 
-class PovertyOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class PovertyOutput(MacroOutputModel):
+    """Poverty and deep poverty rates by age group.
+
+    In the US these are the SPM poverty and deep SPM poverty rates. In the UK,
+    ``poverty`` is relative and ``deep_poverty`` absolute poverty, both measured
+    before housing costs.
+    """
+
     poverty: AgePovertyOutput
     deep_poverty: AgePovertyOutput
 
 
-class PovertyByGenderOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class PovertyByGenderOutput(MacroOutputModel):
+    """Poverty and deep poverty rates by gender, as defined for ``PovertyOutput``."""
+
     poverty: GenderPovertyOutput
     deep_poverty: GenderPovertyOutput
 
 
-class PovertyByRaceOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class PovertyByRaceOutput(MacroOutputModel):
+    """US poverty rates by race and ethnicity; there is no deep poverty breakdown."""
+
     poverty: RacePovertyOutput
 
 
-class PovertyModuleOutputs(MacroOutputModel):  # noqa: D101  # docstring would change the published JSON schema description
+class PovertyModuleOutputs(MacroOutputModel):
+    """Overall, by-gender and by-race poverty results for one comparison.
+
+    ``poverty_by_race`` is null outside the US.
+    """
+
     poverty: PovertyOutput
     poverty_by_gender: PovertyByGenderOutput
     poverty_by_race: PovertyByRaceOutput | None
 
 
-class InequalityOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class InequalityOutput(MacroOutputModel):
+    """Baseline and reform income inequality.
+
+    Covers the Gini coefficient and the income shares of the top 10% and top 1%.
+    """
+
     gini: BaselineReformValue
     top_10_pct_share: BaselineReformValue
     top_1_pct_share: BaselineReformValue
 
 
-class LaborSupplyRelativeResponse(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class LaborSupplyRelativeResponse(MacroOutputModel):
+    """Income- and substitution-effect responses relative to baseline earnings."""
+
     income: float
     substitution: float
 
 
-class LaborSupplyDecileMetric(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class LaborSupplyDecileMetric(MacroOutputModel):
+    """Income- and substitution-effect responses keyed by income decile number."""
+
     income: dict[int, float]
     substitution: dict[int, float]
 
 
-class LaborSupplyDecileOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class LaborSupplyDecileOutput(MacroOutputModel):
+    """Labor supply responses by income decile.
+
+    ``average`` is the response per household and ``relative`` the response
+    relative to the decile's baseline earnings.
+    """
+
     average: LaborSupplyDecileMetric
     relative: LaborSupplyDecileMetric
 
 
-class LaborSupplyHoursOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class LaborSupplyHoursOutput(MacroOutputModel):
+    """Total weekly hours worked under the baseline and reform, and how they change.
+
+    ``change`` is reform minus baseline, split into its income and substitution
+    effects.
+    """
+
     baseline: float
     reform: float
     change: float
@@ -126,7 +200,13 @@ class LaborSupplyHoursOutput(MacroOutputModel):  # noqa: D101  # docstring would
     substitution_effect: float
 
 
-class LaborSupplyResponseOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class LaborSupplyResponseOutput(MacroOutputModel):
+    """Behavioral labor supply response to the reform.
+
+    ``income_lsr`` and ``substitution_lsr`` are the total earnings changes from
+    the income and substitution effects, and ``total_change`` is their sum.
+    """
+
     substitution_lsr: float
     income_lsr: float
     relative_lsr: LaborSupplyRelativeResponse
@@ -136,17 +216,32 @@ class LaborSupplyResponseOutput(MacroOutputModel):  # noqa: D101  # docstring wo
     hours: LaborSupplyHoursOutput
 
 
-class CliffImpactInSimulation(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class CliffImpactInSimulation(MacroOutputModel):
+    """Exposure to tax-benefit cliffs in one simulation.
+
+    ``cliff_gap`` is the total net income people would lose from a small rise in
+    their earnings, and ``cliff_share`` the share of adults on a cliff.
+    """
+
     cliff_gap: float
     cliff_share: float
 
 
-class CliffImpactOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class CliffImpactOutput(MacroOutputModel):
+    """Exposure to tax-benefit cliffs under the baseline and under the reform."""
+
     baseline: CliffImpactInSimulation
     reform: CliffImpactInSimulation
 
 
-class ConstituencyImpactRecord(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class ConstituencyImpactRecord(MacroOutputModel):
+    """Reform impact on household net income in one UK parliamentary constituency.
+
+    ``average_household_income_change`` is the average change per household and
+    ``relative_household_income_change`` the relative change in the area's total
+    household net income. ``x`` and ``y`` are integer map-rendering coordinates.
+    """
+
     constituency_code: str
     constituency_name: str
     x: int | None
@@ -156,7 +251,12 @@ class ConstituencyImpactRecord(MacroOutputModel):  # noqa: D101  # docstring wou
     population: float
 
 
-class LocalAuthorityImpactRecord(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class LocalAuthorityImpactRecord(MacroOutputModel):
+    """Reform impact on household net income in one UK local authority.
+
+    Fields mean the same as in ``ConstituencyImpactRecord``.
+    """
+
     local_authority_code: str
     local_authority_name: str
     x: int | None
@@ -172,7 +272,17 @@ class GeographicImpactOutput(
     """UK constituency or local-authority impact records."""
 
 
-class CongressionalDistrictImpactRecord(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class CongressionalDistrictImpactRecord(MacroOutputModel):
+    """Reform impact on household net income in one US congressional district.
+
+    ``district`` is the state abbreviation and two-digit district number, such
+    as ``"CA-12"``; at-large districts are numbered ``01``. The income changes
+    are the average change per household and the relative change in the
+    district's total household net income. The three percentage fields are the
+    shares of people whose household net income rises, falls, or stays
+    essentially unchanged.
+    """
+
     district: str
     average_household_income_change: float
     relative_household_income_change: float
@@ -182,7 +292,9 @@ class CongressionalDistrictImpactRecord(MacroOutputModel):  # noqa: D101  # docs
     population: float
 
 
-class CongressionalDistrictImpactOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class CongressionalDistrictImpactOutput(MacroOutputModel):
+    """Reform impact for each US congressional district in the simulated region."""
+
     districts: list[CongressionalDistrictImpactRecord]
 
 

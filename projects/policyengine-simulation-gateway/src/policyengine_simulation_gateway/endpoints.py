@@ -1340,7 +1340,8 @@ async def health() -> HealthResponse:
 
 @router.post("/ping", response_model=PingResponse)
 async def ping(request: PingRequest) -> PingResponse:
-    """Verify the API is able to receive and process requests.
-    Matches the policyengine_fastapi.ping endpoint for test compatibility.
-    """  # noqa: D205  # docstring would change the published OpenAPI description
+    """Verify the API can receive and process requests.
+
+    Responds with the request's ``value`` plus one as ``incremented``.
+    """
     return PingResponse(incremented=request.value + 1)

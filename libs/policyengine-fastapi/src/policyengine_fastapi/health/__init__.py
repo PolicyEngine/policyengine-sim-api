@@ -5,19 +5,25 @@ from collections.abc import Callable
 from pydantic import BaseModel
 
 
-class ProbeStatus(BaseModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class ProbeStatus(BaseModel):
+    """Result of one health probe, with an optional explanatory message."""
+
     name: str
     healthy: bool
     message: str | None = None
 
 
-class SystemStatus(BaseModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class SystemStatus(BaseModel):
+    """Health of one system; it is healthy only if every probe in ``detail`` is."""
+
     name: str
     healthy: bool
     detail: list[ProbeStatus]
 
 
-class HealthStatus(BaseModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class HealthStatus(BaseModel):
+    """Health of the service; it is healthy only if every system is."""
+
     healthy: bool
     systems: list[SystemStatus]
 

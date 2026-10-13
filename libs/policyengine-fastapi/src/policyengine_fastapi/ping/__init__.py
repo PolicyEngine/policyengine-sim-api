@@ -7,11 +7,15 @@ from pydantic import BaseModel
 from policyengine_fastapi.health import HealthRegistry, HealthStatus
 
 
-class PingRequest(BaseModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class PingRequest(BaseModel):
+    """Ping payload: an integer for the service to increment."""
+
     value: int
 
 
-class PingResponse(BaseModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class PingResponse(BaseModel):
+    """Ping reply carrying the request's ``value`` plus one."""
+
     incremented: int
 
 
@@ -21,7 +25,7 @@ def create_router(health_registry: HealthRegistry) -> APIRouter:
 
     @router.post("/ping")
     async def ping(request: PingRequest) -> PingResponse:
-        """Verify the api is able to recieve and process unauthenticated requests."""
+        """Verify the API can receive and process unauthenticated requests."""
         return PingResponse(incremented=request.value + 1)
 
     @router.get("/ping/started", response_model=str)
@@ -31,10 +35,11 @@ def create_router(health_registry: HealthRegistry) -> APIRouter:
 
     @router.get("/ping/alive", response_model=HealthStatus)
     async def alive() -> JSONResponse:
-        """Check if the service is healthy. This will always return
-        data, but will return a 503 response code if the service is
-        unhealthy.
-        """  # noqa: D205  # docstring would change the published OpenAPI description
+        """Report whether the service is healthy.
+
+        The health report is always returned, with status 200 when the service
+        is healthy and 503 when it is not.
+        """
         content = health_registry.report()
         return JSONResponse(
             content=content.model_dump(exclude_none=True),

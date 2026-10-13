@@ -30,16 +30,26 @@ ManifestText = Annotated[str, Field(min_length=1, max_length=255)]
 CallableName = Annotated[str, Field(pattern=_CALLABLE_PATTERN.pattern)]
 
 
-class StrictManifestModel(BaseModel):  # noqa: D101  # docstring would change the published JSON schema description
+class StrictManifestModel(BaseModel):
+    """Base for v2 version manifest models; unknown fields are rejected."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class V2CountryWorker(StrictManifestModel):  # noqa: D101  # docstring would change the published JSON schema description
+class V2CountryWorker(StrictManifestModel):
+    """A country served by a v2 worker, and the callable that runs its simulations."""
+
     country: CountryId
     single_simulation_callable: CallableName
 
 
-class V2WorkerValidation(StrictManifestModel):  # noqa: D101  # docstring would change the published JSON schema description
+class V2WorkerValidation(StrictManifestModel):
+    """Receipt for a successful validation of a deployed v2 worker application.
+
+    Names the application and bundle digest that were validated, when, and the
+    validation invocation IDs overall and for each country.
+    """
+
     validated: Literal[True]
     application_name: ManifestText
     bundle_manifest_sha256: Sha256Digest
@@ -48,7 +58,13 @@ class V2WorkerValidation(StrictManifestModel):  # noqa: D101  # docstring would 
     country_validation_invocation_ids: dict[CountryId, ManifestText]
 
 
-class V2WorkerVersion(StrictManifestModel):  # noqa: D101  # docstring would change the published JSON schema description
+class V2WorkerVersion(StrictManifestModel):
+    """One deployed v2 worker application and the bundle it runs.
+
+    Lists its report coordinator callable, its per-country workers and its
+    validation receipt; the countries must match the bundle's, in order.
+    """
+
     application_name: ManifestText
     report_coordinator_callable: CallableName
     countries: tuple[V2CountryWorker, ...]
@@ -87,7 +103,13 @@ class V2WorkerVersion(StrictManifestModel):  # noqa: D101  # docstring would cha
         return self
 
 
-class V2VersionManifest(StrictManifestModel):  # noqa: D101  # docstring would change the published JSON schema description
+class V2VersionManifest(StrictManifestModel):
+    """Registry of deployed v2 worker versions, keyed by PolicyEngine.py version.
+
+    ``default_version`` is the version used when a request does not pin one, and
+    ``generation`` identifies the publish that produced this manifest.
+    """
+
     schema_version: Literal[1] = 1
     generation: ManifestText
     default_version: ManifestText

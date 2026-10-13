@@ -323,7 +323,14 @@ SPM_ERROR_CODES = frozenset(
 )
 
 
-class SPMErrorDetail(BaseModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class SPMErrorDetail(BaseModel):
+    """A typed SPM input error.
+
+    ``code`` is one of a fixed set of stable values, such as
+    ``SPM_GEOGRAPHY_REQUIRED``, that clients can branch on; ``message`` explains
+    the problem to a person.
+    """
+
     code: str
     message: str
 
@@ -359,7 +366,13 @@ def spm_error_detail(exc: BaseException) -> SPMErrorDetail | None:
     return None
 
 
-class SPMCapability(BaseModel):  # noqa: D101  # docstring would change the published OpenAPI description
+class SPMCapability(BaseModel):
+    """Canonical SPM support offered by a simulation version.
+
+    ``defaults`` is the pinned SPM selection, including the forecast artifact
+    hash and scenario, that applies to any option a request leaves out.
+    """
+
     model_config = ConfigDict(extra="forbid")
     contract_version: Literal["canonical-spm-v1"] = SPM_CONTRACT_VERSION
     defaults: SPMSelection

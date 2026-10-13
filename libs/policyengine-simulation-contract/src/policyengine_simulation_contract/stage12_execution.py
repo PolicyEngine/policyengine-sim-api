@@ -53,17 +53,23 @@ CountryId = Annotated[
 ]
 
 
-class StrictContractModel(BaseModel):  # noqa: D101  # docstring would change the published JSON schema description
+class StrictContractModel(BaseModel):
+    """Base for Stage 12 contracts; rejects unknown fields and non-finite numbers."""
+
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False, frozen=True)
 
 
-class SimulationRole(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
+class SimulationRole(StrEnum):
+    """Role of a simulation: baseline or reform of a comparison, or a standalone run."""
+
     BASELINE = "baseline"
     REFORM = "reform"
     STANDALONE = "standalone"
 
 
-class ArtifactMediaType(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
+class ArtifactMediaType(StrEnum):
+    """Media type of a Stage 12 output artifact."""
+
     JSON = "application/json"
     PARQUET = "application/vnd.apache.parquet"
 
@@ -104,13 +110,17 @@ class SimulationParquetPayloadContract(StrictContractModel):
 SIMULATION_PARQUET_PAYLOAD_CONTRACT = SimulationParquetPayloadContract()
 
 
-class DatasetArtifactMediaType(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
+class DatasetArtifactMediaType(StrEnum):
+    """Media type of an input dataset artifact."""
+
     HDF5 = "application/x-hdf5"
     JSON = "application/json"
     PARQUET = "application/vnd.apache.parquet"
 
 
-class DatasetProvenance(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class DatasetProvenance(StrictContractModel):
+    """The dataset a simulation used: identity, URI, revision and data package."""
+
     identity: ContractText
     uri: Annotated[str, Field(min_length=1, max_length=2048)]
     artifact_revision: ContractText
@@ -118,7 +128,13 @@ class DatasetProvenance(StrictContractModel):  # noqa: D101  # docstring would c
     data_package_version: ContractText
 
 
-class BundleProvenance(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class BundleProvenance(StrictContractModel):
+    """The pinned software and data a simulation ran with.
+
+    Covers the PolicyEngine.py version, the country model package, the dataset,
+    and the SHA-256 of the bundle manifest they came from.
+    """
+
     policyengine_version: ContractText
     country_package_name: ContractText
     country_package_version: ContractText
@@ -126,26 +142,37 @@ class BundleProvenance(StrictContractModel):  # noqa: D101  # docstring would ch
     bundle_manifest_sha256: Sha256Digest
 
 
-class ArtifactReference(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class ArtifactReference(StrictContractModel):
+    """An artifact in Cloud Storage, with its media type, SHA-256 and size in bytes."""
+
     uri: StorageUri
     media_type: ArtifactMediaType
     content_sha256: Sha256Digest
     size_bytes: Annotated[int, Field(ge=0)]
 
 
-class DatasetArtifactReference(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class DatasetArtifactReference(StrictContractModel):
+    """A dataset artifact in Cloud Storage (``gs://``) or on Hugging Face (``hf://``).
+
+    ``size_bytes`` may be omitted when the size is not known.
+    """
+
     uri: DatasetArtifactUri
     media_type: DatasetArtifactMediaType
     content_sha256: Sha256Digest
     size_bytes: Annotated[int, Field(ge=0)] | None = None
 
 
-class DatasetPopulationInput(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class DatasetPopulationInput(StrictContractModel):
+    """Population input that simulates the households in a dataset artifact."""
+
     kind: Literal["dataset"] = "dataset"
     artifact: DatasetArtifactReference
 
 
-class HouseholdPopulationInput(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class HouseholdPopulationInput(StrictContractModel):
+    """Population input that simulates one household from a situation document."""
+
     kind: Literal["household"] = "household"
     document: dict[str, JsonValue]
 
@@ -156,7 +183,13 @@ PopulationInput = Annotated[
 ]
 
 
-class GeographySelection(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class GeographySelection(StrictContractModel):
+    """Country and region to simulate, optionally filtered on one dataset field.
+
+    ``filter_field`` and ``filter_value`` must be given together, and
+    ``filter_strategy`` requires both.
+    """
+
     country: CountryId
     region: ContractText
     filter_field: ContractText | None = None
@@ -173,7 +206,15 @@ class GeographySelection(StrictContractModel):  # noqa: D101  # docstring would 
         return self
 
 
-class SimulationExecutionInput(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class SimulationExecutionInput(StrictContractModel):
+    """Everything needed to run one simulation of a comparison run.
+
+    ``evaluation_id`` identifies the comparison run and
+    ``simulation_execution_id`` this simulation within it. The input fixes the
+    policy, population, year, geography, options and pinned bundle; a baseline
+    and reform pair is described by ``ReportExecutionInput`` instead.
+    """
+
     contract_version: Literal[1] = 1
     evaluation_id: UUID
     simulation_execution_id: UUID
@@ -200,7 +241,9 @@ class SimulationExecutionInput(StrictContractModel):  # noqa: D101  # docstring 
         return value
 
 
-class ReportAggregate(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
+class ReportAggregate(StrEnum):
+    """A family of aggregate results that a comparison report computes."""
+
     BUDGET = "budget"
     POVERTY = "poverty"
     INEQUALITY = "inequality"
@@ -328,7 +371,13 @@ class PlannedSimulationExecutionInput(SimulationExecutionInput):
         return self
 
 
-class RowIdentity(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class RowIdentity(StrictContractModel):
+    """Fingerprint of the rows in a simulation artifact.
+
+    Names the identifier columns and gives the row count and a SHA-256 over the
+    row identifiers, so artifacts can be checked to cover the same rows.
+    """
+
     schema_version: Literal[1] = 1
     identifier_columns: Annotated[tuple[ContractText, ...], Field(min_length=1)]
     row_count: Annotated[int, Field(ge=0)]
@@ -343,7 +392,14 @@ class RowIdentity(StrictContractModel):  # noqa: D101  # docstring would change 
         return value
 
 
-class SimulationArtifactDescriptor(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class SimulationArtifactDescriptor(StrictContractModel):
+    """The stored output of one simulation in a comparison run.
+
+    Points to the artifact and records the digest of the output plan it follows,
+    its row identity, its bundle provenance and, for SPM calculations, the
+    calculation receipt.
+    """
+
     contract_version: Literal[1] = 1
     evaluation_id: UUID
     simulation_execution_id: UUID
@@ -356,7 +412,13 @@ class SimulationArtifactDescriptor(StrictContractModel):  # noqa: D101  # docstr
     calculation_provenance: SPMProvenance | None = None
 
 
-class ReportExecutionInput(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class ReportExecutionInput(StrictContractModel):
+    """A baseline and reform simulation pair to run and aggregate into one report.
+
+    Both simulations must belong to this report, carry the baseline and reform
+    roles and distinct execution IDs, and differ only in their policy.
+    """
+
     contract_version: Literal[1] = 1
     evaluation_id: UUID
     baseline: SimulationExecutionInput
@@ -396,7 +458,13 @@ class ReportExecutionInput(StrictContractModel):  # noqa: D101  # docstring woul
         return self
 
 
-class AggregateReportArtifactDescriptor(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class AggregateReportArtifactDescriptor(StrictContractModel):
+    """The stored aggregate results of a comparison run.
+
+    Records the digests of the baseline and reform artifacts the results were
+    computed from, and the bundle provenance.
+    """
+
     contract_version: Literal[1] = 1
     evaluation_id: UUID
     artifact: ArtifactReference
@@ -501,7 +569,15 @@ class ResultComparisonArtifactPayload(StrictContractModel):
         return self
 
 
-class Stage12InvocationContext(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
+class Stage12InvocationContext(StrictContractModel):
+    """Deployment and retention context for one comparison-run invocation.
+
+    Records the originating request, the environments, the worker version and
+    callable, the manifest digests and the artifact prefix. Automatic runs also
+    name the production function call they are compared with. Artifacts are kept
+    for at most 30 days after ``created_at``.
+    """
+
     contract_version: Literal[1] = 1
     request_id: ContractText
     # The logical environment labels durable records and artifact paths.
@@ -544,7 +620,9 @@ def _validate_retention(created_at: datetime, retention_expires_at: datetime) ->
         raise ValueError("comparison retention must not exceed 30 days")
 
 
-class ComparisonRunLifecycleStatus(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
+class ComparisonRunLifecycleStatus(StrEnum):
+    """Overall status of a comparison run."""
+
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -553,14 +631,18 @@ class ComparisonRunLifecycleStatus(StrEnum):  # noqa: D101  # docstring would ch
     SKIPPED = "skipped"
 
 
-class ComparisonRunAggregationStatus(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
+class ComparisonRunAggregationStatus(StrEnum):
+    """Status of aggregating a comparison run's simulations into a report."""
+
     NOT_STARTED = "not_started"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 
 
-class ResultComparisonStatus(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
+class ResultComparisonStatus(StrEnum):
+    """Outcome of checking a comparison run's aggregate result against production."""
+
     NOT_REQUESTED = "not_requested"
     PENDING = "pending"
     RUNNING = "running"
