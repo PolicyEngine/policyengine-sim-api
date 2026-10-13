@@ -24,9 +24,8 @@ def parse_header_value_pairs(raw: str | None) -> dict[str, str]:
             continue
         key, separator, value = candidate.partition("=")
         if not separator:
-            raise ValueError(
-                "Expected OTLP headers in key=value format separated by commas"
-            )
+            msg = "Expected OTLP headers in key=value format separated by commas"
+            raise ValueError(msg)
         headers[key.strip()] = value.strip()
 
     return headers
