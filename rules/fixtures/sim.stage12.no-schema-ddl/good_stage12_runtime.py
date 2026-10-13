@@ -1,4 +1,7 @@
-"""Proof fixture: a Stage 12 runtime that writes rows with typed DML. The rule must accept it."""
+"""Proof fixture: a Stage 12 runtime that writes rows with typed DML.
+
+The rule must accept it.
+"""
 
 from __future__ import annotations
 
