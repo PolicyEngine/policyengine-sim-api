@@ -3,7 +3,8 @@
 This app contains the heavy simulation workload with snapshotted models.
 Each deployment creates a versioned app (e.g., policyengine-simulation-py4-10-0).
 
-The gateway app (policyengine-simulation-gateway) routes requests to these versioned apps.
+The gateway app (policyengine-simulation-gateway) routes requests to these
+versioned apps.
 """
 
 import os

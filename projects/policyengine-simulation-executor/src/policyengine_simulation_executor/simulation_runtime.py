@@ -213,7 +213,7 @@ def _parse_policy_period(period_key: object) -> tuple[datetime, datetime | None]
 
 
 def _parse_policy_period_dates(text: str) -> tuple[datetime, datetime | None]:
-    """Parse a date or a ``start.stop`` range; raise a bare ``ValueError`` if invalid."""
+    """Parse a date or ``start.stop`` range; raise a bare ``ValueError`` if invalid."""
     parts = text.split(".")
     if len(parts) not in {1, 2}:
         raise ValueError

@@ -66,7 +66,10 @@ def test_extract_annual_impact_defaults_state_tax_for_uk_child_result():
 def test_extract_annual_impact_rejects_malformed_child_result():
     with pytest.raises(
         ValueError,
-        match="Malformed budget-window child result: missing numeric budget.tax_revenue_impact",
+        match=(
+            "Malformed budget-window child result: "
+            "missing numeric budget.tax_revenue_impact"
+        ),
     ):
         extract_annual_impact(
             simulation_year="2026",

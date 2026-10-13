@@ -187,7 +187,7 @@ if [[ "$1" == "pr" && "$2" == "create" ]]; then
 fi
 
 exit 0
-""",
+""",  # noqa: E501  # the fake gh prints each JSON response on one line, as gh does
     )
 
 

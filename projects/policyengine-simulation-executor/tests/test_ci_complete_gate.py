@@ -69,7 +69,8 @@ def test_image_smoke_runs_only_at_the_bottom_of_a_stack() -> None:
     )
     stack_condition = (
         "(!github.event.pull_request.stack || "
-        "github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref)"
+        "github.event.pull_request.stack.base.ref == "
+        "github.event.pull_request.base.ref)"
     )
 
     for job_id, job in smoke["jobs"].items():
