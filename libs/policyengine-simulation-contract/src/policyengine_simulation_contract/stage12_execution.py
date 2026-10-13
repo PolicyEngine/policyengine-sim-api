@@ -53,17 +53,17 @@ CountryId = Annotated[
 ]
 
 
-class StrictContractModel(BaseModel):
+class StrictContractModel(BaseModel):  # noqa: D101  # docstring would change the published JSON schema description
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False, frozen=True)
 
 
-class SimulationRole(StrEnum):
+class SimulationRole(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
     BASELINE = "baseline"
     REFORM = "reform"
     STANDALONE = "standalone"
 
 
-class ArtifactMediaType(StrEnum):
+class ArtifactMediaType(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
     JSON = "application/json"
     PARQUET = "application/vnd.apache.parquet"
 
@@ -104,13 +104,13 @@ class SimulationParquetPayloadContract(StrictContractModel):
 SIMULATION_PARQUET_PAYLOAD_CONTRACT = SimulationParquetPayloadContract()
 
 
-class DatasetArtifactMediaType(StrEnum):
+class DatasetArtifactMediaType(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
     HDF5 = "application/x-hdf5"
     JSON = "application/json"
     PARQUET = "application/vnd.apache.parquet"
 
 
-class DatasetProvenance(StrictContractModel):
+class DatasetProvenance(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     identity: ContractText
     uri: Annotated[str, Field(min_length=1, max_length=2048)]
     artifact_revision: ContractText
@@ -118,7 +118,7 @@ class DatasetProvenance(StrictContractModel):
     data_package_version: ContractText
 
 
-class BundleProvenance(StrictContractModel):
+class BundleProvenance(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     policyengine_version: ContractText
     country_package_name: ContractText
     country_package_version: ContractText
@@ -126,26 +126,26 @@ class BundleProvenance(StrictContractModel):
     bundle_manifest_sha256: Sha256Digest
 
 
-class ArtifactReference(StrictContractModel):
+class ArtifactReference(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     uri: StorageUri
     media_type: ArtifactMediaType
     content_sha256: Sha256Digest
     size_bytes: Annotated[int, Field(ge=0)]
 
 
-class DatasetArtifactReference(StrictContractModel):
+class DatasetArtifactReference(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     uri: DatasetArtifactUri
     media_type: DatasetArtifactMediaType
     content_sha256: Sha256Digest
     size_bytes: Annotated[int, Field(ge=0)] | None = None
 
 
-class DatasetPopulationInput(StrictContractModel):
+class DatasetPopulationInput(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     kind: Literal["dataset"] = "dataset"
     artifact: DatasetArtifactReference
 
 
-class HouseholdPopulationInput(StrictContractModel):
+class HouseholdPopulationInput(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     kind: Literal["household"] = "household"
     document: dict[str, JsonValue]
 
@@ -156,7 +156,7 @@ PopulationInput = Annotated[
 ]
 
 
-class GeographySelection(StrictContractModel):
+class GeographySelection(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     country: CountryId
     region: ContractText
     filter_field: ContractText | None = None
@@ -165,6 +165,7 @@ class GeographySelection(StrictContractModel):
 
     @model_validator(mode="after")
     def require_complete_filter(self) -> GeographySelection:
+        """Require the filter field and value together, and both for a strategy."""
         if (self.filter_field is None) != (self.filter_value is None):
             raise ValueError("filter_field and filter_value must be supplied together")
         if self.filter_strategy is not None and self.filter_field is None:
@@ -172,7 +173,7 @@ class GeographySelection(StrictContractModel):
         return self
 
 
-class SimulationExecutionInput(StrictContractModel):
+class SimulationExecutionInput(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     contract_version: Literal[1] = 1
     evaluation_id: UUID
     simulation_execution_id: UUID
@@ -187,6 +188,11 @@ class SimulationExecutionInput(StrictContractModel):
     @model_validator(mode="before")
     @classmethod
     def reject_combined_policy_input(cls, value: object) -> object:
+        """Reject report-shaped input that carries ``baseline`` or ``reform`` keys.
+
+        One execution input describes one simulation; the pair belongs in
+        ``ReportExecutionInput``.
+        """
         if isinstance(value, dict) and ({"baseline", "reform"} & value.keys()):
             raise ValueError(
                 "single-simulation input cannot contain baseline or reform fields"
@@ -194,7 +200,7 @@ class SimulationExecutionInput(StrictContractModel):
         return value
 
 
-class ReportAggregate(StrEnum):
+class ReportAggregate(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
     BUDGET = "budget"
     POVERTY = "poverty"
     INEQUALITY = "inequality"
@@ -218,6 +224,7 @@ class ReportOutputRequirements(StrictContractModel):
         cls,
         value: tuple[ReportAggregate, ...],
     ) -> tuple[ReportAggregate, ...]:
+        """Require every ``ReportAggregate``, once each and in declaration order."""
         if len(value) != len(set(value)):
             raise ValueError("report output aggregates must be unique")
         if value != tuple(ReportAggregate):
@@ -245,6 +252,7 @@ class EntityOutputPlan(StrictContractModel):
     )
     @classmethod
     def require_canonical_variables(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Require variable names to be unique and sorted, so plans hash stably."""
         if len(value) != len(set(value)):
             raise ValueError("output-plan variables must be unique")
         if value != tuple(sorted(value)):
@@ -253,6 +261,10 @@ class EntityOutputPlan(StrictContractModel):
 
     @model_validator(mode="after")
     def require_variable_subsets(self) -> EntityOutputPlan:
+        """Require the additional and dataset variables not to overlap.
+
+        Both must also be subsets of ``materialized_variables``.
+        """
         if not set(self.additional_variables).issubset(self.materialized_variables):
             raise ValueError(
                 "additional output-plan variables must be a materialized subset"
@@ -282,6 +294,7 @@ class Stage12OutputPlan(StrictContractModel):
         cls,
         value: tuple[EntityOutputPlan, ...],
     ) -> tuple[EntityOutputPlan, ...]:
+        """Require entity plans to be unique and sorted by entity name."""
         names = tuple(entity.entity for entity in value)
         if len(names) != len(set(names)):
             raise ValueError("output-plan entities must be unique")
@@ -292,7 +305,6 @@ class Stage12OutputPlan(StrictContractModel):
 
 def stage12_output_plan_sha256(plan: Stage12OutputPlan) -> str:
     """Return the stable digest recorded by each Stage 12 child artifact."""
-
     payload = json.dumps(
         plan.model_dump(mode="json"),
         sort_keys=True,
@@ -310,12 +322,13 @@ class PlannedSimulationExecutionInput(SimulationExecutionInput):
 
     @model_validator(mode="after")
     def require_output_plan_country(self) -> PlannedSimulationExecutionInput:
+        """Reject an output plan built for a different country than the geography."""
         if self.output_plan.country != self.geography.country:
             raise ValueError("output plan country must match simulation geography")
         return self
 
 
-class RowIdentity(StrictContractModel):
+class RowIdentity(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     schema_version: Literal[1] = 1
     identifier_columns: Annotated[tuple[ContractText, ...], Field(min_length=1)]
     row_count: Annotated[int, Field(ge=0)]
@@ -324,12 +337,13 @@ class RowIdentity(StrictContractModel):
     @field_validator("identifier_columns")
     @classmethod
     def require_unique_columns(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Reject repeated identifier column names."""
         if len(value) != len(set(value)):
             raise ValueError("row identifier columns must be unique")
         return value
 
 
-class SimulationArtifactDescriptor(StrictContractModel):
+class SimulationArtifactDescriptor(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     contract_version: Literal[1] = 1
     evaluation_id: UUID
     simulation_execution_id: UUID
@@ -342,7 +356,7 @@ class SimulationArtifactDescriptor(StrictContractModel):
     calculation_provenance: SPMProvenance | None = None
 
 
-class ReportExecutionInput(StrictContractModel):
+class ReportExecutionInput(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     contract_version: Literal[1] = 1
     evaluation_id: UUID
     baseline: SimulationExecutionInput
@@ -351,6 +365,11 @@ class ReportExecutionInput(StrictContractModel):
 
     @model_validator(mode="after")
     def require_aligned_simulations(self) -> ReportExecutionInput:
+        """Check the two simulations form one comparable report.
+
+        Roles must be baseline and reform, both must belong to this report with
+        distinct execution ids, and everything but the policy must match.
+        """
         if self.baseline.role is not SimulationRole.BASELINE:
             raise ValueError("baseline input must use the baseline role")
         if self.reform.role is not SimulationRole.REFORM:
@@ -377,7 +396,7 @@ class ReportExecutionInput(StrictContractModel):
         return self
 
 
-class AggregateReportArtifactDescriptor(StrictContractModel):
+class AggregateReportArtifactDescriptor(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     contract_version: Literal[1] = 1
     evaluation_id: UUID
     artifact: ArtifactReference
@@ -403,6 +422,7 @@ class AggregateReportArtifactPayload(StrictContractModel):
         cls,
         value: tuple[ReportAggregate, ...],
     ) -> tuple[ReportAggregate, ...]:
+        """Reject repeated aggregate names."""
         if len(value) != len(set(value)):
             raise ValueError("requested aggregates must be unique")
         return value
@@ -410,7 +430,6 @@ class AggregateReportArtifactPayload(StrictContractModel):
     @model_validator(mode="after")
     def validate_spm_provenance(self) -> AggregateReportArtifactPayload:
         """Reject duplicate or noncanonical SPM data in aggregate artifacts."""
-
         if "spm_config" in self.result:
             raise ValueError("aggregate result must not include legacy spm_config")
         # Reports without US SPM calculations serialize this optional field
@@ -434,6 +453,11 @@ class ResultDifference(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_presence(self) -> ResultDifference:
+        """Check presence flags against values, and that deltas come as a pair.
+
+        An absent side must be null, and a relative delta needs an absolute one;
+        only an absolute delta may stand alone (a zero production value).
+        """
         if not self.production_present and not self.stage12_present:
             raise ValueError(
                 "a result difference must be present in at least one result"
@@ -466,6 +490,7 @@ class ResultComparisonArtifactPayload(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_differences(self) -> ResultComparisonArtifactPayload:
+        """Require a timezone-aware timestamp and a count and status that match."""
         if self.compared_at.tzinfo is None:
             raise ValueError("comparison timestamp must include a timezone")
         if self.difference_count != len(self.differences):
@@ -476,7 +501,7 @@ class ResultComparisonArtifactPayload(StrictContractModel):
         return self
 
 
-class Stage12InvocationContext(StrictContractModel):
+class Stage12InvocationContext(StrictContractModel):  # noqa: D101  # docstring would change the published JSON schema description
     contract_version: Literal[1] = 1
     request_id: ContractText
     # The logical environment labels durable records and artifact paths.
@@ -499,6 +524,7 @@ class Stage12InvocationContext(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_retention(self) -> Stage12InvocationContext:
+        """Require aware timestamps and a retention window of at most 30 days."""
         _validate_retention(self.created_at, self.retention_expires_at)
         return self
 
@@ -518,7 +544,7 @@ def _validate_retention(created_at: datetime, retention_expires_at: datetime) ->
         raise ValueError("comparison retention must not exceed 30 days")
 
 
-class ComparisonRunLifecycleStatus(StrEnum):
+class ComparisonRunLifecycleStatus(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -527,14 +553,14 @@ class ComparisonRunLifecycleStatus(StrEnum):
     SKIPPED = "skipped"
 
 
-class ComparisonRunAggregationStatus(StrEnum):
+class ComparisonRunAggregationStatus(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
     NOT_STARTED = "not_started"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 
 
-class ResultComparisonStatus(StrEnum):
+class ResultComparisonStatus(StrEnum):  # noqa: D101  # docstring would change the published JSON schema description
     NOT_REQUESTED = "not_requested"
     PENDING = "pending"
     RUNNING = "running"
@@ -590,6 +616,12 @@ class ComparisonReportRecord(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_state(self) -> ComparisonReportRecord:
+        """Check that the row's fields are consistent with its lifecycle states.
+
+        Aggregate and comparison output fields come all-or-nothing, a success
+        needs its outputs and ``completed_at``, failures and skips need an
+        ``error_code``, and the retention window is at most 30 days.
+        """
         _validate_retention(self.created_at, self.retention_expires_at)
         output_fields = (
             self.aggregate_output_uri,
@@ -692,6 +724,12 @@ class ComparisonSimulationRecord(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_state(self) -> ComparisonSimulationRecord:
+        """Check that the row's fields are consistent with its lifecycle status.
+
+        Output and row-identity fields come all-or-nothing, a success needs
+        them and ``completed_at``, failures and skips need an ``error_code``,
+        and the retention window is at most 30 days.
+        """
         _validate_retention(self.created_at, self.retention_expires_at)
         output_fields = (
             self.output_uri,
@@ -729,11 +767,21 @@ class ComparisonSimulationRecord(StrictContractModel):
 
 @dataclass(frozen=True)
 class ComparisonReportPersistenceResult:
+    """The stored parent row after an idempotent create.
+
+    ``created`` is False when an identical row already existed and was reused.
+    """
+
     record: ComparisonReportRecord
     created: bool
 
 
 @dataclass(frozen=True)
 class ComparisonSimulationPersistenceResult:
+    """The stored child row after an idempotent create.
+
+    ``created`` is False when an identical row already existed and was reused.
+    """
+
     record: ComparisonSimulationRecord
     created: bool

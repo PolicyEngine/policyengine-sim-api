@@ -11,6 +11,11 @@ from policyengine_simulation_contract.hf_dataset import (
 
 
 def split_dataset_revision(dataset_uri: str) -> tuple[str, str | None]:
+    """Split a trailing ``@revision`` off a dataset URI.
+
+    The revision is None when the URI has no ``@``. Raises ValueError when
+    either side of the last ``@`` is empty.
+    """
     if "@" not in dataset_uri:
         return dataset_uri, None
     dataset_without_revision, revision = dataset_uri.rsplit("@", maxsplit=1)
@@ -24,6 +29,11 @@ def select_dataset_revision(
     requested_revision: str | None,
     requested_data_version: str | None,
 ) -> str | None:
+    """Pick the dataset revision from the URI pin or ``data_version``.
+
+    Either may be given alone; when both are given they must match, otherwise
+    ValueError is raised. Returns None when neither is set.
+    """
     if (
         requested_revision is not None
         and requested_data_version is not None
@@ -72,7 +82,6 @@ def _policyengine_data_runtime_uri(
     artifact_revision: str | None,
 ) -> str | None:
     """Resolve a PolicyEngine data-repository artifact through its GCS mirror."""
-
     bucket = _policyengine_gcs_bucket_for_hf_repo(reference.repo_id)
     if bucket is None:
         return None
@@ -103,7 +112,6 @@ def _non_policyengine_data_runtime_uri(
     validate_hf: bool,
 ) -> str:
     """Preserve the existing Hugging Face resolution behavior for other repos."""
-
     if override_revision is not None:
         if validate_hf:
             return with_hf_revision(dataset_uri, override_revision)
@@ -133,7 +141,6 @@ def runtime_dataset_uri(
     can disable live HF validation to avoid requiring private Hub credentials
     in request-routing code.
     """
-
     if dataset_uri.startswith("gs://"):
         return _with_gs_revision(dataset_uri, override_revision or default_revision)
 

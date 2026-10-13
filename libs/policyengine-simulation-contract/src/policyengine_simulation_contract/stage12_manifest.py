@@ -30,16 +30,16 @@ ManifestText = Annotated[str, Field(min_length=1, max_length=255)]
 CallableName = Annotated[str, Field(pattern=_CALLABLE_PATTERN.pattern)]
 
 
-class StrictManifestModel(BaseModel):
+class StrictManifestModel(BaseModel):  # noqa: D101  # docstring would change the published JSON schema description
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class V2CountryWorker(StrictManifestModel):
+class V2CountryWorker(StrictManifestModel):  # noqa: D101  # docstring would change the published JSON schema description
     country: CountryId
     single_simulation_callable: CallableName
 
 
-class V2WorkerValidation(StrictManifestModel):
+class V2WorkerValidation(StrictManifestModel):  # noqa: D101  # docstring would change the published JSON schema description
     validated: Literal[True]
     application_name: ManifestText
     bundle_manifest_sha256: Sha256Digest
@@ -48,7 +48,7 @@ class V2WorkerValidation(StrictManifestModel):
     country_validation_invocation_ids: dict[CountryId, ManifestText]
 
 
-class V2WorkerVersion(StrictManifestModel):
+class V2WorkerVersion(StrictManifestModel):  # noqa: D101  # docstring would change the published JSON schema description
     application_name: ManifestText
     report_coordinator_callable: CallableName
     countries: tuple[V2CountryWorker, ...]
@@ -58,6 +58,13 @@ class V2WorkerVersion(StrictManifestModel):
 
     @model_validator(mode="after")
     def validate_worker(self) -> V2WorkerVersion:
+        """Check the worker's name, validation receipt and countries match its bundle.
+
+        The application name must be the v2 name derived from the bundle's
+        PolicyEngine.py version, the validation must name this application and
+        bundle digest, and the countries must equal the bundle's, in order,
+        each with a validation invocation.
+        """
         if not self.application_name.startswith(V2_APPLICATION_PREFIX):
             raise ValueError("v2 application uses an invalid name prefix")
         if self.application_name.startswith(V1_APPLICATION_PREFIX):
@@ -80,7 +87,7 @@ class V2WorkerVersion(StrictManifestModel):
         return self
 
 
-class V2VersionManifest(StrictManifestModel):
+class V2VersionManifest(StrictManifestModel):  # noqa: D101  # docstring would change the published JSON schema description
     schema_version: Literal[1] = 1
     generation: ManifestText
     default_version: ManifestText
@@ -88,6 +95,7 @@ class V2VersionManifest(StrictManifestModel):
 
     @model_validator(mode="after")
     def validate_versions(self) -> V2VersionManifest:
+        """Check the default has an entry and each key is its bundle's version."""
         if not self.versions:
             raise ValueError("v2 manifest must contain a worker version")
         if self.default_version not in self.versions:
@@ -99,12 +107,23 @@ class V2VersionManifest(StrictManifestModel):
 
 
 class V2ManifestStore(Protocol):
-    def get(self, key: str, default: object = None) -> object: ...
+    """The part of a Modal Dict's mapping interface the manifest helpers use."""
 
-    def __setitem__(self, key: str, value: object) -> None: ...
+    def get(self, key: str, default: object = None) -> object:
+        """Return the value stored under ``key``, or ``default`` when absent."""
+        ...
+
+    def __setitem__(self, key: str, value: object) -> None:
+        """Store ``value`` under ``key``, replacing any previous value."""
+        ...
 
 
 def v2_application_name(policyengine_version: str) -> str:
+    """Derive the v2 Modal application name from a PolicyEngine.py version.
+
+    Dots and plus signs become hyphens. Raises ValueError for a version with
+    characters a Modal name cannot hold, or a name over 64 characters.
+    """
     if not policyengine_version or not re.fullmatch(
         r"[A-Za-z0-9][A-Za-z0-9._+-]*", policyengine_version
     ):
@@ -118,6 +137,7 @@ def v2_application_name(policyengine_version: str) -> str:
 
 
 def manifest_digest(manifest: V2VersionManifest) -> str:
+    """Return the SHA-256 of the manifest's canonical JSON (sorted, compact)."""
     payload = json.dumps(
         manifest.model_dump(mode="json"),
         sort_keys=True,
@@ -143,6 +163,12 @@ def build_next_v2_manifest(
     worker: V2WorkerVersion,
     force_default: bool = False,
 ) -> V2VersionManifest:
+    """Return ``current`` with ``worker`` added under its bundle version.
+
+    ``current`` is the raw stored manifest, or None before the first publish.
+    The default moves to the new version only when it is newer by PEP 440
+    ordering (an unparsable version never is) or ``force_default`` is set.
+    """
     if current is None:
         versions: dict[str, V2WorkerVersion] = {}
         previous_default = None
@@ -172,6 +198,11 @@ def publish_v2_manifest(
     worker: V2WorkerVersion,
     force_default: bool = False,
 ) -> V2VersionManifest:
+    """Add ``worker`` to the stored manifest, write it back and return it.
+
+    The whole manifest is written as one store value, so readers never see a
+    partial update.
+    """
     next_manifest = build_next_v2_manifest(
         current=store.get(ACTIVE_MANIFEST_KEY),
         worker=worker,
@@ -187,10 +218,16 @@ class V2ManifestLoader:
     """Load v2 state while retaining only this loader's last valid v2 copy."""
 
     def __init__(self, store: V2ManifestStore) -> None:
+        """Wrap ``store``; nothing is read until the first ``load``."""
         self._store = store
         self._last_valid: V2VersionManifest | None = None
 
     def load(self) -> V2VersionManifest:
+        """Return the stored manifest, or this loader's last valid copy.
+
+        The fallback covers a missing or invalid stored value; with no earlier
+        valid copy, ValueError is raised instead.
+        """
         value = self._store.get(ACTIVE_MANIFEST_KEY)
         try:
             manifest = V2VersionManifest.model_validate(value)
@@ -202,6 +239,10 @@ class V2ManifestLoader:
         return manifest
 
     def resolve(self, version: str | None = None) -> tuple[str, V2WorkerVersion, str]:
+        """Return ``(version, worker, manifest digest)`` for ``version`` or the default.
+
+        Raises ValueError when the manifest has no worker for that version.
+        """
         manifest = self.load()
         selected = version or manifest.default_version
         try:
@@ -214,6 +255,10 @@ class V2ManifestLoader:
 
 
 def assert_separate_manifest_names(*, v1_name: str, v2_name: str) -> None:
+    """Raise ValueError unless both names are set and differ.
+
+    This keeps a v2 manifest publish from overwriting the v1 routing state.
+    """
     if not v1_name or not v2_name:
         raise ValueError("v1 and v2 manifest names must be non-empty")
     if v1_name == v2_name:
@@ -221,6 +266,11 @@ def assert_separate_manifest_names(*, v1_name: str, v2_name: str) -> None:
 
 
 def validate_manifest_has_no_credentials(value: Mapping[str, object]) -> None:
+    """Raise ValueError if any key, at any depth, looks like a credential.
+
+    Keys containing password, secret, token, credential or private_key match
+    case-insensitively; the error names the dotted path to the key.
+    """
     prohibited = {"password", "secret", "token", "credential", "private_key"}
 
     def visit(item: object, path: tuple[str, ...]) -> None:

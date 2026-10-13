@@ -12,11 +12,11 @@ CountryId = Literal["us", "uk"]
 SUPPORTED_COUNTRIES: tuple[CountryId, ...] = ("us", "uk")
 
 
-class StrictBundleModel(BaseModel):
+class StrictBundleModel(BaseModel):  # noqa: D101  # docstring would change the published JSON schema description
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class Stage12Dataset(StrictBundleModel):
+class Stage12Dataset(StrictBundleModel):  # noqa: D101  # docstring would change the published JSON schema description
     identity: NonEmptyText
     uri: NonEmptyText
     artifact_revision: NonEmptyText
@@ -24,7 +24,7 @@ class Stage12Dataset(StrictBundleModel):
     repo_type: NonEmptyText
 
 
-class Stage12CountryBundle(StrictBundleModel):
+class Stage12CountryBundle(StrictBundleModel):  # noqa: D101  # docstring would change the published JSON schema description
     country: CountryId
     country_package_name: NonEmptyText
     country_package_version: NonEmptyText
@@ -51,6 +51,6 @@ class Stage12BundleManifest(StrictBundleModel):
     countries: tuple[Stage12CountryBundle, ...]
 
 
-class ResolvedStage12Bundle(StrictBundleModel):
+class ResolvedStage12Bundle(StrictBundleModel):  # noqa: D101  # docstring would change the published JSON schema description
     bundle: Stage12BundleManifest
     bundle_manifest_sha256: Sha256Digest

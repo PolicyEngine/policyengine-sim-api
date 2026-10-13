@@ -21,7 +21,7 @@ class MacroRootModel(RootModel[T], Generic[T]):
     """Base model for named map and list output schemas."""
 
 
-class BudgetaryImpact(MacroOutputModel):
+class BudgetaryImpact(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     tax_revenue_impact: float
     state_tax_revenue_impact: float
     benefit_spending_impact: float
@@ -33,7 +33,7 @@ class BudgetaryImpact(MacroOutputModel):
 BudgetaryOutput = BudgetaryImpact
 
 
-class DetailedBudgetProgramOutput(MacroOutputModel):
+class DetailedBudgetProgramOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     baseline: float
     reform: float
     difference: float
@@ -43,82 +43,82 @@ class DetailedBudgetOutput(MacroRootModel[dict[str, DetailedBudgetProgramOutput]
     """Program name mapped to its baseline and reform totals."""
 
 
-class DecileOutput(MacroOutputModel):
+class DecileOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     average: dict[str, float]
     relative: dict[str, float]
 
 
-class IntraDecileOutput(MacroOutputModel):
+class IntraDecileOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     deciles: dict[str, list[float]]
     all: dict[str, float]
 
 
-class BaselineReformValue(MacroOutputModel):
+class BaselineReformValue(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     baseline: float
     reform: float
 
 
-class AgePovertyOutput(MacroOutputModel):
+class AgePovertyOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     child: BaselineReformValue
     adult: BaselineReformValue
     senior: BaselineReformValue
     all: BaselineReformValue
 
 
-class GenderPovertyOutput(MacroOutputModel):
+class GenderPovertyOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     male: BaselineReformValue
     female: BaselineReformValue
 
 
-class RacePovertyOutput(MacroOutputModel):
+class RacePovertyOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     white: BaselineReformValue
     black: BaselineReformValue
     hispanic: BaselineReformValue
     other: BaselineReformValue
 
 
-class PovertyOutput(MacroOutputModel):
+class PovertyOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     poverty: AgePovertyOutput
     deep_poverty: AgePovertyOutput
 
 
-class PovertyByGenderOutput(MacroOutputModel):
+class PovertyByGenderOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     poverty: GenderPovertyOutput
     deep_poverty: GenderPovertyOutput
 
 
-class PovertyByRaceOutput(MacroOutputModel):
+class PovertyByRaceOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     poverty: RacePovertyOutput
 
 
-class PovertyModuleOutputs(MacroOutputModel):
+class PovertyModuleOutputs(MacroOutputModel):  # noqa: D101  # docstring would change the published JSON schema description
     poverty: PovertyOutput
     poverty_by_gender: PovertyByGenderOutput
     poverty_by_race: PovertyByRaceOutput | None
 
 
-class InequalityOutput(MacroOutputModel):
+class InequalityOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     gini: BaselineReformValue
     top_10_pct_share: BaselineReformValue
     top_1_pct_share: BaselineReformValue
 
 
-class LaborSupplyRelativeResponse(MacroOutputModel):
+class LaborSupplyRelativeResponse(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     income: float
     substitution: float
 
 
-class LaborSupplyDecileMetric(MacroOutputModel):
+class LaborSupplyDecileMetric(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     income: dict[int, float]
     substitution: dict[int, float]
 
 
-class LaborSupplyDecileOutput(MacroOutputModel):
+class LaborSupplyDecileOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     average: LaborSupplyDecileMetric
     relative: LaborSupplyDecileMetric
 
 
-class LaborSupplyHoursOutput(MacroOutputModel):
+class LaborSupplyHoursOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     baseline: float
     reform: float
     change: float
@@ -126,7 +126,7 @@ class LaborSupplyHoursOutput(MacroOutputModel):
     substitution_effect: float
 
 
-class LaborSupplyResponseOutput(MacroOutputModel):
+class LaborSupplyResponseOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     substitution_lsr: float
     income_lsr: float
     relative_lsr: LaborSupplyRelativeResponse
@@ -136,17 +136,17 @@ class LaborSupplyResponseOutput(MacroOutputModel):
     hours: LaborSupplyHoursOutput
 
 
-class CliffImpactInSimulation(MacroOutputModel):
+class CliffImpactInSimulation(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     cliff_gap: float
     cliff_share: float
 
 
-class CliffImpactOutput(MacroOutputModel):
+class CliffImpactOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     baseline: CliffImpactInSimulation
     reform: CliffImpactInSimulation
 
 
-class ConstituencyImpactRecord(MacroOutputModel):
+class ConstituencyImpactRecord(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     constituency_code: str
     constituency_name: str
     x: int | None
@@ -156,7 +156,7 @@ class ConstituencyImpactRecord(MacroOutputModel):
     population: float
 
 
-class LocalAuthorityImpactRecord(MacroOutputModel):
+class LocalAuthorityImpactRecord(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     local_authority_code: str
     local_authority_name: str
     x: int | None
@@ -172,7 +172,7 @@ class GeographicImpactOutput(
     """UK constituency or local-authority impact records."""
 
 
-class CongressionalDistrictImpactRecord(MacroOutputModel):
+class CongressionalDistrictImpactRecord(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     district: str
     average_household_income_change: float
     relative_household_income_change: float
@@ -182,7 +182,7 @@ class CongressionalDistrictImpactRecord(MacroOutputModel):
     population: float
 
 
-class CongressionalDistrictImpactOutput(MacroOutputModel):
+class CongressionalDistrictImpactOutput(MacroOutputModel):  # noqa: D101  # docstring would change the published OpenAPI description
     districts: list[CongressionalDistrictImpactRecord]
 
 
