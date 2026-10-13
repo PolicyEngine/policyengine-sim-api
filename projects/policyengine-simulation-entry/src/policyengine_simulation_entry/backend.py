@@ -77,7 +77,7 @@ class ClientCredentialsTokenProvider:
 
     REFRESH_MARGIN_SECONDS = 60
 
-    def __init__(self, settings: Settings, client: httpx.AsyncClient):
+    def __init__(self, settings: Settings, client: httpx.AsyncClient) -> None:
         self.settings = settings
         self.client = client
         self._token: str | None = None
@@ -132,7 +132,7 @@ class OldGatewayBackend:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         runtime: ObservabilityRuntime | None = None,
-    ):
+    ) -> None:
         self.settings = settings
         self.transport = transport
         self.observability = runtime

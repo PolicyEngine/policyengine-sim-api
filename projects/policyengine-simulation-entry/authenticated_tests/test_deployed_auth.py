@@ -64,7 +64,7 @@ def access_token() -> str:
     return token
 
 
-def test_protected_route_rejects_missing_token(base_url: str):
+def test_protected_route_rejects_missing_token(base_url: str) -> None:
     response = httpx.post(
         f"{base_url}{PROTECTED_PATH}",
         json=PROBE_PAYLOAD,
@@ -74,7 +74,7 @@ def test_protected_route_rejects_missing_token(base_url: str):
     assert response.status_code == 403
 
 
-def test_protected_route_rejects_invalid_token(base_url: str):
+def test_protected_route_rejects_invalid_token(base_url: str) -> None:
     response = httpx.post(
         f"{base_url}{PROTECTED_PATH}",
         json=PROBE_PAYLOAD,
@@ -88,7 +88,7 @@ def test_protected_route_rejects_invalid_token(base_url: str):
 def test_valid_token_reaches_authenticated_old_gateway(
     base_url: str,
     access_token: str,
-):
+) -> None:
     response = httpx.post(
         f"{base_url}{PROTECTED_PATH}",
         json=PROBE_PAYLOAD,

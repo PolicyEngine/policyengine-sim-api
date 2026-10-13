@@ -22,7 +22,10 @@ from policyengine_simulation_contract.stage12_execution import (
 
 if TYPE_CHECKING:
     from policyengine_simulation_contract.stage12_bundle import CountryId
-    from policyengine_simulation_contract.stage12_manifest import V2WorkerVersion
+    from policyengine_simulation_contract.stage12_manifest import (
+        V2CountryWorker,
+        V2WorkerVersion,
+    )
 
 
 class ComparisonSkipReason(StrEnum):
@@ -75,7 +78,7 @@ def _skip(reason: ComparisonSkipReason) -> AdaptedComparisonRun:
     return AdaptedComparisonRun(report=None, skip_reason=reason)
 
 
-def _country_worker(worker: V2WorkerVersion, country: str):
+def _country_worker(worker: V2WorkerVersion, country: str) -> V2CountryWorker | None:
     return next(
         (item for item in worker.countries if item.country == country),
         None,
