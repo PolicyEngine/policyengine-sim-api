@@ -1270,7 +1270,7 @@ async def get_budget_window_job_status(
         return batch_status_response(status_response, headers=response_headers)
 
 
-@router.get("/versions", response_model=VersionsResponse)
+@router.get("/versions")
 async def list_versions(request: Request) -> VersionsResponse:
     """List all available routing versions."""
     runtime = _runtime(request)
@@ -1316,7 +1316,7 @@ def _version_map_from_state(state: VersionRoutingState, kind: str) -> VersionMap
     return VersionMap(versions)
 
 
-@router.get("/versions/{kind}", response_model=VersionMap)
+@router.get("/versions/{kind}")
 async def get_country_versions(kind: str, request: Request) -> VersionMap:
     """Get available versions for policyengine, US, or UK routing."""
     runtime = _runtime(request)
@@ -1342,13 +1342,13 @@ async def get_country_versions(kind: str, request: Request) -> VersionMap:
         return VersionMap(dict(version_dict))
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get("/health")
 async def health() -> HealthResponse:
     """Health check endpoint."""
     return HealthResponse()
 
 
-@router.post("/ping", response_model=PingResponse)
+@router.post("/ping")
 async def ping(request: PingRequest) -> PingResponse:
     """Verify the API can receive and process requests.
 
