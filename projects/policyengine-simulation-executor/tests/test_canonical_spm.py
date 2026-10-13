@@ -274,8 +274,8 @@ def test_sync_compatibility_endpoint_preserves_explicit_null(
 
     def capture(params, *, runtime):
         captured.append(params)
-        msg = "SPM_GEOGRAPHY_REQUIRED"
-        raise SPMInputError(msg, "intentional test stop")
+        error_code = "SPM_GEOGRAPHY_REQUIRED"
+        raise SPMInputError(error_code, "intentional test stop")
 
     monkeypatch.setattr(simulation, "run_simulation_impl", capture)
     app = FastAPI()

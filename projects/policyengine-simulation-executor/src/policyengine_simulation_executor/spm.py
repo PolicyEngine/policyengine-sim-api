@@ -58,9 +58,9 @@ def runtime_spm_capability() -> SPMCapability | None:
         bundle = get_current_bundle()
         configured = bundle.get("measurements", {}).get("spm")
     except (ImportError, ValueError, TypeError, AttributeError) as exc:
-        msg = "SPM_CONFIGURATION_UNAVAILABLE"
+        error_code = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            msg,
+            error_code,
             "The installed SPM bundle configuration is unavailable",
         ) from exc
     if configured is None:
@@ -68,16 +68,16 @@ def runtime_spm_capability() -> SPMCapability | None:
     if "spm" not in Simulation.model_fields or not hasattr(
         Simulation, "spm_provenance"
     ):
-        msg = "SPM_CONFIGURATION_UNAVAILABLE"
+        error_code = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            msg,
+            error_code,
             "The installed wrapper does not support canonical SPM",
         )
     try:
         return _certified_us_spm_capability(configured)
     except (ImportError, ValueError, TypeError, OSError) as exc:
-        msg = "SPM_CONFIGURATION_UNAVAILABLE"
-        raise SPMInputError(msg, str(exc)) from exc
+        error_code = "SPM_CONFIGURATION_UNAVAILABLE"
+        raise SPMInputError(error_code, str(exc)) from exc
 
 
 def _certified_us_spm_capability(configured: object) -> SPMCapability:
@@ -153,8 +153,8 @@ def _prevalidate_selection(
                     as_of=selection["as_of"],
                 )
             except ValueError as exc:
-                msg = "SPM_GEOGRAPHY_UNAVAILABLE"
-                raise SPMInputError(msg, str(exc)) from None
+                error_code = "SPM_GEOGRAPHY_UNAVAILABLE"
+                raise SPMInputError(error_code, str(exc)) from None
 
 
 # Bound at import, so clearing still works while a test has replaced one of
@@ -219,10 +219,10 @@ def normalize_runtime_spm(params: dict[str, Any]) -> dict[str, Any] | None:
             # plain scenario error; use the same narrow translation as the
             # calculator's Frame and Axiom adapters, leaving other errors alone.
             if str(exc).startswith("Unknown forecast scenario:"):
-                msg = "SPM_SCENARIO_UNAVAILABLE"
-                raise SPMInputError(msg, str(exc)) from exc
-            msg = "SPM_SETTINGS_INVALID"
-            raise SPMInputError(msg, str(exc)) from exc
+                error_code = "SPM_SCENARIO_UNAVAILABLE"
+                raise SPMInputError(error_code, str(exc)) from exc
+            error_code = "SPM_SETTINGS_INVALID"
+            raise SPMInputError(error_code, str(exc)) from exc
     return selection
 
 
@@ -285,16 +285,16 @@ def simulation_spm_calculation_provenance(
     """Read and compact one simulation's resolved SPM receipt."""
     resolved = SPMSelection.model_validate(selection)
     if getattr(simulation, "spm_config", None) != resolved.model_dump(mode="json"):
-        msg = "SPM_CONFIGURATION_UNAVAILABLE"
+        error_code = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            msg,
+            error_code,
             "Simulation ignored the requested SPM selection",
         )
     receipt = getattr(simulation, "spm_provenance", None)
     if not callable(receipt):
-        msg = "SPM_CONFIGURATION_UNAVAILABLE"
+        error_code = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            msg,
+            error_code,
             "Simulation has no valid SPM calculation receipt",
         )
     try:
@@ -303,9 +303,9 @@ def simulation_spm_calculation_provenance(
             receipt=compact_spm_provenance(receipt(), resolved),
         )
     except (TypeError, ValueError) as exc:
-        msg = "SPM_CONFIGURATION_UNAVAILABLE"
+        error_code = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            msg,
+            error_code,
             "Simulation has no valid SPM calculation receipt",
         ) from exc
 
@@ -334,9 +334,9 @@ def simulation_spm_result(
     if expected_year is not None and str(expected_year) not in (
         comparison.baseline.receipt.years
     ):
-        msg = "SPM_CONFIGURATION_UNAVAILABLE"
+        error_code = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            msg,
+            error_code,
             "Result SPM provenance does not cover the requested year",
         )
     return {

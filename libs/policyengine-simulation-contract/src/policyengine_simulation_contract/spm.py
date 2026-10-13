@@ -506,8 +506,10 @@ def resolve_spm_selection(
     """Resolve only certified metadata; unrecognized future bundles fail closed."""
     if country.lower() != "us":
         if selection is not None:
-            msg = "SPM_SETTINGS_INVALID"
-            raise SPMInputError(msg, "SPM settings are supported only for the US")
+            error_code = "SPM_SETTINGS_INVALID"
+            raise SPMInputError(
+                error_code, "SPM settings are supported only for the US"
+            )
         return None
     if capability is None:
         # Existing versioned worker bundles predate canonical SPM. This does
@@ -541,16 +543,16 @@ def resolve_spm_selection(
         )
         if selection is None and historical:
             return None
-        msg = "SPM_CONFIGURATION_UNAVAILABLE"
+        error_code = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            msg,
+            error_code,
             "This worker bundle has no certified canonical SPM capability",
         )
     try:
         return _certified_spm_selection(capability, selection)
     except ValueError as exc:
-        msg = "SPM_SETTINGS_INVALID"
-        raise SPMInputError(msg, str(exc)) from exc
+        error_code = "SPM_SETTINGS_INVALID"
+        raise SPMInputError(error_code, str(exc)) from exc
 
 
 def _validated_spm_provenance(
@@ -593,24 +595,24 @@ def validate_spm_result(
 ) -> SPMComparisonProvenance | None:
     """Do not accept incomplete or mixed-method child/cached output."""
     if "spm_config" in result:
-        msg = "SPM_CONFIGURATION_UNAVAILABLE"
+        error_code = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            msg,
+            error_code,
             "Completed results must not contain legacy spm_config metadata",
         )
     if selection is None:
         if result.get("spm_provenance") is not None:
-            msg = "SPM_CONFIGURATION_UNAVAILABLE"
+            error_code = "SPM_CONFIGURATION_UNAVAILABLE"
             raise SPMInputError(
-                msg,
+                error_code,
                 "Unexpected SPM receipt for a historical result",
             )
         return None
     try:
         return _validated_spm_provenance(result, selection, expected_year=expected_year)
     except ValueError as exc:
-        msg = "SPM_CONFIGURATION_UNAVAILABLE"
-        raise SPMInputError(msg, str(exc)) from exc
+        error_code = "SPM_CONFIGURATION_UNAVAILABLE"
+        raise SPMInputError(error_code, str(exc)) from exc
 
 
 def combine_spm_results(
@@ -634,8 +636,8 @@ def combine_spm_results(
     validated: list[SPMComparisonProvenance] = []
     for receipt in receipts:
         if receipt is None:
-            msg = "SPM_CONFIGURATION_UNAVAILABLE"
-            raise SPMInputError(msg, "Missing canonical SPM receipt")
+            error_code = "SPM_CONFIGURATION_UNAVAILABLE"
+            raise SPMInputError(error_code, "Missing canonical SPM receipt")
         validated.append(receipt)
     combined = build_spm_comparison_provenance(
         baseline_receipts=[

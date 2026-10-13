@@ -930,8 +930,8 @@ class TestDispatchResolvesSPM:
         # Resolution failures are cheap only if they happen before 20
         # children are spawned.
         def unavailable(params):
-            msg = "SPM_GEOGRAPHY_REQUIRED"
-            raise SPMInputError(msg, "County required")
+            error_code = "SPM_GEOGRAPHY_REQUIRED"
+            raise SPMInputError(error_code, "County required")
 
         monkeypatch.setattr(executor_spm, "normalize_runtime_spm", unavailable)
         monkeypatch.setattr(

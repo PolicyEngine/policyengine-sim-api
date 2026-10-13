@@ -569,9 +569,9 @@ def _build_policyengine_bundle(
         try:
             capability = SPMCapability.model_validate(capability)
         except ValueError as exc:
-            msg = "SPM_CONFIGURATION_UNAVAILABLE"
+            error_code = "SPM_CONFIGURATION_UNAVAILABLE"
             raise SPMInputError(
-                msg,
+                error_code,
                 "This worker bundle has invalid canonical SPM capability metadata",
             ) from exc
     return PolicyEngineBundle(
@@ -729,7 +729,7 @@ def _bind_observability_id(
     if observability_id is not None:
         try:
             runtime.set_context(observability_id=observability_id)
-        except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+        except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
             pass
     return observability_id
 
