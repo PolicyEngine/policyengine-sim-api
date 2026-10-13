@@ -96,7 +96,7 @@ def shellcheck_failures(config: CiScripts, root: Path) -> set[str] | None:
     )
     if not scripts:
         return set()
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603  # runs the resolved shellcheck on this repository's scripts
         [shellcheck, "--format=gcc", *scripts],
         cwd=root,
         capture_output=True,
@@ -149,7 +149,9 @@ def compare(registry: Registry, findings: Findings, root: Path) -> list[Violatio
     A check that could not run is skipped rather than reported.
     """
     config = registry.ci_scripts
-    assert config is not None
+    if config is None:
+        msg = "the registry has no [ci_scripts] table"
+        raise TypeError(msg)
     checks = (
         (
             "multiline",
@@ -197,7 +199,9 @@ def compare(registry: Registry, findings: Findings, root: Path) -> list[Violatio
 def write_baselines(registry: Registry, findings: Findings, root: Path) -> None:
     """Record today's findings as the baselines (used once, when adopting the rule)."""
     config = registry.ci_scripts
-    assert config is not None
+    if config is None:
+        msg = "the registry has no [ci_scripts] table"
+        raise TypeError(msg)
     for found, path in (
         (findings.multiline, config.multiline_baseline),
         (findings.untested, config.untested_baseline),
@@ -243,5 +247,5 @@ def check() -> list[str]:
     """Adapter for scripts/run_quality_guards.py."""
     violations, notes = run_check(REPO_ROOT)
     for note in notes:
-        print(f"note: {note}")
+        print(f"note: {note}")  # noqa: T201  # the guard adapter prints its notes
     return [str(violation) for violation in violations]
