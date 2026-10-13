@@ -1,3 +1,5 @@
+"""HTTP middleware recording a request counter and latency histogram per route."""
+
 from dataclasses import dataclass
 from time import time
 
@@ -10,13 +12,22 @@ from starlette.routing import Match
 
 @dataclass
 class Route:
+    """A FastAPI route with its request counter and latency histogram."""
+
     route: APIRoute
     execution: metrics.Counter
     latency: metrics.Histogram
 
 
 class Middleware:
+    """Count requests and record latency, in seconds, per matched API route.
+
+    Metrics are named ``<route name>_count`` and ``<route name>_latency``.
+    Requests that match no route are passed through unmeasured.
+    """
+
     def __init__(self, app: FastAPI) -> None:
+        """Create metrics for every API route registered on ``app`` so far."""
         self.app = app
         self.meter = metrics.get_meter("policyengine")
 
@@ -35,6 +46,7 @@ class Middleware:
     async def __call__(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
+        """Pass the request on; count and time it under its first matching route."""
         route: Route | None = None
         for r in self.routes:
             if r.route.matches(request.scope)[0] != Match.NONE:

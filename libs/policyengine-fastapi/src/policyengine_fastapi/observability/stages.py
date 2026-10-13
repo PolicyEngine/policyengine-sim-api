@@ -1,7 +1,11 @@
+"""Simulation lifecycle stages and tracer capture modes."""
+
 from enum import Enum
 
 
 class SimulationStage(str, Enum):
+    """Lifecycle stage of a simulation run; values are dotted telemetry event names."""
+
     REQUEST_ACCEPTED = "request.accepted"
     REQUEST_VALIDATED = "request.validated"
     JOB_SETUP = "job.setup"
@@ -23,6 +27,12 @@ class SimulationStage(str, Enum):
 
 
 class TracerCaptureMode(str, Enum):
+    """Which runs have their computation tracer captured.
+
+    Ranges from none (DISABLED) through failed runs, slow runs and a sample, to
+    every run (ALWAYS).
+    """
+
     DISABLED = "disabled"
     FAILURES = "failures"
     THRESHOLD = "threshold"

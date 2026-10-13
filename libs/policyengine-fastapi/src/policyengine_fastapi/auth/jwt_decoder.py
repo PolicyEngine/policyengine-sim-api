@@ -1,3 +1,5 @@
+"""FastAPI dependency that verifies RS256 bearer JWTs against an issuer's JWKS."""
+
 import logging
 
 import jwt
@@ -11,12 +13,19 @@ LOG = logging.getLogger(__name__)
 
 
 class JWTDecoder:
-    """
-    Parse and verify the JWT, verifying the correct issuer and audience and returning
-    the parsed token with all fields.
+    """Callable FastAPI dependency that verifies a bearer JWT and returns its claims.
+
+    Tokens must be RS256-signed by a key from the issuer's JWKS and carry the
+    configured issuer and audience. A missing or invalid token raises HTTP 403,
+    or yields None when ``auto_error`` is False.
     """
 
     def __init__(self, issuer: str, audience: str, auto_error: bool = True) -> None:
+        """Store the expected claims and create a JWKS client for the issuer.
+
+        Keys are fetched from ``{issuer}.well-known/jwks.json``, so ``issuer``
+        must end with a slash.
+        """
         self.issuer = issuer
         self.audience = audience
         self.auto_error = auto_error
@@ -29,6 +38,11 @@ class JWTDecoder:
             HTTPBearer(auto_error=False)
         ),
     ) -> dict[str, str] | None:
+        """Return the verified token's claims.
+
+        A missing or invalid token raises HTTP 403, or returns None when
+        ``auto_error`` is False.
+        """
         try:
             return self._validate(token)
         except HTTPException as err:

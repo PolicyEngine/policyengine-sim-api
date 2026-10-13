@@ -1,3 +1,5 @@
+"""Settings for the shared observability emitters."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -8,7 +10,6 @@ from .stages import TracerCaptureMode
 
 def parse_header_value_pairs(raw: str | None) -> dict[str, str]:
     """Parse OTLP headers from a comma or newline separated key=value string."""
-
     if raw is None:
         return {}
 
@@ -33,6 +34,12 @@ def parse_header_value_pairs(raw: str | None) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class ObservabilityConfig:
+    """Immutable observability settings.
+
+    Covers whether emission is on, where OTLP telemetry and tracer artifacts go,
+    and when tracer output is captured. The defaults describe disabled emission.
+    """
+
     enabled: bool = False
     shadow_mode: bool = True
     service_name: str = "policyengine-observability"
@@ -46,4 +53,5 @@ class ObservabilityConfig:
 
     @classmethod
     def disabled(cls, service_name: str = "policyengine-observability") -> Self:
+        """Return a config with emission off, setting only the service name."""
         return cls(enabled=False, service_name=service_name)

@@ -1,3 +1,5 @@
+"""Console OpenTelemetry exporters for local debugging."""
+
 from opentelemetry import metrics, trace
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import (
@@ -20,8 +22,10 @@ from policyengine_fastapi.exit import exit
 # 1. to include python logs and
 # 2. export to console (for demo purposes)
 def export_ot_to_console(resource: Resource) -> None:
-    """
-    configure opentelemetry to dump messages to console for debugging on desktop
+    """Export OpenTelemetry traces and metrics to the console, for desktop debugging.
+
+    Installs global tracer and meter providers for ``resource`` and registers an
+    ``exit`` callback that flushes both at shutdown.
     """
     traceProvider = TracerProvider(resource=resource)
     processor = BatchSpanProcessor(ConsoleSpanExporter())
