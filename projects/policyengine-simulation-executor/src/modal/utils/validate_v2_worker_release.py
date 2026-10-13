@@ -108,7 +108,7 @@ def main() -> None:
         + "\n",
         encoding="utf-8",
     )
-    print(validation.validation_invocation_id)
+    print(validation.validation_invocation_id)  # noqa: T201  # command-line script: logs the validation id for CI
 
 
 if __name__ == "__main__":

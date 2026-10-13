@@ -36,7 +36,7 @@ def main() -> None:
         )
     except (Stage12RuntimeAccessError, ValueError) as error:
         raise SystemExit(str(error)) from None
-    print(
+    print(  # noqa: T201  # command-line check: stdout reports the verified access
         "Shared API v2 runtime database access verified for Stage 12: "
         f"environment={args.environment}, role={args.expected_role}"
     )

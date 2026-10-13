@@ -39,7 +39,7 @@ def main() -> None:
 
     if "--shell" in sys.argv[1:]:
         for key, value in outputs.items():
-            print(f"{key}={value}")
+            print(f"{key}={value}")  # noqa: T201  # command-line script: deployment scripts read stdout
         return
 
     github_output = os.environ.get("GITHUB_OUTPUT")
@@ -49,7 +49,7 @@ def main() -> None:
             for key, value in outputs.items():
                 file.write(f"{key}={value}\n")
 
-    print(
+    print(  # noqa: T201  # command-line script: deployment scripts read stdout
         "Deploying with policyengine.py bundle "
         f"{outputs['policyengine_version']}: "
         f"policyengine-core={outputs['policyengine_core_version']}, "

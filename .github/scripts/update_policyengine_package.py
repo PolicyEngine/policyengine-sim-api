@@ -32,6 +32,11 @@ def _json_from_stdin() -> object:
     return json.load(sys.stdin)
 
 
+def _write_result(result: object) -> None:
+    """Print one result line for update-policyengine-package.sh to capture."""
+    print(result)  # noqa: T201  # command-line script: the shell script reads stdout
+
+
 def _requirement_name(requirement: str) -> str:
     return re.split(r"[\s\[<>=!~;@]", requirement, maxsplit=1)[0]
 
@@ -155,7 +160,7 @@ def find_issue(title: str) -> None:
         and isinstance(item.get("number"), int)
     )
     if matches:
-        print(matches[0])
+        _write_result(matches[0])
 
 
 def verify_issue(expected_number: int, expected_title: str) -> None:
@@ -191,7 +196,7 @@ def latest_version(package: str) -> None:
     if not isinstance(version, str) or not version:
         msg = f"PyPI response has no latest version for {package}"
         raise SystemExit(msg)
-    print(version)
+    _write_result(version)
 
 
 def bundle_versions() -> None:
@@ -264,7 +269,7 @@ def bundle_versions() -> None:
         "uk_certificate_sha256": certificate_sha256("uk"),
     }
     for name, version in outputs.items():
-        print(f"{name}={version}")
+        _write_result(f"{name}={version}")
 
 
 #: Release-dispatch fields compared with the installed bundle: (payload key
@@ -398,7 +403,7 @@ def main() -> None:
     """
     args = _parser().parse_args()
     if args.command == "current-version":
-        print(current_version(args.pyproject, args.package))
+        _write_result(current_version(args.pyproject, args.package))
     elif args.command == "update-requirements":
         update_requirements(args.pyproject, args.package, args.current, args.latest)
     elif args.command == "find-issue":

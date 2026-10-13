@@ -15,7 +15,7 @@ def validate_local_access() -> HFCredentialAudit:
 
 def main() -> None:
     """Validate the CI credential and print its audit record as JSON."""
-    print(validate_local_access().model_dump_json())
+    print(validate_local_access().model_dump_json())  # noqa: T201  # command-line script: the audit record on stdout is its output
 
 
 if __name__ == "__main__":

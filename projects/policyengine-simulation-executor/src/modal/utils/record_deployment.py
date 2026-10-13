@@ -64,7 +64,7 @@ def main() -> None:
     # The store speaks JSON-able mappings; models dump at the call site
     # (same discipline as publish_manifest_impl).
     ArtifactStore().write_deployed_marker(args.environment, marker.model_dump())
-    print(
+    print(  # noqa: T201  # command-line script: reports the recorded marker
         f"Recorded deployed/{args.environment}.json for manifest {args.manifest_digest}"
     )
 

@@ -61,7 +61,7 @@ def main() -> None:
         simulation_tolerances=_tolerances(arguments.simulation_tolerances),
         aggregate_tolerances=_tolerances(arguments.aggregate_tolerances),
     )
-    print(receipt.model_dump_json())
+    print(receipt.model_dump_json())  # noqa: T201  # command-line script: the receipt JSON on stdout is its output
 
 
 if __name__ == "__main__":

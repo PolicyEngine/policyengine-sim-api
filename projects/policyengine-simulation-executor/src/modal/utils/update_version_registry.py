@@ -1085,6 +1085,11 @@ def restore_routing_state(
     return next_state
 
 
+def _report(line: str = "") -> None:
+    """Print one line of the command's progress report."""
+    print(line)  # noqa: T201  # command-line script: stdout is its progress report
+
+
 def main() -> None:
     """Publish a deployed app's routes, or seed the state from legacy Dicts."""
     parser = argparse.ArgumentParser(
@@ -1355,19 +1360,19 @@ def main() -> None:
         parser.error("--expected-latest needs --restore-latest")
 
     if args.seed_active_from_legacy:
-        print(
+        _report(
             "Seeding active routing state from legacy Modal dicts in "
             f"environment: {args.environment}"
         )
         state = seed_active_routing_state_from_legacy(environment=args.environment)
-        print()
-        print(f"  {ROUTING_STATE_DICT_NAME}[{ROUTING_STATE_ACTIVE_KEY}]: updated")
-        print(f"  policyengine routes: {len(state['routes']['policyengine'])}")
-        print(f"  US routes: {len(state['routes']['us'])}")
-        print(f"  UK routes: {len(state['routes']['uk'])}")
-        print(f"  bundle manifests: {len(state['bundles'])}")
-        print()
-        print("Legacy routing state seed completed successfully.")
+        _report()
+        _report(f"  {ROUTING_STATE_DICT_NAME}[{ROUTING_STATE_ACTIVE_KEY}]: updated")
+        _report(f"  policyengine routes: {len(state['routes']['policyengine'])}")
+        _report(f"  US routes: {len(state['routes']['us'])}")
+        _report(f"  UK routes: {len(state['routes']['uk'])}")
+        _report(f"  bundle manifests: {len(state['bundles'])}")
+        _report()
+        _report("Legacy routing state seed completed successfully.")
         return
 
     required_args = {
@@ -1398,12 +1403,12 @@ def main() -> None:
         print(f"advances_latest={'true' if plan['advances_latest'] else 'false'}")
         return
 
-    print(f"Publishing routing state in Modal environment: {args.environment}")
-    print(f"  App name: {args.app_name}")
-    print(f"  policyengine.py version: {args.policyengine_version}")
-    print(f"  US version: {args.us_version}")
-    print(f"  UK version: {args.uk_version}")
-    print()
+    _report(f"Publishing routing state in Modal environment: {args.environment}")
+    _report(f"  App name: {args.app_name}")
+    _report(f"  policyengine.py version: {args.policyengine_version}")
+    _report(f"  US version: {args.us_version}")
+    _report(f"  UK version: {args.uk_version}")
+    _report()
 
     state = publish_routing_state(
         environment=args.environment,
@@ -1413,13 +1418,13 @@ def main() -> None:
         uk_version=args.uk_version,
         force_latest=args.force_latest,
     )
-    print()
-    print(f"  {ROUTING_STATE_DICT_NAME}[{ROUTING_STATE_ACTIVE_KEY}]: updated")
-    print(f"  latest.policyengine: {state['latest']['policyengine']}")
-    print(f"  latest.us: {state['latest']['us']}")
-    print(f"  latest.uk: {state['latest']['uk']}")
-    print()
-    print("Routing state published successfully.")
+    _report()
+    _report(f"  {ROUTING_STATE_DICT_NAME}[{ROUTING_STATE_ACTIVE_KEY}]: updated")
+    _report(f"  latest.policyengine: {state['latest']['policyengine']}")
+    _report(f"  latest.us: {state['latest']['us']}")
+    _report(f"  latest.uk: {state['latest']['uk']}")
+    _report()
+    _report("Routing state published successfully.")
 
 
 if __name__ == "__main__":

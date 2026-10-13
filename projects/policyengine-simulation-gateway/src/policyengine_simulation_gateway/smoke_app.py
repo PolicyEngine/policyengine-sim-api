@@ -69,11 +69,11 @@ def smoke_import_gateway() -> dict:
 def main() -> None:
     """Run the in-image smoke remotely; fail unless modules and /health loaded."""
     report = smoke_import_gateway.remote()
-    print(report)
+    print(report)  # noqa: T201  # Modal local entrypoint: runs locally, and stdout is the smoke's report
     if report["modules_imported"] <= 0:
         msg = f"Gateway image smoke imported no modules: {report!r}"
         raise RuntimeError(msg)
     if not any("/health" in route for route in report["routes"]):
         msg = f"Gateway image smoke found no /health route: {report!r}"
         raise RuntimeError(msg)
-    print("gateway image smoke OK")
+    print("gateway image smoke OK")  # noqa: T201  # Modal local entrypoint: runs locally, and stdout is the smoke's report

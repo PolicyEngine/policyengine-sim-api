@@ -71,4 +71,4 @@ def main() -> None:
             f"UK dataset boundary version: {observed!r}"
         )
         raise RuntimeError(msg)
-    print("Stage 12 static runtime file smoke OK")
+    print("Stage 12 static runtime file smoke OK")  # noqa: T201  # Modal local entrypoint: runs locally, and stdout is the smoke's report
