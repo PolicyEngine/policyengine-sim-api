@@ -282,6 +282,26 @@ def _job_progress_reporter():
     return StoredJobProgressReporter(job_id, write=put_job_progress)
 
 
+def _record_stage_durations(runtime, progress) -> None:
+    """Attach the job's stage durations to its operation telemetry.
+
+    Main-path traces cannot split the baseline from the reform calculation:
+    both run inside ``economic_impact_analysis``. These attributes can.
+    """
+    durations = progress.stage_durations()
+    if not durations:
+        return
+    try:
+        runtime.set_context(
+            **{
+                f"job_stage_seconds_{stage.value}": seconds
+                for stage, seconds in durations.items()
+            }
+        )
+    except Exception:  # noqa: BLE001 - telemetry is non-fatal
+        pass
+
+
 @app.function(
     image=simulation_image,
     cpu=8.0,
@@ -328,17 +348,24 @@ def run_simulation(
             _set_modal_call_attributes(runtime)
             from src.modal.segmented_national import dispatch_run_simulation
 
-            # Plain national macro requests fan out across region groups
-            # by default (segmented: false opts out). APP_NAME is this
-            # deployed app; children spawn into its dedicated
-            # run_simulation_segment pool.
-            return dispatch_run_simulation(
-                params,
-                app_name=APP_NAME,
-                runtime=runtime,
-                progress=progress,
-            )
+            try:
+                # Plain national macro requests fan out across region groups
+                # by default (segmented: false opts out). APP_NAME is this
+                # deployed app; children spawn into its dedicated
+                # run_simulation_segment pool.
+                return dispatch_run_simulation(
+                    params,
+                    app_name=APP_NAME,
+                    runtime=runtime,
+                    progress=progress,
+                )
+            finally:
+                # Close the last stage inside the operation, so its
+                # completion record carries every stage duration.
+                progress.finish()
+                _record_stage_durations(runtime, progress)
     finally:
+        # A no-op unless the operation never started.
         progress.finish()
         runtime.shutdown()
 

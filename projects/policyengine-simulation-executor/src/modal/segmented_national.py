@@ -25,7 +25,7 @@ import time
 from typing import Any
 
 from policyengine_observability import ObservabilityRuntime
-from policyengine_simulation_contract.job_progress import JobStage
+from policyengine_simulation_contract.job_progress import JobExecution, JobStage
 from policyengine_simulation_contract.spm import (
     SPMInputError,
     combine_spm_results,
@@ -378,6 +378,7 @@ def dispatch_run_simulation(
     if selection is not None:
         params = {**params, "spm": selection}
     if should_run_segmented_national(params):
+        progress.set_execution(JobExecution.SEGMENTED)
         return run_segmented_national_impl(
             params,
             app_name=app_name,
@@ -393,4 +394,5 @@ def dispatch_run_simulation(
     # and UK requests must not pollute the segmented-vs-monolithic metric.
     if is_plain_national_macro(params):
         runtime.set_context(national_execution="monolithic")
+    progress.set_execution(JobExecution.MONOLITHIC)
     return run_simulation_impl(params, runtime=runtime, progress=progress)

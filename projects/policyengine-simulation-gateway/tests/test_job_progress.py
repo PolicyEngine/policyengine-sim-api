@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from policyengine_simulation_contract.job_progress import (
     JOB_PROGRESS_CAPABILITY_VERSION,
+    JobExecution,
     JobProgressRecord,
     JobSegmentProgress,
     JobStage,
@@ -59,6 +60,7 @@ def _store_record(mock_modal, job_id: str, record: JobProgressRecord) -> None:
 def _reform_record(**overrides) -> JobProgressRecord:
     values = {
         "stage": JobStage.REFORM,
+        "execution": JobExecution.MONOLITHIC,
         "started_at": "2026-10-13T12:00:30Z",
         "stage_started_at": "2026-10-13T12:01:00Z",
         "stage_durations": {JobStage.LOADING_DATA: 12.5, JobStage.BASELINE: 17.5},
@@ -114,7 +116,7 @@ class TestStageReportingWorker:
         assert response.status_code == 202
         body = response.json()
         assert body["stage"] == "reform"
-        assert body["progress"] == 45
+        assert body["progress"] == 67
         assert body["started_at"] == "2026-10-13T12:00:30Z"
         assert body["stage_started_at"] == "2026-10-13T12:01:00Z"
         assert body["stage_durations"] == {"loading_data": 12.5, "baseline": 17.5}
@@ -131,6 +133,7 @@ class TestStageReportingWorker:
             job_id,
             _reform_record(
                 stage=JobStage.SIMULATING,
+                execution=JobExecution.SEGMENTED,
                 segments=JobSegmentProgress(completed=10, total=20),
             ),
         )
@@ -139,7 +142,7 @@ class TestStageReportingWorker:
 
         assert body["stage"] == "simulating"
         assert body["segments"] == {"completed": 10, "total": 20}
-        assert body["progress"] == 50
+        assert body["progress"] == 51
 
     def test__complete_job_reports_durations_and_no_current_stage(
         self, stage_reporting_worker, client: TestClient

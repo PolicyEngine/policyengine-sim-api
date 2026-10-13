@@ -50,6 +50,13 @@ class JobStage(StrEnum):
     OUTPUTS = "outputs"
 
 
+class JobExecution(StrEnum):
+    """How the worker runs the job; the two paths spend time differently."""
+
+    MONOLITHIC = "monolithic"
+    SEGMENTED = "segmented"
+
+
 class JobSegmentProgress(BaseModel):
     """Completed region segments of a segmented national run."""
 
@@ -71,23 +78,41 @@ class JobProgressRecord(BaseModel):
     started_at: AwareDatetime
     stage_started_at: AwareDatetime
     finished_at: AwareDatetime | None = None
+    # None only between the worker start and its choice of execution path.
+    execution: JobExecution | None = None
     segments: JobSegmentProgress | None = None
     stage_durations: dict[JobStage, NonNegativeFloat] = Field(default_factory=dict)
 
 
-# Percent of a typical run that is complete when each stage starts.
-# PROVISIONAL: chosen by hand, not measured. Replace these with measured
-# stage shares once per-stage runtime statistics exist (#780, phase 2).
-# ``simulating`` advances from its floor to the ``outputs`` floor as
-# segments complete.
-STAGE_PROGRESS_FLOOR: Mapping[JobStage, int] = MappingProxyType(
+# Percent of submission-to-completion time that has passed, in a typical
+# successful production run, when each stage starts. Set from one week of
+# production telemetry (6-13 October 2026); queue time counts towards the
+# ``loading_data`` floor. PROVISIONAL: replace with stage shares measured per
+# country and region type once runtime statistics exist (#780, phase 2).
+#
+# Monolithic: UK national and US state runs. The baseline/reform split comes
+# from Stage 12 state runs (baseline is about 29% of their calculation).
+# Segmented: US national runs; ``simulating`` advances from its floor to the
+# ``outputs`` floor as segments complete, and the national reduce is short.
+STAGE_PROGRESS_FLOOR: Mapping[JobExecution, Mapping[JobStage, int]] = MappingProxyType(
     {
-        JobStage.QUEUED: 0,
-        JobStage.LOADING_DATA: 5,
-        JobStage.BASELINE: 15,
-        JobStage.SIMULATING: 15,
-        JobStage.REFORM: 45,
-        JobStage.OUTPUTS: 85,
+        JobExecution.MONOLITHIC: MappingProxyType(
+            {
+                JobStage.QUEUED: 0,
+                JobStage.LOADING_DATA: 25,
+                JobStage.BASELINE: 55,
+                JobStage.REFORM: 67,
+                JobStage.OUTPUTS: 97,
+            }
+        ),
+        JobExecution.SEGMENTED: MappingProxyType(
+            {
+                JobStage.QUEUED: 0,
+                JobStage.LOADING_DATA: 3,
+                JobStage.SIMULATING: 5,
+                JobStage.OUTPUTS: 97,
+            }
+        ),
     }
 )
 # A running job never reports 100: only a complete result does.
@@ -121,10 +146,26 @@ def _parse_datetime(value: object) -> datetime | None:
         return None
 
 
+def stage_progress_floor(execution: JobExecution | None, stage: JobStage) -> int:
+    """The progress percent at which ``stage`` starts on ``execution``.
+
+    Before the worker chooses its path, use the lowest floor that any path
+    gives the stage, so progress never moves backwards once the path is known.
+    """
+
+    floors = STAGE_PROGRESS_FLOOR.get(execution) if execution is not None else None
+    if floors is not None and stage in floors:
+        return floors[stage]
+    return min(
+        (floors[stage] for floors in STAGE_PROGRESS_FLOOR.values() if stage in floors),
+        default=0,
+    )
+
+
 def _running_progress(record: JobProgressRecord) -> int:
-    floor = STAGE_PROGRESS_FLOOR[record.stage]
+    floor = stage_progress_floor(record.execution, record.stage)
     if record.stage is JobStage.SIMULATING and record.segments is not None:
-        ceiling = STAGE_PROGRESS_FLOOR[JobStage.OUTPUTS]
+        ceiling = stage_progress_floor(record.execution, JobStage.OUTPUTS)
         share = record.segments.completed / record.segments.total
         floor += int((ceiling - floor) * share)
     return min(floor, RUNNING_PROGRESS_CAP)
@@ -156,7 +197,7 @@ def job_progress_fields(
         if record is None:
             if status == "running":
                 fields["stage"] = JobStage.QUEUED.value
-                fields["progress"] = STAGE_PROGRESS_FLOOR[JobStage.QUEUED]
+                fields["progress"] = stage_progress_floor(None, JobStage.QUEUED)
         else:
             fields["started_at"] = _json_datetime(record.started_at)
             fields["finished_at"] = _json_datetime(record.finished_at)

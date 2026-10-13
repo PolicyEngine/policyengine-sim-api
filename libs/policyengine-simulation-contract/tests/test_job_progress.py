@@ -10,10 +10,12 @@ from policyengine_simulation_contract.job_progress import (
     JOB_PROGRESS_CAPABILITY_VERSION,
     RUNNING_PROGRESS_CAP,
     STAGE_PROGRESS_FLOOR,
+    JobExecution,
     JobProgressRecord,
     JobSegmentProgress,
     JobStage,
     job_progress_fields,
+    stage_progress_floor,
     supported_job_progress_capability,
 )
 from policyengine_simulation_contract.job_progress_state import (
@@ -31,6 +33,7 @@ FINISHED = datetime(2026, 10, 13, 12, 4, 0, tzinfo=UTC)
 def _record(**overrides) -> JobProgressRecord:
     values = {
         "stage": JobStage.REFORM,
+        "execution": JobExecution.MONOLITHIC,
         "started_at": STARTED,
         "stage_started_at": STAGE_STARTED,
         "stage_durations": {JobStage.LOADING_DATA: 12.5, JobStage.BASELINE: 17.5},
@@ -100,17 +103,18 @@ class TestJobProgressFieldsWithStageReporting:
             "started_at": "2026-10-13T12:00:30Z",
             "stage": "reform",
             "stage_started_at": "2026-10-13T12:01:00Z",
-            "progress": STAGE_PROGRESS_FLOOR[JobStage.REFORM],
+            "progress": 67,
             "stage_durations": {"loading_data": 12.5, "baseline": 17.5},
         }
 
     @pytest.mark.parametrize(
         ("completed", "expected"),
-        [(0, 15), (10, 50), (19, 81), (20, 85)],
+        [(0, 5), (10, 51), (19, 92), (20, 97)],
     )
     def test__segmented_run_advances_with_completed_segments(self, completed, expected):
         record = _record(
             stage=JobStage.SIMULATING,
+            execution=JobExecution.SEGMENTED,
             segments=JobSegmentProgress(completed=completed, total=20),
         )
 
@@ -125,9 +129,26 @@ class TestJobProgressFieldsWithStageReporting:
         assert fields["progress"] == expected
         assert fields["segments"] == {"completed": completed, "total": 20}
 
+    def test__running_job_before_its_execution_path_uses_the_lowest_floor(self):
+        record = _record(stage=JobStage.LOADING_DATA, execution=None)
+
+        fields = job_progress_fields(
+            status="running",
+            submitted_at=SUBMITTED,
+            record=record,
+            reports_stages=True,
+        )
+
+        assert fields["progress"] == 3
+        assert fields["progress"] <= stage_progress_floor(
+            JobExecution.MONOLITHIC, JobStage.LOADING_DATA
+        )
+
     def test__running_progress_never_reaches_100(self):
         assert all(
-            floor <= RUNNING_PROGRESS_CAP for floor in STAGE_PROGRESS_FLOOR.values()
+            floor <= RUNNING_PROGRESS_CAP
+            for floors in STAGE_PROGRESS_FLOOR.values()
+            for floor in floors.values()
         )
         record = _record(stage=JobStage.OUTPUTS)
 
@@ -209,6 +230,42 @@ class TestJobProgressFieldsWithStageReporting:
             "status": status,
             **fields,
         }
+
+
+class TestStageProgressFloor:
+    @pytest.mark.parametrize(
+        ("execution", "stages"),
+        [
+            (
+                JobExecution.MONOLITHIC,
+                [
+                    JobStage.QUEUED,
+                    JobStage.LOADING_DATA,
+                    JobStage.BASELINE,
+                    JobStage.REFORM,
+                    JobStage.OUTPUTS,
+                ],
+            ),
+            (
+                JobExecution.SEGMENTED,
+                [
+                    JobStage.QUEUED,
+                    JobStage.LOADING_DATA,
+                    JobStage.SIMULATING,
+                    JobStage.OUTPUTS,
+                ],
+            ),
+        ],
+    )
+    def test__each_path_covers_its_stages_in_increasing_order(self, execution, stages):
+        floors = STAGE_PROGRESS_FLOOR[execution]
+
+        assert list(floors) == stages
+        assert [floors[stage] for stage in stages] == sorted(floors.values())
+
+    def test__a_stage_outside_the_path_uses_the_lowest_floor_of_any_path(self):
+        assert stage_progress_floor(JobExecution.MONOLITHIC, JobStage.SIMULATING) == 5
+        assert stage_progress_floor(None, JobStage.QUEUED) == 0
 
 
 class TestSupportedJobProgressCapability:

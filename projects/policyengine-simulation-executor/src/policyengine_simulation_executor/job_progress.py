@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from policyengine_simulation_contract.job_progress import (
+    JobExecution,
     JobProgressRecord,
     JobSegmentProgress,
     JobStage,
@@ -34,6 +35,8 @@ def _utc_now() -> datetime:
 class JobProgressReporter(Protocol):
     def start(self) -> None: ...
 
+    def set_execution(self, execution: JobExecution) -> None: ...
+
     def enter(self, stage: JobStage) -> None: ...
 
     def start_segments(self, total: int) -> None: ...
@@ -42,11 +45,16 @@ class JobProgressReporter(Protocol):
 
     def finish(self) -> None: ...
 
+    def stage_durations(self) -> dict[JobStage, float]: ...
+
 
 class NullJobProgressReporter:
     """Reports nothing."""
 
     def start(self) -> None:
+        pass
+
+    def set_execution(self, execution: JobExecution) -> None:
         pass
 
     def enter(self, stage: JobStage) -> None:
@@ -60,6 +68,9 @@ class NullJobProgressReporter:
 
     def finish(self) -> None:
         pass
+
+    def stage_durations(self) -> dict[JobStage, float]:
+        return {}
 
 
 NULL_JOB_PROGRESS = NullJobProgressReporter()
@@ -94,6 +105,17 @@ class StoredJobProgressReporter:
             started_at=now,
             stage_started_at=now,
         )
+        self._publish()
+
+    def set_execution(self, execution: JobExecution) -> None:
+        if self._record is None:
+            self.start()
+        record = self._record
+        if record is None or record.finished_at is not None:
+            return
+        if record.execution is execution:
+            return
+        record.execution = execution
         self._publish()
 
     def enter(self, stage: JobStage) -> None:
@@ -138,6 +160,13 @@ class StoredJobProgressReporter:
             return
         record.finished_at = self._close_stage(record)
         self._publish()
+
+    def stage_durations(self) -> dict[JobStage, float]:
+        """Seconds per ended stage; complete only after ``finish()``."""
+
+        if self._record is None:
+            return {}
+        return dict(self._record.stage_durations)
 
     def _close_stage(self, record: JobProgressRecord) -> datetime:
         now = self._clock()

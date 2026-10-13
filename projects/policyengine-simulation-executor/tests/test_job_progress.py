@@ -14,6 +14,7 @@ from fixtures.fake_modal import install_fake_modal
 from fixtures.spm_doubles import installed_spm_selection, spm_capable_simulation
 from fixtures.test_simulation_api_contracts import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_contract.job_progress import (
+    JobExecution,
     JobProgressRecord,
     JobSegmentProgress,
     JobStage,
@@ -71,6 +72,9 @@ class _RecordingReporter:
     def start(self) -> None:
         self.calls.append(("start",))
 
+    def set_execution(self, execution: JobExecution) -> None:
+        self.calls.append(("set_execution", execution))
+
     def enter(self, stage: JobStage) -> None:
         self.calls.append(("enter", stage))
 
@@ -82,6 +86,9 @@ class _RecordingReporter:
 
     def finish(self) -> None:
         self.calls.append(("finish",))
+
+    def stage_durations(self) -> dict[JobStage, float]:
+        return {}
 
 
 def _reporter():
@@ -166,6 +173,31 @@ class TestStoredJobProgressReporter:
         assert writer.last.segments == JobSegmentProgress(completed=2, total=2)
         assert len(writer.writes) == 5
 
+    def test__execution_path_is_recorded_once(self):
+        reporter, writer, _ = _reporter()
+
+        reporter.start()
+        reporter.set_execution(JobExecution.MONOLITHIC)
+        reporter.set_execution(JobExecution.MONOLITHIC)
+
+        assert [record.execution for _, record in writer.writes] == [
+            None,
+            JobExecution.MONOLITHIC,
+        ]
+        assert writer.last.stage is JobStage.LOADING_DATA
+
+    def test__stage_durations_are_a_copy_of_ended_stages(self):
+        reporter, _, clock = _reporter()
+
+        assert reporter.stage_durations() == {}
+        reporter.start()
+        clock.advance(4)
+        reporter.enter(JobStage.REFORM)
+        durations = reporter.stage_durations()
+        durations[JobStage.REFORM] = 1.0
+
+        assert reporter.stage_durations() == {JobStage.LOADING_DATA: 4.0}
+
     def test__segment_completion_without_segments_writes_nothing(self):
         reporter, writer, _ = _reporter()
 
@@ -182,6 +214,7 @@ class TestStoredJobProgressReporter:
         reporter.finish()
         reporter.finish()
         reporter.enter(JobStage.REFORM)
+        reporter.set_execution(JobExecution.SEGMENTED)
         reporter.segment_completed()
 
         assert len(writer.writes) == 2
@@ -457,6 +490,27 @@ class TestSegmentedNationalStages:
         )
 
         assert seen["progress"] is progress
+        assert progress.calls == [("set_execution", JobExecution.MONOLITHIC)]
+
+    def test__dispatch_marks_national_runs_as_segmented(self, monkeypatch):
+        progress = _RecordingReporter()
+        seen = {}
+
+        def fake_segmented(params, *, app_name, runtime, progress):
+            seen["progress"] = progress
+            return {"ok": True}
+
+        monkeypatch.setattr(sn, "run_segmented_national_impl", fake_segmented)
+
+        sn.dispatch_run_simulation(
+            {"country": "us", "scope": "macro", "time_period": "2026"},
+            app_name="app-x",
+            runtime=NoOpObservabilityRuntime(),
+            progress=progress,
+        )
+
+        assert seen["progress"] is progress
+        assert progress.calls == [("set_execution", JobExecution.SEGMENTED)]
 
 
 @pytest.fixture
@@ -475,12 +529,39 @@ def modal_app(monkeypatch):
     sys.modules.pop("src.modal.app", None)
 
 
-class _ShutdownRuntime(NoOpObservabilityRuntime):
+class _OperationScope:
     def __init__(self, events):
         self.events = events
 
+    def __enter__(self):
+        self.events.append("operation_start")
+
+    def __exit__(self, *exc_info):
+        self.events.append("operation_end")
+        return False
+
+
+class _RecordingRuntime(NoOpObservabilityRuntime):
+    def __init__(self, events):
+        self.events = events
+
+    def operation(self, *args, **kwargs):
+        return _OperationScope(self.events)
+
+    def set_context(self, **attributes):
+        self.events.append(("context", attributes))
+
     def shutdown(self):
         self.events.append("shutdown")
+
+
+def _stage_attributes(events) -> list[tuple[int, dict]]:
+    return [
+        (index, event[1])
+        for index, event in enumerate(events)
+        if isinstance(event, tuple)
+        and any(key.startswith("job_stage_seconds_") for key in event[1])
+    ]
 
 
 class TestModalRunSimulation:
@@ -500,7 +581,7 @@ class TestModalRunSimulation:
         monkeypatch.setattr(
             app,
             "_configure_modal_observability",
-            lambda *, service_role: _ShutdownRuntime(events),
+            lambda *, service_role: _RecordingRuntime(events),
         )
         monkeypatch.setattr(sn, "dispatch_run_simulation", dispatch)
         return events, writes
@@ -521,20 +602,30 @@ class TestModalRunSimulation:
             JobStage.REFORM,
         ]
         assert writes[-1][1].finished_at is not None
-        assert events == ["shutdown"]
+        [(index, attributes)] = _stage_attributes(events)
+        assert set(attributes) == {
+            "job_stage_seconds_loading_data",
+            "job_stage_seconds_reform",
+        }
+        # Durations reach the operation before it ends, then the runtime stops.
+        assert index < events.index("operation_end")
+        assert events[-1] == "shutdown"
 
     def test__failed_job_still_records_where_it_stopped(self, modal_app, monkeypatch):
         def dispatch(params, *, app_name, runtime, progress):
             progress.enter(JobStage.BASELINE)
             raise RuntimeError("model failed")
 
-        _, writes = self._wire(modal_app, monkeypatch, dispatch)
+        events, writes = self._wire(modal_app, monkeypatch, dispatch)
 
         with pytest.raises(RuntimeError, match="model failed"):
             modal_app.run_simulation({"country": "us"})
 
         assert writes[-1][1].stage is JobStage.BASELINE
         assert writes[-1][1].finished_at is not None
+        [(index, attributes)] = _stage_attributes(events)
+        assert "job_stage_seconds_baseline" in attributes
+        assert index < events.index("operation_end")
 
     def test__store_failure_does_not_change_the_result(self, modal_app, monkeypatch):
         from policyengine_simulation_contract import job_progress_state

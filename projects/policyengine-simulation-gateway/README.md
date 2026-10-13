@@ -65,9 +65,16 @@ malformed record drops the stage fields; it never changes the status, the
 result or the HTTP status code.
 
 The `progress` value at each stage start (`STAGE_PROGRESS_FLOOR` in
-`policyengine_simulation_contract.job_progress`) is provisional and chosen by
-hand. Replace it with measured stage shares once per-stage runtime
-statistics exist (#780, phase 2).
+`policyengine_simulation_contract.job_progress`) depends on the execution
+path, which the worker records as `monolithic` or `segmented`. The values
+come from one week of production telemetry (6–13 October 2026): queue time
+is about 39% of a UK national run, while the segmented calculation is about
+96% of a US national run. They stay provisional until per-stage runtime
+statistics exist for each country and region type (#780, phase 2).
+
+The worker also adds `job_stage_seconds_<stage>` attributes to its
+`run_simulation` operation, so telemetry can split the baseline from the
+reform calculation.
 
 ## Image dependencies
 
