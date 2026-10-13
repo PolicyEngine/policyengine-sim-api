@@ -15,13 +15,18 @@ share a bounded pool with the work it waits on: parents live in
 There is no batch state store: the plain job-poll path needs no partial
 status, so a parent failure propagates to the gateway as a failed job. A
 parent killed outright (its own timeout/OOM) cannot cancel children — the
-in-band failure paths do.
+in-band failure paths do. The parent therefore enforces its own deadlines
+below the Modal timeout: a child with no result within its deadline is
+cancelled and respawned once, and the run fails in-band (cancelling every
+child) before the parent's Modal timeout would kill it.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from policyengine_observability import ObservabilityRuntime
@@ -54,6 +59,21 @@ POLL_INTERVAL_BACKOFF_FACTOR = 2.0
 
 # The dedicated children pool (see module docstring).
 SEGMENT_FUNCTION_NAME = "run_simulation_segment"
+
+# Seconds from dispatch before a child with no result is cancelled and
+# respawned. Successful children took 124 s at the median and at most 302 s
+# in the week to 13 October 2026, apart from one 2,672 s outlier.
+CHILD_DEADLINE_SECONDS = 900.0
+# Must equal the run_simulation timeout in src/modal/app.py.
+PARENT_FUNCTION_TIMEOUT_SECONDS = 3600.0
+# Parent time kept back for the reduce, result return, and the work done
+# before this runner starts.
+PARENT_COMPLETION_MARGIN_SECONDS = 300.0
+# A respawn needs at least this long to be worth starting (the slowest
+# successful children took about 300 s).
+MINIMUM_RETRY_WINDOW_SECONDS = 300.0
+# The first dispatch plus one respawn after a missed deadline.
+MAX_CHILD_ATTEMPTS = 2
 
 # Parent-scoped keys never forwarded to children. (The shared payload
 # builder owns _telemetry: stripped, then re-attached when present.)
@@ -133,6 +153,21 @@ def build_group_child_payload(
     )
 
 
+@dataclass
+class ChildExecution:
+    """One dispatched attempt at a region group's child simulation."""
+
+    group: list[str]
+    call: Any
+    attempt: int
+    dispatched_at: float
+    deadline_seconds: float
+
+    @property
+    def group_label(self) -> str:
+        return "+".join(self.group)
+
+
 class SegmentedNationalRunner:
     """Runs one segmented national request to completion."""
 
@@ -145,6 +180,11 @@ class SegmentedNationalRunner:
         modal_module=None,
         poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
         poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
+        child_deadline_seconds: float = CHILD_DEADLINE_SECONDS,
+        parent_budget_seconds: float = (
+            PARENT_FUNCTION_TIMEOUT_SECONDS - PARENT_COMPLETION_MARGIN_SECONDS
+        ),
+        clock: Callable[[], float] = time.monotonic,
     ):
         self.params = params
         self.app_name = app_name
@@ -152,6 +192,13 @@ class SegmentedNationalRunner:
         self.modal = modal if modal_module is None else modal_module
         self.poll_interval_initial_seconds = poll_interval_seconds
         self.poll_interval_max_seconds = poll_interval_max_seconds
+        self.child_deadline_seconds = child_deadline_seconds
+        self.parent_budget_seconds = parent_budget_seconds
+        self.clock = clock
+        # The parent's Modal timeout started before this runner existed; the
+        # completion margin inside the default budget covers that gap.
+        self.budget_ends_at = clock() + parent_budget_seconds
+        self.child_retry_count = 0
         self.country = str(params.get("country") or "us").lower()
         groups = national_region_groups(self.country)
         if not groups:
@@ -171,8 +218,8 @@ class SegmentedNationalRunner:
     def run(self) -> dict[str, Any]:
         country_module = self._country_module()
         self._extend_last_group_with_uncovered_states(country_module)
-        handles = self._spawn_all_children()
-        child_results = self._collect(handles)
+        children = self._spawn_all_children()
+        child_results = self._collect(children)
         return self._reduce(child_results, country_module=country_module)
 
     def _country_module(self):
@@ -209,33 +256,42 @@ class SegmentedNationalRunner:
             self.runtime.set_context(partition_uncovered_regions=",".join(uncovered))
             self.groups[-1] = list(self.groups[-1]) + uncovered
 
-    def _spawn_all_children(self) -> list[tuple[list[str], Any]]:
-        handles: list[tuple[list[str], Any]] = []
+    def _spawn_child(self, group: list[str], *, attempt: int) -> Any:
+        payload = build_group_child_payload(self.params, group)
+        observability_context = self.runtime.capture_context()
+        with self.runtime.span(
+            SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_CHILD_SPAWN),
+            attributes={"region_group": "+".join(group), "child_attempt": attempt},
+        ):
+            return self.child_func.spawn(
+                payload,
+                observability_context=observability_context,
+            )
+
+    def _spawn_all_children(self) -> list[ChildExecution]:
+        children: list[ChildExecution] = []
         try:
             for group in self.groups:
-                payload = build_group_child_payload(self.params, group)
-                observability_context = self.runtime.capture_context()
-                with self.runtime.span(
-                    SEGMENTED_NATIONAL_STAGES.name(
-                        Stage.SEGMENTED_NATIONAL_CHILD_SPAWN
-                    ),
-                    attributes={"region_group": "+".join(group)},
-                ):
-                    call = self.child_func.spawn(
-                        payload,
-                        observability_context=observability_context,
+                call = self._spawn_child(group, attempt=1)
+                children.append(
+                    ChildExecution(
+                        group=group,
+                        call=call,
+                        attempt=1,
+                        dispatched_at=self.clock(),
+                        deadline_seconds=self.child_deadline_seconds,
                     )
-                handles.append((group, call))
+                )
         except Exception:
             # Children spawned before the failure must not run for a job
             # that is already dead.
-            self._cancel_all(handles)
+            self._cancel_all(children)
             raise
-        return handles
+        return children
 
-    def _collect(self, handles: list[tuple[list[str], Any]]) -> list[dict]:
-        results: list[dict | None] = [None] * len(handles)
-        pending = set(range(len(handles)))
+    def _collect(self, children: list[ChildExecution]) -> list[dict]:
+        results: list[dict | None] = [None] * len(children)
+        pending = set(range(len(children)))
         poll_errors: dict[int, int] = {}
         current_sleep = self.poll_interval_initial_seconds
         poll_count = 0
@@ -243,19 +299,24 @@ class SegmentedNationalRunner:
         while pending:
             progress_made = False
             for index in sorted(pending):
-                group, call = handles[index]
+                child = children[index]
                 poll_count += 1
                 try:
-                    results[index] = call.get(timeout=0)
+                    results[index] = child.call.get(timeout=0)
                 except TimeoutError:
                     # A not-ready probe is a SUCCESSFUL RPC: reset the error
                     # tally so only consecutive failures fail the job.
                     poll_errors.pop(index, None)
+                    now = self.clock()
+                    if now - child.dispatched_at >= child.deadline_seconds:
+                        children[index] = self._respawn_overdue_child(
+                            children, index, now=now
+                        )
                     continue
                 except Exception as exc:
                     detail = spm_error_detail(exc)
                     if detail:
-                        self._cancel_all(handles)
+                        self._cancel_all(children)
                         raise SPMInputError(detail.code, detail.message) from exc
                     # One transient poll-RPC blip must not kill the job; a
                     # real child failure re-raises on the next probe too.
@@ -264,7 +325,7 @@ class SegmentedNationalRunner:
                     if attempts < 2:
                         logger.warning(
                             "Poll error for group %s (attempt %d), retrying: %s",
-                            "+".join(group),
+                            child.group_label,
                             attempts,
                             type(exc).__name__,
                         )
@@ -273,12 +334,20 @@ class SegmentedNationalRunner:
                         exc,
                         runtime=self.runtime,
                         scope="segmented_national_child",
-                        context={"region_group": "+".join(group)},
+                        context={
+                            "region_group": child.group_label,
+                            "child_attempt": child.attempt,
+                        },
                     )
-                    self._cancel_all(handles)
+                    self._cancel_all(children)
+                    retry_note = (
+                        f" on attempt {child.attempt}, after a deadline respawn"
+                        if child.attempt > 1
+                        else ""
+                    )
                     raise RuntimeError(
                         "Segmented national child failed for group "
-                        f"{'+'.join(group)}: {redacted}"
+                        f"{child.group_label}{retry_note}: {redacted}"
                     ) from None
                 pending.discard(index)
                 poll_errors.pop(index, None)
@@ -286,6 +355,7 @@ class SegmentedNationalRunner:
             # Bounded aggregate instead of one segment per probe (see the
             # Stage registry note about long poll loops).
             self.runtime.set_context(segmented_poll_count=poll_count)
+            self._fail_if_budget_exhausted(children, pending)
             if pending and not progress_made:
                 time.sleep(current_sleep)
                 current_sleep = next_backoff(
@@ -297,13 +367,100 @@ class SegmentedNationalRunner:
                 current_sleep = self.poll_interval_initial_seconds
         return results  # type: ignore[return-value]
 
-    def _cancel_all(self, handles: list[tuple[list[str], Any]]) -> None:
+    def _respawn_overdue_child(
+        self, children: list[ChildExecution], index: int, *, now: float
+    ) -> ChildExecution:
+        """Replace a child that missed its deadline, or fail the run.
+
+        Modal can keep re-running a child whose containers are terminated, so
+        a stuck child never fails on its own; only the parent can stop it.
+        """
+        overdue = children[index]
+        waited_seconds = now - overdue.dispatched_at
+        remaining_budget_seconds = self.budget_ends_at - now
+        if overdue.attempt >= MAX_CHILD_ATTEMPTS:
+            reason = (
+                f"no result {waited_seconds:.0f}s after dispatch on attempt "
+                f"{overdue.attempt} of {MAX_CHILD_ATTEMPTS}"
+            )
+        elif remaining_budget_seconds < MINIMUM_RETRY_WINDOW_SECONDS:
+            reason = (
+                f"no result {waited_seconds:.0f}s after dispatch, and only "
+                f"{max(remaining_budget_seconds, 0):.0f}s of the parent budget "
+                "remains for a retry"
+            )
+        else:
+            reason = None
+        if reason is not None:
+            self._cancel_all(children)
+            raise RuntimeError(
+                "Segmented national child timed out for group "
+                f"{overdue.group_label}: {reason}"
+            ) from None
+
+        self._cancel_call(overdue.call)
+        next_attempt = overdue.attempt + 1
+        self.child_retry_count += 1
+        logger.warning(
+            "Group %s had no result %.0fs after dispatch; respawning "
+            "(attempt %d of %d)",
+            overdue.group_label,
+            waited_seconds,
+            next_attempt,
+            MAX_CHILD_ATTEMPTS,
+        )
+        self.runtime.event(
+            "segmented_national_child_respawned",
+            severity="WARNING",
+            attributes={
+                "region_group": overdue.group_label,
+                "child_attempt": next_attempt,
+                "waited_seconds": round(waited_seconds, 3),
+                "deadline_seconds": overdue.deadline_seconds,
+            },
+        )
+        self.runtime.set_context(segmented_child_retry_count=self.child_retry_count)
+        try:
+            call = self._spawn_child(overdue.group, attempt=next_attempt)
+        except Exception:
+            self._cancel_all(children)
+            raise
+        return ChildExecution(
+            group=overdue.group,
+            call=call,
+            attempt=next_attempt,
+            dispatched_at=self.clock(),
+            deadline_seconds=min(self.child_deadline_seconds, remaining_budget_seconds),
+        )
+
+    def _fail_if_budget_exhausted(
+        self, children: list[ChildExecution], pending: set[int]
+    ) -> None:
+        """Fail in-band, cancelling children, before the Modal timeout can
+        kill the parent and strand them."""
+        if not pending or self.clock() < self.budget_ends_at:
+            return
+        self._cancel_all(children)
+        outstanding_groups = ", ".join(
+            children[index].group_label for index in sorted(pending)
+        )
+        raise RuntimeError(
+            "Segmented national run exceeded its "
+            f"{self.parent_budget_seconds:.0f}s budget with groups still "
+            f"running: {outstanding_groups}"
+        )
+
+    @staticmethod
+    def _cancel_call(call: Any) -> None:
+        try:
+            call.cancel()
+        except Exception:
+            pass
+
+    def _cancel_all(self, children: list[ChildExecution]) -> None:
         """Best-effort cancel so a failed batch doesn't strand workers."""
-        for _, call in handles:
-            try:
-                call.cancel()
-            except Exception:
-                pass
+        for child in children:
+            self._cancel_call(child.call)
 
     def _reduce(self, child_results: list[dict], *, country_module) -> dict[str, Any]:
         from policyengine_simulation_executor.simulation_runtime import (
