@@ -3,6 +3,7 @@
     changed:
       - Added CODEOWNERS for the rule machinery, pinned CI's ruff to 0.15.22 with an explicit rule selection, and documented that agents never bypass branch rules
       - Ran the Modal image smoke for Stage 12 persistence changes and added policyengine-fastapi to the PR test matrix
+      - Ran the full PR workflow and the Modal image smoke only on the lowest unmerged pull request in a stack, behind a new CI complete gate job that fails on the others
     fixed:
       - Preserved bounded reform stop dates in UK and US simulations while retaining current-law baseline artifact reuse
       - Resolved PolicyEngine-managed regional datasets using bundled data versions instead of release-manifest commit hashes when loading from GCS

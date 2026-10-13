@@ -30,7 +30,9 @@ jobs:
   image-smoke:
     name: Image smoke (staging)
     runs-on: ubuntu-latest
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Same-repository pull requests only, and in a stack only the lowest
+    # unmerged one (see docs/engineering/skills/github-prs.md).
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (!github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref) }}
     # Warm cache: ~2 min. After a relock the executor smoke pays the
     # certified dataset download layer (~15-20 min).
     timeout-minutes: 45
