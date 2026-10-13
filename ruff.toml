@@ -32,18 +32,20 @@ ignore = ["D203", "D213"]
 # docs/engineering/skills/rules-registry.md#file-level-exceptions.
 #
 # Tests may use pytest's bare assert, and need no docstrings, annotations or
-# named constants for magic numbers. They also run repository scripts and use
+# named constants for magic numbers. They may also reach into private members,
+# live in directories that aren't packages, and import inside a test (often
+# after patching the environment). They also run repository scripts and use
 # fake credentials, temporary paths, naive datetimes, pickle and exec on
 # purpose. Every other rule applies to tests.
 "**/tests/**" = [
-    "ANN", "D1", "DTZ001", "DTZ007", "PLR2004",
-    "S101", "S102", "S105", "S106", "S108", "S301", "S603", "S607",
+    "ANN", "D1", "DTZ001", "DTZ007", "INP001", "PLC0415", "PLR2004",
+    "S101", "S102", "S105", "S106", "S108", "S301", "S603", "S607", "SLF001",
 ]
 # The deployed-service test suite (pytest, run against a live candidate) gets
 # the same test exemptions.
 "**/authenticated_tests/**" = [
-    "ANN", "D1", "DTZ001", "DTZ007", "PLR2004",
-    "S101", "S102", "S105", "S106", "S108", "S301", "S603", "S607",
+    "ANN", "D1", "DTZ001", "DTZ007", "INP001", "PLC0415", "PLR2004",
+    "S101", "S102", "S105", "S106", "S108", "S301", "S603", "S607", "SLF001",
 ]
 # CI/CD scripts report on stdout.
 ".github/**" = ["T201"]
