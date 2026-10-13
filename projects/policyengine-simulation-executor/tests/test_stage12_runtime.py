@@ -75,6 +75,9 @@ from policyengine_simulation_executor.stage12_runtime import (
 from policyengine_simulation_executor.stage12_runtime import (
     coordinate_report as coordinate_report_impl,
 )
+from policyengine_simulation_executor.stage12_runtime import (
+    coordination as coordination_module,
+)
 from policyengine_simulation_executor.stage12_runtime.aggregation import (
     validate_uk_local_authority_metadata,
 )
@@ -916,6 +919,9 @@ class FutureCall:
     def get(self, *, timeout=None):
         return self.future.result(timeout=timeout)
 
+    def cancel(self):
+        self.future.cancel()
+
 
 class ImmediateCall:
     def __init__(self, object_id, result, observed_timeouts):
@@ -1505,6 +1511,9 @@ class TimeoutCall:
     def get(self, *, timeout=None):
         raise TimeoutError("contains sensitive timeout details")
 
+    def cancel(self):
+        pass
+
 
 class TimeoutInvoker:
     def __init__(self):
@@ -1548,3 +1557,258 @@ def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
     timed_out_child = store.children[BASELINE_ID]
     assert timed_out_child.status is ComparisonRunLifecycleStatus.FAILED
     assert timed_out_child.error_summary == "TimeoutError"
+
+
+class SteppedClock:
+    def __init__(self, start_seconds=10_000.0):
+        self.current_seconds = start_seconds
+
+    def monotonic(self):
+        return self.current_seconds
+
+    def advance(self, elapsed_seconds):
+        self.current_seconds += elapsed_seconds
+
+
+class ScriptedChildCall:
+    def __init__(
+        self,
+        object_id,
+        *,
+        result,
+        clock,
+        wait_error=None,
+        elapsed_seconds=0.0,
+        cancel_error=None,
+    ):
+        self.object_id = object_id
+        self.result = result
+        self.clock = clock
+        self.wait_error = wait_error
+        self.elapsed_seconds = elapsed_seconds
+        self.cancel_error = cancel_error
+        self.wait_timeouts = []
+        self.cancel_count = 0
+
+    def get(self, *, timeout=None):
+        self.wait_timeouts.append(timeout)
+        self.clock.advance(self.elapsed_seconds)
+        if self.wait_error is not None:
+            raise self.wait_error
+        return self.result
+
+    def cancel(self):
+        self.cancel_count += 1
+        if self.cancel_error is not None:
+            raise self.cancel_error
+
+
+class ScriptedInvoker:
+    def __init__(
+        self,
+        artifacts,
+        clock,
+        *,
+        wait_errors=None,
+        elapsed_seconds=None,
+        cancel_errors=None,
+    ):
+        self.artifacts = artifacts
+        self.clock = clock
+        self.wait_errors = wait_errors or {}
+        self.elapsed_seconds = elapsed_seconds or {}
+        self.cancel_errors = cancel_errors or {}
+        self.calls = {}
+
+    def spawn(self, *, simulation, **_):
+        parsed = PlannedSimulationExecutionInput.model_validate(simulation)
+        role = parsed.role.value
+        descriptor = self.artifacts.add_simulation(
+            parsed, _frames(100.0 if role == "baseline" else 120.0)
+        )
+        call = ScriptedChildCall(
+            f"call-{role}",
+            result=descriptor.model_dump(mode="json"),
+            clock=self.clock,
+            wait_error=self.wait_errors.get(role),
+            elapsed_seconds=self.elapsed_seconds.get(role, 0.0),
+            cancel_error=self.cancel_errors.get(role),
+        )
+        self.calls[role] = call
+        return call
+
+    def restore(self, invocation_id):
+        raise AssertionError(f"unexpected restored invocation {invocation_id}")
+
+
+@pytest.fixture
+def stepped_clock(monkeypatch):
+    clock = SteppedClock()
+    monkeypatch.setattr(coordination_module, "monotonic", clock.monotonic)
+    return clock
+
+
+def _coordinate_with(store, artifacts, invoker):
+    return coordinate_report(
+        _report().model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        _parent().model_dump(mode="json"),
+        application_name=_context().modal_application,
+        coordinator_invocation_id="coordinator-1",
+        store=store,
+        artifacts=artifacts,
+        invoker=invoker,
+        aggregator=lambda **_: {"result": "complete"},
+    )
+
+
+def test_children_share_one_wait_window(stepped_clock) -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    invoker = ScriptedInvoker(
+        artifacts,
+        stepped_clock,
+        elapsed_seconds={"baseline": 1_200.0},
+    )
+
+    result = _coordinate_with(store, artifacts, invoker)
+
+    assert result["artifact"]["uri"] == "gs://private/aggregate.json"
+    assert invoker.calls["baseline"].wait_timeouts == [
+        coordination_module.SIMULATION_WAIT_TIMEOUT_SECONDS
+    ]
+    assert invoker.calls["reform"].wait_timeouts == [
+        coordination_module.SIMULATION_WAIT_TIMEOUT_SECONDS - 1_200.0
+    ]
+    assert [call.cancel_count for call in invoker.calls.values()] == [0, 0]
+    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
+
+
+def test_exhausted_wait_window_gives_the_next_child_no_extra_time(
+    stepped_clock,
+) -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    invoker = ScriptedInvoker(
+        artifacts,
+        stepped_clock,
+        elapsed_seconds={
+            "baseline": coordination_module.SIMULATION_WAIT_TIMEOUT_SECONDS + 60.0
+        },
+    )
+
+    _coordinate_with(store, artifacts, invoker)
+
+    assert invoker.calls["reform"].wait_timeouts == [0.0]
+
+
+def test_baseline_failure_cancels_and_records_the_reform_child(
+    stepped_clock,
+) -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    invoker = ScriptedInvoker(
+        artifacts,
+        stepped_clock,
+        wait_errors={"baseline": LookupError("baseline worker failed")},
+    )
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        _coordinate_with(store, artifacts, invoker)
+
+    reform_call = invoker.calls["reform"]
+    assert reform_call.cancel_count == 1
+    assert reform_call.wait_timeouts == []
+    assert artifacts.aggregate_writes == []
+    failed_baseline = store.children[BASELINE_ID]
+    assert failed_baseline.status is ComparisonRunLifecycleStatus.FAILED
+    assert failed_baseline.error_code == "simulation_invocation_failed"
+    cancelled_reform = store.children[REFORM_ID]
+    assert cancelled_reform.status is ComparisonRunLifecycleStatus.FAILED
+    assert cancelled_reform.error_code == "simulation_cancelled"
+    assert cancelled_reform.error_summary == (
+        "Cancelled after the baseline simulation failed"
+    )
+    assert cancelled_reform.completed_at is not None
+
+
+def test_baseline_timeout_cancels_both_unfinished_children(stepped_clock) -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    invoker = ScriptedInvoker(
+        artifacts,
+        stepped_clock,
+        wait_errors={"baseline": TimeoutError("baseline still running")},
+    )
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        _coordinate_with(store, artifacts, invoker)
+
+    # The timed-out baseline is still running on Modal, so it is stopped too.
+    assert invoker.calls["baseline"].cancel_count == 1
+    assert invoker.calls["reform"].cancel_count == 1
+    assert store.children[BASELINE_ID].error_code == "simulation_invocation_failed"
+    assert store.children[REFORM_ID].error_code == "simulation_cancelled"
+
+
+def test_reform_failure_leaves_the_finished_baseline_alone(stepped_clock) -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    invoker = ScriptedInvoker(
+        artifacts,
+        stepped_clock,
+        wait_errors={"reform": LookupError("reform worker failed")},
+    )
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        _coordinate_with(store, artifacts, invoker)
+
+    assert invoker.calls["baseline"].cancel_count == 0
+    assert store.children[BASELINE_ID].error_code is None
+    assert store.children[REFORM_ID].error_code == "simulation_invocation_failed"
+
+
+def test_cancellation_error_does_not_mask_the_child_failure(stepped_clock) -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    invoker = ScriptedInvoker(
+        artifacts,
+        stepped_clock,
+        wait_errors={"baseline": LookupError("baseline worker failed")},
+        cancel_errors={"reform": ConnectionError("cancel RPC failed")},
+    )
+
+    with pytest.raises(
+        RuntimeError, match="Stage 12 report coordination failed"
+    ) as error:
+        _coordinate_with(store, artifacts, invoker)
+
+    assert isinstance(error.value.__context__, LookupError)
+    assert store.children[BASELINE_ID].error_code == "simulation_invocation_failed"
+    # A sibling that may still be running is not recorded as cancelled.
+    assert store.children[REFORM_ID].status is ComparisonRunLifecycleStatus.RUNNING
+
+
+def test_sibling_state_error_does_not_mask_the_child_failure(stepped_clock) -> None:
+    class SiblingUpdateFailingStore(FakeStore):
+        def replace_simulation(self, record):
+            if record.error_code == "simulation_cancelled":
+                raise ConnectionError("database unavailable")
+            return super().replace_simulation(record)
+
+    store = SiblingUpdateFailingStore()
+    artifacts = FakeArtifacts()
+    invoker = ScriptedInvoker(
+        artifacts,
+        stepped_clock,
+        wait_errors={"baseline": LookupError("baseline worker failed")},
+    )
+
+    with pytest.raises(
+        RuntimeError, match="Stage 12 report coordination failed"
+    ) as error:
+        _coordinate_with(store, artifacts, invoker)
+
+    assert isinstance(error.value.__context__, LookupError)
+    assert invoker.calls["reform"].cancel_count == 1
+    assert store.children[BASELINE_ID].error_code == "simulation_invocation_failed"

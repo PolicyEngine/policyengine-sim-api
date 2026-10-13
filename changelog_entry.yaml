@@ -10,3 +10,4 @@
       - Accepted a UK dataset without area codes only when the policyengine.py bundle routes constituency and local-authority regions to another dataset, and kept requiring area codes on every constituency and local-authority run
       - Raised a clear error, never an omission, when a UK constituency or local-authority breakdown is built over a dataset without area codes
       - Bound UK constituency and local-authority weight matrices to the certified data release of the selected dataset instead of the unversioned bucket copy, and stopped runs before they start when the matrix lacks the run year or household dimension
+      - Gave Stage 12 baseline and reform waits one shared deadline inside the coordinator timeout, and cancelled unfinished child simulations when a child fails or times out

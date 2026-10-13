@@ -64,6 +64,8 @@ class ChildCall(Protocol):
 
     def get(self, *, timeout: float | None = None) -> object: ...
 
+    def cancel(self) -> None: ...
+
 
 class ChildInvoker(Protocol):
     def spawn(

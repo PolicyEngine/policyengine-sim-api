@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+import logging
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from hashlib import sha256
+from time import monotonic
 from typing import Any
 from uuid import uuid4
 
@@ -58,6 +60,12 @@ from .output_planning import (
 )
 from .simulation import descriptor_from_record, simulation_input_sha256
 
+logger = logging.getLogger(__name__)
+
+# One wait window shared by every child simulation, equal to the workers'
+# own 3,000 s Modal timeout. The coordinator's 4,500 s Modal timeout then
+# leaves 1,500 s: the 900 s production-result wait plus 600 s to aggregate,
+# persist, and record any failure before Modal stops the coordinator.
 SIMULATION_WAIT_TIMEOUT_SECONDS = 3_000
 
 
@@ -185,6 +193,65 @@ def _claim_parent(
         )
     )
     return claimed, True
+
+
+def _cancel_unfinished_children(
+    calls: Mapping[str, ChildCall],
+    *,
+    failed_role: str,
+    finished_roles: Collection[str],
+    simulations: Sequence[PlannedSimulationExecutionInput],
+    persistence: ComparisonStore,
+) -> None:
+    """Stop children that can no longer contribute to a failed report.
+
+    Best effort: a cancellation or state-update error must never replace the
+    child failure that the caller re-raises.
+    """
+    for role, call in calls.items():
+        if role in finished_roles:
+            continue
+        try:
+            call.cancel()
+        except Exception as cancel_error:  # noqa: BLE001
+            logger.warning(
+                "stage12_child_cancel_failed",
+                extra={
+                    "simulation_role": role,
+                    "error_type": type(cancel_error).__name__,
+                },
+            )
+            continue
+        if role == failed_role:
+            # The caller records the outcome of the child it was waiting on.
+            continue
+        # A cancelled worker cannot record its own outcome, so record it here.
+        simulation = next(item for item in simulations if item.role.value == role)
+        try:
+            sibling = persistence.get_simulation(simulation.simulation_execution_id)
+            if sibling.status is ComparisonRunLifecycleStatus.RUNNING:
+                cancelled_at = datetime.now(UTC)
+                persistence.replace_simulation(
+                    sibling.model_copy(
+                        update={
+                            "status": ComparisonRunLifecycleStatus.FAILED,
+                            "error_code": "simulation_cancelled",
+                            "error_summary": (
+                                f"Cancelled after the {failed_role} simulation failed"
+                            ),
+                            "updated_at": cancelled_at,
+                            "completed_at": cancelled_at,
+                        }
+                    )
+                )
+        except Exception as persistence_error:  # noqa: BLE001
+            logger.warning(
+                "stage12_cancelled_child_state_update_failed",
+                extra={
+                    "simulation_role": role,
+                    "error_type": type(persistence_error).__name__,
+                },
+            )
 
 
 def coordinate_report(
@@ -392,6 +459,9 @@ def coordinate_report(
                 updated_at=datetime.now(UTC),
             )
         # Every required call has been started before the coordinator waits.
+        # The calls share one deadline, so a slow baseline never gives reform
+        # a second full window beyond the coordinator's own timeout.
+        wait_deadline = monotonic() + SIMULATION_WAIT_TIMEOUT_SECONDS
         for role, call in calls.items():
             try:
                 wait_span = (
@@ -404,9 +474,16 @@ def coordinate_report(
                 )
                 with wait_span:
                     descriptors[role] = SimulationArtifactDescriptor.model_validate(
-                        call.get(timeout=SIMULATION_WAIT_TIMEOUT_SECONDS)
+                        call.get(timeout=max(0.0, wait_deadline - monotonic()))
                     )
             except Exception as error:
+                _cancel_unfinished_children(
+                    calls,
+                    failed_role=role,
+                    finished_roles=descriptors.keys(),
+                    simulations=planned_simulations,
+                    persistence=persistence,
+                )
                 simulation = next(
                     item for item in simulations if item.role.value == role
                 )
