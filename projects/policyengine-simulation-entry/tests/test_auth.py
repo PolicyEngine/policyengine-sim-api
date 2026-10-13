@@ -23,7 +23,7 @@ def signing_keys():
     return private_key, private_key.public_key()
 
 
-def _token(private_key, **overrides) -> str:
+def _token(private_key, *, omitted_claims: tuple[str, ...] = (), **overrides) -> str:
     now = datetime.now(timezone.utc)
     claims = {
         "sub": "api-v1@clients",
@@ -34,10 +34,12 @@ def _token(private_key, **overrides) -> str:
         "exp": now + timedelta(minutes=5),
     }
     claims.update(overrides)
+    for claim_name in omitted_claims:
+        claims.pop(claim_name)
     return jwt.encode(claims, private_key, algorithm="RS256")
 
 
-def _use_static_signing_key(monkeypatch, public_key) -> None:
+def _static_decoder(public_key) -> auth_module.JWTDecoder:
     decoder = auth_module.JWTDecoder(
         issuer="https://issuer.example/",
         audience="simulation-entry",
@@ -45,6 +47,11 @@ def _use_static_signing_key(monkeypatch, public_key) -> None:
     decoder.jwks_client = SimpleNamespace(
         get_signing_key_from_jwt=lambda _: SimpleNamespace(key=public_key)
     )
+    return decoder
+
+
+def _use_static_signing_key(monkeypatch, public_key) -> None:
+    decoder = _static_decoder(public_key)
     monkeypatch.setattr(auth_module, "_decoder", lambda issuer, audience: decoder)
 
 
@@ -94,13 +101,7 @@ def test_valid_api_v1_token_can_poll(monkeypatch, signing_keys):
 
 def test_decoder_returns_only_the_declared_caller_identity(signing_keys):
     private_key, public_key = signing_keys
-    decoder = auth_module.JWTDecoder(
-        issuer="https://issuer.example/",
-        audience="simulation-entry",
-    )
-    decoder.jwks_client = SimpleNamespace(
-        get_signing_key_from_jwt=lambda _: SimpleNamespace(key=public_key)
-    )
+    decoder = _static_decoder(public_key)
 
     identity = decoder(
         HTTPAuthorizationCredentials(
@@ -119,6 +120,32 @@ def test_decoder_returns_only_the_declared_caller_identity(signing_keys):
     assert identity.grant_types == ("client-credentials",)
     assert identity.scope == "simulate:read"
     assert "undocumented_claim" not in identity.model_dump()
+
+
+def test_decoder_reads_claims_only_by_their_registered_names(signing_keys):
+    private_key, public_key = signing_keys
+    decoder = _static_decoder(public_key)
+
+    identity = decoder(
+        HTTPAuthorizationCredentials(
+            scheme="Bearer",
+            credentials=_token(
+                private_key,
+                omitted_claims=("sub", "gty"),
+                subject="api-v1@clients",
+                grant_types="client-credentials",
+                authorized_party="api-v1-client",
+                scope="simulation:read",
+            ),
+        ),
+        Mock(),
+    )
+
+    assert identity.subject is None
+    assert identity.grant_types == ()
+    assert identity.authorized_party is None
+    assert not auth_module.is_client_credentials(identity)
+    assert auth_module.granted_permissions(identity) == frozenset()
 
 
 @pytest.mark.parametrize(
@@ -696,6 +723,59 @@ def test_verified_tokens_count_scope_only_for_client_credentials(
         result = client.get(
             "/jobs/job-1",
             headers={"Authorization": f"Bearer {_token(private_key, **claims)}"},
+        )
+
+    assert result.status_code == expected_status
+
+
+@pytest.mark.parametrize(
+    ("omitted_claims", "claims", "expected_status"),
+    [
+        (
+            ("gty",),
+            {
+                "sub": "google-oauth2|123",
+                "grant_types": "client-credentials",
+                "scope": "simulation:read",
+            },
+            403,
+        ),
+        (
+            ("sub", "gty"),
+            {"subject": "api-v1@clients", "scope": "simulation:read"},
+            403,
+        ),
+        (
+            ("gty",),
+            {"sub": "api-v1@clients", "scope": "simulation:read"},
+            200,
+        ),
+    ],
+    ids=[
+        "grant-types-claim-is-not-gty",
+        "subject-claim-is-not-sub",
+        "registered-sub-claim",
+    ],
+)
+def test_verified_tokens_read_grant_claims_only_by_registered_names(
+    monkeypatch,
+    signing_keys,
+    omitted_claims,
+    claims,
+    expected_status,
+):
+    private_key, public_key = signing_keys
+    _use_static_signing_key(monkeypatch, public_key)
+    app = create_app(
+        settings=make_settings(enforce_permissions=True),
+        backend=FakeBackend(),
+    )
+    token = _token(private_key, omitted_claims=omitted_claims, **claims)
+
+    with TestClient(app) as client:
+        result = client.get(
+            "/jobs/job-1",
+            headers={"Authorization": f"Bearer {token}"},
         )
 
     assert result.status_code == expected_status

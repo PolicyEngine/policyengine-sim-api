@@ -14,7 +14,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CallerIdentity(BaseModel):
-    """Validated identity claims from an inbound Auth0 access token."""
+    """Validated identity claims from an inbound Auth0 access token.
+
+    Aliased fields are read only by their registered JWT claim names, never by
+    field name: a token's ``grant_types`` or ``subject`` claim must not stand
+    in for ``gty`` or ``sub``, because those decide whether ``scope`` counts.
+    """
 
     subject: str | None = Field(default=None, alias="sub")
     issuer: str = Field(alias="iss")
@@ -26,7 +31,7 @@ class CallerIdentity(BaseModel):
     authorized_party: str | None = Field(default=None, alias="azp")
     grant_types: tuple[str, ...] = Field(default=(), alias="gty")
 
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore")
 
     @field_validator("grant_types", mode="before")
     @classmethod
