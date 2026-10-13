@@ -167,7 +167,8 @@ class FakeCall:
             self.before_each_poll()
         if self.errors_once > 0:
             self.errors_once -= 1
-            raise ConnectionError("transient control-plane blip")
+            msg = "transient control-plane blip"
+            raise ConnectionError(msg)
         if self.error is not None:
             raise self.error
         if self.polls_until_ready > 0:
@@ -205,7 +206,8 @@ class FakeModal:
             self.fail_spawn_at is not None
             and len(self.spawned_payloads) == self.fail_spawn_at
         ):
-            raise ConnectionError("spawn RPC failed")
+            msg = "spawn RPC failed"
+            raise ConnectionError(msg)
         self.spawned_payloads.append(payload)
         self.spawned_observability_contexts.append(observability_context)
         return self._calls[len(self.spawned_payloads) - 1]
@@ -928,7 +930,8 @@ class TestDispatchResolvesSPM:
         # Resolution failures are cheap only if they happen before 20
         # children are spawned.
         def unavailable(params):
-            raise SPMInputError("SPM_GEOGRAPHY_REQUIRED", "County required")
+            msg = "SPM_GEOGRAPHY_REQUIRED"
+            raise SPMInputError(msg, "County required")
 
         monkeypatch.setattr(executor_spm, "normalize_runtime_spm", unavailable)
         monkeypatch.setattr(

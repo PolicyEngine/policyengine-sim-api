@@ -139,7 +139,7 @@ def compare_completed_report(
                     "production_job_id": production_job_id,
                 },
             )
-        logger.error(
+        logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
             "stage12_result_comparison_failed",
             extra={
                 "evaluation_id": str(parent.evaluation_id),

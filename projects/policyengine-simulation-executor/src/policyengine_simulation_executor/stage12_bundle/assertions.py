@@ -48,8 +48,10 @@ def assert_expected_bundle_values(
     actual = assertion_values(bundle)
     for name, expected_value in expected.items():
         if name not in actual:
-            raise Stage12BundleError(f"Unknown Stage 12 bundle assertion {name!r}")
+            msg = f"Unknown Stage 12 bundle assertion {name!r}"
+            raise Stage12BundleError(msg)
         if actual[name] != expected_value:
-            raise Stage12BundleError(
+            msg = (
                 f"Stage 12 bundle assertion {name!r} does not match the packaged bundle"
             )
+            raise Stage12BundleError(msg)

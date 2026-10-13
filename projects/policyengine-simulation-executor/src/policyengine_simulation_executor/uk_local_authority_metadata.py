@@ -132,24 +132,21 @@ def _rows(
     with _resource_path(filename).open("r", encoding="utf-8") as stream:
         reader = csv.DictReader(stream)
         if tuple(reader.fieldnames or ()) != expected_fields:
-            raise ValueError(
-                f"UK local-authority resource {filename!r} has invalid columns"
-            )
+            msg = f"UK local-authority resource {filename!r} has invalid columns"
+            raise ValueError(msg)
         rows: list[dict[str, str]] = []
         for raw in reader:
             if any(raw.get(field) is None for field in expected_fields):
-                raise ValueError(
-                    f"UK local-authority resource {filename!r} has an incomplete row"
-                )
+                msg = f"UK local-authority resource {filename!r} has an incomplete row"
+                raise ValueError(msg)
             rows.append({field: str(raw[field]).strip() for field in expected_fields})
         return tuple(rows)
 
 
 def _require_code(code: str, filename: str) -> None:
     if not _CODE_PATTERN.fullmatch(code):
-        raise ValueError(
-            f"UK local-authority resource {filename!r} contains invalid code {code!r}"
-        )
+        msg = f"UK local-authority resource {filename!r} contains invalid code {code!r}"
+        raise ValueError(msg)
 
 
 def _load_names() -> Mapping[str, str]:
@@ -160,13 +157,11 @@ def _load_names() -> Mapping[str, str]:
         name = row["name"]
         _require_code(code, filename)
         if not name or name == code:
-            raise ValueError(
-                f"UK local-authority resource {filename!r} has no name for {code!r}"
-            )
+            msg = f"UK local-authority resource {filename!r} has no name for {code!r}"
+            raise ValueError(msg)
         if code in names:
-            raise ValueError(
-                f"UK local-authority resource {filename!r} repeats {code!r}"
-            )
+            msg = f"UK local-authority resource {filename!r} repeats {code!r}"
+            raise ValueError(msg)
         names[code] = name
     return MappingProxyType(names)
 
@@ -177,16 +172,16 @@ def _load_coordinates(filename: str) -> Mapping[str, LocalAuthorityCoordinate]:
         code = row["code"]
         _require_code(code, filename)
         if code in coordinates:
-            raise ValueError(
-                f"UK local-authority resource {filename!r} repeats {code!r}"
-            )
+            msg = f"UK local-authority resource {filename!r} repeats {code!r}"
+            raise ValueError(msg)
         try:
             coordinate = LocalAuthorityCoordinate(x=int(row["x"]), y=int(row["y"]))
         except ValueError as error:
-            raise ValueError(
+            msg = (
                 f"UK local-authority resource {filename!r} has invalid coordinates "
                 f"for {code!r}"
-            ) from error
+            )
+            raise ValueError(msg) from error
         coordinates[code] = coordinate
     return MappingProxyType(coordinates)
 
@@ -199,19 +194,21 @@ def load_uk_local_authority_resources() -> UKLocalAuthorityResources:
     lad23 = _load_coordinates("coordinates_lad23.csv")
     supported_codes = lad22.keys() | lad23.keys()
     if names.keys() != supported_codes:
-        raise ValueError(
-            "UK local-authority names must exactly cover the supported boundary versions"
-        )
+        msg = "UK local-authority names must exactly cover the supported boundary versions"
+        raise ValueError(msg)
     if lad22.keys() - lad23.keys() != _LAD22_ONLY_CODES:
-        raise ValueError("LAD22 distinguishing codes do not match its coordinate file")
+        msg = "LAD22 distinguishing codes do not match its coordinate file"
+        raise ValueError(msg)
     if lad23.keys() - lad22.keys() != _LAD23_ONLY_CODES:
-        raise ValueError("LAD23 distinguishing codes do not match its coordinate file")
+        msg = "LAD23 distinguishing codes do not match its coordinate file"
+        raise ValueError(msg)
     for code in lad22.keys() & lad23.keys():
         if lad22[code] != lad23[code]:
-            raise ValueError(
+            msg = (
                 "UK local-authority coordinate differs between boundary versions "
                 f"for {code!r}"
             )
+            raise ValueError(msg)
     return UKLocalAuthorityResources(
         names=names,
         coordinates=MappingProxyType(
@@ -232,17 +229,18 @@ def _normalise_observed_code(value: object) -> str | None:
         try:
             code = value.decode("utf-8").strip()
         except UnicodeDecodeError as error:
-            raise ValueError(
-                "UK dataset contains an invalid local-authority code"
-            ) from error
+            msg = "UK dataset contains an invalid local-authority code"
+            raise ValueError(msg) from error
     elif isinstance(value, str):
         code = value.strip()
     else:
-        raise TypeError("UK dataset contains a non-text local-authority code")
+        msg = "UK dataset contains a non-text local-authority code"
+        raise TypeError(msg)
     if not code:
         return None
     if not _CODE_PATTERN.fullmatch(code):
-        raise ValueError(f"UK dataset contains invalid local-authority code {code!r}")
+        msg = f"UK dataset contains invalid local-authority code {code!r}"
+        raise ValueError(msg)
     return code
 
 
@@ -256,14 +254,14 @@ def detect_uk_local_authority_boundary_version(
         if (code := _normalise_observed_code(value)) is not None
     )
     if not observed_codes:
-        raise ValueError("UK dataset contains no local-authority codes")
+        msg = "UK dataset contains no local-authority codes"
+        raise ValueError(msg)
     supported_codes = load_uk_local_authority_resources().names.keys()
     unsupported_codes = observed_codes - supported_codes
     if unsupported_codes:
         first = min(unsupported_codes)
-        raise ValueError(
-            f"UK dataset contains unsupported local-authority code {first!r}"
-        )
+        msg = f"UK dataset contains unsupported local-authority code {first!r}"
+        raise ValueError(msg)
 
     matches = tuple(
         definition
@@ -271,11 +269,11 @@ def detect_uk_local_authority_boundary_version(
         if observed_codes & definition.distinguishing_codes
     )
     if len(matches) > 1:
-        raise ValueError("UK dataset mixes LAD22 and LAD23 local-authority codes")
+        msg = "UK dataset mixes LAD22 and LAD23 local-authority codes"
+        raise ValueError(msg)
     if not matches:
-        raise ValueError(
-            "UK dataset local-authority configuration cannot be identified"
-        )
+        msg = "UK dataset local-authority configuration cannot be identified"
+        raise ValueError(msg)
     return UKLocalAuthorityMetadata(boundary_version=matches[0].boundary_version)
 
 
@@ -331,10 +329,12 @@ def detect_uk_local_authority_metadata(
     data = getattr(dataset, "data", None)
     entity_data = getattr(data, "entity_data", None)
     if not isinstance(entity_data, Mapping):
-        raise TypeError("UK dataset contains no entity tables")
+        msg = "UK dataset contains no entity tables"
+        raise TypeError(msg)
     household = entity_data.get("household")
     if household is None:
-        raise ValueError("UK dataset contains no household table")
+        msg = "UK dataset contains no household table"
+        raise ValueError(msg)
     household_frame = pd.DataFrame(household)
     if "la_code_oa" not in household_frame:
         if uk_area_codes_required(region_code):
@@ -349,11 +349,19 @@ def uk_hdf_household_has_local_authority_codes(dataset_path: str) -> bool:
     """Whether an installed UK HDF dataset's household table has ``la_code_oa``."""
     with pd.HDFStore(dataset_path, mode="r") as store:
         if "household" not in store:
-            raise ValueError("UK dataset contains no household table")
+            msg = "UK dataset contains no household table"
+            raise ValueError(msg)
         household = store.select("household", stop=0)
     if not isinstance(household, pd.DataFrame):
-        raise TypeError("UK dataset household table is not a data frame")
+        msg = "UK dataset household table is not a data frame"
+        raise TypeError(msg)
     return "la_code_oa" in household.columns
+
+
+def _require_local_authority_column(household_chunk: pd.DataFrame) -> None:
+    if "la_code_oa" not in household_chunk:
+        msg = "UK dataset household table contains no la_code_oa column"
+        raise ValueError(msg)
 
 
 def detect_uk_local_authority_metadata_from_hdf(
@@ -363,7 +371,8 @@ def detect_uk_local_authority_metadata_from_hdf(
     observed_codes: set[object] = set()
     with pd.HDFStore(dataset_path, mode="r") as store:
         if "/household" not in store.keys():
-            raise ValueError("UK dataset contains no household table")
+            msg = "UK dataset contains no household table"
+            raise ValueError(msg)
         try:
             chunks = store.select(
                 "household",
@@ -371,15 +380,11 @@ def detect_uk_local_authority_metadata_from_hdf(
                 chunksize=100_000,
             )
             for chunk in chunks:
-                if "la_code_oa" not in chunk:
-                    raise ValueError(
-                        "UK dataset household table contains no la_code_oa column"
-                    )
+                _require_local_authority_column(chunk)
                 observed_codes.update(chunk["la_code_oa"].drop_duplicates().tolist())
         except (KeyError, TypeError, ValueError) as error:
             if "la_code_oa" in str(error):
-                raise ValueError(
-                    "UK dataset household table contains no la_code_oa column"
-                ) from error
+                msg = "UK dataset household table contains no la_code_oa column"
+                raise ValueError(msg) from error
             raise
     return detect_uk_local_authority_boundary_version(observed_codes)

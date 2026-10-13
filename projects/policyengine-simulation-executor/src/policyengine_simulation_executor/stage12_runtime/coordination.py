@@ -122,26 +122,34 @@ def _validate_submitted_parent(
     }
     for field, value in expected.items():
         if getattr(parent, field) != value:
-            raise ValueError(f"submitted parent {field} does not match invocation")
+            msg = f"submitted parent {field} does not match invocation"
+            raise ValueError(msg)
     if parent.status is not ComparisonRunLifecycleStatus.PENDING:
-        raise ValueError("submitted parent must be pending")
+        msg = "submitted parent must be pending"
+        raise ValueError(msg)
     if parent.aggregation_status is not ComparisonRunAggregationStatus.NOT_STARTED:
-        raise ValueError("submitted parent aggregation must not be started")
+        msg = "submitted parent aggregation must not be started"
+        raise ValueError(msg)
     if parent.coordinator_invocation_id is not None:
-        raise ValueError("submitted parent must not contain an invocation identifier")
+        msg = "submitted parent must not contain an invocation identifier"
+        raise ValueError(msg)
     production_job_id = context.production_function_call_id
     if production_job_id is None:
         if parent.production_identity != f"direct:{report.evaluation_id}":
-            raise ValueError("direct parent identity does not match its report")
+            msg = "direct parent identity does not match its report"
+            raise ValueError(msg)
         if parent.incumbent_execution_id is not None:
-            raise ValueError("direct parent must not name a production execution")
+            msg = "direct parent must not name a production execution"
+            raise ValueError(msg)
         if parent.comparison_status is not ResultComparisonStatus.NOT_REQUESTED:
-            raise ValueError("direct parent must not request result comparison")
+            msg = "direct parent must not request result comparison"
+            raise ValueError(msg)
     elif (
         parent.production_identity != production_job_id
         or parent.incumbent_execution_id != production_job_id
     ):
-        raise ValueError("automatic parent does not match the production execution")
+        msg = "automatic parent does not match the production execution"
+        raise ValueError(msg)
 
 
 def _claim_parent(
@@ -169,9 +177,8 @@ def _claim_parent(
     if persistence.created:
         return parent, True
     if parent.evaluation_id != submitted.evaluation_id:
-        raise ValueError(
-            "existing comparison identity has a different report identifier"
-        )
+        msg = "existing comparison identity has a different report identifier"
+        raise ValueError(msg)
     if parent.status in {
         ComparisonRunLifecycleStatus.RUNNING,
         ComparisonRunLifecycleStatus.SUCCEEDED,
@@ -231,6 +238,17 @@ def _mark_child_failed(
     return error_summary
 
 
+def _require_artifact_digest(
+    payload: bytes,
+    expected_sha256: str,
+    *,
+    mismatch_message: str,
+) -> None:
+    """Raise ``ValueError(mismatch_message)`` unless ``payload`` matches its digest."""
+    if sha256(payload).hexdigest() != expected_sha256:
+        raise ValueError(mismatch_message)
+
+
 def coordinate_report(
     payload: object,
     context_payload: object,
@@ -260,11 +278,14 @@ def coordinate_report(
     context = Stage12InvocationContext.model_validate(context_payload)
     submitted_parent = ComparisonReportRecord.model_validate(parent_payload)
     if application_name != context.modal_application:
-        raise ValueError("report coordinator application differs from dispatch context")
+        msg = "report coordinator application differs from dispatch context"
+        raise ValueError(msg)
     if report.baseline.bundle.policyengine_version != context.worker_version:
-        raise ValueError("report worker version differs from dispatch context")
+        msg = "report worker version differs from dispatch context"
+        raise ValueError(msg)
     if report.baseline.bundle.bundle_manifest_sha256 != context.bundle_manifest_sha256:
-        raise ValueError("report bundle digest differs from dispatch context")
+        msg = "report bundle digest differs from dispatch context"
+        raise ValueError(msg)
     _validate_submitted_parent(
         report=report,
         context=context,
@@ -355,8 +376,11 @@ def coordinate_report(
             if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
                 descriptor = descriptor_from_record(child, simulation)
                 retained = artifact_storage.read(descriptor.artifact.uri)
-                if sha256(retained).hexdigest() != descriptor.artifact.content_sha256:
-                    raise ValueError("retained child artifact digest mismatch")
+                _require_artifact_digest(
+                    retained,
+                    descriptor.artifact.content_sha256,
+                    mismatch_message="retained child artifact digest mismatch",
+                )
                 descriptor = descriptor.model_copy(
                     update={
                         "artifact": descriptor.artifact.model_copy(
@@ -472,10 +496,16 @@ def coordinate_report(
         with stage_span(Stage.STAGE12_ARTIFACT_READ):
             baseline_payload = artifact_storage.read(baseline.artifact.uri)
             reform_payload = artifact_storage.read(reform.artifact.uri)
-        if sha256(baseline_payload).hexdigest() != baseline.artifact.content_sha256:
-            raise ValueError("baseline artifact digest mismatch")
-        if sha256(reform_payload).hexdigest() != reform.artifact.content_sha256:
-            raise ValueError("reform artifact digest mismatch")
+        _require_artifact_digest(
+            baseline_payload,
+            baseline.artifact.content_sha256,
+            mismatch_message="baseline artifact digest mismatch",
+        )
+        _require_artifact_digest(
+            reform_payload,
+            reform.artifact.content_sha256,
+            mismatch_message="reform artifact digest mismatch",
+        )
         baseline_frames = deserialize_simulation_frames(baseline_payload)
         reform_frames = deserialize_simulation_frames(reform_payload)
         uk_local_authority_metadata = validate_uk_local_authority_metadata(
@@ -563,4 +593,5 @@ def coordinate_report(
             runtime=runtime,
             failure_scope="report_coordination",
         )
-        raise RuntimeError("Stage 12 report coordination failed") from None
+        msg = "Stage 12 report coordination failed"
+        raise RuntimeError(msg) from None

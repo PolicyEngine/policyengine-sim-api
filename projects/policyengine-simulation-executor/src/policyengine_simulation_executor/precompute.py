@@ -139,11 +139,12 @@ def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
         year=year,
     )
     if identity is None:
-        raise RuntimeError(
+        msg = (
             f"Cohort request for year {year} group {group} does not qualify "
             "for a deterministic baseline id — writer and reader predicates "
             "have diverged."
         )
+        raise RuntimeError(msg)
     return identity
 
 
@@ -200,7 +201,8 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
     store = ArtifactStore(bucket)
     groups = national_region_groups(PRECOMPUTE_COUNTRY)
     if not groups:
-        raise RuntimeError(f"No national partition for {PRECOMPUTE_COUNTRY!r}")
+        msg = f"No national partition for {PRECOMPUTE_COUNTRY!r}"
+        raise RuntimeError(msg)
 
     datasets: list[DatasetPlanEntry] = []
     baselines: list[BaselinePlanEntry] = []
@@ -258,11 +260,12 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
 
     identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, expected.year)
     if identity.store_path != expected.path:
-        raise RuntimeError(
+        msg = (
             "Planned and in-container dataset identities disagree "
             f"({expected.path} != {identity.store_path}); refusing to upload "
             "under a mismatched key."
         )
+        raise RuntimeError(msg)
 
     data_folder = resolve_data_folder()
     country_module = _country_module(PRECOMPUTE_COUNTRY)
@@ -276,7 +279,8 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
 
     local_file = Path(data_folder) / identity.filename
     if not local_file.exists():
-        raise RuntimeError(f"ensure_datasets produced no file at {local_file}")
+        msg = f"ensure_datasets produced no file at {local_file}"
+        raise RuntimeError(msg)
     uploaded = ArtifactStore(bucket).upload_file(identity.store_path, local_file)
     return DatasetBuildResult(
         year=expected.year,
@@ -328,19 +332,21 @@ def _prepare_cohort_baseline(
         region_code=resolution.code,
     )
     if baseline.id != expected.simulation_id:
-        raise RuntimeError(
+        msg = (
             "Planned and in-container baseline ids disagree "
             f"({expected.simulation_id} != {baseline.id}); refusing to act "
             "under a mismatched key."
         )
+        raise RuntimeError(msg)
     planned_storage_id = Path(expected.path).stem
     storage_id = getattr(baseline, "storage_id", baseline.id)
     if storage_id != planned_storage_id:
-        raise RuntimeError(
+        msg = (
             "Planned and in-container baseline storage ids disagree "
             f"({planned_storage_id} != {storage_id}); refusing to act "
             "under a mismatched key."
         )
+        raise RuntimeError(msg)
 
     # The extras economic_impact_analysis applies unconditionally before
     # ensure(); the artifact must carry them or every request would fail
@@ -363,10 +369,11 @@ def compute_baseline_impl(
 
     store, data_folder, baseline = _prepare_cohort_baseline(bucket, expected)
     if not isinstance(baseline, ArtifactBaselineSimulation):
-        raise RuntimeError(
+        msg = (
             "Precompute built a plain Simulation — the qualifying predicate "
             "rejected the cohort request shape."
         )
+        raise RuntimeError(msg)  # noqa: TRY004  # a precompute invariant failure, not a bad argument; raised across the compute_baseline Modal boundary and asserted by test_precompute
 
     started = time.monotonic()
     baseline.ensure()
@@ -376,7 +383,8 @@ def compute_baseline_impl(
         getattr(baseline, "storage_id", baseline.id)
     )
     if not artifact_file.exists():
-        raise RuntimeError(f"ensure() left no artifact at {artifact_file}")
+        msg = f"ensure() left no artifact at {artifact_file}"
+        raise RuntimeError(msg)
     uploaded = store.upload_file(expected.path, artifact_file)
     return BaselineComputeResult(
         year=expected.year,
@@ -413,10 +421,11 @@ def verify_determinism_impl(
         store.download_file(expected.path, artifact_file)
     baseline.ensure()
     if baseline.artifact_outcome != OUTCOME_HIT:
-        raise RuntimeError(
+        msg = (
             "Determinism gate could not load the artifact it verifies "
             f"(outcome={baseline.artifact_outcome})"
         )
+        raise RuntimeError(msg)
 
     selection = getattr(baseline, "spm_config", None)
     fresh = Simulation(

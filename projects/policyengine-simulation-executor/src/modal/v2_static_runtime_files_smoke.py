@@ -25,7 +25,8 @@ def validate_installed_uk_local_authority_dataset() -> str:
     """
     dataset_path = resolve_local_bundle_dataset_path("uk", None)
     if dataset_path is None:
-        raise RuntimeError("installed certified UK dataset is unavailable")
+        msg = "installed certified UK dataset is unavailable"
+        raise RuntimeError(msg)
     return detect_uk_local_authority_metadata_from_hdf(
         dataset_path
     ).boundary_version.value
@@ -59,13 +60,15 @@ def main() -> None:
         "lad23_coordinates": 361,
     }
     if {key: observed.get(key) for key in expected_counts} != expected_counts:
-        raise RuntimeError(
+        msg = (
             f"Stage 12 static runtime file smoke returned invalid counts: {observed!r}"
         )
+        raise RuntimeError(msg)
     supported_versions = {version.value for version in UKLocalAuthorityBoundaryVersion}
     if observed.get("installed_dataset_boundary_version") not in supported_versions:
-        raise RuntimeError(
+        msg = (
             "Stage 12 static runtime file smoke could not identify the installed "
             f"UK dataset boundary version: {observed!r}"
         )
+        raise RuntimeError(msg)
     print("Stage 12 static runtime file smoke OK")

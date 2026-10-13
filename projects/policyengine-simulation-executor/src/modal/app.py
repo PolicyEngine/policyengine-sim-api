@@ -49,10 +49,11 @@ def _version_from_env_or_local_bundle_package(env_var: str, package: str) -> str
         return value
     if modal.is_local():
         return get_bundled_package_version(package)
-    raise RuntimeError(
+    msg = (
         f"{env_var} must be set in the Modal image environment for remote "
         "simulation workers."
     )
+    raise RuntimeError(msg)
 
 
 def _version_from_env_or_local_bundle(env_var: str, country: str) -> str:
@@ -61,10 +62,11 @@ def _version_from_env_or_local_bundle(env_var: str, country: str) -> str:
         return value
     if modal.is_local():
         return get_bundled_country_model_version(country)
-    raise RuntimeError(
+    msg = (
         f"{env_var} must be set in the Modal image environment for remote "
         "simulation workers."
     )
+    raise RuntimeError(msg)
 
 
 POLICYENGINE_VERSION = _version_from_env_or_local_bundle_package(
@@ -156,10 +158,11 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
     store = ArtifactStore(bucket or None)
     payload = store.read_manifest(digest)
     if payload is None:
-        raise RuntimeError(
+        msg = (
             f"Artifact manifest {digest} is not in the store: the deploy "
             "must consume a digest published by the precompute run."
         )
+        raise RuntimeError(msg)
     # Validate on the runner so a corrupt or foreign manifest fails the
     # deploy here, not mid-image-build.
     manifest = ArtifactManifest.model_validate(payload)
@@ -256,7 +259,7 @@ def _configure_modal_observability(
 def _set_modal_call_attributes(runtime: "ObservabilityRuntime") -> None:
     try:
         runtime.set_context(function_call_id=modal.current_function_call_id())
-    except Exception:
+    except Exception:  # noqa: BLE001  # telemetry is non-fatal: a failed attribute must never fail the Modal call
         pass
 
 

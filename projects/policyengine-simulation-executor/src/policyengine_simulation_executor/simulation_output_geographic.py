@@ -45,10 +45,11 @@ def _required_uk_geography_lookup_csv_path(spec: UKGeographyAssetSpec) -> str:
             download_missing_assets=True,
         )
     if path is None:
-        raise FileNotFoundError(
+        msg = (
             f"Required UK {spec.geography_type} lookup CSV "
             f"{spec.lookup_csv_filename!r} could not be resolved"
         )
+        raise FileNotFoundError(msg)
     return path
 
 
@@ -61,17 +62,21 @@ def _complete_uk_geography_output(
     """Require every UK geography record to contain lookup-owned metadata."""
     output = build_geographic_impact_output(value)
     if output is None or not output.root:
-        raise ValueError("UK geography output did not contain result records")
+        msg = "UK geography output did not contain result records"
+        raise ValueError(msg)
     for record in output.root:
         record_values = record.model_dump(mode="python")
         code = record_values.get(code_field)
         name = record_values.get(name_field)
         if not isinstance(code, str) or not code.strip():
-            raise ValueError(f"UK geography output is missing {code_field}")
+            msg = f"UK geography output is missing {code_field}"
+            raise ValueError(msg)
         if not isinstance(name, str) or not name.strip() or name == code:
-            raise ValueError(f"UK geography {code!r} is missing a lookup name")
+            msg = f"UK geography {code!r} is missing a lookup name"
+            raise ValueError(msg)
         if record_values.get("x") is None or record_values.get("y") is None:
-            raise ValueError(f"UK geography {code!r} is missing lookup coordinates")
+            msg = f"UK geography {code!r} is missing lookup coordinates"
+            raise ValueError(msg)
     return output
 
 
@@ -160,14 +165,17 @@ def _public_congressional_district_code(record: Mapping[str, Any]) -> str:
         if district_number is None:
             district_number = geoid % 100
     if state_fips is None:
-        raise ValueError("Congressional district output is missing state FIPS")
+        msg = "Congressional district output is missing state FIPS"
+        raise ValueError(msg)
 
     state_abbreviation_by_fips, at_large_states = _policyengine_us_district_metadata()
     state_abbreviation = state_abbreviation_by_fips.get(state_fips)
     if state_abbreviation is None:
-        raise ValueError(f"Unknown state FIPS code: {state_fips}")
+        msg = f"Unknown state FIPS code: {state_fips}"
+        raise ValueError(msg)
     if district_number is None:
-        raise ValueError("Congressional district output is missing district number")
+        msg = "Congressional district output is missing district number"
+        raise ValueError(msg)
 
     public_district_number = (
         1 if state_abbreviation in at_large_states else district_number
@@ -238,11 +246,12 @@ def _require_uk_area_column(
     separate run.
     """
     if column not in household.columns:
-        raise ValueError(
+        msg = (
             f"UK {breakdown} breakdowns need {column} on the simulated dataset, "
             "which carries no area codes; for such a dataset they need a run on "
             "the local-area dataset its bundle routes these regions to."
         )
+        raise ValueError(msg)
 
 
 def build_uk_constituency_impact(
@@ -293,7 +302,8 @@ def build_uk_local_authority_impact(
     baseline_household = _output_household(baseline)
     _require_uk_area_column(baseline_household, "la_code_oa", "local-authority")
     if uk_local_authority_metadata is None:
-        raise ValueError("UK local-authority boundary metadata is required")
+        msg = "UK local-authority boundary metadata is required"
+        raise ValueError(msg)
 
     from policyengine.outputs.uk_geography_impact import (
         compute_longwise_uk_geography_impacts,
@@ -319,13 +329,15 @@ def build_uk_local_authority_impact(
     for numeric_record in numeric_records:
         code = numeric_record.get("local_authority_code")
         if not isinstance(code, str) or not code:
-            raise ValueError("UK local-authority output contains an invalid code")
+            msg = "UK local-authority output contains an invalid code"
+            raise ValueError(msg)
         metadata = display_metadata.get(code)
         if metadata is None:
-            raise ValueError(
+            msg = (
                 f"UK local-authority code {code!r} is not part of the detected "
                 f"{boundary_version.value.upper()} boundary version"
             )
+            raise ValueError(msg)
         records.append(
             {
                 **numeric_record,

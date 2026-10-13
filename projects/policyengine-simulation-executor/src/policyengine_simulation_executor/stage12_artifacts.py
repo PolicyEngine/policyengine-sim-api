@@ -62,9 +62,11 @@ def comparison_run_prefix(
     naive ``created_at``.
     """
     if not environment or "/" in environment or ".." in environment:
-        raise ValueError("invalid Stage 12 artifact environment")
+        msg = "invalid Stage 12 artifact environment"
+        raise ValueError(msg)
     if created_at.tzinfo is None:
-        raise ValueError("Stage 12 artifact timestamp must include a timezone")
+        msg = "Stage 12 artifact timestamp must include a timezone"
+        raise ValueError(msg)
     return (
         f"stage-12-runs/{environment}/{created_at:%Y}/{created_at:%m}/{evaluation_id}"
     )
@@ -101,9 +103,11 @@ def _frame_payload(
         source = source.reindex(sorted(source.columns), axis=1)
         identifier = PARQUET_CONTRACT.identifier_column_template.format(entity=entity)
         if identifier not in source.columns:
-            raise ValueError(f"simulation output entity {entity!r} has no {identifier}")
+            msg = f"simulation output entity {entity!r} has no {identifier}"
+            raise ValueError(msg)
         if source[identifier].duplicated().any():
-            raise ValueError(f"simulation output entity {entity!r} has duplicate IDs")
+            msg = f"simulation output entity {entity!r} has duplicate IDs"
+            raise ValueError(msg)
         source = source.sort_values(identifier, kind="stable").reset_index(drop=True)
         dtypes[entity] = {column: str(dtype) for column, dtype in source.dtypes.items()}
         identifier_values[entity] = [
@@ -113,7 +117,8 @@ def _frame_payload(
         source.insert(0, PARQUET_CONTRACT.entity_column, entity)
         parts.append(source)
     if not parts:
-        raise ValueError("simulation output contains no entity tables")
+        msg = "simulation output contains no entity tables"
+        raise ValueError(msg)
     combined = pd.concat(parts, ignore_index=True, sort=False)
     columns = [
         PARQUET_CONTRACT.entity_column,
@@ -196,22 +201,24 @@ def deserialize_simulation_frames(payload: bytes) -> dict[str, pd.DataFrame]:
         metadata.get(PARQUET_CONTRACT.schema_version_metadata_key.encode())
         != str(PARQUET_CONTRACT.payload_schema_version).encode()
     ):
-        raise ValueError("unsupported Stage 12 simulation artifact schema")
+        msg = "unsupported Stage 12 simulation artifact schema"
+        raise ValueError(msg)
     raw_dtypes = metadata.get(PARQUET_CONTRACT.dtype_metadata_key.encode())
     if raw_dtypes is None:
-        raise ValueError("Stage 12 simulation artifact has no dtype metadata")
+        msg = "Stage 12 simulation artifact has no dtype metadata"
+        raise ValueError(msg)
     dtypes = json.loads(raw_dtypes)
     if not isinstance(dtypes, dict):
-        raise TypeError("Stage 12 simulation artifact dtype metadata is invalid")
+        msg = "Stage 12 simulation artifact dtype metadata is invalid"
+        raise TypeError(msg)
     combined = table.to_pandas()
     frames: dict[str, pd.DataFrame] = {}
     for entity in sorted(combined[PARQUET_CONTRACT.entity_column].unique()):
         entity_name = str(entity)
         entity_dtypes = dtypes.get(entity_name)
         if not isinstance(entity_dtypes, dict):
-            raise ValueError(
-                f"Stage 12 simulation artifact has no dtype schema for {entity_name}"
-            )
+            msg = f"Stage 12 simulation artifact has no dtype schema for {entity_name}"
+            raise ValueError(msg)  # noqa: TRY004  # documented ValueError for missing dtype metadata; the coordinator persists the type name as error_summary
         frame = combined.loc[combined[PARQUET_CONTRACT.entity_column] == entity].copy()
         frame = frame.sort_values(PARQUET_CONTRACT.row_order_column, kind="stable")
         frame = frame.drop(
@@ -271,9 +278,8 @@ class Stage12ArtifactStore:
     def __init__(self, bucket_name: str, *, store: ArtifactStore | None = None) -> None:
         """Bind to ``bucket_name``, which must be non-empty (there is no default)."""
         if not bucket_name:
-            raise ValueError(
-                "Stage 12 requires an explicitly configured private bucket"
-            )
+            msg = "Stage 12 requires an explicitly configured private bucket"
+            raise ValueError(msg)
         self.bucket_name = bucket_name
         self._store = store or ArtifactStore(bucket_name)
 
@@ -293,9 +299,8 @@ class Stage12ArtifactStore:
         if not created:
             existing = self._store.read_bytes(path)
             if existing is None or sha256(existing).hexdigest() != digest:
-                raise RuntimeError(
-                    "immutable Stage 12 artifact path contains other data"
-                )
+                msg = "immutable Stage 12 artifact path contains other data"
+                raise RuntimeError(msg)
         return ArtifactReference(
             uri=f"gs://{self.bucket_name}/{path}",
             media_type=ArtifactMediaType(content_type),
@@ -383,7 +388,8 @@ class Stage12ArtifactStore:
         """
         expected_prefix = f"gs://{self.bucket_name}/"
         if not uri.startswith(expected_prefix):
-            raise ValueError("Stage 12 artifact URI names another bucket")
+            msg = "Stage 12 artifact URI names another bucket"
+            raise ValueError(msg)
         payload = self._store.read_bytes(uri.removeprefix(expected_prefix))
         if payload is None:
             raise FileNotFoundError(uri)

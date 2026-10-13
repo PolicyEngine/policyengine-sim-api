@@ -29,7 +29,8 @@ class FakeBlob:
     def _write(self, data, **kwargs):
         self.store.upload_calls.append((self.path, kwargs))
         if kwargs.get("if_generation_match") == 0 and self.path in self.store.objects:
-            raise PreconditionFailed(f"object exists: {self.path}")
+            msg = f"object exists: {self.path}"
+            raise PreconditionFailed(msg)
         self.store.objects[self.path] = data
 
     def upload_from_filename(self, filename, **kwargs):
@@ -46,7 +47,8 @@ class FakeBlob:
             # the transport dies.
             with open(filename, "wb") as handle:
                 handle.write(self.store.objects[self.path][:1])
-            raise ConnectionError("stream reset")
+            msg = "stream reset"
+            raise ConnectionError(msg)
         with open(filename, "wb") as handle:
             handle.write(self.store.objects[self.path])
 

@@ -107,7 +107,8 @@ def _default_dataset_sha256(
 def _normalise_country(country: str) -> str:
     country = country.lower()
     if country not in SUPPORTED_COUNTRIES:
-        raise ValueError(f"Unsupported country: {country}")
+        msg = f"Unsupported country: {country}"
+        raise ValueError(msg)
     return country
 
 
@@ -262,23 +263,23 @@ def get_bundled_package_version(package: str) -> str:
     """Return a runtime package version from policyengine.py's bundle manifest."""
     bundle = _current_policyengine_bundle()
     if not isinstance(bundle, Mapping):
-        raise TypeError("PolicyEngine.py bundle metadata is unavailable")
+        msg = "PolicyEngine.py bundle metadata is unavailable"
+        raise TypeError(msg)
 
     packages = bundle.get("packages")
     if not isinstance(packages, Mapping):
-        raise TypeError("PolicyEngine.py bundle has no package mapping")
+        msg = "PolicyEngine.py bundle has no package mapping"
+        raise TypeError(msg)
 
     package_metadata = packages.get(package)
     if not isinstance(package_metadata, Mapping):
-        raise TypeError(
-            f"PolicyEngine.py bundle has no metadata for package {package!r}"
-        )
+        msg = f"PolicyEngine.py bundle has no metadata for package {package!r}"
+        raise TypeError(msg)
 
     version = package_metadata.get("version")
     if not isinstance(version, str) or not version.strip():
-        raise ValueError(
-            f"PolicyEngine.py bundle has no version for package {package!r}"
-        )
+        msg = f"PolicyEngine.py bundle has no version for package {package!r}"
+        raise ValueError(msg)
     return version.strip()
 
 
@@ -290,7 +291,8 @@ def _derive_data_package_version(
     """Return the data package version certified by policyengine.py."""
     version = bundled_data_package.get("version") or manifest_data_package_version
     if not isinstance(version, str) or not version.strip():
-        raise ValueError("PolicyEngine.py bundle has no data package version")
+        msg = "PolicyEngine.py bundle has no data package version"
+        raise ValueError(msg)
     return version.strip()
 
 
@@ -398,7 +400,8 @@ def _split_requested_revision(requested_data: str) -> tuple[str, str | None]:
         return requested_data, None
     dataset_name, revision = requested_data.rsplit("@", maxsplit=1)
     if not dataset_name or not revision:
-        raise ValueError(f"Invalid dataset revision reference: {requested_data}")
+        msg = f"Invalid dataset revision reference: {requested_data}"
+        raise ValueError(msg)
     return dataset_name, revision
 
 
@@ -421,10 +424,11 @@ def resolve_bundle_dataset_name(country: str, requested_data: str | None) -> str
     if revision is not None:
         uri = bundle.dataset_uris.get(requested_without_revision)
         if uri is None:
-            raise ValueError(
+            msg = (
                 "Unknown dataset revision reference "
                 f"{requested_data!r} for country {bundle.country!r}"
             )
+            raise ValueError(msg)
         return _with_hf_revision_unvalidated(uri, revision)
     return requested_without_revision
 
@@ -575,10 +579,11 @@ def resolve_runtime_bundle_dataset_uri(
     dataset_uri = resolve_bundle_dataset_uri(country, requested_without_revision)
     if dataset_uri == requested_without_revision:
         if revision is not None:
-            raise ValueError(
+            msg = (
                 "Unknown dataset revision reference "
                 f"{requested_data!r} for country {bundle.country!r}"
             )
+            raise ValueError(msg)
         return requested_data
 
     return runtime_dataset_uri(

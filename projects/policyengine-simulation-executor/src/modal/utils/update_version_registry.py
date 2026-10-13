@@ -220,7 +220,8 @@ def validate_routing_state(
     a manifest unless its version is in ``required_policyengine_manifests``.
     """
     if state.get("schema_version") != 1:
-        raise ValueError("Routing state schema_version must be 1")
+        msg = "Routing state schema_version must be 1"
+        raise ValueError(msg)
 
     required_manifests = set(required_policyengine_manifests)
     required_latest_routes = ["us", "uk"]
@@ -230,31 +231,34 @@ def validate_routing_state(
     for route_name in required_latest_routes:
         latest = state["latest"].get(route_name)
         if not latest:
-            raise ValueError(f"Routing state latest.{route_name} is missing")
+            msg = f"Routing state latest.{route_name} is missing"
+            raise ValueError(msg)
         if latest not in state["routes"][route_name]:
-            raise ValueError(
-                f"Routing state latest.{route_name}={latest!r} has no route"
-            )
+            msg = f"Routing state latest.{route_name}={latest!r} has no route"
+            raise ValueError(msg)
 
     for policyengine_version, app_name in state["routes"]["policyengine"].items():
         manifest = state["bundles"].get(policyengine_version)
         if not isinstance(manifest, dict):
             if policyengine_version in required_manifests:
-                raise ValueError(
+                msg = (
                     "Routing state policyengine route "
                     f"{policyengine_version!r} has no bundle manifest"
                 )
+                raise ValueError(msg)
             continue
         if manifest.get("policyengine_version") != policyengine_version:
-            raise ValueError(
+            msg = (
                 "Routing state bundle manifest key does not match "
                 f"policyengine_version for {policyengine_version!r}"
             )
+            raise ValueError(msg)
         if manifest.get("app_name") != app_name:
-            raise ValueError(
+            msg = (
                 "Routing state bundle manifest app_name does not match route "
                 f"for {policyengine_version!r}"
             )
+            raise ValueError(msg)
 
 
 def _assert_version_matches_manifest(
@@ -264,10 +268,11 @@ def _assert_version_matches_manifest(
     manifest_version: str,
 ) -> None:
     if requested_version != manifest_version:
-        raise ValueError(
+        msg = (
             f"{requested_name} {requested_version!r} does not match the "
             f"policyengine.py bundle manifest value {manifest_version!r}"
         )
+        raise ValueError(msg)
 
 
 def build_next_routing_state(

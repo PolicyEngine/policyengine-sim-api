@@ -64,12 +64,14 @@ def concatenate_microdata(
     concatenated in child order with source dtypes restored.
     """
     if not child_outputs:
-        raise ValueError("No child outputs to reduce")
+        msg = "No child outputs to reduce"
+        raise ValueError(msg)
     payloads = []
     for index, child in enumerate(child_outputs):
         payload = child.get("_microdata")
         if not payload:
-            raise ValueError(f"Child {index} returned no _microdata payload")
+            msg = f"Child {index} returned no _microdata payload"
+            raise ValueError(msg)
         payloads.append(payload)
 
     entities = list(payloads[0]["baseline"])
@@ -136,9 +138,8 @@ def build_national_output(
     district table populates. No model recompute occurs.
     """
     if country.lower() != "us":
-        raise ValueError(
-            f"No segmented-national reduce for country {country!r} (US only)"
-        )
+        msg = f"No segmented-national reduce for country {country!r} (US only)"
+        raise ValueError(msg)
 
     sides = concatenate_microdata(child_outputs)
     datasets = {

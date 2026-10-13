@@ -58,8 +58,9 @@ def runtime_spm_capability() -> SPMCapability | None:
         bundle = get_current_bundle()
         configured = bundle.get("measurements", {}).get("spm")
     except (ImportError, ValueError, TypeError, AttributeError) as exc:
+        msg = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            "SPM_CONFIGURATION_UNAVAILABLE",
+            msg,
             "The installed SPM bundle configuration is unavailable",
         ) from exc
     if configured is None:
@@ -67,28 +68,40 @@ def runtime_spm_capability() -> SPMCapability | None:
     if "spm" not in Simulation.model_fields or not hasattr(
         Simulation, "spm_provenance"
     ):
+        msg = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            "SPM_CONFIGURATION_UNAVAILABLE",
+            msg,
             "The installed wrapper does not support canonical SPM",
         )
     try:
-        from policyengine_us import Microsimulation
-
-        if not (
-            hasattr(Microsimulation, "spm_config")
-            and callable(getattr(Microsimulation, "spm_provenance", None))
-        ):
-            raise ValueError("The installed US model does not support canonical SPM")
-        capability = SPMCapability(defaults=configured)
-        forecast = _forecast(capability.defaults.forecast_content_sha256)
-        forecast.entry(
-            forecast.years[0],
-            scenario=capability.defaults.scenario,
-            as_of=capability.defaults.as_of,
-        )
-        return capability
+        return _certified_us_spm_capability(configured)
     except (ImportError, ValueError, TypeError, OSError) as exc:
-        raise SPMInputError("SPM_CONFIGURATION_UNAVAILABLE", str(exc)) from exc
+        msg = "SPM_CONFIGURATION_UNAVAILABLE"
+        raise SPMInputError(msg, str(exc)) from exc
+
+
+def _certified_us_spm_capability(configured: object) -> SPMCapability:
+    """Certify the bundle's SPM defaults against the installed US model and forecast.
+
+    Raises ``ImportError``, ``ValueError``, ``TypeError`` or ``OSError`` when the
+    US model, the configuration or the pinned forecast cannot support them.
+    """
+    from policyengine_us import Microsimulation
+
+    if not (
+        hasattr(Microsimulation, "spm_config")
+        and callable(getattr(Microsimulation, "spm_provenance", None))
+    ):
+        msg = "The installed US model does not support canonical SPM"
+        raise ValueError(msg)
+    capability = SPMCapability(defaults=configured)
+    forecast = _forecast(capability.defaults.forecast_content_sha256)
+    forecast.entry(
+        forecast.years[0],
+        scenario=capability.defaults.scenario,
+        as_of=capability.defaults.as_of,
+    )
+    return capability
 
 
 @lru_cache(maxsize=64)
@@ -114,7 +127,8 @@ def _prevalidate_selection(
     selection = json.loads(selection_json)
     forecast = _forecast(selection["forecast_content_sha256"])
     if selection["county_vintage"] != "2020":
-        raise ValueError("Unsupported county vintage: use 2020")
+        msg = "Unsupported county vintage: use 2020"
+        raise ValueError(msg)
     provider = PolicyEngineSPMProvider(
         forecast,
         **{
@@ -139,7 +153,8 @@ def _prevalidate_selection(
                     as_of=selection["as_of"],
                 )
             except ValueError as exc:
-                raise SPMInputError("SPM_GEOGRAPHY_UNAVAILABLE", str(exc)) from None
+                msg = "SPM_GEOGRAPHY_UNAVAILABLE"
+                raise SPMInputError(msg, str(exc)) from None
 
 
 # Bound at import, so clearing still works while a test has replaced one of
@@ -204,15 +219,18 @@ def normalize_runtime_spm(params: dict[str, Any]) -> dict[str, Any] | None:
             # plain scenario error; use the same narrow translation as the
             # calculator's Frame and Axiom adapters, leaving other errors alone.
             if str(exc).startswith("Unknown forecast scenario:"):
-                raise SPMInputError("SPM_SCENARIO_UNAVAILABLE", str(exc)) from exc
-            raise SPMInputError("SPM_SETTINGS_INVALID", str(exc)) from exc
+                msg = "SPM_SCENARIO_UNAVAILABLE"
+                raise SPMInputError(msg, str(exc)) from exc
+            msg = "SPM_SETTINGS_INVALID"
+            raise SPMInputError(msg, str(exc)) from exc
     return selection
 
 
 def _required_string(source: Mapping[str, object], field_name: str) -> str:
     value = source.get(field_name)
     if not isinstance(value, str) or not value:
-        raise ValueError(f"SPM calculation receipt has no valid {field_name}")
+        msg = f"SPM calculation receipt has no valid {field_name}"
+        raise ValueError(msg)
     return value
 
 
@@ -227,7 +245,8 @@ def compact_spm_provenance(
     package versions that belong on the simulation API wire contract.
     """
     if not isinstance(country_receipt, Mapping):
-        raise TypeError("SPM calculation receipt must be an object")
+        msg = "SPM calculation receipt must be an object"
+        raise TypeError(msg)
     resolved = SPMSelection.model_validate(selection)
     forecast_sha256 = _required_string(country_receipt, "forecast_sha256")
     for field_name, expected_value in (
@@ -236,18 +255,20 @@ def compact_spm_provenance(
         ("geography_kind", resolved.geography_kind),
     ):
         if country_receipt.get(field_name) != expected_value:
-            raise ValueError(
-                f"SPM calculation receipt {field_name} differs from the selection"
-            )
+            msg = f"SPM calculation receipt {field_name} differs from the selection"
+            raise ValueError(msg)
     raw_versions = country_receipt.get("runtime_versions")
     if not isinstance(raw_versions, Mapping):
-        raise TypeError("SPM calculation receipt has no runtime versions")
+        msg = "SPM calculation receipt has no runtime versions"
+        raise TypeError(msg)
     runtime_versions = SPMRuntimeVersions.model_validate(raw_versions)
     raw_years = country_receipt.get("years")
     if not isinstance(raw_years, Mapping):
-        raise TypeError("SPM calculation receipt has no executed years")
+        msg = "SPM calculation receipt has no executed years"
+        raise TypeError(msg)
     if any(not isinstance(year, str) for year in raw_years):
-        raise TypeError("SPM calculation receipt year keys must be strings")
+        msg = "SPM calculation receipt year keys must be strings"
+        raise TypeError(msg)
     return build_spm_provenance(
         forecast_id=_required_string(country_receipt, "forecast_id"),
         forecast_sha256=forecast_sha256,
@@ -264,14 +285,16 @@ def simulation_spm_calculation_provenance(
     """Read and compact one simulation's resolved SPM receipt."""
     resolved = SPMSelection.model_validate(selection)
     if getattr(simulation, "spm_config", None) != resolved.model_dump(mode="json"):
+        msg = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            "SPM_CONFIGURATION_UNAVAILABLE",
+            msg,
             "Simulation ignored the requested SPM selection",
         )
     receipt = getattr(simulation, "spm_provenance", None)
     if not callable(receipt):
+        msg = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            "SPM_CONFIGURATION_UNAVAILABLE",
+            msg,
             "Simulation has no valid SPM calculation receipt",
         )
     try:
@@ -280,8 +303,9 @@ def simulation_spm_calculation_provenance(
             receipt=compact_spm_provenance(receipt(), resolved),
         )
     except (TypeError, ValueError) as exc:
+        msg = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            "SPM_CONFIGURATION_UNAVAILABLE",
+            msg,
             "Simulation has no valid SPM calculation receipt",
         ) from exc
 
@@ -310,8 +334,9 @@ def simulation_spm_result(
     if expected_year is not None and str(expected_year) not in (
         comparison.baseline.receipt.years
     ):
+        msg = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            "SPM_CONFIGURATION_UNAVAILABLE",
+            msg,
             "Result SPM provenance does not cover the requested year",
         )
     return {

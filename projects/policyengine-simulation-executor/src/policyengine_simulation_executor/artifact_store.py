@@ -43,9 +43,8 @@ def resolve_bucket_name(explicit: str | None = None) -> str:
     """
     bucket = explicit or os.environ.get(ARTIFACT_BUCKET_ENV)
     if not bucket:
-        raise RuntimeError(
-            f"No artifact bucket configured: pass one or set {ARTIFACT_BUCKET_ENV}."
-        )
+        msg = f"No artifact bucket configured: pass one or set {ARTIFACT_BUCKET_ENV}."
+        raise RuntimeError(msg)
     return bucket
 
 

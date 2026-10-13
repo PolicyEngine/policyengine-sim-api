@@ -238,7 +238,7 @@ class BudgetWindowBatchRunner:
                 child_result = handle.call.get(timeout=0)
             except TimeoutError:
                 continue
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001  # call.get re-raises whatever the child worker raised; every failure fails the batch, logged with its traceback by log_and_redact_exception
                 detail = spm_error_detail(exc)
                 if detail:
                     self.state.errors = [detail]
@@ -277,7 +277,7 @@ class BudgetWindowBatchRunner:
                         child_result=child_result,
                         spm=self.state.request_payload.get("spm"),
                     )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001  # any unparseable child result fails the batch, logged with its traceback by log_and_redact_exception
                 detail = spm_error_detail(exc)
                 if detail:
                     self.state.errors = [detail]

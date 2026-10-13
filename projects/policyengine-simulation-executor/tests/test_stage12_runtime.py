@@ -716,7 +716,8 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
     store.children[simulation.simulation_execution_id] = _child(simulation)
 
     def fail(_simulation):
-        raise RuntimeError("country package calculation failed")
+        msg = "country package calculation failed"
+        raise RuntimeError(msg)
 
     with pytest.raises(
         RuntimeError, match="Stage 12 simulation execution failed"
@@ -1254,7 +1255,8 @@ class ConcurrentInvoker:
             started = time.monotonic()
             time.sleep(0.05)
             if role == self.fail_role:
-                raise RuntimeError("child calculation failed")
+                msg = "child calculation failed"
+                raise RuntimeError(msg)
             frames = _frames(100.0 if role == "baseline" else 120.0)
             if self.missing_column and role == "reform":
                 frames["household"] = frames["household"].drop(
@@ -1714,7 +1716,8 @@ def test_coordinator_rejects_artifacts_that_do_not_satisfy_the_shared_plan(
 def test_coordinator_records_failure_when_child_persistence_fails() -> None:
     class FailingChildStore(FakeStore):
         def create_or_resolve_simulation(self, record):
-            raise RuntimeError("database rejected the child record")
+            msg = "database rejected the child record"
+            raise RuntimeError(msg)
 
     store = FailingChildStore()
 
@@ -2315,7 +2318,8 @@ class TimeoutCall:
         self.object_id = object_id
 
     def get(self, *, timeout=None):
-        raise TimeoutError("child result was not ready")
+        msg = "child result was not ready"
+        raise TimeoutError(msg)
 
 
 class TimeoutInvoker:
@@ -2328,7 +2332,8 @@ class TimeoutInvoker:
         return TimeoutCall(f"call-{role}")
 
     def restore(self, invocation_id):
-        raise AssertionError(f"unexpected restored invocation {invocation_id}")
+        msg = f"unexpected restored invocation {invocation_id}"
+        raise AssertionError(msg)
 
 
 def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:

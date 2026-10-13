@@ -17,9 +17,11 @@ def _expectations(values: list[str]) -> dict[str, str]:
     for value in values:
         name, separator, expected = value.partition("=")
         if not separator or not name or not expected:
-            raise ValueError("--expect values must use non-empty NAME=VALUE syntax")
+            msg = "--expect values must use non-empty NAME=VALUE syntax"
+            raise ValueError(msg)
         if name in expectations:
-            raise ValueError(f"Duplicate Stage 12 bundle assertion {name!r}")
+            msg = f"Duplicate Stage 12 bundle assertion {name!r}"
+            raise ValueError(msg)
         expectations[name] = expected
     return expectations
 

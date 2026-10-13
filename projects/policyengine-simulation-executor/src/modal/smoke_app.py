@@ -99,7 +99,8 @@ def _validate_installed_uk_local_authority_dataset() -> str:
     """Require the installed UK dataset to match one packaged boundary version."""
     dataset_path = resolve_local_bundle_dataset_path("uk", None)
     if dataset_path is None:
-        raise RuntimeError("installed certified UK dataset is unavailable")
+        msg = "installed certified UK dataset is unavailable"
+        raise RuntimeError(msg)
     metadata = detect_uk_local_authority_metadata_from_hdf(dataset_path)
     return metadata.boundary_version.value
 

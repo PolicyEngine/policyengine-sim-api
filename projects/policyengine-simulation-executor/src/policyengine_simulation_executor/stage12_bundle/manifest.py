@@ -33,7 +33,8 @@ def _normalize_stage12_bundle(
 ) -> Stage12BundleManifest:
     bundle = require_mapping(raw_bundle, "root")
     if bundle.get("schema_version") != 2:
-        raise Stage12BundleError("PolicyEngine.py bundle schema_version must be 2")
+        msg = "PolicyEngine.py bundle schema_version must be 2"
+        raise Stage12BundleError(msg)
     policyengine_version = require_text(
         bundle.get("policyengine_version"),
         "policyengine_version",
@@ -42,9 +43,8 @@ def _normalize_stage12_bundle(
         require_text(bundle.get("bundle_version"), "bundle_version")
         != policyengine_version
     ):
-        raise Stage12BundleError(
-            "PolicyEngine.py bundle_version does not match policyengine_version"
-        )
+        msg = "PolicyEngine.py bundle_version does not match policyengine_version"
+        raise Stage12BundleError(msg)
 
     packages = require_mapping(bundle.get("packages"), "packages")
     packaged_policyengine_version, policyengine_requirement = require_exact_package(
@@ -52,9 +52,8 @@ def _normalize_stage12_bundle(
         "policyengine",
     )
     if packaged_policyengine_version != policyengine_version:
-        raise Stage12BundleError(
-            "PolicyEngine.py package version does not match the bundle version"
-        )
+        msg = "PolicyEngine.py package version does not match the bundle version"
+        raise Stage12BundleError(msg)
     core_package_version, core_package_requirement = require_exact_package(
         packages,
         "policyengine-core",
@@ -93,9 +92,8 @@ def normalize_stage12_bundle(
             supported_countries=supported_countries,
         )
     except ValidationError as error:
-        raise Stage12BundleError(
-            "PolicyEngine.py bundle contains malformed values"
-        ) from error
+        msg = "PolicyEngine.py bundle contains malformed values"
+        raise Stage12BundleError(msg) from error
 
 
 def bundle_digest(bundle: Stage12BundleManifest) -> str:

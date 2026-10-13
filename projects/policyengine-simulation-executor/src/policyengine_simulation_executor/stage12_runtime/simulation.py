@@ -75,25 +75,30 @@ def _require_context(
     required_country: CountryId,
 ) -> None:
     if simulation.geography.country != required_country:
-        raise ValueError("single-simulation input was sent to another country worker")
+        msg = "single-simulation input was sent to another country worker"
+        raise ValueError(msg)
     if simulation.bundle.policyengine_version != context.worker_version:
-        raise ValueError("single-simulation worker version does not match its context")
+        msg = "single-simulation worker version does not match its context"
+        raise ValueError(msg)
     if simulation.bundle.bundle_manifest_sha256 != context.bundle_manifest_sha256:
-        raise ValueError("single-simulation bundle digest does not match its context")
+        msg = "single-simulation bundle digest does not match its context"
+        raise ValueError(msg)
     if str(simulation.evaluation_id) not in context.artifact_prefix:
-        raise ValueError(
-            "single-simulation artifact prefix names another comparison run"
-        )
+        msg = "single-simulation artifact prefix names another comparison run"
+        raise ValueError(msg)
     if simulation.output_plan.country != required_country:
-        raise ValueError("single-simulation output plan names another country")
+        msg = "single-simulation output plan names another country"
+        raise ValueError(msg)
 
 
 def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
     resolved = load_stage12_bundle()
     if resolved.bundle_manifest_sha256 != simulation.bundle.bundle_manifest_sha256:
-        raise RuntimeError("installed bundle digest differs from the simulation input")
+        msg = "installed bundle digest differs from the simulation input"
+        raise RuntimeError(msg)
     if resolved.bundle.policyengine_version != simulation.bundle.policyengine_version:
-        raise RuntimeError("installed PolicyEngine.py version differs from the input")
+        msg = "installed PolicyEngine.py version differs from the input"
+        raise RuntimeError(msg)
     country = next(
         item
         for item in resolved.bundle.countries
@@ -114,7 +119,8 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
         "dataset_revision": simulation.bundle.dataset.artifact_revision,
     }
     if actual != expected:
-        raise RuntimeError("simulation provenance differs from the installed bundle")
+        msg = "simulation provenance differs from the installed bundle"
+        raise RuntimeError(msg)
 
 
 def calculate_simulation_frames(
@@ -133,9 +139,11 @@ def calculate_simulation_frames(
         runtime=runtime,
     )
     if simulation.population.kind != "dataset":
-        raise ValueError("Stage 12 society-wide worker requires a dataset population")
+        msg = "Stage 12 society-wide worker requires a dataset population"
+        raise ValueError(msg)
     if simulation.population.artifact.uri != simulation.bundle.dataset.uri:
-        raise ValueError("population artifact differs from bundle dataset provenance")
+        msg = "population artifact differs from bundle dataset provenance"
+        raise ValueError(msg)
     _require_installed_bundle(simulation)
     country = simulation.geography.country
     params: dict[str, Any] = {
@@ -204,7 +212,8 @@ def calculate_simulation_frames(
         output_data = getattr(getattr(model, "output_dataset", None), "data", None)
         entity_data = getattr(output_data, "entity_data", None)
         if not isinstance(entity_data, Mapping):
-            raise TypeError("simulation produced no entity output tables")
+            msg = "simulation produced no entity output tables"
+            raise TypeError(msg)
         frames = {entity: pd.DataFrame(frame) for entity, frame in entity_data.items()}
         validate_output_frames(frames, simulation.output_plan)
         selection = getattr(model, "spm_config", None)
@@ -248,7 +257,8 @@ def descriptor_from_record(
         or row_count is None
         or row_identity_sha256 is None
     ):
-        raise ValueError("successful child record has incomplete output metadata")
+        msg = "successful child record has incomplete output metadata"
+        raise ValueError(msg)
     from policyengine_simulation_contract.stage12_execution import (
         ArtifactMediaType,
         ArtifactReference,
@@ -398,4 +408,5 @@ def run_single_simulation(
             runtime=runtime,
             failure_scope="simulation_execution",
         )
-        raise RuntimeError("Stage 12 simulation execution failed") from None
+        msg = "Stage 12 simulation execution failed"
+        raise RuntimeError(msg) from None
