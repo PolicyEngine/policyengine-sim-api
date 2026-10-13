@@ -82,8 +82,10 @@ The deployment workflow passes each environment's
 unset or empty variable deploys `0`, which records callers that lack a route's
 permission but lets them through. `1` rejects those callers with 403. Any other
 value fails the deployment before Cloud Run changes. A new value takes effect
-at the next entrypoint deployment. The route permissions are listed in
-`README.md`.
+at the next entrypoint deployment. In `prod` that deployment is promoted to
+stable traffic. `beta` never promotes its candidate revision, so a `beta` value
+applies only to the tagged candidate that the deployment tests call. The route
+permissions are listed in `README.md`.
 
 ### Auth0 prerequisites
 
@@ -113,14 +115,22 @@ variable to `1`:
 ### Enabling enforcement
 
 1. Deploy with the variable unset or `0`, and complete the Auth0 setup.
-2. Watch for `simulation_entry_permission_missing` events with
-   `enforced=false`. Each one names the missing permission and the caller's
-   `client_id`. Access tokens issued before a grant do not carry it, so wait at
-   least one access-token lifetime after the last grant with no new events.
+2. Watch the `prod` service for `simulation_entry_permission_missing` events
+   with `enforced=false`. Each one names the missing permission and the
+   caller's `client_id`. Only `prod` serves real callers such as API v1: a
+   `beta` candidate receives only the deployment tests' own requests, so `beta`
+   events cannot show a missing API v1 grant. Access tokens issued before a
+   grant do not carry it, so wait at least one access-token lifetime after the
+   last grant with no new events.
 3. Set the `beta` variable to `1` and deploy. With enforcement on, the
    authenticated deployment tests also check that the test client's token is
    rejected on `GET /internal/stage12/reports/{evaluation_id}`, which requires
    `stage12:operate`. Those tests skip this check while the variable is `0`.
-4. Repeat for `prod`.
+4. Set the `prod` variable to `1` and deploy. No deployment test sends API v1's
+   own token, so step 2 is the only check that API v1 holds its grants.
 
-To roll back, set the variable to `0` and deploy.
+To roll back, set the variable to `0` and deploy. The regular deployment
+rebuilds and tests `beta` before `prod`. For `prod` alone, the **Deploy Stage
+12 comparison path** workflow with `deployment_environment: production` (and the
+`DEPLOY_STAGE12_PRODUCTION` confirmation) redeploys and promotes the production
+entrypoint, and also redeploys the production Stage 12 resources.
