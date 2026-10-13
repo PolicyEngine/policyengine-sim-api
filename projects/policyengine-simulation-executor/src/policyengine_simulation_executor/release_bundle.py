@@ -446,7 +446,7 @@ def _receipt_path() -> Path:
     explicit = os.environ.get("POLICYENGINE_BUNDLE_RECEIPT")
     if explicit:
         return Path(explicit)
-    data_folder = os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")
+    data_folder = os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")  # noqa: S108  # fixed data directory inside the Modal container
     return Path(data_folder) / BUNDLE_RECEIPT_FILENAME
 
 

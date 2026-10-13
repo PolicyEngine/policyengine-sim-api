@@ -301,7 +301,7 @@ def test_app_module_imports_at_container_entrypoint_path(monkeypatch):
     )
     module = importlib.util.module_from_spec(spec)
     module.__file__ = "/root/app.py"
-    exec(code, module.__dict__)
+    exec(code, module.__dict__)  # noqa: S102  # executes repository-owned app source as Modal's /root/app.py
 
     assert module.APP_NAME.startswith("policyengine-simulation-py")
     fetch_calls = [

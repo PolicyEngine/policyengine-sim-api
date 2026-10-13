@@ -186,7 +186,7 @@ def enforce_production_auth_guard(runtime: ObservabilityRuntime) -> None:
                 "ack_value_present": True,
             },
         )
-    except Exception:  # noqa: BLE001  # pragma: no cover - observability must never block startup
+    except Exception:  # noqa: BLE001, S110  # pragma: no cover - observability must never block startup
         pass
 
 

@@ -13,6 +13,8 @@ from policyengine_simulation_contract.hf_dataset import (
     with_hf_revision,
 )
 
+RUNTIME_TOKEN = "runtime-token"  # noqa: S105  # fake token; the Hub fetch is stubbed
+
 
 class _FakeResponse:
     def __init__(self, payload: dict):
@@ -75,12 +77,12 @@ def test_validate_hf_dataset_uri_uses_runtime_credential(monkeypatch):
         return {"siblings": [{"rfilename": "dataset.h5"}]}
 
     monkeypatch.setattr(hf_dataset, "_fetch_hf_dataset_revision", fake_fetch)
-    monkeypatch.setenv("HUGGING_FACE_TOKEN", "runtime-token")
+    monkeypatch.setenv("HUGGING_FACE_TOKEN", RUNTIME_TOKEN)
     monkeypatch.setenv("PE_UK_PRIVATE_HF_READ_TOKEN", "deployment-token")
     monkeypatch.setenv("HF_TOKEN", "legacy-token")
 
     assert validate_hf_dataset_uri(dataset_uri) == dataset_uri
-    assert seen["token"] == "runtime-token"
+    assert seen["token"] == RUNTIME_TOKEN
 
 
 def test_validate_hf_dataset_uri_ignores_non_runtime_credential_names(monkeypatch):

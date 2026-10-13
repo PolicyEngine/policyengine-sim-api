@@ -91,7 +91,7 @@ def log_and_redact_exception(
             "gateway_error_redacted",
             attributes=payload,
         )
-    except Exception:  # noqa: BLE001  # pragma: no cover - defensive, never raise from logger
+    except Exception:  # noqa: BLE001, S110  # pragma: no cover - defensive, never raise from logger
         pass
 
     return f"{GENERIC_JOB_FAILURE_MESSAGE} (correlation_id={correlation_id})"

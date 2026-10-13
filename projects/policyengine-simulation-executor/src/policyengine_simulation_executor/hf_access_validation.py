@@ -16,8 +16,8 @@ from policyengine_simulation_executor.release_bundle import (
 )
 
 HF_RUNTIME_ENV_NAME = "HUGGING_FACE_TOKEN"
-HF_MODAL_SECRET_NAME = "pe-uk-private-hf-read-token"
-EXPECTED_HF_TOKEN_DISPLAY_NAME = "pe-uk-private-hf-read-token"
+HF_MODAL_SECRET_NAME = "pe-uk-private-hf-read-token"  # noqa: S105  # the Modal secret's name, not its value
+EXPECTED_HF_TOKEN_DISPLAY_NAME = "pe-uk-private-hf-read-token"  # noqa: S105  # the token's Hugging Face display name, not its value
 
 
 class HFAccessTarget(BaseModel):

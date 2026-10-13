@@ -647,13 +647,13 @@ def resolve_data_folder() -> str:
     this folder for ``ensure_datasets``/``Simulation.ensure()`` to find, so
     any divergence from ``_load_dataset``'s resolution strands them.
     """
-    return os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")
+    return os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")  # noqa: S108  # fixed data directory inside the Modal container
 
 
 def _nondefault_data_folder(country: str, name: str, uri: str) -> str:
     """Separate managed datasets even if their source filenames have the same stem."""
     identity = hashlib.sha256(f"{country}:{name}:{uri}".encode()).hexdigest()
-    return f"/tmp/policyengine-alternate-data/{identity}"
+    return f"/tmp/policyengine-alternate-data/{identity}"  # noqa: S108  # fixed data directory inside the Modal container
 
 
 def _resolve_dataset_selection(

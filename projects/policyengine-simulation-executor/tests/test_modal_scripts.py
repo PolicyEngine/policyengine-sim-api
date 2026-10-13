@@ -13,6 +13,8 @@ from fixtures.test_modal_scripts import REPO_ROOT, SCRIPTS_DIR
 
 pytest_plugins = ("fixtures.test_modal_scripts",)
 
+FAKE_HF_TOKEN = "hf_test"  # noqa: S105  # fake token; the scripts under test run stubbed commands
+
 
 def _run_bash(
     *arguments: str,
@@ -168,7 +170,7 @@ class TestModalImageSmoke:
             {
                 "PATH": f"{fake_bin}:{env['PATH']}",
                 "UV_CALLS_LOG": str(uv_calls_log),
-                "PE_UK_PRIVATE_HF_READ_TOKEN": "hf_test",
+                "PE_UK_PRIVATE_HF_READ_TOKEN": FAKE_HF_TOKEN,
             }
         )
 
@@ -178,7 +180,7 @@ class TestModalImageSmoke:
         calls = uv_calls_log.read_text(encoding="utf-8").splitlines()
         assert calls[0] == (
             "run modal secret create pe-uk-private-hf-read-token "
-            "HUGGING_FACE_TOKEN=hf_test --env=staging --force"
+            f"HUGGING_FACE_TOKEN={FAKE_HF_TOKEN} --env=staging --force"
         )
         assert len(calls) == 4
 
@@ -328,7 +330,7 @@ class TestModalSyncSecrets:
     def test_fails_when_gateway_auth_config_is_partial(self):
         """Should fail before touching Modal when auth config is partial."""
         env = os.environ.copy()
-        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = "hf_test"
+        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = FAKE_HF_TOKEN
         env["GCP_CREDENTIALS_JSON"] = '{"type":"service_account"}'
         env["GATEWAY_AUTH_ISSUER"] = "https://tenant.auth0.com"
         env.pop("GATEWAY_AUTH_AUDIENCE", None)
@@ -343,7 +345,7 @@ class TestModalSyncSecrets:
     def test_fails_when_auth_required_but_gateway_auth_vars_missing(self):
         """Required auth must refuse deploy when the GitHub secrets are absent."""
         env = os.environ.copy()
-        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = "hf_test"
+        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = FAKE_HF_TOKEN
         env["GCP_CREDENTIALS_JSON"] = '{"type":"service_account"}'
         env["GATEWAY_AUTH_REQUIRED"] = "1"
         for key in (
@@ -362,7 +364,7 @@ class TestModalSyncSecrets:
     def test_requires_gcp_credentials(self):
         """Artifact credential synchronization must fail before deployment."""
         env = os.environ.copy()
-        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = "hf_test"
+        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = FAKE_HF_TOKEN
         env.pop("GCP_CREDENTIALS_JSON", None)
 
         result = _run_bash(str(self.script), "staging", env=env)
@@ -384,7 +386,7 @@ class TestModalSyncSecrets:
             {
                 "PATH": f"{fake_bin}:{env['PATH']}",
                 "UV_CALLS_LOG": str(uv_calls_log),
-                "PE_UK_PRIVATE_HF_READ_TOKEN": "hf_test",
+                "PE_UK_PRIVATE_HF_READ_TOKEN": FAKE_HF_TOKEN,
                 "GCP_CREDENTIALS_JSON": '{"type":"service_account"}',
                 "GATEWAY_AUTH_ISSUER": "https://tenant.auth0.com",
                 "GATEWAY_AUTH_AUDIENCE": "https://simulation-api-beta.policyengine.org",
@@ -428,7 +430,7 @@ class TestModalSyncSecrets:
             {
                 "PATH": f"{fake_bin}:{env['PATH']}",
                 "UV_CALLS_LOG": str(uv_calls_log),
-                "PE_UK_PRIVATE_HF_READ_TOKEN": "hf_test",
+                "PE_UK_PRIVATE_HF_READ_TOKEN": FAKE_HF_TOKEN,
                 "GCP_CREDENTIALS_JSON": '{"type":"service_account"}',
             }
         )

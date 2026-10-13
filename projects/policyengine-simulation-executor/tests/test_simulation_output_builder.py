@@ -80,6 +80,8 @@ from policyengine_simulation_executor.simulation_runtime import (
 )
 from policyengine_simulation_observability.stages import Stage
 
+CONSTITUENCY_CSV_PATH = "/tmp/constituencies_2024.csv"  # noqa: S108  # a path string the fakes pass along; nothing opens it
+
 
 def _params_with_spm(params, selection):
     """Return request parameters after the runtime resolves SPM settings."""
@@ -1773,7 +1775,7 @@ def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
             assert baseline_simulation is baseline
             assert reform_simulation is reform
             assert kwargs == {
-                "constituency_csv_path": "/tmp/constituencies_2024.csv",
+                "constituency_csv_path": CONSTITUENCY_CSV_PATH,
                 "download_missing_assets": False,
             }
             return SimpleNamespace(constituency_results=expected)
@@ -1787,7 +1789,7 @@ def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_geographic."
         "_required_uk_geography_lookup_csv_path",
-        lambda spec: "/tmp/constituencies_2024.csv",
+        lambda spec: CONSTITUENCY_CSV_PATH,
     )
 
     result = _simulation_output_builder(

@@ -83,9 +83,9 @@ def _fetch_hf_dataset_revision(
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
 
-    request = Request(url, headers=headers)
+    request = Request(url, headers=headers)  # noqa: S310  # Hub API URL: the HF_ENDPOINT base (https by default) and quoted path parts
     try:
-        with urlopen(request, timeout=HF_REQUEST_TIMEOUT_SECONDS) as response:
+        with urlopen(request, timeout=HF_REQUEST_TIMEOUT_SECONDS) as response:  # noqa: S310  # the Hub API request built above
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         detail = exc.reason or f"HTTP {exc.code}"
