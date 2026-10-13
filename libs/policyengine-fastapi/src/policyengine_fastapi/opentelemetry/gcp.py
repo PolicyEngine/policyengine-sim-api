@@ -102,7 +102,8 @@ class GCPLoggingInstrumentor:
 
         log_handler = logging.StreamHandler()
         formatter = JsonFormatter(
-            "%(asctime)s %(levelname)s %(message)s %(otelTraceID)s %(otelSpanID)s %(otelTraceSampled)s",
+            "%(asctime)s %(levelname)s %(message)s "
+            "%(otelTraceID)s %(otelSpanID)s %(otelTraceSampled)s",
             rename_fields={
                 "levelname": "severity",
                 "asctime": "timestamp",

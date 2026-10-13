@@ -12,7 +12,10 @@ def test_runtime_dataset_uri_preserves_populace_build_revision_when_package_diff
     )
 
     def reject_hf_validation(dataset_uri: str, revision: str) -> str:
-        msg = f"HF validation should not run for trusted bundle data: {dataset_uri}@{revision}"
+        msg = (
+            "HF validation should not run for trusted bundle data: "
+            f"{dataset_uri}@{revision}"
+        )
         raise AssertionError(msg)
 
     monkeypatch.setattr(

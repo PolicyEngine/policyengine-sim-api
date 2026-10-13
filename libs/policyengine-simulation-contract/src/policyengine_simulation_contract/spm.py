@@ -230,7 +230,10 @@ class SPMRuntimeVersions(BaseModel):
 
 
 def _require_complete_selection(selection: SPMSelection) -> tuple[str, str]:
-    """Return a complete selection's artifact hash and scenario, else raise ValueError."""
+    """Return a complete selection's artifact hash and scenario.
+
+    Raise ValueError if the selection is incomplete.
+    """
     required = set(SPMSelection.model_fields)
     missing = required.difference(selection.model_fields_set)
     if missing:
