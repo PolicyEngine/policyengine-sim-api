@@ -196,7 +196,8 @@ class MockDict:
     @classmethod
     def from_name(cls, name: str) -> Self:
         """Mock from_name that returns a MockDict based on name."""
-        raise NotImplementedError("Mock not configured")
+        msg = "Mock not configured"
+        raise NotImplementedError(msg)
 
 
 class MockFunctionCall:
@@ -375,7 +376,8 @@ def mock_modal(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
             if create_if_missing and name not in mock_dicts:
                 mock_dicts[name] = {}
             if name not in mock_dicts:
-                raise KeyError(f"Mock dict not configured for: {name}")
+                msg = f"Mock dict not configured for: {name}"
+                raise KeyError(msg)
             return MockDict(mock_dicts[name])
 
     class MockModalFunction:

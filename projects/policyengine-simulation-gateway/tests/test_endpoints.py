@@ -760,9 +760,8 @@ class TestSubmitSimulationEndpoint:
         mock_modal["dicts"]["simulation-api-routing-state"] = {"active": state}
 
         def reject_revision(dataset_uri, revision):
-            raise HuggingFaceDatasetReferenceError(
-                f"HF validation should not run for private GCS data: {dataset_uri}@{revision}"
-            )
+            msg = f"HF validation should not run for private GCS data: {dataset_uri}@{revision}"
+            raise HuggingFaceDatasetReferenceError(msg)
 
         monkeypatch.setattr(
             "policyengine_simulation_contract.dataset_uri.with_hf_revision",

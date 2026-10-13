@@ -119,7 +119,8 @@ def _job_metadata_store() -> "modal.Dict":
 def _runtime(request: Request) -> ObservabilityRuntime:
     runtime = getattr(request.app.state, "policyengine_observability", None)
     if not isinstance(runtime, ObservabilityRuntime):
-        raise RuntimeError("Simulation gateway observability is not configured")
+        msg = "Simulation gateway observability is not configured"
+        raise RuntimeError(msg)  # noqa: TRY004  # a missing runtime is a configuration error, not a bad argument; FastAPI handlers surface it unchanged
     return runtime
 
 
@@ -296,10 +297,11 @@ def _policyengine_version_for_app(
     if len(matching) == 1 and not unclassified:
         return matching[0]
     if len(candidates) > 1:
-        raise ValueError(
+        msg = (
             f"Ambiguous bundle for {country} version {model_version}; pass "
             "policyengine_version to select a bundle explicitly"
         )
+        raise ValueError(msg)
     if not candidates:
         return None
     version = next(iter(candidates))
@@ -334,7 +336,8 @@ def _resolve_policyengine_route(
 ) -> RouteResolution:
     app_name = _routing_state_routes(state, "policyengine").get(policyengine_version)
     if not isinstance(app_name, str):
-        raise ValueError(f"Unknown policyengine.py version {policyengine_version}")
+        msg = f"Unknown policyengine.py version {policyengine_version}"
+        raise ValueError(msg)  # noqa: TRY004  # an unknown version is a request error; route resolution callers catch ValueError
     return RouteResolution(
         app_name=app_name,
         response_version=response_version or policyengine_version,
@@ -390,11 +393,12 @@ def _validate_legacy_version_matches_bundle(
         return
     model_version = country_bundle.get("model_version")
     if isinstance(model_version, str) and requested_version != model_version:
-        raise ValueError(
+        msg = (
             f"Requested {country} version {requested_version} does not match "
             f"policyengine.py bundle {manifest.get('policyengine_version')} "
             f"({country} model version {model_version})"
         )
+        raise ValueError(msg)
 
 
 def _resolve_from_active_state(
@@ -433,7 +437,8 @@ def _resolve_from_active_state(
             )
             if country_resolution is not None:
                 return country_resolution
-        raise ValueError("Routing state does not define a latest route")
+        msg = "Routing state does not define a latest route"
+        raise ValueError(msg)
 
     country_resolution = _resolve_country_route(
         state,
@@ -443,10 +448,11 @@ def _resolve_from_active_state(
     policyengine_app = _routing_state_routes(state, "policyengine").get(version)
     if country_resolution is not None and isinstance(policyengine_app, str):
         if country_resolution.app_name != policyengine_app:
-            raise ValueError(
+            msg = (
                 f"Ambiguous version {version} for country {country}; pass "
                 "policyengine_version to select a bundle explicitly"
             )
+            raise ValueError(msg)
         return _resolve_policyengine_route(
             state,
             policyengine_version=version,
@@ -459,7 +465,8 @@ def _resolve_from_active_state(
             policyengine_version=version,
         )
 
-    raise ValueError(f"Unknown version {version} for country {country}")
+    msg = f"Unknown version {version} for country {country}"
+    raise ValueError(msg)
 
 
 def _resolve_from_legacy_dicts(
@@ -471,11 +478,13 @@ def _resolve_from_legacy_dicts(
     if policyengine_version is not None:
         policyengine_versions = _optional_modal_dict(POLICYENGINE_VERSION_DICT_NAME)
         if policyengine_versions is None:
-            raise ValueError(f"Unknown policyengine.py version {policyengine_version}")
+            msg = f"Unknown policyengine.py version {policyengine_version}"
+            raise ValueError(msg)
         try:
             app_name = policyengine_versions[policyengine_version]
         except KeyError:
-            raise ValueError(f"Unknown policyengine.py version {policyengine_version}")
+            msg = f"Unknown policyengine.py version {policyengine_version}"
+            raise ValueError(msg)
         return RouteResolution(
             app_name=app_name,
             response_version=policyengine_version,
@@ -505,7 +514,8 @@ def _resolve_from_legacy_dicts(
                     policyengine_version=version,
                     bundle_manifest={},
                 )
-        raise ValueError(f"Unknown version {resolved_version} for country {country}")
+        msg = f"Unknown version {resolved_version} for country {country}"
+        raise ValueError(msg)
 
     return RouteResolution(
         app_name=app_name,
@@ -559,8 +569,9 @@ def _build_policyengine_bundle(
         try:
             capability = SPMCapability.model_validate(capability)
         except ValueError as exc:
+            msg = "SPM_CONFIGURATION_UNAVAILABLE"
             raise SPMInputError(
-                "SPM_CONFIGURATION_UNAVAILABLE",
+                msg,
                 "This worker bundle has invalid canonical SPM capability metadata",
             ) from exc
     return PolicyEngineBundle(
@@ -817,7 +828,8 @@ def resolve_route(
     """Resolve a country/package or policyengine.py version to a Modal app."""
     country_lower = country.lower()
     if country_lower not in ("us", "uk"):
-        raise ValueError(f"Unknown country: {country}")
+        msg = f"Unknown country: {country}"
+        raise ValueError(msg)
 
     state = _active_routing_state()
     if state:
@@ -1115,7 +1127,7 @@ async def get_job_status(
         running_metadata = with_progress("running")
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
             return running_job_response(running_metadata, headers=response_headers)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # call.get re-raises whatever the worker raised; every failure becomes a failed-job response, logged with its traceback by log_and_redact_exception
         if _is_modal_job_not_found(exc):
             runtime.record_exception(exc, handled=True, status_code=404)
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
@@ -1185,7 +1197,7 @@ async def get_budget_window_job_status(
     try:
         with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)):
             call = modal.FunctionCall.from_id(batch_job_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # any lookup failure degrades to the seed state; logged below with its traceback at warning level
         # The endpoint degrades gracefully to the seed state (a successful
         # 202/200 response), so this must NOT be recorded as a request
         # error — recording the exception would emit a request failure and
@@ -1221,7 +1233,7 @@ async def get_budget_window_job_status(
             return batch_status_response(
                 build_batch_status_response(seed_state), headers=response_headers
             )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # call.get re-raises whatever the batch worker raised; every failure is persisted as a failed batch, logged with its traceback by log_and_redact_exception
         # Persist the failure so subsequent polls don't resurrect the
         # "submitted" status from the seed store (#448). We deliberately
         # overwrite the main job store entry as well as the seed so either
