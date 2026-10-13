@@ -130,7 +130,7 @@ def setup_gcp_credentials(
                 for k, v in os.environ.items()
                 if "GOOGLE" in k or "GCP" in k or "CREDENTIAL" in k
             }
-            logger.info(f"GCP-related env vars: {list(gcp_vars.keys())}")
+            logger.info("GCP-related env vars: %s", list(gcp_vars.keys()))
 
             if previous:
                 logger.info("GOOGLE_APPLICATION_CREDENTIALS already set")
@@ -158,7 +158,7 @@ def setup_gcp_credentials(
                     creds_file.write(normalized)
                     creds_file.flush()
                     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_file.name
-                    logger.info(f"GCP credentials written to {creds_file.name}")
+                    logger.info("GCP credentials written to %s", creds_file.name)
 
         yield
     finally:

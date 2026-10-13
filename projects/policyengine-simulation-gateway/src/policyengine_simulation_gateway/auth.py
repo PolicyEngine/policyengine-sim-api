@@ -264,8 +264,8 @@ def require_auth(
 
     try:
         decoder = _get_decoder()
-    except RuntimeError as exc:
-        logger.error("Gateway auth misconfigured: %s", exc, exc_info=True)
+    except RuntimeError:
+        logger.exception("Gateway auth misconfigured")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Gateway authentication is not configured.",

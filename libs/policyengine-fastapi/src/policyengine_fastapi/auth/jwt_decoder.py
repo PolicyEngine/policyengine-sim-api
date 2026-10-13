@@ -63,10 +63,10 @@ class JWTDecoder:
                 token.credentials
             ).key
         except jwt.exceptions.PyJWKClientError as error:
-            LOG.error(f"Unable to get public key for JWT validation: {error}")  # noqa: TRY400  # callers control the token, so a traceback per bad token would let them flood the logs
+            LOG.error("Unable to get public key for JWT validation: %s", error)  # noqa: TRY400  # callers control the token, so a traceback per bad token would let them flood the logs
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         except jwt.exceptions.DecodeError as error:
-            LOG.error(f"Unable to get public key for JWT validation: {error}")  # noqa: TRY400  # callers control the token, so a traceback per bad token would let them flood the logs
+            LOG.error("Unable to get public key for JWT validation: %s", error)  # noqa: TRY400  # callers control the token, so a traceback per bad token would let them flood the logs
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
         try:
@@ -78,6 +78,6 @@ class JWTDecoder:
                 issuer=self.issuer,
             )
         except Exception as error:  # noqa: BLE001  # any decode or claim-validation failure must become a 403, never a 500
-            LOG.info(f"Invalid bearer token: {error}")
+            LOG.info("Invalid bearer token: %s", error)
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         return payload
