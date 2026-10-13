@@ -117,9 +117,8 @@ class StagePlan:
     def name(self, stage: Stage) -> str:
         """Return a configured stage name, rejecting unregistered use."""
         if stage not in self.stages:
-            raise ValueError(
-                f"{stage.value!r} is not registered for {self.configuration.value!r}"
-            )
+            msg = f"{stage.value!r} is not registered for {self.configuration.value!r}"
+            raise ValueError(msg)
         return stage.value
 
 
