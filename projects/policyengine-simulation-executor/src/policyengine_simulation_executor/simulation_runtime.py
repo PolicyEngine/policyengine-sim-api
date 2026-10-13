@@ -222,7 +222,7 @@ def _parse_policy_period_dates(text: str) -> tuple[datetime, datetime | None]:
         raise ValueError
     # The wrapper has always parsed dates with strptime, which also takes
     # unpadded months and days ("2027-4-6"); accept what it accepted.
-    dates = [datetime.strptime(part, "%Y-%m-%d") for part in parts]
+    dates = [datetime.strptime(part, "%Y-%m-%d") for part in parts]  # noqa: DTZ007  # naive like policyengine.py's own period parsing; its ParameterValue dates are naive
     start = dates[0]
     stop = dates[1] if len(dates) == 2 else None
     if stop is not None and stop < start:

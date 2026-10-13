@@ -21,6 +21,15 @@ UK_ALLOWANCE = "gov.hmrc.income_tax.allowances.personal_allowance.amount"
 US_SALT_CAP = "gov.irs.deductions.itemized.salt_and_real_estate.cap.JOINT"
 
 
+def _naive_policy_date(year: int, month: int, day: int) -> datetime:
+    """Return midnight on a date as a naive datetime.
+
+    policyengine.py parses policy period keys with ``strptime`` and no zone, so
+    its ``ParameterValue`` dates are naive; an aware value never compares equal.
+    """
+    return datetime(year, month, day)  # noqa: DTZ001  # naive like the dates under test
+
+
 @pytest.fixture(scope="module")
 def uk():
     country = _country_module("uk")
@@ -59,8 +68,8 @@ def test_uk_interval_policy_preserves_inclusive_stop_date(uk, stop):
     assert value.parameter.name == UK_RATE
     assert value.parameter.tax_benefit_model_version is uk.model
     assert value.parameter.data_type is float
-    assert value.start_date == datetime(2027, 4, 6)
-    assert value.end_date == datetime.strptime(stop, "%Y-%m-%d")
+    assert value.start_date == _naive_policy_date(2027, 4, 6)
+    assert value.end_date == datetime.strptime(stop, "%Y-%m-%d")  # noqa: DTZ007  # policyengine.py's ParameterValue dates are naive
     assert value.value == 0.21
     assert reform_dict_from_parameter_values(policy.parameter_values) == raw
 
@@ -83,9 +92,9 @@ def test_mixed_effective_dates_and_intervals_are_chronological(uk, reverse):
         (value.start_date, value.end_date, value.value)
         for value in policy.parameter_values
     ] == [
-        (datetime(2026, 4, 6), None, 0.20),
-        (datetime(2027, 4, 6), datetime(2028, 4, 5), 0.21),
-        (datetime(2029, 4, 6), None, 0.22),
+        (_naive_policy_date(2026, 4, 6), None, 0.20),
+        (_naive_policy_date(2027, 4, 6), _naive_policy_date(2028, 4, 5), 0.21),
+        (_naive_policy_date(2029, 4, 6), None, 0.22),
     ]
     assert reform_dict_from_parameter_values(policy.parameter_values) == {
         UK_RATE: {
@@ -165,7 +174,7 @@ def test_scalar_in_interval_policy_uses_request_year(uk, period, year):
         for value in simulation.policy.parameter_values
         if value.parameter.name == UK_ALLOWANCE
     )
-    assert scalar.start_date == datetime(year, 1, 1)
+    assert scalar.start_date == _naive_policy_date(year, 1, 1)
     assert scalar.end_date is None
     assert scalar.value == 13000
     assert scalar.parameter.data_type is int
@@ -188,8 +197,8 @@ def test_us_interval_policy_uses_same_public_parameter_values():
     assert value.parameter.name == US_SALT_CAP
     assert value.parameter.tax_benefit_model_version is us.model
     assert value.parameter.data_type is int
-    assert value.start_date == datetime(2027, 1, 1)
-    assert value.end_date == datetime(2027, 12, 31)
+    assert value.start_date == _naive_policy_date(2027, 1, 1)
+    assert value.end_date == _naive_policy_date(2027, 12, 31)
     assert value.value == 50000
     assert reform_dict_from_parameter_values(policy.parameter_values) == raw
 
@@ -237,8 +246,12 @@ def test_policy_without_intervals_keeps_original_wrapper_compilation(
 @pytest.mark.parametrize(
     "key, start, stop",
     [
-        ("2027-4-6", datetime(2027, 4, 6), None),
-        ("2027-4-6.2028-4-5", datetime(2027, 4, 6), datetime(2028, 4, 5)),
+        ("2027-4-6", _naive_policy_date(2027, 4, 6), None),
+        (
+            "2027-4-6.2028-4-5",
+            _naive_policy_date(2027, 4, 6),
+            _naive_policy_date(2028, 4, 5),
+        ),
     ],
 )
 def test_unpadded_dates_are_accepted_as_the_wrapper_always_accepted_them(

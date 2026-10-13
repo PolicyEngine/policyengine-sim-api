@@ -1071,7 +1071,7 @@ def test_aggregate_stand_ins_keep_bounded_policy_end_dates(monkeypatch) -> None:
 
     for role, stop in (("baseline", "2026-12-31"), ("reform", "2027-12-31")):
         (value,) = observed[role].policy.parameter_values
-        assert value.end_date == datetime.strptime(stop, "%Y-%m-%d"), role
+        assert value.end_date == datetime.strptime(stop, "%Y-%m-%d"), role  # noqa: DTZ007  # policyengine.py's ParameterValue dates are naive
 
 
 def _uk_report() -> ReportExecutionInput:
