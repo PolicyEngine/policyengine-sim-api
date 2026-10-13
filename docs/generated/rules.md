@@ -252,7 +252,7 @@ flowchart LR
 | `sim.quality.every-project-tested` | Every project and library with unit tests runs them in the PR test matrix. | mechanical | doc-only | no | nothing | — | — |
 | `sim.quality.ruff-format-src` | Source code under projects/*/src and libs/*/src is formatted with ruff format. | mechanical | enforced | yes | ruff format | `pr.yml:lint` | — |
 | `sim.quality.ruff-format-tests` | Test code is formatted with ruff format too; CI currently checks only src directories. | mechanical | doc-only | no | nothing | — | — |
-| `sim.quality.ruff-lint` | All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. | mechanical | enforced | yes | ruff check (ANN, BLE, D, DTZ, E4, E7, E9, EM, ERA, EXE, F, FIX, FLY, FURB, G, I, LOG, PIE, PYI, RET, RSE, S, T20, TC, TD, TRY, UP, W) | `pr.yml:lint` | — |
+| `sim.quality.ruff-lint` | All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. | mechanical | enforced | yes | ruff check (A, ANN, BLE, D, DTZ, E, E4, E7, E9, EM, ERA, EXE, F, FAST, FIX, FLY, FURB, G, I, INP, LOG, N, PIE, PLC, PYI, RET, RSE, S, SLF, T20, TC, TD, TRY, UP, W) | `pr.yml:lint` | — |
 | `sim.quality.runtime-evaluated-models-resolve` | Every Pydantic model is runtime-evaluated for ruff: one of its bases, read through the imports of the model's own module, is listed in ruff.toml's runtime-evaluated-base-classes or is a runtime-evaluated class in that same module; and every Pydantic model resolves its annotations once its package is imported. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py`, `projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py` | `pr.yml:test` | yes |
 | `sim.quality.src-programs-ruff-exemptions` | Programs under src (the Modal deployment utilities, and the OpenAPI and Stage 12 infrastructure commands) may print their output (T201) and open URLs from their arguments (S310); every other ruff rule applies to them. | mechanical | enforced | yes | ruff per-file ignore of S310, T201 for `projects/*/src/{modal/utils/*,policyengine_simulation_entry/generate_openapi,policyengine_simulation_entry/stage12_infrastructure,policyengine_simulation_gateway/generate_openapi}.py` | `pr.yml:lint` | — |
 | `sim.quality.tests-pass` | Each project's unit tests pass in its own locked environment. | mechanical | enforced | yes | CI job `test` | `pr.yml:test` | — |
@@ -273,7 +273,7 @@ flowchart LR
   e_ruff_format["ruff format"]
   r_sim_quality_ruff_format_tests("sim.quality.ruff-format-tests (doc-only)")
   r_sim_quality_ruff_lint("sim.quality.ruff-lint (enforced)")
-  e_ruff_check__ANN__BLE__D__DTZ__E4__E7__E9__EM__ERA__EXE__F__FIX__FLY__FURB__G__I__LOG__PIE__PYI__RET__RSE__S__T20__TC__TD__TRY__UP__W_["ruff check (ANN, BLE, D, DTZ, E4, E7, E9, EM, ERA, EXE, F, FIX, FLY, FURB, G, I, LOG, PIE, PYI, RET, RSE, S, T20, TC, TD, TRY, UP, W)"]
+  e_ruff_check__A__ANN__BLE__D__DTZ__E__E4__E7__E9__EM__ERA__EXE__F__FAST__FIX__FLY__FURB__G__I__INP__LOG__N__PIE__PLC__PYI__RET__RSE__S__SLF__T20__TC__TD__TRY__UP__W_["ruff check (A, ANN, BLE, D, DTZ, E, E4, E7, E9, EM, ERA, EXE, F, FAST, FIX, FLY, FURB, G, I, INP, LOG, N, PIE, PLC, PYI, RET, RSE, S, SLF, T20, TC, TD, TRY, UP, W)"]
   r_sim_quality_runtime_evaluated_models_resolve("sim.quality.runtime-evaluated-models-resolve (enforced)")
   e_pytest_projects_policyengine_simulation_entry_tests_test_runtime_evaluated_annotations_py__projects_policyengine_simulation_executor_tests_test_runtime_evaluated_annotations_py["pytest projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py, projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py"]
   j_CI_pr_yml_test["CI pr.yml:test"]
@@ -293,8 +293,8 @@ flowchart LR
   r_sim_quality_ruff_format_src --> e_ruff_format
   e_ruff_format --> j_CI_pr_yml_lint
   r_sim_quality_ruff_format_tests -.-> gap_unenforced
-  r_sim_quality_ruff_lint --> e_ruff_check__ANN__BLE__D__DTZ__E4__E7__E9__EM__ERA__EXE__F__FIX__FLY__FURB__G__I__LOG__PIE__PYI__RET__RSE__S__T20__TC__TD__TRY__UP__W_
-  e_ruff_check__ANN__BLE__D__DTZ__E4__E7__E9__EM__ERA__EXE__F__FIX__FLY__FURB__G__I__LOG__PIE__PYI__RET__RSE__S__T20__TC__TD__TRY__UP__W_ --> j_CI_pr_yml_lint
+  r_sim_quality_ruff_lint --> e_ruff_check__A__ANN__BLE__D__DTZ__E__E4__E7__E9__EM__ERA__EXE__F__FAST__FIX__FLY__FURB__G__I__INP__LOG__N__PIE__PLC__PYI__RET__RSE__S__SLF__T20__TC__TD__TRY__UP__W_
+  e_ruff_check__A__ANN__BLE__D__DTZ__E__E4__E7__E9__EM__ERA__EXE__F__FAST__FIX__FLY__FURB__G__I__INP__LOG__N__PIE__PLC__PYI__RET__RSE__S__SLF__T20__TC__TD__TRY__UP__W_ --> j_CI_pr_yml_lint
   r_sim_quality_runtime_evaluated_models_resolve --> e_pytest_projects_policyengine_simulation_entry_tests_test_runtime_evaluated_annotations_py__projects_policyengine_simulation_executor_tests_test_runtime_evaluated_annotations_py
   e_pytest_projects_policyengine_simulation_entry_tests_test_runtime_evaluated_annotations_py__projects_policyengine_simulation_executor_tests_test_runtime_evaluated_annotations_py --> j_CI_pr_yml_test
   r_sim_quality_src_programs_ruff_exemptions --> e_ruff_per_file_ignore_of_S310__T201_for_projects___src__modal_utils___policyengine_simulation_entry_generate_openapi_policyengine_simulation_entry_stage12_infrastructure_policyengine_simulation_gateway_generate_openapi__py
