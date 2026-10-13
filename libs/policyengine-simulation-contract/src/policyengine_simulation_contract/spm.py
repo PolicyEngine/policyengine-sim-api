@@ -81,7 +81,8 @@ class SPMSelection(BaseModel):
         """Require ``as_of`` to be a canonical ``YYYY-MM-DD`` date when given."""
         if value is not None:
             if date.fromisoformat(value).isoformat() != value:
-                raise ValueError("as_of must be an ISO calendar date (YYYY-MM-DD)")
+                msg = "as_of must be an ISO calendar date (YYYY-MM-DD)"
+                raise ValueError(msg)
         return value
 
     @model_validator(mode="after")
@@ -97,9 +98,11 @@ class SPMSelection(BaseModel):
             return self
         if self.geography_kind == "metro":
             if not self.geography_id or not self.geography_id.strip():
-                raise ValueError("An SPM area selection requires geography_id")
+                msg = "An SPM area selection requires geography_id"
+                raise ValueError(msg)
         elif self.geography_id is not None:
-            raise ValueError("Only an SPM area selection accepts geography_id")
+            msg = "Only an SPM area selection accepts geography_id"
+            raise ValueError(msg)
         return self
 
 
@@ -136,7 +139,8 @@ class SPMResolvedConfiguration(BaseModel):
     def validate_as_of(cls, value: str | None) -> str | None:
         """Require ``as_of`` to be a canonical ``YYYY-MM-DD`` date when given."""
         if value is not None and date.fromisoformat(value).isoformat() != value:
-            raise ValueError("as_of must be an ISO calendar date (YYYY-MM-DD)")
+            msg = "as_of must be an ISO calendar date (YYYY-MM-DD)"
+            raise ValueError(msg)
         return value
 
     @model_validator(mode="after")
@@ -144,9 +148,11 @@ class SPMResolvedConfiguration(BaseModel):
         """Require ``geography_id`` for metro selections and forbid it otherwise."""
         if self.geography_kind == "metro":
             if self.geography_id is None or not self.geography_id.strip():
-                raise ValueError("An SPM area selection requires geography_id")
+                msg = "An SPM area selection requires geography_id"
+                raise ValueError(msg)
         elif self.geography_id is not None:
-            raise ValueError("Only an SPM area selection accepts geography_id")
+            msg = "Only an SPM area selection accepts geography_id"
+            raise ValueError(msg)
         return self
 
 
@@ -187,9 +193,11 @@ class SPMProvenance(BaseModel):
     def validate_years(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         """Require four-digit years, sorted ascending with no duplicates."""
         if any(re.fullmatch(r"[0-9]{4}", year) is None for year in value):
-            raise ValueError("SPM provenance years must use four-digit years")
+            msg = "SPM provenance years must use four-digit years"
+            raise ValueError(msg)
         if value != tuple(sorted(set(value))):
-            raise ValueError("SPM provenance years must be sorted and unique")
+            msg = "SPM provenance years must be sorted and unique"
+            raise ValueError(msg)
         return value
 
     @model_validator(mode="after")
@@ -197,9 +205,11 @@ class SPMProvenance(BaseModel):
         """Require ``geography_id`` for metro receipts and forbid it otherwise."""
         if self.geography_kind == "metro":
             if self.geography_id is None or not self.geography_id.strip():
-                raise ValueError("An SPM area receipt requires geography_id")
+                msg = "An SPM area receipt requires geography_id"
+                raise ValueError(msg)
         elif self.geography_id is not None:
-            raise ValueError("Only an SPM area receipt accepts geography_id")
+            msg = "Only an SPM area receipt accepts geography_id"
+            raise ValueError(msg)
         return self
 
 
@@ -227,9 +237,11 @@ def _require_complete_selection(selection: SPMSelection) -> None:
             "Resolved SPM selection is missing " + ", ".join(sorted(missing))
         )
     if selection.forecast_content_sha256 is None:
-        raise ValueError("Resolved SPM selection has no artifact hash")
+        msg = "Resolved SPM selection has no artifact hash"
+        raise ValueError(msg)
     if selection.scenario is None:
-        raise ValueError("Resolved SPM selection has no scenario")
+        msg = "Resolved SPM selection has no scenario"
+        raise ValueError(msg)
 
 
 def _resolved_spm_configuration(
@@ -276,7 +288,8 @@ def build_spm_provenance(
     assert selection.forecast_content_sha256 is not None
     assert selection.scenario is not None
     if forecast_sha256 != selection.forecast_content_sha256:
-        raise ValueError("SPM receipt artifact hash differs from the selection")
+        msg = "SPM receipt artifact hash differs from the selection"
+        raise ValueError(msg)
     return SPMProvenance(
         schema_version="canonical-spm-provenance-v2",
         forecast_id=forecast_id,
@@ -303,9 +316,8 @@ def validate_spm_calculation_provenance(
     receipt_configuration = _resolved_spm_configuration_from_provenance(receipt)
     for field_name in SPMResolvedConfiguration.model_fields:
         if getattr(receipt_configuration, field_name) != getattr(resolved, field_name):
-            raise ValueError(
-                f"SPM receipt {field_name} differs from the resolved selection"
-            )
+            msg = f"SPM receipt {field_name} differs from the resolved selection"
+            raise ValueError(msg)
     return receipt
 
 
@@ -385,9 +397,8 @@ class SPMCapability(BaseModel):
         default, since ``SPMSelection`` serialises only the fields that were set.
         """
         if not self.defaults.forecast_content_sha256 or not self.defaults.scenario:
-            raise ValueError(
-                "Certified SPM defaults must pin artifact hash and scenario"
-            )
+            msg = "Certified SPM defaults must pin artifact hash and scenario"
+            raise ValueError(msg)
         self.defaults = SPMSelection(
             **{name: getattr(self.defaults, name) for name in SPMSelection.model_fields}
         )
@@ -416,7 +427,8 @@ class SPMComparisonProvenance(BaseModel):
     def validate_compatible_receipts(self) -> "SPMComparisonProvenance":
         """Reject comparisons whose baseline and reform receipts differ."""
         if self.baseline.receipt != self.reform.receipt:
-            raise ValueError("baseline and reform SPM receipts differ")
+            msg = "baseline and reform SPM receipts differ"
+            raise ValueError(msg)
         return self
 
 
@@ -425,10 +437,12 @@ def _collapse_spm_receipts(
     receipts: Sequence[SPMProvenance],
 ) -> SPMExecutionProvenance:
     if not receipts:
-        raise ValueError(f"{side} receipts must not be empty")
+        msg = f"{side} receipts must not be empty"
+        raise ValueError(msg)
     first = receipts[0]
     if any(receipt != first for receipt in receipts[1:]):
-        raise ValueError(f"{side} receipts differ")
+        msg = f"{side} receipts differ"
+        raise ValueError(msg)
     return SPMExecutionProvenance(receipt=first, execution_count=len(receipts))
 
 
@@ -441,12 +455,43 @@ def build_spm_comparison_provenance(
     baseline = _collapse_spm_receipts("baseline", baseline_receipts)
     reform = _collapse_spm_receipts("reform", reform_receipts)
     if baseline.receipt != reform.receipt:
-        raise ValueError("baseline and reform SPM receipts differ")
+        msg = "baseline and reform SPM receipts differ"
+        raise ValueError(msg)
     return SPMComparisonProvenance(
         schema_version="canonical-spm-comparison-v2",
         baseline=baseline,
         reform=reform,
     )
+
+
+def _certified_spm_selection(
+    capability: SPMCapability | Mapping[str, object],
+    selection: SPMSelection | Mapping[str, object] | None,
+) -> JsonObject:
+    """Merge a selection over the certified capability's defaults.
+
+    Raises ``ValueError`` for an invalid capability or selection, or for a
+    selection that names a different forecast artifact.
+    """
+    cap = SPMCapability.model_validate(capability)
+    chosen = SPMSelection.model_validate({} if selection is None else selection)
+    defaults = cap.defaults
+    if chosen.forecast_content_sha256 not in (
+        None,
+        defaults.forecast_content_sha256,
+    ):
+        msg = "SPM selection does not match the certified bundle artifact hash"
+        raise ValueError(msg)
+    values = {name: getattr(defaults, name) for name in SPMSelection.model_fields}
+    values.update(chosen.model_dump(exclude_unset=True))
+    if (
+        "geography_kind" in chosen.model_fields_set
+        and chosen.geography_kind != defaults.geography_kind
+    ):
+        values["geography_id"] = chosen.geography_id
+    values["forecast_content_sha256"] = defaults.forecast_content_sha256
+    values["scenario"] = chosen.scenario or defaults.scenario
+    return SPMSelection.model_validate(values).model_dump(mode="json")
 
 
 def resolve_spm_selection(
@@ -461,9 +506,8 @@ def resolve_spm_selection(
     """Resolve only certified metadata; unrecognized future bundles fail closed."""
     if country.lower() != "us":
         if selection is not None:
-            raise SPMInputError(
-                "SPM_SETTINGS_INVALID", "SPM settings are supported only for the US"
-            )
+            msg = "SPM_SETTINGS_INVALID"
+            raise SPMInputError(msg, "SPM settings are supported only for the US")
         return None
     if capability is None:
         # Existing versioned worker bundles predate canonical SPM. This does
@@ -497,33 +541,51 @@ def resolve_spm_selection(
         )
         if selection is None and historical:
             return None
+        msg = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            "SPM_CONFIGURATION_UNAVAILABLE",
+            msg,
             "This worker bundle has no certified canonical SPM capability",
         )
     try:
-        cap = SPMCapability.model_validate(capability)
-        chosen = SPMSelection.model_validate({} if selection is None else selection)
-        defaults = cap.defaults
-        if chosen.forecast_content_sha256 not in (
-            None,
-            defaults.forecast_content_sha256,
-        ):
-            raise ValueError(
-                "SPM selection does not match the certified bundle artifact hash"
-            )
-        values = {name: getattr(defaults, name) for name in SPMSelection.model_fields}
-        values.update(chosen.model_dump(exclude_unset=True))
-        if (
-            "geography_kind" in chosen.model_fields_set
-            and chosen.geography_kind != defaults.geography_kind
-        ):
-            values["geography_id"] = chosen.geography_id
-        values["forecast_content_sha256"] = defaults.forecast_content_sha256
-        values["scenario"] = chosen.scenario or defaults.scenario
-        return SPMSelection.model_validate(values).model_dump(mode="json")
+        return _certified_spm_selection(capability, selection)
     except ValueError as exc:
-        raise SPMInputError("SPM_SETTINGS_INVALID", str(exc)) from exc
+        msg = "SPM_SETTINGS_INVALID"
+        raise SPMInputError(msg, str(exc)) from exc
+
+
+def _validated_spm_provenance(
+    result: dict,
+    selection: object,
+    *,
+    expected_year: int | str | None,
+) -> SPMComparisonProvenance:
+    """Return the result's SPM provenance once it matches ``selection``.
+
+    Raises ``ValueError`` when the provenance is missing, incomplete, does not
+    match the selection, or does not cover ``expected_year``.
+    """
+    chosen = _resolved_spm_configuration(SPMSelection.model_validate(selection))
+    try:
+        provenance = SPMComparisonProvenance.model_validate(
+            result.get("spm_provenance")
+        )
+    except ValidationError as exc:
+        if any(error["type"] == "missing" for error in exc.errors()):
+            msg = "Result has no complete resolved SPM provenance"
+            raise ValueError(msg) from exc
+        raise
+    for execution in (provenance.baseline, provenance.reform):
+        validate_spm_calculation_provenance(
+            config=SPMSelection.model_validate(chosen.model_dump(mode="json")),
+            receipt=execution.receipt,
+        )
+        if (
+            expected_year is not None
+            and str(expected_year) not in execution.receipt.years
+        ):
+            msg = "Result SPM provenance does not cover the requested year"
+            raise ValueError(msg)
+    return provenance
 
 
 def validate_spm_result(
@@ -531,44 +593,24 @@ def validate_spm_result(
 ) -> SPMComparisonProvenance | None:
     """Do not accept incomplete or mixed-method child/cached output."""
     if "spm_config" in result:
+        msg = "SPM_CONFIGURATION_UNAVAILABLE"
         raise SPMInputError(
-            "SPM_CONFIGURATION_UNAVAILABLE",
+            msg,
             "Completed results must not contain legacy spm_config metadata",
         )
     if selection is None:
         if result.get("spm_provenance") is not None:
+            msg = "SPM_CONFIGURATION_UNAVAILABLE"
             raise SPMInputError(
-                "SPM_CONFIGURATION_UNAVAILABLE",
+                msg,
                 "Unexpected SPM receipt for a historical result",
             )
         return None
     try:
-        chosen = _resolved_spm_configuration(SPMSelection.model_validate(selection))
-        try:
-            provenance = SPMComparisonProvenance.model_validate(
-                result.get("spm_provenance")
-            )
-        except ValidationError as exc:
-            if any(error["type"] == "missing" for error in exc.errors()):
-                raise ValueError(
-                    "Result has no complete resolved SPM provenance"
-                ) from exc
-            raise
-        for execution in (provenance.baseline, provenance.reform):
-            validate_spm_calculation_provenance(
-                config=SPMSelection.model_validate(chosen.model_dump(mode="json")),
-                receipt=execution.receipt,
-            )
-            if (
-                expected_year is not None
-                and str(expected_year) not in execution.receipt.years
-            ):
-                raise ValueError(
-                    "Result SPM provenance does not cover the requested year"
-                )
-        return provenance
+        return _validated_spm_provenance(result, selection, expected_year=expected_year)
     except ValueError as exc:
-        raise SPMInputError("SPM_CONFIGURATION_UNAVAILABLE", str(exc)) from exc
+        msg = "SPM_CONFIGURATION_UNAVAILABLE"
+        raise SPMInputError(msg, str(exc)) from exc
 
 
 def combine_spm_results(
@@ -592,9 +634,8 @@ def combine_spm_results(
     validated: list[SPMComparisonProvenance] = []
     for receipt in receipts:
         if receipt is None:
-            raise SPMInputError(
-                "SPM_CONFIGURATION_UNAVAILABLE", "Missing canonical SPM receipt"
-            )
+            msg = "SPM_CONFIGURATION_UNAVAILABLE"
+            raise SPMInputError(msg, "Missing canonical SPM receipt")
         validated.append(receipt)
     combined = build_spm_comparison_provenance(
         baseline_receipts=[

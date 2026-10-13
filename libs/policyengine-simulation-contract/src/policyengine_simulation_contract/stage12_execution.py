@@ -200,9 +200,11 @@ class GeographySelection(StrictContractModel):
     def require_complete_filter(self) -> GeographySelection:
         """Require the filter field and value together, and both for a strategy."""
         if (self.filter_field is None) != (self.filter_value is None):
-            raise ValueError("filter_field and filter_value must be supplied together")
+            msg = "filter_field and filter_value must be supplied together"
+            raise ValueError(msg)
         if self.filter_strategy is not None and self.filter_field is None:
-            raise ValueError("filter_strategy requires filter_field and filter_value")
+            msg = "filter_strategy requires filter_field and filter_value"
+            raise ValueError(msg)
         return self
 
 
@@ -235,9 +237,8 @@ class SimulationExecutionInput(StrictContractModel):
         ``ReportExecutionInput``.
         """
         if isinstance(value, dict) and ({"baseline", "reform"} & value.keys()):
-            raise ValueError(
-                "single-simulation input cannot contain baseline or reform fields"
-            )
+            msg = "single-simulation input cannot contain baseline or reform fields"
+            raise ValueError(msg)
         return value
 
 
@@ -269,11 +270,11 @@ class ReportOutputRequirements(StrictContractModel):
     ) -> tuple[ReportAggregate, ...]:
         """Require every ``ReportAggregate``, once each and in declaration order."""
         if len(value) != len(set(value)):
-            raise ValueError("report output aggregates must be unique")
+            msg = "report output aggregates must be unique"
+            raise ValueError(msg)
         if value != tuple(ReportAggregate):
-            raise ValueError(
-                "Stage 12 currently requires the complete aggregate profile"
-            )
+            msg = "Stage 12 currently requires the complete aggregate profile"
+            raise ValueError(msg)
         return value
 
 
@@ -297,9 +298,11 @@ class EntityOutputPlan(StrictContractModel):
     def require_canonical_variables(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         """Require variable names to be unique and sorted, so plans hash stably."""
         if len(value) != len(set(value)):
-            raise ValueError("output-plan variables must be unique")
+            msg = "output-plan variables must be unique"
+            raise ValueError(msg)
         if value != tuple(sorted(value)):
-            raise ValueError("output-plan variables must use canonical order")
+            msg = "output-plan variables must use canonical order"
+            raise ValueError(msg)
         return value
 
     @model_validator(mode="after")
@@ -309,17 +312,16 @@ class EntityOutputPlan(StrictContractModel):
         Both must also be subsets of ``materialized_variables``.
         """
         if not set(self.additional_variables).issubset(self.materialized_variables):
-            raise ValueError(
-                "additional output-plan variables must be a materialized subset"
-            )
+            msg = "additional output-plan variables must be a materialized subset"
+            raise ValueError(msg)
         if not set(self.dataset_variables).issubset(self.materialized_variables):
-            raise ValueError(
-                "dataset output-plan variables must be a materialized subset"
-            )
+            msg = "dataset output-plan variables must be a materialized subset"
+            raise ValueError(msg)
         if set(self.additional_variables).intersection(self.dataset_variables):
-            raise ValueError(
+            msg = (
                 "calculated additional variables and dataset variables must be disjoint"
             )
+            raise ValueError(msg)
         return self
 
 
@@ -340,9 +342,11 @@ class Stage12OutputPlan(StrictContractModel):
         """Require entity plans to be unique and sorted by entity name."""
         names = tuple(entity.entity for entity in value)
         if len(names) != len(set(names)):
-            raise ValueError("output-plan entities must be unique")
+            msg = "output-plan entities must be unique"
+            raise ValueError(msg)
         if names != tuple(sorted(names)):
-            raise ValueError("output-plan entities must use canonical order")
+            msg = "output-plan entities must use canonical order"
+            raise ValueError(msg)
         return value
 
 
@@ -367,7 +371,8 @@ class PlannedSimulationExecutionInput(SimulationExecutionInput):
     def require_output_plan_country(self) -> PlannedSimulationExecutionInput:
         """Reject an output plan built for a different country than the geography."""
         if self.output_plan.country != self.geography.country:
-            raise ValueError("output plan country must match simulation geography")
+            msg = "output plan country must match simulation geography"
+            raise ValueError(msg)
         return self
 
 
@@ -388,7 +393,8 @@ class RowIdentity(StrictContractModel):
     def require_unique_columns(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         """Reject repeated identifier column names."""
         if len(value) != len(set(value)):
-            raise ValueError("row identifier columns must be unique")
+            msg = "row identifier columns must be unique"
+            raise ValueError(msg)
         return value
 
 
@@ -433,15 +439,20 @@ class ReportExecutionInput(StrictContractModel):
         distinct execution ids, and everything but the policy must match.
         """
         if self.baseline.role is not SimulationRole.BASELINE:
-            raise ValueError("baseline input must use the baseline role")
+            msg = "baseline input must use the baseline role"
+            raise ValueError(msg)
         if self.reform.role is not SimulationRole.REFORM:
-            raise ValueError("reform input must use the reform role")
+            msg = "reform input must use the reform role"
+            raise ValueError(msg)
         if self.baseline.evaluation_id != self.evaluation_id:
-            raise ValueError("baseline evaluation_id must match the report")
+            msg = "baseline evaluation_id must match the report"
+            raise ValueError(msg)
         if self.reform.evaluation_id != self.evaluation_id:
-            raise ValueError("reform evaluation_id must match the report")
+            msg = "reform evaluation_id must match the report"
+            raise ValueError(msg)
         if self.baseline.simulation_execution_id == self.reform.simulation_execution_id:
-            raise ValueError("baseline and reform simulation identifiers must differ")
+            msg = "baseline and reform simulation identifiers must differ"
+            raise ValueError(msg)
         for field_name in (
             "population",
             "year",
@@ -450,11 +461,11 @@ class ReportExecutionInput(StrictContractModel):
             "bundle",
         ):
             if getattr(self.baseline, field_name) != getattr(self.reform, field_name):
-                raise ValueError(
-                    f"baseline and reform {field_name} must match before execution"
-                )
+                msg = f"baseline and reform {field_name} must match before execution"
+                raise ValueError(msg)
         if len(self.requested_aggregates) != len(set(self.requested_aggregates)):
-            raise ValueError("requested aggregates must be unique")
+            msg = "requested aggregates must be unique"
+            raise ValueError(msg)
         return self
 
 
@@ -492,14 +503,16 @@ class AggregateReportArtifactPayload(StrictContractModel):
     ) -> tuple[ReportAggregate, ...]:
         """Reject repeated aggregate names."""
         if len(value) != len(set(value)):
-            raise ValueError("requested aggregates must be unique")
+            msg = "requested aggregates must be unique"
+            raise ValueError(msg)
         return value
 
     @model_validator(mode="after")
     def validate_spm_provenance(self) -> AggregateReportArtifactPayload:
         """Reject duplicate or noncanonical SPM data in aggregate artifacts."""
         if "spm_config" in self.result:
-            raise ValueError("aggregate result must not include legacy spm_config")
+            msg = "aggregate result must not include legacy spm_config"
+            raise ValueError(msg)
         # Reports without US SPM calculations serialize this optional field
         # as null. Validate a supplied record, not the absence of one.
         provenance = self.result.get("spm_provenance")
@@ -527,19 +540,21 @@ class ResultDifference(StrictContractModel):
         only an absolute delta may stand alone (a zero production value).
         """
         if not self.production_present and not self.stage12_present:
-            raise ValueError(
-                "a result difference must be present in at least one result"
-            )
+            msg = "a result difference must be present in at least one result"
+            raise ValueError(msg)
         if not self.production_present and self.production_value is not None:
-            raise ValueError("an absent production value must be null")
+            msg = "an absent production value must be null"
+            raise ValueError(msg)
         if not self.stage12_present and self.stage12_value is not None:
-            raise ValueError("an absent Stage 12 value must be null")
+            msg = "an absent Stage 12 value must be null"
+            raise ValueError(msg)
         # A zero production value has no finite relative delta, so an absolute
         # delta with no relative delta is the only permitted partial pair.
         if (self.absolute_delta is None) != (self.relative_delta is None) and (
             self.absolute_delta is None or self.relative_delta is not None
         ):
-            raise ValueError("numeric deltas must be supplied together")
+            msg = "numeric deltas must be supplied together"
+            raise ValueError(msg)
         return self
 
 
@@ -560,12 +575,15 @@ class ResultComparisonArtifactPayload(StrictContractModel):
     def validate_differences(self) -> ResultComparisonArtifactPayload:
         """Require a timezone-aware timestamp and a count and status that match."""
         if self.compared_at.tzinfo is None:
-            raise ValueError("comparison timestamp must include a timezone")
+            msg = "comparison timestamp must include a timezone"
+            raise ValueError(msg)
         if self.difference_count != len(self.differences):
-            raise ValueError("difference_count must equal the number of differences")
+            msg = "difference_count must equal the number of differences"
+            raise ValueError(msg)
         expected_status = "matched" if not self.differences else "different"
         if self.status != expected_status:
-            raise ValueError("comparison status does not match its differences")
+            msg = "comparison status does not match its differences"
+            raise ValueError(msg)
         return self
 
 
@@ -612,12 +630,15 @@ MAX_COMPARISON_RUN_ARTIFACT_RETENTION = timedelta(days=30)
 
 def _validate_retention(created_at: datetime, retention_expires_at: datetime) -> None:
     if created_at.tzinfo is None or retention_expires_at.tzinfo is None:
-        raise ValueError("comparison retention timestamps must include a timezone")
+        msg = "comparison retention timestamps must include a timezone"
+        raise ValueError(msg)
     retention = retention_expires_at - created_at
     if retention <= timedelta(0):
-        raise ValueError("comparison retention must be greater than zero")
+        msg = "comparison retention must be greater than zero"
+        raise ValueError(msg)
     if retention > MAX_COMPARISON_RUN_ARTIFACT_RETENTION:
-        raise ValueError("comparison retention must not exceed 30 days")
+        msg = "comparison retention must not exceed 30 days"
+        raise ValueError(msg)
 
 
 class ComparisonRunLifecycleStatus(StrEnum):
@@ -713,14 +734,18 @@ class ComparisonReportRecord(StrictContractModel):
         if any(value is not None for value in output_fields) and not all(
             value is not None for value in output_fields
         ):
-            raise ValueError("aggregate output fields must be supplied together")
+            msg = "aggregate output fields must be supplied together"
+            raise ValueError(msg)
         if self.status is ComparisonRunLifecycleStatus.SUCCEEDED:
             if self.aggregation_status is not ComparisonRunAggregationStatus.SUCCEEDED:
-                raise ValueError("a successful report requires successful aggregation")
+                msg = "a successful report requires successful aggregation"
+                raise ValueError(msg)
             if not all(value is not None for value in output_fields):
-                raise ValueError("a successful report requires an aggregate output")
+                msg = "a successful report requires an aggregate output"
+                raise ValueError(msg)
             if self.completed_at is None:
-                raise ValueError("a successful report requires completed_at")
+                msg = "a successful report requires completed_at"
+                raise ValueError(msg)
         if (
             self.status
             in {
@@ -729,7 +754,8 @@ class ComparisonReportRecord(StrictContractModel):
             }
             and self.error_code is None
         ):
-            raise ValueError("a failed or skipped report requires an error_code")
+            msg = "a failed or skipped report requires an error_code"
+            raise ValueError(msg)
         comparison_output_fields = (
             self.comparison_output_uri,
             self.comparison_output_sha256,
@@ -741,38 +767,43 @@ class ComparisonReportRecord(StrictContractModel):
             ResultComparisonStatus.RUNNING,
         }:
             if any(value is not None for value in comparison_output_fields):
-                raise ValueError(
-                    "an incomplete comparison cannot reference an output artifact"
-                )
+                msg = "an incomplete comparison cannot reference an output artifact"
+                raise ValueError(msg)
             if self.comparison_completed_at is not None:
-                raise ValueError("an incomplete comparison cannot have completed_at")
+                msg = "an incomplete comparison cannot have completed_at"
+                raise ValueError(msg)
             if self.comparison_error_code is not None:
-                raise ValueError("an incomplete comparison cannot have an error_code")
+                msg = "an incomplete comparison cannot have an error_code"
+                raise ValueError(msg)
             if self.comparison_error_summary is not None:
-                raise ValueError(
-                    "an incomplete comparison cannot have an error_summary"
-                )
+                msg = "an incomplete comparison cannot have an error_summary"
+                raise ValueError(msg)
         elif self.comparison_status in {
             ResultComparisonStatus.MATCHED,
             ResultComparisonStatus.DIFFERENT,
         }:
             if not all(value is not None for value in comparison_output_fields):
-                raise ValueError("a completed comparison requires an output artifact")
+                msg = "a completed comparison requires an output artifact"
+                raise ValueError(msg)
             if self.comparison_completed_at is None:
-                raise ValueError("a completed comparison requires completed_at")
+                msg = "a completed comparison requires completed_at"
+                raise ValueError(msg)
             if self.comparison_error_code is not None:
-                raise ValueError("a completed comparison cannot have an error_code")
+                msg = "a completed comparison cannot have an error_code"
+                raise ValueError(msg)
             if self.comparison_error_summary is not None:
-                raise ValueError("a completed comparison cannot have an error_summary")
+                msg = "a completed comparison cannot have an error_summary"
+                raise ValueError(msg)
         else:
             if any(value is not None for value in comparison_output_fields):
-                raise ValueError(
-                    "a failed comparison cannot reference an output artifact"
-                )
+                msg = "a failed comparison cannot reference an output artifact"
+                raise ValueError(msg)
             if self.comparison_completed_at is None:
-                raise ValueError("a failed comparison requires completed_at")
+                msg = "a failed comparison requires completed_at"
+                raise ValueError(msg)
             if self.comparison_error_code is None:
-                raise ValueError("a failed comparison requires an error_code")
+                msg = "a failed comparison requires an error_code"
+                raise ValueError(msg)
         return self
 
 
@@ -824,17 +855,22 @@ class ComparisonSimulationRecord(StrictContractModel):
         if any(value is not None for value in output_fields) and not all(
             value is not None for value in output_fields
         ):
-            raise ValueError("simulation output fields must be supplied together")
+            msg = "simulation output fields must be supplied together"
+            raise ValueError(msg)
         if self.row_identity_columns is not None:
             if not self.row_identity_columns:
-                raise ValueError("row_identity_columns must not be empty")
+                msg = "row_identity_columns must not be empty"
+                raise ValueError(msg)
             if len(self.row_identity_columns) != len(set(self.row_identity_columns)):
-                raise ValueError("row_identity_columns must be unique")
+                msg = "row_identity_columns must be unique"
+                raise ValueError(msg)
         if self.status is ComparisonRunLifecycleStatus.SUCCEEDED:
             if not all(value is not None for value in output_fields):
-                raise ValueError("a successful simulation requires an output")
+                msg = "a successful simulation requires an output"
+                raise ValueError(msg)
             if self.completed_at is None:
-                raise ValueError("a successful simulation requires completed_at")
+                msg = "a successful simulation requires completed_at"
+                raise ValueError(msg)
         if (
             self.status
             in {
@@ -843,7 +879,8 @@ class ComparisonSimulationRecord(StrictContractModel):
             }
             and self.error_code is None
         ):
-            raise ValueError("a failed or skipped simulation requires an error_code")
+            msg = "a failed or skipped simulation requires an error_code"
+            raise ValueError(msg)
         return self
 
 
