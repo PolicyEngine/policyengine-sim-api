@@ -104,10 +104,29 @@ def reset_decoder_cache() -> None:
     _decoder.cache_clear()
 
 
-def granted_permissions(identity: CallerIdentity) -> frozenset[str]:
-    """Return permissions granted by Auth0's RBAC claim or the OAuth scope."""
+def is_client_credentials(identity: CallerIdentity) -> bool:
+    """Return whether the token was issued to a machine client."""
 
-    scopes = identity.scope.split() if identity.scope else []
+    return identity.grant_type == "client-credentials" or (
+        identity.subject is not None and identity.subject.endswith("@clients")
+    )
+
+
+def granted_permissions(identity: CallerIdentity) -> frozenset[str]:
+    """Return the permissions a token grants.
+
+    The RBAC ``permissions`` claim counts for every token. The OAuth ``scope``
+    claim counts only for client-credentials tokens, whose scopes come from the
+    client's grant. Unless RBAC is enabled on the API, Auth0 copies whatever
+    API scopes a user's application requested into a user token's ``scope``,
+    so there it proves nothing.
+    """
+
+    scopes = (
+        identity.scope.split()
+        if identity.scope and is_client_credentials(identity)
+        else []
+    )
     return frozenset([*(identity.permissions or []), *scopes])
 
 

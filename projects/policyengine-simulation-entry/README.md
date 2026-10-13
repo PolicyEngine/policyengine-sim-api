@@ -44,7 +44,9 @@ Auth0 permission:
 `POST /ping` stay public.
 
 A caller holds a permission when it appears in the token's `permissions` claim
-(Auth0 RBAC) or as an entry in its space-delimited `scope` claim.
+(Auth0 RBAC). For a client-credentials (machine) token, an entry in its
+space-delimited `scope` claim also counts. A user token's `scope` never does,
+because without RBAC Auth0 puts any requested API scope there.
 `SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS` decides what happens when the
 permission is missing:
 

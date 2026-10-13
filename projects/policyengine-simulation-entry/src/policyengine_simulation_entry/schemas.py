@@ -24,6 +24,7 @@ class CallerIdentity(BaseModel):
     scope: str | None = None
     permissions: list[str] | None = None
     authorized_party: str | None = Field(default=None, alias="azp")
+    grant_type: str | None = Field(default=None, alias="gty")
 
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 

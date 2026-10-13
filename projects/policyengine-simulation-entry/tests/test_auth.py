@@ -26,7 +26,8 @@ def signing_keys():
 def _token(private_key, **overrides) -> str:
     now = datetime.now(timezone.utc)
     claims = {
-        "sub": "api-v1",
+        "sub": "api-v1@clients",
+        "gty": "client-credentials",
         "iss": "https://issuer.example/",
         "aud": "simulation-entry",
         "iat": now,
@@ -114,7 +115,8 @@ def test_decoder_returns_only_the_declared_caller_identity(signing_keys):
     )
 
     assert isinstance(identity, CallerIdentity)
-    assert identity.subject == "api-v1"
+    assert identity.subject == "api-v1@clients"
+    assert identity.grant_type == "client-credentials"
     assert identity.scope == "simulate:read"
     assert "undocumented_claim" not in identity.model_dump()
 
@@ -234,16 +236,19 @@ def _identity(
     permissions: list[str] | None = None,
     scope: str | None = None,
     azp: str | None = "api-v1-client",
+    sub: str = "api-v1-client@clients",
+    gty: str | None = None,
 ) -> CallerIdentity:
     return CallerIdentity.model_validate(
         {
-            "sub": "api-v1-client@clients",
+            "sub": sub,
             "iss": "https://issuer.example/",
             "aud": "simulation-entry",
             "exp": int((datetime.now(timezone.utc) + timedelta(minutes=5)).timestamp()),
             "permissions": permissions,
             "scope": scope,
             "azp": azp,
+            "gty": gty,
         }
     )
 
@@ -377,6 +382,38 @@ def test_permission_requires_an_exact_claim_entry(claims):
         result = client.get("/jobs/job-1")
 
     assert result.status_code == 403
+
+
+@pytest.mark.parametrize(
+    ("claims", "expected_status"),
+    [
+        ({"sub": "google-oauth2|123", "scope": "openid simulation:read"}, 403),
+        ({"sub": "google-oauth2|123", "permissions": ["simulation:read"]}, 200),
+        (
+            {
+                "sub": "api-v1-client",
+                "gty": "client-credentials",
+                "scope": "simulation:read",
+            },
+            200,
+        ),
+    ],
+    ids=[
+        "user-token-scope-ignored",
+        "user-token-permissions-claim",
+        "client-credentials-grant-scope",
+    ],
+)
+def test_scope_claim_counts_only_for_client_credentials_tokens(
+    claims,
+    expected_status,
+):
+    app = _app_for(_identity(**claims), enforce=True)
+
+    with TestClient(app) as client:
+        result = client.get("/jobs/job-1")
+
+    assert result.status_code == expected_status
 
 
 def test_enforced_missing_permission_records_permission_and_client(monkeypatch):
