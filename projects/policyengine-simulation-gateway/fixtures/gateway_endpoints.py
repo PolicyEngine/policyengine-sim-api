@@ -355,12 +355,14 @@ class MockModalException:
 @pytest.fixture
 def mock_modal(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """Patch Modal calls in the gateway endpoints module."""
-    from policyengine_simulation_contract import (
+    from policyengine_simulation_contract import (  # noqa: PLC0415  # patch targets, imported when the fixture runs
         budget_window_state,
         dataset_uri,
         job_progress_state,
     )
-    from policyengine_simulation_gateway import endpoints
+    from policyengine_simulation_gateway import (  # noqa: PLC0415  # patch targets, imported when the fixture runs
+        endpoints,
+    )
 
     mock_func = MockFunction()
     mock_dicts = {

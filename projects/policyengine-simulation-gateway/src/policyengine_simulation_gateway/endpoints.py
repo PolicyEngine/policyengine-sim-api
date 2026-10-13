@@ -48,6 +48,7 @@ from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_contract.spm import (
     SPMCapability,
     SPMInputError,
+    SPMSelection,
     resolve_spm_selection,
     spm_error_detail,
 )
@@ -673,8 +674,6 @@ def _resolve_request_spm(
         route_provenance=route.route_provenance,
     )
     if selection is not None:
-        from policyengine_simulation_contract.spm import SPMSelection
-
         request.spm = SPMSelection.model_validate(selection)
     return selection
 
