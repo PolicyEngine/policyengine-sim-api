@@ -29,15 +29,12 @@ class NoOpSpan(AbstractContextManager["NoOpSpan"]):
         traceback: TracebackType | None,
     ) -> None:
         """Do nothing, so any exception raised inside the span propagates."""
-        return None  # noqa: RET501  # explicit no-op body
 
     def set_attribute(self, key: str, value: object) -> None:
         """Discard the attribute."""
-        return None  # noqa: RET501  # explicit no-op body
 
     def add_event(self, name: str, attributes: Mapping[str, Any] | None = None) -> None:
         """Discard the event."""
-        return None  # noqa: RET501  # explicit no-op body
 
 
 class Observability(Protocol):
@@ -88,7 +85,6 @@ class NoOpObservability:
 
     def emit_lifecycle_event(self, event: SimulationLifecycleEvent) -> None:
         """Discard the event."""
-        return None  # noqa: RET501  # explicit no-op body
 
     def emit_counter(
         self,
@@ -97,7 +93,6 @@ class NoOpObservability:
         attributes: Mapping[str, str] | None = None,
     ) -> None:
         """Discard the measurement."""
-        return None  # noqa: RET501  # explicit no-op body
 
     def emit_histogram(
         self,
@@ -106,11 +101,9 @@ class NoOpObservability:
         attributes: Mapping[str, str] | None = None,
     ) -> None:
         """Discard the measurement."""
-        return None  # noqa: RET501  # explicit no-op body
 
     def record_artifact_manifest(self, manifest: TracerArtifactManifest) -> None:
         """Discard the manifest."""
-        return None  # noqa: RET501  # explicit no-op body
 
     def span(self, name: str, attributes: Mapping[str, Any] | None = None) -> NoOpSpan:
         """Return a span that records nothing."""
@@ -118,4 +111,3 @@ class NoOpObservability:
 
     def flush(self) -> None:
         """Do nothing; there is never anything buffered."""
-        return None  # noqa: RET501  # explicit no-op body
