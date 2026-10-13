@@ -49,7 +49,9 @@ def _get_project_id() -> str:
 
 
 def _get_project_id_from_metadata() -> str | None:
-    from urllib import request
+    from urllib import (  # noqa: PLC0415  # urllib.request loads only when the metadata probe runs
+        request,
+    )
 
     try:
         return (
@@ -91,8 +93,12 @@ class GCPLoggingInstrumentor:
         Uses ``logging.basicConfig``, so the handler is not installed if the root
         logger already has handlers.
         """
-        from opentelemetry.instrumentation.logging import LoggingInstrumentor
-        from pythonjsonlogger.json import JsonFormatter
+        from opentelemetry.instrumentation.logging import (  # noqa: PLC0415  # the logging instrumentation loads only when GCP logging is set up
+            LoggingInstrumentor,
+        )
+        from pythonjsonlogger.json import (  # noqa: PLC0415  # the JSON formatter loads only when GCP logging is set up
+            JsonFormatter,
+        )
 
         log_handler = logging.StreamHandler()
         formatter = JsonFormatter(
@@ -124,10 +130,12 @@ def export_ot_to_gcp(resource: Resource) -> None:
     providers for ``resource`` and registers an ``exit`` callback that flushes
     both at shutdown.
     """
-    from opentelemetry.exporter.cloud_monitoring import (
+    from opentelemetry.exporter.cloud_monitoring import (  # noqa: PLC0415  # the Google Cloud exporters load only when GCP export is set up
         CloudMonitoringMetricsExporter,
     )
-    from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+    from opentelemetry.exporter.cloud_trace import (  # noqa: PLC0415  # the Google Cloud exporters load only when GCP export is set up
+        CloudTraceSpanExporter,
+    )
 
     trace_provider = TracerProvider(resource=resource)
     processor = BatchSpanProcessor(CloudTraceSpanExporter())

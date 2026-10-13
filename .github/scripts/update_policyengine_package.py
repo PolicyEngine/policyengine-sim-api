@@ -201,7 +201,9 @@ def latest_version(package: str) -> None:
 
 def bundle_versions() -> None:
     """Print the package and data versions selected by PolicyEngine.py."""
-    from policyengine.bundle import get_current_bundle
+    from policyengine.bundle import (  # noqa: PLC0415  # only bundle-versions runs under uv with policyengine installed; the other commands use the runner's python3
+        get_current_bundle,
+    )
 
     bundle = _mapping(get_current_bundle())
     packages = _mapping(bundle.get("packages"))
