@@ -101,6 +101,7 @@ class TestStageReportingWorker:
         assert body["status"] == "running"
         assert body["stage"] == "queued"
         assert body["progress"] == 0
+        assert body["progress_max"] == 24
         assert body["submitted_at"].endswith("Z")
         assert "job_progress" not in body
 
@@ -117,13 +118,14 @@ class TestStageReportingWorker:
         body = response.json()
         assert body["stage"] == "reform"
         assert body["progress"] == 67
+        assert body["progress_max"] == 96
         assert body["started_at"] == "2026-10-13T12:00:30Z"
         assert body["stage_started_at"] == "2026-10-13T12:01:00Z"
         assert body["stage_durations"] == {"loading_data": 12.5, "baseline": 17.5}
         assert body["result"] is None
         assert body["error"] is None
 
-    def test__segmented_run_reports_completed_segments(
+    def test__segmented_run_reports_segments_without_moving_progress(
         self, stage_reporting_worker, client: TestClient
     ):
         job_id = _submit(client)
@@ -142,7 +144,8 @@ class TestStageReportingWorker:
 
         assert body["stage"] == "simulating"
         assert body["segments"] == {"completed": 10, "total": 20}
-        assert body["progress"] == 51
+        assert body["progress"] == 5
+        assert body["progress_max"] == 96
 
     def test__complete_job_reports_durations_and_no_current_stage(
         self, stage_reporting_worker, client: TestClient
@@ -170,6 +173,7 @@ class TestStageReportingWorker:
         assert body["status"] == "complete"
         assert body["result"] is not None
         assert body["progress"] == 100
+        assert "progress_max" not in body
         assert body["finished_at"] == "2026-10-13T12:04:00Z"
         assert body["stage_durations"]["reform"] == 150.0
         assert "stage" not in body

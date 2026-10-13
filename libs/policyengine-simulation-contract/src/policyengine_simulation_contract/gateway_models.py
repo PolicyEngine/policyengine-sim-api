@@ -205,7 +205,8 @@ class JobStatusResponse(BaseModel):
         default=None,
         description=(
             "Current stage of a running job, or the stage in which a failed "
-            "job stopped. Absent for complete jobs."
+            "job stopped. Absent for complete jobs. Later versions may add "
+            "stages; clients must accept a value they do not know."
         ),
     )
     progress: int | None = Field(
@@ -213,9 +214,19 @@ class JobStatusResponse(BaseModel):
         ge=0,
         le=100,
         description=(
-            "Coarse completion percent. It advances at stage boundaries and "
-            "as national segments complete, stays below 100 while running, "
+            "Coarse completion percent at the start of the current stage. It "
+            "changes only at stage boundaries, stays below 100 while running, "
             "and is 100 when complete."
+        ),
+    )
+    progress_max: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description=(
+            "Highest percent a running job reaches before its next stage "
+            "starts. A client can move a time-based estimate between "
+            "progress and progress_max."
         ),
     )
     submitted_at: AwareDatetime | None = Field(

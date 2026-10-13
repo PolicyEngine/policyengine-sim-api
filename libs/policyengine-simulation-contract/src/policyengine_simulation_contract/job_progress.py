@@ -40,6 +40,9 @@ class JobStage(StrEnum):
     and ``outputs``. A segmented US national run computes baseline and reform
     together in parallel region segments, so it moves through
     ``loading_data``, ``simulating`` and ``outputs``.
+
+    Later versions may add stages. Clients must accept a value they do not
+    know, for example by showing a generic "running" state.
     """
 
     QUEUED = "queued"
@@ -92,8 +95,10 @@ class JobProgressRecord(BaseModel):
 #
 # Monolithic: UK national and US state runs. The baseline/reform split comes
 # from Stage 12 state runs (baseline is about 29% of their calculation).
-# Segmented: US national runs; ``simulating`` advances from its floor to the
-# ``outputs`` floor as segments complete, and the national reduce is short.
+# Segmented: US national runs; the national reduce is short. Completed
+# segments do not move progress: the regional children finish at about the
+# same time and California finishes last, so a count jumps late and then
+# waits. ``segments`` reports the count for captions instead.
 STAGE_PROGRESS_FLOOR: Mapping[JobExecution, Mapping[JobStage, int]] = MappingProxyType(
     {
         JobExecution.MONOLITHIC: MappingProxyType(
@@ -162,13 +167,29 @@ def stage_progress_floor(execution: JobExecution | None, stage: JobStage) -> int
     )
 
 
-def _running_progress(record: JobProgressRecord) -> int:
-    floor = stage_progress_floor(record.execution, record.stage)
-    if record.stage is JobStage.SIMULATING and record.segments is not None:
-        ceiling = stage_progress_floor(record.execution, JobStage.OUTPUTS)
-        share = record.segments.completed / record.segments.total
-        floor += int((ceiling - floor) * share)
-    return min(floor, RUNNING_PROGRESS_CAP)
+def stage_progress_max(execution: JobExecution | None, stage: JobStage) -> int:
+    """The highest progress percent a job reaches before its next stage.
+
+    This is one below the next stage's floor, or ``RUNNING_PROGRESS_CAP`` for
+    the last stage. Before the worker chooses its path, use the highest value
+    that any path gives the stage, so a client estimate is not held back.
+    """
+
+    paths = [STAGE_PROGRESS_FLOOR[execution]] if execution is not None else []
+    if not any(stage in floors for floors in paths):
+        paths = list(STAGE_PROGRESS_FLOOR.values())
+    limits = []
+    for floors in paths:
+        stages = list(floors)
+        if stage not in floors:
+            continue
+        index = stages.index(stage)
+        if index + 1 < len(stages):
+            limits.append(floors[stages[index + 1]] - 1)
+        else:
+            limits.append(RUNNING_PROGRESS_CAP)
+    floor = stage_progress_floor(execution, stage)
+    return min(max([floor, *limits]), RUNNING_PROGRESS_CAP)
 
 
 def job_progress_fields(
@@ -198,6 +219,7 @@ def job_progress_fields(
             if status == "running":
                 fields["stage"] = JobStage.QUEUED.value
                 fields["progress"] = stage_progress_floor(None, JobStage.QUEUED)
+                fields["progress_max"] = stage_progress_max(None, JobStage.QUEUED)
         else:
             fields["started_at"] = _json_datetime(record.started_at)
             fields["finished_at"] = _json_datetime(record.finished_at)
@@ -205,7 +227,13 @@ def job_progress_fields(
                 fields["stage"] = record.stage.value
                 fields["stage_started_at"] = _json_datetime(record.stage_started_at)
             if status == "running":
-                fields["progress"] = _running_progress(record)
+                fields["progress"] = min(
+                    stage_progress_floor(record.execution, record.stage),
+                    RUNNING_PROGRESS_CAP,
+                )
+                fields["progress_max"] = stage_progress_max(
+                    record.execution, record.stage
+                )
             if record.segments is not None:
                 fields["segments"] = record.segments.model_dump(mode="json")
             if record.stage_durations:
