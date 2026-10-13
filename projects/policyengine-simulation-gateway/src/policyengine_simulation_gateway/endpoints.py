@@ -1,6 +1,4 @@
-"""
-FastAPI endpoints for the Gateway API.
-"""
+"""FastAPI endpoints for the Gateway API."""
 
 import logging
 import re
@@ -95,6 +93,14 @@ class VersionRoutingState(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class RouteResolution:
+    """The Modal app a request routes to, and the provenance the gateway reports.
+
+    ``response_version`` is the version echoed to the caller, and
+    ``bundle_manifest`` is empty when the route came from the legacy version
+    dicts. ``route_provenance`` marks pre-canonical routes, which SPM
+    resolution treats differently.
+    """
+
     app_name: str
     response_version: str
     policyengine_version: str | None
@@ -241,7 +247,7 @@ def _bundle_manifest(state: dict, policyengine_version: str | None) -> dict:
 def _policyengine_version_for_app(
     state: dict, app_name: str, *, country: str, model_version: str
 ) -> str | None:
-    """The wrapper version serving this country route, or None.
+    """Return the wrapper version serving this country route, or None.
 
     Behaviour change from the pre-canonical gateway, deliberate: a country
     route whose one candidate bundle states a *different* model version is
@@ -628,7 +634,7 @@ def _bundle_identities(state: dict) -> dict[str, dict[str, PolicyEngineBundle]]:
 
 
 def _certified_model_version(country: str, route: RouteResolution) -> str | None:
-    """The country model version the registry states for this route.
+    """Return the country model version the registry states for this route.
 
     ``PolicyEngineBundle.model_version`` falls back to the routing response
     version so the response always carries one. On a policyengine-keyed
@@ -848,8 +854,7 @@ async def submit_simulation(
     http_request: Request,
     response: Response,
 ) -> JobSubmitResponse | JSONResponse:
-    """
-    Submit a simulation job.
+    """Submit a simulation job.
 
     Matches the existing Cloud Run API endpoint path.
     Routes to the appropriate app based on country and version params.
@@ -965,9 +970,7 @@ async def submit_budget_window_batch(
     http_request: Request,
     response: Response,
 ) -> BudgetWindowBatchSubmitResponse | JSONResponse:
-    """
-    Submit a budget-window batch job.
-    """
+    """Submit a budget-window batch job."""
     runtime = _runtime(http_request)
     observability_id = _start_workflow_observability(http_request, runtime)
     response.headers[OBSERVABILITY_ID_HEADER] = observability_id
@@ -1060,14 +1063,14 @@ async def submit_budget_window_batch(
 async def get_job_status(
     job_id: str, request: Request, response: Response
 ) -> JobStatusResponse | JSONResponse:
-    """
-    Poll for job status.
+    """Poll for job status.
 
     Returns:
         - 200 with status="complete" and result when done
         - 202 with status="running" while in progress
         - 500 with status="failed" and error on failure
         - 404 if job_id not found
+
     """
     runtime = _runtime(request)
     runtime.set_context(job_id=job_id)
@@ -1152,9 +1155,7 @@ async def get_budget_window_job_status(
     request: Request,
     response: Response,
 ) -> JSONResponse:
-    """
-    Poll for budget-window batch status.
-    """
+    """Poll for budget-window batch status."""
     runtime = _runtime(request)
     runtime.set_context(batch_job_id=batch_job_id)
     with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)):
@@ -1339,8 +1340,7 @@ async def health() -> HealthResponse:
 
 @router.post("/ping", response_model=PingResponse)
 async def ping(request: PingRequest) -> PingResponse:
-    """
-    Verify the API is able to receive and process requests.
+    """Verify the API is able to receive and process requests.
     Matches the policyengine_fastapi.ping endpoint for test compatibility.
-    """
+    """  # noqa: D205  # docstring would change the published OpenAPI description
     return PingResponse(incremented=request.value + 1)

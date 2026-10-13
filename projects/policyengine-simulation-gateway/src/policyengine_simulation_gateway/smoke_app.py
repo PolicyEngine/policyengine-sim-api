@@ -22,6 +22,10 @@ app = modal.App("policyengine-simulation-gateway-smoke")
 
 @app.function(image=build_gateway_image(), timeout=300)
 def smoke_import_gateway() -> dict:
+    """Import every shipped package module and build the ASGI app in-image.
+
+    Return the number of modules imported and the app's ``METHOD path`` routes.
+    """
     import importlib
     import os
     import pkgutil
@@ -63,6 +67,7 @@ def smoke_import_gateway() -> dict:
 
 @app.local_entrypoint()
 def main() -> None:
+    """Run the in-image smoke remotely; fail unless modules and /health loaded."""
     report = smoke_import_gateway.remote()
     print(report)
     assert report["modules_imported"] > 0

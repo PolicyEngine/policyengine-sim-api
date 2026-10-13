@@ -239,7 +239,6 @@ def require_auth(
     silently make the gateway private. Partial auth configuration always
     returns 503 because it indicates an incomplete secret.
     """
-
     if _auth_disabled():
         return None
 

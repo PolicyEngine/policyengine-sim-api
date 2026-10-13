@@ -8,11 +8,7 @@ class TestHealthEndpoint:
     """Tests for GET /health endpoint."""
 
     def test_health_returns_healthy_status(self, client: TestClient):
-        """
-        Given a running gateway service
-        When the health endpoint is called
-        Then the response indicates healthy status.
-        """
+        """Given a running gateway, when calling /health, then report healthy."""
         # When
         response = client.get("/health")
 
@@ -34,11 +30,7 @@ class TestHealthEndpoint:
         assert OBSERVABILITY_ID_HEADER not in response.headers
 
     def test_health_is_idempotent(self, client: TestClient):
-        """
-        Given a running gateway service
-        When the health endpoint is called multiple times
-        Then each response is identical.
-        """
+        """Given a running gateway, when calling /health repeatedly, then match."""
         # When
         response1 = client.get("/health")
         response2 = client.get("/health")

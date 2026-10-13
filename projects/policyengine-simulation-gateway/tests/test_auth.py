@@ -41,9 +41,11 @@ def _request():
 
 @pytest.fixture
 def unauthenticated_client(monkeypatch) -> TestClient:
-    """A client where the real auth dependency is active but no token is
-    attached. The underlying JWTDecoder is stubbed to preserve the 403
-    contract without making a live JWKS fetch."""
+    """Return a client with the real auth dependency active and no token.
+
+    The underlying JWTDecoder is stubbed to preserve the 403 contract without
+    making a live JWKS fetch.
+    """
 
     class FailingDecoder:
         def __call__(self, token):
@@ -67,7 +69,6 @@ def test__given_no_bearer_token__then_gated_endpoint_returns_403(
     unauthenticated_client, method, path, body
 ):
     """Missing bearer tokens should be rejected on all private endpoints."""
-
     if method == "post":
         response = unauthenticated_client.post(path, json=body)
     else:
@@ -135,7 +136,6 @@ def test__given_partial_auth_config__then_dependency_raises_503(monkeypatch):
 
 def test__given_health_endpoint__then_auth_not_required(monkeypatch):
     """Health/ping/versions endpoints remain public by design."""
-
     from policyengine_simulation_gateway.testing import create_gateway_app
 
     client = TestClient(create_gateway_app(authenticate=False))
@@ -144,10 +144,11 @@ def test__given_health_endpoint__then_auth_not_required(monkeypatch):
 
 
 def test__given_same_env__then_decoder_is_cached(monkeypatch):
-    """Calling ``_get_decoder`` repeatedly must return the same instance so
-    the wrapped ``PyJWKClient`` JWKS cache is reused across requests.
-    Rebuilding the decoder per request defeats the cache (#458 review)."""
+    """Repeated ``_get_decoder`` calls must return the same instance.
 
+    That keeps the wrapped ``PyJWKClient`` JWKS cache in use across requests;
+    rebuilding the decoder per request defeats the cache (#458 review).
+    """
     monkeypatch.delenv(auth_module.GATEWAY_AUTH_DISABLED_ENV, raising=False)
     monkeypatch.setenv(auth_module.GATEWAY_AUTH_ISSUER_ENV, "https://issuer.example/")
     monkeypatch.setenv(auth_module.GATEWAY_AUTH_AUDIENCE_ENV, "aud-caching")
@@ -160,9 +161,11 @@ def test__given_same_env__then_decoder_is_cached(monkeypatch):
 
 
 def test__given_rotated_audience__then_cache_returns_new_decoder(monkeypatch):
-    """Cache is keyed on issuer+audience so rotating the audience yields a
-    fresh decoder without polluting the previous one."""
+    """Rotating the audience yields a fresh decoder.
 
+    The cache is keyed on issuer+audience, so the previous decoder is left
+    untouched.
+    """
     monkeypatch.delenv(auth_module.GATEWAY_AUTH_DISABLED_ENV, raising=False)
     monkeypatch.setenv(auth_module.GATEWAY_AUTH_ISSUER_ENV, "https://issuer.example/")
 
@@ -180,10 +183,11 @@ def test__given_rotated_audience__then_cache_returns_new_decoder(monkeypatch):
 
 
 def test__given_repeated_requests__then_decoder_not_reinstantiated(monkeypatch):
-    """Smoke test: hitting a gated endpoint many times must not rebuild the
-    decoder. We spy on ``JWTDecoder.__init__`` and assert it runs at most
-    once across many requests."""
+    """Hitting a gated endpoint many times must not rebuild the decoder.
 
+    Smoke test: we spy on ``JWTDecoder.__init__`` and assert it runs at most
+    once across many requests.
+    """
     from policyengine_fastapi.auth import jwt_decoder as jwt_decoder_module
     from policyengine_simulation_gateway.testing import create_gateway_app
 
@@ -218,12 +222,14 @@ def test__given_repeated_requests__then_decoder_not_reinstantiated(monkeypatch):
 def test__given_dependency_override__then_gated_endpoint_returns_200(
     mock_modal, client: TestClient
 ):
-    """Positive-path auth test: when ``app.dependency_overrides`` bypasses
+    """Overriding ``require_auth`` lets a gated endpoint return 200.
+
+    Positive-path auth test: when ``app.dependency_overrides`` bypasses
     ``require_auth`` (as real tests do), the gated endpoint returns 200 with
     the expected payload. This guards the override path that other tests
     rely on — if the override stops working, every gated-endpoint test would
-    start returning 403 instead of exercising real logic."""
-
+    start returning 403 instead of exercising real logic.
+    """
     mock_modal["dicts"]["simulation-api-us-versions"] = {
         "latest": "1.500.0",
         "1.500.0": "policyengine-simulation-py4-10-0",
@@ -242,8 +248,11 @@ def test__given_dependency_override__then_gated_endpoint_returns_200(
 
 
 class TestProductionAuthGuard:
-    """Tests for ``enforce_production_auth_guard`` — the startup-time check
-    that prevents ``GATEWAY_AUTH_DISABLED`` from slipping into production."""
+    """Tests for ``enforce_production_auth_guard``.
+
+    It is the startup-time check that prevents ``GATEWAY_AUTH_DISABLED`` from
+    slipping into production.
+    """
 
     def test__given_auth_enabled__then_guard_noops(self, monkeypatch):
         monkeypatch.delenv(auth_module.GATEWAY_AUTH_DISABLED_ENV, raising=False)

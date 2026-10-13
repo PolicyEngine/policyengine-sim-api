@@ -1,5 +1,4 @@
-"""
-Generate OpenAPI spec for the Modal Gateway API.
+"""Generate OpenAPI spec for the Modal Gateway API.
 
 This creates a FastAPI app with the same route signatures as the gateway
 but without Modal dependencies, allowing OpenAPI generation without credentials.
@@ -45,8 +44,7 @@ def create_openapi_app() -> FastAPI:
         },
     )
     async def submit_simulation(request: SimulationRequest) -> JobSubmitResponse:
-        """
-        Submit a simulation job.
+        """Submit a simulation job.
 
         Routes to the appropriate simulation app based on country and version.
         Returns immediately with a job_id for polling.
@@ -64,8 +62,7 @@ def create_openapi_app() -> FastAPI:
     async def submit_budget_window_batch(
         request: BudgetWindowBatchRequest,
     ) -> BudgetWindowBatchSubmitResponse:
-        """
-        Submit a budget-window batch job.
+        """Submit a budget-window batch job.
 
         Returns immediately with a parent batch job ID for polling.
         """
@@ -82,14 +79,14 @@ def create_openapi_app() -> FastAPI:
         },
     )
     async def get_job_status(job_id: str) -> JobStatusResponse:
-        """
-        Poll for job status.
+        """Poll for job status.
 
         Returns:
             - 200 with status="complete" and result when done
             - 202 with status="running" while in progress
             - 404 if job_id not found
             - 500 with status="failed" and error on failure
+
         """
         raise NotImplementedError("Stub for OpenAPI generation")
 
@@ -109,9 +106,7 @@ def create_openapi_app() -> FastAPI:
     async def get_budget_window_job_status(
         batch_job_id: str,
     ) -> BudgetWindowBatchStatusResponse:
-        """
-        Poll for budget-window batch status.
-        """
+        """Poll for budget-window batch status."""
         raise NotImplementedError("Stub for OpenAPI generation")
 
     @app.get("/versions", response_model=VersionsResponse)
