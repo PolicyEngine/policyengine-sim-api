@@ -315,6 +315,14 @@ def test_the_tolerance_is_floating_point_reordering_only(relative, agrees):
     assert sentinel.agree(value, value * (1 + relative)) is agrees
 
 
+@pytest.mark.parametrize(("actual", "agrees"), [(0.009, True), (0.011, False)])
+def test_the_absolute_tolerance_is_one_penny(actual, agrees):
+    """Near zero, numerical agreement admits less than one penny of error."""
+
+    assert sentinel.agree(0, actual) is agrees
+    assert sentinel.agree(actual, 0) is agrees
+
+
 def test_a_job_that_never_finishes_fails():
     ticks = iter(range(0, 10_000, 100))
     problems, _ = _check(

@@ -490,6 +490,17 @@ jobs:
           grep -E '^(before_sha256|after_sha256|advances_latest)=' \
             "${RUNNER_TEMP}/routing-plan.out" >> "$GITHUB_OUTPUT"
 
+      - name: Record the unfinished routing publication
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
+        run: |
+          uv run python -m src.modal.utils.update_version_registry \
+            --environment "${MODAL_ENVIRONMENT}" \
+            --record-plan "${RUNNER_TEMP}/routing-plan/plan.json"
+
       - name: Keep the plan for a guarded restore
         uses: actions/upload-artifact@v4
         with:
@@ -1028,15 +1039,17 @@ jobs:
     # it never overwrites another change, and a plan that was never applied
     # restores nothing. This covers first publications, older releases that
     # do not move latest, and every route the release touched. A same-version
-    # redeploy changes no routing (both digests are equal) but replaces that
+    # redeploy changes only the routing state's generation, and replaces that
     # version's Modal app in place, which routing cannot undo: redeploy the
-    # previous commit instead.
+    # previous commit instead. The restore does not depend on the plan's
+    # digests differing: it is also what resolves this release's publication
+    # record, which would otherwise stay pending and refuse every later
+    # deployment.
     if: >-
       ${{
         always() &&
         inputs.deploy_existing_stack &&
-        needs.update_routing.outputs.plan_artifact != '' &&
-        needs.update_routing.outputs.before_sha256 != needs.update_routing.outputs.after_sha256 &&
+        needs.update_routing.result != 'skipped' &&
         (
           needs.update_routing.result != 'success' ||
           needs.integration.result != 'success' ||
@@ -1063,7 +1076,9 @@ jobs:
       - name: Download this release's routing plan
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.update_routing.outputs.plan_artifact }}
+          # Artifacts are scoped to this run. Runner loss must not hide the
+          # saved plan just because update_routing never reported job outputs.
+          name: routing-plan-${{ inputs.release_environment }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/routing-plan
 
       - name: Restore the routing this release replaced
@@ -1084,8 +1099,9 @@ jobs:
     # Run after failures and expected skips so a required skipped phase cannot
     # make the reusable workflow report a successful partial deployment.
     if: ${{ !cancelled() }}
-    needs: [deploy_entrypoint, integration, authenticated_test, promote_entrypoint]
+    needs: [deploy_entrypoint, update_routing, integration, authenticated_test, promote_entrypoint, revert_routing]
     runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
     steps:
       - name: Check deployment result
         env:
@@ -1103,6 +1119,41 @@ jobs:
           else
             test "${PROMOTION_RESULT}" = "skipped"
           fi
+
+      - uses: actions/checkout@v6
+        if: ${{ inputs.deploy_existing_stack }}
+
+      - uses: actions/setup-python@v6
+        if: ${{ inputs.deploy_existing_stack }}
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        if: ${{ inputs.deploy_existing_stack }}
+
+      - name: Install routing publisher dependencies
+        if: ${{ inputs.deploy_existing_stack }}
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --frozen
+
+      - name: Download the successful release's routing plan
+        if: ${{ inputs.deploy_existing_stack }}
+        uses: actions/download-artifact@v4
+        with:
+          name: routing-plan-${{ inputs.release_environment }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/routing-plan
+
+      - name: Complete the routing publication after all release gates
+        if: ${{ inputs.deploy_existing_stack }}
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
+        run: |
+          uv run python -m src.modal.utils.update_version_registry \
+            --environment "${MODAL_ENVIRONMENT}" \
+            --complete-plan "${RUNNER_TEMP}/routing-plan/plan.json"
 
   cleanup_entrypoint_revisions:
     name: Remove superseded Cloud Run revisions

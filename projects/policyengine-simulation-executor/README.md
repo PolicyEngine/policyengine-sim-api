@@ -39,8 +39,8 @@ Routing writes run only through `simulation-deploy.yml`, `stage12-deploy.yml`,
 or `simulation-rollback.yml` in `PolicyEngine/policyengine-sim-api`. These
 workflows share the repository-wide `simulation-deploy-main` concurrency group
 with `cancel-in-progress: false`, which serializes publication and restoration.
-The routing CLI checks the GitHub Actions repository and caller workflow before
-writing. Run the deployment or rollback workflow to change routing; local
+The routing CLI and library check the GitHub Actions repository and caller workflow
+before writing. Run the deployment or rollback workflow to change routing; local
 read-only queries, `--dry-run`, and `--plan-out` remain available.
 
 Each publication keeps its routing plan as an artifact before writing, including
@@ -50,6 +50,16 @@ publication is still active. Manual rollback checks the plan inventory across
 all run attempts before restoring the chain. A version-mode rollback instead
 moves latest to an already published version and keeps other versions pinnable.
 Routing writes and recovery use no lease or lock expiry wait.
+
+Before uploading a deployment plan, the workflow records the full plan as a pending
+publication in the routing store. It marks that publication complete only after the
+release gates pass; restoring the owning plan also resolves it. If a runner is lost,
+restoration finds the artifact by environment and run attempt without job outputs.
+Until completion or restoration, new routing writes refuse to proceed. This requires
+explicit recovery because an interrupted release may have promoted service traffic.
+Use the deployment-run rollback when its artifact is available. If loss occurred
+before upload, `--print-pending-plan --environment ENVIRONMENT` retrieves the durable
+plan for operator recovery through a serialized workflow; it does not change routing.
 
 ## Baseline artifact pipeline (precompute → store → image fetch)
 

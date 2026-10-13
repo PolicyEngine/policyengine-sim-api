@@ -1,9 +1,9 @@
 """Publish the Modal routing state after a simulation API deployment.
 
 Routing writes are serialized by the repository-wide GitHub Actions concurrency
-group ``simulation-deploy-main`` (with ``cancel-in-progress: false``). The CLI
-permits writes only from its deployment and rollback workflows; read-only and
-plan modes remain available locally.
+group ``simulation-deploy-main`` (with ``cancel-in-progress: false``). Library
+writers and the CLI permit writes only from its deployment and rollback
+workflows; read-only and plan modes remain available locally.
 """
 
 import argparse
@@ -23,6 +23,7 @@ UK_VERSION_DICT_NAME = "simulation-api-uk-versions"
 APP_RELEASE_BUNDLES_DICT_NAME = "simulation-api-app-release-bundles"
 ROUTING_STATE_DICT_NAME = "simulation-api-routing-state"
 ROUTING_STATE_ACTIVE_KEY = "active"
+ROUTING_PUBLICATION_KEY = "publication"
 # The Modal Dict intentionally stores one "active" key whose value is the full
 # routing snapshot. Publishing replaces that single key after validation, so the
 # gateway does not observe half-updated latest/routes/bundles fields if CI exits
@@ -499,11 +500,82 @@ def _require_serialized_routing_workflow() -> None:
     )
 
 
+def _unfinished_publication(store) -> dict | None:
+    record = store.get(ROUTING_PUBLICATION_KEY) if store is not None else None
+    if record is None:
+        return None
+    if not isinstance(record, dict) or record.get("status") not in {
+        "pending",
+        "completed",
+        "restored",
+    }:
+        raise RoutingConflict(
+            "invalid routing publication record; refusing routing writes"
+        )
+    validate_routing_plan(record.get("plan"))
+    return record["plan"] if record["status"] == "pending" else None
+
+
+def _require_finished_publication(store, *, allowed_plans: Iterable[dict] = ()) -> None:
+    pending = _unfinished_publication(store)
+    if pending is not None and not any(pending == plan for plan in allowed_plans):
+        raise RoutingConflict(
+            f"Unfinished routing publication {pending['publication_id']}: "
+            "refusing new routing writes. Inspect --print-pending-plan and restore "
+            "the recorded plan through a serialized workflow before deploying again. "
+            "If its artifact was uploaded, use simulation-rollback with that run id."
+        )
+
+
+def _write_publication_record(store, *, plan: dict, status: str) -> None:
+    record = {"status": status, "plan": _json_copy(plan)}
+    store[ROUTING_PUBLICATION_KEY] = record
+    if store.get(ROUTING_PUBLICATION_KEY) != record:
+        raise RoutingConflict("the routing publication record reads back differently")
+
+
+def record_routing_plan(*, environment: str, plan: dict) -> None:
+    """Journal a pending release before its artifact is uploaded or routing changes.
+
+    An interrupted release requires explicit restoration: automatic restoration
+    cannot establish whether its service checks or traffic promotion completed.
+    """
+
+    _require_serialized_routing_workflow()
+    validate_routing_plan(plan)
+    store = _routing_store(environment, create_if_missing=True)
+    _require_finished_publication(store)
+    if (
+        routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
+        != plan["before_sha256"]
+    ):
+        raise RoutingConflict("the routing state changed before recording the plan")
+    _write_publication_record(store, plan=plan, status="pending")
+
+
+def complete_routing_plan(*, environment: str, plan: dict) -> None:
+    """Acknowledge the owning release only after all its gates have passed."""
+
+    _require_serialized_routing_workflow()
+    validate_routing_plan(plan)
+    store = _routing_store(environment, create_if_missing=False)
+    if _unfinished_publication(store) != plan:
+        raise RoutingConflict("no matching unfinished routing publication to complete")
+    if (
+        routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
+        != plan["after_sha256"]
+    ):
+        raise RoutingConflict("the completed release's routing state is not live")
+    _write_publication_record(store, plan=plan, status="completed")
+
+
 def apply_routing_plan(*, environment: str, plan: dict) -> None:
     """Publish ``plan``'s state if the live state is still its starting point."""
 
+    _require_serialized_routing_workflow()
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=True)
+    _require_finished_publication(store, allowed_plans=[plan])
     current = store.get(ROUTING_STATE_ACTIVE_KEY)
     if routing_state_digest(current) != plan["before_sha256"]:
         raise RoutingConflict(
@@ -526,11 +598,14 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
     undone). Any other live state is a conflict and nothing is changed.
     """
 
+    _require_serialized_routing_workflow()
     for plan in plans:
         validate_routing_plan(plan)
     if not plans:
         raise ValueError("no routing plan to restore")
     store = _routing_store(environment, create_if_missing=False)
+    _require_finished_publication(store, allowed_plans=plans)
+    pending = _unfinished_publication(store)
     if store is None:
         if all(plan["before"] is None for plan in plans):
             return "unchanged"
@@ -563,12 +638,15 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
             "the routing state is neither what this release replaced nor what "
             "it published; another change was made, so nothing was restored"
         )
+    if pending is not None:
+        _write_publication_record(store, plan=pending, status="restored")
     return outcome
 
 
 def restore_routing_plan(*, environment: str, plan: dict) -> str:
     """Undo one plan: ``restored``, ``unchanged`` (never applied) or a conflict."""
 
+    _require_serialized_routing_workflow()
     return restore_routing_plans(environment=environment, plans=[plan])
 
 
@@ -778,11 +856,13 @@ def _merge_legacy_seed_into_current(
 
 
 def seed_active_routing_state_from_legacy(*, environment: str) -> RoutingState:
+    _require_serialized_routing_workflow()
     store = modal.Dict.from_name(
         ROUTING_STATE_DICT_NAME,
         environment_name=environment,
         create_if_missing=True,
     )
+    _require_finished_publication(store)
     legacy_seed = build_legacy_seed_routing_state(
         policyengine_versions=_modal_dict_snapshot(
             name=POLICYENGINE_VERSION_DICT_NAME,
@@ -818,11 +898,13 @@ def publish_routing_state(
     uk_version: str,
     force_latest: bool = False,
 ) -> RoutingState:
+    _require_serialized_routing_workflow()
     store = modal.Dict.from_name(
         ROUTING_STATE_DICT_NAME,
         environment_name=environment,
         create_if_missing=True,
     )
+    _require_finished_publication(store)
     next_state = build_next_routing_state(
         current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
         app_name=app_name,
@@ -851,11 +933,13 @@ def restore_routing_state(
     policyengine_version: str,
     expected_latest: str | None = None,
 ) -> RoutingState:
+    _require_serialized_routing_workflow()
     store = modal.Dict.from_name(
         ROUTING_STATE_DICT_NAME,
         environment_name=environment,
         create_if_missing=False,
     )
+    _require_finished_publication(store)
     next_state = build_restored_routing_state(
         current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
         policyengine_version=policyengine_version,
@@ -928,6 +1012,11 @@ def main():
         ),
     )
     parser.add_argument(
+        "--print-pending-plan",
+        action="store_true",
+        help="Print the durable unfinished plan as JSON, including before upload.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="With publishing arguments: print a routing plan's digests; change nothing.",
@@ -944,6 +1033,16 @@ def main():
         "--apply-plan",
         metavar="FILE",
         help="Publish a plan, refusing unless the live state is its starting point.",
+    )
+    parser.add_argument(
+        "--record-plan",
+        metavar="FILE",
+        help="Record a pending release before uploading its plan or publishing.",
+    )
+    parser.add_argument(
+        "--complete-plan",
+        metavar="FILE",
+        help="Complete a recorded publication after all release gates pass.",
     )
     parser.add_argument(
         "--restore-plan",
@@ -988,8 +1087,15 @@ def main():
             print(f"{key}={value}")
         return
 
+    if args.print_pending_plan:
+        store = _routing_store(args.environment, create_if_missing=False)
+        print(json.dumps(_unfinished_publication(store), indent=2, sort_keys=True))
+        return
+
     writes_routing = (
         args.apply_plan
+        or args.record_plan
+        or args.complete_plan
         or args.restore_plan
         or args.restore_latest
         or args.seed_active_from_legacy
@@ -1000,6 +1106,17 @@ def main():
             _require_serialized_routing_workflow()
         except RuntimeError as exc:
             parser.error(str(exc))
+
+    if args.record_plan or args.complete_plan:
+        with open(args.record_plan or args.complete_plan) as handle:
+            plan = json.load(handle)
+        operation = record_routing_plan if args.record_plan else complete_routing_plan
+        operation(environment=args.environment, plan=plan)
+        print(
+            f"Routing publication {plan['publication_id']}: "
+            f"{'pending' if args.record_plan else 'completed'}"
+        )
+        return
 
     if args.apply_plan:
         with open(args.apply_plan) as handle:

@@ -340,8 +340,8 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert "SIMULATION_ENTRYPOINT_PUBLIC_URL" not in reusable_workflow
     assert "staging.simulation.api.policyengine.org" not in deploy_workflow
     assert (
-        # sentinel_expected and revert_routing read environment secrets too.
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 14
+        # Sentinel, restore and final routing acknowledgement use secrets too.
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 15
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow
@@ -988,21 +988,35 @@ def _routing_context(**overrides):
             },
             False,
         ),
-        # Nothing was planned, so nothing can have been published.
+        # Missing job outputs cannot prove nothing was published: runner loss
+        # can prevent reporting them even after upload and apply succeeded.
         (
             {
                 "needs__update_routing__result": "failure",
                 "needs__update_routing__outputs__plan_artifact": "",
             },
-            False,
+            True,
         ),
-        # A redeploy that changes no routing has nothing to restore.
+        (
+            {
+                "needs__update_routing__result": "failure",
+                "needs__update_routing__outputs": {},
+                "needs__integration__result": "skipped",
+                "needs__authenticated_test__result": "skipped",
+                "needs__promote_entrypoint__result": "skipped",
+            },
+            True,
+        ),
+        # The restore does not depend on the plan's digests: even a plan that
+        # reported equal ones must be restored, because the restore is what
+        # resolves the release's publication record, which would otherwise
+        # refuse every later deployment.
         (
             {
                 "needs__integration__result": "failure",
                 "needs__update_routing__outputs__after_sha256": "a" * 64,
             },
-            False,
+            True,
         ),
         (
             {
@@ -1029,8 +1043,9 @@ def _routing_context(**overrides):
         "promotion",
         "routing-job",
         "no-promotion",
-        "never-planned",
-        "no-routing-change",
+        "missing-artifact-output",
+        "runner-lost-all-outputs",
+        "equal-digests",
         "stage12-only",
         "cancelled",
     ],
@@ -1153,11 +1168,13 @@ def test_revert_restores_the_plan_this_release_kept():
     routing = jobs["update_routing"]
     names = [step.get("name") for step in routing["steps"]]
     plan = names.index("Plan the routing change")
+    journal = names.index("Record the unfinished routing publication")
     keep = names.index("Keep the plan for a guarded restore")
     record = names.index("Record the plan artifact")
     publish = names.index("Publish the planned routing")
     # The plan is kept before anything is published.
-    assert plan < keep < record < publish
+    assert plan < journal < keep < record < publish
+    assert "--record-plan" in routing["steps"][journal]["run"]
     keep_step = routing["steps"][keep]
     assert keep_step["uses"].startswith("actions/upload-artifact@")
     assert keep_step["with"]["if-no-files-found"] == "error"
@@ -1180,7 +1197,8 @@ def test_revert_restores_the_plan_this_release_kept():
         if step.get("uses", "").startswith("actions/download-artifact@")
     )
     assert (
-        download["with"]["name"] == "${{ needs.update_routing.outputs.plan_artifact }}"
+        download["with"]["name"]
+        == "routing-plan-${{ inputs.release_environment }}-${{ github.run_attempt }}"
     )
     assert any("--restore-plan" in step.get("run", "") for step in revert["steps"])
     assert not any(
@@ -1195,6 +1213,86 @@ def test_revert_restores_the_plan_this_release_kept():
         "SIMULATION_ENTRYPOINT_ROLLBACK_REVISION: "
         "${{ needs.deploy_entrypoint.outputs.previous_revision }}"
     ) in cleanup
+
+
+def test_publication_completion_follows_release_gates_and_uses_the_kept_plan():
+    jobs = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)
+    ready = jobs["deployment_ready"]
+    assert {
+        "update_routing",
+        "integration",
+        "authenticated_test",
+        "promote_entrypoint",
+        "revert_routing",
+    } <= set(ready["needs"])
+    steps = ready["steps"]
+    gate = next(
+        i
+        for i, step in enumerate(steps)
+        if step.get("name") == "Check deployment result"
+    )
+    download = next(
+        i
+        for i, step in enumerate(steps)
+        if step.get("uses", "").startswith("actions/download-artifact@")
+    )
+    complete = next(
+        i for i, step in enumerate(steps) if "--complete-plan" in step.get("run", "")
+    )
+    assert gate < download < complete
+    assert "continue-on-error" not in steps[gate]
+    assert "continue-on-error" not in steps[complete]
+    upload = next(
+        step
+        for step in jobs["update_routing"]["steps"]
+        if step.get("uses", "").startswith("actions/upload-artifact@")
+    )
+    assert steps[download]["with"]["name"] == upload["with"]["name"]
+    assert steps[complete]["if"] == "${{ inputs.deploy_existing_stack }}"
+
+
+@pytest.mark.parametrize(
+    "failed_gate",
+    [
+        "ENTRYPOINT_RESULT",
+        "INTEGRATION_RESULT",
+        "AUTHENTICATED_TEST_RESULT",
+        "PROMOTION_RESULT",
+    ],
+)
+def test_failed_release_gate_cannot_reach_publication_completion(tmp_path, failed_gate):
+    ready = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["deployment_ready"]
+    gate = next(
+        step for step in ready["steps"] if step.get("name") == "Check deployment result"
+    )
+    marker = tmp_path / "completed"
+    env = {
+        "PATH": os.environ["PATH"],
+        "PROMOTION_REQUESTED": "true",
+        "ENTRYPOINT_RESULT": "success",
+        "INTEGRATION_RESULT": "success",
+        "AUTHENTICATED_TEST_RESULT": "success",
+        "PROMOTION_RESULT": "success",
+    }
+    env[failed_gate] = "failure"
+    # A later step cannot run after this gate under Actions' bash -e behavior.
+    result = subprocess.run(
+        [
+            "bash",
+            "-eo",
+            "pipefail",
+            "-c",
+            gate["run"] + '\ntouch "$1"',
+            "gate",
+            str(marker),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode != 0
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize(

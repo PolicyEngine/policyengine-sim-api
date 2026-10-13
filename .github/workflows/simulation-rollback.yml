@@ -110,7 +110,7 @@ jobs:
                 --jq "[.jobs[] | select(.name == \"Complete ${TARGET} deployment / Publish routing after all services pass\") | .steps[] | select(.name == \"Keep the plan for a guarded restore\" and .conclusion == \"success\")] | length" \
                 | awk '{total += $1} END {print total + 0}')"
               if [[ "${kept}" -gt 0 && ! -f "${RUNNER_TEMP}/routing-plans/routing-plan-${TARGET}-${attempt}/plan.json" ]]; then
-                echo "Attempt ${attempt} of run ${DEPLOY_RUN_ID} kept a ${TARGET} routing plan that cannot be found; restore by policyengine_version instead." >&2
+                echo "Attempt ${attempt} of run ${DEPLOY_RUN_ID} kept a ${TARGET} routing plan that cannot be found; inspect --print-pending-plan for the durable plan and arrange recovery through a serialized workflow." >&2
                 exit 1
               fi
             done
