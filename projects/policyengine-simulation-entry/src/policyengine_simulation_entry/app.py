@@ -67,6 +67,7 @@ from policyengine_simulation_entry.schemas import (
     TemporaryStage12SubmissionResponse,
 )
 from policyengine_simulation_entry.stage12_backend import (
+    Stage12ComparisonBackend,
     TemporaryStage12DispatchFailed,
     TemporaryStage12UnsupportedRequestError,
 )
@@ -260,10 +261,6 @@ def create_app(
     stage12_operator = authorizer.require_permission("stage12:operate")
     runtime_comparison = comparison_backend
     if runtime_comparison is None and runtime_settings.stage12_resources_configured:
-        from policyengine_simulation_entry.stage12_backend import (
-            Stage12ComparisonBackend,
-        )
-
         runtime_comparison = Stage12ComparisonBackend.from_settings(
             runtime_settings,
             runtime=runtime,
