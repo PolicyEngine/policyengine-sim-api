@@ -32,7 +32,8 @@ def _binary_flag(name: str) -> bool:
         return False
     if value == "1":
         return True
-    raise ConfigurationError(f"{name} must be exactly 0 or 1.")
+    msg = f"{name} must be exactly 0 or 1."
+    raise ConfigurationError(msg)
 
 
 def _normalized_issuer(value: str) -> str:
@@ -53,13 +54,14 @@ def _validate_https_url(
         or parsed.username is not None
         or parsed.password is not None
     ):
-        raise ConfigurationError(f"{name} must be an absolute HTTPS URL.")
+        msg = f"{name} must be an absolute HTTPS URL."
+        raise ConfigurationError(msg)
     if parsed.params or parsed.query or parsed.fragment:
-        raise ConfigurationError(
-            f"{name} must not contain parameters, a query string, or a fragment."
-        )
+        msg = f"{name} must not contain parameters, a query string, or a fragment."
+        raise ConfigurationError(msg)
     if not allow_path and parsed.path not in {"", "/"}:
-        raise ConfigurationError(f"{name} must not contain a path.")
+        msg = f"{name} must not contain a path."
+        raise ConfigurationError(msg)
 
 
 @dataclass(frozen=True)
@@ -164,18 +166,15 @@ class Settings:
         configured all together or not at all.
         """
         if self.production and not self.auth_required:
-            raise ConfigurationError(
-                "Caller authentication cannot be disabled in production."
-            )
+            msg = "Caller authentication cannot be disabled in production."
+            raise ConfigurationError(msg)
 
         if bool(self.auth_issuer) != bool(self.auth_audience):
-            raise ConfigurationError(
-                "Set both SIMULATION_ENTRYPOINT_AUTH_ISSUER and SIMULATION_ENTRYPOINT_AUTH_AUDIENCE."
-            )
+            msg = "Set both SIMULATION_ENTRYPOINT_AUTH_ISSUER and SIMULATION_ENTRYPOINT_AUTH_AUDIENCE."
+            raise ConfigurationError(msg)
         if self.auth_required and not self.auth_issuer:
-            raise ConfigurationError(
-                "Caller authentication is required but issuer/audience are missing."
-            )
+            msg = "Caller authentication is required but issuer/audience are missing."
+            raise ConfigurationError(msg)
         if self.auth_issuer:
             _validate_https_url(
                 "SIMULATION_ENTRYPOINT_AUTH_ISSUER",
@@ -191,9 +190,8 @@ class Settings:
         }
         missing = [name for name, value in required_backend.items() if not value]
         if missing:
-            raise ConfigurationError(
-                f"Missing old-gateway configuration: {', '.join(missing)}."
-            )
+            msg = f"Missing old-gateway configuration: {', '.join(missing)}."
+            raise ConfigurationError(msg)
 
         _validate_https_url(
             "OLD_GATEWAY_AUTH_ISSUER",
@@ -201,7 +199,8 @@ class Settings:
         )
 
         if self.connect_timeout_seconds <= 0 or self.request_timeout_seconds <= 0:
-            raise ConfigurationError("Old-gateway timeouts must be positive.")
+            msg = "Old-gateway timeouts must be positive."
+            raise ConfigurationError(msg)
 
         _validate_https_url(
             "OLD_GATEWAY_URL",
@@ -213,9 +212,8 @@ class Settings:
         if upstream_hostname is None or not upstream_hostname.endswith(
             MODAL_GATEWAY_HOST_SUFFIX
         ):
-            raise ConfigurationError(
-                "OLD_GATEWAY_URL must point to the existing Modal gateway."
-            )
+            msg = "OLD_GATEWAY_URL must point to the existing Modal gateway."
+            raise ConfigurationError(msg)
 
         try:
             assert_separate_manifest_names(
@@ -225,7 +223,8 @@ class Settings:
         except ValueError as error:
             raise ConfigurationError(str(error)) from error
         if self.stage12_retention_days != 30:
-            raise ConfigurationError("STAGE12_RETENTION_DAYS must be exactly 30.")
+            msg = "STAGE12_RETENTION_DAYS must be exactly 30."
+            raise ConfigurationError(msg)
         required_stage12 = {
             "STAGE12_V2_MANIFEST_ENVIRONMENT": self.stage12_v2_manifest_environment,
             "STAGE12_DATABASE_URL": self.stage12_database_url,
@@ -240,13 +239,13 @@ class Settings:
                 "Stage 12 resources require: " + ", ".join(missing_stage12) + "."
             )
         if self.stage12_enabled and not self.stage12_resources_configured:
-            raise ConfigurationError(
+            msg = (
                 "STAGE12_ENABLED=1 requires the Stage 12 manifest, database, "
                 "and artifact resources."
             )
+            raise ConfigurationError(msg)
         if self.stage12_database_url and not self.stage12_database_url.startswith(
             "postgresql://"
         ):
-            raise ConfigurationError(
-                "STAGE12_DATABASE_URL must use the canonical postgresql:// scheme."
-            )
+            msg = "STAGE12_DATABASE_URL must use the canonical postgresql:// scheme."
+            raise ConfigurationError(msg)

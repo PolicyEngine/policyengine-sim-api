@@ -141,9 +141,8 @@ class ModalReportInvoker:
         )
         invocation_id = getattr(call, "object_id", None)
         if not isinstance(invocation_id, str) or not invocation_id:
-            raise RuntimeError(
-                "Modal report dispatch returned no invocation identifier"
-            )
+            msg = "Modal report dispatch returned no invocation identifier"
+            raise RuntimeError(msg)
         return invocation_id
 
 
@@ -272,7 +271,8 @@ class Stage12ComparisonBackend:
     ) -> tuple[ComparisonReportRecord, tuple[ComparisonSimulationRecord, ...]]:
         report = self._store.get_report(evaluation_id)
         if report.environment != self._settings.environment:
-            raise LookupError(f"comparison report {evaluation_id} does not exist")
+            msg = f"comparison report {evaluation_id} does not exist"
+            raise LookupError(msg)
         return report, self._store.list_simulations(evaluation_id)
 
     def _resolve_report(
@@ -397,7 +397,8 @@ class Stage12ComparisonBackend:
             response.get("job_id") if isinstance(response, dict) else None
         )
         if not isinstance(production_identity, str) or not production_identity:
-            raise ValueError("accepted production response has no job identifier")
+            msg = "accepted production response has no job identifier"
+            raise ValueError(msg)
 
         version, worker, manifest_sha256 = self._manifest_loader.resolve(
             self._settings.stage12_v2_worker_version
@@ -474,7 +475,7 @@ class Stage12ComparisonBackend:
         )
         try:
             raw_context = self._runtime.capture_context()
-        except Exception:
+        except Exception:  # noqa: BLE001  # telemetry is non-fatal: a failed context capture dispatches without one
             raw_context = None
         captured_context = dict(raw_context) if isinstance(raw_context, dict) else {}
         captured_context.pop("observability_id", None)

@@ -72,7 +72,8 @@ def test_missing_token_preserves_403_contract(monkeypatch):
 def test_public_routes_do_not_require_token(monkeypatch):
     class Decoder:
         def __call__(self, token, runtime):
-            raise AssertionError("public route attempted authentication")
+            msg = "public route attempted authentication"
+            raise AssertionError(msg)
 
     monkeypatch.setattr(auth_module, "_decoder", lambda issuer, audience: Decoder())
     app = create_app(settings=make_settings(), backend=FakeBackend())

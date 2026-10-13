@@ -84,7 +84,8 @@ class TemporaryComparisonBackend:
     async def get_temporary_report(self, evaluation_id):
         self.polls.append(evaluation_id)
         if evaluation_id != self.report.evaluation_id:
-            raise LookupError("missing report")
+            msg = "missing report"
+            raise LookupError(msg)
         return self.report, self.simulations
 
 
@@ -227,7 +228,8 @@ def test_automatic_comparison_dispatch_preserves_production_response(
 def test_comparison_dispatch_failure_cannot_change_production_response(backend):
     class FailingComparisonBackend:
         async def dispatch_after_production(self, **_):
-            raise RuntimeError("comparison unavailable")
+            msg = "comparison unavailable"
+            raise RuntimeError(msg)
 
     payload = {
         "job_id": "fc-123",
@@ -395,7 +397,8 @@ def test_temporary_stage12_poll_not_found_has_short_retry_hint(backend):
     class MissingComparisonBackend(TemporaryComparisonBackend):
         async def get_temporary_report(self, evaluation_id):
             self.polls.append(evaluation_id)
-            raise LookupError("not created")
+            msg = "not created"
+            raise LookupError(msg)
 
     comparison = MissingComparisonBackend()
     app = create_app(
@@ -897,7 +900,8 @@ def test_backend_failures_are_sanitized(error, expected_status, expected_detail)
 def test_unexpected_failure_preserves_correlation_headers_and_request_log(caplog):
     class FailingBackend(FakeBackend):
         async def request(self, *args, **kwargs):
-            raise RuntimeError("unexpected backend failure")
+            msg = "unexpected backend failure"
+            raise RuntimeError(msg)
 
     app = create_app(
         settings=make_settings(),
