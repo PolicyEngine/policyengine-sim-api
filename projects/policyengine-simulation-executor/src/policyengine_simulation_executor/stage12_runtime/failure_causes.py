@@ -1,0 +1,209 @@
+"""Bounded, redacted failure causes for durable Stage 12 records.
+
+A Stage 12 failure record names the exception type, the stage the process
+was in (or had last finished), the simulation role where one applies, and a
+redacted message. Without the message an operator cannot tell a database
+session limit from a validation defect, because both surface as a generic
+exception class.
+
+Messages are redacted before they are stored or exported. Redaction removes
+credentials embedded in URLs, signed URL query strings, secret-looking
+key/value pairs, bearer and access tokens, the values of this process's
+secret environment variables, Pydantic validation input values and SQL
+statement parameters. The summary fits the 512-character ``error_summary``
+column and contract field.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from urllib.parse import urlsplit
+
+from policyengine_observability import ObservabilityRuntime
+from pydantic import ValidationError
+
+from policyengine_simulation_executor.hf_access_validation import HF_RUNTIME_ENV_NAME
+
+MAX_FAILURE_SUMMARY_LENGTH = 512
+REDACTED = "[REDACTED]"
+TRUNCATION_MARKER = "..."
+SECRET_ENVIRONMENT_VARIABLES = ("STAGE12_DATABASE_URL", HF_RUNTIME_ENV_NAME)
+MIN_SECRET_VALUE_LENGTH = 8
+logger = logging.getLogger(__name__)
+
+_PRIVATE_KEY_BLOCK = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)",
+    re.DOTALL,
+)
+_URL_CREDENTIALS = re.compile(r"(?P<scheme>\b[a-zA-Z][a-zA-Z0-9+.-]*://)[^\s/@'\"]+@")
+_URL_QUERY = re.compile(
+    r"(?P<address>\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s?'\"]+)\?[^\s'\"]+"
+)
+_BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(?P<key>[a-z0-9_-]*(?:password|passwd|pwd|secret|token|api[_-]?key"
+    r"|access[_-]?key|private[_-]?key|authorization|credentials?))"
+    r"(?P<separator>\s*[=:]\s*)(?P<value>\"[^\"]*\"|'[^']*'|[^\s,;)\]}]+)"
+)
+_KNOWN_TOKEN_FORMATS = re.compile(
+    r"\b(?:hf_[A-Za-z0-9]{20,}"
+    r"|gh[pousr]_[A-Za-z0-9]{20,}"
+    r"|AIza[0-9A-Za-z_-]{35}"
+    r"|ya29\.[0-9A-Za-z_-]+"
+    r"|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)"
+)
+_PYDANTIC_INPUT_VALUE = re.compile(r"input_value=.*?(?=, input_type=)", re.DOTALL)
+_SQL_PARAMETERS = re.compile(r"\[parameters: .*?\](?=\s*(?:\(Background|$))", re.DOTALL)
+_SQLALCHEMY_BACKGROUND = re.compile(r"\(Background on this error at: [^)]*\)")
+_WHITESPACE = re.compile(r"\s+")
+
+
+class StageProgress:
+    """Remember the last Stage 12 stage a process entered and whether it ended.
+
+    A failure inside a stage is reported as ``in <stage>``. A failure between
+    stages is reported as ``after <stage>``, naming the last stage that
+    completed, so code between two spans is not attributed to either of them.
+    """
+
+    def __init__(self, *, role: str | None = None) -> None:
+        self.process_role = role
+        self.stage_name: str | None = None
+        self.stage_role: str | None = role
+        self.stage_finished = False
+
+    @contextmanager
+    def stage(self, stage_name: str, *, role: str | None = None) -> Iterator[None]:
+        stage_role = role if role is not None else self.process_role
+        self.stage_name = stage_name
+        self.stage_role = stage_role
+        self.stage_finished = False
+        yield
+        # An exception skips this, leaving the failing stage recorded.
+        if self.stage_name == stage_name and self.stage_role == stage_role:
+            self.stage_finished = True
+
+
+class Stage12FailureCause(Exception):
+    """A redacted stand-in for a failure, safe to export to telemetry."""
+
+
+def redact_failure_message(message: str) -> str:
+    """Remove credentials, tokens and input values from an exception message."""
+
+    redacted = _PRIVATE_KEY_BLOCK.sub(REDACTED, message)
+    for secret in _secret_environment_values():
+        redacted = redacted.replace(secret, REDACTED)
+    redacted = _URL_CREDENTIALS.sub(rf"\g<scheme>{REDACTED}@", redacted)
+    redacted = _URL_QUERY.sub(rf"\g<address>?{REDACTED}", redacted)
+    redacted = _BEARER_TOKEN.sub(f"Bearer {REDACTED}", redacted)
+    redacted = _SECRET_ASSIGNMENT.sub(
+        rf"\g<key>\g<separator>{REDACTED}",
+        redacted,
+    )
+    redacted = _KNOWN_TOKEN_FORMATS.sub(REDACTED, redacted)
+    redacted = _PYDANTIC_INPUT_VALUE.sub(f"input_value={REDACTED}", redacted)
+    redacted = _SQL_PARAMETERS.sub(f"[parameters: {REDACTED}]", redacted)
+    redacted = _SQLALCHEMY_BACKGROUND.sub("", redacted)
+    return _WHITESPACE.sub(" ", redacted).strip()
+
+
+def failure_summary(
+    error: BaseException,
+    *,
+    progress: StageProgress | None = None,
+) -> str:
+    """Return a redacted ``<type> in <stage> (<role>): <message>`` summary."""
+
+    error_type = type(error).__name__
+    try:
+        heading = f"{error_type}{_location(progress)}"
+        message = redact_failure_message(_failure_message(error))
+        return _bounded(f"{heading}: {message}" if message else heading)
+    except Exception:  # noqa: BLE001 - a summary must never mask the failure
+        return _bounded(error_type)
+
+
+def record_failure_cause(
+    runtime: ObservabilityRuntime | None,
+    error: BaseException,
+    summary: str,
+) -> None:
+    """Attach the redacted cause, with the original stack, to the operation."""
+
+    if runtime is None:
+        return
+    try:
+        cause = Stage12FailureCause(summary).with_traceback(error.__traceback__)
+        runtime.record_exception(cause, handled=True)
+    except Exception:  # noqa: BLE001 - telemetry must not change the outcome
+        logger.warning("stage12_failure_cause_not_recorded")
+
+
+def _location(progress: StageProgress | None) -> str:
+    if progress is None:
+        return ""
+    location = ""
+    if progress.stage_name is not None:
+        position = "after" if progress.stage_finished else "in"
+        location = f" {position} {progress.stage_name}"
+    if progress.stage_role is not None:
+        location = f"{location} ({progress.stage_role})"
+    return location
+
+
+def _failure_message(error: BaseException) -> str:
+    if isinstance(error, ValidationError):
+        return _validation_message(error)
+    database_error = getattr(error, "orig", None)
+    if isinstance(database_error, BaseException) and hasattr(error, "statement"):
+        # SQLAlchemy wraps the driver error with the statement and parameters.
+        # The driver message carries the cause without stored values.
+        return f"{type(database_error).__name__}: {database_error}"
+    return str(error)
+
+
+def _validation_message(error: ValidationError) -> str:
+    details = []
+    for detail in error.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    ):
+        description = f"{detail['msg']} [{detail['type']}]"
+        location = ".".join(str(part) for part in detail["loc"])
+        details.append(f"{location}: {description}" if location else description)
+    count = error.error_count()
+    noun = "error" if count == 1 else "errors"
+    return f"{count} validation {noun} for {error.title}: {'; '.join(details)}"
+
+
+def _secret_environment_values() -> tuple[str, ...]:
+    values: list[str] = []
+    for name in SECRET_ENVIRONMENT_VARIABLES:
+        value = os.environ.get(name, "")
+        values.append(value)
+        values.append(_url_password(value) or "")
+    # Very short values would redact ordinary words; URL credentials are
+    # removed by pattern regardless of length.
+    secrets = {value for value in values if len(value) >= MIN_SECRET_VALUE_LENGTH}
+    # Replace longer values first so a password inside a URL is not split.
+    return tuple(sorted(secrets, key=len, reverse=True))
+
+
+def _url_password(value: str) -> str | None:
+    try:
+        return urlsplit(value).password
+    except ValueError:
+        return None
+
+
+def _bounded(summary: str) -> str:
+    if len(summary) <= MAX_FAILURE_SUMMARY_LENGTH:
+        return summary
+    kept = MAX_FAILURE_SUMMARY_LENGTH - len(TRUNCATION_MARKER)
+    return f"{summary[:kept]}{TRUNCATION_MARKER}"
