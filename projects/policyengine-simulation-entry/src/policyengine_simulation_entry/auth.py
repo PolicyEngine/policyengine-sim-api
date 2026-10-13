@@ -107,7 +107,7 @@ def reset_decoder_cache() -> None:
 def is_client_credentials(identity: CallerIdentity) -> bool:
     """Return whether the token was issued to a machine client."""
 
-    return identity.grant_type == "client-credentials" or (
+    return "client-credentials" in identity.grant_types or (
         identity.subject is not None and identity.subject.endswith("@clients")
     )
 

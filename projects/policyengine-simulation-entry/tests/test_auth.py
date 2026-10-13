@@ -116,7 +116,7 @@ def test_decoder_returns_only_the_declared_caller_identity(signing_keys):
 
     assert isinstance(identity, CallerIdentity)
     assert identity.subject == "api-v1@clients"
-    assert identity.grant_type == "client-credentials"
+    assert identity.grant_types == ("client-credentials",)
     assert identity.scope == "simulate:read"
     assert "undocumented_claim" not in identity.model_dump()
 
@@ -608,6 +608,78 @@ def test_enforced_stage12_routes_reject_simulation_permissions():
     ids=["no-permission", "wrong-permission", "permissions-claim", "scope-claim"],
 )
 def test_enforced_permissions_apply_to_verified_api_v1_tokens(
+    monkeypatch,
+    signing_keys,
+    claims,
+    expected_status,
+):
+    private_key, public_key = signing_keys
+    _use_static_signing_key(monkeypatch, public_key)
+    app = create_app(
+        settings=make_settings(enforce_permissions=True),
+        backend=FakeBackend(),
+    )
+
+    with TestClient(app) as client:
+        result = client.get(
+            "/jobs/job-1",
+            headers={"Authorization": f"Bearer {_token(private_key, **claims)}"},
+        )
+
+    assert result.status_code == expected_status
+
+
+@pytest.mark.parametrize(
+    ("claims", "expected_status"),
+    [
+        (
+            # A null gty replaces the default client-credentials grant.
+            {"sub": "google-oauth2|123", "gty": None, "scope": "simulation:read"},
+            403,
+        ),
+        (
+            {"sub": "auth0|123", "gty": "password", "scope": "simulation:read"},
+            403,
+        ),
+        (
+            {
+                "sub": "auth0|123",
+                "gty": ["refresh_token", "password"],
+                "scope": "simulation:read",
+            },
+            403,
+        ),
+        (
+            {
+                "sub": "auth0|123",
+                "gty": ["refresh_token", "password"],
+                "permissions": ["simulation:read"],
+            },
+            200,
+        ),
+        (
+            {"sub": "auth0|123", "gty": 7, "permissions": ["simulation:read"]},
+            200,
+        ),
+        (
+            {
+                "sub": "api-v1-client",
+                "gty": ["client-credentials"],
+                "scope": "simulation:read",
+            },
+            200,
+        ),
+    ],
+    ids=[
+        "user-token-scope-ignored",
+        "password-grant-scope-ignored",
+        "listed-user-grants-scope-ignored",
+        "listed-user-grants-permissions-claim",
+        "malformed-grant-type-ignored",
+        "listed-client-credentials-scope",
+    ],
+)
+def test_verified_tokens_count_scope_only_for_client_credentials(
     monkeypatch,
     signing_keys,
     claims,
