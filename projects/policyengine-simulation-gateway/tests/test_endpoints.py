@@ -136,7 +136,7 @@ class TestGetAppName:
         assert resolved_version == "1.500.0"
         assert app_name == "legacy-app"
 
-    def test__given_active_state_with_only_legacy_country_routes__then_no_version_uses_country_latest(
+    def test__given_only_legacy_country_routes__then_no_version_uses_country_latest(
         self, mock_modal
     ):
         from policyengine_simulation_gateway.endpoints import get_app_name
@@ -542,7 +542,7 @@ class TestSubmitSimulationEndpoint:
         assert response.json()["detail"][0]["type"] == "extra_forbidden"
         assert mock_modal["func"].last_payload is None
 
-    def test__given_us_state_region_without_data__then_keeps_contract_and_uses_default_dataset(
+    def test__given_us_state_without_data__then_keeps_contract_and_uses_default_dataset(
         self, mock_modal, client: TestClient
     ):
         mock_modal["dicts"]["simulation-api-us-versions"] = {
@@ -734,7 +734,7 @@ class TestSubmitSimulationEndpoint:
         )
         assert response_bundle["data_version"] == ("policyengine-uk-data-1.56.16")
 
-    def test__given_uk_submission_without_data_and_manifest_commit__then_uses_populace_default(
+    def test__given_uk_without_data_and_manifest_commit__then_uses_populace_default(
         self,
         mock_modal,
         client: TestClient,
@@ -760,7 +760,10 @@ class TestSubmitSimulationEndpoint:
         mock_modal["dicts"]["simulation-api-routing-state"] = {"active": state}
 
         def reject_revision(dataset_uri, revision):
-            msg = f"HF validation should not run for private GCS data: {dataset_uri}@{revision}"
+            msg = (
+                "HF validation should not run for private GCS data: "
+                f"{dataset_uri}@{revision}"
+            )
             raise HuggingFaceDatasetReferenceError(msg)
 
         monkeypatch.setattr(
@@ -1673,7 +1676,7 @@ class TestBudgetWindowBatchEndpoints:
         assert response.status_code == 422
         assert response.json()["detail"][0]["loc"] == ["body", "target"]
 
-    def test__given_max_parallel_above_active_limit__then_budget_window_submit_returns_422(
+    def test__given_max_parallel_above_active_limit__then_submit_returns_422(
         self, mock_modal, client: TestClient
     ):
         response = client.post(

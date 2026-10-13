@@ -100,7 +100,9 @@ def web_app() -> FastAPI:
 
     api = FastAPI(
         title="PolicyEngine Simulation Gateway",
-        description="Submit and poll simulation jobs. Routes to versioned simulation apps.",
+        description=(
+            "Submit and poll simulation jobs. Routes to versioned simulation apps."
+        ),
         version="1.0.0",
     )
     runtime = init_simulation_observability(
