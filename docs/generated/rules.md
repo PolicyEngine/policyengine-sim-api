@@ -249,7 +249,7 @@ flowchart LR
 | `sim.quality.every-project-tested` | Every project and library with unit tests runs them in the PR test matrix. | mechanical | doc-only | no | nothing | — | — |
 | `sim.quality.ruff-format-src` | Source code under projects/*/src and libs/*/src is formatted with ruff format. | mechanical | enforced | yes | ruff format | `pr.yml:lint` | — |
 | `sim.quality.ruff-format-tests` | Test code is formatted with ruff format too; CI currently checks only src directories. | mechanical | doc-only | no | nothing | — | — |
-| `sim.quality.ruff-lint` | All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. | mechanical | enforced | yes | ruff check (E4, E7, E9, F, FLY, FURB, I, PIE, PYI, RET, RSE, UP, W) | `pr.yml:lint` | — |
+| `sim.quality.ruff-lint` | All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. | mechanical | enforced | yes | ruff check (E4, E7, E9, F, FLY, FURB, I, PIE, PYI, RET, RSE, TC, UP, W) | `pr.yml:lint` | — |
 | `sim.quality.tests-pass` | Each project's unit tests pass in its own locked environment. | mechanical | enforced | yes | CI job `test` | `pr.yml:test` | — |
 
 ```mermaid
@@ -261,7 +261,7 @@ flowchart LR
   j_CI_pr_yml_lint["CI pr.yml:lint"]
   r_sim_quality_ruff_format_tests("sim.quality.ruff-format-tests (doc-only)")
   r_sim_quality_ruff_lint("sim.quality.ruff-lint (enforced)")
-  e_ruff_check__E4__E7__E9__F__FLY__FURB__I__PIE__PYI__RET__RSE__UP__W_["ruff check (E4, E7, E9, F, FLY, FURB, I, PIE, PYI, RET, RSE, UP, W)"]
+  e_ruff_check__E4__E7__E9__F__FLY__FURB__I__PIE__PYI__RET__RSE__TC__UP__W_["ruff check (E4, E7, E9, F, FLY, FURB, I, PIE, PYI, RET, RSE, TC, UP, W)"]
   r_sim_quality_tests_pass("sim.quality.tests-pass (enforced)")
   e_CI_job_test["CI job test"]
   j_CI_pr_yml_test["CI pr.yml:test"]
@@ -269,8 +269,8 @@ flowchart LR
   r_sim_quality_ruff_format_src --> e_ruff_format
   e_ruff_format --> j_CI_pr_yml_lint
   r_sim_quality_ruff_format_tests -.-> gap_unenforced
-  r_sim_quality_ruff_lint --> e_ruff_check__E4__E7__E9__F__FLY__FURB__I__PIE__PYI__RET__RSE__UP__W_
-  e_ruff_check__E4__E7__E9__F__FLY__FURB__I__PIE__PYI__RET__RSE__UP__W_ --> j_CI_pr_yml_lint
+  r_sim_quality_ruff_lint --> e_ruff_check__E4__E7__E9__F__FLY__FURB__I__PIE__PYI__RET__RSE__TC__UP__W_
+  e_ruff_check__E4__E7__E9__F__FLY__FURB__I__PIE__PYI__RET__RSE__TC__UP__W_ --> j_CI_pr_yml_lint
   r_sim_quality_tests_pass --> e_CI_job_test
   e_CI_job_test --> j_CI_pr_yml_test
 ```
