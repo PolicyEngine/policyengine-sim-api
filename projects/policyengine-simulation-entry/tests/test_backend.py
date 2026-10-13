@@ -8,7 +8,7 @@ from conftest import make_settings
 from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_entry.backend import (
     BackendAuthenticationError,
-    BackendUnavailable,
+    BackendUnavailableError,
     OldGatewayBackend,
 )
 
@@ -208,7 +208,7 @@ async def test_post_connection_error_is_not_retried():
     )
     await backend.start()
     try:
-        with pytest.raises(BackendUnavailable):
+        with pytest.raises(BackendUnavailableError):
             await backend.request(
                 "POST",
                 "/simulate/economy/comparison",

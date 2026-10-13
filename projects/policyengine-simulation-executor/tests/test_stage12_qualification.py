@@ -11,7 +11,7 @@ from policyengine_simulation_contract.stage12_execution import SimulationRole
 from policyengine_simulation_executor.simulation_microdata import (
     extract_output_microdata,
 )
-from policyengine_simulation_executor.stage12_parity import ParityMismatch
+from policyengine_simulation_executor.stage12_parity import ParityMismatchError
 from policyengine_simulation_executor.stage12_qualification import (
     qualify_report_parity,
 )
@@ -145,7 +145,7 @@ def test_qualification_fails_with_bounded_diagnostic_without_output_values() -> 
         )
         return SimulationCalculation(frames=frames)
 
-    with pytest.raises(ParityMismatch) as error:
+    with pytest.raises(ParityMismatchError) as error:
         qualify_report_parity(
             _existing_request(),
             report,
@@ -169,7 +169,7 @@ def test_qualification_fails_with_bounded_diagnostic_without_output_values() -> 
 def test_qualification_rejects_different_input_provenance(field, value, code) -> None:
     request = {**_existing_request(), field: value}
 
-    with pytest.raises(ParityMismatch) as error:
+    with pytest.raises(ParityMismatchError) as error:
         qualify_report_parity(request, _report())
 
     assert error.value.code == code
@@ -191,7 +191,7 @@ def test_qualification_rejects_existing_executor_provenance_mismatch() -> None:
             ),
         }
 
-    with pytest.raises(ParityMismatch) as error:
+    with pytest.raises(ParityMismatchError) as error:
         qualify_report_parity(
             _existing_request(),
             report,

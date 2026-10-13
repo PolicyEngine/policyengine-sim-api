@@ -232,7 +232,7 @@ class ArtifactBaselineSimulation(StageReportingSimulation):
         # existing key and exposes no remove, so evict directly first.
         from policyengine.core.simulation import _cache
 
-        _cache._cache.pop(getattr(self, "storage_id", self.id), None)
+        _cache._cache.pop(getattr(self, "storage_id", self.id), None)  # noqa: SLF001  # policyengine's LRUCache has no public remove
         _cache.add(
             getattr(self, "storage_id", self.id),
             self.model_copy(deep=False) if selection is not None else self,

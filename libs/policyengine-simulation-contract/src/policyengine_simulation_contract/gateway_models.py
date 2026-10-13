@@ -325,32 +325,32 @@ class BudgetWindowAnnualImpact(BaseModel):
 
     spm_provenance: SPMComparisonProvenance | None = None
     year: str
-    taxRevenueImpact: float
-    federalTaxRevenueImpact: float
-    stateTaxRevenueImpact: float
-    benefitSpendingImpact: float
-    budgetaryImpact: float
+    taxRevenueImpact: float  # noqa: N815  # published budget-window JSON field taxRevenueImpact
+    federalTaxRevenueImpact: float  # noqa: N815  # published budget-window JSON field federalTaxRevenueImpact
+    stateTaxRevenueImpact: float  # noqa: N815  # published budget-window JSON field stateTaxRevenueImpact
+    benefitSpendingImpact: float  # noqa: N815  # published budget-window JSON field benefitSpendingImpact
+    budgetaryImpact: float  # noqa: N815  # published budget-window JSON field budgetaryImpact
 
 
 class BudgetWindowTotals(BaseModel):
     """Aggregate totals for a completed budget-window response."""
 
     year: Literal["Total"] = "Total"
-    taxRevenueImpact: float
-    federalTaxRevenueImpact: float
-    stateTaxRevenueImpact: float
-    benefitSpendingImpact: float
-    budgetaryImpact: float
+    taxRevenueImpact: float  # noqa: N815  # published budget-window JSON field taxRevenueImpact
+    federalTaxRevenueImpact: float  # noqa: N815  # published budget-window JSON field federalTaxRevenueImpact
+    stateTaxRevenueImpact: float  # noqa: N815  # published budget-window JSON field stateTaxRevenueImpact
+    benefitSpendingImpact: float  # noqa: N815  # published budget-window JSON field benefitSpendingImpact
+    budgetaryImpact: float  # noqa: N815  # published budget-window JSON field budgetaryImpact
 
 
 class BudgetWindowResult(BaseModel):
     """Completed budget-window output."""
 
     kind: Literal["budgetWindow"] = "budgetWindow"
-    startYear: str
-    endYear: str
-    windowSize: int
-    annualImpacts: list[BudgetWindowAnnualImpact] = Field(default_factory=list)
+    startYear: str  # noqa: N815  # published budget-window JSON field startYear
+    endYear: str  # noqa: N815  # published budget-window JSON field endYear
+    windowSize: int  # noqa: N815  # published budget-window JSON field windowSize
+    annualImpacts: list[BudgetWindowAnnualImpact] = Field(default_factory=list)  # noqa: N815  # published budget-window JSON field annualImpacts
     totals: BudgetWindowTotals
 
 

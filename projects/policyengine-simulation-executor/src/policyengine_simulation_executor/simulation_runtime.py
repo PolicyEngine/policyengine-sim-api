@@ -456,7 +456,7 @@ def _require_certified_uk_weight_matrix(
         weight_matrix_bucket=scoping_strategy.weight_matrix_bucket,
         lookup_csv_bucket=scoping_strategy.lookup_csv_bucket,
     )
-    simulation_output_geographic._required_uk_geography_lookup_csv_path(spec)
+    simulation_output_geographic._required_uk_geography_lookup_csv_path(spec)  # noqa: SLF001  # package-internal helper, called through its module so tests can patch it
     paths = resolve_uk_geography_asset_paths(spec, download_missing_assets=False)
     if Path(paths.weight_matrix_path).resolve() != Path(certified.path).resolve():
         msg = (

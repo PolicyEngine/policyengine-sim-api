@@ -19,12 +19,12 @@ from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.backend import (
     BackendResponse,
-    BackendTimeout,
-    BackendUnavailable,
+    BackendTimeoutError,
+    BackendUnavailableError,
 )
 from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12DispatchFailed,
-    TemporaryStage12UnsupportedRequest,
+    TemporaryStage12UnsupportedRequestError,
 )
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 from stage12_fixtures import (
@@ -584,7 +584,7 @@ def test_temporary_stage12_poll_returns_404_for_unknown_report(backend):
     ("error", "status_code", "expected"),
     [
         (
-            TemporaryStage12UnsupportedRequest("unsupported_cliff_calculation"),
+            TemporaryStage12UnsupportedRequestError("unsupported_cliff_calculation"),
             422,
             {"reason": "unsupported_cliff_calculation"},
         ),
@@ -866,8 +866,12 @@ def test_request_validation_matches_shared_contract(client):
 @pytest.mark.parametrize(
     ("error", "expected_status", "expected_detail"),
     [
-        (BackendUnavailable("unavailable"), 503, "Simulation backend is unavailable."),
-        (BackendTimeout("timed out"), 504, "Simulation backend timed out."),
+        (
+            BackendUnavailableError("unavailable"),
+            503,
+            "Simulation backend is unavailable.",
+        ),
+        (BackendTimeoutError("timed out"), 504, "Simulation backend timed out."),
     ],
 )
 def test_backend_failures_are_sanitized(error, expected_status, expected_detail):

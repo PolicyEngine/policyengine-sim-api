@@ -35,15 +35,15 @@ SAFE_RESPONSE_HEADERS = frozenset(
 )
 
 
-class BackendUnavailable(RuntimeError):
+class BackendUnavailableError(RuntimeError):
     """The backend could not be reached."""
 
 
-class BackendTimeout(RuntimeError):
+class BackendTimeoutError(RuntimeError):
     """The backend did not answer within the configured timeout."""
 
 
-class BackendAuthenticationError(BackendUnavailable):
+class BackendAuthenticationError(BackendUnavailableError):
     """The service could not authenticate to the backend."""
 
 
@@ -85,7 +85,7 @@ class SimulationBackend(Protocol):
     ) -> BackendResponse:
         """Send one request and return the backend's response.
 
-        Raise BackendUnavailable or BackendTimeout when no response arrives.
+        Raise BackendUnavailableError or BackendTimeoutError when no response arrives.
         """
         ...
 
@@ -196,14 +196,14 @@ class OldGatewayBackend:
     def _runtime(self) -> tuple[httpx.AsyncClient, ClientCredentialsTokenProvider]:
         if self.client is None or self.token_provider is None:
             msg = "Old-gateway backend is not started."
-            raise BackendUnavailable(msg)
+            raise BackendUnavailableError(msg)
         return self.client, self.token_provider
 
     async def ready(self) -> bool:
         """Return whether the old gateway answers GET /health with 200."""
         try:
             response = await self.request("GET", "/health")
-        except (BackendUnavailable, BackendTimeout):
+        except (BackendUnavailableError, BackendTimeoutError):
             return False
         return response.status_code == 200
 
@@ -220,8 +220,8 @@ class OldGatewayBackend:
 
         A connection failure is retried once for GET only. A 401 or 403 refreshes
         the token and replays once for any method, then raises
-        BackendAuthenticationError. Raise BackendUnavailable if the client is
-        not started or the gateway is unreachable, and BackendTimeout on timeout.
+        BackendAuthenticationError. Raise BackendUnavailableError if the client is
+        not started or the gateway is unreachable, and BackendTimeoutError on timeout.
         """
         client, token_provider = self._runtime()
         method = method.upper()
@@ -248,13 +248,13 @@ class OldGatewayBackend:
                     connection_retries_remaining -= 1
                     continue
                 msg = "Old gateway is unavailable."
-                raise BackendUnavailable(msg) from exc
+                raise BackendUnavailableError(msg) from exc
             except httpx.TimeoutException as exc:
                 msg = "Old gateway timed out."
-                raise BackendTimeout(msg) from exc
+                raise BackendTimeoutError(msg) from exc
             except httpx.RequestError as exc:
                 msg = "Old gateway is unavailable."
-                raise BackendUnavailable(msg) from exc
+                raise BackendUnavailableError(msg) from exc
 
             if response.status_code in {401, 403}:
                 if auth_refreshes_remaining:

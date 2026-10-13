@@ -52,8 +52,8 @@ from policyengine_simulation_entry.auth import (
 )
 from policyengine_simulation_entry.backend import (
     BackendResponse,
-    BackendTimeout,
-    BackendUnavailable,
+    BackendTimeoutError,
+    BackendUnavailableError,
     OldGatewayBackend,
     SimulationBackend,
 )
@@ -68,7 +68,7 @@ from policyengine_simulation_entry.schemas import (
 )
 from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12DispatchFailed,
-    TemporaryStage12UnsupportedRequest,
+    TemporaryStage12UnsupportedRequestError,
 )
 
 if TYPE_CHECKING:
@@ -379,7 +379,7 @@ def create_app(
                 response.headers[OBSERVABILITY_ID_HEADER] = observability_id
             elif OBSERVABILITY_ID_HEADER in response.headers:
                 del response.headers[OBSERVABILITY_ID_HEADER]
-        except BackendTimeout:
+        except BackendTimeoutError:
             runtime.event(
                 "simulation_entry_backend_timeout",
                 attributes={
@@ -396,7 +396,7 @@ def create_app(
                     **BACKEND_RESPONSE_HEADER,
                 },
             )
-        except BackendUnavailable:
+        except BackendUnavailableError:
             runtime.event(
                 "simulation_entry_backend_unavailable",
                 attributes={
@@ -466,7 +466,7 @@ def create_app(
                 content={"detail": "Stage 12 submission acknowledgement timed out."},
                 headers={"Retry-After": "10"},
             )
-        except TemporaryStage12UnsupportedRequest as error:
+        except TemporaryStage12UnsupportedRequestError as error:
             return JSONResponse(
                 status_code=422,
                 content={

@@ -10,7 +10,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-from policyengine_fastapi.exit import exit
+from policyengine_fastapi.exit import exit as app_exit
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class GCPLoggingInstrumentor:
         from opentelemetry.instrumentation.logging import LoggingInstrumentor
         from pythonjsonlogger.json import JsonFormatter
 
-        logHandler = logging.StreamHandler()
+        log_handler = logging.StreamHandler()
         formatter = JsonFormatter(
             "%(asctime)s %(levelname)s %(message)s %(otelTraceID)s %(otelSpanID)s %(otelTraceSampled)s",
             rename_fields={
@@ -107,12 +107,12 @@ class GCPLoggingInstrumentor:
             datefmt="%Y-%m-%dT%H:%M:%SZ",
         )
 
-        logHandler.setFormatter(formatter)
-        logHandler.addFilter(AddGcpProjectToTraceFilter(self.project_id))
+        log_handler.setFormatter(formatter)
+        log_handler.addFilter(AddGcpProjectToTraceFilter(self.project_id))
 
         logging.basicConfig(
             level=logging.INFO,
-            handlers=[logHandler],
+            handlers=[log_handler],
         )
         LoggingInstrumentor().instrument()
 
@@ -129,18 +129,18 @@ def export_ot_to_gcp(resource: Resource) -> None:
     )
     from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 
-    traceProvider = TracerProvider(resource=resource)
+    trace_provider = TracerProvider(resource=resource)
     processor = BatchSpanProcessor(CloudTraceSpanExporter())
-    traceProvider.add_span_processor(processor)
-    trace.set_tracer_provider(traceProvider)
+    trace_provider.add_span_processor(processor)
+    trace.set_tracer_provider(trace_provider)
 
     reader = PeriodicExportingMetricReader(CloudMonitoringMetricsExporter())
-    meterProvider = MeterProvider(metric_readers=[reader], resource=resource)
-    metrics.set_meter_provider(meterProvider)
+    meter_provider = MeterProvider(metric_readers=[reader], resource=resource)
+    metrics.set_meter_provider(meter_provider)
 
-    @exit()
+    @app_exit()
     def flush_ot() -> None:
         log.info("Flushing traces and metrics before shutdown")
-        traceProvider.force_flush()
-        meterProvider.force_flush()
+        trace_provider.force_flush()
+        meter_provider.force_flush()
         log.info("All metics and traces flushed.")

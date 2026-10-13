@@ -15,7 +15,7 @@ from opentelemetry.sdk.trace.export import (
     ConsoleSpanExporter,
 )
 
-from policyengine_fastapi.exit import exit
+from policyengine_fastapi.exit import exit as app_exit
 
 
 # Configure opentelemetry
@@ -27,16 +27,16 @@ def export_ot_to_console(resource: Resource) -> None:
     Installs global tracer and meter providers for ``resource`` and registers an
     ``exit`` callback that flushes both at shutdown.
     """
-    traceProvider = TracerProvider(resource=resource)
+    trace_provider = TracerProvider(resource=resource)
     processor = BatchSpanProcessor(ConsoleSpanExporter())
-    traceProvider.add_span_processor(processor)
-    trace.set_tracer_provider(traceProvider)
+    trace_provider.add_span_processor(processor)
+    trace.set_tracer_provider(trace_provider)
 
     reader = PeriodicExportingMetricReader(ConsoleMetricExporter())
-    meterProvider = MeterProvider(resource=resource, metric_readers=[reader])
-    metrics.set_meter_provider(meterProvider)
+    meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
+    metrics.set_meter_provider(meter_provider)
 
-    @exit()
+    @app_exit()
     def flush_ot() -> None:
-        traceProvider.force_flush()
-        meterProvider.force_flush()
+        trace_provider.force_flush()
+        meter_provider.force_flush()
