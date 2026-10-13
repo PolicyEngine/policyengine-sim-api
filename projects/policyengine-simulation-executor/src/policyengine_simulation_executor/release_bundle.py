@@ -14,12 +14,19 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from policyengine_simulation_contract.dataset_uri import (
     runtime_dataset_uri,
     select_dataset_revision,
     split_dataset_revision,
 )
+
+if TYPE_CHECKING:
+    from policyengine.provenance.manifest import (
+        CountryReleaseManifest,
+        DataPackageVersion,
+    )
 
 os.environ.setdefault("POLICYENGINE_SKIP_COUNTRY_IMPORTS", "1")
 
@@ -99,7 +106,7 @@ def _normalise_country(country: str) -> str:
     return country
 
 
-def _artifact_revision(data_package) -> str:
+def _artifact_revision(data_package: DataPackageVersion) -> str:
     return data_package.release_manifest_revision or data_package.version
 
 
@@ -129,7 +136,7 @@ def _with_hf_revision_unvalidated(dataset_uri: str, revision: str) -> str:
 
 def _artifact_hf_uri(
     *,
-    data_package,
+    data_package: DataPackageVersion,
     reference: object,
 ) -> tuple[str | None, str | None]:
     from policyengine.provenance.manifest import build_hf_uri
@@ -152,7 +159,9 @@ def _artifact_hf_uri(
     )
 
 
-def _dataset_uris_from_manifest(manifest) -> tuple[dict[str, str], dict[str, str]]:
+def _dataset_uris_from_manifest(
+    manifest: CountryReleaseManifest,
+) -> tuple[dict[str, str], dict[str, str]]:
     dataset_uris: dict[str, str] = {}
     dataset_repo_types: dict[str, str] = {}
     for name, reference in manifest.datasets.items():
@@ -171,7 +180,7 @@ def _dataset_uris_from_manifest(manifest) -> tuple[dict[str, str], dict[str, str
 def _dataset_uris_from_release(
     *,
     data_release: Mapping,
-    fallback_data_package,
+    fallback_data_package: DataPackageVersion,
 ) -> tuple[dict[str, str], dict[str, str]]:
     from policyengine.provenance.manifest import build_hf_uri
 

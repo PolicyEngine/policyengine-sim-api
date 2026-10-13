@@ -10,12 +10,16 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import pandas as pd
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
+
+if TYPE_CHECKING:
+    from importlib.resources.abc import Traversable
 
 _CODE_PATTERN = re.compile(r"^[A-Z]\d{8}$")
 _RESOURCE_PACKAGE = "policyengine_simulation_executor"
@@ -116,7 +120,7 @@ class UKLocalAuthorityResources:
         )
 
 
-def _resource_path(filename: str):
+def _resource_path(filename: str) -> Traversable:
     path = files(_RESOURCE_PACKAGE)
     for part in _RESOURCE_DIRECTORY:
         path = path.joinpath(part)

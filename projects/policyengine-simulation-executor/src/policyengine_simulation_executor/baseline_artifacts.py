@@ -21,7 +21,7 @@ which is what makes it safe to ship before any artifacts exist.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import PrivateAttr
 
@@ -29,6 +29,9 @@ from policyengine_simulation_executor import artifact_keys
 from policyengine_simulation_executor.stage_reporting_simulation import (
     StageReportingSimulation,
 )
+
+if TYPE_CHECKING:
+    from policyengine.core.scoping_strategy import ScopingStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +50,9 @@ def qualifying_baseline_identity(
     *,
     country: str,
     dataset_is_default: bool,
-    policy: Any,
+    policy: object,
     region_code: str | None,
-    scoping_strategy: Any,
+    scoping_strategy: ScopingStrategy | None,
     year: int,
 ) -> artifact_keys.BaselineArtifactIdentity | None:
     """Full artifact identity for a qualifying baseline, else None.
@@ -105,9 +108,9 @@ def deterministic_baseline_id(
     *,
     country: str,
     dataset_is_default: bool,
-    policy: Any,
+    policy: object,
     region_code: str | None,
-    scoping_strategy: Any,
+    scoping_strategy: ScopingStrategy | None,
     year: int,
 ) -> str | None:
     """The runtime wrapper: id for a qualifying baseline, else None.
@@ -152,7 +155,7 @@ class ArtifactBaselineSimulation(StageReportingSimulation):
         """Set by ``ensure()``; None until then."""
         return self._artifact_outcome
 
-    def run(self):
+    def run(self) -> None:
         self._computed_this_process = True
         super().run()
 

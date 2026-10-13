@@ -239,7 +239,7 @@ def deserialize_uk_local_authority_metadata(
 
 
 class Stage12ArtifactStore:
-    def __init__(self, bucket_name: str, *, store: ArtifactStore | None = None):
+    def __init__(self, bucket_name: str, *, store: ArtifactStore | None = None) -> None:
         if not bucket_name:
             raise ValueError(
                 "Stage 12 requires an explicitly configured private bucket"

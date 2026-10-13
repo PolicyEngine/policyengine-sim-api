@@ -1035,7 +1035,7 @@ def restore_routing_state(
     return next_state
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 from policyengine_simulation_executor.simulation_macro_output import (
     BudgetaryImpact,
@@ -17,8 +17,11 @@ from policyengine_simulation_executor.simulation_output_common import (
     _sum_output_variable,
 )
 
+if TYPE_CHECKING:
+    from policyengine.core import Simulation
 
-def build_detailed_budget(analysis: Any) -> DetailedBudgetOutput:
+
+def build_detailed_budget(analysis: object) -> DetailedBudgetOutput:
     collection = getattr(analysis, "program_statistics", None)
     if isinstance(collection, DetailedBudgetOutput):
         return collection
@@ -37,7 +40,9 @@ def build_detailed_budget(analysis: Any) -> DetailedBudgetOutput:
     return DetailedBudgetOutput(detailed_budget)
 
 
-def build_budgetary_impact(country: str, baseline, reform) -> BudgetaryImpact:
+def build_budgetary_impact(
+    country: str, baseline: Simulation, reform: Simulation
+) -> BudgetaryImpact:
     tax_revenue_impact = _change_output_variable(
         baseline, reform, "household_tax", entity="household"
     )

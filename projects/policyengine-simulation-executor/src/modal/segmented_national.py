@@ -56,6 +56,7 @@ import modal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from types import ModuleType
 
     from policyengine_observability import ObservabilityRuntime
 
@@ -185,7 +186,7 @@ class SegmentedNationalRunner:
         *,
         app_name: str,
         runtime: ObservabilityRuntime,
-        modal_module=None,
+        modal_module: ModuleType | None = None,
         poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
         poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
         child_deadline_seconds: float = CHILD_DEADLINE_SECONDS,
@@ -194,7 +195,7 @@ class SegmentedNationalRunner:
         ),
         clock: Callable[[], float] = time.monotonic,
         progress: JobProgressReporter = NULL_JOB_PROGRESS,
-    ):
+    ) -> None:
         self.params = params
         self.app_name = app_name
         self.runtime = runtime
@@ -239,14 +240,16 @@ class SegmentedNationalRunner:
         self.progress.enter(JobStage.OUTPUTS)
         return self._reduce(child_results, country_module=country_module)
 
-    def _country_module(self):
+    def _country_module(self) -> ModuleType:
         from policyengine_simulation_executor.simulation_runtime import (
             _country_module,
         )
 
         return _country_module(self.country)
 
-    def _extend_last_group_with_uncovered_states(self, country_module) -> None:
+    def _extend_last_group_with_uncovered_states(
+        self, country_module: ModuleType
+    ) -> None:
         """Registry state regions missing from the static partition ride in
         the last group, loudly, so a new state-level region added to the
         model cannot silently drop its households from national results.
@@ -516,7 +519,9 @@ class SegmentedNationalRunner:
             self._cancel_call(child.call)
         self._cancel_superseded_children()
 
-    def _reduce(self, child_results: list[dict], *, country_module) -> dict[str, Any]:
+    def _reduce(
+        self, child_results: list[dict], *, country_module: ModuleType
+    ) -> dict[str, Any]:
         from policyengine_simulation_executor.simulation_runtime import (
             _parse_year,
         )

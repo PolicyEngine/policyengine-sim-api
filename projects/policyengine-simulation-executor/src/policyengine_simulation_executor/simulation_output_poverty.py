@@ -24,6 +24,8 @@ from policyengine_simulation_executor.simulation_output_common import (
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
+    from policyengine.core import Simulation
+
 US_POVERTY_TYPES = {
     "spm": "poverty",
     "spm_deep": "deep_poverty",
@@ -110,7 +112,9 @@ def _race_poverty_output(values: dict[str, dict[str, float]]) -> RacePovertyOutp
     )
 
 
-def build_poverty_outputs(country: str, baseline, reform, analysis: Any):
+def build_poverty_outputs(
+    country: str, baseline: Simulation, reform: Simulation, analysis: object
+) -> PovertyModuleOutputs:
     prefix = "us" if country == "us" else "uk"
     baseline_poverty_by_age = _try_compute_output(
         "baseline poverty by age",
@@ -172,10 +176,10 @@ def build_poverty_outputs(country: str, baseline, reform, analysis: Any):
 def build_poverty_output(
     *,
     country: str,
-    baseline: Any,
-    reform: Any,
-    baseline_by_age: Any,
-    reform_by_age: Any,
+    baseline: object,
+    reform: object,
+    baseline_by_age: object,
+    reform_by_age: object,
 ) -> PovertyOutput:
     if isinstance(baseline, PovertyOutput):
         return baseline
@@ -206,8 +210,8 @@ def build_poverty_output(
 def build_poverty_by_gender_output(
     *,
     country: str,
-    baseline_by_gender: Any,
-    reform_by_gender: Any,
+    baseline_by_gender: object,
+    reform_by_gender: object,
 ) -> PovertyByGenderOutput:
     if isinstance(baseline_by_gender, PovertyByGenderOutput):
         return baseline_by_gender
@@ -230,8 +234,8 @@ def build_poverty_by_gender_output(
 
 def build_poverty_by_race_output(
     *,
-    baseline_by_race: Any,
-    reform_by_race: Any,
+    baseline_by_race: object,
+    reform_by_race: object,
 ) -> PovertyByRaceOutput:
     if isinstance(baseline_by_race, PovertyByRaceOutput):
         return baseline_by_race

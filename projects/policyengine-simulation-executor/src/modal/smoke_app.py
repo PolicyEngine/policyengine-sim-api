@@ -161,7 +161,7 @@ def smoke_import_executor() -> dict:
 
 
 @app.local_entrypoint()
-def main():
+def main() -> None:
     report = smoke_import_executor.remote()
     print(report)
     print("executor image smoke OK")

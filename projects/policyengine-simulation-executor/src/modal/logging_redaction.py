@@ -15,7 +15,7 @@ from __future__ import annotations
 SENSITIVE_PARAM_KEYS = ("data", "reform", "baseline")
 
 
-def redact_params_for_logging(params) -> dict:
+def redact_params_for_logging(params: object) -> dict:
     """Return a shallow copy of ``params`` safe for observability attributes.
 
     We preserve routing-relevant fields (country, scope, version, time

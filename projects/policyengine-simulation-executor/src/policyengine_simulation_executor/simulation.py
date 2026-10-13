@@ -14,7 +14,7 @@ from policyengine_simulation_executor.simulation_runtime import run_simulation_i
 logger = logging.getLogger(__file__)
 
 
-def create_router(runtime: ObservabilityRuntime):
+def create_router(runtime: ObservabilityRuntime) -> APIRouter:
     router = APIRouter()
 
     @router.post("/simulate/economy/comparison", response_model=EconomyComparison)

@@ -1,8 +1,11 @@
 """Certified SPM runtime selection, independent of caller-supplied metadata."""
 
+from __future__ import annotations
+
 import json
 from collections.abc import Mapping
 from functools import lru_cache
+from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_contract.spm import (
     SPMCapability,
@@ -17,16 +20,19 @@ from policyengine_simulation_contract.spm import (
     validate_spm_calculation_provenance,
 )
 
+if TYPE_CHECKING:
+    from spm_calculator.rolling_forecast import SPMForecast
+
 
 @lru_cache(maxsize=4)
-def _forecast(expected_sha256):
+def _forecast(expected_sha256: str | None) -> SPMForecast:
     from spm_calculator import load_forecast
 
     return load_forecast(expected_sha256=expected_sha256)
 
 
 @lru_cache(maxsize=1)
-def runtime_spm_capability():
+def runtime_spm_capability() -> SPMCapability | None:
     """The installed image's certified SPM capability, or None.
 
     Memoized for the life of the process because every input is a property
@@ -83,7 +89,9 @@ def runtime_spm_capability():
 
 
 @lru_cache(maxsize=64)
-def _prevalidate_selection(selection_json: str, start_year: int, window_size: int):
+def _prevalidate_selection(
+    selection_json: str, start_year: int, window_size: int
+) -> None:
     """Prove a resolved selection can be measured, before anything expensive.
 
     Keyed on the resolved selection and the year range, which is everything
@@ -139,7 +147,7 @@ _MEMO_CLEARERS = (
 )
 
 
-def reset_spm_runtime_caches():
+def reset_spm_runtime_caches() -> None:
     """Forget what was memoized from the installed environment.
 
     Production never needs this: a container's image is fixed for the life
@@ -154,7 +162,7 @@ def reset_spm_runtime_caches():
         clear()
 
 
-def normalize_runtime_spm(params):
+def normalize_runtime_spm(params: dict[str, Any]) -> dict[str, Any] | None:
     """Resolve before dataset loading, artifact lookup, or child submission."""
     from policyengine_simulation_executor.release_bundle import (
         get_country_release_bundle,
@@ -277,7 +285,13 @@ def simulation_spm_calculation_provenance(
         ) from exc
 
 
-def simulation_spm_result(baseline, reform, selection, *, expected_year=None):
+def simulation_spm_result(
+    baseline: object,
+    reform: object,
+    selection: object,
+    *,
+    expected_year: int | None = None,
+) -> dict[str, object]:
     if selection is None:
         return {}
     baseline_provenance = simulation_spm_calculation_provenance(baseline, selection)

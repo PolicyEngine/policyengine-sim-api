@@ -22,13 +22,14 @@ Two hazards this module exists to handle:
   aggregates drift ~1e-7 relative.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from microdf import MicroDataFrame
 from policyengine.core import Simulation
-from policyengine_observability import ObservabilityRuntime
 
 from policyengine_simulation_executor.simulation_microdata import (
     rebuild_entity_frame,
@@ -36,6 +37,12 @@ from policyengine_simulation_executor.simulation_microdata import (
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
 )
+
+if TYPE_CHECKING:
+    from types import ModuleType
+
+    from policyengine.tax_benefit_models.us.datasets import PolicyEngineUSDataset
+    from policyengine_observability import ObservabilityRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +89,9 @@ def concatenate_microdata(
     return sides
 
 
-def _us_dataset_from_frames(frames: dict[str, pd.DataFrame], *, year: int):
+def _us_dataset_from_frames(
+    frames: dict[str, pd.DataFrame], *, year: int
+) -> PolicyEngineUSDataset:
     """Wrap concatenated entity tables as an in-memory US dataset.
 
     Weights need no special handling: they ride as ``<entity>_weight``
@@ -115,7 +124,7 @@ def build_national_output(
     *,
     country: str,
     simulation_params: dict[str, Any],
-    country_module,
+    country_module: ModuleType,
     year: int,
     resolved_data_version: str | None = None,
     runtime: ObservabilityRuntime | None = None,
@@ -137,7 +146,7 @@ def build_national_output(
         for side, frames in sides.items()
     }
 
-    def stand_in(dataset) -> PrecomputedSimulation:
+    def stand_in(dataset: PolicyEngineUSDataset) -> PrecomputedSimulation:
         simulation = PrecomputedSimulation(
             dataset=dataset,
             tax_benefit_model_version=country_module.model,
