@@ -1,5 +1,4 @@
-"""
-Integration tests for Modal-based budget-window batches.
+"""Integration tests for Modal-based budget-window batches.
 
 These tests run against the staging Modal deployment and verify that the
 gateway can spawn the parent budget-window worker, the parent can spawn child
@@ -26,7 +25,8 @@ def test_budget_window_multi_year_batch_completes(
     poll_budget_window_batch,
     us_model_version: str,
 ):
-    """
+    """A two-year US budget-window batch returns both annual impacts and totals.
+
     Given a two-year US budget-window request
     When the batch is submitted and polled to completion
     Then the response contains 2026 and 2027 annual impacts plus totals.

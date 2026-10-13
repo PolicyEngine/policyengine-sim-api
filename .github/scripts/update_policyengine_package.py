@@ -379,6 +379,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Run one subcommand for update-policyengine-package.sh.
+
+    Results go to stdout for the shell script to capture; a failed check exits
+    non-zero through ``SystemExit`` with the reason as its message.
+    """
     args = _parser().parse_args()
     if args.command == "current-version":
         print(current_version(args.pyproject, args.package))
