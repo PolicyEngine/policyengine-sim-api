@@ -1,4 +1,4 @@
-"""Run one controlled Stage 12 parity qualification from canonical JSON files."""
+"""Run one controlled Stage 12 parity qualification from canonical JSON files."""  # noqa: INP001  # a script run as python -m src.modal.utils.qualify_stage12_parity; utils is not a regular package
 
 from __future__ import annotations
 

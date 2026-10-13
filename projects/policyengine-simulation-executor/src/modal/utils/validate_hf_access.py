@@ -1,4 +1,4 @@
-"""Validate UK private-data access directly in CI."""
+"""Validate UK private-data access directly in CI."""  # noqa: INP001  # a script run as python -m src.modal.utils.validate_hf_access; utils is not a regular package
 
 from __future__ import annotations
 

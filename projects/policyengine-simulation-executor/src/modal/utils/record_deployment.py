@@ -4,7 +4,7 @@ Runs on the deploy runner after the health check, writing the
 ``deployed/<environment>.json`` marker (last-writer-wins). The marker is
 the artifact GC's liveness signal, so a deploy that cannot record itself
 must fail the job even though Modal already serves it.
-"""
+"""  # noqa: INP001  # a script run as python -m src.modal.utils.record_deployment; utils is not a regular package
 
 from __future__ import annotations
 

@@ -4,7 +4,7 @@ Routing writes are serialized by the repository-wide GitHub Actions concurrency
 group ``simulation-deploy-main`` (with ``cancel-in-progress: false``). Library
 writers and the CLI permit writes only from its deployment and rollback
 workflows; read-only and plan modes remain available locally.
-"""
+"""  # noqa: INP001  # a script run as python -m src.modal.utils.update_version_registry; utils is not a regular package
 
 import argparse
 import hashlib
