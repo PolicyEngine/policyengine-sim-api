@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
 from typing import Any
 
 from policyengine_simulation_executor.simulation_macro_output import (
     AgePovertyOutput,
-    BaselineReformValue,
     GenderPovertyOutput,
     PovertyByGenderOutput,
     PovertyByRaceOutput,
     PovertyModuleOutputs,
     PovertyOutput,
+    PovertyRateValue,
     RacePovertyOutput,
 )
 from policyengine_simulation_executor.simulation_output_common import (
@@ -33,11 +34,31 @@ UK_POVERTY_TYPES = {
 }
 
 
-def _empty_baseline_reform_value() -> dict[str, float]:
+#: A group's baseline and reform poverty rates. ``None`` means nobody in the
+#: group is measured (see ``PovertyRateValue``).
+RateBySide = dict[str, float | None]
+
+
+def _empty_baseline_reform_value() -> RateBySide:
     return {"baseline": 0.0, "reform": 0.0}
 
 
-def _empty_age_poverty() -> dict[str, dict[str, float]]:
+def _poverty_rate(row: Mapping[str, Any]) -> float | None:
+    """Keep "nobody measured" (``None``) apart from a measured rate.
+
+    policyengine.py reports a ``None`` rate, which its DataFrame stores as NaN,
+    for a group with no measured population. Such a group is ``None`` here
+    too; any other rate is coerced as before.
+    """
+    if _number(row.get("total_population"), default=-1.0) == 0.0:
+        return None
+    rate = row.get("rate")
+    if rate is None or (isinstance(rate, float) and math.isnan(rate)):
+        return None
+    return _number(rate)
+
+
+def _empty_age_poverty() -> dict[str, RateBySide]:
     return {
         "child": _empty_baseline_reform_value(),
         "adult": _empty_baseline_reform_value(),
@@ -46,7 +67,7 @@ def _empty_age_poverty() -> dict[str, dict[str, float]]:
     }
 
 
-def _empty_gender_poverty() -> dict[str, dict[str, float]]:
+def _empty_gender_poverty() -> dict[str, RateBySide]:
     return {
         "male": _empty_baseline_reform_value(),
         "female": _empty_baseline_reform_value(),
@@ -63,7 +84,7 @@ def _poverty_type(country: str, row: Mapping[str, Any]) -> str | None:
 def _fill_poverty_block(
     *,
     country: str,
-    output: dict[str, dict[str, dict[str, float]]],
+    output: dict[str, dict[str, RateBySide]],
     baseline_records: Iterable[Mapping[str, Any]],
     reform_records: Iterable[Mapping[str, Any]],
     default_group: str,
@@ -78,33 +99,33 @@ def _fill_poverty_block(
             group = str(row.get("filter_group") or default_group).lower()
             if group not in output[poverty_type]:
                 continue
-            output[poverty_type][group][side] = _number(row.get("rate"))
+            output[poverty_type][group][side] = _poverty_rate(row)
 
 
-def _age_poverty_output(values: dict[str, dict[str, float]]) -> AgePovertyOutput:
+def _age_poverty_output(values: dict[str, RateBySide]) -> AgePovertyOutput:
     return AgePovertyOutput(
-        child=BaselineReformValue(**values["child"]),
-        adult=BaselineReformValue(**values["adult"]),
-        senior=BaselineReformValue(**values["senior"]),
-        all=BaselineReformValue(**values["all"]),
+        child=PovertyRateValue(**values["child"]),
+        adult=PovertyRateValue(**values["adult"]),
+        senior=PovertyRateValue(**values["senior"]),
+        all=PovertyRateValue(**values["all"]),
     )
 
 
 def _gender_poverty_output(
-    values: dict[str, dict[str, float]],
+    values: dict[str, RateBySide],
 ) -> GenderPovertyOutput:
     return GenderPovertyOutput(
-        male=BaselineReformValue(**values["male"]),
-        female=BaselineReformValue(**values["female"]),
+        male=PovertyRateValue(**values["male"]),
+        female=PovertyRateValue(**values["female"]),
     )
 
 
-def _race_poverty_output(values: dict[str, dict[str, float]]) -> RacePovertyOutput:
+def _race_poverty_output(values: dict[str, RateBySide]) -> RacePovertyOutput:
     return RacePovertyOutput(
-        white=BaselineReformValue(**values["white"]),
-        black=BaselineReformValue(**values["black"]),
-        hispanic=BaselineReformValue(**values["hispanic"]),
-        other=BaselineReformValue(**values["other"]),
+        white=PovertyRateValue(**values["white"]),
+        black=PovertyRateValue(**values["black"]),
+        hispanic=PovertyRateValue(**values["hispanic"]),
+        other=PovertyRateValue(**values["other"]),
     )
 
 

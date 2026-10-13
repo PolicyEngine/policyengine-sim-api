@@ -40,16 +40,36 @@ in for the real loading check. The real check is invoked by
 the local Docker integration command that excludes `beta_only` calculations.
 
 With the affected `.py` 6.2.2 release, real preparation is expected to fail on
-missing ACS WIC participation. Do not catch, skip, or mark that failure as
-expected in CI. The executor's two `.py` pins and frozen lockfile use 6.2.7,
-which retains the narrowly scoped temporary compatibility fix in
-PolicyEngine/policyengine.py#566.
+missing ACS WIC participation. With `.py` 6.2.7, preparation succeeds but every
+SPM calculation on the ACS-local source stops with `SPM_COMPOSITION_REQUIRED`:
+the source predates SPM measurement-scope and independence-role declarations.
+Do not catch, skip, or mark either failure as expected in CI.
 
 ## Published bundle and validation
 
-PolicyEngine/policyengine-sim-api#746 supplied the published 6.2.7 pins and
-generated lockfile on main. This change retains those exact dependencies rather
-than downgrading to the original 6.2.5 target. Run `uv lock --check`, install
-from the frozen lockfile, and require the real ACS validation to pass before
-merging or deploying the regional dataset changes. A dependency update alone
-does not validate the regional preparation and calculation path.
+The executor's two `.py` pins require 6.3.4, which adds backward compatibility
+for legacy certified SPM sources (PolicyEngine/policyengine.py#599, issues #597
+and #598):
+
+- ACS group-quarters units are outside the SPM measurement, following Census's
+  ACS household-population method. Their SPM results are missing, not zero.
+- The ACS-local source's ASEC/PUF records take the certified SPM independence
+  role from the national release.
+
+`.py` 6.3.x also certifies policyengine-uk 2.126.12.
+
+Until 6.3.4 is published, `uv lock --check`, the frozen install and the image
+checks fail by design. After publication:
+
+1. Regenerate `uv.lock`.
+2. Install from the frozen lockfile.
+3. Require the real ACS validation to pass before merging or deploying the
+   regional dataset changes.
+
+The smoke check asserts that the calculation records the legacy SPM declarations
+for the selected source, that group-quarters SPM units are outside the
+measurement, and that measured poverty rates are valid. A dependency update
+alone does not validate the regional preparation and calculation path.
+
+Poverty rates are `null` for a group with nobody inside the poverty measurement
+(`PovertyRateValue`), which is not a measured rate of zero.

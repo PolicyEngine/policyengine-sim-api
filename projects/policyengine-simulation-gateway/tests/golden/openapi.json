@@ -311,16 +311,16 @@
       "AgePovertyOutput": {
         "properties": {
           "child": {
-            "$ref": "#/components/schemas/BaselineReformValue"
+            "$ref": "#/components/schemas/PovertyRateValue"
           },
           "adult": {
-            "$ref": "#/components/schemas/BaselineReformValue"
+            "$ref": "#/components/schemas/PovertyRateValue"
           },
           "senior": {
-            "$ref": "#/components/schemas/BaselineReformValue"
+            "$ref": "#/components/schemas/PovertyRateValue"
           },
           "all": {
-            "$ref": "#/components/schemas/BaselineReformValue"
+            "$ref": "#/components/schemas/PovertyRateValue"
           }
         },
         "additionalProperties": false,
@@ -1142,10 +1142,10 @@
       "GenderPovertyOutput": {
         "properties": {
           "male": {
-            "$ref": "#/components/schemas/BaselineReformValue"
+            "$ref": "#/components/schemas/PovertyRateValue"
           },
           "female": {
-            "$ref": "#/components/schemas/BaselineReformValue"
+            "$ref": "#/components/schemas/PovertyRateValue"
           }
         },
         "additionalProperties": false,
@@ -1703,19 +1703,53 @@
         ],
         "title": "PovertyOutput"
       },
+      "PovertyRateValue": {
+        "properties": {
+          "baseline": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline"
+          },
+          "reform": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reform"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "baseline",
+          "reform"
+        ],
+        "title": "PovertyRateValue",
+        "description": "A group's poverty rate under the baseline and the reform.\n\n``None`` means nobody in the group is inside the poverty measurement, for\nexample when every member lives in ACS group quarters, which Census's ACS\nSPM methodology does not measure. That is not a measured rate of zero."
+      },
       "RacePovertyOutput": {
         "properties": {
           "white": {
-            "$ref": "#/components/schemas/BaselineReformValue"
+            "$ref": "#/components/schemas/PovertyRateValue"
           },
           "black": {
-            "$ref": "#/components/schemas/BaselineReformValue"
+            "$ref": "#/components/schemas/PovertyRateValue"
           },
           "hispanic": {
-            "$ref": "#/components/schemas/BaselineReformValue"
+            "$ref": "#/components/schemas/PovertyRateValue"
           },
           "other": {
-            "$ref": "#/components/schemas/BaselineReformValue"
+            "$ref": "#/components/schemas/PovertyRateValue"
           }
         },
         "additionalProperties": false,

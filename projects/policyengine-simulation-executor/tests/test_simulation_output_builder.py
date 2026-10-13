@@ -70,6 +70,7 @@ from policyengine_simulation_executor.simulation_macro_output import (
     PovertyByGenderOutput,
     PovertyModuleOutputs,
     PovertyOutput,
+    PovertyRateValue,
     SingleYearMacroOutput,
 )
 from policyengine_simulation_executor.simulation_output_geographic import (
@@ -737,7 +738,8 @@ def test_builder_records_output_timings_without_real_calculation(monkeypatch):
         )
         return analysis
 
-    value = BaselineReformValue(baseline=0.0, reform=0.0)
+    value = PovertyRateValue(baseline=0.0, reform=0.0)
+    inequality_value = BaselineReformValue(baseline=0.0, reform=0.0)
     age_poverty = AgePovertyOutput(
         child=value,
         adult=value,
@@ -792,9 +794,9 @@ def test_builder_records_output_timings_without_real_calculation(monkeypatch):
         record(
             "inequality",
             InequalityOutput(
-                gini=value,
-                top_10_pct_share=value,
-                top_1_pct_share=value,
+                gini=inequality_value,
+                top_10_pct_share=inequality_value,
+                top_1_pct_share=inequality_value,
             ),
         ),
     )

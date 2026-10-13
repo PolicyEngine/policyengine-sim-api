@@ -175,7 +175,7 @@ def main():
 
 
 @app.function(image=smoke_image, timeout=1800, cpu=8.0, memory=65536, max_containers=1)
-def smoke_us_regional_dataset() -> dict[str, str | int]:
+def smoke_us_regional_dataset() -> dict[str, object]:
     """Ephemeral PR check; do not publish outputs or change deployed workers."""
     from src.modal.us_regional_dataset_check import check_certified_us_regional_dataset
 

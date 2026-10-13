@@ -29,6 +29,7 @@ from policyengine_simulation_contract.macro_output import (
     PovertyByRaceOutput,
     PovertyModuleOutputs,
     PovertyOutput,
+    PovertyRateValue,
     RacePovertyOutput,
     SingleYearMacroOutput,
 )
@@ -62,6 +63,7 @@ __all__ = [
     "PovertyByRaceOutput",
     "PovertyModuleOutputs",
     "PovertyOutput",
+    "PovertyRateValue",
     "RacePovertyOutput",
     "SingleYearMacroOutput",
 ]

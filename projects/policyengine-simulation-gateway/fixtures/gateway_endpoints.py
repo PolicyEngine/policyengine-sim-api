@@ -14,6 +14,7 @@ from policyengine_simulation_contract.macro_output import (
     IntraDecileOutput,
     PovertyByGenderOutput,
     PovertyOutput,
+    PovertyRateValue,
     SingleYearMacroOutput,
 )
 
@@ -226,7 +227,8 @@ class MockFunctionCall:
 
     def __init__(self, object_id: str = "mock-job-id-123"):
         self.object_id = object_id
-        value = BaselineReformValue(baseline=0.0, reform=0.0)
+        value = PovertyRateValue(baseline=0.0, reform=0.0)
+        inequality_value = BaselineReformValue(baseline=0.0, reform=0.0)
         age_poverty = AgePovertyOutput(
             child=value,
             adult=value,
@@ -248,9 +250,9 @@ class MockFunctionCall:
             detailed_budget=DetailedBudgetOutput({}),
             decile=DecileOutput(average={}, relative={}),
             inequality=InequalityOutput(
-                gini=value,
-                top_10_pct_share=value,
-                top_1_pct_share=value,
+                gini=inequality_value,
+                top_10_pct_share=inequality_value,
+                top_1_pct_share=inequality_value,
             ),
             poverty=PovertyOutput(
                 poverty=age_poverty,

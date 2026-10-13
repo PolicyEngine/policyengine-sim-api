@@ -58,23 +58,35 @@ class BaselineReformValue(MacroOutputModel):
     reform: float
 
 
+class PovertyRateValue(MacroOutputModel):
+    """A group's poverty rate under the baseline and the reform.
+
+    ``None`` means nobody in the group is inside the poverty measurement, for
+    example when every member lives in ACS group quarters, which Census's ACS
+    SPM methodology does not measure. That is not a measured rate of zero.
+    """
+
+    baseline: float | None
+    reform: float | None
+
+
 class AgePovertyOutput(MacroOutputModel):
-    child: BaselineReformValue
-    adult: BaselineReformValue
-    senior: BaselineReformValue
-    all: BaselineReformValue
+    child: PovertyRateValue
+    adult: PovertyRateValue
+    senior: PovertyRateValue
+    all: PovertyRateValue
 
 
 class GenderPovertyOutput(MacroOutputModel):
-    male: BaselineReformValue
-    female: BaselineReformValue
+    male: PovertyRateValue
+    female: PovertyRateValue
 
 
 class RacePovertyOutput(MacroOutputModel):
-    white: BaselineReformValue
-    black: BaselineReformValue
-    hispanic: BaselineReformValue
-    other: BaselineReformValue
+    white: PovertyRateValue
+    black: PovertyRateValue
+    hispanic: PovertyRateValue
+    other: PovertyRateValue
 
 
 class PovertyOutput(MacroOutputModel):
