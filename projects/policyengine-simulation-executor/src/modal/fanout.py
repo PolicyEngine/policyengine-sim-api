@@ -10,8 +10,10 @@ orchestrator but forwarded by the other).
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 def build_child_payload(

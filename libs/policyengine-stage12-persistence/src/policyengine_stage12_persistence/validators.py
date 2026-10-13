@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
@@ -11,6 +11,9 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonSimulationRecord,
     ResultComparisonStatus,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 REPORT_IMMUTABLE_FIELDS = (
     "evaluation_id",

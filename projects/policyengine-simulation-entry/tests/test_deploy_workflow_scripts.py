@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from workflow_script_support import (
@@ -17,6 +17,9 @@ from workflow_script_support import (
     FakeCommands,
     run_script,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 REUSABLE_DEPLOY_WORKFLOW = WORKFLOWS_DIR / "simulation-deploy.reusable.yml"
 

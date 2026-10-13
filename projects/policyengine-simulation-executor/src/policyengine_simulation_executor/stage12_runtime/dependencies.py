@@ -3,23 +3,26 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
 from functools import partial
-from typing import Any, Protocol
-from uuid import UUID
+from typing import TYPE_CHECKING, Any, Protocol
 
-from policyengine_observability import ObservabilityRuntime
-from policyengine_simulation_contract.stage12_execution import (
-    ComparisonReportPersistenceResult,
-    ComparisonReportRecord,
-    ComparisonSimulationPersistenceResult,
-    ComparisonSimulationRecord,
-)
 from policyengine_stage12_persistence import Stage12PersistenceStore
 
 from policyengine_simulation_executor.stage12_artifacts import Stage12ArtifactStore
 
 from .database_retry import open_connection_with_retry
+
+if TYPE_CHECKING:
+    from datetime import datetime
+    from uuid import UUID
+
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.stage12_execution import (
+        ComparisonReportPersistenceResult,
+        ComparisonReportRecord,
+        ComparisonSimulationPersistenceResult,
+        ComparisonSimulationRecord,
+    )
 
 
 class ComparisonStore(Protocol):

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import shlex
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def bundle_data_install_command(

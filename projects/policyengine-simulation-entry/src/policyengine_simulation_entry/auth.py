@@ -5,15 +5,18 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from functools import lru_cache
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from policyengine_observability import ObservabilityRuntime
 
-from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.schemas import CallerIdentity
+
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
+
+    from policyengine_simulation_entry.config import Settings
 
 _bearer = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)

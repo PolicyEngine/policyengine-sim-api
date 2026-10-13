@@ -7,12 +7,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
-from policyengine_observability import ObservabilityRuntime
-from policyengine_simulation_contract.spm import SPMProvenance
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     ComparisonSimulationRecord,
@@ -22,7 +19,6 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12InvocationContext,
     stage12_output_plan_sha256,
 )
-from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
     Stage,
@@ -46,6 +42,12 @@ from .failure_causes import (
 )
 from .failure_recording import persist_failure_record, report_original_failure
 from .output_planning import apply_output_plan, validate_output_frames
+
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.spm import SPMProvenance
+    from policyengine_simulation_contract.stage12_bundle import CountryId
+    from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
 
 @dataclass(frozen=True)

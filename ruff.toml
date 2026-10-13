@@ -11,4 +11,40 @@ select = [
     "E4", "E7", "E9", "F",
     # Group 1: safe auto-fixes.
     "FLY", "FURB", "I", "PIE", "PYI", "RET", "RSE", "UP", "W",
+    # Group 2: typing-only imports.
+    "TC",
+]
+
+[lint.flake8-type-checking]
+# Classes whose annotations Pydantic evaluates at runtime, so their imports must
+# stay at runtime. Ruff checks direct bases only, so every project model base
+# class that other models inherit from is listed.
+runtime-evaluated-base-classes = [
+    "policyengine_fastapi.observability.contracts.CorrelatedRunFields",
+    "policyengine_fastapi.observability.contracts.ObservabilityModel",
+    "policyengine_simulation_contract.gateway_models.GatewayRequestBase",
+    "policyengine_simulation_contract.macro_output.MacroOutputModel",
+    "policyengine_simulation_contract.macro_output.MacroRootModel",
+    "policyengine_simulation_contract.stage12_bundle.StrictBundleModel",
+    "policyengine_simulation_contract.stage12_execution.SimulationExecutionInput",
+    "policyengine_simulation_contract.stage12_execution.StrictContractModel",
+    "policyengine_simulation_contract.stage12_manifest.StrictManifestModel",
+    "policyengine_simulation_executor.precompute_models._StrictModel",
+    "pydantic.BaseModel",
+    "pydantic.RootModel",
+]
+# FastAPI evaluates endpoint annotations when routes are registered.
+runtime-evaluated-decorators = [
+    "fastapi.APIRouter.api_route",
+    "fastapi.APIRouter.delete",
+    "fastapi.APIRouter.get",
+    "fastapi.APIRouter.patch",
+    "fastapi.APIRouter.post",
+    "fastapi.APIRouter.put",
+    "fastapi.FastAPI.api_route",
+    "fastapi.FastAPI.delete",
+    "fastapi.FastAPI.get",
+    "fastapi.FastAPI.patch",
+    "fastapi.FastAPI.post",
+    "fastapi.FastAPI.put",
 ]

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import importlib
 import sys
-from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 GATEWAY_MODEL_MODULE = "policyengine_simulation_contract.gateway_models"
 GATEWAY_ENDPOINTS_MODULE = "policyengine_simulation_gateway.endpoints"

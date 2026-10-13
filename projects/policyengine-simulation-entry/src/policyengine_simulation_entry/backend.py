@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 from policyengine_observability import (
@@ -13,12 +13,15 @@ from policyengine_observability import (
     ObservabilityRuntime,
     instrument_httpx,
 )
-from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 from pydantic import ValidationError
 
-from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.schemas import BackendServiceToken
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.json_types import JsonObject
+
+    from policyengine_simulation_entry.config import Settings
 
 SAFE_RESPONSE_HEADERS = frozenset(
     {

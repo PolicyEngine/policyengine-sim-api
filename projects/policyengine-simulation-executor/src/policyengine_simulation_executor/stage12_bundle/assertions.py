@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-
-from policyengine_simulation_contract.stage12_bundle import Stage12BundleManifest
+from typing import TYPE_CHECKING
 
 from .errors import Stage12BundleError
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from policyengine_simulation_contract.stage12_bundle import Stage12BundleManifest
 
 
 def assertion_values(bundle: Stage12BundleManifest) -> dict[str, str]:

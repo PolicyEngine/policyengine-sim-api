@@ -4,16 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
-import pandas as pd
 from policyengine.core import Simulation
 from policyengine.outputs import (
     configure_cliff_impact_variables,
     configure_labor_supply_response_variables,
     labor_supply_response_is_active,
 )
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     EntityOutputPlan,
     PlannedSimulationExecutionInput,
@@ -24,6 +22,10 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12OutputPlan,
 )
 from policyengine_simulation_observability.stages import Stage
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from policyengine_simulation_contract.stage12_bundle import CountryId
 
 UK_GEOGRAPHIC_DATASET_VARIABLES: dict[str, tuple[str, ...]] = {
     "household": ("constituency_code_oa", "la_code_oa"),
@@ -230,7 +232,7 @@ def apply_output_plan(
             if variable not in entity_extras:
                 entity_extras.append(variable)
     simulation.extra_variables = extras
-    model = cast(OutputVariableModel, simulation.tax_benefit_model_version)
+    model = cast("OutputVariableModel", simulation.tax_benefit_model_version)
     resolved = model.resolve_entity_variables(simulation)
     missing = {
         entity_plan.entity: sorted(

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
 from hashlib import sha256
+from typing import TYPE_CHECKING
 
 from policyengine_simulation_contract.stage12_bundle import (
     SUPPORTED_COUNTRIES,
@@ -21,6 +21,9 @@ from .parsing import (
     require_mapping,
     require_text,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 def _normalize_stage12_bundle(

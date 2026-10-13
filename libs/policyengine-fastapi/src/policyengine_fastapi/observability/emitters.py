@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .config import ObservabilityConfig
-from .contracts import SimulationLifecycleEvent, TracerArtifactManifest
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from .contracts import SimulationLifecycleEvent, TracerArtifactManifest
 
 
 class NoOpSpan(AbstractContextManager["NoOpSpan"]):

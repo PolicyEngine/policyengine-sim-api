@@ -27,9 +27,8 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.job_progress import JobExecution, JobStage
 from policyengine_simulation_contract.spm import (
     SPMInputError,
@@ -55,6 +54,9 @@ from policyengine_simulation_observability.telemetry import split_internal_paylo
 from src.modal.fanout import build_child_payload, next_backoff
 
 import modal
+
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
 
 logger = logging.getLogger(__name__)
 

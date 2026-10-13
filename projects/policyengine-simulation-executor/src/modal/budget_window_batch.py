@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_observability.stages import BUDGET_WINDOW_STAGES, Stage
 from src.modal.budget_window_context import build_batch_context
 from src.modal.budget_window_scheduler import BudgetWindowBatchRunner
 
 import modal
+
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
 
 
 def run_budget_window_batch_impl(

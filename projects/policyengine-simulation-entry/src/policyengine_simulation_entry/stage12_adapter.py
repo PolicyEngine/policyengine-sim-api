@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid5
 
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     BundleProvenance,
     DatasetArtifactMediaType,
@@ -20,7 +19,10 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationExecutionInput,
     SimulationRole,
 )
-from policyengine_simulation_contract.stage12_manifest import V2WorkerVersion
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.stage12_bundle import CountryId
+    from policyengine_simulation_contract.stage12_manifest import V2WorkerVersion
 
 
 class ComparisonSkipReason(StrEnum):
@@ -172,7 +174,7 @@ def adapt_annual_comparison(
         )
     )
     geography = GeographySelection(
-        country=cast(CountryId, country),
+        country=cast("CountryId", country),
         region=region,
     )
     options = {key: payload[key] for key in ("spm",) if payload.get(key) is not None}

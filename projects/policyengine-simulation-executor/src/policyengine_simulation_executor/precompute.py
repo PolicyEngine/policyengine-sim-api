@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from policyengine_simulation_executor.artifact_keys import (
     BaselineArtifactIdentity,
@@ -53,6 +53,9 @@ from policyengine_simulation_executor.precompute_models import (
     RemoteFunction,
     WorkSelection,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

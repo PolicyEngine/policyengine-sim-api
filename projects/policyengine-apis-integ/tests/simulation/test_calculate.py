@@ -323,7 +323,7 @@ def _poll_with_responses(
     )
     monkeypatch.setattr(time, "sleep", record_sleep)
     result = poll_for_completion(
-        cast(Client, object()),
+        cast("Client", object()),
         "fc-test",
         max_wait_seconds=max_wait_seconds,
         poll_interval=poll_interval,
