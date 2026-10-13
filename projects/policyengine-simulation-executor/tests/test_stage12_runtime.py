@@ -23,6 +23,7 @@ from policyengine_observability import (
     StdoutLogDestination,
     configure,
 )
+from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_contract.stage12_execution import (
     ArtifactMediaType,
     ArtifactReference,
@@ -61,7 +62,9 @@ from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
+from fixtures.test_simulation_api_contracts import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_executor.stage12_artifacts import (
+    Stage12ArtifactStore,
     canonical_json_bytes,
     serialize_simulation_frames,
 )
@@ -985,6 +988,102 @@ def test_aggregate_stand_ins_keep_bounded_policy_end_dates(monkeypatch) -> None:
     for role, stop in (("baseline", "2026-12-31"), ("reform", "2027-12-31")):
         (value,) = observed[role].policy.parameter_values
         assert value.end_date == datetime.strptime(stop, "%Y-%m-%d"), role
+
+
+class InMemoryObjectStore:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    def upload_bytes(self, path, payload, *, content_type):
+        if path in self.objects:
+            return False
+        self.objects[path] = payload
+        return True
+
+    def read_bytes(self, path):
+        return self.objects.get(path)
+
+
+def _uk_report() -> ReportExecutionInput:
+    uk_bundle = _bundle().model_copy(
+        update={
+            "country_package_name": "policyengine-uk",
+            "country_package_version": "2.102.3",
+        }
+    )
+    report_payload = _report().model_dump(mode="json")
+    for role, policy in (
+        ("baseline", {}),
+        (
+            "reform",
+            {
+                "gov.hmrc.income_tax.charges.CB_HITC.phase_out_start": {
+                    "2026-01-01.2100-12-31": 70_000
+                }
+            },
+        ),
+    ):
+        report_payload[role].update(
+            {
+                "policy": policy,
+                "geography": {"country": "uk", "region": "uk"},
+                "bundle": uk_bundle.model_dump(mode="json"),
+            }
+        )
+    return ReportExecutionInput.model_validate(report_payload)
+
+
+def test_uk_aggregate_without_spm_provenance_is_written(monkeypatch) -> None:
+    from policyengine_simulation_executor import simulation_output_builder
+
+    report = _uk_report()
+    assert report.baseline.options.get("spm") is None
+    uk_output = {
+        **{
+            key: value
+            for key, value in CURRENT_SINGLE_YEAR_MACRO_RESULT.items()
+            if key != "spm_provenance"
+        },
+        "congressional_district_impact": None,
+    }
+
+    class UKOutputBuilder:
+        def __init__(self, **_values):
+            pass
+
+        def serialize(self):
+            # The real builder dumps SingleYearMacroOutput, which serializes
+            # the unset optional SPM receipt as an explicit null.
+            return SingleYearMacroOutput.model_validate(uk_output).model_dump(
+                mode="json"
+            )
+
+    monkeypatch.setattr(
+        simulation_output_builder, "SimulationOutputBuilder", UKOutputBuilder
+    )
+    uk_frames = {
+        entity: pd.DataFrame({f"{entity}_id": [1]})
+        for entity in ("person", "benunit", "household")
+    }
+    simulation_artifacts = FakeArtifacts()
+
+    aggregate = build_aggregate_report(
+        report=report,
+        baseline_frames=uk_frames,
+        reform_frames=uk_frames,
+        baseline_descriptor=simulation_artifacts.add_simulation(report.baseline),
+        reform_descriptor=simulation_artifacts.add_simulation(report.reform),
+    )
+    assert aggregate["result"]["spm_provenance"] is None
+
+    object_store = InMemoryObjectStore()
+    aggregate_reference = Stage12ArtifactStore(
+        "private-stage12", store=object_store
+    ).write_aggregate(prefix=_context().artifact_prefix, payload=aggregate)
+
+    (stored_aggregate,) = object_store.objects.values()
+    assert aggregate_reference.content_sha256 == sha256(stored_aggregate).hexdigest()
+    assert json.loads(stored_aggregate)["result"]["spm_provenance"] is None
 
 
 def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:
