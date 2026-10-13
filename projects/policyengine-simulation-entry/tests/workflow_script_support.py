@@ -73,7 +73,7 @@ def run_script(
     cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run ``.github/scripts/<name>`` directly, as a workflow step does."""
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603  # runs a repository script with test-built arguments
         [str(SCRIPTS_DIR / name), *args],
         capture_output=True,
         text=True,

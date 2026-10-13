@@ -58,10 +58,26 @@ DOCKERFILE = (
 )
 
 
+def _run_bash(
+    *arguments: str | Path,
+    check: bool,
+    capture_output: bool = False,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run bash on a repository deployment script, with text output."""
+    return subprocess.run(  # noqa: S603  # runs repository scripts with test-built arguments
+        ["bash", *arguments],  # noqa: S607  # bash from PATH, as the workflows run these scripts
+        check=check,
+        capture_output=capture_output,
+        text=True,
+        env=env,
+    )
+
+
 def test_deployment_scripts_have_valid_shell_syntax():
-    subprocess.run(["bash", "-n", TRAFFIC_SCRIPT], check=True)
-    subprocess.run(["bash", "-n", SMOKE_SCRIPT], check=True)
-    subprocess.run(["bash", "-n", CLOUD_RUN_DEPLOY_SCRIPT], check=True)
+    _run_bash("-n", TRAFFIC_SCRIPT, check=True)
+    _run_bash("-n", SMOKE_SCRIPT, check=True)
+    _run_bash("-n", CLOUD_RUN_DEPLOY_SCRIPT, check=True)
     assert os.access(SMOKE_SCRIPT, os.X_OK)
     assert os.access(CLOUD_RUN_DEPLOY_SCRIPT, os.X_OK)
 
@@ -167,17 +183,13 @@ def test_stable_smoke_retries_the_previous_revision_until_target_is_served(
         [old_revision, old_revision, target_revision],
     )
 
-    subprocess.run(
-        [
-            "bash",
-            SMOKE_SCRIPT,
-            "https://simulation.example.test",
-            target_revision,
-            old_revision,
-        ],
+    _run_bash(
+        SMOKE_SCRIPT,
+        "https://simulation.example.test",
+        target_revision,
+        old_revision,
         check=True,
         capture_output=True,
-        text=True,
         env=_smoke_test_env(tmp_path, state_file, revisions_file),
     )
 
@@ -193,17 +205,13 @@ def test_stable_smoke_rejects_an_unexpected_revision_without_retrying(tmp_path: 
         [unexpected_revision, target_revision],
     )
 
-    result = subprocess.run(
-        [
-            "bash",
-            SMOKE_SCRIPT,
-            "https://simulation.example.test",
-            target_revision,
-            old_revision,
-        ],
+    result = _run_bash(
+        SMOKE_SCRIPT,
+        "https://simulation.example.test",
+        target_revision,
+        old_revision,
         check=False,
         capture_output=True,
-        text=True,
         env=_smoke_test_env(tmp_path, state_file, revisions_file),
     )
 
@@ -220,16 +228,12 @@ def test_candidate_smoke_rejects_a_revision_mismatch_without_retrying(tmp_path: 
         [old_revision, target_revision],
     )
 
-    result = subprocess.run(
-        [
-            "bash",
-            SMOKE_SCRIPT,
-            "https://candidate.example.test",
-            target_revision,
-        ],
+    result = _run_bash(
+        SMOKE_SCRIPT,
+        "https://candidate.example.test",
+        target_revision,
         check=False,
         capture_output=True,
-        text=True,
         env=_smoke_test_env(tmp_path, state_file, revisions_file),
     )
 
@@ -248,17 +252,13 @@ def test_stable_smoke_fails_when_the_previous_revision_does_not_converge(
         [old_revision, old_revision, old_revision],
     )
 
-    result = subprocess.run(
-        [
-            "bash",
-            SMOKE_SCRIPT,
-            "https://simulation.example.test",
-            target_revision,
-            old_revision,
-        ],
+    result = _run_bash(
+        SMOKE_SCRIPT,
+        "https://simulation.example.test",
+        target_revision,
+        old_revision,
         check=False,
         capture_output=True,
-        text=True,
         env=_smoke_test_env(tmp_path, state_file, revisions_file),
     )
 
@@ -493,7 +493,7 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
     arguments_capture = Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"])
     env_capture = Path(command_environment["GCLOUD_ENV_FILE_CAPTURE"])
 
-    subprocess.run(
+    subprocess.run(  # noqa: S603  # runs the repository deploy script directly, as the workflow does
         [CLOUD_RUN_DEPLOY_SCRIPT],
         check=True,
         env=command_environment,
@@ -1691,11 +1691,10 @@ def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
         "SIMULATION_ENTRYPOINT_SERVICE": "policyengine-simulation-entry",
     }
 
-    subprocess.run(
-        ["bash", TRAFFIC_SCRIPT],
+    _run_bash(
+        TRAFFIC_SCRIPT,
         check=True,
         capture_output=True,
-        text=True,
         env={
             **base_env,
             "SIMULATION_ENTRYPOINT_TARGET_REVISION": "policyengine-simulation-entry-00002-new",
@@ -1707,11 +1706,10 @@ def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
         == "policyengine-simulation-entry-00002-new"
     )
 
-    subprocess.run(
-        ["bash", TRAFFIC_SCRIPT],
+    _run_bash(
+        TRAFFIC_SCRIPT,
         check=True,
         capture_output=True,
-        text=True,
         env={
             **base_env,
             "SIMULATION_ENTRYPOINT_TARGET_REVISION": "policyengine-simulation-entry-00001-old",
@@ -1742,11 +1740,10 @@ def test_traffic_change_refuses_an_intervening_promotion(tmp_path):
     )
     fake_gcloud.chmod(0o755)
 
-    result = subprocess.run(
-        ["bash", TRAFFIC_SCRIPT],
+    result = _run_bash(
+        TRAFFIC_SCRIPT,
         check=False,
         capture_output=True,
-        text=True,
         env={
             **os.environ,
             "GCLOUD_BIN": str(fake_gcloud),

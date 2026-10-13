@@ -16,8 +16,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 @pytest.mark.integration
 def test_gateway_image_smoke():
     env_name = os.environ.get("MODAL_SMOKE_ENV", "staging")
-    result = subprocess.run(
-        [
+    result = subprocess.run(  # noqa: S603  # runs the repository smoke app through uv and Modal
+        [  # noqa: S607  # uv from PATH, as CI runs it
             "uv",
             "run",
             "modal",

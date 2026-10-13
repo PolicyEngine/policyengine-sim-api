@@ -27,6 +27,22 @@ STAGE12_DEPLOY_WORKFLOW = (
 )
 
 
+def _run_bash(
+    *arguments: str | Path,
+    check: bool,
+    capture_output: bool = False,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run bash on a repository deployment script, with text output."""
+    return subprocess.run(  # noqa: S603  # runs repository scripts with test-built arguments
+        ["bash", *arguments],  # noqa: S607  # bash from PATH, as the workflows run these scripts
+        check=check,
+        capture_output=capture_output,
+        text=True,
+        env=env,
+    )
+
+
 def _revision(name: str, created_at: str, *, ready: bool = True) -> dict:
     return {
         "metadata": {
@@ -96,11 +112,10 @@ def _run_cleanup(
     )
     revisions_json.write_text(json.dumps(revisions), encoding="utf-8")
 
-    return subprocess.run(
-        ["bash", CLEANUP_SCRIPT],
+    return _run_bash(
+        CLEANUP_SCRIPT,
         check=False,
         capture_output=True,
-        text=True,
         env=os.environ
         | {
             "GCLOUD_BIN": str(_write_fake_gcloud(tmp_path)),
@@ -321,5 +336,5 @@ def test_revision_cleanup_runs_after_promoted_deployment_completion():
 
 
 def test_revision_cleanup_script_has_valid_shell_syntax_and_is_executable():
-    subprocess.run(["bash", "-n", CLEANUP_SCRIPT], check=True)
+    _run_bash("-n", CLEANUP_SCRIPT, check=True)
     assert os.access(CLEANUP_SCRIPT, os.X_OK)
