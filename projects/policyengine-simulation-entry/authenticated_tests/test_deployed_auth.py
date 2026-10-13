@@ -27,6 +27,7 @@ def _required(name: str) -> str:
 
 @pytest.fixture(scope="session")
 def base_url() -> str:
+    """Return the deployed candidate's base URL, without a trailing slash."""
     return _required("SIMULATION_ENTRYPOINT_TEST_BASE_URL").rstrip("/")
 
 
@@ -46,6 +47,10 @@ def permission_enforcement() -> None:
 
 @pytest.fixture(scope="session")
 def access_token() -> str:
+    """Fetch a client-credentials token for the candidate's caller audience.
+
+    Raise RuntimeError if a required variable is unset or Auth0 returns no token.
+    """
     issuer = _required("SIMULATION_ENTRYPOINT_TEST_AUTH_ISSUER").rstrip("/")
     response = httpx.post(
         f"{issuer}/oauth/token",
@@ -65,6 +70,7 @@ def access_token() -> str:
 
 
 def test_protected_route_rejects_missing_token(base_url: str) -> None:
+    """Check the deployed comparison route returns 403 without a bearer token."""
     response = httpx.post(
         f"{base_url}{PROTECTED_PATH}",
         json=PROBE_PAYLOAD,
@@ -75,6 +81,7 @@ def test_protected_route_rejects_missing_token(base_url: str) -> None:
 
 
 def test_protected_route_rejects_invalid_token(base_url: str) -> None:
+    """Check the deployed comparison route returns 403 for a malformed token."""
     response = httpx.post(
         f"{base_url}{PROTECTED_PATH}",
         json=PROBE_PAYLOAD,
@@ -89,6 +96,7 @@ def test_valid_token_reaches_authenticated_old_gateway(
     base_url: str,
     access_token: str,
 ) -> None:
+    """Check a valid token passes both auth hops to reach the old gateway."""
     response = httpx.post(
         f"{base_url}{PROTECTED_PATH}",
         json=PROBE_PAYLOAD,

@@ -50,15 +50,21 @@ AUTOMATIC_REPORT_NAMESPACE = uuid5(
 class ComparisonStore(Protocol):
     """Read temporary comparison state from the API-owned schema."""
 
-    def get_report(self, evaluation_id: UUID) -> ComparisonReportRecord: ...
+    def get_report(self, evaluation_id: UUID) -> ComparisonReportRecord:
+        """Return the parent report row; raise LookupError if there is none."""
+        ...
 
     def list_simulations(
         self,
         evaluation_id: UUID,
-    ) -> tuple[ComparisonSimulationRecord, ...]: ...
+    ) -> tuple[ComparisonSimulationRecord, ...]:
+        """Return the simulation rows recorded so far for one report."""
+        ...
 
 
 class ReportInvoker(Protocol):
+    """Seam that starts a worker's report coordinator, so tests can avoid Modal."""
+
     async def spawn(
         self,
         *,
@@ -67,7 +73,9 @@ class ReportInvoker(Protocol):
         context_payload: dict[str, Any],
         parent_payload: dict[str, Any],
         observability_context: dict[str, Any] | None = None,
-    ) -> str: ...
+    ) -> str:
+        """Start the coordinator without waiting for it and return the call ID."""
+        ...
 
 
 type PreparedReport = tuple[
@@ -84,6 +92,7 @@ class TemporaryStage12UnsupportedRequest(ValueError):
     """A temporary direct request cannot be normalized by the reviewed adapter."""
 
     def __init__(self, reason: str) -> None:
+        """Keep the adapter's skip reason, which the route returns to the caller."""
         super().__init__("Stage 12 does not support this request")
         self.reason = reason
 
@@ -92,12 +101,16 @@ class TemporaryStage12DispatchFailed(RuntimeError):
     """Modal did not acknowledge a Stage 12 coordinator submission."""
 
     def __init__(self, report: ComparisonReportRecord) -> None:
+        """Keep the report record, already marked failed, for the 502 response."""
         super().__init__("Stage 12 comparison-run dispatch failed")
         self.report = report
 
 
 class ModalReportInvoker:
+    """Invoker that spawns report coordinators deployed as Modal functions."""
+
     def __init__(self, environment: str) -> None:
+        """Look up coordinator functions in this Modal environment."""
         self._environment = environment
 
     async def spawn(
@@ -109,6 +122,10 @@ class ModalReportInvoker:
         parent_payload: dict[str, Any],
         observability_context: dict[str, Any] | None = None,
     ) -> str:
+        """Spawn the worker's report coordinator and return its Modal call ID.
+
+        Raise RuntimeError if Modal returns no invocation identifier.
+        """
         function = modal.Function.from_name(
             worker.application_name,
             worker.report_coordinator_callable,
@@ -131,6 +148,12 @@ class ModalReportInvoker:
 
 
 class Stage12ComparisonBackend:
+    """Backend that prepares Stage 12 comparison runs for Modal coordinators.
+
+    It writes no database rows: the spawned coordinator owns all durable
+    state, and this class only reads it back for polling.
+    """
+
     def __init__(
         self,
         settings: Settings,
@@ -140,6 +163,7 @@ class Stage12ComparisonBackend:
         invoker: ReportInvoker,
         runtime: ObservabilityRuntime,
     ) -> None:
+        """Wire the manifest, persistence, invoker and telemetry dependencies."""
         self._settings = settings
         self._manifest_loader = manifest_loader
         self._store = store
@@ -153,6 +177,10 @@ class Stage12ComparisonBackend:
         *,
         runtime: ObservabilityRuntime,
     ) -> Stage12ComparisonBackend:
+        """Build the production backend from the Modal manifest and Stage 12 database.
+
+        The manifest Dict must already exist; it is never created here.
+        """
         manifest_store = modal.Dict.from_name(
             settings.stage12_v2_manifest_name,
             environment_name=settings.stage12_v2_manifest_environment,
@@ -174,6 +202,14 @@ class Stage12ComparisonBackend:
         request_id: str,
         observability_id: str,
     ) -> None:
+        """Spawn a shadow comparison of an accepted production job.
+
+        The evaluation ID is derived from the environment, production job and
+        worker version, so a repeat dispatch maps to the same report. Requests
+        the adapter cannot represent are skipped with a telemetry event.
+        Raise ValueError if the production response has no ``job_id`` and
+        TemporaryStage12DispatchFailed if Modal does not accept the spawn.
+        """
         prepared = await asyncio.to_thread(
             self._prepare_automatic_report,
             request_payload=request_payload,
@@ -205,7 +241,6 @@ class Stage12ComparisonBackend:
         observability_id: str,
     ) -> ComparisonReportRecord:
         """Submit one direct report and return after Modal acknowledges it."""
-
         prepared = await asyncio.to_thread(
             self._prepare_temporary_report,
             request_payload=request_payload,
@@ -229,7 +264,6 @@ class Stage12ComparisonBackend:
         evaluation_id: UUID,
     ) -> tuple[ComparisonReportRecord, tuple[ComparisonSimulationRecord, ...]]:
         """Read coordinator-owned durable state without polling Modal."""
-
         return await asyncio.to_thread(self._get_temporary_report, evaluation_id)
 
     def _get_temporary_report(
@@ -433,7 +467,6 @@ class Stage12ComparisonBackend:
         observability_id: str,
     ) -> ComparisonReportRecord:
         """Return after Modal accepts the coordinator; perform no database writes."""
-
         artifact_prefix = (
             f"stage-12-runs/{self._settings.environment}/"
             f"{parent.created_at:%Y}/{parent.created_at:%m}/"

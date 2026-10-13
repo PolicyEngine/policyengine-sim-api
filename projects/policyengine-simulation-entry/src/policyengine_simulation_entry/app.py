@@ -86,6 +86,13 @@ STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS = 5.0
 
 
 class ComparisonBackend(Protocol):
+    """Stage 12 comparison dispatch and polling seam used by the entry routes.
+
+    The real implementation is ``Stage12ComparisonBackend``; tests inject fakes.
+    The routes bound every call with a timeout and never let a failure here
+    alter the production v1 response.
+    """
+
     async def dispatch_after_production(
         self,
         *,
@@ -93,7 +100,13 @@ class ComparisonBackend(Protocol):
         production_response: bytes,
         request_id: str,
         observability_id: str,
-    ) -> None: ...
+    ) -> None:
+        """Start a shadow comparison run for a production job the gateway accepted.
+
+        ``production_response`` is the raw gateway response body; its ``job_id``
+        identifies the incumbent run being compared.
+        """
+        ...
 
     async def submit_temporary_report(
         self,
@@ -101,12 +114,16 @@ class ComparisonBackend(Protocol):
         request_payload: dict[str, Any],
         request_id: str,
         observability_id: str,
-    ) -> ComparisonReportRecord: ...
+    ) -> ComparisonReportRecord:
+        """Submit an operator-requested report and return its acknowledged record."""
+        ...
 
     async def get_temporary_report(
         self,
         evaluation_id: UUID,
-    ) -> tuple[ComparisonReportRecord, tuple[ComparisonSimulationRecord, ...]]: ...
+    ) -> tuple[ComparisonReportRecord, tuple[ComparisonSimulationRecord, ...]]:
+        """Return a report and its simulations; raise LookupError if it is unknown."""
+        ...
 
 
 def _model_json(model: BaseModel) -> JsonObject:
@@ -157,7 +174,6 @@ def create_app(
     comparison_backend: ComparisonBackend | None = None,
 ) -> FastAPI:
     """Build the app with injectable auth/backend seams for hermetic tests."""
-
     runtime_settings = settings or Settings.from_env()
 
     @asynccontextmanager

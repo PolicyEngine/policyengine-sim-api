@@ -9,6 +9,11 @@ from policyengine_simulation_entry.app import create_app
 
 
 def main() -> None:
+    """Write the entry app's OpenAPI spec to ``artifacts/openapi.json``.
+
+    ``scripts/generate-clients.sh`` builds the published simulation client
+    from this file.
+    """
     output = Path(__file__).resolve().parents[2] / "artifacts" / "openapi.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(

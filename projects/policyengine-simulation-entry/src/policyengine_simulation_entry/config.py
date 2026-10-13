@@ -91,6 +91,11 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        """Read settings from environment variables, applying defaults.
+
+        Only STAGE12_ENABLED is checked here (it must be 0 or 1); call validate
+        for everything else. Auth is required unless explicitly disabled.
+        """
         return cls(
             environment=os.getenv("APP_ENVIRONMENT", "local").lower(),
             revision=os.getenv("K_REVISION", ""),
@@ -137,10 +142,12 @@ class Settings:
 
     @property
     def production(self) -> bool:
+        """Whether this is a production environment, where auth must stay on."""
         return self.environment in PRODUCTION_ENVIRONMENTS
 
     @property
     def stage12_resources_configured(self) -> bool:
+        """Whether the Stage 12 manifest environment, database and bucket are set."""
         return all(
             (
                 self.stage12_v2_manifest_environment,
@@ -150,6 +157,12 @@ class Settings:
         )
 
     def validate(self) -> None:
+        """Raise ConfigurationError unless the service can start safely.
+
+        Called from the app lifespan, so a misconfigured revision fails at
+        startup rather than on its first request. Stage 12 resources must be
+        configured all together or not at all.
+        """
         if self.production and not self.auth_required:
             raise ConfigurationError(
                 "Caller authentication cannot be disabled in production."

@@ -49,17 +49,30 @@ class BackendAuthenticationError(BackendUnavailable):
 
 @dataclass(frozen=True)
 class BackendResponse:
+    """A backend reply with only the safe-to-forward response headers kept."""
+
     status_code: int
     content: bytes
     headers: dict[str, str]
 
 
 class SimulationBackend(Protocol):
-    async def start(self) -> None: ...
+    """Backend the entry routes forward simulation requests to.
 
-    async def close(self) -> None: ...
+    The app starts it in the lifespan and closes it on shutdown.
+    """
 
-    async def ready(self) -> bool: ...
+    async def start(self) -> None:
+        """Open connections; called once when the app starts."""
+        ...
+
+    async def close(self) -> None:
+        """Release connections; called when the app shuts down."""
+        ...
+
+    async def ready(self) -> bool:
+        """Return whether the backend can serve requests, for the /ready probe."""
+        ...
 
     async def request(
         self,
@@ -69,7 +82,12 @@ class SimulationBackend(Protocol):
         json_body: JsonObject | None = None,
         request_id: str | None = None,
         observability_id: str | None = None,
-    ) -> BackendResponse: ...
+    ) -> BackendResponse:
+        """Send one request and return the backend's response.
+
+        Raise BackendUnavailable or BackendTimeout when no response arrives.
+        """
+        ...
 
 
 class ClientCredentialsTokenProvider:
@@ -78,6 +96,7 @@ class ClientCredentialsTokenProvider:
     REFRESH_MARGIN_SECONDS = 60
 
     def __init__(self, settings: Settings, client: httpx.AsyncClient) -> None:
+        """Start with no cached token; the first get_token call fetches one."""
         self.settings = settings
         self.client = client
         self._token: str | None = None
@@ -85,6 +104,10 @@ class ClientCredentialsTokenProvider:
         self._lock = asyncio.Lock()
 
     async def get_token(self) -> str:
+        """Return a bearer token, refetching it within a minute of expiry.
+
+        Raise BackendAuthenticationError if Auth0 cannot issue one.
+        """
         async with self._lock:
             now = time.time()
             if (
@@ -97,6 +120,7 @@ class ClientCredentialsTokenProvider:
             return self._token
 
     def invalidate(self) -> None:
+        """Drop the cached token so the next get_token call fetches a new one."""
         self._token = None
         self._expires_at = 0.0
 
@@ -133,6 +157,7 @@ class OldGatewayBackend:
         transport: httpx.AsyncBaseTransport | None = None,
         runtime: ObservabilityRuntime | None = None,
     ) -> None:
+        """Configure the backend; no HTTP client exists until start is called."""
         self.settings = settings
         self.transport = transport
         self.observability = runtime
@@ -140,6 +165,7 @@ class OldGatewayBackend:
         self.token_provider: ClientCredentialsTokenProvider | None = None
 
     async def start(self) -> None:
+        """Create the instrumented HTTP client and token provider; idempotent."""
         if self.client is not None:
             return
         timeout = httpx.Timeout(
@@ -161,6 +187,7 @@ class OldGatewayBackend:
         )
 
     async def close(self) -> None:
+        """Close the HTTP client; start may be called again afterwards."""
         if self.client is not None:
             await self.client.aclose()
         self.client = None
@@ -172,6 +199,7 @@ class OldGatewayBackend:
         return self.client, self.token_provider
 
     async def ready(self) -> bool:
+        """Return whether the old gateway answers GET /health with 200."""
         try:
             response = await self.request("GET", "/health")
         except (BackendUnavailable, BackendTimeout):
@@ -187,6 +215,13 @@ class OldGatewayBackend:
         request_id: str | None = None,
         observability_id: str | None = None,
     ) -> BackendResponse:
+        """Forward one request to the old gateway with a service bearer token.
+
+        A connection failure is retried once for GET only. A 401 or 403 refreshes
+        the token and replays once for any method, then raises
+        BackendAuthenticationError. Raise BackendUnavailable if the client is
+        not started or the gateway is unreachable, and BackendTimeout on timeout.
+        """
         client, token_provider = self._runtime()
         method = method.upper()
         connection_retries_remaining = 1 if method == "GET" else 0
