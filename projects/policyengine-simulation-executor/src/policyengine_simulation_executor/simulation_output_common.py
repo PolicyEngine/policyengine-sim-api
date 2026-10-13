@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from importlib import import_module
 from typing import Any
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,6 +50,20 @@ def _entity_data(simulation, entity: str):
     if simulation.output_dataset is None or simulation.output_dataset.data is None:
         simulation.ensure()
     return getattr(simulation.output_dataset.data, entity)
+
+
+def _count_output_entities(simulation, entity: str, weight: str) -> float:
+    """The weighted number of entities: the plain sum of their weights.
+
+    Output frames are microdf ``MicroDataFrame``s weighted by the entity's
+    weight, so a column's ``.sum()`` is already a weighted sum. Summing the
+    weight column that way weights it twice and returns the sum of squared
+    weights, about 10^4 times the household count on the sparse US data.
+    Read the raw values instead. A weighted frame always holds its weight
+    column, so there is no aggregate fallback: that would weight it again.
+    """
+    data = _entity_data(simulation, entity)
+    return float(np.asarray(data[weight], dtype=float).sum())
 
 
 def _sum_output_variable(simulation, variable: str, entity: str) -> float:
