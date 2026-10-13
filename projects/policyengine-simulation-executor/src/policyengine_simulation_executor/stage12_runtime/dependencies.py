@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from functools import partial
+from importlib import import_module
 from typing import TYPE_CHECKING, Any, Protocol
 
 from policyengine_stage12_persistence import Stage12PersistenceStore
@@ -130,8 +131,6 @@ class ModalChildInvoker:
         observability_context: dict[str, Any] | None,
     ) -> ChildCall:
         """Look up ``application_name.function_name`` in ``environment``; spawn it."""
-        from importlib import import_module
-
         modal: Any = import_module("modal")
         function = modal.Function.from_name(
             application_name,
@@ -146,8 +145,6 @@ class ModalChildInvoker:
 
     def restore(self, invocation_id: str) -> ChildCall:
         """Return the ``modal.FunctionCall`` with this id."""
-        from importlib import import_module
-
         modal: Any = import_module("modal")
         return modal.FunctionCall.from_id(invocation_id)
 

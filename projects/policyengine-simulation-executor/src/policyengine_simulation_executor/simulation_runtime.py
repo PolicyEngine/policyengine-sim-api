@@ -17,10 +17,12 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from importlib import import_module
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 from policyengine_simulation_contract.job_progress import JobStage
+from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     Stage,
@@ -189,11 +191,6 @@ def run_simulation_impl(
         except ValueError as exc:
             # Gateway images intentionally do not install country packages.
             # Transport the public error through the shared contract instead.
-            from policyengine_simulation_contract.spm import (
-                SPMInputError,
-                spm_error_detail,
-            )
-
             detail = spm_error_detail(exc)
             if detail is not None:
                 raise SPMInputError(detail.code, detail.message) from None
@@ -263,9 +260,16 @@ def _compile_interval_policy(
     ):
         return policy
 
-    from policyengine.core import ParameterValue, Policy
-    from policyengine.core.parameter import Parameter
-    from policyengine.tax_benefit_models.common.reform import compile_reform
+    from policyengine.core import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
+        ParameterValue,
+        Policy,
+    )
+    from policyengine.core.parameter import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
+        Parameter,
+    )
+    from policyengine.tax_benefit_models.common.reform import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
+        compile_reform,
+    )
 
     compiled = compile_reform(policy, year=year, model_version=country_module.model)
     parameter_values = []
@@ -346,9 +350,13 @@ def _build_uk_weight_replacement_region(region_code: str) -> Region | None:
     if prefix not in {"constituency", "local_authority"}:
         return None
 
-    from policyengine.core.region import Region
-    from policyengine.core.scoping_strategy import WeightReplacementStrategy
-    from policyengine.data.uk_geography_assets import (
+    from policyengine.core.region import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
+        Region,
+    )
+    from policyengine.core.scoping_strategy import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
+        WeightReplacementStrategy,
+    )
+    from policyengine.data.uk_geography_assets import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
         CONSTITUENCY_ASSET_SPEC,
         LOCAL_AUTHORITY_ASSET_SPEC,
     )
@@ -395,24 +403,30 @@ def _require_certified_uk_weight_matrix(
     release replaces, is never downloaded (see
     ``_build_uk_weight_replacement_region``).
     """
-    from policyengine.core.scoping_strategy import WeightReplacementStrategy
+    from policyengine.core.scoping_strategy import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
+        WeightReplacementStrategy,
+    )
 
     if not isinstance(scoping_strategy, WeightReplacementStrategy):
         return
 
-    from pathlib import Path
-
-    import h5py
-    import pandas as pd
-    from policyengine.data.uk_geography_assets import (
+    import h5py  # noqa: PLC0415  # h5py loads only for the UK weight-matrix check
+    import pandas as pd  # noqa: PLC0415  # UK weight-matrix check: kept with its lazily loaded data dependencies
+    from policyengine.data.uk_geography_assets import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
         UKGeographyAssetSpec,
         default_download_dir,
         resolve_uk_geography_asset_paths,
     )
-    from policyengine.provenance.dataset_materialization import materialize_dataset
-    from policyengine.provenance.manifest import get_release_manifest
+    from policyengine.provenance.dataset_materialization import (  # noqa: PLC0415  # resolved per call so tests can patch materialize_dataset
+        materialize_dataset,
+    )
+    from policyengine.provenance.manifest import (  # noqa: PLC0415  # resolved per call so tests can patch the release manifest
+        get_release_manifest,
+    )
 
-    from policyengine_simulation_executor import simulation_output_geographic
+    from policyengine_simulation_executor import (  # noqa: PLC0415  # simulation_output_geographic imports this module back lazily; kept lazy on both sides
+        simulation_output_geographic,
+    )
 
     region = scoping_strategy.region_code
     matrix_name = scoping_strategy.weight_matrix_key
@@ -595,7 +609,7 @@ def _resolve_region_group(
     Members must be row-filter regions (states/CDs) so national weights are
     preserved (INV-5); the group filters the national dataset.
     """
-    from policyengine.core.scoping_strategy import (
+    from policyengine.core.scoping_strategy import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
         RegionGroupStrategy,
         RowFilterStrategy,
     )
@@ -730,11 +744,13 @@ def _build_simulation(
     scoping_strategy: ScopingStrategy | None = None,
     region_code: str | None = None,
 ) -> Simulation:
-    from policyengine_simulation_executor.baseline_artifacts import (
+    from policyengine_simulation_executor.baseline_artifacts import (  # noqa: PLC0415  # resolved per call so tests can patch baseline_artifacts
         ArtifactBaselineSimulation,
         deterministic_baseline_id,
     )
-    from policyengine_simulation_executor.spm import normalize_runtime_spm
+    from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # resolved per call so tests can patch spm.normalize_runtime_spm
+        normalize_runtime_spm,
+    )
     from policyengine_simulation_executor.stage_reporting_simulation import (
         StageReportingSimulation,
     )
@@ -792,7 +808,7 @@ def _run_simulation_impl_core(
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
         simulation_params, telemetry, metadata = split_internal_payload(params)
     metadata = metadata or {}
-    from policyengine_simulation_executor.spm import (
+    from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # resolved per call so tests can patch spm.normalize_runtime_spm
         normalize_runtime_spm,
         simulation_spm_result,
     )
@@ -837,7 +853,7 @@ def _run_simulation_impl_core(
             selection=dataset_selection,
             country_module=country_module,
         )
-    from policyengine_simulation_executor.uk_local_authority_metadata import (
+    from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
         detect_uk_local_authority_metadata,
     )
 
@@ -908,7 +924,7 @@ def _run_simulation_impl_core(
         logger.info("Baseline artifact outcome: %s", artifact_outcome)
     logger.info("Comparison complete")
     if params.get("_emit_microdata"):
-        from policyengine_simulation_executor.simulation_microdata import (
+        from policyengine_simulation_executor.simulation_microdata import (  # noqa: PLC0415  # the microdata export loads only when a run asks for it
             extract_output_microdata,
         )
 

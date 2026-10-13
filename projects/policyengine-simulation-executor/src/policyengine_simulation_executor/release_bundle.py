@@ -145,7 +145,9 @@ def _artifact_hf_uri(
     data_package: DataPackageVersion,
     reference: object,
 ) -> tuple[str | None, str | None]:
-    from policyengine.provenance.manifest import build_hf_uri
+    from policyengine.provenance.manifest import (  # noqa: PLC0415  # policyengine stays out of this module's import-time imports
+        build_hf_uri,
+    )
 
     path = _reference_value(reference, "path")
     if not isinstance(path, str) or not path:
@@ -188,7 +190,9 @@ def _dataset_uris_from_release(
     data_release: Mapping,
     fallback_data_package: DataPackageVersion,
 ) -> tuple[dict[str, str], dict[str, str]]:
-    from policyengine.provenance.manifest import build_hf_uri
+    from policyengine.provenance.manifest import (  # noqa: PLC0415  # policyengine stays out of this module's import-time imports
+        build_hf_uri,
+    )
 
     data_package = _mapping(data_release.get("data_package"))
     datasets = _mapping(data_release.get("datasets"))
@@ -227,7 +231,9 @@ def _dataset_uris_from_release(
 
 def _current_policyengine_bundle() -> Mapping | None:
     try:
-        from policyengine.bundle import get_current_bundle
+        from policyengine.bundle import (  # noqa: PLC0415  # inside the fallback guard: a failing policyengine.bundle import returns None
+            get_current_bundle,
+        )
 
         return get_current_bundle()
     except Exception:  # noqa: BLE001  # preserve the fallback for invalid legacy bundles
@@ -300,7 +306,9 @@ def _derive_data_package_version(
 def get_country_release_bundle(country: str) -> CountryReleaseBundle:
     """Return package and dataset versions from policyengine.py metadata."""
     country = _normalise_country(country)
-    from policyengine.provenance.manifest import get_release_manifest
+    from policyengine.provenance.manifest import (  # noqa: PLC0415  # resolved per call so tests can patch the release manifest
+        get_release_manifest,
+    )
 
     manifest = get_release_manifest(country)
     bundle_metadata = _bundle_country_metadata(country)

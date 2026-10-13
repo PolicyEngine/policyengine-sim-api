@@ -41,6 +41,8 @@ from policyengine_simulation_executor.stage12_parity import (
 )
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
+    build_aggregate_report,
+    calculate_simulation_frames,
     simulation_input_sha256,
 )
 from policyengine_simulation_executor.stage12_runtime.aggregation import (
@@ -237,7 +239,7 @@ def qualify_report_parity(
 
     local_runtime: ObservabilityRuntime | None = None
     if existing_runner is None:
-        from policyengine_simulation_executor.simulation_runtime import (
+        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # default runner, bound only when none is injected
             run_simulation_impl,
         )
 
@@ -249,16 +251,8 @@ def qualify_report_parity(
 
         existing_runner = run_existing
     if single_simulation_runner is None:
-        from policyengine_simulation_executor.stage12_runtime import (
-            calculate_simulation_frames,
-        )
-
         single_simulation_runner = calculate_simulation_frames
     if aggregate_builder is None:
-        from policyengine_simulation_executor.stage12_runtime import (
-            build_aggregate_report,
-        )
-
         aggregate_builder = build_aggregate_report
 
     request_with_microdata = dict(existing_request)

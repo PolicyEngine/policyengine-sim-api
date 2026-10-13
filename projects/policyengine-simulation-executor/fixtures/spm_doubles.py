@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 
 def installed_spm_selection() -> dict[str, object] | None:
     """Return the installed US bundle's default SPM selection, if any."""
-    from policyengine_simulation_executor.spm import runtime_spm_capability
+    from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # resolved per call so tests can patch spm.runtime_spm_capability
+        runtime_spm_capability,
+    )
 
     capability = runtime_spm_capability()
     return None if capability is None else capability.defaults.model_dump()

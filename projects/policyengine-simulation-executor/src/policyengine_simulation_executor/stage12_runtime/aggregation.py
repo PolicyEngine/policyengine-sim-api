@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from policyengine_simulation_contract.spm import build_spm_comparison_provenance
 from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
     SimulationArtifactDescriptor,
@@ -38,7 +39,7 @@ def validate_uk_local_authority_metadata(
     """
     if country == "uk":
         if baseline is None and reform is None:
-            from policyengine_simulation_executor.uk_local_authority_metadata import (
+            from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # UK-only branch, reached only when a UK report has no metadata
                 uk_area_codes_required,
             )
 
@@ -103,7 +104,9 @@ def _dataset_from_frames(
     country: CountryId,
     year: int,
 ) -> PolicyEngineUSDataset | PolicyEngineUKDataset:
-    from microdf import MicroDataFrame
+    from microdf import (  # noqa: PLC0415  # dataset rebuild: kept with the country dataset classes below, which load lazily
+        MicroDataFrame,
+    )
 
     fields = {}
     for entity, frame in frames.items():
@@ -114,7 +117,7 @@ def _dataset_from_frames(
             else MicroDataFrame(frame)
         )
     if country == "us":
-        from policyengine.tax_benefit_models.us.datasets import (
+        from policyengine.tax_benefit_models.us.datasets import (  # noqa: PLC0415  # policyengine's US model loads only for a US report
             PolicyEngineUSDataset,
             USYearData,
         )
@@ -126,7 +129,7 @@ def _dataset_from_frames(
             name="stage12-comparison",
             description="Retained Stage 12 output",
         )
-    from policyengine.tax_benefit_models.uk.datasets import (
+    from policyengine.tax_benefit_models.uk.datasets import (  # noqa: PLC0415  # policyengine's UK model loads only for a UK report
         PolicyEngineUKDataset,
         UKYearData,
     )
@@ -154,13 +157,13 @@ def build_aggregate_report(
     Runs the standard macro output builder over stand-in simulations that load
     the stored frames, so no model is recomputed.
     """
-    from policyengine_simulation_executor.segmented_national_reduce import (
+    from policyengine_simulation_executor.segmented_national_reduce import (  # noqa: PLC0415  # the segmented reduce module loads only when a report is aggregated
         PrecomputedSimulation,
     )
-    from policyengine_simulation_executor.simulation_output_builder import (
+    from policyengine_simulation_executor.simulation_output_builder import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_output_builder.SimulationOutputBuilder
         SimulationOutputBuilder,
     )
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime._country_module
         _country_module,
         _runtime_policy,
     )
@@ -247,9 +250,6 @@ def build_spm_result(
     requested_spm = report.baseline.options.get("spm")
     if requested_spm is None:
         return {}
-    from policyengine_simulation_contract.spm import (
-        build_spm_comparison_provenance,
-    )
 
     baseline_provenance = baseline_descriptor.calculation_provenance
     reform_provenance = reform_descriptor.calculation_provenance

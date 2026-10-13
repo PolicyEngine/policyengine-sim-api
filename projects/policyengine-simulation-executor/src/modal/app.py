@@ -152,8 +152,12 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
     bucket = os.environ.get("POLICYENGINE_ARTIFACT_BUCKET", "")
     if not digest:
         return bucket, None
-    from policyengine_simulation_executor.artifact_store import ArtifactStore
-    from policyengine_simulation_executor.precompute_models import ArtifactManifest
+    from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # deploy-time manifest check only; the app import stays light for the precompute and smoke apps
+        ArtifactStore,
+    )
+    from policyengine_simulation_executor.precompute_models import (  # noqa: PLC0415  # deploy-time manifest check only; the app import stays light for the precompute and smoke apps
+        ArtifactManifest,
+    )
 
     store = ArtifactStore(bucket or None)
     payload = store.read_manifest(digest)
@@ -361,7 +365,9 @@ def run_simulation(
             remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
-            from src.modal.segmented_national import dispatch_run_simulation
+            from src.modal.segmented_national import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+                dispatch_run_simulation,
+            )
 
             try:
                 # Plain national macro requests fan out across region groups
@@ -431,7 +437,7 @@ def run_simulation_segment(
             remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
-            from policyengine_simulation_executor.simulation_runtime import (
+            from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
                 run_simulation_impl,
             )
 
@@ -471,7 +477,9 @@ def run_budget_window_batch(
             remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
-            from src.modal.budget_window_batch import run_budget_window_batch_impl
+            from src.modal.budget_window_batch import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+                run_budget_window_batch_impl,
+            )
 
             return run_budget_window_batch_impl(params, runtime=runtime)
     finally:

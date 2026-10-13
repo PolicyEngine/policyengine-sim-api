@@ -11,9 +11,12 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from policyengine_simulation_contract.stage12_execution import (
+    ArtifactMediaType,
+    ArtifactReference,
     ComparisonRunLifecycleStatus,
     ComparisonSimulationRecord,
     PlannedSimulationExecutionInput,
+    RowIdentity,
     SimulationArtifactDescriptor,
     SimulationExecutionInput,
     Stage12InvocationContext,
@@ -153,7 +156,7 @@ def calculate_simulation_frames(
         "region": simulation.geography.region,
         **simulation.options,
     }
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _build_simulation,
         _country_module,
         _load_dataset,
@@ -219,7 +222,7 @@ def calculate_simulation_frames(
         selection = getattr(model, "spm_config", None)
         calculation_provenance = None
         if selection is not None:
-            from policyengine_simulation_executor.spm import (
+            from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # executor spm loads only for an SPM selection
                 simulation_spm_calculation_provenance,
             )
 
@@ -259,11 +262,6 @@ def descriptor_from_record(
     ):
         msg = "successful child record has incomplete output metadata"
         raise ValueError(msg)
-    from policyengine_simulation_contract.stage12_execution import (
-        ArtifactMediaType,
-        ArtifactReference,
-        RowIdentity,
-    )
 
     return SimulationArtifactDescriptor(
         evaluation_id=simulation.evaluation_id,

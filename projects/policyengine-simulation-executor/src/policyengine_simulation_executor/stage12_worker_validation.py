@@ -72,7 +72,7 @@ def _run_non_serving_calculation(country: CountryId) -> None:
 
 
 def _check_uk_local_authority_resources() -> None:
-    from policyengine_simulation_executor.uk_local_authority_metadata import (
+    from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
         load_uk_local_authority_resources,
     )
 
@@ -82,7 +82,7 @@ def _check_uk_local_authority_resources() -> None:
 
 
 def _check_uk_local_authority_dataset(dataset_path: str) -> None:
-    from policyengine_simulation_executor.uk_local_authority_metadata import (
+    from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # resolved per call so tests can patch uk_local_authority_metadata
         detect_uk_local_authority_metadata_from_hdf,
         uk_area_regions_routed,
         uk_hdf_household_has_local_authority_codes,

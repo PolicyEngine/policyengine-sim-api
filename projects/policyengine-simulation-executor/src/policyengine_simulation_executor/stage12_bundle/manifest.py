@@ -122,6 +122,8 @@ def resolve_stage12_bundle(raw_bundle: object) -> ResolvedStage12Bundle:
 
 def load_stage12_bundle() -> ResolvedStage12Bundle:
     """Read the installed PolicyEngine.py release's packaged bundle."""
-    from policyengine.bundle import get_current_bundle
+    from policyengine.bundle import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine.bundle.get_current_bundle
+        get_current_bundle,
+    )
 
     return resolve_stage12_bundle(get_current_bundle())

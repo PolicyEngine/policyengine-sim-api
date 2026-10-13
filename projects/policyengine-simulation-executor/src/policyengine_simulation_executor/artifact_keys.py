@@ -297,7 +297,9 @@ def _receipt_source_sha256(country: str, data_version: str) -> str | None:
     version (mirroring ``resolve_local_bundle_dataset_path``) — a receipt
     left over from a different install must not leak into the key.
     """
-    from policyengine_simulation_executor.release_bundle import _receipt_dataset
+    from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # identity seam: resolved per call so tests can patch release_bundle._receipt_dataset
+        _receipt_dataset,
+    )
 
     entry = _receipt_dataset(country)
     if not isinstance(entry, Mapping):
@@ -312,7 +314,9 @@ def _receipt_source_sha256(country: str, data_version: str) -> str | None:
 
 
 def _certification_fingerprint(country: str) -> str | None:
-    from policyengine.provenance.manifest import get_release_manifest
+    from policyengine.provenance.manifest import (  # noqa: PLC0415  # identity seam: resolved per call so tests can patch the release manifest
+        get_release_manifest,
+    )
 
     certification = getattr(get_release_manifest(country), "certification", None)
     fingerprint = getattr(certification, "data_build_fingerprint", None)
@@ -328,12 +332,12 @@ def collect_dataset_identity(country: str, year: int) -> DatasetArtifactIdentity
     runtime lookup uses, so filename coupling is inherited, not
     re-derived.
     """
-    from policyengine.provenance.manifest import (
+    from policyengine.provenance.manifest import (  # noqa: PLC0415  # identity seam: resolved per call so tests can patch the release manifest
         dataset_logical_name,
         resolve_dataset_reference,
     )
 
-    from policyengine_simulation_executor.release_bundle import (
+    from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # identity seam: resolved per call so tests can patch release_bundle
         get_country_release_bundle,
     )
 
@@ -341,7 +345,9 @@ def collect_dataset_identity(country: str, year: int) -> DatasetArtifactIdentity
     stem = dataset_logical_name(
         resolve_dataset_reference(bundle.country, bundle.default_dataset)
     )
-    from policyengine_simulation_executor.spm import normalize_runtime_spm
+    from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # executor spm is not loaded at import; loaded per call
+        normalize_runtime_spm,
+    )
 
     selection = normalize_runtime_spm({"country": country, "time_period": year})
     return DatasetArtifactIdentity(
@@ -372,7 +378,9 @@ def collect_baseline_identity(
     ``spm`` is normalized against the installed image's capability first, so
     a request that omits it still keys to the image's default SPM selection.
     """
-    from policyengine_simulation_executor.spm import normalize_runtime_spm
+    from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # executor spm is not loaded at import; loaded per call
+        normalize_runtime_spm,
+    )
 
     selection = normalize_runtime_spm(
         {"country": country, "time_period": year, "spm": spm}

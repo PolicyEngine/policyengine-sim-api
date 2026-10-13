@@ -108,7 +108,7 @@ def _is_newer_version(candidate: str, current: str | None) -> bool:
 
 
 def _country_bundle_metadata(country: str) -> CountryBundleMetadata:
-    from policyengine_simulation_executor.release_bundle import (
+    from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # the executor package loads only when bundle metadata is built
         get_country_release_bundle,
     )
 
@@ -138,7 +138,9 @@ def build_bundle_manifest_metadata(
     from policyengine_simulation_contract.job_progress import (
         JOB_PROGRESS_CAPABILITY_VERSION,
     )
-    from policyengine_simulation_executor.spm import runtime_spm_capability
+    from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # the executor package loads only when bundle metadata is built
+        runtime_spm_capability,
+    )
 
     capability = runtime_spm_capability()
     metadata: BundleManifestMetadata = {

@@ -251,7 +251,7 @@ class SegmentedNationalRunner:
         return self._reduce(child_results, country_module=country_module)
 
     def _country_module(self) -> ModuleType:
-        from policyengine_simulation_executor.simulation_runtime import (
+        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime._country_module
             _country_module,
         )
 
@@ -540,7 +540,7 @@ class SegmentedNationalRunner:
     def _reduce(
         self, child_results: list[dict], *, country_module: ModuleType
     ) -> dict[str, Any]:
-        from policyengine_simulation_executor.simulation_runtime import (
+        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # Modal worker code: bound per call, like this module's other simulation_runtime imports
             _parse_year,
         )
 
@@ -600,7 +600,9 @@ def dispatch_run_simulation(
     Segmented national fan-out serves eligible requests (see
     ``should_run_segmented_national``); everything else runs monolithically.
     """
-    from policyengine_simulation_executor.spm import normalize_runtime_spm
+    from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # resolved per call so tests can patch spm.normalize_runtime_spm
+        normalize_runtime_spm,
+    )
 
     selection = normalize_runtime_spm(params)
     if selection is not None:
@@ -614,7 +616,7 @@ def dispatch_run_simulation(
             progress=progress,
         )
 
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime.run_simulation_impl
         run_simulation_impl,
     )
 

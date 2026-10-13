@@ -49,9 +49,11 @@ def resolve_bucket_name(explicit: str | None = None) -> str:
 
 
 def _default_client() -> storage.Client:
-    from google.cloud import storage
+    from google.cloud import (  # noqa: PLC0415  # google-cloud-storage loads only when a default client is built
+        storage,
+    )
 
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime.setup_gcp_credentials
         setup_gcp_credentials,
     )
 

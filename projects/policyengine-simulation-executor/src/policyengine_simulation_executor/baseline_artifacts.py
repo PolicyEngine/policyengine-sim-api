@@ -23,6 +23,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from policyengine.core.scoping_strategy import RegionGroupStrategy
+from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
 from pydantic import PrivateAttr
 
 from policyengine_simulation_executor import artifact_keys
@@ -73,8 +75,6 @@ def qualifying_baseline_identity(
     reader cannot disagree by construction. Identity-collection errors
     propagate: the writer must fail loudly on them.
     """
-    from policyengine.core.scoping_strategy import RegionGroupStrategy
-
     if policy is not None:
         return None
     if str(params.get("scope") or "").lower() != "macro":
@@ -132,8 +132,6 @@ def deterministic_baseline_id(
             year=year,
         )
     except Exception as exc:
-        from policyengine_simulation_contract.spm import spm_error_detail
-
         if spm_error_detail(exc):
             raise
         logger.warning(
@@ -194,9 +192,9 @@ class ArtifactBaselineSimulation(StageReportingSimulation):
             self._record_outcome(OUTCOME_MISS)
             return
 
-        from policyengine_simulation_contract.spm import SPMInputError
-
-        from policyengine_simulation_executor.spm import simulation_spm_result
+        from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # executor spm is not loaded at import; loaded per call
+            simulation_spm_result,
+        )
 
         # A tax-only artifact can legitimately have no receipt years. Check its
         # columns first, then treat unusable cached receipts as another gap.
@@ -230,7 +228,9 @@ class ArtifactBaselineSimulation(StageReportingSimulation):
         # completed output instead of revalidating (and re-running) against
         # the incomplete one. LRUCache.add keeps the OLD value for an
         # existing key and exposes no remove, so evict directly first.
-        from policyengine.core.simulation import _cache
+        from policyengine.core.simulation import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine's simulation cache
+            _cache,
+        )
 
         _cache._cache.pop(getattr(self, "storage_id", self.id), None)  # noqa: SLF001  # policyengine's LRUCache has no public remove
         _cache.add(

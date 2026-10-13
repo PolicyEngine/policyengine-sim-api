@@ -60,7 +60,7 @@ _EXPECTED_COUNTRIES = frozenset({"us", "uk"})
 
 def _summarize_bundle_status(status: dict) -> dict:
     """Reject an incomplete or mismatched runtime bundle and summarize it."""
-    import json
+    import json  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check that uses it
 
     package_names = {check.get("package") for check in status.get("packages", [])}
     dataset_countries = {check.get("country") for check in status.get("datasets", [])}
@@ -112,12 +112,16 @@ def smoke_import_executor() -> dict:
     Raises on any bundle mismatch or import failure; otherwise returns the
     bundle summary and how many shared-library modules imported.
     """
-    import importlib
-    import os
-    import pkgutil
-    from pathlib import Path
+    import importlib  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
+    import os  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
+    import pkgutil  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
+    from pathlib import (  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
+        Path,
+    )
 
-    from policyengine.bundle import inspect_bundle_status
+    from policyengine.bundle import (  # noqa: PLC0415  # smoke check: inspects the bundle installed in the Modal image
+        inspect_bundle_status,
+    )
 
     bundle = _summarize_bundle_status(
         inspect_bundle_status(
@@ -139,15 +143,15 @@ def smoke_import_executor() -> dict:
     # policyengine.core chain) on EVERY request, so a break there crashes
     # all requests at import time — exactly the #602 failure class this
     # smoke exists to catch.
-    import policyengine_simulation_contract
-    import policyengine_simulation_observability
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: F401
+    import policyengine_simulation_contract  # noqa: PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
+    import policyengine_simulation_observability  # noqa: PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: F401, PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
         run_simulation_impl,
     )
-    from src.modal.budget_window_batch import (  # noqa: F401
+    from src.modal.budget_window_batch import (  # noqa: F401, PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
         run_budget_window_batch_impl,
     )
-    from src.modal.segmented_national import (  # noqa: F401
+    from src.modal.segmented_national import (  # noqa: F401, PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
         dispatch_run_simulation,
     )
 
