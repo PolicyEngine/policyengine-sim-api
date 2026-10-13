@@ -10,7 +10,7 @@ class FastAPIEnhancedInstrumenter:
     metrics instead of global for the whole api.
     """
 
-    def instrument(self, app: FastAPI):
+    def instrument(self, app: FastAPI) -> None:
         FastAPIInstrumentor.instrument_app(app)
         middleware = Middleware(app)
         app.middleware("http")(middleware)

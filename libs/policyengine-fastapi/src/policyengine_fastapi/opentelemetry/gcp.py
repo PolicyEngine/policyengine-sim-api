@@ -23,11 +23,11 @@ log = logging.getLogger(__name__)
 
 
 class AddGcpProjectToTraceFilter(logging.Filter):
-    def __init__(self, project: str):
+    def __init__(self, project: str) -> None:
         super().__init__()
         self.project = project
 
-    def filter(self, record: logging.LogRecord):
+    def filter(self, record: logging.LogRecord) -> bool | logging.LogRecord:
         if not hasattr(record, "otelTraceID"):
             return super().filter(record)
         record.otelTraceID = f"projects/{self.project}/traces/{record.otelTraceID}"  # type: ignore
@@ -58,7 +58,7 @@ def _get_project_id_from_metadata() -> str | None:
 
 
 class GCPLoggingInstrumentor:
-    def __init__(self, project_id: str | None = None):
+    def __init__(self, project_id: str | None = None) -> None:
         self.project_id = project_id or _get_project_id()
 
     """
@@ -66,7 +66,7 @@ class GCPLoggingInstrumentor:
     json logs as per gcp expectations.
     """
 
-    def instrument(self):
+    def instrument(self) -> None:
         from opentelemetry.instrumentation.logging import LoggingInstrumentor
         from pythonjsonlogger.json import JsonFormatter
 
@@ -93,7 +93,7 @@ class GCPLoggingInstrumentor:
         LoggingInstrumentor().instrument()
 
 
-def export_ot_to_gcp(resource: Resource):
+def export_ot_to_gcp(resource: Resource) -> None:
     from opentelemetry.exporter.cloud_monitoring import (
         CloudMonitoringMetricsExporter,
     )
@@ -114,7 +114,7 @@ def export_ot_to_gcp(resource: Resource):
     metrics.set_meter_provider(meterProvider)
 
     @exit()
-    def flush_ot():
+    def flush_ot() -> None:
         log.info("Flushing traces and metrics before shutdown")
         traceProvider.force_flush()
         meterProvider.force_flush()

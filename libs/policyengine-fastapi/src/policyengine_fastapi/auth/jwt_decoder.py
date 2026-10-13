@@ -16,7 +16,7 @@ class JWTDecoder:
     the parsed token with all fields.
     """
 
-    def __init__(self, issuer: str, audience: str, auto_error: bool = True):
+    def __init__(self, issuer: str, audience: str, auto_error: bool = True) -> None:
         self.issuer = issuer
         self.audience = audience
         self.auto_error = auto_error
@@ -38,7 +38,7 @@ class JWTDecoder:
             LOG.info("Ignoring invalid auth token")
         return None
 
-    def _validate(self, token: HTTPAuthorizationCredentials | None):
+    def _validate(self, token: HTTPAuthorizationCredentials | None) -> dict[str, str]:
         if token is None:
             LOG.info("No bearer token on request")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)

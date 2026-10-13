@@ -2,24 +2,30 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, Self
 
 from .config import ObservabilityConfig
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from types import TracebackType
 
     from .contracts import SimulationLifecycleEvent, TracerArtifactManifest
 
 
 class NoOpSpan(AbstractContextManager["NoOpSpan"]):
-    def __enter__(self):
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         return None
 
-    def set_attribute(self, key: str, value: Any) -> None:
+    def set_attribute(self, key: str, value: object) -> None:
         return None
 
     def add_event(self, name: str, attributes: Mapping[str, Any] | None = None) -> None:
