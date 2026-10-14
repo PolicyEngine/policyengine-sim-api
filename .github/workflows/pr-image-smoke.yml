@@ -65,6 +65,4 @@ jobs:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         PE_UK_PRIVATE_HF_READ_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}
-      run: |
-        chmod +x .github/scripts/modal-image-smoke.sh
-        .github/scripts/modal-image-smoke.sh staging
+      run: .github/scripts/modal-image-smoke.sh staging

@@ -38,14 +38,9 @@ jobs:
         ./scripts/generate-clients.sh
 
     - name: Build simulation API client from the entrypoint contract
-      run: |
-        cd projects/policyengine-simulation-entry/artifacts/clients/python
-        # Update version
-        DATE=$(date +%Y%m%d)
-        RUN_NUMBER="${{ github.run_number }}"
-        NEW_VERSION="0.${DATE}.${RUN_NUMBER}"
-        sed -i "s/^version = .*/version = \"${NEW_VERSION}\"/" pyproject.toml
-        uv build
+      env:
+        RUN_NUMBER: ${{ github.run_number }}
+      run: .github/scripts/build-simulation-api-client.sh projects/policyengine-simulation-entry/artifacts/clients/python
 
     # PyPI trusted publishing: uploads accepted only from this workflow in the
     # pypi environment (limited to main). No stored token.

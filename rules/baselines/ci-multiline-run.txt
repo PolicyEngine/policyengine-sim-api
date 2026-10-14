@@ -1,11 +1,4 @@
 # Tolerated existing violations. This list may only shrink.
-.github/workflows/pr-image-smoke.yml :: image-smoke :: Run image smokes
-.github/workflows/pr.yml :: lint :: Run ruff format check
-.github/workflows/pr.yml :: test :: Install dependencies
-.github/workflows/pr.yml :: test :: Run tests
-.github/workflows/pr.yml :: test-integration :: Run integration tests (local services only)
-.github/workflows/pr.yml :: test-integration :: Start services
-.github/workflows/publish-clients.yml :: publish :: Build simulation API client from the entrypoint contract
 .github/workflows/simulation-deploy.reusable.yml :: deploy_entrypoint :: Build and push entrypoint image
 .github/workflows/simulation-deploy.reusable.yml :: deploy_entrypoint :: Capture stable service state before deployment
 .github/workflows/simulation-deploy.reusable.yml :: deploy_entrypoint :: Resolve exact candidate metadata
