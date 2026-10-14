@@ -1336,11 +1336,11 @@ class ConcurrentInvoker:
         self.production_wait_timeouts = []
         self.output_plans = []
 
-    def spawn(self, *, simulation, environment, **_):
-        parsed = PlannedSimulationExecutionInput.model_validate(simulation)
+    def spawn(self, request):
+        parsed = PlannedSimulationExecutionInput.model_validate(request.simulation)
         role = parsed.role.value
         self.events.append(f"spawn:{role}")
-        self.environments.append(environment)
+        self.environments.append(request.environment)
         self.output_plans.append(parsed.output_plan)
 
         return self._submit(parsed, role)
@@ -1866,8 +1866,10 @@ class RefusingDispatchInvoker:
         self.dispatch_error = dispatch_error
         self.events = []
 
-    def spawn(self, *, simulation, **_):
-        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
+    def spawn(self, request):
+        role = PlannedSimulationExecutionInput.model_validate(
+            request.simulation
+        ).role.value
         self.events.append(f"spawn:{role}")
         raise self.dispatch_error
 
@@ -1951,8 +1953,8 @@ class WorkerRecordedFailureInvoker:
         self.store = store
         self.worker_summary = worker_summary
 
-    def spawn(self, *, simulation, **_):
-        planned = PlannedSimulationExecutionInput.model_validate(simulation)
+    def spawn(self, request):
+        planned = PlannedSimulationExecutionInput.model_validate(request.simulation)
         if planned.role is SimulationRole.BASELINE:
             return WorkerRecordedFailureCall(
                 "call-baseline",
@@ -2455,8 +2457,10 @@ class TimeoutInvoker:
     def __init__(self):
         self.events = []
 
-    def spawn(self, *, simulation, **_):
-        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
+    def spawn(self, request):
+        role = PlannedSimulationExecutionInput.model_validate(
+            request.simulation
+        ).role.value
         self.events.append(f"spawn:{role}")
         return TimeoutCall(f"call-{role}")
 
