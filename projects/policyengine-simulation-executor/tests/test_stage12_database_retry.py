@@ -53,7 +53,7 @@ class OpenedConnection:
     """Stand in for the connection a successful connect step returns."""
 
 
-def _upper_bound_delay(lower_bound: float, upper_bound: float) -> float:
+def _upper_bound_delay(_lower_bound: float, upper_bound: float) -> float:
     return upper_bound
 
 

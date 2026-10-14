@@ -52,7 +52,7 @@ def open_connection_with_retry(
     while True:
         try:
             return connect()
-        except OperationalError as error:
+        except OperationalError as error:  # noqa: PERF203  # each refused attempt is caught so the loop can retry it
             remaining_budget = CONNECTION_RETRY_BUDGET_SECONDS - (monotonic() - started)
             if remaining_budget <= 0:
                 raise
