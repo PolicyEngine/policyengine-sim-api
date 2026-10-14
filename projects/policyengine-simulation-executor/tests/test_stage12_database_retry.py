@@ -227,3 +227,42 @@ def test_retry_is_logged_when_no_observability_runtime_is_available(
         "retrying attempt 2 after 1.000 seconds"
     )
     assert isinstance(record.exc_info[1], OperationalError)
+
+
+def test_delays_double_up_to_the_maximum_until_the_budget_is_spent() -> None:
+    clock = ManualClock()
+
+    def never_connect() -> None:
+        raise _connection_limit_error()
+
+    with pytest.raises(OperationalError):
+        open_connection_with_retry(
+            never_connect,
+            operation_name="get_report",
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            choose_delay=_upper_bound_delay,
+        )
+
+    assert clock.sleeps == [1.0, 2.0, 4.0, 8.0, 15.0, 15.0, 15.0]
+
+
+def test_the_last_delay_is_cut_to_the_remaining_budget() -> None:
+    clock = ManualClock()
+    seconds_per_refused_attempt = 12.0
+
+    def slowly_refuse() -> None:
+        clock.now += seconds_per_refused_attempt
+        raise _connection_limit_error()
+
+    with pytest.raises(OperationalError):
+        open_connection_with_retry(
+            slowly_refuse,
+            operation_name="get_report",
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            choose_delay=_upper_bound_delay,
+        )
+
+    # 12 + 1 + 12 + 2 + 12 + 4 + 12 seconds leave 5 of the 60-second budget.
+    assert clock.sleeps == [1.0, 2.0, 4.0, 5.0]
