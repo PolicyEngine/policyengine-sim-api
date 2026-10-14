@@ -2879,6 +2879,30 @@ def _declared_modal_timeouts(monkeypatch):
 MINIMUM_FINISHING_SECONDS = 600
 
 
+def test_declared_modal_timeouts_fit_the_shared_wait_window(monkeypatch) -> None:
+    declared_timeouts = _declared_modal_timeouts(monkeypatch)
+    window_seconds = coordination_module.SIMULATION_WAIT_TIMEOUT_SECONDS
+    child_worker_timeouts = {
+        name: timeout
+        for name, timeout in declared_timeouts.items()
+        if name.startswith("run_single_simulation")
+    }
+
+    assert set(child_worker_timeouts) == {
+        "run_single_simulation_us",
+        "run_single_simulation_uk",
+        "run_single_simulation_segment_us",
+    }
+    # The window covers every worker's own Modal timeout.
+    assert all(window_seconds >= timeout for timeout in child_worker_timeouts.values())
+    assert (
+        declared_timeouts["coordinate_report"]
+        >= window_seconds
+        + PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS
+        + MINIMUM_FINISHING_SECONDS
+    )
+
+
 @pytest.mark.parametrize("setup_seconds", [0.0, 400.0, 2_000.0])
 def test_child_wait_window_opens_when_the_coordinator_starts(
     monkeypatch,
@@ -2886,7 +2910,6 @@ def test_child_wait_window_opens_when_the_coordinator_starts(
 ) -> None:
     declared_timeouts = _declared_modal_timeouts(monkeypatch)
     window_seconds = coordination_module.SIMULATION_WAIT_TIMEOUT_SECONDS
-    poll_seconds = coordination_module.SIMULATION_POLL_MAX_SECONDS
     clock = SteppedClock()
     coordinator_started_at = clock.monotonic()
 
@@ -2913,10 +2936,8 @@ def test_child_wait_window_opens_when_the_coordinator_starts(
     window_closed_after = probed_at[-1] - coordinator_started_at
     assert child_waits_began_after == setup_seconds
     # Setup shortens the children's window rather than the time after it.
-    assert window_seconds <= window_closed_after < window_seconds + poll_seconds
-    assert probed_at[-1] - probed_at[0] == pytest.approx(
-        window_seconds - setup_seconds, abs=poll_seconds
-    )
+    assert window_closed_after == pytest.approx(window_seconds)
+    assert probed_at[-1] - probed_at[0] == pytest.approx(window_seconds - setup_seconds)
     assert (
         declared_timeouts["coordinate_report"]
         - window_closed_after
@@ -2928,3 +2949,29 @@ def test_child_wait_window_opens_when_the_coordinator_starts(
         child.error_code == "simulation_wait_timeout"
         for child in store.children.values()
     )
+
+
+def test_exhausted_wait_window_gives_the_children_no_extra_time() -> None:
+    window_seconds = coordination_module.SIMULATION_WAIT_TIMEOUT_SECONDS
+    clock = SteppedClock()
+
+    def setup_that_uses_the_whole_window(_report):
+        clock.advance(window_seconds + 60.0)
+        return _output_plan()
+
+    store = FakeStore()
+    invoker = ScriptedChildInvoker(clock=clock)
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        _coordinate_with(
+            _report_with_segmentation(segmented=False),
+            store,
+            invoker,
+            output_plan_resolver=setup_that_uses_the_whole_window,
+            monotonic=clock.monotonic,
+            sleep=lambda _: pytest.fail("an exhausted window must not wait"),
+        )
+
+    assert [len(call.probed_at) for call in invoker.calls.values()] == [1, 1]
+    assert [call.cancel_count for call in invoker.calls.values()] == [1, 1]
+    assert store.parent.error_code == "simulation_wait_timeout"

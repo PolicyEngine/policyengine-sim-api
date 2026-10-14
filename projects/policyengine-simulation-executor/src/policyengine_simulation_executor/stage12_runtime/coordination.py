@@ -39,6 +39,9 @@ from policyengine_simulation_executor.stage12_artifacts import (
     deserialize_simulation_frames,
     deserialize_uk_local_authority_metadata,
 )
+from policyengine_simulation_executor.stage12_timeouts import (
+    SIMULATION_WAIT_TIMEOUT_SECONDS,
+)
 
 from .aggregation import (
     build_aggregate_report,
@@ -69,23 +72,6 @@ from .output_planning import (
 from .simulation import descriptor_from_record, simulation_input_sha256
 from .segmentation import should_segment_simulation
 
-# One child-wait window opens when `coordinate_report` starts. It covers
-# coordinator setup (claiming, output planning including the country model
-# load, child-state creation, retained-artifact reads and dispatch) and the
-# concurrent wait for both simulations, so setup time shortens the children's
-# window instead of the time left after it. The deadline is checked after each
-# polling pass, so the coordinator notices a closed window at most one poll
-# interval (1 s) late. A simulation worker may have a longer Modal timeout
-# (3,900 s for US), but the report stops waiting for it, and cancels it, when
-# this window closes.
-#
-# Budget against the coordinator's 5,100 s Modal timeout in `v2_app.py`: the
-# 3,000 s window leaves 2,100 s. Up to 900 s of that is the production-result
-# wait (`PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS`), which leaves 1,200 s to read
-# and validate both simulation artifacts, aggregate, write the aggregate and
-# comparison artifacts, and record the outcome or failure before Modal stops
-# the coordinator.
-SIMULATION_WAIT_TIMEOUT_SECONDS = 3_000
 SIMULATION_POLL_INITIAL_SECONDS = 0.25
 SIMULATION_POLL_MAX_SECONDS = 1.0
 SIMULATION_POLL_BACKOFF_FACTOR = 2.0
@@ -312,7 +298,8 @@ def _observe_simulations(
 
         if not pending:
             return
-        if monotonic() >= deadline:
+        remaining_seconds = deadline - monotonic()
+        if remaining_seconds <= 0:
             detail = Stage12FailureDetail(
                 error_code="simulation_wait_timeout",
                 error_summary=(
@@ -351,7 +338,8 @@ def _observe_simulations(
                             error=error,
                         )
             raise wait_timeout
-        sleep(poll_interval)
+        # Never sleep past the deadline, so the window closes on time.
+        sleep(min(poll_interval, remaining_seconds))
         poll_interval = (
             SIMULATION_POLL_INITIAL_SECONDS
             if progress_made

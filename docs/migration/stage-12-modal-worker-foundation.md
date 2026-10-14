@@ -314,14 +314,14 @@ the cancellation state, it cancels all region-group calls it owns and exits.
 Atomic status replacement prevents a late calculation result from replacing
 that cancellation record.
 
-Both simulations share one 3,000-second wait window. It opens when the
-coordinator starts, so the coordinator's own setup, including loading the
-country model and dispatching both simulations, comes out of that window and
-not out of the time it needs afterwards. When the window closes, the
-coordinator records each unfinished simulation as `failed` with
-`simulation_wait_timeout` and stops it. Its 5,100-second Modal timeout leaves
-2,100 seconds after the window: up to 900 seconds for the production-result
-wait and 1,200 seconds to aggregate, write artifacts, and record the outcome.
+Both simulations share one 3,900-second wait window, the longest simulation
+worker timeout. It opens when the coordinator starts, so the coordinator's own
+setup, including loading the country model and dispatching both simulations,
+comes out of that window and not out of the time it needs afterwards. When the
+window closes, the coordinator records each unfinished simulation as `failed`
+with `simulation_wait_timeout` and stops it. The coordinator's 5,400-second
+Modal timeout is that window plus up to 900 seconds for the production-result
+wait plus 600 seconds to aggregate, write artifacts, and record the outcome.
 
 If the coordinator itself fails after starting a simulation, for example while
 recording a later dispatch or attaching a started call's invocation

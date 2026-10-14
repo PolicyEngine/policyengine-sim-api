@@ -173,9 +173,10 @@ single-container Stage 12 path.
 
 After dispatching both logical simulations, the coordinator checks both Modal
 calls with nonblocking result probes on every polling pass. It does not wait
-for baseline before checking reform. Both simulations share one 3,000-second
-wait window that opens when the coordinator starts, so coordinator setup comes
-out of that window. When it closes, every unfinished simulation is recorded as
+for baseline before checking reform. Both simulations share one 3,900-second
+wait window, the longest simulation worker timeout, that opens when the
+coordinator starts, so coordinator setup comes out of that window. When it
+closes, every unfinished simulation is recorded as
 `failed` with `simulation_wait_timeout` and stopped. The first failed
 simulation supplies the report's `error_code` and safe `error_summary`; the
 coordinator marks the unresolved peer `incomplete` with

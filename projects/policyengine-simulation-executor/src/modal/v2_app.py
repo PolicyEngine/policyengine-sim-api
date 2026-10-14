@@ -38,6 +38,11 @@ from policyengine_simulation_executor.stage12_bundle import (
     assertion_values,
     load_stage12_bundle,
 )
+from policyengine_simulation_executor.stage12_timeouts import (
+    COORDINATOR_TIMEOUT_SECONDS,
+    UK_SIMULATION_TIMEOUT_SECONDS,
+    US_SIMULATION_TIMEOUT_SECONDS,
+)
 from src.modal.bundle_data import bundle_data_install_command
 from src.modal.static_runtime_files import add_static_runtime_files
 from src.modal.stage12_cache_image import fetch_stage12_cache
@@ -268,7 +273,7 @@ def run_single_simulation_segment_us(
     image=us_worker_image,
     cpu=8.0,
     memory=32768,
-    timeout=3900,
+    timeout=US_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
     max_containers=10,
     secrets=worker_secrets,
@@ -328,7 +333,7 @@ def run_single_simulation_us(
     image=uk_worker_image,
     cpu=8.0,
     memory=32768,
-    timeout=3000,
+    timeout=UK_SIMULATION_TIMEOUT_SECONDS,
     retries=0,
     max_containers=10,
     secrets=worker_secrets,
@@ -377,9 +382,9 @@ def run_single_simulation_uk(
     image=coordinator_image,
     cpu=2.0,
     memory=8192,
-    # Allow the two logical simulation parents to start and collect all region
-    # calculations, then retain bounded aggregation/persistence overhead.
-    timeout=5100,
+    # The shared child-wait window (the longest simulation worker timeout),
+    # the production-result wait, and time to finish and record the report.
+    timeout=COORDINATOR_TIMEOUT_SECONDS,
     retries=0,
     max_containers=10,
     secrets=worker_secrets,
