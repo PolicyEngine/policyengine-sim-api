@@ -28,6 +28,7 @@ from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
+from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from pydantic import JsonValue
@@ -227,7 +228,7 @@ def test_aggregate_artifact_accepts_absent_spm_provenance(result) -> None:
 
 @pytest.mark.parametrize("provenance", [{}, "invalid", [], 0])
 def test_aggregate_artifact_rejects_invalid_present_spm_provenance(provenance) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValidationError):
         AggregateReportArtifactPayload(
             evaluation_id=UUID("00000000-0000-0000-0000-000000000001"),
             requested_aggregates=(ReportAggregate.BUDGET,),
