@@ -710,3 +710,74 @@ def test_finalizer_reference_cannot_bypass_routing_cli_discovery():
 def test_argument_value_cannot_hide_a_default_writer():
     script = f"uv run python -m {REGISTRY_COMMAND} --app-name app--dry-run"
     assert list(_writing_steps({"steps": [{"run": script}]}))
+
+
+# --- Characterization: routing command discovery's argv and refusals ---------
+
+
+def test_routing_command_discovery_yields_each_foreground_argv_in_order():
+    script = (
+        f"# uv run python -m {REGISTRY_COMMAND} --apply-plan ignored.json\n"
+        'base=(--environment "${MODAL_ENVIRONMENT}")\n'
+        "base+=(--dry-run)\n"
+        f"uv run python -m {REGISTRY_COMMAND} \\\n  --print-latest && "
+        "python src/modal/utils/update_version_registry.py "
+        '"${base[@]}" --app-name app\n'
+        "echo done\n"
+    )
+
+    assert list(_routing_commands(script)) == [
+        ("--print-latest",),
+        ("--environment", "${MODAL_ENVIRONMENT}", "--dry-run", "--app-name", "app"),
+    ]
+
+
+def test_routing_command_discovery_ignores_scripts_without_routing():
+    assert list(_routing_commands("echo update_version\nmake test\n")) == []
+
+
+@pytest.mark.parametrize(
+    ("script", "message"),
+    [
+        (
+            f'args+=(--dry-run)\nuv run python -m {REGISTRY_COMMAND} "${{args[@]}}"',
+            "Cannot append unresolved routing array args",
+        ),
+        (
+            f"uv run python -m {REGISTRY_COMMAND} python -m {REGISTRY_COMMAND}",
+            "Unsupported nested routing invocation",
+        ),
+        (
+            f"python3 -m {REGISTRY_COMMAND} --print-latest",
+            "Unsupported routing shell prefix: ['python3', '-m']",
+        ),
+        (
+            "uv run python -m src/modal/utils/update_version_registry.py",
+            "Unsupported routing shell prefix: ['uv', 'run', 'python', '-m']",
+        ),
+        (
+            f"echo update_version_registry; uv run python -m {REGISTRY_COMMAND}",
+            "Unsupported inline routing library invocation",
+        ),
+        (
+            f"uv run python -m {REGISTRY_COMMAND} --bogus",
+            "Unsupported routing option or shell form: --bogus",
+        ),
+        (
+            f"uv run python -m {REGISTRY_COMMAND} --print-latest`date`",
+            "Unsupported routing command substitution",
+        ),
+    ],
+    ids=[
+        "append-before-declare",
+        "nested",
+        "module-prefix",
+        "file-prefix",
+        "inline-reference",
+        "unknown-option",
+        "backtick",
+    ],
+)
+def test_routing_command_discovery_names_each_refusal(script, message):
+    with pytest.raises(AssertionError, match=f"^{re.escape(message)}"):
+        list(_routing_commands(script))

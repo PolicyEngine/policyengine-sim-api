@@ -55,6 +55,8 @@ guard_test_globs = [
 ]
 ignore_tests = [
   { node = "projects/policyengine-simulation-entry/tests/test_deployment_assets.py::test_the_expression_evaluator_follows_github_semantics", reason = "Checks the GitHub Actions expression evaluator that the workflow-condition tests use; it enforces no repository rule itself." },
+  { node = "projects/policyengine-simulation-entry/tests/test_deployment_assets.py::test_the_expression_evaluator_returns_operands_and_job_statuses", reason = "Pins the operand values and job statuses the GitHub Actions expression evaluator returns; it enforces no repository rule itself." },
+  { node = "projects/policyengine-simulation-entry/tests/test_deployment_assets.py::test_the_expression_evaluator_refuses_what_it_cannot_read", reason = "Pins that the GitHub Actions expression evaluator refuses expressions it cannot read; it enforces no repository rule itself." },
 ]
 
 [agents]
