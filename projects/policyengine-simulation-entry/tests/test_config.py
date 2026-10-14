@@ -162,3 +162,138 @@ def test_stage12_database_url_requires_the_canonical_scheme(database_url):
 def test_stage12_retention_is_fixed_at_thirty_days():
     with pytest.raises(ConfigurationError, match="exactly 30"):
         make_settings(stage12_retention_days=31).validate()
+
+
+STAGE12_DATABASE_URL = (
+    "postgresql://policyengine_v2_runtime:secret@"
+    "test.pooler.supabase.com:5432/postgres?sslmode=require"
+)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        pytest.param(
+            {
+                "environment": "prod",
+                "auth_required": False,
+                "auth_audience": "",
+                "old_gateway_url": "",
+            },
+            "Caller authentication cannot be disabled in production.",
+            id="production-auth-first",
+        ),
+        pytest.param(
+            {"auth_issuer": "", "old_gateway_url": ""},
+            "Set both SIMULATION_ENTRYPOINT_AUTH_ISSUER and "
+            "SIMULATION_ENTRYPOINT_AUTH_AUDIENCE.",
+            id="issuer-without-audience",
+        ),
+        pytest.param(
+            {"auth_issuer": "", "auth_audience": "", "old_gateway_url": ""},
+            "Caller authentication is required but issuer/audience are missing.",
+            id="required-auth-without-issuer",
+        ),
+        pytest.param(
+            {"auth_issuer": "https://issuer.example/?x=1", "old_gateway_url": ""},
+            "SIMULATION_ENTRYPOINT_AUTH_ISSUER must not contain parameters, a "
+            "query string, or a fragment.",
+            id="caller-issuer-before-backend",
+        ),
+        pytest.param(
+            {
+                "old_gateway_url": "",
+                "old_gateway_auth_client_id": "",
+                "old_gateway_auth_client_secret": "",
+            },
+            "Missing old-gateway configuration: OLD_GATEWAY_URL, "
+            "OLD_GATEWAY_AUTH_CLIENT_ID, OLD_GATEWAY_AUTH_CLIENT_SECRET.",
+            id="missing-backend",
+        ),
+        pytest.param(
+            {
+                "old_gateway_auth_issuer": "http://issuer.example/",
+                "connect_timeout_seconds": 0,
+            },
+            "OLD_GATEWAY_AUTH_ISSUER must be an absolute HTTPS URL.",
+            id="backend-issuer-before-timeouts",
+        ),
+        pytest.param(
+            {"connect_timeout_seconds": 0, "old_gateway_url": "http://x.modal.run"},
+            "Old-gateway timeouts must be positive.",
+            id="zero-connect-timeout",
+        ),
+        pytest.param(
+            {"request_timeout_seconds": -1.0},
+            "Old-gateway timeouts must be positive.",
+            id="negative-request-timeout",
+        ),
+        pytest.param(
+            {
+                "old_gateway_url": "https://gateway.example",
+                "stage12_v2_manifest_name": "simulation-api-routing-state",
+            },
+            "OLD_GATEWAY_URL must point to the existing Modal gateway.",
+            id="gateway-host-before-stage12",
+        ),
+        pytest.param(
+            {
+                "stage12_retention_days": 29,
+                "stage12_v2_manifest_environment": "staging",
+            },
+            "STAGE12_RETENTION_DAYS must be exactly 30.",
+            id="retention-before-resources",
+        ),
+        pytest.param(
+            {"stage12_artifact_bucket": "bucket", "stage12_enabled": True},
+            "Stage 12 resources require: STAGE12_V2_MANIFEST_ENVIRONMENT, "
+            "STAGE12_DATABASE_URL.",
+            id="partial-resources-before-enabled",
+        ),
+        pytest.param(
+            {
+                "stage12_v2_manifest_environment": "staging",
+                "stage12_database_url": "mysql://db.example/stage12",
+                "stage12_artifact_bucket": "bucket",
+            },
+            "STAGE12_DATABASE_URL must use the canonical postgresql:// scheme.",
+            id="database-scheme",
+        ),
+    ],
+)
+def test_validation_reports_the_first_failed_check(overrides, message):
+    with pytest.raises(ConfigurationError) as error:
+        make_settings(**overrides).validate()
+
+    assert str(error.value) == message
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        pytest.param({}, id="complete"),
+        pytest.param(
+            {"auth_required": False, "auth_issuer": "", "auth_audience": ""},
+            id="local-without-caller-auth",
+        ),
+        pytest.param(
+            {
+                "stage12_enabled": True,
+                "stage12_v2_manifest_environment": "staging",
+                "stage12_database_url": STAGE12_DATABASE_URL,
+                "stage12_artifact_bucket": "bucket",
+            },
+            id="stage12-enabled",
+        ),
+        pytest.param(
+            {
+                "stage12_v2_manifest_environment": "staging",
+                "stage12_database_url": STAGE12_DATABASE_URL,
+                "stage12_artifact_bucket": "bucket",
+            },
+            id="stage12-configured-but-disabled",
+        ),
+    ],
+)
+def test_consistent_configuration_validates(overrides):
+    make_settings(**overrides).validate()
