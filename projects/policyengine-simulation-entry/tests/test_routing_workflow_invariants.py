@@ -98,20 +98,15 @@ def _shell_tokens(line: str) -> list[str]:
     ]
 
 
-def _routing_commands(script: str):
-    """Inspect foreground CLI argv in execution order, refusing unknown forms.
-
-    The supported subset is explicit CLI commands and previously declared
-    argument arrays. Conditional array appends are conservatively included.
-    Importing the library or using shell wrappers needs a deliberate extension
-    here, rather than silently escaping discovery or the ordering proof.
-    """
+def _without_comments(script: str) -> str:
+    """Join continued lines and drop comment lines."""
     script = re.sub(r"\\\n\s*", " ", script)
-    script = "\n".join(
+    return "\n".join(
         line for line in script.splitlines() if not line.lstrip().startswith("#")
     )
-    if not ROUTING_LIBRARY_REFERENCE.search(script):
-        return
+
+
+def _assert_protected_environment_kept(script: str) -> None:
     for variable in PROTECTED_SHELL_ENVIRONMENT:
         # Shell builtins remove quotes from assignment operands, so both
         # export "MODAL_ENVIRONMENT"=main and export "MODAL_ENVIRONMENT=main"
@@ -123,83 +118,119 @@ def _routing_commands(script: str):
             script,
         ), f"Shell overrides the proven routing environment or write guard: {variable}"
 
+
+def _logical_lines(script: str) -> list[str]:
+    """Return the script's lines with each array assignment joined onto one."""
     # Preserve source order: a declaration after a command cannot prove that
     # command's argv. The repository uses only literal array assignments.
-    logical_lines = re.sub(
+    return re.sub(
         r"(\b\w+\+?=\()([^)]*)(\))",
         lambda match: "".join(match.groups()).replace("\n", " "),
         script,
     ).splitlines()
+
+
+def _declare_array(assignment: re.Match[str], arrays: dict[str, list[str]]) -> None:
+    name, append, values = assignment.groups()
+    if append:
+        assert name in arrays, f"Cannot append unresolved routing array {name}"
+        arrays[name] += _shell_tokens(values)
+    else:
+        arrays[name] = _shell_tokens(values)
+
+
+def _foreground_commands(line: str) -> list[list[str]]:
+    """Split a routing line into its commands, refusing substitution and grouping."""
+    assert REGISTRY_INVOCATION.search(line), (
+        f"Routing library calls must use the guarded foreground CLI: {line}"
+    )
+    assert "$(" not in line, f"Unsupported routing command substitution: {line}"
+    assert "`" not in line, f"Unsupported routing command substitution: {line}"
+    tokens = _shell_tokens(line)
+    assert not any(
+        token in {"{", "}"}
+        or (re.fullmatch(r"[;&|()]+", token) and token not in {";", "&&", "||", "|"})
+        for token in tokens
+    ), f"Routing commands must run in the foreground without shell grouping: {line}"
+    return [
+        list(group)
+        for key, group in itertools.groupby(
+            tokens, key=lambda token: token in {";", "&&", "||", "|"}
+        )
+        if not key
+    ]
+
+
+def _assert_supported_prefix(command: list[str], index: int) -> None:
+    prefix = command[:index]
+    if command[index] == REGISTRY_COMMAND:
+        assert prefix in (["uv", "run", "python", "-m"], ["python", "-m"]), (
+            f"Unsupported routing shell prefix: {prefix}"
+        )
+    else:
+        assert prefix in (["uv", "run", "python"], ["python"]), (
+            f"Unsupported routing shell prefix: {prefix}"
+        )
+
+
+def _expand_arrays(tokens: list[str], arrays: dict[str, list[str]]) -> tuple[str, ...]:
+    arguments = []
+    for token in tokens:
+        array = re.fullmatch(r"\$\{(\w+)\[@\]\}", token)
+        if array:
+            name = array.group(1)
+            assert name in arrays, f"Cannot resolve routing argument array {name}"
+            arguments.extend(arrays[name])
+        else:
+            arguments.append(token)
+    return tuple(arguments)
+
+
+def _registry_arguments(
+    command: list[str], arrays: dict[str, list[str]], line: str
+) -> tuple[str, ...] | None:
+    """Return a command's routing CLI argv, or None when it runs something else."""
+    invocations = [
+        index
+        for index, token in enumerate(command)
+        if REGISTRY_INVOCATION.fullmatch(token)
+    ]
+    if not invocations:
+        assert not ROUTING_LIBRARY_REFERENCE.search(" ".join(command)), (
+            f"Unsupported inline routing library invocation: {line}"
+        )
+        return None
+    assert len(invocations) == 1, f"Unsupported nested routing invocation: {line}"
+    index = invocations[0]
+    _assert_supported_prefix(command, index)
+    return _expand_arrays(command[index + 1 :], arrays)
+
+
+def _routing_commands(script: str):
+    """Inspect foreground CLI argv in execution order, refusing unknown forms.
+
+    The supported subset is explicit CLI commands and previously declared
+    argument arrays. Conditional array appends are conservatively included.
+    Importing the library or using shell wrappers needs a deliberate extension
+    here, rather than silently escaping discovery or the ordering proof.
+    """
+    script = _without_comments(script)
+    if not ROUTING_LIBRARY_REFERENCE.search(script):
+        return
+    _assert_protected_environment_kept(script)
     arrays: dict[str, list[str]] = {}
-    for line in logical_lines:
+    for line in _logical_lines(script):
         assignment = re.fullmatch(r"\s*(\w+)(\+?)=\((.*?)\)\s*", line)
         if assignment:
-            name, append, values = assignment.groups()
-            if append:
-                assert name in arrays, f"Cannot append unresolved routing array {name}"
-                arrays[name] += _shell_tokens(values)
-            else:
-                arrays[name] = _shell_tokens(values)
+            _declare_array(assignment, arrays)
             continue
         if not ROUTING_LIBRARY_REFERENCE.search(line):
             continue
-        assert REGISTRY_INVOCATION.search(line), (
-            f"Routing library calls must use the guarded foreground CLI: {line}"
-        )
-        assert "$(" not in line, f"Unsupported routing command substitution: {line}"
-        assert "`" not in line, f"Unsupported routing command substitution: {line}"
-        tokens = _shell_tokens(line)
-        assert not any(
-            token in {"{", "}"}
-            or (
-                re.fullmatch(r"[;&|()]+", token) and token not in {";", "&&", "||", "|"}
-            )
-            for token in tokens
-        ), f"Routing commands must run in the foreground without shell grouping: {line}"
-        commands = [
-            list(group)
-            for key, group in itertools.groupby(
-                tokens, key=lambda token: token in {";", "&&", "||", "|"}
-            )
-            if not key
-        ]
-        for command in commands:
-            invocations = [
-                index
-                for index, token in enumerate(command)
-                if REGISTRY_INVOCATION.fullmatch(token)
-            ]
-            if not invocations:
-                assert not ROUTING_LIBRARY_REFERENCE.search(" ".join(command)), (
-                    f"Unsupported inline routing library invocation: {line}"
-                )
-                continue
-            assert len(invocations) == 1, (
-                f"Unsupported nested routing invocation: {line}"
-            )
-            index = invocations[0]
-            prefix = command[:index]
-            if command[index] == REGISTRY_COMMAND:
-                assert prefix in (["uv", "run", "python", "-m"], ["python", "-m"]), (
-                    f"Unsupported routing shell prefix: {prefix}"
-                )
-            else:
-                assert prefix in (["uv", "run", "python"], ["python"]), (
-                    f"Unsupported routing shell prefix: {prefix}"
-                )
-            arguments = []
-            for token in command[index + 1 :]:
-                array = re.fullmatch(r"\$\{(\w+)\[@\]\}", token)
-                if array:
-                    name = array.group(1)
-                    assert name in arrays, (
-                        f"Cannot resolve routing argument array {name}"
-                    )
-                    arguments.extend(arrays[name])
-                else:
-                    arguments.append(token)
-            _command_options(tuple(arguments))
-            yield tuple(arguments)
+        for command in _foreground_commands(line):
+            arguments = _registry_arguments(command, arrays, line)
+            if arguments is not None:
+                _command_options(arguments)
+                yield arguments
 
 
 def _command_options(arguments: tuple[str, ...]) -> set[str]:
