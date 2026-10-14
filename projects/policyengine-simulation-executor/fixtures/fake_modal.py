@@ -115,7 +115,7 @@ class FakeApp:
         return decorator
 
     def local_entrypoint[F: Callable[..., object]](
-        self, **kwargs: object
+        self, **_kwargs: object
     ) -> Callable[[F], F]:
         """Return a pass-through decorator; entrypoints are not recorded."""
 

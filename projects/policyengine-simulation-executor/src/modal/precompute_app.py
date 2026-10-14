@@ -148,7 +148,7 @@ def publish_manifest(bucket: str, plan: dict) -> str:
 
 
 @app.local_entrypoint()
-def main(force: bool = False) -> None:
+def main(force: bool = False) -> None:  # noqa: FBT001, FBT002  # Modal local entrypoint: Modal builds its --force CLI option from this signature
     """Fill the store for the installed bundle; ``--force`` recomputes stored ones."""
     from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # local entrypoint: loaded only when the precompute runs
         resolve_bucket_name,

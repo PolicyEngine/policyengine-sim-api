@@ -134,11 +134,11 @@ class SimulationOutputBuilder:
         """Build the output and dump it to JSON-compatible data."""
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.CALCULATION)):
             output = self.build()
-        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
-            with self._span(
-                ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_MODEL_DUMP)
-            ):
-                return output.model_dump(mode="json")
+        with (
+            self._span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)),
+            self._span(ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_MODEL_DUMP)),
+        ):
+            return output.model_dump(mode="json")
 
     def _build_detailed_budget(self) -> DetailedBudgetOutput:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_DETAILED_BUDGET)):

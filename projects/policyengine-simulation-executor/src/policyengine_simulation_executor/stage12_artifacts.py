@@ -123,15 +123,16 @@ def _frame_payload(
     columns = [
         PARQUET_CONTRACT.entity_column,
         PARQUET_CONTRACT.row_order_column,
-    ] + sorted(
-        column
-        for column in combined.columns
-        if column
-        not in {
-            PARQUET_CONTRACT.entity_column,
-            PARQUET_CONTRACT.row_order_column,
-        }
-    )
+        *sorted(
+            column
+            for column in combined.columns
+            if column
+            not in {
+                PARQUET_CONTRACT.entity_column,
+                PARQUET_CONTRACT.row_order_column,
+            }
+        ),
+    ]
     return combined.reindex(columns=columns), dtypes, identifier_values
 
 
