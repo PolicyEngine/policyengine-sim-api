@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pandas as pd
-from microdf import MicroDataFrame
+from fixtures.weighted_frames import weighted_entity_frame
 from policyengine_simulation_executor.simulation_output_budget import (
     build_budgetary_impact,
 )
@@ -13,7 +12,7 @@ from policyengine_simulation_executor.simulation_output_budget import (
 
 def _simulation(columns: dict[str, list[float]]):
     """Build a simulation whose household output is a policyengine MicroDataFrame."""
-    household = MicroDataFrame(pd.DataFrame(columns), weights="household_weight")
+    household = weighted_entity_frame(columns)
     return SimpleNamespace(
         output_dataset=SimpleNamespace(data=SimpleNamespace(household=household))
     )
