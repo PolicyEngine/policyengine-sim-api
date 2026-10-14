@@ -411,37 +411,66 @@ def _resolve_from_active_state(
     policyengine_version: str | None,
 ) -> RouteResolution:
     if policyengine_version is not None:
-        resolution = _resolve_policyengine_route(
+        return _resolve_pinned_policyengine_route(
             state,
+            country=country,
+            version=version,
             policyengine_version=policyengine_version,
         )
-        if version is not None:
-            _validate_legacy_version_matches_bundle(
-                country=country,
-                requested_version=version,
-                manifest=resolution.bundle_manifest,
-            )
-        return resolution
-
     if version is None:
-        latest_policyengine = _routing_state_latest(state, "policyengine")
-        if latest_policyengine is not None:
-            return _resolve_policyengine_route(
-                state,
-                policyengine_version=latest_policyengine,
-            )
-        latest_country_version = _routing_state_latest(state, country)
-        if latest_country_version is not None:
-            country_resolution = _resolve_country_route(
-                state,
-                country=country,
-                version=latest_country_version,
-            )
-            if country_resolution is not None:
-                return country_resolution
-        msg = "Routing state does not define a latest route"
-        raise ValueError(msg)
+        return _resolve_latest_route(state, country=country)
+    return _resolve_requested_version_route(state, country=country, version=version)
 
+
+def _resolve_pinned_policyengine_route(
+    state: dict,
+    *,
+    country: str,
+    version: str | None,
+    policyengine_version: str,
+) -> RouteResolution:
+    """Route to an explicit wrapper version, checking any requested model version."""
+    resolution = _resolve_policyengine_route(
+        state,
+        policyengine_version=policyengine_version,
+    )
+    if version is not None:
+        _validate_legacy_version_matches_bundle(
+            country=country,
+            requested_version=version,
+            manifest=resolution.bundle_manifest,
+        )
+    return resolution
+
+
+def _resolve_latest_route(state: dict, *, country: str) -> RouteResolution:
+    """Route to the latest wrapper version, else the latest country model."""
+    latest_policyengine = _routing_state_latest(state, "policyengine")
+    if latest_policyengine is not None:
+        return _resolve_policyengine_route(
+            state,
+            policyengine_version=latest_policyengine,
+        )
+    latest_country_version = _routing_state_latest(state, country)
+    if latest_country_version is not None:
+        country_resolution = _resolve_country_route(
+            state,
+            country=country,
+            version=latest_country_version,
+        )
+        if country_resolution is not None:
+            return country_resolution
+    msg = "Routing state does not define a latest route"
+    raise ValueError(msg)
+
+
+def _resolve_requested_version_route(
+    state: dict,
+    *,
+    country: str,
+    version: str,
+) -> RouteResolution:
+    """Route ``version`` as a country model or wrapper version, refusing ambiguity."""
     country_resolution = _resolve_country_route(
         state,
         country=country,
