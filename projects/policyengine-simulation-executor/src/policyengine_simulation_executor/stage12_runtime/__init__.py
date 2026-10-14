@@ -32,6 +32,7 @@ from .segmentation import (
 )
 from .simulation import (
     SimulationCalculation,
+    SimulationWorkerDependencies,
     build_stage12_simulation,
     calculate_simulation_frames,
     run_single_simulation,
@@ -47,6 +48,7 @@ __all__ = [
     "CoordinatorInvocation",
     "RetainedSimulationOutput",
     "SimulationCalculation",
+    "SimulationWorkerDependencies",
     "Stage12CancellationError",
     "Stage12ExecutionError",
     "Stage12FailureDetail",

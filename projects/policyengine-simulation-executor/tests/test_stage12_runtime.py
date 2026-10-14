@@ -85,6 +85,7 @@ from policyengine_simulation_executor.stage12_runtime import (
     CoordinatorInvocation,
     RetainedSimulationOutput,
     SimulationCalculation,
+    SimulationWorkerDependencies,
     Stage12SegmentRunner,
     _build_spm_result,
     build_aggregate_report,
@@ -705,9 +706,11 @@ def test_single_worker_accepts_one_policy_and_persists_one_artifact() -> None:
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        store=store,
-        artifacts=artifacts,
-        calculator=lambda _: _frames(),
+        dependencies=SimulationWorkerDependencies(
+            store=store,
+            artifacts=artifacts,
+            calculator=lambda _: _frames(),
+        ),
     )
 
     assert result["role"] == "baseline"
@@ -734,10 +737,12 @@ def test_single_worker_routes_eligible_us_calculation_to_segment_runner() -> Non
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        store=store,
-        artifacts=FakeArtifacts(),
-        calculator=lambda _: pytest.fail("monolithic calculator was selected"),
-        segmented_calculator=segmented_calculator,
+        dependencies=SimulationWorkerDependencies(
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=lambda _: pytest.fail("monolithic calculator was selected"),
+            segmented_calculator=segmented_calculator,
+        ),
     )
 
     assert received == [simulation]
@@ -759,10 +764,12 @@ def test_single_worker_honors_explicit_segmentation_opt_out() -> None:
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        store=store,
-        artifacts=FakeArtifacts(),
-        calculator=lambda _: _frames(),
-        segmented_calculator=unexpected_segmented,
+        dependencies=SimulationWorkerDependencies(
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=lambda _: _frames(),
+            segmented_calculator=unexpected_segmented,
+        ),
     )
 
     assert segmented_calls == []
@@ -779,11 +786,13 @@ def test_single_worker_retains_detached_calculation_provenance() -> None:
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        store=store,
-        artifacts=artifacts,
-        calculator=lambda _: SimulationCalculation(
-            frames=_frames(),
-            calculation_provenance=provenance,
+        dependencies=SimulationWorkerDependencies(
+            store=store,
+            artifacts=artifacts,
+            calculator=lambda _: SimulationCalculation(
+                frames=_frames(),
+                calculation_provenance=provenance,
+            ),
         ),
     )
 
@@ -809,9 +818,11 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+            ),
         )
 
     assert "country package calculation failed" not in str(error.value)
@@ -839,10 +850,12 @@ def test_single_worker_persists_and_records_a_redacted_cause() -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
-            runtime=runtime,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+                runtime=runtime,
+            ),
         )
 
     child = store.children[simulation.simulation_execution_id]
@@ -870,9 +883,11 @@ def test_single_worker_names_the_failing_artifact_write_stage() -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FailingSimulationArtifacts(),
-            calculator=lambda _: _frames(),
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FailingSimulationArtifacts(),
+                calculator=lambda _: _frames(),
+            ),
         )
 
     assert _failure_cause(
@@ -896,9 +911,11 @@ def test_single_worker_preserves_typed_failure_values() -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+            ),
         )
 
     child = store.children[simulation.simulation_execution_id]
@@ -920,9 +937,11 @@ def test_single_worker_rejects_bare_year_policy_period_before_calculation() -> N
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=lambda _: pytest.fail("calculation must not start"),
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=lambda _: pytest.fail("calculation must not start"),
+            ),
         )
 
     child = store.children[simulation.simulation_execution_id]
@@ -989,9 +1008,11 @@ def test_single_worker_builds_its_store_with_the_worker_runtime(monkeypatch) -> 
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        artifacts=FakeArtifacts(),
-        calculator=lambda _: _frames(),
-        runtime=runtime,
+        dependencies=SimulationWorkerDependencies(
+            artifacts=FakeArtifacts(),
+            calculator=lambda _: _frames(),
+            runtime=runtime,
+        ),
     )
 
     # The runtime store reports each connection retry through this runtime.
@@ -1023,10 +1044,12 @@ def test_single_worker_reports_failure_before_an_unwritable_failure_record() -> 
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
-            runtime=TelemetryRecordingRuntime(ordered_events),
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+                runtime=TelemetryRecordingRuntime(ordered_events),
+            ),
         )
 
     original_report, failure_write, persistence_report = ordered_events
@@ -1081,10 +1104,12 @@ def test_late_simulation_success_does_not_overwrite_parent_cancellation() -> Non
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=lambda _: pytest.fail("monolithic calculator was selected"),
-            segmented_calculator=segmented_calculator,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=lambda _: pytest.fail("monolithic calculator was selected"),
+                segmented_calculator=segmented_calculator,
+            ),
         )
 
     child = store.children[simulation.simulation_execution_id]
@@ -1104,9 +1129,11 @@ def test_single_worker_rejects_frames_that_do_not_satisfy_the_output_plan() -> N
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=lambda _: frames,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=lambda _: frames,
+            ),
         )
 
     assert store.children[simulation.simulation_execution_id].status is (
@@ -1450,9 +1477,11 @@ def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:
             payload,
             _context().model_dump(mode="json"),
             required_country="us",
-            store=FakeStore(),
-            artifacts=FakeArtifacts(),
-            calculator=lambda _: _frames(),
+            dependencies=SimulationWorkerDependencies(
+                store=FakeStore(),
+                artifacts=FakeArtifacts(),
+                calculator=lambda _: _frames(),
+            ),
         )
 
 
@@ -3718,10 +3747,12 @@ def _fail_simulation_calculation(runtime):
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
-            runtime=runtime,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+                runtime=runtime,
+            ),
         )
     return calculation_error, store.children[BASELINE_ID].error_summary
 
@@ -3862,11 +3893,13 @@ def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=lambda _: pytest.fail("monolithic calculator was selected"),
-            segmented_calculator=segmented_calculator,
-            runtime=runtime,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=lambda _: pytest.fail("monolithic calculator was selected"),
+                segmented_calculator=segmented_calculator,
+                runtime=runtime,
+            ),
         )
 
     child = store.children[BASELINE_ID]
