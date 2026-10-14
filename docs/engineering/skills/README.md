@@ -15,6 +15,8 @@ Current skills:
   verification, and title conventions.
 - `testing.md`: test placement, dependency boundaries, and expected validation
   commands.
+- `microdata-weights.md`: weights, values, labels and counts in simulation
+  microdata, and the guards that keep weights from being aggregated as values.
 - `observability.md`: identifier ownership, HTTP and Modal transport,
   persistence, registered runtime stages, trace boundaries, and failure
   isolation.
