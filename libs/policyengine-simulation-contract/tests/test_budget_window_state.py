@@ -1,5 +1,6 @@
 """Tests for budget-window batch state helpers."""
 
+import pytest
 from policyengine_simulation_contract.budget_window_state import (
     build_batch_status_response,
     create_initial_batch_state,
@@ -84,7 +85,8 @@ def test_build_batch_status_response_computes_progress_from_completed_years():
     assert response.queued_years == ["2029"]
 
 
-def test_batch_state_round_trips_through_modal_dict(mock_modal):
+@pytest.mark.usefixtures("mock_modal")
+def test_batch_state_round_trips_through_modal_dict():
     request = BudgetWindowBatchRequest(
         country="us",
         region="state/ca",

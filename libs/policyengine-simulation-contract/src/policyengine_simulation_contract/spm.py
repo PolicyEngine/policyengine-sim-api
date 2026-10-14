@@ -79,10 +79,9 @@ class SPMSelection(BaseModel):
     @classmethod
     def validate_as_of(cls, value: str | None) -> str | None:
         """Require ``as_of`` to be a canonical ``YYYY-MM-DD`` date when given."""
-        if value is not None:
-            if date.fromisoformat(value).isoformat() != value:
-                msg = "as_of must be an ISO calendar date (YYYY-MM-DD)"
-                raise ValueError(msg)
+        if value is not None and date.fromisoformat(value).isoformat() != value:
+            msg = "as_of must be an ISO calendar date (YYYY-MM-DD)"
+            raise ValueError(msg)
         return value
 
     @model_validator(mode="after")

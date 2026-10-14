@@ -95,9 +95,7 @@ def _policyengine_data_runtime_uri(
         package_version is not None
         and artifact_revision is not None
         and reference.revision == artifact_revision
-    ):
-        selected_revision = package_version
-    elif selected_revision is None:
+    ) or selected_revision is None:
         selected_revision = package_version
 
     if selected_revision is not None:
