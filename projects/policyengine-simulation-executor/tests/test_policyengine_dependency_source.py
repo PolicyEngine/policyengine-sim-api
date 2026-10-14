@@ -106,6 +106,7 @@ def _run_python_snippet(
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
 

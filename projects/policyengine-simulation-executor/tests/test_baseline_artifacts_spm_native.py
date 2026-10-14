@@ -40,7 +40,9 @@ def _baseline(dataset, *, geography="national", tax_only=False):
             "spm": {"geography_kind": geography},
         },
         dataset=dataset,
-        dataset_selection=DatasetSelection("bounded-native-test", "native", False),
+        dataset_selection=DatasetSelection(
+            "bounded-native-test", "native", is_default=False
+        ),
         policy=None,
         region_code="us",
     )

@@ -132,7 +132,11 @@ def test_configured_validation_uses_the_bundle_access_plan(monkeypatch) -> None:
     monkeypatch.setattr(
         "policyengine_simulation_executor.hf_access_validation."
         "validate_uk_private_hf_access",
-        lambda targets: expected if targets == (target,) else pytest.fail(),
+        lambda targets: (
+            expected
+            if targets == (target,)
+            else pytest.fail(f"unexpected access targets: {targets!r}")
+        ),
     )
 
     assert validate_configured_uk_private_hf_access() == expected

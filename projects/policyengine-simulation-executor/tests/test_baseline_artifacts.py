@@ -52,15 +52,15 @@ class TestDeterministicBaselineId:
         return calls
 
     def _id(self, _collected, **overrides):
-        kwargs = dict(
-            params={"scope": "macro"},
-            country="us",
-            dataset_is_default=True,
-            policy=None,
-            region_code="us",
-            scoping_strategy=None,
-            year=2026,
-        )
+        kwargs = {
+            "params": {"scope": "macro"},
+            "country": "us",
+            "dataset_is_default": True,
+            "policy": None,
+            "region_code": "us",
+            "scoping_strategy": None,
+            "year": 2026,
+        }
         kwargs.update(overrides)
         return ba.deterministic_baseline_id(kwargs.pop("params"), **kwargs)
 
@@ -496,7 +496,7 @@ def test_bounded_reform_build_keeps_current_law_artifact_reuse(monkeypatch):
     monkeypatch.setattr(ak, "collect_baseline_identity", collect_identity)
     kwargs = {
         "dataset": "dataset",
-        "dataset_selection": sr.DatasetSelection("default", "default", True),
+        "dataset_selection": sr.DatasetSelection("default", "default", is_default=True),
         "region_code": "uk",
     }
     params = {"country": "uk", "scope": "macro", "time_period": 2027}
@@ -525,15 +525,15 @@ class TestIdentityErrorContract:
     """The stated split: the writer path fails loud, the reader degrades."""
 
     def _kwargs(self):
-        return dict(
-            params={"scope": "macro"},
-            country="us",
-            dataset_is_default=True,
-            policy=None,
-            region_code="us",
-            scoping_strategy=None,
-            year=2026,
-        )
+        return {
+            "params": {"scope": "macro"},
+            "country": "us",
+            "dataset_is_default": True,
+            "policy": None,
+            "region_code": "us",
+            "scoping_strategy": None,
+            "year": 2026,
+        }
 
     def test_qualifying_identity_propagates_collection_errors(self, monkeypatch):
         def boom(*_args, **_kwargs):

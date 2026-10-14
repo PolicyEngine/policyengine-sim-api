@@ -204,6 +204,7 @@ def _simulation_output_builder(
     baseline,
     reform,
     analysis=None,
+    *,
     include_cliffs: bool | None = None,
     resolved_region_code: str | None = "us",
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
@@ -1547,9 +1548,7 @@ def test_resolve_region_scopes_us_state_from_national_dataset():
         parent_code=None,
     )
     regions = {"state/ut": state, "us": national}
-    country_module = SimpleNamespace(
-        model=SimpleNamespace(get_region=lambda code: regions.get(code))
-    )
+    country_module = SimpleNamespace(model=SimpleNamespace(get_region=regions.get))
 
     resolution = _resolve_region(
         country_module=country_module,
@@ -1587,9 +1586,7 @@ def test_resolve_region_scopes_us_congressional_district_from_national_dataset()
         "state/ut": state,
         "us": national,
     }
-    country_module = SimpleNamespace(
-        model=SimpleNamespace(get_region=lambda code: regions.get(code))
-    )
+    country_module = SimpleNamespace(model=SimpleNamespace(get_region=regions.get))
 
     resolution = _resolve_region(
         country_module=country_module,
@@ -1616,9 +1613,7 @@ def test_resolve_region_rejects_unscoped_us_place_region():
         parent_code="us",
     )
     regions = {"place/UT-67000": place, "state/ut": state}
-    country_module = SimpleNamespace(
-        model=SimpleNamespace(get_region=lambda code: regions.get(code))
-    )
+    country_module = SimpleNamespace(model=SimpleNamespace(get_region=regions.get))
 
     with pytest.raises(ValueError, match="US place regions are not yet supported"):
         _resolve_region(
@@ -1642,9 +1637,7 @@ def test_resolve_region_scopes_uk_country_from_national_dataset():
         parent_code=None,
     )
     regions = {"country/england": england, "uk": uk}
-    country_module = SimpleNamespace(
-        model=SimpleNamespace(get_region=lambda code: regions.get(code))
-    )
+    country_module = SimpleNamespace(model=SimpleNamespace(get_region=regions.get))
 
     resolution = _resolve_region(
         country_module=country_module,

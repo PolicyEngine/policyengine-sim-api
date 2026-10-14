@@ -317,7 +317,7 @@ class TestSegmentedNationalRunner:
         registry = SimpleNamespace(
             regions=[
                 SimpleNamespace(code=code, region_type="state")
-                for code in partition_codes + ["state/pr"]
+                for code in [*partition_codes, "state/pr"]
             ]
         )
         country_module = SimpleNamespace(

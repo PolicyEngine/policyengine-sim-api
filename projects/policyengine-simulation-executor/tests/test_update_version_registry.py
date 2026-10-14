@@ -60,6 +60,7 @@ def patched_modal(monkeypatch, serialized_workflow):
         @staticmethod
         def from_name(
             name: str,
+            *,
             environment_name: str,
             create_if_missing: bool,
         ):
@@ -195,7 +196,7 @@ def test_validate_routing_state_rejects_missing_latest_route():
     )
     state["routes"]["us"].pop("1.687.0")
 
-    with pytest.raises(ValueError, match="latest.us"):
+    with pytest.raises(ValueError, match=r"latest\.us"):
         registry.validate_routing_state(state)
 
 

@@ -151,7 +151,7 @@ def test_guard_rejects_a_copy_that_shadows_the_certified_matrix(
     _assets(monkeypatch, tmp_path, certified_dir=tmp_path / "certified")
     _write_matrix(tmp_path / _MATRIX, households=3)
 
-    with pytest.raises(ValueError, match="would read .*, not the parliamentary"):
+    with pytest.raises(ValueError, match=r"would read .*, not the parliamentary"):
         sr._require_certified_uk_weight_matrix(_STRATEGY, _dataset(3), _SELECTION)
 
 

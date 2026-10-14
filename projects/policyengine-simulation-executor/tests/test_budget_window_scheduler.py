@@ -259,7 +259,7 @@ def budget_window_semi_integration_client(
 
     class MockModalDict:
         @staticmethod
-        def from_name(name: str, create_if_missing: bool = False):
+        def from_name(name: str, *, create_if_missing: bool = False):
             if create_if_missing and name not in runtime.dicts:
                 runtime.dicts[name] = {}
             if name not in runtime.dicts:
