@@ -49,6 +49,9 @@ guard_test_globs = [
   "projects/policyengine-simulation-entry/tests/test_deployment_assets.py",
   "projects/policyengine-simulation-gateway/tests/test_openapi_golden.py",
 ]
+ignore_tests = [
+  { node = "projects/policyengine-simulation-entry/tests/test_deployment_assets.py::test_the_expression_evaluator_follows_github_semantics", reason = "Checks the GitHub Actions expression evaluator that the workflow-condition tests use; it enforces no repository rule itself." },
+]
 
 # --- Service and package boundaries ----------------------------------------
 
@@ -193,6 +196,7 @@ nodes = [
   "tests/test_deployment_assets.py::test_stage12_only_deployment_runs_candidate_tests_and_requested_promotion",
   "tests/test_deployment_assets.py::test_stage12_only_deployment_cannot_redeploy_existing_modal_resources",
   "tests/test_deployment_assets.py::test_stage12_worker_deployment_can_request_a_google_oidc_token",
+  "tests/test_deployment_assets.py::test_stage12_only_promotion_runs_whatever_the_skipped_stack_jobs",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
@@ -356,6 +360,93 @@ project = "projects/policyengine-simulation-entry"
 nodes = [
   "tests/test_deployment_assets.py::test_traffic_changes_are_exact_revision_validated_and_reversible",
   "tests/test_deployment_assets.py::test_traffic_change_refuses_an_intervening_promotion",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.release-identity-smoke"
+category = "deployment"
+statement = "Deploy gates pass the whole release identity to the entrypoint smoke, which requires every expectation, refuses malformed ones, and rejects a release whose routes, latest pointers, bundle, UK model or UK dataset differ from that identity."
+rationale = "docs/operations"
+scope = [".github/scripts/cloud-run-simulation-entry-smoke.sh", ".github/workflows/simulation-deploy.reusable.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_deploy_gates_pass_the_release_identity_to_the_smoke",
+  "tests/test_deployment_assets.py::test_latest_is_expected_only_when_the_release_advances_it",
+  "tests/test_deployment_assets.py::test_smoke_without_expectations_only_requires_versions_json",
+  "tests/test_deployment_assets.py::test_smoke_accepts_the_gateway_identity_of_a_new_release",
+  "tests/test_deployment_assets.py::test_smoke_accepts_an_older_release_by_its_route",
+  "tests/test_deployment_assets.py::test_smoke_accepts_an_unrecorded_digest_only_when_none_is_served",
+  "tests/test_deployment_assets.py::test_smoke_requires_every_expectation_when_identity_is_required",
+  "tests/test_deployment_assets.py::test_smoke_refuses_an_incomplete_identity",
+  "tests/test_deployment_assets.py::test_smoke_refuses_malformed_expectations",
+  "tests/test_deployment_assets.py::test_smoke_rejects_identity_expectations_without_a_version",
+  "tests/test_deployment_assets.py::test_smoke_rejects_a_release_without_a_route",
+  "tests/test_deployment_assets.py::test_smoke_rejects_worker_routes_to_an_old_app",
+  "tests/test_deployment_assets.py::test_smoke_rejects_a_uk_model_routed_to_another_app",
+  "tests/test_deployment_assets.py::test_smoke_rejects_latest_routing_to_another_version",
+  "tests/test_deployment_assets.py::test_smoke_rejects_a_latest_wrapper_that_lags_alone",
+  "tests/test_deployment_assets.py::test_smoke_rejects_a_uk_latest_that_lags_the_wrapper",
+  "tests/test_deployment_assets.py::test_smoke_rejects_a_missing_bundle_identity",
+  "tests/test_deployment_assets.py::test_smoke_rejects_a_bundle_recorded_for_another_wrapper",
+  "tests/test_deployment_assets.py::test_smoke_rejects_another_uk_model",
+  "tests/test_deployment_assets.py::test_smoke_rejects_another_uk_dataset",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.numerical-sentinel-gate"
+category = "deployment"
+statement = "An existing-stack deployment computes the numerical release sentinel from the exact bundle it installs, and the candidate and stable services must reproduce it; a failing sentinel check fails its step."
+rationale = "docs/operations"
+scope = [".github/workflows/simulation-deploy.reusable.yml", "projects/policyengine-simulation-executor/src/modal/utils/release_sentinel.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_deployed_stack_must_reproduce_the_numerical_sentinel",
+  "tests/test_deployment_assets.py::test_a_failing_sentinel_fails_its_step",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.routing-publication-journaled"
+category = "deployment"
+statement = "Each routing publication is named by its run, attempt and environment and journaled before it is applied; an always-running finalizer resolves it from the journal with the release-gate outcome, a release reports success only after that finalizer completes, and routing jobs never tolerate a failed command."
+rationale = "projects/policyengine-simulation-executor/README.md#routing-publication-and-rollback"
+scope = [".github/workflows/simulation-deploy.reusable.yml", ".github/workflows/simulation-rollback.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_each_publication_is_named_by_its_run_attempt_and_environment",
+  "tests/test_deployment_assets.py::test_publication_keeps_the_plan_but_finalization_reads_the_journal",
+  "tests/test_deployment_assets.py::test_finalizer_always_resolves_a_publication_with_the_release_gate_outcome",
+  "tests/test_deployment_assets.py::test_deployment_ready_requires_the_journal_finalizer_to_complete",
+  "tests/test_deployment_assets.py::test_release_success_requires_completed_finalization_for_published_routing",
+  "tests/test_deployment_assets.py::test_failed_release_gate_cannot_report_a_successful_release",
+  "tests/test_deployment_assets.py::test_a_failing_routing_command_fails_its_step_and_job",
+  "tests/test_deployment_assets.py::test_routing_jobs_never_allow_command_failures",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"

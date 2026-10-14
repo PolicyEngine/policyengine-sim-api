@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 25 | 0 | 1 | 13 | 39 |
+| mechanical | 28 | 0 | 1 | 13 | 42 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 25 of 39 rules.
+**Blocking:** 28 of 42 rules.
 
 ## Gaps
 
@@ -43,8 +43,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.contracts.gateway-openapi-golden`
 - `sim.deploy.container-context-minimal`
 - `sim.deploy.gcloud-without-terraform`
+- `sim.deploy.numerical-sentinel-gate`
 - `sim.deploy.promotion-order-explicit`
+- `sim.deploy.release-identity-smoke`
 - `sim.deploy.revision-tags-valid`
+- `sim.deploy.routing-publication-journaled`
 - `sim.deploy.shell-scripts-valid`
 - `sim.deploy.smoke-tests-strict`
 - `sim.deploy.traffic-changes-exact`
@@ -127,8 +130,11 @@ flowchart LR
 | `sim.deploy.gcloud-without-terraform` | Deployment uses the gcloud-based workflow, not Terraform. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.image-smoke-covers-every-image-lib` | The image smoke path filter includes every library mounted into a Modal image, so a change to any of them runs the smoke. | mechanical | doc-only | no | nothing | — | — |
 | `sim.deploy.modal-image-smoke` | App entrypoints import inside the real Modal images before merge, whenever a library baked into an image changes. | mechanical | enforced | yes | CI job `image-smoke` | `pr-image-smoke.yml:image-smoke` | — |
+| `sim.deploy.numerical-sentinel-gate` | An existing-stack deployment computes the numerical release sentinel from the exact bundle it installs, and the candidate and stable services must reproduce it; a failing sentinel check fails its step. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.promotion-order-explicit` | Full-stack promotion order is explicit, and the reusable deployment rejects unexpectedly skipped phases. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
+| `sim.deploy.release-identity-smoke` | Deploy gates pass the whole release identity to the entrypoint smoke, which requires every expectation, refuses malformed ones, and rejects a release whose routes, latest pointers, bundle, UK model or UK dataset differ from that identity. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.revision-tags-valid` | Cloud Run revision tags are valid on a workflow's first run and fit the existing service names. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
+| `sim.deploy.routing-publication-journaled` | Each routing publication is named by its run, attempt and environment and journaled before it is applied; an always-running finalizer resolves it from the journal with the release-gate outcome, a release reports success only after that finalizer completes, and routing jobs never tolerate a failed command. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.shell-scripts-valid` | Deployment shell scripts have valid shell syntax. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.smoke-tests-strict` | Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.traffic-changes-exact` | Traffic changes target an exact, validated revision, are reversible, and refuse to run over an intervening promotion. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
@@ -148,8 +154,11 @@ flowchart LR
   r_sim_deploy_modal_image_smoke("sim.deploy.modal-image-smoke (enforced)")
   e_CI_job_image_smoke["CI job image-smoke"]
   j_CI_pr_image_smoke_yml_image_smoke["CI pr-image-smoke.yml:image-smoke"]
+  r_sim_deploy_numerical_sentinel_gate("sim.deploy.numerical-sentinel-gate (enforced)")
   r_sim_deploy_promotion_order_explicit("sim.deploy.promotion-order-explicit (enforced)")
+  r_sim_deploy_release_identity_smoke("sim.deploy.release-identity-smoke (enforced)")
   r_sim_deploy_revision_tags_valid("sim.deploy.revision-tags-valid (enforced)")
+  r_sim_deploy_routing_publication_journaled("sim.deploy.routing-publication-journaled (enforced)")
   r_sim_deploy_shell_scripts_valid("sim.deploy.shell-scripts-valid (enforced)")
   r_sim_deploy_smoke_tests_strict("sim.deploy.smoke-tests-strict (enforced)")
   r_sim_deploy_traffic_changes_exact("sim.deploy.traffic-changes-exact (enforced)")
@@ -162,8 +171,11 @@ flowchart LR
   r_sim_deploy_image_smoke_covers_every_image_lib -.-> gap_unenforced
   r_sim_deploy_modal_image_smoke --> e_CI_job_image_smoke
   e_CI_job_image_smoke --> j_CI_pr_image_smoke_yml_image_smoke
+  r_sim_deploy_numerical_sentinel_gate --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_promotion_order_explicit --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
+  r_sim_deploy_release_identity_smoke --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_revision_tags_valid --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
+  r_sim_deploy_routing_publication_journaled --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_shell_scripts_valid --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_smoke_tests_strict --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_traffic_changes_exact --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
