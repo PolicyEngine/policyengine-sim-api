@@ -405,10 +405,11 @@ def test_simulation_status_replacement_is_compare_and_set() -> None:
 
 
 def test_simulation_status_replacement_preserves_a_concurrent_cancellation() -> None:
-    incomplete = _simulation().model_copy(
+    cancelled = _simulation().model_copy(
         update={
-            "status": ComparisonRunLifecycleStatus.INCOMPLETE,
-            "error_code": "cancelled_after_peer_failure",
+            "status": ComparisonRunLifecycleStatus.FAILED,
+            "error_code": "simulation_cancelled",
+            "error_summary": "Cancelled after the reform simulation failed.",
             "completed_at": NOW,
         }
     )
@@ -424,7 +425,7 @@ def test_simulation_status_replacement_preserves_a_concurrent_cancellation() -> 
             "completed_at": NOW,
         }
     )
-    engine = FakeEngine([FakeResult(row=_row(incomplete))])
+    engine = FakeEngine([FakeResult(row=_row(cancelled))])
     store = Stage12PersistenceStore(engine=engine)  # type: ignore[arg-type]
 
     result, replaced = store.replace_simulation_if_status(
@@ -433,7 +434,7 @@ def test_simulation_status_replacement_preserves_a_concurrent_cancellation() -> 
     )
 
     assert replaced is False
-    assert result == incomplete
+    assert result == cancelled
     assert len(engine.connection.statements) == 1
 
 

@@ -175,18 +175,19 @@ After dispatching both logical simulations, the coordinator checks both Modal
 calls with nonblocking result probes on every polling pass. It does not wait
 for baseline before checking reform. Both simulations share one 3,900-second
 wait window, the longest simulation worker timeout, that opens when the
-coordinator starts, so coordinator setup comes out of that window. When it
-closes, every unfinished simulation is recorded as
-`failed` with `simulation_wait_timeout` and stopped. The first failed
-simulation supplies the report's `error_code` and safe `error_summary`; the
-coordinator marks the unresolved peer `incomplete` with
-`cancelled_after_peer_failure`. A segmented peer reads that persisted state,
-cancels the region-group calls it owns, and exits without overwriting the
-cancellation record. If the coordinator itself fails after starting a
-simulation, it stops every started, unfinished simulation the same way and
-marks it `incomplete` with `cancelled_after_coordinator_failure`. Expected
-input failures retain their typed code and message. Unexpected exceptions are
-logged in full and persisted as a generic message with a correlation ID.
+coordinator starts, so coordinator setup comes out of that window. The first
+failed simulation supplies the report's `error_code` and safe `error_summary`.
+When a simulation fails, when the window closes, or when the coordinator
+itself fails after starting a simulation, the coordinator records every
+started, unfinished simulation as `failed` with `simulation_cancelled` and a
+summary that gives the reason, then stops it. Only a `running` record changes,
+so a simulation that already succeeded or failed keeps its outcome. An
+unsegmented simulation is cancelled through Modal. A segmented simulation
+reads its cancelled record, cancels the region-group calls it owns, and exits
+without overwriting the record; it is cancelled through Modal only if that
+record could not be written. Expected input failures retain their typed code
+and message. Unexpected exceptions are logged in full and persisted as a
+generic message with a correlation ID.
 
 Stage 12 deployments run `src/modal/stage12_precompute_app.py` against the
 dedicated `STAGE12_CACHE_BUCKET`. It publishes three annual datasets plus 60

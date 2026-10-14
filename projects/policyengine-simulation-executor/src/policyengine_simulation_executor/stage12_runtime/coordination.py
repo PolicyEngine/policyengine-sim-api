@@ -142,16 +142,15 @@ def _replace_running_simulation(
     return result
 
 
-COORDINATOR_FAILURE_CANCELLATION = Stage12FailureDetail(
-    error_code="cancelled_after_coordinator_failure",
-    error_summary="Cancelled after report coordination failed.",
-)
+SIMULATION_CANCELLED_ERROR_CODE = "simulation_cancelled"
 
 
-def _peer_failure_cancellation(failed_role: str) -> Stage12FailureDetail:
+def _cancellation(reason: str) -> Stage12FailureDetail:
+    """Describe a child the coordinator stopped; ``reason`` ends the summary."""
+
     return Stage12FailureDetail(
-        error_code="cancelled_after_peer_failure",
-        error_summary=f"Cancelled after {failed_role} simulation failed.",
+        error_code=SIMULATION_CANCELLED_ERROR_CODE,
+        error_summary=f"Cancelled after {reason}.",
     )
 
 
@@ -163,21 +162,22 @@ def _cancel_pending_simulations(
     store: ComparisonStore,
     detail: Stage12FailureDetail,
 ) -> None:
-    """Record each started, unfinished child as incomplete, then stop it.
+    """Record each started, unfinished child as failed, then stop it.
 
-    A child whose record is no longer running has already finished or been
-    stopped, so it is left unchanged. State-update and cancellation errors are
-    logged rather than raised, so they never replace the failure that caused
-    the cancellation.
+    Only a running record changes, so a child that has already succeeded or
+    failed keeps its own outcome. An unsegmented child is always cancelled
+    through Modal, even if its record could not be written. State-update and
+    cancellation errors are logged rather than raised, so they never replace
+    the failure that caused the cancellation.
     """
 
     for role in sorted(roles):
         simulation = simulations[role]
         try:
-            latest = _replace_running_simulation(
+            _replace_running_simulation(
                 store=store,
                 simulation=simulation,
-                status=ComparisonRunLifecycleStatus.INCOMPLETE,
+                status=ComparisonRunLifecycleStatus.FAILED,
                 detail=detail,
             )
         except Exception as error:  # noqa: BLE001
@@ -188,13 +188,16 @@ def _cancel_pending_simulations(
                 simulation=simulation,
                 error=error,
             )
-            continue
-        if latest.status is not ComparisonRunLifecycleStatus.INCOMPLETE:
-            continue
-        if should_segment_simulation(simulation):
-            # The simulation worker reads the persisted state and cancels the
-            # segment handles it owns. Modal does not guarantee recursive
-            # cancellation for calls created with spawn().
+            cancellation_recorded = False
+        else:
+            cancellation_recorded = True
+        if cancellation_recorded and should_segment_simulation(simulation):
+            # A segmented worker reads its record, cancels the region-group
+            # calls it started, and exits. Modal does not cancel spawned calls
+            # recursively, so cancelling the worker through Modal would leave
+            # those calls running. That is the fallback only when the record
+            # could not be written and the worker cannot learn of the
+            # cancellation.
             continue
         try:
             calls[role].cancel()
@@ -289,7 +292,7 @@ def _observe_simulations(
                     simulations=simulations,
                     roles=pending - {role},
                     store=store,
-                    detail=_peer_failure_cancellation(role),
+                    detail=_cancellation(f"the {role} simulation failed"),
                 )
                 raise Stage12ExecutionError(detail) from None
             descriptors[role] = descriptor
@@ -314,29 +317,15 @@ def _observe_simulations(
                 runtime=runtime,
                 failure_scope="child_wait_timeout",
             )
-            for role in sorted(pending):
-                persist_failure_record(
-                    partial(
-                        _replace_running_simulation,
-                        store=store,
-                        simulation=simulations[role],
-                        status=ComparisonRunLifecycleStatus.FAILED,
-                        detail=detail,
-                    ),
-                    runtime=runtime,
-                    failure_scope="child_wait_timeout",
-                )
-                if not should_segment_simulation(simulations[role]):
-                    try:
-                        calls[role].cancel()
-                    except Exception as error:  # noqa: BLE001
-                        _log_cancellation_failure(
-                            logging.WARNING,
-                            "Stage 12 could not cancel timed-out %s simulation %s "
-                            "in report %s (%s)",
-                            simulation=simulations[role],
-                            error=error,
-                        )
+            _cancel_pending_simulations(
+                calls=calls,
+                simulations=simulations,
+                roles=pending,
+                store=store,
+                detail=_cancellation(
+                    f"the {timeout_seconds:g}-second wait window closed"
+                ),
+            )
             raise wait_timeout
         # Never sleep past the deadline, so the window closes on time.
         sleep(min(poll_interval, remaining_seconds))
@@ -698,7 +687,9 @@ def coordinate_report(
                     simulations=simulations,
                     roles=set(calls),
                     store=persistence,
-                    detail=_peer_failure_cancellation(simulation.role.value),
+                    detail=_cancellation(
+                        f"the {simulation.role.value} simulation failed"
+                    ),
                 )
                 raise Stage12ExecutionError(detail) from None
             calls[simulation.role.value] = call
@@ -829,7 +820,7 @@ def coordinate_report(
                 simulations=simulations,
                 roles=set(calls) - set(descriptors),
                 store=persistence,
-                detail=COORDINATOR_FAILURE_CANCELLATION,
+                detail=_cancellation("the coordinator failed"),
             )
         failed_at = datetime.now(UTC)
         detail = failure_detail_from_exception(

@@ -306,29 +306,34 @@ for every calculation call that it already started.
 
 The report coordinator observes baseline and reform together rather than
 blocking on one role first. On the first failure, it copies the failed
-simulation's `error_code` and safe `error_summary` to the report, marks the
-unresolved peer `incomplete` with `cancelled_after_peer_failure`, and completes
-the report as failed without waiting for the peer calculation. A segmented
-peer checks its persisted simulation status during bounded waits; after seeing
-the cancellation state, it cancels all region-group calls it owns and exits.
-Atomic status replacement prevents a late calculation result from replacing
-that cancellation record.
+simulation's `error_code` and safe `error_summary` to the report, records the
+unresolved peer as `failed` with `simulation_cancelled` and the summary
+"Cancelled after the baseline simulation failed." (or reform), and completes
+the report as failed without waiting for the peer calculation. An unsegmented
+peer is also cancelled through Modal. A segmented peer checks its persisted
+simulation status during bounded waits; after seeing the cancellation, it
+cancels all region-group calls it owns and exits. Modal does not cancel
+spawned calls recursively, so the coordinator cancels a segmented peer through
+Modal only if it could not write the cancellation record. Only a `running`
+record changes, so a simulation that already succeeded or failed keeps its
+outcome, and atomic status replacement prevents a late calculation result from
+replacing the cancellation record.
 
 Both simulations share one 3,900-second wait window, the longest simulation
 worker timeout. It opens when the coordinator starts, so the coordinator's own
 setup, including loading the country model and dispatching both simulations,
 comes out of that window and not out of the time it needs afterwards. When the
-window closes, the coordinator records each unfinished simulation as `failed`
-with `simulation_wait_timeout` and stops it. The coordinator's 5,400-second
-Modal timeout is that window plus up to 900 seconds for the production-result
-wait plus 600 seconds to aggregate, write artifacts, and record the outcome.
+window closes, the report fails with `simulation_wait_timeout`, and each
+unfinished simulation is cancelled in the same way. The coordinator's
+5,400-second Modal timeout is that window plus up to 900 seconds for the
+production-result wait plus 600 seconds to aggregate, write artifacts, and
+record the outcome.
 
 If the coordinator itself fails after starting a simulation, for example while
 recording a later dispatch or attaching a started call's invocation
-identifier, it stops every started, unfinished simulation in the same way and
-marks it `incomplete` with `cancelled_after_coordinator_failure`. Simulations
-that already finished are left unchanged, and the report keeps the
-coordinator's original failure.
+identifier, it cancels every started, unfinished simulation in the same way,
+with the summary "Cancelled after the coordinator failed.". The report keeps
+the coordinator's original failure.
 
 Typed input failures, including invalid policy periods and SPM selection
 errors, retain their code and bounded message through the segment, simulation,
@@ -478,9 +483,8 @@ contains the complete temporary parent and child execution metadata, including
 private artifact references and digests, but never returns artifact contents.
 For a failed report, the parent record contains the originating safe failure;
 the failed simulation contains the same values, and a peer stopped because of
-that failure is `incomplete` with `cancelled_after_peer_failure`. A simulation
-stopped because the coordinator failed is `incomplete` with
-`cancelled_after_coordinator_failure`.
+that failure is `failed` with `simulation_cancelled`; its `error_summary`
+gives the reason.
 Cloud Run therefore requires no additional object-storage permission for this
 interface.
 

@@ -497,9 +497,9 @@ def test_temporary_stage12_poll_returns_propagated_failure_values(backend):
     )
     baseline = comparison_simulation(SimulationRole.BASELINE).model_copy(
         update={
-            "status": ComparisonRunLifecycleStatus.INCOMPLETE,
-            "error_code": "cancelled_after_peer_failure",
-            "error_summary": "Cancelled after reform simulation failed.",
+            "status": ComparisonRunLifecycleStatus.FAILED,
+            "error_code": "simulation_cancelled",
+            "error_summary": "Cancelled after the reform simulation failed.",
             "completed_at": report.completed_at,
         }
     )
@@ -531,8 +531,8 @@ def test_temporary_stage12_poll_returns_propagated_failure_values(backend):
     payload = result.json()
     assert payload["report"]["error_code"] == "invalid_policy_period"
     assert payload["report"]["error_summary"] == "The reform period is invalid."
-    assert payload["simulations"][0]["status"] == "incomplete"
-    assert payload["simulations"][0]["error_code"] == "cancelled_after_peer_failure"
+    assert payload["simulations"][0]["status"] == "failed"
+    assert payload["simulations"][0]["error_code"] == "simulation_cancelled"
     assert payload["simulations"][1]["error_code"] == "invalid_policy_period"
 
 

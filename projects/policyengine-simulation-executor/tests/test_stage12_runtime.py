@@ -957,9 +957,9 @@ def test_late_simulation_success_does_not_overwrite_parent_cancellation() -> Non
         store.replace_simulation(
             current.model_copy(
                 update={
-                    "status": ComparisonRunLifecycleStatus.INCOMPLETE,
-                    "error_code": "cancelled_after_peer_failure",
-                    "error_summary": "Cancelled after reform simulation failed.",
+                    "status": ComparisonRunLifecycleStatus.FAILED,
+                    "error_code": "simulation_cancelled",
+                    "error_summary": "Cancelled after the reform simulation failed.",
                     "updated_at": cancelled_at,
                     "completed_at": cancelled_at,
                 }
@@ -980,8 +980,8 @@ def test_late_simulation_success_does_not_overwrite_parent_cancellation() -> Non
         )
 
     child = store.children[simulation.simulation_execution_id]
-    assert child.status is ComparisonRunLifecycleStatus.INCOMPLETE
-    assert child.error_code == "cancelled_after_peer_failure"
+    assert child.status is ComparisonRunLifecycleStatus.FAILED
+    assert child.error_code == "simulation_cancelled"
 
 
 def test_single_worker_rejects_frames_that_do_not_satisfy_the_output_plan() -> None:
@@ -1288,13 +1288,14 @@ class ImmediateCall:
         self.object_id = object_id
         self.result = result
         self.observed_timeouts = observed_timeouts
+        self.cancel_count = 0
 
     def get(self, *, timeout=None):
         self.observed_timeouts.append(timeout)
         return self.result
 
     def cancel(self):
-        return None
+        self.cancel_count += 1
 
 
 class ConcurrentInvoker:
@@ -1751,13 +1752,14 @@ def test_coordinator_observes_one_role_failure_while_the_peer_is_pending(
 
         def __init__(self):
             self.timeouts = []
+            self.cancel_count = 0
 
         def get(self, *, timeout=None):
             self.timeouts.append(timeout)
             raise TimeoutError()
 
         def cancel(self):
-            raise AssertionError("segmented cancellation must be cooperative")
+            self.cancel_count += 1
 
     class FailedCall:
         object_id = f"call-{failed_role}"
@@ -1812,10 +1814,15 @@ def test_coordinator_observes_one_role_failure_while_the_peer_is_pending(
 
     assert failed_call.timeouts == [0]
     assert baseline_call.timeouts == ([0] if pending_role == "baseline" else [])
+    # A segmented peer reads its cancelled record and stops its own
+    # region-group calls, so it is not cancelled through Modal.
+    assert baseline_call.cancel_count == 0
     pending = store.children[pending_id]
-    assert pending.status is ComparisonRunLifecycleStatus.INCOMPLETE
-    assert pending.error_code == "cancelled_after_peer_failure"
-    assert pending.error_summary == f"Cancelled after {failed_role} simulation failed."
+    assert pending.status is ComparisonRunLifecycleStatus.FAILED
+    assert pending.error_code == "simulation_cancelled"
+    assert pending.error_summary == (
+        f"Cancelled after the {failed_role} simulation failed."
+    )
     assert store.parent.error_code == "invalid_policy_period"
     assert store.parent.error_summary == "The reform period is invalid."
     assert artifacts.aggregate_writes == []
@@ -1849,8 +1856,10 @@ def test_dispatch_failure_cancels_an_already_started_peer() -> None:
 
     baseline = store.children[BASELINE_ID]
     reform = store.children[REFORM_ID]
-    assert baseline.status is ComparisonRunLifecycleStatus.INCOMPLETE
-    assert baseline.error_code == "cancelled_after_peer_failure"
+    assert baseline_call.cancelled == 0
+    assert baseline.status is ComparisonRunLifecycleStatus.FAILED
+    assert baseline.error_code == "simulation_cancelled"
+    assert baseline.error_summary == "Cancelled after the reform simulation failed."
     assert reform.status is ComparisonRunLifecycleStatus.FAILED
     assert reform.error_code == "simulation_dispatch_failed"
     assert store.parent.error_code == "simulation_dispatch_failed"
@@ -2451,27 +2460,46 @@ def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
         for child in store.children.values()
     )
     assert all(
-        child.error_code == "simulation_wait_timeout"
-        for child in store.children.values()
+        child.error_code == "simulation_cancelled" for child in store.children.values()
     )
 
 
-class ScriptedChildCall:
-    """A started child that keeps running unless a wait error is scripted."""
+class StartupWriteError(Exception):
+    """A coordinator persistence failure after a child may have started."""
 
-    def __init__(self, object_id, *, clock=None, wait_error=None, cancel_error=None):
+
+class ScriptedChildCall:
+    """A started child that keeps running unless the test scripts an outcome."""
+
+    def __init__(
+        self,
+        object_id,
+        *,
+        clock=None,
+        result=None,
+        wait_error=None,
+        cancel_error=None,
+        during_wait=None,
+    ):
         self.object_id = object_id
         self.clock = clock
+        self.result = result
         self.wait_error = wait_error
         self.cancel_error = cancel_error
+        self.during_wait = during_wait
         self.probed_at = []
         self.cancel_count = 0
 
     def get(self, *, timeout=None):
-        if self.clock is not None:
-            self.probed_at.append(self.clock.monotonic())
+        self.probed_at.append(
+            self.clock.monotonic() if self.clock is not None else None
+        )
+        if self.during_wait is not None:
+            self.during_wait()
         if self.wait_error is not None:
             raise self.wait_error
+        if self.result is not None:
+            return self.result
         raise TimeoutError("still running")
 
     def cancel(self):
@@ -2481,10 +2509,20 @@ class ScriptedChildCall:
 
 
 class ScriptedChildInvoker:
-    def __init__(self, *, clock=None, wait_errors=None, cancel_errors=None):
+    def __init__(
+        self,
+        *,
+        clock=None,
+        results=None,
+        wait_errors=None,
+        cancel_errors=None,
+        during_wait=None,
+    ):
         self.clock = clock
+        self.results = results or {}
         self.wait_errors = wait_errors or {}
         self.cancel_errors = cancel_errors or {}
+        self.during_wait = during_wait or {}
         self.events = []
         self.calls = {}
 
@@ -2502,16 +2540,41 @@ class ScriptedChildInvoker:
         call = ScriptedChildCall(
             f"call-{role}",
             clock=self.clock,
+            result=self.results.get(role),
             wait_error=self.wait_errors.get(role),
             cancel_error=self.cancel_errors.get(role),
+            during_wait=self.during_wait.get(role),
         )
         self.calls[role] = call
         return call
 
 
+class PlaceholderWriteFailingStore(FakeStore):
+    def __init__(self, failing_simulation_id):
+        super().__init__()
+        self.failing_simulation_id = failing_simulation_id
+
+    def replace_simulation(self, record):
+        # The coordinator's only plain replacement is the dispatch placeholder.
+        if record.simulation_execution_id == self.failing_simulation_id:
+            raise StartupWriteError("placeholder write contains sensitive details")
+        return super().replace_simulation(record)
+
+
+class AttachFailingStore(FakeStore):
+    def __init__(self, failing_simulation_id):
+        super().__init__()
+        self.failing_simulation_id = failing_simulation_id
+
+    def attach_simulation_invocation(self, simulation_execution_id, **values):
+        if simulation_execution_id == self.failing_simulation_id:
+            raise StartupWriteError("attach contains sensitive details")
+        return super().attach_simulation_invocation(simulation_execution_id, **values)
+
+
 class CancellationStateFailingStore(FakeStore):
     def replace_simulation_if_status(self, record, *, expected_status):
-        if record.status is ComparisonRunLifecycleStatus.INCOMPLETE:
+        if record.error_code == "simulation_cancelled":
             raise ConnectionError("database contains sensitive details")
         return super().replace_simulation_if_status(
             record, expected_status=expected_status
@@ -2552,6 +2615,20 @@ def _coordinate_with(report, store, invoker, **coordinator_options):
     )
 
 
+def _assert_cancelled(child, *, after: str) -> None:
+    assert child.status is ComparisonRunLifecycleStatus.FAILED
+    assert child.error_code == "simulation_cancelled"
+    assert child.error_summary == f"Cancelled after {after}."
+    assert child.completed_at is not None
+
+
+def _assert_original_coordinator_failure(error, store) -> None:
+    assert isinstance(error.value.__context__, StartupWriteError)
+    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
+    assert store.parent.error_code == "report_coordination_failed"
+    assert "sensitive" not in store.parent.error_summary
+
+
 def _coordination_log(caplog, level):
     (record,) = [
         record
@@ -2574,7 +2651,118 @@ def _assert_log_identifies_child(record, *, role: str, error_type: str) -> None:
     assert record.exc_info is None
 
 
-def test_peer_cancellation_failure_log_identifies_the_report_and_child(
+def test_baseline_failure_cancels_and_records_the_reform_child() -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    invoker = ScriptedChildInvoker(
+        wait_errors={"baseline": LookupError("baseline worker failed")}
+    )
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        _coordinate_with(
+            _report_with_segmentation(segmented=False),
+            store,
+            invoker,
+            artifacts=artifacts,
+        )
+
+    reform_call = invoker.calls["reform"]
+    assert reform_call.cancel_count == 1
+    assert reform_call.probed_at == []
+    assert artifacts.aggregate_writes == []
+    assert store.children[BASELINE_ID].error_code == "simulation_invocation_failed"
+    _assert_cancelled(store.children[REFORM_ID], after="the baseline simulation failed")
+    assert store.parent.error_code == "simulation_invocation_failed"
+
+
+def test_reform_failure_leaves_the_finished_baseline_alone() -> None:
+    report = _report_with_segmentation(segmented=False)
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    baseline_descriptor = artifacts.add_simulation(report.baseline)
+    invoker = ScriptedChildInvoker(
+        results={"baseline": baseline_descriptor.model_dump(mode="json")},
+        wait_errors={"reform": LookupError("reform worker failed")},
+    )
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        _coordinate_with(report, store, invoker, artifacts=artifacts)
+
+    assert invoker.calls["baseline"].cancel_count == 0
+    assert store.children[BASELINE_ID].status is ComparisonRunLifecycleStatus.RUNNING
+    assert store.children[BASELINE_ID].error_code is None
+    assert store.children[REFORM_ID].error_code == "simulation_invocation_failed"
+
+
+def test_baseline_failure_cancels_a_reform_call_restored_on_retry() -> None:
+    report = _report_with_segmentation(segmented=False)
+    store = FakeStore()
+    # An earlier coordinator attempt started the reform child before stopping.
+    store.children[REFORM_ID] = _child(report.reform).model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.RUNNING,
+            "modal_invocation_id": "call-reform",
+            "started_at": NOW,
+        }
+    )
+    invoker = ScriptedChildInvoker(
+        wait_errors={"baseline": LookupError("baseline worker failed")}
+    )
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        _coordinate_with(report, store, invoker)
+
+    assert invoker.events == ["spawn:baseline", "restore:reform"]
+    assert invoker.calls["reform"].cancel_count == 1
+    _assert_cancelled(store.children[REFORM_ID], after="the baseline simulation failed")
+    assert store.children[BASELINE_ID].error_code == "simulation_invocation_failed"
+
+
+@pytest.mark.parametrize(
+    ("worker_status", "worker_error_code"),
+    [
+        (ComparisonRunLifecycleStatus.SUCCEEDED, None),
+        (ComparisonRunLifecycleStatus.FAILED, "simulation_execution_failed"),
+    ],
+)
+def test_cancellation_leaves_a_sibling_that_already_finished_unchanged(
+    worker_status,
+    worker_error_code,
+) -> None:
+    store = FakeStore()
+    worker_records = []
+
+    def reform_worker_records_its_outcome():
+        # The reform worker finishes while the coordinator probes baseline.
+        finished_at = NOW + timedelta(minutes=5)
+        worker_records.append(
+            store.replace_simulation(
+                store.get_simulation(REFORM_ID).model_copy(
+                    update={
+                        "status": worker_status,
+                        "error_code": worker_error_code,
+                        "updated_at": finished_at,
+                        "completed_at": finished_at,
+                    }
+                )
+            )
+        )
+
+    invoker = ScriptedChildInvoker(
+        wait_errors={"baseline": LookupError("baseline worker failed")},
+        during_wait={"baseline": reform_worker_records_its_outcome},
+    )
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        _coordinate_with(_report_with_segmentation(segmented=False), store, invoker)
+
+    # Cancelling a finished Modal call is harmless; its record is not touched.
+    assert invoker.calls["reform"].cancel_count == 1
+    assert store.children[REFORM_ID] == worker_records[0]
+    assert store.children[BASELINE_ID].error_code == "simulation_invocation_failed"
+
+
+def test_peer_cancellation_failure_does_not_replace_the_child_failure(
     caplog,
 ) -> None:
     store = FakeStore()
@@ -2592,7 +2780,7 @@ def test_peer_cancellation_failure_log_identifies_the_report_and_child(
         _coordinate_with(_report_with_segmentation(segmented=False), store, invoker)
 
     assert invoker.calls["reform"].cancel_count == 1
-    assert store.children[REFORM_ID].error_code == "cancelled_after_peer_failure"
+    _assert_cancelled(store.children[REFORM_ID], after="the baseline simulation failed")
     assert store.parent.error_code == "simulation_invocation_failed"
     _assert_log_identifies_child(
         _coordination_log(caplog, logging.WARNING),
@@ -2601,8 +2789,10 @@ def test_peer_cancellation_failure_log_identifies_the_report_and_child(
     )
 
 
-def test_peer_state_cancellation_failure_log_identifies_the_report_and_child(
+@pytest.mark.parametrize("segmented", [True, False])
+def test_failed_cancellation_state_write_still_cancels_through_modal(
     caplog,
+    segmented,
 ) -> None:
     store = CancellationStateFailingStore()
     invoker = ScriptedChildInvoker(
@@ -2613,14 +2803,39 @@ def test_peer_state_cancellation_failure_log_identifies_the_report_and_child(
         caplog.at_level(logging.WARNING, logger=coordination_module.__name__),
         pytest.raises(RuntimeError, match="Stage 12 report coordination failed"),
     ):
-        _coordinate_with(_report_with_segmentation(segmented=False), store, invoker)
+        _coordinate_with(_report_with_segmentation(segmented=segmented), store, invoker)
 
+    # A segmented worker cannot read a cancellation that was never written, so
+    # it is cancelled through Modal as well.
+    assert invoker.calls["reform"].cancel_count == 1
+    assert store.children[REFORM_ID].status is ComparisonRunLifecycleStatus.RUNNING
     assert store.parent.error_code == "simulation_invocation_failed"
     _assert_log_identifies_child(
         _coordination_log(caplog, logging.ERROR),
         role="reform",
         error_type="ConnectionError",
     )
+
+
+def test_wait_timeout_cancels_and_records_every_unfinished_child() -> None:
+    store = FakeStore()
+    invoker = ScriptedChildInvoker()
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        _coordinate_with(
+            _report_with_segmentation(segmented=False),
+            store,
+            invoker,
+            wait_timeout_seconds=0,
+        )
+
+    assert [call.cancel_count for call in invoker.calls.values()] == [1, 1]
+    for role in ("baseline", "reform"):
+        _assert_cancelled(
+            store.children[_simulation_id(role)],
+            after="the 0-second wait window closed",
+        )
+    assert store.parent.error_code == "simulation_wait_timeout"
 
 
 def test_timeout_cancellation_failure_log_identifies_the_report_and_child(
@@ -2653,47 +2868,6 @@ def test_timeout_cancellation_failure_log_identifies_the_report_and_child(
     )
 
 
-class StartupWriteError(Exception):
-    """A coordinator persistence failure after a child may have started."""
-
-
-class PlaceholderWriteFailingStore(FakeStore):
-    def __init__(self, failing_simulation_id):
-        super().__init__()
-        self.failing_simulation_id = failing_simulation_id
-
-    def replace_simulation(self, record):
-        # The coordinator's only plain replacement is the dispatch placeholder.
-        if record.simulation_execution_id == self.failing_simulation_id:
-            raise StartupWriteError("placeholder write contains sensitive details")
-        return super().replace_simulation(record)
-
-
-class AttachFailingStore(FakeStore):
-    def __init__(self, failing_simulation_id):
-        super().__init__()
-        self.failing_simulation_id = failing_simulation_id
-
-    def attach_simulation_invocation(self, simulation_execution_id, **values):
-        if simulation_execution_id == self.failing_simulation_id:
-            raise StartupWriteError("attach contains sensitive details")
-        return super().attach_simulation_invocation(simulation_execution_id, **values)
-
-
-def _assert_cancelled_after_coordinator_failure(child) -> None:
-    assert child.status is ComparisonRunLifecycleStatus.INCOMPLETE
-    assert child.error_code == "cancelled_after_coordinator_failure"
-    assert child.error_summary == "Cancelled after report coordination failed."
-    assert child.completed_at is not None
-
-
-def _assert_original_coordinator_failure(error, store) -> None:
-    assert isinstance(error.value.__context__, StartupWriteError)
-    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
-    assert store.parent.error_code == "report_coordination_failed"
-    assert "sensitive" not in store.parent.error_summary
-
-
 @pytest.mark.parametrize("segmented", [True, False])
 def test_failed_placeholder_write_stops_the_started_baseline(segmented) -> None:
     store = PlaceholderWriteFailingStore(REFORM_ID)
@@ -2706,7 +2880,7 @@ def test_failed_placeholder_write_stops_the_started_baseline(segmented) -> None:
 
     _assert_original_coordinator_failure(error, store)
     assert invoker.events == ["spawn:baseline"]
-    _assert_cancelled_after_coordinator_failure(store.children[BASELINE_ID])
+    _assert_cancelled(store.children[BASELINE_ID], after="the coordinator failed")
     # A segmented worker stops itself, and its region-group calls, once it
     # reads the cancelled record; Modal does not cancel spawned calls
     # recursively.
@@ -2737,8 +2911,8 @@ def test_failed_invocation_attach_stops_every_started_child(
     assert invoker.events == [f"spawn:{role}" for role in started_roles]
     # The child whose invocation could not be attached is stopped as well.
     for role in started_roles:
-        _assert_cancelled_after_coordinator_failure(
-            store.children[_simulation_id(role)]
+        _assert_cancelled(
+            store.children[_simulation_id(role)], after="the coordinator failed"
         )
         assert invoker.calls[role].cancel_count == 1
     if failing_role == "baseline":
@@ -2764,7 +2938,7 @@ def test_startup_failure_stops_a_call_restored_from_an_earlier_attempt() -> None
 
     _assert_original_coordinator_failure(error, store)
     assert invoker.events == ["restore:baseline"]
-    _assert_cancelled_after_coordinator_failure(store.children[BASELINE_ID])
+    _assert_cancelled(store.children[BASELINE_ID], after="the coordinator failed")
     assert invoker.calls["baseline"].cancel_count == 1
 
 
@@ -2796,7 +2970,7 @@ def test_startup_failure_leaves_a_finished_child_unchanged() -> None:
     _assert_original_coordinator_failure(error, store)
     assert invoker.events == ["spawn:reform"]
     assert store.children[BASELINE_ID] == finished_baseline
-    _assert_cancelled_after_coordinator_failure(store.children[REFORM_ID])
+    _assert_cancelled(store.children[REFORM_ID], after="the coordinator failed")
     assert invoker.calls["reform"].cancel_count == 1
 
 
@@ -2820,7 +2994,7 @@ def test_startup_cancellation_error_does_not_replace_the_original_failure(
 
     _assert_original_coordinator_failure(error, store)
     assert invoker.calls["baseline"].cancel_count == 1
-    _assert_cancelled_after_coordinator_failure(store.children[BASELINE_ID])
+    _assert_cancelled(store.children[BASELINE_ID], after="the coordinator failed")
     _assert_log_identifies_child(
         _coordination_log(caplog, logging.WARNING),
         role="baseline",
@@ -2846,6 +3020,7 @@ def test_startup_cancellation_state_error_does_not_replace_the_original_failure(
         _coordinate_with(_report_with_segmentation(segmented=False), store, invoker)
 
     _assert_original_coordinator_failure(error, store)
+    assert invoker.calls["baseline"].cancel_count == 1
     _assert_log_identifies_child(
         _coordination_log(caplog, logging.ERROR),
         role="baseline",
@@ -2945,10 +3120,11 @@ def test_child_wait_window_opens_when_the_coordinator_starts(
         >= MINIMUM_FINISHING_SECONDS
     )
     assert store.parent.error_code == "simulation_wait_timeout"
-    assert all(
-        child.error_code == "simulation_wait_timeout"
-        for child in store.children.values()
-    )
+    for role in ("baseline", "reform"):
+        _assert_cancelled(
+            store.children[_simulation_id(role)],
+            after=f"the {window_seconds:g}-second wait window closed",
+        )
 
 
 def test_exhausted_wait_window_gives_the_children_no_extra_time() -> None:
