@@ -202,3 +202,60 @@ class TestSerializerPreservesExplicitNulls:
         assert SPMSelection(geography_kind="national").model_dump(mode="json") == {
             "geography_kind": "national"
         }
+
+
+@pytest.mark.parametrize("country", ["uk", "UK"])
+def test_non_us_countries_take_no_spm_settings(country):
+    assert (
+        resolve_spm_selection(
+            country,
+            None,
+            capability=None,
+            policyengine_version="5.3.0",
+            model_version="1.824.7",
+        )
+        is None
+    )
+    with pytest.raises(SPMInputError) as error:
+        resolve_spm_selection(
+            country,
+            {},
+            capability=None,
+            policyengine_version="5.3.0",
+            model_version="1.824.7",
+        )
+    assert error.value.code == "SPM_SETTINGS_INVALID"
+    assert str(error.value) == "SPM settings are supported only for the US"
+
+
+@pytest.mark.parametrize(
+    ("wrapper", "historical"),
+    [
+        ("5.1.9", True),
+        ("4.10.0", True),
+        ("5.2.0", False),
+        ("5.2.1", False),
+        ("5.1", False),
+        ("5.1.9.0", False),
+        ("5.1.x", False),
+        ("v5.1.9", False),
+    ],
+)
+def test_wrappers_before_5_2_0_are_historical(wrapper, historical):
+    """Three numeric parts below 5.2.0 are historical whatever the model says."""
+
+    def resolve_unpinned():
+        return resolve_spm_selection(
+            "us",
+            None,
+            capability=None,
+            policyengine_version=wrapper,
+            model_version="9.9.9",
+        )
+
+    if historical:
+        assert resolve_unpinned() is None
+    else:
+        with pytest.raises(SPMInputError) as error:
+            resolve_unpinned()
+        assert error.value.code == "SPM_CONFIGURATION_UNAVAILABLE"

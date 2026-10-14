@@ -30,6 +30,35 @@ class _FakeResponse:
         return json.dumps(self.payload).encode("utf-8")
 
 
+def test_parse_hf_dataset_uri_ignores_other_schemes():
+    assert parse_hf_dataset_uri("gs://bucket/populace_us_2024.h5") is None
+
+
+@pytest.mark.parametrize(
+    "dataset_uri",
+    [
+        "hf://policyengine/populace-us",
+        "hf://policyengine//populace_us_2024.h5",
+        "hf:///populace-us/populace_us_2024.h5@v1",
+        "hf://policyengine/populace-us/@v1",
+    ],
+)
+def test_parse_hf_dataset_uri_rejects_uris_without_org_repo_and_path(dataset_uri):
+    with pytest.raises(HuggingFaceDatasetReferenceError) as error:
+        parse_hf_dataset_uri(dataset_uri)
+
+    assert str(error.value) == f"Invalid Hugging Face dataset URI: {dataset_uri!r}"
+
+
+def test_parse_hf_dataset_uri_keeps_nested_paths_and_the_last_revision():
+    parsed = parse_hf_dataset_uri("hf://org/repo/nested/file@name.h5@rev")
+
+    assert parsed is not None
+    assert parsed.repo_id == "org/repo"
+    assert parsed.path == "nested/file@name.h5"
+    assert parsed.revision == "rev"
+
+
 def test_parse_hf_dataset_uri_extracts_repo_path_and_revision():
     parsed = parse_hf_dataset_uri(
         "hf://policyengine/populace-us/populace_us_2024.h5@custom-v1"
