@@ -41,8 +41,10 @@ def persist_failure_record(
 ) -> None:
     """Attempt a failure write without letting its error replace the original.
 
-    The caller re-raises the original failure after this returns, whether or
-    not the record was written.
+    The caller raises the same failure after this returns, whether or not the
+    record was written: a child handler re-raises the original error, and the
+    report and simulation handlers raise their stable ``RuntimeError``. The
+    original cause then remains visible only in telemetry.
     """
 
     try:

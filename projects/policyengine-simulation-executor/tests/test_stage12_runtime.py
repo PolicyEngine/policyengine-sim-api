@@ -1797,6 +1797,60 @@ def test_coordinator_reports_a_child_failure_once_when_its_record_is_unwritable(
     assert store.parent.error_summary == "RuntimeError"
 
 
+class RefusingDispatchInvoker:
+    def __init__(self, dispatch_error):
+        self.dispatch_error = dispatch_error
+        self.events = []
+
+    def spawn(self, *, simulation, **_):
+        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
+        self.events.append(f"spawn:{role}")
+        raise self.dispatch_error
+
+    def restore(self, invocation_id):
+        raise AssertionError(f"unexpected restored invocation {invocation_id}")
+
+
+def test_coordinator_reports_a_child_dispatch_failure_once() -> None:
+    ordered_events: list[tuple[str, object]] = []
+    dispatch_error = ConnectionError("Modal refused the dispatch")
+    store = FakeStore()
+    invoker = RefusingDispatchInvoker(dispatch_error)
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=FakeArtifacts(),
+            invoker=invoker,
+            aggregator=lambda **_: {"must": "not run"},
+            runtime=TelemetryRecordingRuntime(ordered_events),
+        )
+
+    failure_reports = [
+        event[1]
+        for event in ordered_events
+        if event[0] == "telemetry" and event[1][0] == "Stage 12 execution failed"
+    ]
+    assert [(attributes, error) for _message, attributes, error in failure_reports] == [
+        (
+            {"stage12_failure_scope": "child_dispatch", "simulation_role": "baseline"},
+            dispatch_error,
+        )
+    ]
+    assert invoker.events == ["spawn:baseline"]
+    baseline_child = store.children[BASELINE_ID]
+    assert baseline_child.status is ComparisonRunLifecycleStatus.FAILED
+    assert baseline_child.error_code == "simulation_dispatch_failed"
+    assert baseline_child.error_summary == "ConnectionError"
+    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
+    assert store.parent.error_summary == "ConnectionError"
+
+
 def test_coordinator_rejects_incompatible_row_identity() -> None:
     store = FakeStore()
     artifacts = FakeArtifacts()
