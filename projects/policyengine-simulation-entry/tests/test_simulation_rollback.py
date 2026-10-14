@@ -30,12 +30,27 @@ VALIDATOR = (
 )
 
 
+def _run_bash(
+    *arguments: str | Path,
+    check: bool,
+    capture_output: bool = False,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run bash on a repository rollback script or step, with text output."""
+    return subprocess.run(  # noqa: S603  # runs repository scripts with test-built arguments
+        ["bash", *arguments],  # noqa: S607  # bash from PATH, as the workflows run these scripts
+        check=check,
+        capture_output=capture_output,
+        text=True,
+        env=env,
+    )
+
+
 def _validate(**env: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", VALIDATOR],
+    return _run_bash(
+        VALIDATOR,
         check=False,
         capture_output=True,
-        text=True,
         env={"PATH": os.environ["PATH"], **env},
     )
 
@@ -306,11 +321,13 @@ def _run_restore(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _fake_gh(bin_dir, attempts, kept, inventory)
-    return subprocess.run(
-        ["bash", "-eo", "pipefail", "-c", _restore_script()],
+    return _run_bash(
+        "-eo",
+        "pipefail",
+        "-c",
+        _restore_script(),
         check=False,
         capture_output=True,
-        text=True,
         env={
             "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             "RUNNER_TEMP": str(runner_temp),
@@ -400,5 +417,5 @@ def test_rollbacks_share_the_deployment_concurrency_group():
 
 
 def test_validator_has_valid_shell_syntax_and_is_executable():
-    subprocess.run(["bash", "-n", VALIDATOR], check=True)
+    _run_bash("-n", VALIDATOR, check=True)
     assert os.access(VALIDATOR, os.X_OK)

@@ -63,6 +63,7 @@ def _run_bash(
     check: bool,
     capture_output: bool = False,
     env: dict[str, str] | None = None,
+    cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run bash on a repository deployment script, with text output."""
     return subprocess.run(  # noqa: S603  # runs repository scripts with test-built arguments
@@ -71,6 +72,7 @@ def _run_bash(
         capture_output=capture_output,
         text=True,
         env=env,
+        cwd=cwd,
     )
 
 
@@ -1220,12 +1222,16 @@ def test_a_failing_sentinel_fails_its_step(tmp_path, job):
     script = step["run"].replace(
         "${{ needs.deploy_entrypoint.outputs.candidate_url }}", "https://candidate"
     )
-    result = subprocess.run(
+    result = _run_bash(
         # GitHub runs `run` blocks with bash -e -o pipefail.
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+        "--noprofile",
+        "--norc",
+        "-eo",
+        "pipefail",
+        "-c",
+        script,
         check=False,
         capture_output=True,
-        text=True,
         env={
             "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             "RUNNER_TEMP": str(tmp_path),
@@ -1294,11 +1300,15 @@ def _run_routing_step_with_a_failing_command(tmp_path, step, failed_command, **e
     plan = runner_temp / "routing-plans" / "routing-plan-prod-1" / "plan.json"
     plan.parent.mkdir(parents=True)
     plan.write_text("{}")
-    result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+    result = _run_bash(
+        "--noprofile",
+        "--norc",
+        "-eo",
+        "pipefail",
+        "-c",
+        step["run"],
         check=False,
         capture_output=True,
-        text=True,
         env={
             "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             "RUNNER_TEMP": str(runner_temp),
@@ -1548,19 +1558,15 @@ def test_failed_release_gate_cannot_report_a_successful_release(tmp_path, failed
     }
     env[failed_gate] = "failure"
     # A later step cannot run after this gate under Actions' bash -e behavior.
-    result = subprocess.run(
-        [
-            "bash",
-            "-eo",
-            "pipefail",
-            "-c",
-            gate["run"] + '\ntouch "$1"',
-            "gate",
-            str(marker),
-        ],
+    result = _run_bash(
+        "-eo",
+        "pipefail",
+        "-c",
+        gate["run"] + '\ntouch "$1"',
+        "gate",
+        str(marker),
         check=False,
         capture_output=True,
-        text=True,
         env=env,
         cwd=REPOSITORY_ROOT,
     )
@@ -1591,11 +1597,13 @@ def test_release_success_requires_completed_finalization_for_published_routing(
         ]
         if step.get("name") == "Check deployment result"
     )
-    completed = subprocess.run(
-        ["bash", "-eo", "pipefail", "-c", gate["run"]],
+    completed = _run_bash(
+        "-eo",
+        "pipefail",
+        "-c",
+        gate["run"],
         check=False,
         capture_output=True,
-        text=True,
         cwd=REPOSITORY_ROOT,
         env={
             "PATH": os.environ["PATH"],
@@ -1822,11 +1830,12 @@ def _run_identity_smoke(tmp_path: Path, versions: dict, **expected: str):
         "FAKE_CURL_VERSIONS": str(versions_file),
         **expected,
     }
-    return subprocess.run(
-        ["bash", SMOKE_SCRIPT, "https://simulation.example.test", revision],
+    return _run_bash(
+        SMOKE_SCRIPT,
+        "https://simulation.example.test",
+        revision,
         check=False,
         capture_output=True,
-        text=True,
         env=env,
     )
 

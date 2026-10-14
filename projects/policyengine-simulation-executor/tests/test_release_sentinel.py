@@ -187,7 +187,7 @@ def _check(api, **kwargs):
     problems = sentinel.check_deployment(
         "https://candidate.example/",
         expected,
-        token="t0ken",
+        token="t0ken",  # noqa: S106  # fake bearer token; the HTTP calls are stubbed
         http=api,
         sleep=sleeps.append,
         **kwargs,

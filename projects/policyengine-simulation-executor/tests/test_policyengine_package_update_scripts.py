@@ -403,15 +403,30 @@ INSTALLED = "\n".join(
 )
 
 
+def _run_helper(
+    command: str,
+    *,
+    check: bool = False,
+    input_text: str | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run one command of the repository's Python update helper."""
+    return subprocess.run(  # noqa: S603  # runs the repository helper script with this interpreter
+        [sys.executable, str(HELPER), command],
+        input=input_text,
+        capture_output=True,
+        text=True,
+        check=check,
+        env=env,
+    )
+
+
 def _verify(payload: str) -> subprocess.CompletedProcess[str]:
     import os
 
-    return subprocess.run(
-        [sys.executable, str(HELPER), "verify-dispatch"],
-        input=INSTALLED,
-        capture_output=True,
-        text=True,
-        check=False,
+    return _run_helper(
+        "verify-dispatch",
+        input_text=INSTALLED,
         env={**os.environ, "RELEASE_PAYLOAD": payload},
     )
 
@@ -476,12 +491,9 @@ def test_verify_dispatch_compares_the_certificate_when_installed_reports_one() -
     )
 
     def verify(payload: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, str(HELPER), "verify-dispatch"],
-            input=installed,
-            capture_output=True,
-            text=True,
-            check=False,
+        return _run_helper(
+            "verify-dispatch",
+            input_text=installed,
             env={**os.environ, "RELEASE_PAYLOAD": payload},
         )
 
@@ -496,12 +508,9 @@ def test_verify_dispatch_fails_closed_when_the_installed_bundle_cannot_answer() 
     import os
 
     installed = INSTALLED.replace("uk_dataset_sha256=" + "a" * 64, "uk_dataset_sha256=")
-    result = subprocess.run(
-        [sys.executable, str(HELPER), "verify-dispatch"],
-        input=installed,
-        capture_output=True,
-        text=True,
-        check=False,
+    result = _run_helper(
+        "verify-dispatch",
+        input_text=installed,
         env={**os.environ, "RELEASE_PAYLOAD": _payload()},
     )
     assert result.returncode != 0
@@ -589,10 +598,8 @@ def test_bundle_versions_matches_policyengine_release_identity() -> None:
 
     bundle = get_current_bundle()
     record = bundle["data_releases"]["uk"]
-    output = subprocess.run(
-        [sys.executable, str(HELPER), "bundle-versions"],
-        capture_output=True,
-        text=True,
+    output = _run_helper(
+        "bundle-versions",
         check=True,
     ).stdout
     installed = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
@@ -608,12 +615,9 @@ def test_bundle_versions_matches_policyengine_release_identity() -> None:
             }
         },
     }
-    result = subprocess.run(
-        [sys.executable, str(HELPER), "verify-dispatch"],
-        input=output,
-        capture_output=True,
-        text=True,
-        check=False,
+    result = _run_helper(
+        "verify-dispatch",
+        input_text=output,
         env={**os.environ, "RELEASE_PAYLOAD": json.dumps(payload)},
     )
     assert result.returncode == 0, result.stderr
@@ -641,10 +645,8 @@ def test_bundle_versions_reports_the_receipt_certificate_digest(tmp_path) -> Non
         "sys.modules['policyengine.provenance.receipt'] = module\n"
     )
     env = {**os.environ, "PYTHONPATH": str(stand_in)}
-    output = subprocess.run(
-        [sys.executable, str(HELPER), "bundle-versions"],
-        capture_output=True,
-        text=True,
+    output = _run_helper(
+        "bundle-versions",
         check=True,
         env=env,
     ).stdout
@@ -657,12 +659,9 @@ def test_bundle_versions_reports_the_receipt_certificate_digest(tmp_path) -> Non
     record = get_current_bundle()["data_releases"]["uk"]
     expected = hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
     assert installed["uk_certificate_sha256"] == expected
-    mismatch = subprocess.run(
-        [sys.executable, str(HELPER), "verify-dispatch"],
-        input=output,
-        capture_output=True,
-        text=True,
-        check=False,
+    mismatch = _run_helper(
+        "verify-dispatch",
+        input_text=output,
         env={
             **os.environ,
             "RELEASE_PAYLOAD": json.dumps(

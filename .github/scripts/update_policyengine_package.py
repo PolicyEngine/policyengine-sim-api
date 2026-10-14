@@ -358,9 +358,9 @@ def verify_dispatch() -> None:
     ):
         msg = f"The release dispatch says the UK pair was not promotable ({verdict})"
         raise SystemExit(msg)
-    print(f"dispatch_verified={'true' if compared else 'false'}")
-    print(f"uk_qualification_verdict={verdict}")
-    print(f"uk_qualification_receipt_sha256={receipt_sha256}")
+    _write_result(f"dispatch_verified={'true' if compared else 'false'}")
+    _write_result(f"uk_qualification_verdict={verdict}")
+    _write_result(f"uk_qualification_receipt_sha256={receipt_sha256}")
 
 
 def _parser() -> argparse.ArgumentParser:
