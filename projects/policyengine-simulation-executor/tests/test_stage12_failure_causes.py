@@ -7,9 +7,6 @@ import time
 import pytest
 from policyengine_simulation_contract.spm import SPMComparisonProvenance
 from policyengine_simulation_contract.stage12_execution import ErrorSummary
-from pydantic import BaseModel, TypeAdapter, ValidationError
-from sqlalchemy.exc import IntegrityError, OperationalError
-
 from policyengine_simulation_executor.stage12_runtime import failure_causes
 from policyengine_simulation_executor.stage12_runtime.failure_causes import (
     MAX_FAILURE_SUMMARY_LENGTH,
@@ -20,6 +17,8 @@ from policyengine_simulation_executor.stage12_runtime.failure_causes import (
     record_failure_cause,
     redact_failure_message,
 )
+from pydantic import BaseModel, TypeAdapter, ValidationError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 DATABASE_PASSWORD = "pooler-password-value"
 DATABASE_URL = (
