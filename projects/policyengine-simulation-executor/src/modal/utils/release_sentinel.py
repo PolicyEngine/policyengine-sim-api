@@ -32,6 +32,8 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from http import HTTPStatus
 from importlib import metadata
 from pathlib import Path
 from typing import Any
@@ -65,6 +67,11 @@ SENTINEL_CASES: tuple[dict[str, Any], ...] = (
             "budget.baseline_net_income",
         ),
     },
+)
+
+#: Job poll statuses that mean the job has not finished yet: poll again.
+_PENDING_JOB_STATUSES = frozenset(
+    {HTTPStatus.ACCEPTED, HTTPStatus.TOO_MANY_REQUESTS, HTTPStatus.SERVICE_UNAVAILABLE}
 )
 
 _AUTH_VARS = (
@@ -228,7 +235,7 @@ def access_token(environ: Mapping[str, str] = os.environ) -> str | None:
         },
     )
     token = payload.get("access_token") if isinstance(payload, Mapping) else None
-    if status != 200 or not token:
+    if status != HTTPStatus.OK or not token:
         msg = f"token request failed with HTTP {status}"
         raise SentinelError(msg)
     return str(token)
@@ -244,86 +251,156 @@ def _retry_after(headers: Mapping[str, str], fallback: float) -> float:
     return fallback
 
 
+HttpCall = Callable[..., tuple[int, Mapping[str, str], Any]]
+
+
+@dataclass(frozen=True)
+class JobPolling:
+    """How long to wait for each job, and the clock and sleep that measure it.
+
+    ``poll_seconds`` is the wait between polls when the API sends no usable
+    ``Retry-After`` header.
+    """
+
+    timeout_seconds: float = 1800
+    poll_seconds: float = 10
+    sleep: Callable[[float], None] = time.sleep
+    clock: Callable[[], float] = time.monotonic
+
+
+@dataclass
+class _JobOutcome:
+    """What polling one job found: its problems, its result and whether it completed."""
+
+    problems: list[str] = field(default_factory=list)
+    result: object = None
+    completed: bool = False
+
+
+@dataclass(frozen=True)
+class _Deployment:
+    """The deployment under check: its URL, how to call it and how to poll it."""
+
+    base_url: str
+    token: str | None
+    http: HttpCall
+    polling: JobPolling
+
+    def check_case(
+        self, case: Mapping[str, Any], expected: Mapping[str, Any]
+    ) -> list[str]:
+        """Submit one case and return its identity, job and value problems."""
+        label = case["case_id"]
+        version = expected["policyengine_version"]
+        body = {**case["request"], "policyengine_version": version}
+        status, _, submitted = self.http(
+            "POST",
+            f"{self.base_url}/simulate/economy/comparison",
+            token=self.token,
+            body=body,
+        )
+        if status != HTTPStatus.OK or not isinstance(submitted, Mapping):
+            return [f"{label}: submit returned HTTP {status}: {submitted}"]
+        problems = _identity_problems(
+            label,
+            submitted.get("policyengine_bundle") or {},
+            version=version,
+            country_identity=expected[case["request"]["country"]],
+        )
+        job = self._await_job(label, submitted["job_id"])
+        problems += job.problems
+        if not isinstance(job.result, Mapping):
+            # A complete job must carry an object result; anything else
+            # (missing, null, a list or a string) compares nothing.
+            if job.completed:
+                problems.append(
+                    f"{label}: complete job returned a "
+                    f"{type(job.result).__name__} result, not an object"
+                )
+            return problems
+        return problems + _value_problems(label, case["values"], job.result)
+
+    def _await_job(self, label: str, job_id: str) -> _JobOutcome:
+        """Poll the job until it finishes, fails or runs out of time."""
+        deadline = self.polling.clock() + self.polling.timeout_seconds
+        while True:
+            status, headers, job = self.http(
+                "GET", f"{self.base_url}/jobs/{job_id}", token=self.token
+            )
+            if status == HTTPStatus.OK and isinstance(job, Mapping):
+                return _finished_job(label, job)
+            if status not in _PENDING_JOB_STATUSES:
+                return _JobOutcome([f"{label}: job returned HTTP {status}: {job}"])
+            if self.polling.clock() >= deadline:
+                return _JobOutcome(
+                    [f"{label}: no result within {self.polling.timeout_seconds:.0f}s"]
+                )
+            self.polling.sleep(_retry_after(headers, self.polling.poll_seconds))
+
+
+def _finished_job(label: str, job: Mapping[str, Any]) -> _JobOutcome:
+    """Describe a finished job; one that did not complete is a problem."""
+    completed = job.get("status") == "complete"
+    problems = [] if completed else [f"{label}: job ended {job.get('status')!r}"]
+    return _JobOutcome(problems, job.get("result"), completed)
+
+
+def _identity_problems(
+    label: str,
+    served: Mapping[str, Any],
+    *,
+    version: str,
+    country_identity: Mapping[str, Any],
+) -> list[str]:
+    """Compare the served wrapper version, country model and dataset digest."""
+    return [
+        f"{label}: served {name} {served.get(name)!r}, expected {wanted!r}"
+        for name, wanted in (
+            ("policyengine_version", version),
+            ("model_version", country_identity["model_version"]),
+            ("dataset_sha256", country_identity["dataset_sha256"]),
+        )
+        if served.get(name) != wanted
+    ]
+
+
+def _value_problems(
+    label: str, values: Mapping[str, float], result: Mapping[str, Any]
+) -> list[str]:
+    """Compare each computed value with the one the deployment served."""
+    problems = []
+    for path, wanted in values.items():
+        try:
+            actual = value_at(result, path)
+        except SentinelError as exc:
+            problems.append(f"{label}: {exc}")
+            continue
+        if not agree(wanted, actual):
+            problems.append(f"{label}: {path} served {actual!r}, computed {wanted!r}")
+    return problems
+
+
 def check_deployment(
     base_url: str,
     expected: Mapping[str, Any],
     *,
     token: str | None = None,
-    timeout_seconds: float = 1800,
-    poll_seconds: float = 10,
-    http: Callable[..., tuple[int, Mapping[str, str], Any]] | None = None,
-    sleep: Callable[[float], None] = time.sleep,
-    clock: Callable[[], float] = time.monotonic,
+    http: HttpCall | None = None,
+    polling: JobPolling | None = None,
 ) -> list[str]:
     """Submit each expected case to ``base_url`` and return what disagrees."""
     if expected.get("schema") != SCHEMA:
         msg = f"expected file schema is {expected.get('schema')!r}"
         raise SentinelError(msg)
-    http = http or _http
-    base_url = base_url.rstrip("/")
-    version = expected["policyengine_version"]
+    deployment = _Deployment(
+        base_url=base_url.rstrip("/"),
+        token=token,
+        http=http or _http,
+        polling=polling or JobPolling(),
+    )
     problems: list[str] = []
     for case in expected["cases"]:
-        label = case["case_id"]
-        body = {**case["request"], "policyengine_version": version}
-        status, _, submitted = http(
-            "POST", f"{base_url}/simulate/economy/comparison", token=token, body=body
-        )
-        if status != 200 or not isinstance(submitted, Mapping):
-            problems.append(f"{label}: submit returned HTTP {status}: {submitted}")
-            continue
-        served = submitted.get("policyengine_bundle") or {}
-        want = expected[case["request"]["country"]]
-        for field, wanted in (
-            ("policyengine_version", version),
-            ("model_version", want["model_version"]),
-            ("dataset_sha256", want["dataset_sha256"]),
-        ):
-            if served.get(field) != wanted:
-                problems.append(
-                    f"{label}: served {field} {served.get(field)!r}, "
-                    f"expected {wanted!r}"
-                )
-        deadline = clock() + timeout_seconds
-        result = None
-        completed = False
-        while True:
-            status, headers, job = http(
-                "GET", f"{base_url}/jobs/{submitted['job_id']}", token=token
-            )
-            if status == 200 and isinstance(job, Mapping):
-                if job.get("status") != "complete":
-                    problems.append(f"{label}: job ended {job.get('status')!r}")
-                else:
-                    completed = True
-                result = job.get("result")
-                break
-            if status not in (202, 429, 503):
-                problems.append(f"{label}: job returned HTTP {status}: {job}")
-                break
-            if clock() >= deadline:
-                problems.append(f"{label}: no result within {timeout_seconds:.0f}s")
-                break
-            sleep(_retry_after(headers, poll_seconds))
-        if not isinstance(result, Mapping):
-            # A complete job must carry an object result; anything else
-            # (missing, null, a list or a string) compares nothing.
-            if completed:
-                problems.append(
-                    f"{label}: complete job returned a {type(result).__name__} "
-                    "result, not an object"
-                )
-            continue
-        for path, wanted in case["values"].items():
-            try:
-                actual = value_at(result, path)
-            except SentinelError as exc:
-                problems.append(f"{label}: {exc}")
-                continue
-            if not agree(wanted, actual):
-                problems.append(
-                    f"{label}: {path} served {actual!r}, computed {wanted!r}"
-                )
+        problems += deployment.check_case(case, expected)
     return problems
 
 
@@ -358,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
         args.base_url,
         expected,
         token=access_token(),
-        timeout_seconds=args.timeout_seconds,
+        polling=JobPolling(timeout_seconds=args.timeout_seconds),
     )
     if problems:
         _report("The deployed API does not reproduce the bundle's numbers:", error=True)
