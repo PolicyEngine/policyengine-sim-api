@@ -52,25 +52,30 @@ _BASELINE_GOLDEN = "f9cac05d94509895eb48ea33ea5f72d40eb9b954989df05ca6506009d8de
 
 class TestDigests:
     def test_dataset_key_golden(self):
-        assert ak.dataset_key(**_DATASET_KWARGS) == _DATASET_GOLDEN
+        assert ak.dataset_key(ak.DatasetKeyInputs(**_DATASET_KWARGS)) == _DATASET_GOLDEN
 
     def test_none_field_is_a_distinct_identity(self):
-        digest = ak.dataset_key(**{**_DATASET_KWARGS, "source_sha256": None})
+        digest = ak.dataset_key(
+            ak.DatasetKeyInputs(**{**_DATASET_KWARGS, "source_sha256": None})
+        )
         assert digest == _DATASET_NO_SHA_GOLDEN
         assert digest != _DATASET_GOLDEN
 
     def test_baseline_key_golden(self):
-        assert ak.baseline_key(**_BASELINE_KWARGS) == _BASELINE_GOLDEN
+        assert (
+            ak.baseline_key(ak.BaselineKeyInputs(**_BASELINE_KWARGS))
+            == _BASELINE_GOLDEN
+        )
 
     @pytest.mark.parametrize("field", sorted(_DATASET_KWARGS))
     def test_every_dataset_field_perturbs_digest(self, field):
         perturbed = {**_DATASET_KWARGS, field: 2027 if field == "year" else "other"}
-        assert ak.dataset_key(**perturbed) != _DATASET_GOLDEN
+        assert ak.dataset_key(ak.DatasetKeyInputs(**perturbed)) != _DATASET_GOLDEN
 
     @pytest.mark.parametrize("field", sorted(_BASELINE_KWARGS))
     def test_every_baseline_field_perturbs_digest(self, field):
         perturbed = {**_BASELINE_KWARGS, field: "other"}
-        assert ak.baseline_key(**perturbed) != _BASELINE_GOLDEN
+        assert ak.baseline_key(ak.BaselineKeyInputs(**perturbed)) != _BASELINE_GOLDEN
 
     def test_canonical_digest_ignores_insertion_order(self):
         forward = {"a": 1, "b": {"c": 2, "d": None}}
@@ -213,8 +218,7 @@ class TestIdentityCollection:
 
         assert identity.spm == expected_selection
         assert identity.digest == ak.dataset_key(
-            **_DATASET_KWARGS,
-            spm=expected_selection,
+            ak.DatasetKeyInputs(**_DATASET_KWARGS, spm=expected_selection)
         )
         assert identity.digest != _DATASET_GOLDEN
 
