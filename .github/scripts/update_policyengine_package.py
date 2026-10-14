@@ -235,7 +235,8 @@ def bundle_versions() -> None:
             value = reference.get("sha256") or ""
         digest = str(value).strip().lower()
         if digest and not re.fullmatch(r"[0-9a-f]{64}", digest):
-            raise SystemExit(f"Bundle records a malformed {country} dataset SHA-256")
+            msg = f"Bundle records a malformed {country} dataset SHA-256"
+            raise SystemExit(msg)
         return digest
 
     def certificate_sha256(country: str) -> str:
@@ -305,10 +306,11 @@ def verify_dispatch() -> None:
     if payload.get("version") and payload["version"] != installed.get(
         "policyengine_version"
     ):
-        raise SystemExit(
+        msg = (
             f"Dispatch is for policyengine {payload['version']}, but "
             f"{installed.get('policyengine_version')} is installed."
         )
+        raise SystemExit(msg)
     expected = _mapping(_mapping(payload.get("bundle")).get("uk"))
     mismatches = []
     compared = 0
@@ -339,17 +341,18 @@ def verify_dispatch() -> None:
     verdict = qualification.get("verdict") or ""
     receipt_sha256 = qualification.get("receipt_sha256") or ""
     if not isinstance(verdict, str) or not re.fullmatch(r"[a-z_]*", verdict):
-        raise SystemExit("The release dispatch carries a malformed verdict")
+        msg = "The release dispatch carries a malformed verdict"
+        raise SystemExit(msg)
     if not isinstance(receipt_sha256, str) or not re.fullmatch(
         r"(?:[0-9a-f]{64})?", receipt_sha256
     ):
-        raise SystemExit("The release dispatch carries a malformed receipt digest")
+        msg = "The release dispatch carries a malformed receipt digest"
+        raise SystemExit(msg)
     if qualification.get("promotable") is False or (
         verdict and verdict not in PROMOTABLE_VERDICTS
     ):
-        raise SystemExit(
-            f"The release dispatch says the UK pair was not promotable ({verdict})"
-        )
+        msg = f"The release dispatch says the UK pair was not promotable ({verdict})"
+        raise SystemExit(msg)
     print(f"dispatch_verified={'true' if compared else 'false'}")
     print(f"uk_qualification_verdict={verdict}")
     print(f"uk_qualification_receipt_sha256={receipt_sha256}")

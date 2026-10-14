@@ -94,12 +94,15 @@ def value_at(result: Mapping[str, Any], path: str) -> float:
     node: Any = result
     for key in path.split("."):
         if not isinstance(node, Mapping) or key not in node:
-            raise SentinelError(f"the result has no {path}")
+            msg = f"the result has no {path}"
+            raise SentinelError(msg)
         node = node[key]
     if isinstance(node, bool) or not isinstance(node, (int, float)):
-        raise SentinelError(f"{path} is {node!r}, not a number")
+        msg = f"{path} is {node!r}, not a number"
+        raise SentinelError(msg)
     if not math.isfinite(node):
-        raise SentinelError(f"{path} is {node}, not a finite number")
+        msg = f"{path} is {node}, not a finite number"
+        raise SentinelError(msg)
     return float(node)
 
 
@@ -148,7 +151,8 @@ def compute_expected(
     runner = runner or _local_runner()
     identity = dict(identity or _bundle_identity())
     if not identity["uk"].get("dataset_sha256"):
-        raise SentinelError("the installed bundle records no UK dataset SHA-256")
+        msg = "the installed bundle records no UK dataset SHA-256"
+        raise SentinelError(msg)
     recorded = []
     for case in cases:
         started = time.monotonic()
@@ -203,11 +207,13 @@ def access_token(environ: Mapping[str, str] = os.environ) -> str | None:
     present = [name for name in _AUTH_VARS if environ.get(name)]
     if not present:
         if _truthy(environ.get("SIMULATION_TEST_AUTH_REQUIRED")):
-            raise SentinelError("SIMULATION_TEST_AUTH_REQUIRED is set but no auth vars")
+            msg = "SIMULATION_TEST_AUTH_REQUIRED is set but no auth vars"
+            raise SentinelError(msg)
         return None
     if len(present) != len(_AUTH_VARS):
         missing = sorted(set(_AUTH_VARS) - set(present))
-        raise SentinelError(f"partial auth configuration; missing {missing}")
+        msg = f"partial auth configuration; missing {missing}"
+        raise SentinelError(msg)
     status, _, payload = _http(
         "POST",
         environ["SIMULATION_TEST_AUTH_ISSUER"].rstrip("/") + "/oauth/token",
@@ -220,7 +226,8 @@ def access_token(environ: Mapping[str, str] = os.environ) -> str | None:
     )
     token = payload.get("access_token") if isinstance(payload, Mapping) else None
     if status != 200 or not token:
-        raise SentinelError(f"token request failed with HTTP {status}")
+        msg = f"token request failed with HTTP {status}"
+        raise SentinelError(msg)
     return str(token)
 
 
@@ -247,7 +254,8 @@ def check_deployment(
 ) -> list[str]:
     """Submit each expected case to ``base_url`` and return what disagrees."""
     if expected.get("schema") != SCHEMA:
-        raise SentinelError(f"expected file schema is {expected.get('schema')!r}")
+        msg = f"expected file schema is {expected.get('schema')!r}"
+        raise SentinelError(msg)
     http = http or _http
     base_url = base_url.rstrip("/")
     version = expected["policyengine_version"]

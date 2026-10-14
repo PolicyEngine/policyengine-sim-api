@@ -355,22 +355,25 @@ def build_restored_routing_state(
     state = _coerce_routing_state(current_state)
     current_latest = state["latest"].get("policyengine")
     if expected_latest is not None and current_latest != expected_latest:
-        raise ValueError(
+        msg = (
             f"latest.policyengine is {current_latest!r}, not {expected_latest!r}; "
             "another release changed routing, so this rollback was not applied"
         )
+        raise ValueError(msg)
     app_name = state["routes"]["policyengine"].get(policyengine_version)
     manifest = state["bundles"].get(policyengine_version)
     if not app_name or not isinstance(manifest, dict):
-        raise ValueError(
+        msg = (
             f"policyengine {policyengine_version!r} has no published route and "
             "bundle manifest to restore"
         )
+        raise ValueError(msg)
     if manifest.get("app_name") != app_name:
-        raise ValueError(
+        msg = (
             f"policyengine {policyengine_version!r}'s manifest names app "
             f"{manifest.get('app_name')!r}, but its route is {app_name!r}"
         )
+        raise ValueError(msg)
     restored_models = {
         country: manifest[country]["model_version"] for country in ("us", "uk")
     }
@@ -463,12 +466,15 @@ def plan_routing_publication(
 def validate_routing_plan(plan: object) -> dict:
     """Return a plan whose digests match its states, or raise ``ValueError``."""
     if not isinstance(plan, dict) or plan.get("schema") != ROUTING_PLAN_SCHEMA:
-        raise ValueError(f"not a {ROUTING_PLAN_SCHEMA} routing plan")
+        msg = f"not a {ROUTING_PLAN_SCHEMA} routing plan"
+        raise ValueError(msg)
     for side in ("before", "after"):
         if routing_state_digest(plan.get(side)) != plan.get(f"{side}_sha256"):
-            raise ValueError(f"the plan's {side} state does not match its digest")
+            msg = f"the plan's {side} state does not match its digest"
+            raise ValueError(msg)
     if not isinstance(plan["after"], dict):
-        raise ValueError("the plan publishes no routing state")  # noqa: TRY004
+        msg = "the plan publishes no routing state"
+        raise ValueError(msg)  # noqa: TRY004
     return plan
 
 
@@ -524,13 +530,14 @@ def _require_serialized_routing_workflow() -> None:
     ):
         return
     workflows = ", ".join(sorted(SERIALIZED_ROUTING_WORKFLOW_FILES))
-    raise RuntimeError(
+    msg = (
         "Routing writes require GitHub Actions in "
         f"{CANONICAL_GITHUB_REPOSITORY} through {workflows}. "
         "Use those workflows, whose simulation-deploy-main concurrency group "
         "serializes routing writes. Read-only, --dry-run and --plan-out modes are available "
         "locally."
     )
+    raise RuntimeError(msg)
 
 
 def _unfinished_publication(store: "modal.Dict | None") -> dict | None:
@@ -542,9 +549,8 @@ def _unfinished_publication(store: "modal.Dict | None") -> dict | None:
         "completed",
         "restored",
     }:
-        raise RoutingConflict(
-            "invalid routing publication record; refusing routing writes"
-        )
+        msg = "invalid routing publication record; refusing routing writes"
+        raise RoutingConflict(msg)
     validate_routing_plan(record.get("plan"))
     return record["plan"] if record["status"] == "pending" else None
 
@@ -554,19 +560,21 @@ def _require_finished_publication(
 ) -> None:
     pending = _unfinished_publication(store)
     if pending is not None and not any(pending == plan for plan in allowed_plans):
-        raise RoutingConflict(
+        msg = (
             f"Unfinished routing publication {pending['publication_id']}: "
             "refusing new routing writes. Inspect --print-pending-plan and restore "
             "the recorded plan through simulation-rollback with target and "
             "resolve_pending_publication=true before deploying again."
         )
+        raise RoutingConflict(msg)
 
 
 def _write_publication_record(store: "modal.Dict", *, plan: dict, status: str) -> None:
     record = {"status": status, "plan": _json_copy(plan)}
     store[ROUTING_PUBLICATION_KEY] = record
     if store.get(ROUTING_PUBLICATION_KEY) != record:
-        raise RoutingConflict("the routing publication record reads back differently")
+        msg = "the routing publication record reads back differently"
+        raise RoutingConflict(msg)
 
 
 def record_routing_plan(*, environment: str, plan: dict) -> None:
@@ -584,7 +592,8 @@ def record_routing_plan(*, environment: str, plan: dict) -> None:
         routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
         != plan["before_sha256"]
     ):
-        raise RoutingConflict("the routing state changed before recording the plan")
+        msg = "the routing state changed before recording the plan"
+        raise RoutingConflict(msg)
     _write_publication_record(store, plan=plan, status="pending")
 
 
@@ -594,12 +603,14 @@ def complete_routing_plan(*, environment: str, plan: dict) -> None:
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=False)
     if _unfinished_publication(store) != plan:
-        raise RoutingConflict("no matching unfinished routing publication to complete")
+        msg = "no matching unfinished routing publication to complete"
+        raise RoutingConflict(msg)
     if (
         routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
         != plan["after_sha256"]
     ):
-        raise RoutingConflict("the completed release's routing state is not live")
+        msg = "the completed release's routing state is not live"
+        raise RoutingConflict(msg)
     _write_publication_record(store, plan=plan, status="completed")
 
 
@@ -611,14 +622,16 @@ def apply_routing_plan(*, environment: str, plan: dict) -> None:
     _require_finished_publication(store, allowed_plans=[plan])
     current = store.get(ROUTING_STATE_ACTIVE_KEY)
     if routing_state_digest(current) != plan["before_sha256"]:
-        raise RoutingConflict(
+        msg = (
             "the routing state changed after this release was planned; "
             "nothing was published"
         )
+        raise RoutingConflict(msg)
     store[ROUTING_STATE_ACTIVE_KEY] = plan["after"]
     written = store.get(ROUTING_STATE_ACTIVE_KEY)
     if routing_state_digest(written) != plan["after_sha256"]:
-        raise RoutingConflict("the published routing state reads back differently")
+        msg = "the published routing state reads back differently"
+        raise RoutingConflict(msg)
 
 
 def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
@@ -634,14 +647,16 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
     for plan in plans:
         validate_routing_plan(plan)
     if not plans:
-        raise ValueError("no routing plan to restore")
+        msg = "no routing plan to restore"
+        raise ValueError(msg)
     store = _routing_store(environment, create_if_missing=False)
     _require_finished_publication(store, allowed_plans=plans)
     pending = _unfinished_publication(store)
     if store is None:
         if all(plan["before"] is None for plan in plans):
             return "unchanged"
-        raise RoutingConflict("there is no routing state to restore into")
+        msg = "there is no routing state to restore into"
+        raise RoutingConflict(msg)
     remaining = [
         plan for plan in plans if plan["before_sha256"] != plan["after_sha256"]
     ]
@@ -661,15 +676,17 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
             routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
             != plan["before_sha256"]
         ):
-            raise RoutingConflict("the restored routing state reads back differently")
+            msg = "the restored routing state reads back differently"
+            raise RoutingConflict(msg)
         outcome = "restored"
     if outcome == "unchanged" and not any(
         plan["before_sha256"] == digest for plan in plans
     ):
-        raise RoutingConflict(
+        msg = (
             "the routing state is neither what this release replaced nor what "
             "it published; another change was made, so nothing was restored"
         )
+        raise RoutingConflict(msg)
     if pending is not None:
         _write_publication_record(store, plan=pending, status="restored")
     return outcome
@@ -716,9 +733,11 @@ def finalize_routing_publication(
     """
     _require_serialized_routing_workflow()
     if release_environment not in {"beta", "prod"}:
-        raise ValueError("release_environment must be beta or prod")
+        msg = "release_environment must be beta or prod"
+        raise ValueError(msg)
     if publication_run is None and gates_passed:
-        raise ValueError("operator recovery requires gates_passed=false")
+        msg = "operator recovery requires gates_passed=false"
+        raise ValueError(msg)
     store = _routing_store(environment, create_if_missing=False)
     pending = _unfinished_publication(store)
     if pending is None:
