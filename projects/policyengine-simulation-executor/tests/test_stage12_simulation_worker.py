@@ -9,6 +9,7 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationRole,
 )
 from policyengine_simulation_executor.stage12_runtime import (
+    SimulationWorkerDependencies,
     run_single_simulation,
 )
 from policyengine_simulation_executor.stage12_runtime import (
@@ -46,7 +47,7 @@ def _run(store, artifacts, *, calculator=None, runtime=None):
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        **seams,
+        dependencies=SimulationWorkerDependencies(**seams),
     )
 
 

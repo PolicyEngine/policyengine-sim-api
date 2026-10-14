@@ -12,6 +12,7 @@ from .coordination import (
 )
 from .simulation import (
     SimulationCalculation,
+    SimulationWorkerDependencies,
     calculate_simulation_frames,
     run_single_simulation,
     simulation_input_sha256,
@@ -26,6 +27,7 @@ __all__ = [
     "CoordinatorInvocation",
     "RetainedSimulationOutput",
     "SimulationCalculation",
+    "SimulationWorkerDependencies",
     "build_aggregate_report",
     "calculate_simulation_frames",
     "coordinate_report",

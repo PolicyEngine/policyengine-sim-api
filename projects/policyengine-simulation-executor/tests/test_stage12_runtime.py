@@ -78,6 +78,7 @@ from policyengine_simulation_executor.stage12_runtime import (
     CoordinatorInvocation,
     RetainedSimulationOutput,
     SimulationCalculation,
+    SimulationWorkerDependencies,
     _build_spm_result,
     build_aggregate_report,
     database_retry,
@@ -683,9 +684,11 @@ def test_single_worker_accepts_one_policy_and_persists_one_artifact() -> None:
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        store=store,
-        artifacts=artifacts,
-        calculator=lambda _: _frames(),
+        dependencies=SimulationWorkerDependencies(
+            store=store,
+            artifacts=artifacts,
+            calculator=lambda _: _frames(),
+        ),
     )
 
     assert result["role"] == "baseline"
@@ -708,11 +711,13 @@ def test_single_worker_retains_detached_calculation_provenance() -> None:
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        store=store,
-        artifacts=artifacts,
-        calculator=lambda _: SimulationCalculation(
-            frames=_frames(),
-            calculation_provenance=provenance,
+        dependencies=SimulationWorkerDependencies(
+            store=store,
+            artifacts=artifacts,
+            calculator=lambda _: SimulationCalculation(
+                frames=_frames(),
+                calculation_provenance=provenance,
+            ),
         ),
     )
 
@@ -738,9 +743,11 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+            ),
         )
 
     assert "country package calculation failed" not in str(error.value)
@@ -768,10 +775,12 @@ def test_single_worker_persists_and_records_a_redacted_cause() -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
-            runtime=runtime,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+                runtime=runtime,
+            ),
         )
 
     child = store.children[simulation.simulation_execution_id]
@@ -799,9 +808,11 @@ def test_single_worker_names_the_failing_artifact_write_stage() -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FailingSimulationArtifacts(),
-            calculator=lambda _: _frames(),
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FailingSimulationArtifacts(),
+                calculator=lambda _: _frames(),
+            ),
         )
 
     assert store.children[simulation.simulation_execution_id].error_summary == (
@@ -848,9 +859,11 @@ def test_single_worker_builds_its_store_with_the_worker_runtime(monkeypatch) -> 
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        artifacts=FakeArtifacts(),
-        calculator=lambda _: _frames(),
-        runtime=runtime,
+        dependencies=SimulationWorkerDependencies(
+            artifacts=FakeArtifacts(),
+            calculator=lambda _: _frames(),
+            runtime=runtime,
+        ),
     )
 
     # The runtime store reports each connection retry through this runtime.
@@ -880,10 +893,12 @@ def test_single_worker_reports_failure_before_an_unwritable_failure_record() -> 
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
-            runtime=TelemetryRecordingRuntime(ordered_events),
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+                runtime=TelemetryRecordingRuntime(ordered_events),
+            ),
         )
 
     original_report, failure_write, persistence_report = ordered_events
@@ -920,9 +935,11 @@ def test_single_worker_rejects_frames_that_do_not_satisfy_the_output_plan() -> N
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=lambda _: frames,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=lambda _: frames,
+            ),
         )
 
     assert store.children[simulation.simulation_execution_id].status is (
@@ -1266,9 +1283,11 @@ def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:
             payload,
             _context().model_dump(mode="json"),
             required_country="us",
-            store=FakeStore(),
-            artifacts=FakeArtifacts(),
-            calculator=lambda _: _frames(),
+            dependencies=SimulationWorkerDependencies(
+                store=FakeStore(),
+                artifacts=FakeArtifacts(),
+                calculator=lambda _: _frames(),
+            ),
         )
 
 

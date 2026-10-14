@@ -207,6 +207,7 @@ def run_single_simulation_us(
 ) -> dict:
     """Calculate one planned US simulation and return its artifact descriptor."""
     from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        SimulationWorkerDependencies,
         run_single_simulation,
     )
 
@@ -230,7 +231,7 @@ def run_single_simulation_us(
                 payload,
                 context,
                 required_country="us",
-                runtime=runtime,
+                dependencies=SimulationWorkerDependencies(runtime=runtime),
             )
     finally:
         runtime.shutdown()
@@ -253,6 +254,7 @@ def run_single_simulation_uk(
 ) -> dict:
     """Calculate one planned UK simulation and return its artifact descriptor."""
     from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        SimulationWorkerDependencies,
         run_single_simulation,
     )
 
@@ -276,7 +278,7 @@ def run_single_simulation_uk(
                 payload,
                 context,
                 required_country="uk",
-                runtime=runtime,
+                dependencies=SimulationWorkerDependencies(runtime=runtime),
             )
     finally:
         runtime.shutdown()

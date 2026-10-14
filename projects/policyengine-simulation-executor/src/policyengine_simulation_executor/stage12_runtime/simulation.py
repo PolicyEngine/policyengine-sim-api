@@ -283,18 +283,29 @@ def descriptor_from_record(
     )
 
 
+@dataclass(frozen=True)
+class SimulationWorkerDependencies:
+    """Seams the single-simulation worker uses; unset seams use the defaults.
+
+    The defaults are the Stage 12 database store, the private artifact bucket,
+    the standard country-package calculation and no telemetry runtime.
+    """
+
+    store: ComparisonStore | None = None
+    artifacts: Stage12ArtifactStore | None = None
+    calculator: Callable[
+        [PlannedSimulationExecutionInput],
+        Mapping[str, pd.DataFrame] | SimulationCalculation,
+    ] = calculate_simulation_frames
+    runtime: ObservabilityRuntime | None = None
+
+
 def run_single_simulation(
     payload: object,
     context_payload: object,
     *,
     required_country: CountryId,
-    store: ComparisonStore | None = None,
-    artifacts: Stage12ArtifactStore | None = None,
-    calculator: Callable[
-        [PlannedSimulationExecutionInput],
-        Mapping[str, pd.DataFrame] | SimulationCalculation,
-    ] = calculate_simulation_frames,
-    runtime: ObservabilityRuntime | None = None,
+    dependencies: SimulationWorkerDependencies | None = None,
 ) -> dict[str, Any]:
     """Calculate one planned simulation, store its artifact, and return its descriptor.
 
@@ -302,11 +313,14 @@ def run_single_simulation(
     recalculating. A failure after the run is marked running marks it FAILED
     and raises a ``RuntimeError`` that carries no calculation detail.
     """
+    dependencies = dependencies or SimulationWorkerDependencies()
+    calculator = dependencies.calculator
+    runtime = dependencies.runtime
     simulation = PlannedSimulationExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
     _require_context(simulation, context, required_country=required_country)
-    persistence = store or runtime_store(runtime)
-    artifact_storage = artifacts or artifact_store()
+    persistence = dependencies.store or runtime_store(runtime)
+    artifact_storage = dependencies.artifacts or artifact_store()
     child = persistence.get_simulation(simulation.simulation_execution_id)
     if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
         return descriptor_from_record(child, simulation).model_dump(mode="json")
