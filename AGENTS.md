@@ -18,6 +18,9 @@ Before changing correlation identifiers, telemetry transport, spans, stage
 names, logging, or observability failure handling, read
 `docs/engineering/skills/observability.md`.
 
+When adding or changing a GitHub Actions workflow step or a script under
+`.github/scripts/`, read `docs/engineering/skills/ci-workflows.md`.
+
 When adding, changing, or removing a rule, a guard test, a checker
 configuration, or a CI job that enforces one, read
 `docs/engineering/skills/rules-registry.md`.
@@ -66,6 +69,13 @@ same-repository draft PR.
 - PR CI runs simulation unit tests, Ruff format checks, quality guards
   (including the rules registry), Docker build, and local integration tests.
 - There is currently no repository-wide changelog fragment requirement.
+
+## Safety Boundaries
+
+Do not commit directly to `main`.
+
+Do not make production deployment changes or publish clients unless the user
+explicitly asks for that operation.
 
 ## Rules
 
@@ -132,12 +142,20 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 - `sim.quality.ruff-lint`: Python code passes ruff check with the rules selected in ruff.toml (ruff's defaults, made explicit); CI does not run ruff check yet. (advisory: ruff check (E4, E7, E9, F), not blocking)
 - `sim.quality.tests-pass`: Each project's unit tests pass in its own locked environment. (blocking: CI job `test`)
 
+### CI workflows and scripts
+
+- `sim.ci.multiline-run-is-script`: A GitHub Actions run: block holds one line of code and no chained commands (&&, ||, ;); anything more lives in a tested script under .github/scripts/, called from a single-line step. (blocking: quality guard `ci-scripts`)
+- `sim.ci.shell-scripts-pass-shellcheck`: Every shell script under .github/scripts/ passes shellcheck. (blocking: quality guard `ci-scripts`)
+- `sim.ci.workflow-scripts-tested`: Every shell script a workflow calls is run by at least one test. (blocking: quality guard `ci-scripts`)
+
 ### Process and repository hygiene
 
+- `sim.agents.adapters-point-to-agents-md`: CLAUDE.md and .github/copilot-instructions.md only point to AGENTS.md; skills and rules are listed in AGENTS.md alone. (blocking: quality guard `rules-registry`)
 - `sim.process.agents-never-bypass`: Agents never bypass branch rules, even with admin credentials: no gh pr merge --admin and no bypass option; a blocked merge is reported to a human. (doc-only, not checked: follow it yourself)
+- `sim.process.pr-tracking-issue`: Every PR has a tracking issue in this repository, and the first line of its description is Fixes #ISSUE_NUMBER. (doc-only, not checked: follow it yourself)
 - `sim.process.rule-machinery-code-owned`: Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author. (doc-only, not checked: follow it yourself)
 - `sim.process.rules-registry`: Every rule is registered in rules/registry.toml, is enforced where it claims to be, and its rendered views are current. (blocking: quality guard `rules-registry`)
-- `sim.process.same-repo-draft-prs`: PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks, and start with 'Fixes #<issue>'. (doc-only, not checked: follow it yourself)
+- `sim.process.same-repo-draft-prs`: PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks. (doc-only, not checked: follow it yourself)
 - `sim.process.stacked-prs-full-ci-at-bottom`: In a stack of pull requests, only the lowest unmerged one runs the full PR workflow and the Modal image smoke. Every pr.yml job is needed by the CI complete gate, which fails on the pull requests above it and otherwise passes only when every job passed, so a stack merges bottom-up and nothing merges untested. (blocking: pytest `projects/policyengine-simulation-executor/tests/test_ci_complete_gate.py`)
 
 <!-- END GENERATED: rules -->

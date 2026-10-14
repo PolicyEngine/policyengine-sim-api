@@ -1,0 +1,33 @@
+# Tolerated existing violations. This list may only shrink.
+.github/workflows/pr-image-smoke.yml :: image-smoke :: Run image smokes
+.github/workflows/pr.yml :: lint :: Run ruff format check
+.github/workflows/pr.yml :: test :: Install dependencies
+.github/workflows/pr.yml :: test :: Run tests
+.github/workflows/pr.yml :: test-integration :: Run integration tests (local services only)
+.github/workflows/pr.yml :: test-integration :: Start services
+.github/workflows/publish-clients.yml :: publish :: Build simulation API client from the entrypoint contract
+.github/workflows/simulation-deploy.reusable.yml :: deploy_entrypoint :: Build and push entrypoint image
+.github/workflows/simulation-deploy.reusable.yml :: deploy_entrypoint :: Capture stable service state before deployment
+.github/workflows/simulation-deploy.reusable.yml :: deploy_entrypoint :: Resolve exact candidate metadata
+.github/workflows/simulation-deploy.reusable.yml :: deploy_executor :: Select versioned executor app
+.github/workflows/simulation-deploy.reusable.yml :: deploy_stage12_v2 :: Select the bundle-derived v2 application name
+.github/workflows/simulation-deploy.reusable.yml :: deploy_stage12_v2 :: Validate installed bundles, secrets, datasets, and calculations
+.github/workflows/simulation-deploy.reusable.yml :: deploy_stage12_v2 :: Validate the packaged PolicyEngine.py bundle
+.github/workflows/simulation-deploy.reusable.yml :: deployment_ready :: Check deployment result
+.github/workflows/simulation-deploy.reusable.yml :: finalize_routing :: Finalize the routing publication
+.github/workflows/simulation-deploy.reusable.yml :: integration :: Check the deployed stack reproduces the sentinel numbers
+.github/workflows/simulation-deploy.reusable.yml :: prepare :: Synchronize the Modal UK private-data credential
+.github/workflows/simulation-deploy.reusable.yml :: promote_entrypoint :: Verify the stable service reproduces the sentinel numbers
+.github/workflows/simulation-deploy.reusable.yml :: publish_stage12_v2_manifest :: Publish only the separate v2 manifest
+.github/workflows/simulation-deploy.reusable.yml :: sentinel_expected :: Check the sentinel names this deployment's bundle
+.github/workflows/simulation-deploy.reusable.yml :: stage12_v2_ready :: Check Stage 12 deployment result
+.github/workflows/simulation-deploy.reusable.yml :: update_routing :: Plan the routing change
+.github/workflows/simulation-deploy.reusable.yml :: update_routing :: Publish the planned routing
+.github/workflows/simulation-deploy.reusable.yml :: update_routing :: Record the unfinished routing publication
+.github/workflows/simulation-deploy.yml :: summary :: Report promotion status
+.github/workflows/simulation-rollback.yml :: rollback :: Read the restored release identity
+.github/workflows/simulation-rollback.yml :: rollback :: Resolve the stable service
+.github/workflows/simulation-rollback.yml :: rollback :: Resolve the unfinished routing publication
+.github/workflows/simulation-rollback.yml :: rollback :: Restore Modal routing
+.github/workflows/simulation-rollback.yml :: rollback :: Restore entrypoint traffic
+.github/workflows/simulation-rollback.yml :: rollback :: Verify the stable service serves the restored release

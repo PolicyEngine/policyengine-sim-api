@@ -11,12 +11,16 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.rules import ci_scripts  # noqa: E402
 from scripts.rules import guard as rules_guard  # noqa: E402
 
 
 Guard = tuple[str, Callable[[], list[str]]]
 
-GUARDS: tuple[Guard, ...] = (("rules-registry", rules_guard.check),)
+GUARDS: tuple[Guard, ...] = (
+    ("rules-registry", rules_guard.check),
+    ("ci-scripts", ci_scripts.check),
+)
 
 
 def main() -> int:
