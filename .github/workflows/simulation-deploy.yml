@@ -82,9 +82,4 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Report promotion status
-        run: |
-          .github/scripts/simulation-deployment-summary.sh \
-            "${{ needs.beta.result }}" \
-            "${{ needs.beta.outputs.simulation_api_url }}" \
-            "${{ needs.prod.result }}" \
-            "${{ needs.prod.outputs.stable_url }}"
+        run: .github/scripts/simulation-deployment-summary.sh "${{ needs.beta.result }}" "${{ needs.beta.outputs.simulation_api_url }}" "${{ needs.prod.result }}" "${{ needs.prod.outputs.stable_url }}"
