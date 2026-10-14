@@ -42,6 +42,19 @@ def _output(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
+def test_every_job_checks_out_the_repository_before_running_its_scripts():
+    import yaml
+
+    jobs = yaml.safe_load(REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    for job_name, job in jobs.items():
+        checked_out = False
+        for step in job.get("steps", []):
+            if str(step.get("uses", "")).startswith("actions/checkout@"):
+                checked_out = True
+            if ".github/scripts/" in step.get("run", ""):
+                assert checked_out, f"{job_name}: {step.get('name')}"
+
+
 # --- deploy_entrypoint: Cloud Run state -----------------------------------
 
 STABLE_STATE = "cloud-run-simulation-entry-stable-state.sh"

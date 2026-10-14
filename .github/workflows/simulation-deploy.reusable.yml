@@ -682,6 +682,8 @@ jobs:
       [configure_stage12_v2, deploy_stage12_v2, publish_stage12_v2_manifest]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+
       - name: Check Stage 12 deployment result
         env:
           REQUESTED: ${{ inputs.deploy_stage12_v2 }}
@@ -1006,6 +1008,8 @@ jobs:
         shell: bash
     environment: ${{ inputs.release_environment }}
     steps:
+      - uses: actions/checkout@v6
+
       - name: Check deployment result
         env:
           PROMOTION_REQUESTED: ${{ inputs.promote_entrypoint }}
