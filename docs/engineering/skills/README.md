@@ -9,6 +9,8 @@ first, then keep adapters thin.
 
 Current skills:
 
+- `ci-workflows.md`: one line of code per workflow `run:` block, tested
+  workflow scripts, and shellcheck.
 - `github-prs.md`: same-repository draft PR workflow, issue linkage, PR head
   verification, and title conventions.
 - `testing.md`: test placement, dependency boundaries, and expected validation

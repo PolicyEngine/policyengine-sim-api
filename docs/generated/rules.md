@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 28 | 0 | 1 | 13 | 42 |
+| mechanical | 29 | 3 | 1 | 14 | 47 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 28 of 42 rules.
+**Blocking:** 32 of 47 rules.
 
 ## Gaps
 
@@ -27,8 +27,9 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.observability.id-is-diagnostic-only`: observability_id has diagnostic meaning only: never use it for idempotency, authorization, database identity, routing or business logic.
 - `sim.observability.registered-stages-only`: Span names come from the stage plans in policyengine_simulation_observability.stages; runtime code never adds span-name string literals.
 - `sim.process.agents-never-bypass`: Agents never bypass branch rules, even with admin credentials: no gh pr merge --admin and no bypass option; a blocked merge is reported to a human.
+- `sim.process.pr-tracking-issue`: Every PR has a tracking issue in this repository, and the first line of its description is Fixes #ISSUE_NUMBER.
 - `sim.process.rule-machinery-code-owned`: Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author.
-- `sim.process.same-repo-draft-prs`: PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks, and start with 'Fixes #<issue>'.
+- `sim.process.same-repo-draft-prs`: PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks.
 - `sim.quality.every-project-tested`: Every project and library with unit tests runs them in the PR test matrix.
 - `sim.quality.ruff-format-tests`: Test code is formatted with ruff format too; CI currently checks only src directories.
 
@@ -62,7 +63,9 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 ### Ratcheted (existing violations still tolerated)
 
-- None.
+- `sim.ci.multiline-run-is-script`: 32 remaining in `rules/baselines/ci-multiline-run.txt`
+- `sim.ci.shell-scripts-pass-shellcheck`: 1 remaining in `rules/baselines/ci-shellcheck.txt`
+- `sim.ci.workflow-scripts-tested`: 4 remaining in `rules/baselines/ci-untested-scripts.txt`
 
 ### Exceptions and review dates
 
@@ -271,33 +274,60 @@ flowchart LR
   e_CI_job_test --> j_CI_pr_yml_test
 ```
 
+## CI workflows and scripts
+
+| Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sim.ci.multiline-run-is-script` | A GitHub Actions run: block holds one line of code and no chained commands (&&, \|\|, ;); anything more lives in a tested script under .github/scripts/, called from a single-line step. | mechanical | ratcheted | yes | quality guard `ci-scripts` | `pr.yml:quality-guards` | yes |
+| `sim.ci.shell-scripts-pass-shellcheck` | Every shell script under .github/scripts/ passes shellcheck. | mechanical | ratcheted | yes | quality guard `ci-scripts` | `pr.yml:quality-guards` | yes |
+| `sim.ci.workflow-scripts-tested` | Every shell script a workflow calls is run by at least one test. | mechanical | ratcheted | yes | quality guard `ci-scripts` | `pr.yml:quality-guards` | yes |
+
+```mermaid
+flowchart LR
+  r_sim_ci_multiline_run_is_script("sim.ci.multiline-run-is-script (ratcheted)")
+  e_quality_guard_ci_scripts["quality guard ci-scripts"]
+  j_CI_pr_yml_quality_guards["CI pr.yml:quality-guards"]
+  r_sim_ci_shell_scripts_pass_shellcheck("sim.ci.shell-scripts-pass-shellcheck (ratcheted)")
+  r_sim_ci_workflow_scripts_tested("sim.ci.workflow-scripts-tested (ratcheted)")
+  r_sim_ci_multiline_run_is_script --> e_quality_guard_ci_scripts
+  e_quality_guard_ci_scripts --> j_CI_pr_yml_quality_guards
+  r_sim_ci_shell_scripts_pass_shellcheck --> e_quality_guard_ci_scripts
+  r_sim_ci_workflow_scripts_tested --> e_quality_guard_ci_scripts
+```
+
 ## Process and repository hygiene
 
 | Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `sim.agents.adapters-point-to-agents-md` | CLAUDE.md and .github/copilot-instructions.md only point to AGENTS.md; skills and rules are listed in AGENTS.md alone. | mechanical | enforced | yes | quality guard `rules-registry` | `pr.yml:quality-guards` | yes |
 | `sim.process.agents-never-bypass` | Agents never bypass branch rules, even with admin credentials: no gh pr merge --admin and no bypass option; a blocked merge is reported to a human. | mechanical | doc-only | no | nothing | — | — |
+| `sim.process.pr-tracking-issue` | Every PR has a tracking issue in this repository, and the first line of its description is Fixes #ISSUE_NUMBER. | mechanical | doc-only | no | nothing | — | — |
 | `sim.process.rule-machinery-code-owned` | Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author. | mechanical | doc-only | no | nothing | — | — |
 | `sim.process.rules-registry` | Every rule is registered in rules/registry.toml, is enforced where it claims to be, and its rendered views are current. | mechanical | enforced | yes | quality guard `rules-registry` | `pr.yml:quality-guards` | **unproven** |
-| `sim.process.same-repo-draft-prs` | PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks, and start with 'Fixes #<issue>'. | mechanical | doc-only | no | nothing | — | — |
+| `sim.process.same-repo-draft-prs` | PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks. | mechanical | doc-only | no | nothing | — | — |
 | `sim.process.stacked-prs-full-ci-at-bottom` | In a stack of pull requests, only the lowest unmerged one runs the full PR workflow and the Modal image smoke. Every pr.yml job is needed by the CI complete gate, which fails on the pull requests above it and otherwise passes only when every job passed, so a stack merges bottom-up and nothing merges untested. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-executor/tests/test_ci_complete_gate.py` | `pr.yml:test`, `pr.yml:ci-complete` | yes |
 
 ```mermaid
 flowchart LR
-  r_sim_process_agents_never_bypass("sim.process.agents-never-bypass (doc-only)")
-  gap_unenforced>"not enforced"]
-  r_sim_process_rule_machinery_code_owned("sim.process.rule-machinery-code-owned (doc-only)")
-  r_sim_process_rules_registry("sim.process.rules-registry (enforced)")
+  r_sim_agents_adapters_point_to_agents_md("sim.agents.adapters-point-to-agents-md (enforced)")
   e_quality_guard_rules_registry["quality guard rules-registry"]
   j_CI_pr_yml_quality_guards["CI pr.yml:quality-guards"]
+  r_sim_process_agents_never_bypass("sim.process.agents-never-bypass (doc-only)")
+  gap_unenforced>"not enforced"]
+  r_sim_process_pr_tracking_issue("sim.process.pr-tracking-issue (doc-only)")
+  r_sim_process_rule_machinery_code_owned("sim.process.rule-machinery-code-owned (doc-only)")
+  r_sim_process_rules_registry("sim.process.rules-registry (enforced)")
   r_sim_process_same_repo_draft_prs("sim.process.same-repo-draft-prs (doc-only)")
   r_sim_process_stacked_prs_full_ci_at_bottom("sim.process.stacked-prs-full-ci-at-bottom (enforced)")
   e_pytest_projects_policyengine_simulation_executor_tests_test_ci_complete_gate_py["pytest projects/policyengine-simulation-executor/tests/test_ci_complete_gate.py"]
   j_CI_pr_yml_test["CI pr.yml:test"]
   j_CI_pr_yml_ci_complete["CI pr.yml:ci-complete"]
+  r_sim_agents_adapters_point_to_agents_md --> e_quality_guard_rules_registry
+  e_quality_guard_rules_registry --> j_CI_pr_yml_quality_guards
   r_sim_process_agents_never_bypass -.-> gap_unenforced
+  r_sim_process_pr_tracking_issue -.-> gap_unenforced
   r_sim_process_rule_machinery_code_owned -.-> gap_unenforced
   r_sim_process_rules_registry --> e_quality_guard_rules_registry
-  e_quality_guard_rules_registry --> j_CI_pr_yml_quality_guards
   r_sim_process_same_repo_draft_prs -.-> gap_unenforced
   r_sim_process_stacked_prs_full_ci_at_bottom --> e_pytest_projects_policyengine_simulation_executor_tests_test_ci_complete_gate_py
   e_pytest_projects_policyengine_simulation_executor_tests_test_ci_complete_gate_py --> j_CI_pr_yml_test
