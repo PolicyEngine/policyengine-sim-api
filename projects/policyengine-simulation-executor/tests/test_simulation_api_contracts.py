@@ -11,7 +11,7 @@ from policyengine_simulation_executor.simulation_macro_output import (
     SingleYearMacroOutput,
 )
 
-from fixtures.test_simulation_api_contracts import (
+from fixtures.macro_output import (
     CURRENT_REQUIRED_BUDGET_KEYS,
     CURRENT_SINGLE_YEAR_MACRO_KEYS,
     CURRENT_SINGLE_YEAR_MACRO_RESULT,

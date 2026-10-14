@@ -23,7 +23,9 @@ from policyengine_observability import (
     StdoutLogDestination,
     configure,
 )
+from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_contract.stage12_execution import (
+    AggregateReportArtifactPayload,
     ArtifactMediaType,
     ArtifactReference,
     BundleProvenance,
@@ -61,7 +63,10 @@ from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
+from fixtures.fake_object_store import InMemoryObjectStore
+from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_executor.stage12_artifacts import (
+    Stage12ArtifactStore,
     canonical_json_bytes,
     serialize_simulation_frames,
 )
@@ -69,18 +74,30 @@ from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
     _build_spm_result,
     build_aggregate_report,
+    database_retry,
     run_single_simulation,
     simulation_input_sha256,
 )
 from policyengine_simulation_executor.stage12_runtime import (
     coordinate_report as coordinate_report_impl,
 )
+from policyengine_simulation_executor.stage12_runtime import (
+    coordination as coordination_module,
+)
+from policyengine_simulation_executor.stage12_runtime import (
+    simulation as simulation_module,
+)
 from policyengine_simulation_executor.stage12_runtime.aggregation import (
     validate_uk_local_authority_metadata,
+)
+from policyengine_simulation_executor.stage12_runtime.dependencies import (
+    runtime_store,
 )
 from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata,
 )
+from policyengine_stage12_persistence import store as persistence_store_module
+from sqlalchemy.exc import OperationalError
 
 NOW = datetime(2026, 9, 15, tzinfo=UTC)
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -188,6 +205,21 @@ def _report() -> ReportExecutionInput:
         reform=_simulation(SimulationRole.REFORM),
         requested_aggregates=tuple(ReportAggregate),
     )
+
+
+def _aggregate_payload(result=None) -> dict:
+    """Return a stand-in aggregate that satisfies the artifact contract.
+
+    Aggregators that must not run return one too, so an unexpected run shows
+    up as a written aggregate instead of a rejected one.
+    """
+    report = _report()
+    return AggregateReportArtifactPayload(
+        evaluation_id=report.evaluation_id,
+        requested_aggregates=report.requested_aggregates,
+        bundle=report.baseline.bundle,
+        result={} if result is None else result,
+    ).model_dump(mode="json")
 
 
 def coordinate_report(*args, **kwargs):
@@ -369,6 +401,9 @@ class FakeArtifacts:
         self.aggregate_writes = []
         self.comparison_writes = []
         self.input_writes = []
+        # Aggregates go through the real store, so every coordinator test
+        # enforces the aggregate artifact contract that production enforces.
+        self.report_store = Stage12ArtifactStore("private", store=InMemoryObjectStore())
 
     def write_input(self, *, prefix, simulation):
         self.input_writes.append((prefix, simulation.role))
@@ -428,20 +463,14 @@ class FakeArtifacts:
         )
 
     def read(self, uri):
-        return self.payloads[uri]
+        if uri in self.payloads:
+            return self.payloads[uri]
+        return self.report_store.read(uri)
 
     def write_aggregate(self, *, prefix, payload):
-        encoded = canonical_json_bytes(payload)
-        digest = sha256(encoded).hexdigest()
-        uri = "gs://private/aggregate.json"
-        self.payloads[uri] = encoded
+        reference = self.report_store.write_aggregate(prefix=prefix, payload=payload)
         self.aggregate_writes.append(payload)
-        return ArtifactReference(
-            uri=uri,
-            media_type=ArtifactMediaType.JSON,
-            content_sha256=digest,
-            size_bytes=len(encoded),
-        )
+        return reference
 
     def write_comparison(self, *, prefix, payload):
         encoded = canonical_json_bytes(payload)
@@ -702,6 +731,101 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
     assert child.error_summary == "RuntimeError"
 
 
+def _connection_limit_error() -> OperationalError:
+    # SQLAlchemy wraps a failure to open a connection without a statement.
+    return OperationalError(
+        None,
+        None,
+        Exception("(EMAXCONNSESSION) max clients reached in session mode"),
+    )
+
+
+class TelemetryRecordingRuntime(RecordingRuntime):
+    """Record telemetry in the same ordered list as database writes."""
+
+    def __init__(self, ordered_events: list[tuple[str, object]]) -> None:
+        super().__init__()
+        self.ordered_events = ordered_events
+
+    def log(self, message, *, severity="INFO", attributes=None, error=None):
+        self.ordered_events.append(
+            ("telemetry", (message, dict(attributes or {}), error))
+        )
+
+
+def test_single_worker_builds_its_store_with_the_worker_runtime(monkeypatch) -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    store_runtimes = []
+
+    def record_store_runtime(runtime):
+        store_runtimes.append(runtime)
+        return store
+
+    monkeypatch.setattr(simulation_module, "runtime_store", record_store_runtime)
+    runtime = RecordingRuntime()
+
+    run_single_simulation(
+        simulation.model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        required_country="us",
+        artifacts=FakeArtifacts(),
+        calculator=lambda _: _frames(),
+        runtime=runtime,
+    )
+
+    # The runtime store reports each connection retry through this runtime.
+    assert store_runtimes == [runtime]
+
+
+def test_single_worker_reports_failure_before_an_unwritable_failure_record() -> None:
+    ordered_events: list[tuple[str, object]] = []
+
+    class UnwritableFailureStore(FakeStore):
+        def replace_simulation(self, record):
+            if record.status is ComparisonRunLifecycleStatus.FAILED:
+                ordered_events.append(("failure_write", record.error_summary))
+                raise _connection_limit_error()
+            return super().replace_simulation(record)
+
+    store = UnwritableFailureStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    calculation_error = ValueError("country column missing from household data")
+
+    def fail(_simulation):
+        raise calculation_error
+
+    with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=fail,
+            runtime=TelemetryRecordingRuntime(ordered_events),
+        )
+
+    original_report, failure_write, persistence_report = ordered_events
+    assert original_report[0] == "telemetry"
+    _message, attributes, reported_error = original_report[1]
+    assert reported_error is calculation_error
+    assert attributes == {
+        "stage12_failure_scope": "simulation_execution",
+        "simulation_role": "baseline",
+    }
+    assert failure_write == ("failure_write", "ValueError")
+    assert persistence_report[0] == "telemetry"
+    assert persistence_report[1][0] == (
+        "Stage 12 failure record could not be persisted"
+    )
+    assert isinstance(persistence_report[1][2], OperationalError)
+    child = store.children[simulation.simulation_execution_id]
+    assert child.status is ComparisonRunLifecycleStatus.RUNNING
+
+
 def test_single_worker_rejects_frames_that_do_not_satisfy_the_output_plan() -> None:
     store = FakeStore()
     simulation = _planned_simulation(SimulationRole.BASELINE)
@@ -880,6 +1004,87 @@ def test_aggregate_stand_ins_keep_bounded_policy_end_dates(monkeypatch) -> None:
         assert value.end_date == datetime.strptime(stop, "%Y-%m-%d"), role
 
 
+def _uk_report() -> ReportExecutionInput:
+    uk_bundle = _bundle().model_copy(
+        update={
+            "country_package_name": "policyengine-uk",
+            "country_package_version": "2.102.3",
+        }
+    )
+    report_payload = _report().model_dump(mode="json")
+    for role, policy in (
+        ("baseline", {}),
+        (
+            "reform",
+            {
+                "gov.hmrc.income_tax.charges.CB_HITC.phase_out_start": {
+                    "2026-01-01.2100-12-31": 70_000
+                }
+            },
+        ),
+    ):
+        report_payload[role].update(
+            {
+                "policy": policy,
+                "geography": {"country": "uk", "region": "uk"},
+                "bundle": uk_bundle.model_dump(mode="json"),
+            }
+        )
+    return ReportExecutionInput.model_validate(report_payload)
+
+
+def test_uk_aggregate_without_spm_provenance_is_written(monkeypatch) -> None:
+    from policyengine_simulation_executor import simulation_output_builder
+
+    report = _uk_report()
+    assert report.baseline.options.get("spm") is None
+    uk_output = {
+        **{
+            key: value
+            for key, value in CURRENT_SINGLE_YEAR_MACRO_RESULT.items()
+            if key != "spm_provenance"
+        },
+        "congressional_district_impact": None,
+    }
+
+    class UKOutputBuilder:
+        def __init__(self, **_values):
+            pass
+
+        def serialize(self):
+            # The real builder dumps SingleYearMacroOutput, which serializes
+            # the unset optional SPM receipt as an explicit null.
+            return SingleYearMacroOutput.model_validate(uk_output).model_dump(
+                mode="json"
+            )
+
+    monkeypatch.setattr(
+        simulation_output_builder, "SimulationOutputBuilder", UKOutputBuilder
+    )
+    uk_frames = {
+        entity: pd.DataFrame({f"{entity}_id": [1]})
+        for entity in ("person", "benunit", "household")
+    }
+    artifacts = FakeArtifacts()
+
+    aggregate = build_aggregate_report(
+        report=report,
+        baseline_frames=uk_frames,
+        reform_frames=uk_frames,
+        baseline_descriptor=artifacts.add_simulation(report.baseline),
+        reform_descriptor=artifacts.add_simulation(report.reform),
+    )
+    assert aggregate["result"]["spm_provenance"] is None
+
+    aggregate_reference = artifacts.write_aggregate(
+        prefix=_context().artifact_prefix, payload=aggregate
+    )
+
+    stored_aggregate = artifacts.read(aggregate_reference.uri)
+    assert aggregate_reference.content_sha256 == sha256(stored_aggregate).hexdigest()
+    assert json.loads(stored_aggregate)["result"]["spm_provenance"] is None
+
+
 def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:
     payload = _planned_simulation(SimulationRole.BASELINE).model_dump(mode="json")
     payload["baseline"] = {}
@@ -1015,7 +1220,7 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
 
     def aggregate(**values):
         observed.update(values)
-        return {"result": "complete"}
+        return _aggregate_payload()
 
     context = _context().model_copy(
         update={
@@ -1053,7 +1258,9 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
     latest_start = max(interval[0] for interval in invoker.intervals.values())
     earliest_end = min(interval[1] for interval in invoker.intervals.values())
     assert latest_start < earliest_end
-    assert result["artifact"]["uri"] == "gs://private/aggregate.json"
+    assert result["artifact"]["uri"] == (
+        f"gs://private/{context.artifact_prefix}/reports/aggregate.json"
+    )
     assert observed["baseline_frames"]["household"][
         "household_net_income"
     ].tolist() == [100.0]
@@ -1082,7 +1289,7 @@ def test_duplicate_coordinator_submission_does_not_start_duplicate_children() ->
         store=store,
         artifacts=artifacts,
         invoker=first_invoker,
-        aggregator=lambda **_: {"result": "complete"},
+        aggregator=lambda **_: _aggregate_payload(),
     )
     duplicate_invoker = ConcurrentInvoker(artifacts)
     duplicate = coordinate_report(
@@ -1094,7 +1301,7 @@ def test_duplicate_coordinator_submission_does_not_start_duplicate_children() ->
         store=store,
         artifacts=artifacts,
         invoker=duplicate_invoker,
-        aggregator=lambda **_: {"must": "not run"},
+        aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
     )
 
     assert duplicate == {
@@ -1119,7 +1326,7 @@ def test_coordinator_measures_output_and_child_input_planning() -> None:
         store=store,
         artifacts=artifacts,
         invoker=ConcurrentInvoker(artifacts),
-        aggregator=lambda **_: {"result": "complete"},
+        aggregator=lambda **_: _aggregate_payload(),
         runtime=runtime,
     )
 
@@ -1185,7 +1392,7 @@ def test_coordinator_planning_operations_preserve_observability_id() -> None:
                 store=FakeStore(),
                 artifacts=artifacts,
                 invoker=ConcurrentInvoker(artifacts),
-                aggregator=lambda **_: {"result": "complete"},
+                aggregator=lambda **_: _aggregate_payload(),
                 runtime=runtime,
             )
     finally:
@@ -1230,7 +1437,7 @@ def test_coordinator_compares_automatic_run_after_successful_aggregation() -> No
         store=store,
         artifacts=artifacts,
         invoker=invoker,
-        aggregator=lambda **_: {"result": stage12_result},
+        aggregator=lambda **_: _aggregate_payload(stage12_result),
     )
 
     assert invoker.events[-1] == "restore:production"
@@ -1265,7 +1472,7 @@ def test_comparison_failure_does_not_change_successful_stage12_report() -> None:
         store=store,
         artifacts=artifacts,
         invoker=invoker,
-        aggregator=lambda **_: {"result": {"budget": 100}},
+        aggregator=lambda **_: _aggregate_payload({"budget": 100}),
     )
 
     assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
@@ -1293,7 +1500,7 @@ def test_repeated_submission_does_not_retry_failed_comparison() -> None:
         store=store,
         artifacts=artifacts,
         invoker=first_invoker,
-        aggregator=lambda **_: {"result": {"budget": {"total": 100.0}}},
+        aggregator=lambda **_: _aggregate_payload({"budget": {"total": 100.0}}),
     )
     failed_at = store.parent.comparison_completed_at
     failed_summary = store.parent.comparison_error_summary
@@ -1311,7 +1518,7 @@ def test_repeated_submission_does_not_retry_failed_comparison() -> None:
         store=store,
         artifacts=artifacts,
         invoker=second_invoker,
-        aggregator=lambda **_: {"result": {"budget": {"total": 100.0}}},
+        aggregator=lambda **_: _aggregate_payload({"budget": {"total": 100.0}}),
     )
 
     assert result == {
@@ -1344,7 +1551,7 @@ def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None
             store=store,
             artifacts=artifacts,
             invoker=invoker,
-            aggregator=lambda **_: {"must": "not run"},
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
         )
 
     assert "sensitive" not in str(error.value)
@@ -1382,7 +1589,7 @@ def test_coordinator_rejects_artifacts_that_do_not_satisfy_the_shared_plan(
             store=store,
             artifacts=artifacts,
             invoker=invoker(artifacts),
-            aggregator=lambda **_: {"must": "not run"},
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
         )
 
     assert artifacts.aggregate_writes == []
@@ -1413,6 +1620,337 @@ def test_coordinator_records_failure_when_child_persistence_fails() -> None:
     assert store.parent.error_summary == "RuntimeError"
 
 
+def test_coordinator_builds_its_store_with_the_coordinator_runtime(
+    monkeypatch,
+) -> None:
+    store = FakeStore()
+    store_runtimes = []
+
+    def record_store_runtime(runtime):
+        store_runtimes.append(runtime)
+        return store
+
+    monkeypatch.setattr(coordination_module, "runtime_store", record_store_runtime)
+    artifacts = FakeArtifacts()
+    runtime = RecordingRuntime()
+
+    coordinate_report(
+        _report().model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        _parent().model_dump(mode="json"),
+        application_name=_context().modal_application,
+        coordinator_invocation_id="coordinator-1",
+        artifacts=artifacts,
+        invoker=ConcurrentInvoker(artifacts),
+        aggregator=lambda **_: _aggregate_payload(),
+        runtime=runtime,
+    )
+
+    # The runtime store reports each connection retry through this runtime.
+    assert store_runtimes == [runtime]
+    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
+
+
+def test_coordinator_does_not_deduplicate_against_its_own_claim_after_a_lost_commit() -> (
+    None
+):
+    # SQLAlchemy raises a failed COMMIT without a statement, like a refused
+    # connection, although the claim may already be durable.
+    lost_commit_reply = OperationalError(
+        None,
+        None,
+        Exception("server closed the connection unexpectedly"),
+    )
+
+    class LostCommitReplyStore(FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.claim_attempts = 0
+
+        def create_or_resolve_report(self, record):
+            self.claim_attempts += 1
+            claim = super().create_or_resolve_report(record)
+            if self.claim_attempts == 1:
+                raise lost_commit_reply
+            return claim
+
+    store = LostCommitReplyStore()
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts)
+
+    with pytest.raises(OperationalError) as error:
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=invoker,
+        )
+
+    # A retry would find this coordinator's own running claim and return a
+    # deduplicated success without dispatching either simulation.
+    assert error.value is lost_commit_reply
+    assert store.claim_attempts == 1
+    assert invoker.events == []
+
+
+class ScriptedResult:
+    def __init__(self, row):
+        self.row = row
+
+    def mappings(self):
+        return self
+
+    def one_or_none(self):
+        return self.row
+
+    def one(self):
+        return self.row
+
+
+class ScriptedConnection:
+    """Answer each statement with the next scripted row."""
+
+    def __init__(self, rows, *, commit_error=None):
+        self.rows = list(rows)
+        self.statement_count = 0
+        self.commit_error = commit_error
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exception_details):
+        return None
+
+    @contextmanager
+    def begin(self):
+        yield
+        if self.commit_error is not None:
+            raise self.commit_error
+
+    def execute(self, _statement):
+        self.statement_count += 1
+        return ScriptedResult(self.rows.pop(0))
+
+
+class BusyPoolerEngine:
+    """Refuse the first connections, as a session pooler at its limit does."""
+
+    def __init__(self, rows, *, refused_connections=0, commit_error=None):
+        self.connection = ScriptedConnection(rows, commit_error=commit_error)
+        self.refused_connections = refused_connections
+        self.connection_attempts = 0
+
+    def connect(self):
+        self.connection_attempts += 1
+        if self.connection_attempts <= self.refused_connections:
+            raise _connection_limit_error()
+        return self.connection
+
+
+def _runtime_store_over(engine, monkeypatch, runtime):
+    monkeypatch.setattr(database_retry, "INITIAL_RETRY_DELAY_SECONDS", 0.0)
+    monkeypatch.setattr(
+        persistence_store_module,
+        "create_stage12_engine",
+        lambda _database_url: engine,
+    )
+    return runtime_store(runtime)
+
+
+def test_runtime_store_retries_a_refused_connection_for_child_state_creation(
+    monkeypatch,
+) -> None:
+    ordered_events: list[tuple[str, object]] = []
+    child = _child(_planned_simulation(SimulationRole.BASELINE))
+    engine = BusyPoolerEngine(
+        [_parent().model_dump(mode="python"), child.model_dump(mode="python")],
+        refused_connections=1,
+    )
+    store = _runtime_store_over(
+        engine, monkeypatch, TelemetryRecordingRuntime(ordered_events)
+    )
+
+    result = store.create_or_resolve_simulation(child)
+
+    assert result.created is True
+    assert result.record == child
+    assert engine.connection_attempts == 2
+    assert engine.connection.statement_count == 2
+    [(event_kind, (message, attributes, error))] = ordered_events
+    assert event_kind == "telemetry"
+    assert message == "Stage 12 database connection unavailable; retrying"
+    assert attributes["stage12_database_operation"] == "create_or_resolve_simulation"
+    assert attributes["stage12_database_failed_attempt"] == 1
+    assert isinstance(error, OperationalError)
+
+
+def test_runtime_store_does_not_retry_a_failed_commit(monkeypatch) -> None:
+    ordered_events: list[tuple[str, object]] = []
+    lost_commit_reply = OperationalError(
+        None,
+        None,
+        Exception("server closed the connection unexpectedly"),
+    )
+    report = _parent()
+    engine = BusyPoolerEngine(
+        [report.model_dump(mode="python")],
+        commit_error=lost_commit_reply,
+    )
+    store = _runtime_store_over(
+        engine, monkeypatch, TelemetryRecordingRuntime(ordered_events)
+    )
+
+    with pytest.raises(OperationalError) as failure:
+        store.create_or_resolve_report(report)
+
+    assert failure.value is lost_commit_reply
+    assert engine.connection_attempts == 1
+    assert engine.connection.statement_count == 1
+    assert ordered_events == []
+
+
+def test_coordinator_reports_failure_before_an_unwritable_failure_record() -> None:
+    ordered_events: list[tuple[str, object]] = []
+    aggregation_error = ValueError("aggregate failed validation")
+
+    class UnwritableFailureStore(FakeStore):
+        def replace_report(self, record):
+            if record.status is ComparisonRunLifecycleStatus.FAILED:
+                ordered_events.append(("failure_write", record.error_summary))
+                raise _connection_limit_error()
+            return super().replace_report(record)
+
+    def fail_aggregation(**_):
+        raise aggregation_error
+
+    store = UnwritableFailureStore()
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(
+        RuntimeError, match="Stage 12 report coordination failed"
+    ) as error:
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=ConcurrentInvoker(artifacts),
+            aggregator=fail_aggregation,
+            runtime=TelemetryRecordingRuntime(ordered_events),
+        )
+
+    assert error.value.__cause__ is None
+    original_report, failure_write, persistence_report = ordered_events
+    assert original_report[1][1] == {"stage12_failure_scope": "report_coordination"}
+    assert original_report[1][2] is aggregation_error
+    assert failure_write == ("failure_write", "ValueError")
+    assert isinstance(persistence_report[1][2], OperationalError)
+    assert store.parent.status is ComparisonRunLifecycleStatus.RUNNING
+
+
+def test_coordinator_reports_a_child_failure_once_when_its_record_is_unwritable() -> (
+    None
+):
+    ordered_events: list[tuple[str, object]] = []
+
+    class UnreadableChildStore(FakeStore):
+        def get_simulation(self, simulation_execution_id):
+            ordered_events.append(("child_read", str(simulation_execution_id)))
+            raise _connection_limit_error()
+
+    store = UnreadableChildStore()
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=ConcurrentInvoker(artifacts, fail_role="baseline"),
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
+            runtime=TelemetryRecordingRuntime(ordered_events),
+        )
+
+    failure_reports = [
+        event[1]
+        for event in ordered_events
+        if event[0] == "telemetry" and event[1][0] == "Stage 12 execution failed"
+    ]
+    assert [report[1] for report in failure_reports] == [
+        {"stage12_failure_scope": "child_wait", "simulation_role": "baseline"}
+    ]
+    assert ordered_events[0][0] == "telemetry"
+    assert ordered_events[1] == ("child_read", str(BASELINE_ID))
+    # The report record is still written after the child record could not be.
+    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
+    assert store.parent.error_summary == "RuntimeError"
+
+
+class RefusingDispatchInvoker:
+    def __init__(self, dispatch_error):
+        self.dispatch_error = dispatch_error
+        self.events = []
+
+    def spawn(self, *, simulation, **_):
+        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
+        self.events.append(f"spawn:{role}")
+        raise self.dispatch_error
+
+    def restore(self, invocation_id):
+        raise AssertionError(f"unexpected restored invocation {invocation_id}")
+
+
+def test_coordinator_reports_a_child_dispatch_failure_once() -> None:
+    ordered_events: list[tuple[str, object]] = []
+    dispatch_error = ConnectionError("Modal refused the dispatch")
+    store = FakeStore()
+    invoker = RefusingDispatchInvoker(dispatch_error)
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=FakeArtifacts(),
+            invoker=invoker,
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
+            runtime=TelemetryRecordingRuntime(ordered_events),
+        )
+
+    failure_reports = [
+        event[1]
+        for event in ordered_events
+        if event[0] == "telemetry" and event[1][0] == "Stage 12 execution failed"
+    ]
+    assert [(attributes, error) for _message, attributes, error in failure_reports] == [
+        (
+            {"stage12_failure_scope": "child_dispatch", "simulation_role": "baseline"},
+            dispatch_error,
+        )
+    ]
+    assert invoker.events == ["spawn:baseline"]
+    baseline_child = store.children[BASELINE_ID]
+    assert baseline_child.status is ComparisonRunLifecycleStatus.FAILED
+    assert baseline_child.error_code == "simulation_dispatch_failed"
+    assert baseline_child.error_summary == "ConnectionError"
+    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
+    assert store.parent.error_summary == "ConnectionError"
+
+
 def test_coordinator_rejects_incompatible_row_identity() -> None:
     store = FakeStore()
     artifacts = FakeArtifacts()
@@ -1428,7 +1966,7 @@ def test_coordinator_rejects_incompatible_row_identity() -> None:
             store=store,
             artifacts=artifacts,
             invoker=invoker,
-            aggregator=lambda **_: {"must": "not run"},
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
         )
     assert artifacts.aggregate_writes == []
 
@@ -1462,7 +2000,7 @@ def test_coordinator_reuses_matching_successful_child() -> None:
         store=store,
         artifacts=artifacts,
         invoker=invoker,
-        aggregator=lambda **_: {"result": "complete"},
+        aggregator=lambda **_: _aggregate_payload(),
     )
 
     assert invoker.events == ["spawn:reform"]
@@ -1492,7 +2030,7 @@ def test_coordinator_resumes_a_matching_running_child_invocation() -> None:
         store=store,
         artifacts=artifacts,
         invoker=invoker,
-        aggregator=lambda **_: {"result": "complete"},
+        aggregator=lambda **_: _aggregate_payload(),
     )
 
     assert invoker.events == ["restore:baseline", "spawn:reform"]
@@ -1536,7 +2074,7 @@ def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
             store=store,
             artifacts=artifacts,
             invoker=invoker,
-            aggregator=lambda **_: {"must": "not run"},
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
         )
 
     assert "sensitive" not in str(error.value)

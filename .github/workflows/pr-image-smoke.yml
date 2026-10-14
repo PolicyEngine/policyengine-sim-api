@@ -18,6 +18,7 @@ on:
       - 'libs/policyengine-simulation-contract/**'
       - 'libs/policyengine-simulation-observability/**'
       - 'libs/policyengine-fastapi/**'
+      - 'libs/policyengine-stage12-persistence/**'
       - '.github/workflows/pr-image-smoke.yml'
       - '.github/scripts/modal-image-smoke.sh'
 
@@ -29,7 +30,9 @@ jobs:
   image-smoke:
     name: Image smoke (staging)
     runs-on: ubuntu-latest
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # Same-repository pull requests only, and in a stack only the lowest
+    # unmerged one (see docs/engineering/skills/github-prs.md).
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && (!github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref) }}
     # Warm cache: ~2 min. After a relock the executor smoke pays the
     # certified dataset download layer (~15-20 min).
     timeout-minutes: 45
@@ -62,6 +65,4 @@ jobs:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         PE_UK_PRIVATE_HF_READ_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}
-      run: |
-        chmod +x .github/scripts/modal-image-smoke.sh
-        .github/scripts/modal-image-smoke.sh staging
+      run: .github/scripts/modal-image-smoke.sh staging

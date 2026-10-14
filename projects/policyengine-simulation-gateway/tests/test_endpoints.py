@@ -1108,6 +1108,68 @@ class TestSubmitSimulationEndpoint:
 
 
 class TestVersionEndpoints:
+    def test__given_bundle_with_dataset_sha__then_versions_report_identity(
+        self, mock_modal, client: TestClient
+    ):
+        state = deepcopy(TEST_ROUTING_STATE)
+        # The fixture's two bundles share one UK dict; give 4.10.0 its own.
+        state["bundles"]["4.10.0"]["uk"] = {
+            **state["bundles"]["4.10.0"]["uk"],
+            "default_dataset_sha256": "a" * 64,
+        }
+        mock_modal["dicts"]["simulation-api-routing-state"] = {"active": state}
+
+        response = client.get("/versions")
+
+        assert response.status_code == 200
+        bundles = response.json()["bundles"]
+        assert bundles["4.10.0"]["uk"]["model_version"] == "2.66.0"
+        assert bundles["4.10.0"]["uk"]["policyengine_version"] == "4.10.0"
+        assert bundles["4.10.0"]["uk"]["dataset_sha256"] == "a" * 64
+        assert bundles["4.10.0"]["uk"]["dataset"].startswith("hf://")
+        # Legacy entries without a digest report none rather than a guess.
+        assert bundles["3.9.0"]["uk"].get("dataset_sha256") is None
+        assert bundles["4.10.0"]["us"]["model_version"] == "1.500.0"
+
+    @pytest.mark.parametrize(
+        "malformed",
+        ["not-a-digest", "a" * 64 + "\n", "A" * 64, "a" * 63, 7],
+        ids=["text", "trailing-newline", "uppercase", "short", "number"],
+    )
+    def test__given_malformed_dataset_sha__then_versions_omit_it(
+        self, mock_modal, client: TestClient, malformed
+    ):
+        """#743 round-2 review: a digest with a trailing newline gave a 500."""
+
+        state = deepcopy(TEST_ROUTING_STATE)
+        state["bundles"]["4.10.0"]["uk"] = {
+            **state["bundles"]["4.10.0"]["uk"],
+            "default_dataset_sha256": malformed,
+        }
+        mock_modal["dicts"]["simulation-api-routing-state"] = {"active": state}
+
+        response = client.get("/versions")
+
+        assert response.status_code == 200
+        assert response.json()["bundles"]["4.10.0"]["uk"].get("dataset_sha256") is None
+
+    def test__given_bundle_with_dataset_sha__then_submission_names_it(
+        self, mock_modal, client: TestClient
+    ):
+        state = deepcopy(TEST_ROUTING_STATE)
+        state["bundles"]["4.10.0"]["uk"]["default_dataset_sha256"] = "b" * 64
+        mock_modal["dicts"]["simulation-api-routing-state"] = {"active": state}
+
+        response = client.post(
+            "/simulate/economy/comparison",
+            json={"country": "uk", "scope": "macro", "reform": {}},
+        )
+
+        assert response.status_code == 200
+        bundle = response.json()["policyengine_bundle"]
+        assert bundle["dataset_sha256"] == "b" * 64
+        assert bundle["dataset"].startswith("hf://")
+
     def test__given_active_state__then_lists_policyengine_and_country_routes(
         self, mock_modal, client: TestClient
     ):
@@ -1170,6 +1232,7 @@ class TestVersionEndpoints:
         assert response.status_code == 200
         assert response.json() == {
             "spm_capabilities": {},
+            "bundles": {},
             "policyengine": {
                 "latest": "4.9.0",
                 "4.9.0": "old-py-app",

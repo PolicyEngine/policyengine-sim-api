@@ -9,8 +9,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  ci-complete:
+    # The required check. Needs every other job: on a stacked pull request
+    # above the lowest unmerged one it fails, because those jobs were skipped
+    # and a skipped job would count as passing; otherwise it passes only when
+    # every job passed. See docs/engineering/skills/github-prs.md.
+    name: CI complete
+    if: ${{ always() }}
+    needs: [test, lint, quality-guards, docker-build, test-integration]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout the gate script
+      uses: actions/checkout@v6
+      with:
+        sparse-checkout: .github/scripts/check_ci_complete.sh
+        sparse-checkout-cone-mode: false
+
+    - name: Require full CI, with every job passing
+      env:
+        JOB_RESULTS: ${{ toJSON(needs) }}
+        PULL_REQUEST_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        STACK_BASE_REF: ${{ github.event.pull_request.stack.base.ref }}
+      run: bash .github/scripts/check_ci_complete.sh
+
   test:
     name: Test
+    # Full CI runs only on the lowest unmerged pull request in a stack.
+    if: ${{ !github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -24,6 +52,7 @@ jobs:
           - libs/policyengine-simulation-contract
           - libs/policyengine-simulation-observability
           - libs/policyengine-stage12-persistence
+          - libs/policyengine-fastapi
 
     steps:
     - uses: actions/checkout@v6
@@ -39,17 +68,17 @@ jobs:
         enable-cache: true
 
     - name: Install dependencies
-      run: |
-        cd ${{ matrix.project }}
-        uv sync --extra test
+      working-directory: ${{ matrix.project }}
+      run: uv sync --extra test
 
     - name: Run tests
-      run: |
-        cd ${{ matrix.project }}
-        uv run pytest tests/ -v
+      working-directory: ${{ matrix.project }}
+      run: uv run pytest tests/ -v
 
   lint:
     name: Lint
+    # Full CI runs only on the lowest unmerged pull request in a stack.
+    if: ${{ !github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref }}
     runs-on: ubuntu-latest
 
     steps:
@@ -64,16 +93,37 @@ jobs:
       uses: astral-sh/setup-uv@v8.1.0
 
     - name: Install ruff
-      run: uv tool install ruff
+      # Pinned so a ruff release cannot change CI results; see ruff.toml.
+      run: uv tool install ruff==0.15.22
 
     - name: Run ruff format check
-      run: |
-        for dir in projects/*/src libs/*/src; do
-          if [ -d "$dir" ]; then
-            echo "Checking format in $dir..."
-            uv run ruff format --check $dir
-          fi
-        done
+      run: uv run ruff format --check projects/*/src libs/*/src
+
+  quality-guards:
+    name: Quality guards
+    # Full CI runs only on the lowest unmerged pull request in a stack.
+    if: ${{ !github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref }}
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        # The rules registry guard compares baselines with the base branch.
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - name: Test the rules registry tool
+      run: python -m unittest discover -s scripts/rules/tests -t .
+
+    - name: Install shellcheck (for the ci-scripts guard)
+      run: pip install "shellcheck-py==0.11.0.1"
+
+    - name: Run quality guards
+      run: python scripts/run_quality_guards.py
 
   docker-build:
     name: Docker build
@@ -126,26 +176,16 @@ jobs:
         ./scripts/generate-clients.sh
 
     - name: Start services
-      run: |
-        docker compose -f deployment/docker-compose.yml up -d
-        # Wait for services to be ready
-        sleep 10
-        # Check services are responding
-        for i in {1..30}; do
-          if curl -f http://localhost:8082/ping/alive; then
-            echo "Services are ready!"
-            break
-          fi
-          echo "Waiting for services... (attempt $i/30)"
-          sleep 2
-        done
+      run: .github/scripts/start-local-services.sh deployment/docker-compose.yml
+
+    - name: Install integration test dependencies
+      working-directory: projects/policyengine-apis-integ
+      run: uv sync --extra test
 
     - name: Run integration tests (local services only)
-      run: |
-        cd projects/policyengine-apis-integ
-        uv sync --extra test
-        # Run tests against local Docker services only (not Modal staging)
-        uv run pytest tests/ -v -m "not requires_gcp and not beta_only"
+      working-directory: projects/policyengine-apis-integ
+      # Run tests against local Docker services only (not Modal staging)
+      run: uv run pytest tests/ -v -m "not requires_gcp and not beta_only"
 
     - name: Show service logs on failure
       if: failure()

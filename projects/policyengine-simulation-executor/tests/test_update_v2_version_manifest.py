@@ -62,7 +62,10 @@ def test_deployment_workflow_keeps_v2_optional_and_separate() -> None:
     v2_job = workflow.index("\n  deploy_stage12_v2:")
     assert update_job < v2_job
     v2_section = workflow[v2_job:]
-    assert "src.modal.utils.update_version_registry" not in v2_section
+    # The Stage 12 jobs never touch v1 routing; revert_routing (after them in
+    # the file) restores v1 routing only for existing-stack deployments.
+    stage12_jobs = v2_section[: v2_section.index("\n  integration:")]
+    assert "src.modal.utils.update_version_registry" not in stage12_jobs
     deploy_section = v2_section[: v2_section.index("\n  publish_stage12_v2_manifest:")]
     for declaration in (
         "OBSERVABILITY_SERVICE_NAMESPACE: ${{ vars.OBSERVABILITY_SERVICE_NAMESPACE }}",

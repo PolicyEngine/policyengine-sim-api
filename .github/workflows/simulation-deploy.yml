@@ -21,6 +21,7 @@ permissions:
   contents: read
 
 concurrency:
+  # Serialize routing writes across deployments, Stage 12, and rollbacks.
   group: simulation-deploy-main
   cancel-in-progress: false
 

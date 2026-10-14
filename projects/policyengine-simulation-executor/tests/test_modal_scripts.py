@@ -610,6 +610,8 @@ class TestModalPrecompute:
 
         assert result.returncode != 0
         assert "GITHUB_OUTPUT is required" in result.stderr
+        # The local-run hint is printed literally, not expanded.
+        assert 'export GITHUB_OUTPUT="$(mktemp)".' in result.stderr
         assert calls == [], "Should not invoke modal without GITHUB_OUTPUT"
 
     def test_runs_precompute_app_and_exports_digest(self, tmp_path):

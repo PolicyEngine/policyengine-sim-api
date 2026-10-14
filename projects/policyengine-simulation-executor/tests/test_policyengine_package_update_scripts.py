@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from fixtures.test_policyengine_package_update_scripts import (
     SCRIPT,
     install_fake_gh,
@@ -44,6 +45,15 @@ def test_update_policyengine_package_uses_a_separate_python_helper() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_update_policyengine_workflow_runs_the_tested_script() -> None:
+    workflow = (
+        SCRIPT.parent.parent / "workflows" / "check-policyengine-updates.yml"
+    ).read_text(encoding="utf-8")
+
+    assert SCRIPT.name == "update-policyengine-package.sh"
+    assert "run: bash .github/scripts/update-policyengine-package.sh" in workflow
 
 
 def test_update_policyengine_workflow_requests_issue_and_pr_permissions() -> None:
@@ -140,6 +150,7 @@ def test_update_policyengine_package_opens_pr_for_existing_branch_without_open_p
 ) -> None:
     git_log = tmp_path / "git.log"
     gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
     install_fake_git(
         fake_bin,
         root=fake_repo,
@@ -147,18 +158,83 @@ def test_update_policyengine_package_opens_pr_for_existing_branch_without_open_p
         remote_branch_exists=True,
     )
     install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=uv_log)
 
     result = run_updater(
         env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0"),
     )
 
     assert result.returncode == 0, result.stderr
-    assert "already exists without an open PR. Creating PR." in result.stdout
+    assert "already exists without an open PR. Verifying it." in result.stdout
+    assert "Creating PR for verified branch" in result.stdout
+    assert "bundle-versions" in uv_log.read_text(encoding="utf-8")
+    assert "show origin/auto/update-policyengine-4.1.0:simulation/pyproject.toml" in (
+        git_log.read_text(encoding="utf-8")
+    )
     gh_calls = gh_log.read_text(encoding="utf-8")
     assert "pr view" in gh_calls
     assert "pr create --draft --repo PolicyEngine/policyengine-sim-api" in gh_calls
     assert "--head auto/update-policyengine-4.1.0" in gh_calls
     assert "pr-body-first-line Fixes #679" in gh_calls
+
+
+@pytest.mark.parametrize(
+    ("uv_kwargs", "git_kwargs", "payload", "message"),
+    [
+        (
+            {"bundled_uk_version": "2.0.9"},
+            {},
+            '{"version":"4.1.0","bundle":{"uk":{"model_version":"2.1.0"}}}',
+            "does not match the release dispatch",
+        ),
+        (
+            {},
+            {},
+            '{"version":"4.1.0","qualification":{"uk":{"verdict":"rejected",'
+            '"promotable":false}}}',
+            "does not match the release dispatch",
+        ),
+        (
+            {"bundled_policyengine_version": "4.0.9"},
+            {},
+            "",
+            "reports bundle 4.0.9, expected 4.1.0",
+        ),
+        ({}, {"branch_pin": "4.0.5"}, "", "pins policyengine 4.0.5, expected 4.1.0"),
+    ],
+    ids=["bundle-mismatch", "rejected-verdict", "wrong-wrapper", "stale-branch"],
+)
+def test_a_recovered_branch_gets_no_pr_without_verification(
+    fake_bin: Path,
+    fake_repo: Path,
+    tmp_path: Path,
+    uv_kwargs: dict,
+    git_kwargs: dict,
+    payload: str,
+    message: str,
+) -> None:
+    """#743 round-2 review: branch recovery may not bypass validation."""
+
+    gh_log = tmp_path / "gh.log"
+    install_fake_git(
+        fake_bin,
+        root=fake_repo,
+        log=tmp_path / "git.log",
+        remote_branch_exists=True,
+        **git_kwargs,
+    )
+    install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=tmp_path / "uv.log", **uv_kwargs)
+
+    result = run_updater(
+        env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0", RELEASE_PAYLOAD=payload),
+    )
+
+    assert result.returncode != 0
+    assert message in result.stderr
+    gh_calls = gh_log.read_text(encoding="utf-8") if gh_log.exists() else ""
+    assert "pr create" not in gh_calls
+    assert "issue create" not in gh_calls
 
 
 def test_update_policyengine_package_updates_only_wrapper_requirements(
@@ -309,3 +385,359 @@ def test_update_policyengine_package_rejects_direct_component_requirements(
     assert "git commit" not in git_calls
     assert "git push" not in git_calls
     assert "pr create" not in gh_log.read_text(encoding="utf-8")
+
+
+HELPER = SCRIPT.with_name("update_policyengine_package.py")
+INSTALLED = "\n".join(
+    [
+        "policyengine_version=4.1.0",
+        "policyengine_core_version=3.33.0",
+        "uk_version=2.126.8",
+        "uk_data_version=policyengine-uk-data-1.58.0",
+        "uk_data_package_version=1.58.0",
+        "uk_dataset_sha256=" + "a" * 64,
+        "uk_certificate_sha256=",
+    ]
+)
+
+
+def _verify(payload: str) -> subprocess.CompletedProcess[str]:
+    import os
+
+    return subprocess.run(
+        [sys.executable, str(HELPER), "verify-dispatch"],
+        input=INSTALLED,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "RELEASE_PAYLOAD": payload},
+    )
+
+
+def _payload(**uk: str) -> str:
+    import json
+
+    return json.dumps(
+        {
+            "version": "4.1.0",
+            "bundle": {
+                "uk": {
+                    "model_version": "2.126.8",
+                    "core_version": "3.33.0",
+                    "data_release_version": "1.58.0",
+                    "dataset_sha256": "a" * 64,
+                    "certificate_sha256": "c" * 64,
+                    **uk,
+                }
+            },
+            "qualification": {
+                "uk": {"verdict": "qualified", "receipt_sha256": "e" * 64}
+            },
+        }
+    )
+
+
+def test_verify_dispatch_accepts_a_matching_bundle() -> None:
+    result = _verify(_payload())
+
+    assert result.returncode == 0, result.stderr
+    assert "dispatch_verified=true" in result.stdout
+    assert "uk_qualification_verdict=qualified" in result.stdout
+    assert "uk_qualification_receipt_sha256=" + "e" * 64 in result.stdout
+
+
+def test_verify_dispatch_accepts_legacy_and_manual_payloads() -> None:
+    for payload in ("", "null", '{"version": "4.1.0"}'):
+        result = _verify(payload)
+        assert result.returncode == 0, result.stderr
+        assert "dispatch_verified=false" in result.stdout
+
+
+def test_verify_dispatch_rejects_another_bundle() -> None:
+    for field, value in (
+        ("model_version", "2.125.1"),
+        ("core_version", "3.32.0"),
+        ("data_release_version", "1.59.0"),
+        ("dataset_sha256", "b" * 64),
+    ):
+        result = _verify(_payload(**{field: value}))
+        assert result.returncode != 0, field
+        assert field in result.stderr
+
+
+def test_verify_dispatch_compares_the_certificate_when_installed_reports_one() -> None:
+    """#743 round-2 review: removing the certificate comparison must fail a test."""
+
+    import os
+
+    installed = INSTALLED.replace(
+        "uk_certificate_sha256=", "uk_certificate_sha256=" + "c" * 64
+    )
+
+    def verify(payload: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(HELPER), "verify-dispatch"],
+            input=installed,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "RELEASE_PAYLOAD": payload},
+        )
+
+    assert verify(_payload()).returncode == 0
+    result = verify(_payload(certificate_sha256="d" * 64))
+    assert result.returncode != 0
+    assert "certificate_sha256: dispatch " + "d" * 64 in result.stderr
+
+
+def test_verify_dispatch_fails_closed_when_the_installed_bundle_cannot_answer() -> None:
+    """Review M3: a named dataset digest needs an installed one to compare."""
+
+    import os
+
+    installed = INSTALLED.replace("uk_dataset_sha256=" + "a" * 64, "uk_dataset_sha256=")
+    result = subprocess.run(
+        [sys.executable, str(HELPER), "verify-dispatch"],
+        input=installed,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "RELEASE_PAYLOAD": _payload()},
+    )
+    assert result.returncode != 0
+    assert "dataset_sha256: dispatch" in result.stderr
+    assert "installed bundle reports none" in result.stderr
+
+
+def test_verify_dispatch_is_verified_only_when_something_was_compared() -> None:
+    import json
+
+    only_certificate = json.dumps(
+        {"version": "4.1.0", "bundle": {"uk": {"certificate_sha256": "c" * 64}}}
+    )
+    unknown_only = json.dumps({"version": "4.1.0", "bundle": {"uk": {"x": "y"}}})
+    for payload in (only_certificate, unknown_only):
+        result = _verify(payload)
+        assert result.returncode == 0, result.stderr
+        assert "dispatch_verified=false" in result.stdout
+
+
+def test_verify_dispatch_compares_digests_case_insensitively() -> None:
+    result = _verify(_payload(dataset_sha256="A" * 64))
+
+    assert result.returncode == 0, result.stderr
+    assert "dispatch_verified=true" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "qualification",
+    [
+        {"verdict": "rejected"},
+        {"verdict": "incomplete"},
+        {"verdict": "needs_review", "promotable": False},
+        {"verdict": "qualified\ndispatch_verified=true"},
+        {"verdict": "qualified", "receipt_sha256": "not-a-digest"},
+    ],
+    ids=["rejected", "incomplete", "unreviewed", "newline", "receipt"],
+)
+def test_verify_dispatch_refuses_unpromotable_or_malformed_qualifications(
+    qualification,
+) -> None:
+    import json
+
+    payload = json.loads(_payload())
+    payload["qualification"] = {"uk": qualification}
+
+    result = _verify(json.dumps(payload))
+
+    assert result.returncode != 0
+    assert result.stdout.count("dispatch_verified=") == 0
+
+
+def test_verify_dispatch_accepts_a_reviewed_pair() -> None:
+    import json
+
+    payload = json.loads(_payload())
+    payload["qualification"] = {
+        "uk": {
+            "verdict": "needs_review",
+            "promotable": True,
+            "receipt_sha256": "e" * 64,
+        }
+    }
+
+    result = _verify(json.dumps(payload))
+
+    assert result.returncode == 0, result.stderr
+    assert "uk_qualification_verdict=needs_review" in result.stdout
+
+
+def test_bundle_versions_matches_policyengine_release_identity() -> None:
+    """Differential: the installed bundle, read two ways, must agree.
+
+    bundle-versions (this helper) and policyengine.py's
+    provenance.uk_qualification.release_bundle_identity derive the dispatch
+    fields from the same manifest. The second derivation is restated here from
+    that function (model_package.version, data_package.version,
+    certified_data_artifact.sha256, packages.policyengine-core.version), so a
+    real dispatch for the locked wrapper verifies.
+    """
+
+    import json
+    import os
+
+    from policyengine.bundle import get_current_bundle
+
+    bundle = get_current_bundle()
+    record = bundle["data_releases"]["uk"]
+    output = subprocess.run(
+        [sys.executable, str(HELPER), "bundle-versions"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    installed = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+    assert len(installed["uk_dataset_sha256"]) == 64
+    payload = {
+        "version": bundle["policyengine_version"],
+        "bundle": {
+            "uk": {
+                "model_version": record["model_package"]["version"],
+                "core_version": bundle["packages"]["policyengine-core"]["version"],
+                "data_release_version": record["data_package"]["version"],
+                "dataset_sha256": record["certified_data_artifact"]["sha256"],
+            }
+        },
+    }
+    result = subprocess.run(
+        [sys.executable, str(HELPER), "verify-dispatch"],
+        input=output,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "RELEASE_PAYLOAD": json.dumps(payload)},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "dispatch_verified=true" in result.stdout
+
+
+def test_bundle_versions_reports_the_receipt_certificate_digest(tmp_path) -> None:
+    """#743 review: a wrapper with the receipt helper reports its digest.
+
+    The locked wrapper predates the helper, so a stand-in module provides it:
+    the digest it computes from the UK record must reach the output unchanged,
+    and a dispatch naming another certificate must then be refused.
+    """
+
+    import json
+    import os
+
+    stand_in = tmp_path / "stand_in"
+    stand_in.mkdir()
+    (stand_in / "sitecustomize.py").write_text(
+        "import hashlib, json, sys, types\n"
+        "module = types.ModuleType('policyengine.provenance.receipt')\n"
+        "module.certificate_sha256 = lambda record: hashlib.sha256(\n"
+        "    json.dumps(record, sort_keys=True).encode()).hexdigest()\n"
+        "import policyengine.provenance\n"
+        "sys.modules['policyengine.provenance.receipt'] = module\n"
+    )
+    env = {**os.environ, "PYTHONPATH": str(stand_in)}
+    output = subprocess.run(
+        [sys.executable, str(HELPER), "bundle-versions"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+    ).stdout
+    installed = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+
+    import hashlib
+
+    from policyengine.bundle import get_current_bundle
+
+    record = get_current_bundle()["data_releases"]["uk"]
+    expected = hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
+    assert installed["uk_certificate_sha256"] == expected
+    mismatch = subprocess.run(
+        [sys.executable, str(HELPER), "verify-dispatch"],
+        input=output,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "RELEASE_PAYLOAD": json.dumps(
+                {"bundle": {"uk": {"certificate_sha256": "d" * 64}}}
+            ),
+        },
+    )
+    assert mismatch.returncode != 0
+    assert "certificate_sha256" in mismatch.stderr
+
+
+def test_verify_dispatch_rejects_another_wrapper_version() -> None:
+    import json
+
+    payload = json.loads(_payload())
+    payload["version"] = "4.2.0"
+
+    result = _verify(json.dumps(payload))
+
+    assert result.returncode != 0
+    assert "Dispatch is for policyengine 4.2.0" in result.stderr
+
+
+def test_update_policyengine_package_stops_when_dispatch_names_another_dataset(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    git_log = tmp_path / "git.log"
+    gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
+    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=uv_log)
+
+    result = run_updater(
+        env=updater_env(
+            fake_bin,
+            LATEST_OVERRIDE="4.1.0",
+            RELEASE_PAYLOAD=_payload(
+                dataset_sha256="b" * 64,
+                model_version="2.1.0",
+                core_version="999.999.999",
+                data_release_version="1.20.0",
+            ),
+        ),
+    )
+
+    assert result.returncode != 0
+    assert "does not match the release dispatch" in result.stderr
+    assert "git commit" not in git_log.read_text(encoding="utf-8")
+    assert "pr create" not in gh_log.read_text(encoding="utf-8")
+
+
+def test_update_policyengine_package_accepts_a_matching_dispatch(
+    fake_bin: Path, fake_repo: Path, tmp_path: Path
+) -> None:
+    git_log = tmp_path / "git.log"
+    gh_log = tmp_path / "gh.log"
+    uv_log = tmp_path / "uv.log"
+    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_gh(fake_bin, log=gh_log)
+    install_fake_uv(fake_bin, log=uv_log)
+
+    result = run_updater(
+        env=updater_env(
+            fake_bin,
+            LATEST_OVERRIDE="4.1.0",
+            RELEASE_PAYLOAD=_payload(
+                model_version="2.1.0",
+                core_version="999.999.999",
+                data_release_version="1.20.0",
+            ),
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "pr create" in gh_log.read_text(encoding="utf-8")

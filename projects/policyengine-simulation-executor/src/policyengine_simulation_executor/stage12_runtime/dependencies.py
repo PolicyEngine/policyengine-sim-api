@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from functools import partial
 from typing import Any, Protocol
 from uuid import UUID
 
+from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportPersistenceResult,
     ComparisonReportRecord,
@@ -16,6 +18,8 @@ from policyengine_simulation_contract.stage12_execution import (
 from policyengine_stage12_persistence import Stage12PersistenceStore
 
 from policyengine_simulation_executor.stage12_artifacts import Stage12ArtifactStore
+
+from .database_retry import open_connection_with_retry
 
 
 class ComparisonStore(Protocol):
@@ -112,8 +116,15 @@ class ModalChildInvoker:
         return modal.FunctionCall.from_id(invocation_id)
 
 
-def runtime_store() -> Stage12PersistenceStore:
-    return Stage12PersistenceStore(os.environ.get("STAGE12_DATABASE_URL", ""))
+def runtime_store(
+    runtime: ObservabilityRuntime | None = None,
+) -> Stage12PersistenceStore:
+    # Every operation opens its own pooler session, so each one retries a
+    # refused connection rather than failing the report during a burst.
+    return Stage12PersistenceStore(
+        os.environ.get("STAGE12_DATABASE_URL", ""),
+        open_connection=partial(open_connection_with_retry, runtime=runtime),
+    )
 
 
 def artifact_store() -> Stage12ArtifactStore:

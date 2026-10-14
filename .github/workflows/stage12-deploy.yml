@@ -21,8 +21,8 @@ permissions:
   contents: read
 
 concurrency:
-  # Share the regular deployment workflow's group because both workflows can
-  # create, promote, and remove revisions of the same Cloud Run services.
+  # Serialize routing writes and Cloud Run revision changes with deployments
+  # and rollbacks in every Modal environment.
   group: simulation-deploy-main
   cancel-in-progress: false
 

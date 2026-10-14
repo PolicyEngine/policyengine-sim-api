@@ -1,0 +1,936 @@
+# Rules registry for policyengine-sim-api.
+#
+# Every rule that governs this repository is declared here: what it says, how
+# mechanically it is enforced, where it runs in CI, and whether a checker has
+# been proven to reject a bad example. `python -m scripts.rules guard` keeps this
+# file honest; `python -m scripts.rules render` regenerates
+# docs/generated/rules.md and the Rules block in AGENTS.md.
+#
+# How to add or change a rule: docs/engineering/skills/rules-registry.md
+
+schema_version = 1
+repo = "policyengine-sim-api"
+
+[[category]]
+id = "boundaries"
+title = "Service and package boundaries"
+
+[[category]]
+id = "stage12"
+title = "Stage 12 persistence"
+
+[[category]]
+id = "deployment"
+title = "Deployment pipeline"
+
+[[category]]
+id = "contracts"
+title = "API contracts and integration"
+
+[[category]]
+id = "observability"
+title = "Observability"
+
+[[category]]
+id = "quality"
+title = "Code quality and tests"
+
+[[category]]
+id = "ci"
+title = "CI workflows and scripts"
+
+[[category]]
+id = "process"
+title = "Process and repository hygiene"
+
+[discovery]
+workflows = [".github/workflows/pr.yml", ".github/workflows/pr-image-smoke.yml"]
+guard_test_globs = [
+  "projects/*/tests/test_*boundar*.py",
+  "libs/*/tests/test_*boundar*.py",
+  "projects/*/tests/test_*schema_authority*.py",
+  "projects/policyengine-simulation-entry/tests/test_deployment_assets.py",
+  "projects/policyengine-simulation-gateway/tests/test_openapi_golden.py",
+]
+ignore_tests = [
+  { node = "projects/policyengine-simulation-entry/tests/test_deployment_assets.py::test_the_expression_evaluator_follows_github_semantics", reason = "Checks the GitHub Actions expression evaluator that the workflow-condition tests use; it enforces no repository rule itself." },
+]
+
+[agents]
+instructions = "AGENTS.md"
+adapters = ["CLAUDE.md", ".github/copilot-instructions.md"]
+
+[ci_scripts]
+workflows = ".github/workflows/*.yml"
+scripts_dir = ".github/scripts"
+test_globs = ["projects/*/tests/**/test_*.py", "libs/*/tests/**/test_*.py"]
+multiline_baseline = "rules/baselines/ci-multiline-run.txt"
+untested_baseline = "rules/baselines/ci-untested-scripts.txt"
+shellcheck_baseline = "rules/baselines/ci-shellcheck.txt"
+
+# --- Service and package boundaries ----------------------------------------
+
+[[rule]]
+id = "sim.boundaries.gateway-executor-decoupled"
+category = "boundaries"
+statement = "The gateway and executor never import each other; they communicate only through the models and state helpers in policyengine-simulation-contract."
+rationale = "libs/policyengine-simulation-contract/README.md"
+scope = ["projects/policyengine-simulation-gateway/src/**/*.py", "projects/policyengine-simulation-executor/src/**/*.py"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+[[rule]]
+id = "sim.boundaries.unit-tests-need-no-services"
+category = "boundaries"
+statement = "Unit tests never require real network credentials, Modal, Hugging Face, GCP or deployed services; those seams are mocked."
+rationale = "docs/engineering/skills/testing.md#dependency-boundaries"
+scope = ["projects/*/tests/**/*.py", "libs/*/tests/**/*.py"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+# --- Stage 12 persistence --------------------------------------------------
+
+[[rule]]
+id = "sim.stage12.no-schema-ddl"
+category = "stage12"
+statement = "Simulation runtimes and the Stage 12 persistence library contain no schema DDL (CREATE, ALTER, DROP or TRUNCATE of tables, types, schemas or databases, or create_all); policyengine-api owns the schema."
+rationale = "libs/policyengine-stage12-persistence/README.md"
+scope = ["libs/policyengine-stage12-persistence/src/**/*.py", "projects/policyengine-simulation-entry/src/**/*.py", "projects/policyengine-simulation-executor/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = ["tests/test_stage12_schema_authority.py::test_simulation_runtimes_contain_no_schema_ddl"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.stage12.no-schema-ddl/bad_stage12_runtime.py"
+good_fixture = "rules/fixtures/sim.stage12.no-schema-ddl/good_stage12_runtime.py"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_stage12_schema_authority.py::test_rule_proof_stage12_no_schema_ddl"
+
+[[rule]]
+id = "sim.stage12.no-migration-chain"
+category = "stage12"
+statement = "This repository has no schema migration chain (no Alembic); Stage 12 tables are migrated by policyengine-api."
+rationale = "libs/policyengine-stage12-persistence/README.md"
+scope = ["projects/*/src/**/*.py", "libs/*/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = ["tests/test_stage12_schema_authority.py::test_simulation_repository_has_no_schema_migration_chain"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.stage12.no-production-user-associations"
+category = "stage12"
+statement = "Stage 12 runtime modules never create production user associations (user_simulations or user_reports)."
+rationale = "libs/policyengine-stage12-persistence/README.md"
+scope = ["projects/*/src/**/stage12_*.py", "libs/policyengine-stage12-persistence/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = ["tests/test_stage12_schema_authority.py::test_stage12_runtime_cannot_create_production_user_associations"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.stage12.persistence-typed-dml-only"
+category = "stage12"
+statement = "The Stage 12 persistence library and runtime use typed SQLAlchemy Core DML only: no raw SQL text, driver-level SQL or schema operations."
+rationale = "libs/policyengine-stage12-persistence/README.md"
+scope = ["libs/policyengine-stage12-persistence/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "libs/policyengine-stage12-persistence"
+nodes = ["tests/test_source_boundaries.py::test_persistence_package_contains_no_raw_sql_or_schema_operations"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.stage12.deployment-uses-api-schema"
+category = "stage12"
+statement = "Stage 12 deployment uses the API-owned schema directly, and the Stage 12 runtime it deploys uses typed DML without raw SQL or schema changes."
+rationale = "libs/policyengine-stage12-persistence/README.md"
+scope = ["projects/policyengine-simulation-entry/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_stage12_deployment_uses_the_api_owned_schema_directly",
+  "tests/test_deployment_assets.py::test_stage12_runtime_uses_typed_dml_without_raw_sql_or_schema_changes",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.stage12.deployment-scope"
+category = "stage12"
+statement = "Main-branch deploys roll out Stage 12 in both environments; a Stage 12-only deploy runs candidate tests and the requested promotion but never redeploys existing Modal resources; the Stage 12 worker can request a Google OIDC token."
+rationale = "docs/operations"
+scope = [".github/workflows/*.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_main_deployment_automatically_deploys_stage12_in_both_environments",
+  "tests/test_deployment_assets.py::test_stage12_only_deployment_runs_candidate_tests_and_requested_promotion",
+  "tests/test_deployment_assets.py::test_stage12_only_deployment_cannot_redeploy_existing_modal_resources",
+  "tests/test_deployment_assets.py::test_stage12_worker_deployment_can_request_a_google_oidc_token",
+  "tests/test_deployment_assets.py::test_stage12_only_promotion_runs_whatever_the_skipped_stack_jobs",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.stage12.production-lock-has-db-runtime"
+category = "stage12"
+statement = "The production lock file includes the direct Stage 12 database runtime dependencies."
+rationale = "libs/policyengine-stage12-persistence/README.md"
+scope = ["projects/policyengine-simulation-entry/uv.lock"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = ["tests/test_deployment_assets.py::test_production_lock_contains_the_direct_stage12_database_runtime"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+# --- Deployment pipeline ---------------------------------------------------
+
+[[rule]]
+id = "sim.deploy.shell-scripts-valid"
+category = "deployment"
+statement = "Deployment shell scripts have valid shell syntax."
+rationale = "docs/operations"
+scope = [".github/scripts/*.sh"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = ["tests/test_deployment_assets.py::test_deployment_scripts_have_valid_shell_syntax"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.gcloud-without-terraform"
+category = "deployment"
+statement = "Deployment uses the gcloud-based workflow, not Terraform."
+rationale = "docs/operations"
+scope = [".github/workflows/*.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = ["tests/test_deployment_assets.py::test_deployment_uses_gcloud_workflow_without_terraform"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.workflow-shell-safety"
+category = "deployment"
+statement = "Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, and pins secret versions."
+rationale = "docs/operations"
+scope = [".github/workflows/*.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_cloud_run_deployment_does_not_interpolate_github_values_in_shell",
+  "tests/test_deployment_assets.py::test_cloud_run_deployment_escapes_environment_and_pins_secret_versions",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.revision-tags-valid"
+category = "deployment"
+statement = "Cloud Run revision tags are valid on a workflow's first run and fit the existing service names."
+rationale = "docs/operations"
+scope = [".github/workflows/*.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_cloud_run_revision_tags_are_valid_on_the_first_workflow_run",
+  "tests/test_deployment_assets.py::test_revision_tags_fit_existing_cloud_run_service_names",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.promotion-order-explicit"
+category = "deployment"
+statement = "Full-stack promotion order is explicit, and the reusable deployment rejects unexpectedly skipped phases."
+rationale = "docs/operations"
+scope = [".github/workflows/*.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_full_stack_promotion_order_is_explicit",
+  "tests/test_deployment_assets.py::test_reusable_deployment_rejects_unexpected_skipped_phases",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.smoke-tests-strict"
+category = "deployment"
+statement = "Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge."
+rationale = "docs/operations"
+scope = [".github/scripts/*.sh"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_candidate_smoke_rejects_a_revision_mismatch_without_retrying",
+  "tests/test_deployment_assets.py::test_stable_smoke_rejects_an_unexpected_revision_without_retrying",
+  "tests/test_deployment_assets.py::test_stable_smoke_retries_the_previous_revision_until_target_is_served",
+  "tests/test_deployment_assets.py::test_stable_smoke_fails_when_the_previous_revision_does_not_converge",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.traffic-changes-exact"
+category = "deployment"
+statement = "Traffic changes target an exact, validated revision, are reversible, and refuse to run over an intervening promotion."
+rationale = "docs/operations"
+scope = [".github/scripts/*.sh"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_traffic_changes_are_exact_revision_validated_and_reversible",
+  "tests/test_deployment_assets.py::test_traffic_change_refuses_an_intervening_promotion",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.release-identity-smoke"
+category = "deployment"
+statement = "Deploy gates pass the whole release identity to the entrypoint smoke, which requires every expectation, refuses malformed ones, and rejects a release whose routes, latest pointers, bundle, UK model or UK dataset differ from that identity."
+rationale = "docs/operations"
+scope = [".github/scripts/cloud-run-simulation-entry-smoke.sh", ".github/workflows/simulation-deploy.reusable.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_deploy_gates_pass_the_release_identity_to_the_smoke",
+  "tests/test_deployment_assets.py::test_latest_is_expected_only_when_the_release_advances_it",
+  "tests/test_deployment_assets.py::test_smoke_without_expectations_only_requires_versions_json",
+  "tests/test_deployment_assets.py::test_smoke_accepts_the_gateway_identity_of_a_new_release",
+  "tests/test_deployment_assets.py::test_smoke_accepts_an_older_release_by_its_route",
+  "tests/test_deployment_assets.py::test_smoke_accepts_an_unrecorded_digest_only_when_none_is_served",
+  "tests/test_deployment_assets.py::test_smoke_requires_every_expectation_when_identity_is_required",
+  "tests/test_deployment_assets.py::test_smoke_refuses_an_incomplete_identity",
+  "tests/test_deployment_assets.py::test_smoke_refuses_malformed_expectations",
+  "tests/test_deployment_assets.py::test_smoke_rejects_identity_expectations_without_a_version",
+  "tests/test_deployment_assets.py::test_smoke_rejects_a_release_without_a_route",
+  "tests/test_deployment_assets.py::test_smoke_rejects_worker_routes_to_an_old_app",
+  "tests/test_deployment_assets.py::test_smoke_rejects_a_uk_model_routed_to_another_app",
+  "tests/test_deployment_assets.py::test_smoke_rejects_latest_routing_to_another_version",
+  "tests/test_deployment_assets.py::test_smoke_rejects_a_latest_wrapper_that_lags_alone",
+  "tests/test_deployment_assets.py::test_smoke_rejects_a_uk_latest_that_lags_the_wrapper",
+  "tests/test_deployment_assets.py::test_smoke_rejects_a_missing_bundle_identity",
+  "tests/test_deployment_assets.py::test_smoke_rejects_a_bundle_recorded_for_another_wrapper",
+  "tests/test_deployment_assets.py::test_smoke_rejects_another_uk_model",
+  "tests/test_deployment_assets.py::test_smoke_rejects_another_uk_dataset",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.numerical-sentinel-gate"
+category = "deployment"
+statement = "An existing-stack deployment computes the numerical release sentinel from the exact bundle it installs, and the candidate and stable services must reproduce it; a failing sentinel check fails its step."
+rationale = "docs/operations"
+scope = [".github/workflows/simulation-deploy.reusable.yml", "projects/policyengine-simulation-executor/src/modal/utils/release_sentinel.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_deployed_stack_must_reproduce_the_numerical_sentinel",
+  "tests/test_deployment_assets.py::test_a_failing_sentinel_fails_its_step",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.routing-publication-journaled"
+category = "deployment"
+statement = "Each routing publication is named by its run, attempt and environment and journaled before it is applied; an always-running finalizer resolves it from the journal with the release-gate outcome, a release reports success only after that finalizer completes, and routing jobs never tolerate a failed command."
+rationale = "projects/policyengine-simulation-executor/README.md#routing-publication-and-rollback"
+scope = [".github/workflows/simulation-deploy.reusable.yml", ".github/workflows/simulation-rollback.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_each_publication_is_named_by_its_run_attempt_and_environment",
+  "tests/test_deployment_assets.py::test_publication_keeps_the_plan_but_finalization_reads_the_journal",
+  "tests/test_deployment_assets.py::test_finalizer_always_resolves_a_publication_with_the_release_gate_outcome",
+  "tests/test_deployment_assets.py::test_deployment_ready_requires_the_journal_finalizer_to_complete",
+  "tests/test_deployment_assets.py::test_release_success_requires_completed_finalization_for_published_routing",
+  "tests/test_deployment_assets.py::test_failed_release_gate_cannot_report_a_successful_release",
+  "tests/test_deployment_assets.py::test_a_failing_routing_command_fails_its_step_and_job",
+  "tests/test_deployment_assets.py::test_routing_jobs_never_allow_command_failures",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.container-context-minimal"
+category = "deployment"
+statement = "Container builds exclude local environments and unrelated projects, and the entrypoint container builds for the requested target platform."
+rationale = "docs/operations"
+scope = ["projects/policyengine-simulation-entry/Dockerfile"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_container_context_excludes_local_environments_and_unrelated_projects",
+  "tests/test_deployment_assets.py::test_entrypoint_container_uses_requested_target_platform",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.deploy.docker-images-build"
+category = "deployment"
+statement = "The simulation entry and executor Docker images build."
+rationale = "docs/operations"
+scope = ["projects/policyengine-simulation-entry/Dockerfile", "projects/policyengine-simulation-executor/Dockerfile"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "workflow-job"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "docker-build"
+invocation = "docker/build-push-action"
+
+[[rule]]
+id = "sim.deploy.modal-image-smoke"
+category = "deployment"
+statement = "App entrypoints import inside the real Modal images before merge, whenever a library baked into an image changes."
+rationale = ".github/workflows/pr-image-smoke.yml"
+scope = ["projects/policyengine-simulation-executor/src/modal/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "workflow-job"
+[[rule.ci]]
+workflow = ".github/workflows/pr-image-smoke.yml"
+job = "image-smoke"
+invocation = "modal-image-smoke.sh"
+
+[[rule]]
+id = "sim.deploy.image-smoke-covers-every-image-lib"
+category = "deployment"
+statement = "The image smoke path filter includes every library mounted into a Modal image, so a change to any of them runs the smoke."
+rationale = ".github/workflows/pr-image-smoke.yml"
+scope = [".github/workflows/pr-image-smoke.yml"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+# --- API contracts and integration ----------------------------------------
+
+[[rule]]
+id = "sim.contracts.gateway-openapi-golden"
+category = "contracts"
+statement = "The gateway's OpenAPI spec matches the checked-in golden file; regenerate it deliberately when the API changes."
+rationale = "projects/policyengine-simulation-gateway/tests/test_openapi_golden.py"
+scope = ["projects/policyengine-simulation-gateway/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-gateway"
+nodes = ["tests/test_openapi_golden.py::test_openapi_spec_matches_golden"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.contracts.regenerate-clients"
+category = "contracts"
+statement = "When public API schemas change, regenerate the clients and run the generated-client integration tests."
+rationale = "docs/engineering/skills/testing.md#dependency-boundaries"
+scope = ["projects/policyengine-simulation-entry/src/**/*.py"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+[[rule]]
+id = "sim.contracts.local-integration"
+category = "contracts"
+statement = "Generated-client integration tests pass against the locally built services."
+rationale = "docs/engineering/skills/testing.md#common-commands"
+scope = ["projects/policyengine-apis-integ/tests/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "workflow-job"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test-integration"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.contracts.full-integration-beta-only"
+category = "contracts"
+statement = "The complete integration suite runs against beta deployments only, never production."
+rationale = "docs/engineering/skills/testing.md"
+scope = [".github/workflows/*.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = ["tests/test_deployment_assets.py::test_complete_integration_suite_is_configured_for_beta_only"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.contracts.clients-publish-deployed-commit"
+category = "contracts"
+statement = "Client publication checks out the commit that was actually deployed."
+rationale = "docs/operations"
+scope = [".github/workflows/*.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = ["tests/test_deployment_assets.py::test_client_publication_checks_out_the_deployed_commit"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+# --- Observability ---------------------------------------------------------
+
+[[rule]]
+id = "sim.observability.id-is-diagnostic-only"
+category = "observability"
+statement = "observability_id has diagnostic meaning only: never use it for idempotency, authorization, database identity, routing or business logic."
+rationale = "docs/engineering/skills/observability.md#identifier-ownership"
+scope = ["projects/*/src/**/*.py", "libs/*/src/**/*.py"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+[[rule]]
+id = "sim.observability.header-transport-only"
+category = "observability"
+statement = "observability_id travels only in the X-PolicyEngine-Observability-Id header, never in a simulation JSON body, and polling never invents one."
+rationale = "docs/engineering/skills/observability.md#http-transport"
+scope = ["projects/*/src/**/*.py"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+[[rule]]
+id = "sim.observability.registered-stages-only"
+category = "observability"
+statement = "Span names come from the stage plans in policyengine_simulation_observability.stages; runtime code never adds span-name string literals."
+rationale = "docs/engineering/skills/observability.md#runtime-stages"
+scope = ["projects/*/src/**/*.py"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+[[rule]]
+id = "sim.observability.failures-never-break-requests"
+category = "observability"
+statement = "Invalid observability configuration fails at build or deploy time, and telemetry failures at runtime never fail a request or computation."
+rationale = "docs/engineering/skills/observability.md#failure-behavior"
+scope = ["libs/policyengine-simulation-observability/src/**/*.py"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+# --- Code quality and tests ------------------------------------------------
+
+[[rule]]
+id = "sim.quality.ruff-format-src"
+category = "quality"
+statement = "Source code under projects/*/src and libs/*/src is formatted with ruff format."
+rationale = "docs/engineering/skills/testing.md#common-commands"
+scope = ["projects/*/src/**/*.py", "libs/*/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = true
+[rule.enforcer]
+kind = "ruff"
+mode = "format"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "lint"
+invocation = "ruff format --check"
+
+[[rule]]
+id = "sim.quality.ruff-format-tests"
+category = "quality"
+statement = "Test code is formatted with ruff format too; CI currently checks only src directories."
+rationale = "docs/engineering/skills/testing.md#common-commands"
+scope = ["projects/*/tests/**/*.py", "libs/*/tests/**/*.py"]
+tier = "mechanical"
+status = "doc-only"
+autofix = true
+[rule.enforcer]
+kind = "none"
+
+[[rule]]
+id = "sim.quality.ruff-lint"
+category = "quality"
+statement = "Python code passes ruff check with the rules selected in ruff.toml (ruff's defaults, made explicit); CI does not run ruff check yet."
+rationale = "docs/engineering/skills/testing.md#common-commands"
+scope = ["projects/*/src/**/*.py", "libs/*/src/**/*.py"]
+tier = "mechanical"
+status = "advisory"
+autofix = true
+[rule.enforcer]
+kind = "ruff"
+mode = "lint"
+codes = ["E4", "E7", "E9", "F"]
+
+[[rule]]
+id = "sim.quality.tests-pass"
+category = "quality"
+statement = "Each project's unit tests pass in its own locked environment."
+rationale = "docs/engineering/skills/testing.md#canonical-layout"
+scope = ["projects/*/tests/**/*.py", "libs/*/tests/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "workflow-job"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.quality.every-project-tested"
+category = "quality"
+statement = "Every project and library with unit tests runs them in the PR test matrix."
+rationale = "docs/engineering/skills/testing.md#canonical-layout"
+scope = ["projects/*/tests/**/*.py", "libs/*/tests/**/*.py"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+# --- CI workflows and scripts ----------------------------------------------
+
+[[rule]]
+id = "sim.ci.multiline-run-is-script"
+category = "ci"
+statement = "A GitHub Actions run: block holds one line of code and no chained commands (&&, ||, ;); anything more lives in a tested script under .github/scripts/, called from a single-line step."
+rationale = "docs/engineering/skills/ci-workflows.md#one-line-of-code-per-run-block"
+scope = [".github/workflows/*.yml"]
+tier = "mechanical"
+status = "ratcheted"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "ci-scripts"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[rule.baseline]
+file = "rules/baselines/ci-multiline-run.txt"
+count = 25
+[rule.proof]
+bad_fixture = "scripts/rules/tests/fixtures/ci_scripts/multiline_bad"
+good_fixture = "scripts/rules/tests/fixtures/ci_scripts/multiline_good"
+test = "scripts/rules/tests/test_ci_scripts.py::TestCiScriptsProof::test_rule_proof_multiline_run"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
+[[rule]]
+id = "sim.ci.workflow-scripts-tested"
+category = "ci"
+statement = "Every shell script a workflow calls is run by at least one test."
+rationale = "docs/engineering/skills/ci-workflows.md#testing-a-workflow-script"
+scope = [".github/scripts/*.sh"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "ci-scripts"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[rule.proof]
+bad_fixture = "scripts/rules/tests/fixtures/ci_scripts/untested_bad"
+good_fixture = "scripts/rules/tests/fixtures/ci_scripts/untested_good"
+test = "scripts/rules/tests/test_ci_scripts.py::TestCiScriptsProof::test_rule_proof_untested_script"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
+[[rule]]
+id = "sim.ci.shell-scripts-pass-shellcheck"
+category = "ci"
+statement = "Every shell script under .github/scripts/ passes shellcheck."
+rationale = "docs/engineering/skills/ci-workflows.md#writing-a-workflow-script"
+scope = [".github/scripts/*.sh"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "ci-scripts"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[rule.proof]
+bad_fixture = "scripts/rules/tests/fixtures/ci_scripts/shellcheck/bad_script.sh"
+good_fixture = "scripts/rules/tests/fixtures/ci_scripts/shellcheck/good_script.sh"
+test = "scripts/rules/tests/test_ci_scripts.py::TestCiScriptsProof::test_rule_proof_shellcheck"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
+# --- Process and repository hygiene ----------------------------------------
+
+[[rule]]
+id = "sim.process.rules-registry"
+category = "process"
+statement = "Every rule is registered in rules/registry.toml, is enforced where it claims to be, and its rendered views are current."
+rationale = "docs/engineering/skills/rules-registry.md"
+scope = ["rules/registry.toml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "rules-registry"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+
+[[rule]]
+id = "sim.process.stacked-prs-full-ci-at-bottom"
+category = "process"
+statement = "In a stack of pull requests, only the lowest unmerged one runs the full PR workflow and the Modal image smoke. Every pr.yml job is needed by the CI complete gate, which fails on the pull requests above it and otherwise passes only when every job passed, so a stack merges bottom-up and nothing merges untested."
+rationale = "docs/engineering/skills/github-prs.md#stacked-prs-and-ci"
+scope = [".github/workflows/pr.yml", ".github/workflows/pr-image-smoke.yml", ".github/scripts/check_ci_complete.sh"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-executor"
+nodes = ["tests/test_ci_complete_gate.py::test_pr_workflow_is_gated", "tests/test_ci_complete_gate.py::test_image_smoke_runs_only_at_the_bottom_of_a_stack"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "ci-complete"
+invocation = "check_ci_complete.sh"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.process.stacked-prs-full-ci-at-bottom/bad_pr.yml"
+good_fixture = "rules/fixtures/sim.process.stacked-prs-full-ci-at-bottom/good_pr.yml"
+project = "projects/policyengine-simulation-executor"
+test = "tests/test_ci_complete_gate.py::test_rule_proof_gate_check"
+
+[[rule]]
+id = "sim.process.rule-machinery-code-owned"
+category = "process"
+statement = "Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author."
+rationale = ".github/CODEOWNERS"
+scope = [".github/CODEOWNERS"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+[[rule]]
+id = "sim.process.agents-never-bypass"
+category = "process"
+statement = "Agents never bypass branch rules, even with admin credentials: no gh pr merge --admin and no bypass option; a blocked merge is reported to a human."
+rationale = "docs/engineering/skills/github-prs.md#branch-rules"
+scope = ["AGENTS.md"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+[[rule]]
+id = "sim.agents.adapters-point-to-agents-md"
+category = "process"
+statement = "CLAUDE.md and .github/copilot-instructions.md only point to AGENTS.md; skills and rules are listed in AGENTS.md alone."
+rationale = "AGENTS.md"
+scope = ["CLAUDE.md", ".github/copilot-instructions.md"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "rules-registry"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[rule.proof]
+bad_fixture = "scripts/rules/tests/fixtures/adapters/bad_CLAUDE.md"
+good_fixture = "scripts/rules/tests/fixtures/adapters/good_CLAUDE.md"
+test = "scripts/rules/tests/test_adapters.py::TestAdaptersProof::test_rule_proof_adapters"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
+[[rule]]
+id = "sim.process.pr-tracking-issue"
+category = "process"
+statement = "Every PR has a tracking issue in this repository, and the first line of its description is Fixes #ISSUE_NUMBER."
+rationale = "docs/engineering/skills/github-prs.md#same-repository-draft-prs-only"
+scope = [".github/pull_request_template.md"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+[[rule]]
+id = "sim.process.same-repo-draft-prs"
+category = "process"
+statement = "PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks."
+rationale = "docs/engineering/skills/github-prs.md"
+scope = [".github/pull_request_template.md"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"

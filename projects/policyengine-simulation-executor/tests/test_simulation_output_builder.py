@@ -14,7 +14,7 @@ from fixtures.spm_doubles import (
     installed_spm_selection,
     spm_capable_simulation,
 )
-from fixtures.test_simulation_api_contracts import (
+from fixtures.macro_output import (
     CURRENT_SINGLE_YEAR_MACRO_KEYS,
     CURRENT_SINGLE_YEAR_MACRO_RESULT,
 )
