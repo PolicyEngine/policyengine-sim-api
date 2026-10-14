@@ -207,33 +207,6 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     assert "asgi_app" not in vars(module)
 
 
-def test_coordinator_timeout_leaves_time_to_record_after_the_child_window(
-    monkeypatch,
-) -> None:
-    from policyengine_simulation_executor.stage12_runtime.comparison import (
-        PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS,
-    )
-    from policyengine_simulation_executor.stage12_runtime.coordination import (
-        SIMULATION_WAIT_TIMEOUT_SECONDS,
-    )
-
-    module = _load(monkeypatch)
-    functions = {name: options for name, options in module.app.function_calls}
-    minimum_aggregation_and_persistence_seconds = 600
-
-    assert (
-        SIMULATION_WAIT_TIMEOUT_SECONDS
-        == functions["run_single_simulation_us"]["timeout"]
-        == functions["run_single_simulation_uk"]["timeout"]
-    )
-    assert (
-        functions["coordinate_report"]["timeout"]
-        - SIMULATION_WAIT_TIMEOUT_SECONDS
-        - PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS
-        >= minimum_aggregation_and_persistence_seconds
-    )
-
-
 @pytest.mark.parametrize(
     "function_name",
     [
