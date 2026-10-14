@@ -7,6 +7,7 @@ import subprocess
 import textwrap
 from pathlib import Path
 
+import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 CLEANUP_SCRIPT = (
@@ -83,6 +84,7 @@ def _run_cleanup(
     service_traffic: list[dict],
     revisions: list[dict],
     successful_revision: str,
+    rollback_revision: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     service_json = tmp_path / "service.json"
     revisions_json = tmp_path / "revisions.json"
@@ -110,7 +112,12 @@ def _run_cleanup(
             "SIMULATION_ENTRYPOINT_GCP_REGION": "us-central1",
             "SIMULATION_ENTRYPOINT_SERVICE": "policyengine-simulation-entry",
             "SIMULATION_ENTRYPOINT_SUCCESSFUL_REVISION": successful_revision,
-        },
+        }
+        | (
+            {"SIMULATION_ENTRYPOINT_ROLLBACK_REVISION": rollback_revision}
+            if rollback_revision is not None
+            else {}
+        ),
     )
 
 
@@ -144,6 +151,77 @@ def test_cleanup_retains_only_the_promoted_revision_and_removes_old_tags(
         encoding="utf-8"
     ).splitlines() == ["entry-00002-two", "entry-00001-one"]
     assert "Retained successful Cloud Run revision entry-00003-three" in result.stdout
+
+
+def test_cleanup_keeps_the_rollback_revision(tmp_path: Path):
+    revisions = [
+        _revision("entry-00003-three", "2026-09-03T00:00:00Z"),
+        _revision("entry-00001-one", "2026-09-01T00:00:00Z"),
+        _revision("entry-00002-two", "2026-09-02T00:00:00Z"),
+    ]
+    traffic = [
+        {"revisionName": "entry-00003-three", "percent": 100, "tag": "p-3"},
+        {"revisionName": "entry-00002-two", "tag": "p-2"},
+    ]
+
+    result = _run_cleanup(
+        tmp_path,
+        service_traffic=traffic,
+        revisions=revisions,
+        successful_revision="entry-00003-three",
+        rollback_revision="entry-00002-two",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "deleted-revisions.txt").read_text(
+        encoding="utf-8"
+    ).splitlines() == ["entry-00001-one"]
+    assert "Retained rollback Cloud Run revision entry-00002-two" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("rollback_revision", "message"),
+    [
+        ("entry-00009-gone", "no longer exists"),
+        ("entry-00003-three", None),
+        ("", None),
+    ],
+)
+def test_a_missing_or_current_rollback_revision_retains_nothing_extra(
+    tmp_path: Path, rollback_revision, message
+):
+    result = _run_cleanup(
+        tmp_path,
+        service_traffic=[{"revisionName": "entry-00003-three", "percent": 100}],
+        revisions=[
+            _revision("entry-00003-three", "2026-09-03T00:00:00Z"),
+            _revision("entry-00002-two", "2026-09-02T00:00:00Z"),
+        ],
+        successful_revision="entry-00003-three",
+        rollback_revision=rollback_revision,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "deleted-revisions.txt").read_text(
+        encoding="utf-8"
+    ).splitlines() == ["entry-00002-two"]
+    assert "Retained rollback" not in result.stdout
+    if message:
+        assert message in result.stdout
+
+
+def test_cleanup_refuses_an_invalid_rollback_revision(tmp_path: Path):
+    result = _run_cleanup(
+        tmp_path,
+        service_traffic=[{"revisionName": "entry-00002-two", "percent": 100}],
+        revisions=[_revision("entry-00002-two", "2026-09-02T00:00:00Z")],
+        successful_revision="entry-00002-two",
+        rollback_revision="Entry; rm -rf /",
+    )
+
+    assert result.returncode == 1
+    assert "ROLLBACK_REVISION is invalid" in result.stderr
+    assert not (tmp_path / "deleted-revisions.txt").exists()
 
 
 def test_cleanup_refuses_to_mutate_when_successful_revision_is_not_ready(

@@ -1,0 +1,55 @@
+{
+  "bundles": {
+    "6.2.6": {
+      "uk": {
+        "data_version": "1.58.0",
+        "dataset": "gs://policyengine-uk-data-private/enhanced_frs_2024_25.h5@1.58.0",
+        "dataset_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "model_version": "2.125.1",
+        "policyengine_version": "6.2.6",
+        "spm": null
+      },
+      "us": {
+        "data_version": "1.80.0",
+        "dataset": "gs://policyengine-us-data/enhanced_cps_2024.h5@1.80.0",
+        "dataset_sha256": null,
+        "model_version": "1.700.0",
+        "policyengine_version": "6.2.6",
+        "spm": null
+      }
+    },
+    "6.2.7": {
+      "uk": {
+        "data_version": "1.58.0",
+        "dataset": "gs://policyengine-uk-data-private/enhanced_frs_2024_25.h5@1.58.0",
+        "dataset_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "model_version": "2.126.8",
+        "policyengine_version": "6.2.7",
+        "spm": null
+      },
+      "us": {
+        "data_version": "1.80.0",
+        "dataset": "gs://policyengine-us-data/enhanced_cps_2024.h5@1.80.0",
+        "dataset_sha256": null,
+        "model_version": "1.700.0",
+        "policyengine_version": "6.2.7",
+        "spm": null
+      }
+    }
+  },
+  "policyengine": {
+    "6.2.6": "policyengine-simulation-py6-2-6",
+    "6.2.7": "policyengine-simulation-py6-2-7",
+    "latest": "6.2.7"
+  },
+  "spm_capabilities": {},
+  "uk": {
+    "2.125.1": "policyengine-simulation-py6-2-6",
+    "2.126.8": "policyengine-simulation-py6-2-7",
+    "latest": "2.126.8"
+  },
+  "us": {
+    "1.700.0": "policyengine-simulation-py6-2-7",
+    "latest": "1.700.0"
+  }
+}

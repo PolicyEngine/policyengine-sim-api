@@ -117,6 +117,12 @@ create_pr_body_file() {
     echo "- US: ${BUNDLED_US_DATA_VERSION:-resolved from bundle during update}"
     echo "- UK: ${BUNDLED_UK_DATA_VERSION:-resolved from bundle during update}"
     echo
+    echo "UK release identity:"
+    echo "- certified dataset SHA-256: ${BUNDLED_UK_DATASET_SHA256:-not recorded by this bundle}"
+    echo "- certificate digest (receipt v1): ${BUNDLED_UK_CERTIFICATE_SHA256:-not reported by this wrapper}"
+    echo "- release dispatch verified against the installed wheel: ${DISPATCH_VERIFIED:-false}"
+    echo "- qualification: ${UK_QUALIFICATION_VERDICT:-none recorded}${UK_QUALIFICATION_RECEIPT_SHA256:+ (receipt ${UK_QUALIFICATION_RECEIPT_SHA256})}"
+    echo
     echo "---"
     echo "Generated automatically by GitHub Actions."
   } > "$pr_body_file"
@@ -185,23 +191,8 @@ if [[ -n "$EXISTING_PR" ]]; then
   exit 0
 fi
 
-if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
-  echo "Remote branch '${BRANCH}' already exists without an open PR. Creating PR."
-  create_update_pr
-  echo "PR created for existing branch ${BRANCH}"
-  exit 0
-fi
-
-git config user.name "github-actions[bot]"
-git config user.email "github-actions[bot]@users.noreply.github.com"
-git checkout -b "$BRANCH"
-
-python3 "$PYTHON_HELPER" update-requirements \
-  --pyproject "$PYPROJECT" \
-  --package "$PACKAGE" \
-  --current "$CURRENT" \
-  --latest "$LATEST"
-
+# Every PR, including one for a branch left by an earlier run, is opened only
+# after the target wrapper's bundle and the release dispatch have been verified.
 # Read the target wrapper's release manifest without resolving the project.
 for attempt in 1 2 3; do
   if BUNDLE_OUTPUT=$(
@@ -238,6 +229,18 @@ if [[ "$BUNDLED_POLICYENGINE_VERSION" != "$LATEST" ]]; then
   echo "ERROR: Installed policyengine.py reports bundle ${BUNDLED_POLICYENGINE_VERSION}, expected ${LATEST}." >&2
   exit 1
 fi
+BUNDLED_UK_DATASET_SHA256=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "uk_dataset_sha256" {print $2}')
+BUNDLED_UK_CERTIFICATE_SHA256=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "uk_certificate_sha256" {print $2}')
+
+# A policyengine-release dispatch may name the UK bundle it certified; the
+# installed wheel must carry exactly that bundle.
+if ! DISPATCH_OUTPUT=$(printf '%s\n' "$BUNDLE_OUTPUT" | python3 "$PYTHON_HELPER" verify-dispatch); then
+  echo "ERROR: The installed policyengine ${LATEST} bundle does not match the release dispatch." >&2
+  exit 1
+fi
+DISPATCH_VERIFIED=$(printf '%s\n' "$DISPATCH_OUTPUT" | awk -F= '$1 == "dispatch_verified" {print $2}')
+UK_QUALIFICATION_VERDICT=$(printf '%s\n' "$DISPATCH_OUTPUT" | awk -F= '$1 == "uk_qualification_verdict" {print $2}')
+UK_QUALIFICATION_RECEIPT_SHA256=$(printf '%s\n' "$DISPATCH_OUTPUT" | awk -F= '$1 == "uk_qualification_receipt_sha256" {print $2}')
 
 echo "Bundled runtime pins:"
 echo "  policyengine==${BUNDLED_POLICYENGINE_VERSION}"
@@ -248,6 +251,35 @@ echo "  spm-calculator==${BUNDLED_SPM_VERSION}"
 echo "Certified data releases:"
 echo "  us=${BUNDLED_US_DATA_VERSION}"
 echo "  uk=${BUNDLED_UK_DATA_VERSION}"
+
+if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+  echo "Remote branch '${BRANCH}' already exists without an open PR. Verifying it."
+  git fetch --no-tags origin "refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+  BRANCH_PYPROJECT="$(mktemp)"
+  git show "origin/${BRANCH}:${PROJECT_DIR}/pyproject.toml" > "$BRANCH_PYPROJECT"
+  BRANCH_PIN=$(python3 "$PYTHON_HELPER" current-version \
+    --pyproject "$BRANCH_PYPROJECT" \
+    --package "$PACKAGE")
+  rm -f "$BRANCH_PYPROJECT"
+  if [[ "$BRANCH_PIN" != "$LATEST" ]]; then
+    echo "ERROR: ${BRANCH} pins ${PACKAGE} ${BRANCH_PIN:-nothing}, expected ${LATEST}." >&2
+    exit 1
+  fi
+  echo "Creating PR for verified branch ${BRANCH}."
+  create_update_pr
+  echo "PR created for existing branch ${BRANCH}"
+  exit 0
+fi
+
+git config user.name "github-actions[bot]"
+git config user.email "github-actions[bot]@users.noreply.github.com"
+git checkout -b "$BRANCH"
+
+python3 "$PYTHON_HELPER" update-requirements \
+  --pyproject "$PYPROJECT" \
+  --package "$PACKAGE" \
+  --current "$CURRENT" \
+  --latest "$LATEST"
 
 # The PyPI Simple index can briefly lag the JSON API after a release, so retry
 # the final project lock as well.

@@ -24,6 +24,8 @@ def _bundle_outputs() -> dict[str, str]:
         "us_data_version": us_bundle.data_version,
         "uk_version": get_bundled_package_version("policyengine-uk"),
         "uk_data_version": uk_bundle.data_version,
+        "us_dataset_sha256": getattr(us_bundle, "default_dataset_sha256", None) or "",
+        "uk_dataset_sha256": getattr(uk_bundle, "default_dataset_sha256", None) or "",
     }
 
 
@@ -50,7 +52,8 @@ def main() -> None:
         f"policyengine-us={outputs['us_version']}, "
         f"us-data-release={outputs['us_data_version']}, "
         f"policyengine-uk={outputs['uk_version']}, "
-        f"uk-data-release={outputs['uk_data_version']}"
+        f"uk-data-release={outputs['uk_data_version']}, "
+        f"uk-dataset-sha256={outputs['uk_dataset_sha256'] or 'unrecorded'}"
     )
 
 

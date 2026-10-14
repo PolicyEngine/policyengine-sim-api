@@ -38,9 +38,11 @@ def test_version_export_reads_package_versions_from_policyengine_bundle(monkeypa
     bundles = {
         "us": SimpleNamespace(
             data_version="1.10.0",
+            default_dataset_sha256="a" * 64,
         ),
         "uk": SimpleNamespace(
             data_version="1.20.0",
+            default_dataset_sha256="b" * 64,
         ),
     }
     package_versions = {
@@ -80,4 +82,6 @@ def test_version_export_reads_package_versions_from_policyengine_bundle(monkeypa
         "us_data_version": "1.10.0",
         "uk_version": "2.1.0",
         "uk_data_version": "1.20.0",
+        "us_dataset_sha256": "a" * 64,
+        "uk_dataset_sha256": "b" * 64,
     }

@@ -1,6 +1,7 @@
 """Direct DML for temporary Stage 12 comparison state."""
 
 from policyengine_stage12_persistence.store import (
+    ConnectionOpener,
     Stage12PersistenceStore,
     create_stage12_engine,
     normalized_database_url,
@@ -11,6 +12,7 @@ from policyengine_stage12_persistence.validation import (
 )
 
 __all__ = [
+    "ConnectionOpener",
     "Stage12PersistenceStore",
     "Stage12RuntimeAccessError",
     "create_stage12_engine",

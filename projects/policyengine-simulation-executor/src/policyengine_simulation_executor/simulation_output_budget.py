@@ -12,6 +12,7 @@ from policyengine_simulation_executor.simulation_macro_output import (
 from policyengine_simulation_executor.simulation_output_common import (
     _change_output_variable,
     _collection_records,
+    _count_output_entities,
     _number,
     _sum_output_variable,
 )
@@ -59,8 +60,8 @@ def build_budgetary_impact(country: str, baseline, reform) -> BudgetaryImpact:
         state_tax_revenue_impact=state_tax_revenue_impact,
         benefit_spending_impact=benefit_spending_impact,
         budgetary_impact=tax_revenue_impact - benefit_spending_impact,
-        households=_sum_output_variable(
-            baseline, "household_weight", entity="household"
+        households=_count_output_entities(
+            baseline, entity="household", weight="household_weight"
         ),
         baseline_net_income=_sum_output_variable(
             baseline, "household_net_income", entity="household"
