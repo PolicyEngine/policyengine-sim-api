@@ -137,11 +137,7 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           PE_UK_PRIVATE_HF_READ_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}
-        run: |
-          uv run modal secret create pe-uk-private-hf-read-token \
-            "HUGGING_FACE_TOKEN=${PE_UK_PRIVATE_HF_READ_TOKEN}" \
-            --env="${{ inputs.modal_environment }}" \
-            --force
+        run: uv run modal secret create pe-uk-private-hf-read-token "HUGGING_FACE_TOKEN=${PE_UK_PRIVATE_HF_READ_TOKEN}" --env="${{ inputs.modal_environment }}" --force
 
       - name: Synchronize Modal runtime secrets
         if: ${{ inputs.deploy_existing_stack }}
@@ -351,9 +347,7 @@ jobs:
 
       - name: Select versioned executor app
         id: app
-        run: |
-          version_safe="${POLICYENGINE_VERSION//./-}"
-          echo "name=policyengine-simulation-py${version_safe}" >> "$GITHUB_OUTPUT"
+        run: echo "name=policyengine-simulation-py${POLICYENGINE_VERSION//./-}" >> "$GITHUB_OUTPUT"
 
       - name: Deploy versioned Modal executor
         working-directory: projects/policyengine-simulation-executor
