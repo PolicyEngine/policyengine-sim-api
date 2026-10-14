@@ -43,7 +43,7 @@ from .aggregation import (
     validate_aligned_outputs,
     validate_uk_local_authority_metadata,
 )
-from .comparison import compare_completed_report
+from .comparison import ComparisonServices, compare_completed_report
 from .dependencies import (
     ChildCall,
     ChildInvoker,
@@ -699,11 +699,13 @@ class _ReportCoordination:
             parent=completed_parent,
             aggregate=aggregate,
             context=self.context,
-            store=self.persistence,
-            artifacts=self.artifact_storage,
-            invoker=self.child_invoker,
-            runtime=self.runtime,
-            stage_plan=self.stage_plan,
+            services=ComparisonServices(
+                store=self.persistence,
+                artifacts=self.artifact_storage,
+                invoker=self.child_invoker,
+                runtime=self.runtime,
+                stage_plan=self.stage_plan,
+            ),
         )
         return descriptor.model_dump(mode="json")
 
