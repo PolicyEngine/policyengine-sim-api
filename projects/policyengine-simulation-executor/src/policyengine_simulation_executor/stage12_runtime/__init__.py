@@ -7,7 +7,7 @@ from .failures import (
     Stage12ExecutionError,
     Stage12FailureDetail,
     Stage12InputError,
-    failure_detail_from_exception,
+    redacted_failure_detail,
     validate_policy_periods,
 )
 from .fanout import Stage12SegmentRunner, run_segmented_simulation
@@ -46,7 +46,7 @@ __all__ = [
     "calculate_simulation_frames",
     "calculate_segment",
     "coordinate_report",
-    "failure_detail_from_exception",
+    "redacted_failure_detail",
     "run_single_simulation",
     "run_segmented_simulation",
     "merge_segment_results",

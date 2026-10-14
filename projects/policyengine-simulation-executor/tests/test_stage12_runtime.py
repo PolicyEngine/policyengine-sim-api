@@ -13,6 +13,7 @@ from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Lock
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -76,6 +77,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
+    Stage12SegmentRunner,
     _build_spm_result,
     build_aggregate_report,
     database_retry,
@@ -96,6 +98,9 @@ from policyengine_simulation_executor.stage12_runtime.aggregation import (
 )
 from policyengine_simulation_executor.stage12_runtime.comparison import (
     PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS,
+)
+from policyengine_simulation_executor.stage12_runtime.partition import (
+    US_REGION_GROUPS,
 )
 from policyengine_simulation_executor.stage12_runtime.dependencies import (
     runtime_store,
@@ -857,6 +862,15 @@ def _connection_limit_error() -> OperationalError:
     )
 
 
+def _correlation_id(error_summary: str) -> str:
+    """Return the correlation ID in a redacted failure summary."""
+
+    prefix = "Simulation failed (correlation_id="
+    assert error_summary.startswith(prefix)
+    assert error_summary.endswith(")")
+    return error_summary.removeprefix(prefix).removesuffix(")")
+
+
 class TelemetryRecordingRuntime(RecordingRuntime):
     """Record telemetry in the same ordered list as database writes."""
 
@@ -934,9 +948,11 @@ def test_single_worker_reports_failure_before_an_unwritable_failure_record() -> 
     assert attributes == {
         "stage12_failure_scope": "simulation_execution",
         "simulation_role": "baseline",
+        "evaluation_id": str(EVALUATION_ID),
+        "simulation_execution_id": str(BASELINE_ID),
+        "correlation_id": _correlation_id(failure_write[1]),
     }
     assert failure_write[0] == "failure_write"
-    assert failure_write[1].startswith("Simulation failed (correlation_id=")
     assert persistence_report[0] == "telemetry"
     assert persistence_report[1][0] == (
         "Stage 12 failure record could not be persisted"
@@ -2202,22 +2218,17 @@ def test_coordinator_reports_failure_before_an_unwritable_failure_record() -> No
 
     assert error.value.__cause__ is None
     original_report, failure_write, persistence_report = ordered_events
-    assert original_report[1][1] == {"stage12_failure_scope": "report_coordination"}
+    assert original_report[1][1] == {
+        "stage12_failure_scope": "report_coordination",
+        "evaluation_id": str(EVALUATION_ID),
+        "correlation_id": _correlation_id(failure_write[1]),
+    }
     assert original_report[1][2] is aggregation_error
     assert failure_write[0] == "failure_write"
-    assert failure_write[1].startswith("Simulation failed (correlation_id=")
     assert isinstance(persistence_report[1][2], OperationalError)
     assert store.parent.status is ComparisonRunLifecycleStatus.RUNNING
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known open bug: the coordinator reads a failed child's record to "
-        "choose its failure detail outside the failure-recording guard, so "
-        "an unreadable record replaces the child's original failure."
-    ),
-)
 def test_coordinator_reports_a_child_failure_once_when_its_record_is_unwritable() -> (
     None
 ):
@@ -2251,13 +2262,19 @@ def test_coordinator_reports_a_child_failure_once_when_its_record_is_unwritable(
         if event[0] == "telemetry" and event[1][0] == "Stage 12 execution failed"
     ]
     assert [report[1] for report in failure_reports] == [
-        {"stage12_failure_scope": "child_wait", "simulation_role": "baseline"}
+        {
+            "stage12_failure_scope": "child_wait",
+            "simulation_role": "baseline",
+            "evaluation_id": str(EVALUATION_ID),
+            "simulation_execution_id": str(BASELINE_ID),
+            "correlation_id": _correlation_id(store.parent.error_summary),
+        }
     ]
     assert ordered_events[0][0] == "telemetry"
     assert ordered_events[1] == ("child_read", str(BASELINE_ID))
     # The report record is still written after the child record could not be.
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
-    assert store.parent.error_summary.startswith("Simulation failed (correlation_id=")
+    assert store.parent.error_code == "simulation_invocation_failed"
 
 
 class RefusingDispatchInvoker:
@@ -2299,17 +2316,22 @@ def test_coordinator_reports_a_child_dispatch_failure_once() -> None:
         for event in ordered_events
         if event[0] == "telemetry" and event[1][0] == "Stage 12 execution failed"
     ]
+    baseline_child = store.children[BASELINE_ID]
     assert [(attributes, error) for _message, attributes, error in failure_reports] == [
         (
-            {"stage12_failure_scope": "child_dispatch", "simulation_role": "baseline"},
+            {
+                "stage12_failure_scope": "child_dispatch",
+                "simulation_role": "baseline",
+                "evaluation_id": str(EVALUATION_ID),
+                "simulation_execution_id": str(BASELINE_ID),
+                "correlation_id": _correlation_id(baseline_child.error_summary),
+            },
             dispatch_error,
         )
     ]
     assert invoker.events == ["spawn:baseline"]
-    baseline_child = store.children[BASELINE_ID]
     assert baseline_child.status is ComparisonRunLifecycleStatus.FAILED
     assert baseline_child.error_code == "simulation_dispatch_failed"
-    assert baseline_child.error_summary.startswith("Simulation failed (correlation_id=")
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_summary == baseline_child.error_summary
 
@@ -3081,6 +3103,333 @@ def test_startup_cancellation_state_error_does_not_replace_the_original_failure(
         role="baseline",
         error_type="ConnectionError",
     )
+
+
+class ChildStateError(Exception):
+    """A database failure while reading or writing a child's own record."""
+
+
+class OwnChildStateFailingStore(FakeStore):
+    """Fail one read, or one failed-status write, of one child's record once.
+
+    Cancellation writes are left alone, so only the failed child's own state
+    update can fail.
+    """
+
+    def __init__(self, *, failing_simulation_id, failing_operation):
+        super().__init__()
+        self.failing_simulation_id = failing_simulation_id
+        self.failing_operation = failing_operation
+        self.remaining_failures = 1
+
+    def _fail_once(self, operation, simulation_execution_id):
+        if (
+            operation == self.failing_operation
+            and simulation_execution_id == self.failing_simulation_id
+            and self.remaining_failures > 0
+        ):
+            self.remaining_failures -= 1
+            raise ChildStateError("database contains sensitive details")
+
+    def get_simulation(self, simulation_execution_id):
+        self._fail_once("read", simulation_execution_id)
+        return super().get_simulation(simulation_execution_id)
+
+    def replace_simulation_if_status(self, record, *, expected_status):
+        if record.error_code != "simulation_cancelled":
+            self._fail_once("write", record.simulation_execution_id)
+        return super().replace_simulation_if_status(
+            record, expected_status=expected_status
+        )
+
+
+@pytest.mark.parametrize(
+    ("failing_operation", "baseline_status", "baseline_error_code"),
+    [
+        # The failure is still recorded: the read before the conditional
+        # write succeeds.
+        (
+            "read",
+            ComparisonRunLifecycleStatus.FAILED,
+            "simulation_invocation_failed",
+        ),
+        ("write", ComparisonRunLifecycleStatus.RUNNING, None),
+    ],
+)
+def test_failed_child_state_error_does_not_replace_the_child_failure(
+    caplog,
+    failing_operation,
+    baseline_status,
+    baseline_error_code,
+) -> None:
+    store = OwnChildStateFailingStore(
+        failing_simulation_id=BASELINE_ID,
+        failing_operation=failing_operation,
+    )
+    invoker = ScriptedChildInvoker(
+        wait_errors={"baseline": LookupError("baseline failure is sensitive")},
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger=coordination_module.__name__),
+        pytest.raises(RuntimeError, match="Stage 12 report coordination failed"),
+    ):
+        _coordinate_with(_report_with_segmentation(segmented=False), store, invoker)
+
+    assert store.parent.error_code == "simulation_invocation_failed"
+    _correlation_id(store.parent.error_summary)
+    baseline = store.children[BASELINE_ID]
+    assert baseline.status is baseline_status
+    assert baseline.error_code == baseline_error_code
+    if baseline_error_code is not None:
+        assert baseline.error_summary == store.parent.error_summary
+    # The failed child is neither cancelled nor recorded as cancelled.
+    assert invoker.calls["baseline"].cancel_count == 0
+    _assert_cancelled(store.children[REFORM_ID], after="the baseline simulation failed")
+    assert invoker.calls["reform"].cancel_count == 1
+    _assert_log_identifies_child(
+        _coordination_log(caplog, logging.ERROR),
+        role="baseline",
+        error_type="ChildStateError",
+    )
+
+
+class ReformDispatchFailureInvoker(ScriptedChildInvoker):
+    def spawn(self, *, simulation, **values):
+        role = PlannedSimulationExecutionInput.model_validate(simulation).role
+        if role is SimulationRole.REFORM:
+            self.events.append("spawn:reform")
+            raise ConnectionError("dispatch contains sensitive details")
+        return super().spawn(simulation=simulation, **values)
+
+
+@pytest.mark.parametrize("failing_operation", ["read", "write"])
+def test_dispatch_failure_state_error_does_not_replace_the_child_failure(
+    caplog,
+    failing_operation,
+) -> None:
+    store = OwnChildStateFailingStore(
+        failing_simulation_id=REFORM_ID,
+        failing_operation=failing_operation,
+    )
+    invoker = ReformDispatchFailureInvoker()
+
+    with (
+        caplog.at_level(logging.WARNING, logger=coordination_module.__name__),
+        pytest.raises(RuntimeError, match="Stage 12 report coordination failed"),
+    ):
+        _coordinate_with(_report_with_segmentation(segmented=False), store, invoker)
+
+    assert invoker.events == ["spawn:baseline", "spawn:reform"]
+    assert store.parent.error_code == "simulation_dispatch_failed"
+    _correlation_id(store.parent.error_summary)
+    # The reform record could not be updated, so it keeps its dispatch
+    # placeholder rather than a cancellation.
+    reform = store.children[REFORM_ID]
+    assert reform.status is ComparisonRunLifecycleStatus.RUNNING
+    assert reform.error_code is None
+    _assert_cancelled(store.children[BASELINE_ID], after="the reform simulation failed")
+    assert invoker.calls["baseline"].cancel_count == 1
+    _assert_log_identifies_child(
+        _coordination_log(caplog, logging.ERROR),
+        role="reform",
+        error_type="ChildStateError",
+    )
+
+
+class ExceptionRecordingRuntime(RecordingRuntime):
+    """Record every telemetry call that can report a failure."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reports: list[tuple[str, object, dict, object]] = []
+
+    def log(self, message, *, severity="INFO", attributes=None, error=None):
+        self.reports.append(("log", message, dict(attributes or {}), error))
+
+    def record_exception(self, error, *, handled, status_code=None):
+        self.reports.append(("exception", None, {}, error))
+
+    def event(self, name, *, attributes=None, **_options):
+        self.reports.append(("event", name, dict(attributes or {}), None))
+
+    def set_context(self, **_attributes):
+        return None
+
+
+def _fail_simulation_calculation(runtime):
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    calculation_error = ValueError("calculation contains sensitive details")
+
+    def fail(_simulation):
+        raise calculation_error
+
+    with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=fail,
+            runtime=runtime,
+        )
+    return calculation_error, store.children[BASELINE_ID].error_summary
+
+
+def _fail_child_call(runtime):
+    store = FakeStore()
+    child_error = LookupError("baseline failure contains sensitive details")
+    invoker = ScriptedChildInvoker(wait_errors={"baseline": child_error})
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        _coordinate_with(
+            _report_with_segmentation(segmented=False),
+            store,
+            invoker,
+            runtime=runtime,
+        )
+    return child_error, store.parent.error_summary
+
+
+def _fail_child_dispatch(runtime):
+    store = FakeStore()
+    dispatch_error = ConnectionError("dispatch contains sensitive details")
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        _coordinate_with(
+            _report(),
+            store,
+            RefusingDispatchInvoker(dispatch_error),
+            runtime=runtime,
+        )
+    return dispatch_error, store.parent.error_summary
+
+
+def _fail_report_aggregation(runtime):
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    aggregation_error = ValueError("aggregation contains sensitive details")
+
+    def fail_aggregation(**_values):
+        raise aggregation_error
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=ConcurrentInvoker(artifacts),
+            aggregator=fail_aggregation,
+            runtime=runtime,
+        )
+    return aggregation_error, store.parent.error_summary
+
+
+@pytest.mark.parametrize(
+    "fail",
+    [
+        _fail_simulation_calculation,
+        _fail_child_call,
+        _fail_child_dispatch,
+        _fail_report_aggregation,
+    ],
+)
+@pytest.mark.parametrize("with_runtime", [True, False], ids=["runtime", "no-runtime"])
+def test_an_unexpected_failure_is_reported_exactly_once(
+    caplog,
+    fail,
+    with_runtime,
+) -> None:
+    runtime = ExceptionRecordingRuntime() if with_runtime else None
+
+    with caplog.at_level(logging.DEBUG):
+        original_error, error_summary = fail(runtime)
+
+    correlation_id = _correlation_id(error_summary)
+    logged_failures = [record for record in caplog.records if record.exc_info]
+    if runtime is not None:
+        [(kind, message, attributes, reported_error)] = runtime.reports
+        assert (kind, message) == ("log", "Stage 12 execution failed")
+        assert reported_error is original_error
+        assert attributes["correlation_id"] == correlation_id
+        assert logged_failures == []
+    else:
+        [logged_failure] = logged_failures
+        assert logged_failure.exc_info[1] is original_error
+        assert f"correlation_id={correlation_id}" in logged_failure.getMessage()
+
+
+def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    runtime = ExceptionRecordingRuntime()
+    segment_error = RuntimeError("segment contains sensitive details")
+
+    class SegmentFunction:
+        @staticmethod
+        def spawn(payload, *, observability_context):
+            segment_index = payload["segment_index"]
+            # The first segment fails on every probe; the others keep running.
+            return ScriptedChildCall(
+                f"segment-{segment_index}",
+                wait_error=segment_error if segment_index == 0 else None,
+            )
+
+    class SegmentFunctionLookup:
+        @staticmethod
+        def from_name(_app_name, _function_name):
+            return SegmentFunction
+
+    def segmented_calculator(value, cancellation_requested):
+        return Stage12SegmentRunner(
+            value,
+            app_name="stage12-app",
+            runtime=runtime,
+            modal_module=SimpleNamespace(Function=SegmentFunctionLookup),
+            groups=US_REGION_GROUPS,
+            sleep=lambda _seconds: None,
+            cancellation_requested=cancellation_requested,
+        ).run()
+
+    with (
+        caplog.at_level(logging.DEBUG),
+        pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"),
+    ):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=lambda _: pytest.fail("monolithic calculator was selected"),
+            segmented_calculator=segmented_calculator,
+            runtime=runtime,
+        )
+
+    child = store.children[BASELINE_ID]
+    assert child.error_code == "segment_execution_failed"
+    [(kind, message, attributes, reported_error)] = runtime.reports
+    assert (kind, message) == ("log", "Stage 12 execution failed")
+    assert reported_error is segment_error
+    assert attributes == {
+        "stage12_failure_scope": "segment_call",
+        "simulation_role": "baseline",
+        "evaluation_id": str(EVALUATION_ID),
+        "simulation_execution_id": str(BASELINE_ID),
+        "segment_index": 0,
+        "correlation_id": _correlation_id(
+            child.error_summary.removeprefix("Segment 0: ")
+        ),
+    }
+    assert [record for record in caplog.records if record.exc_info] == []
 
 
 class SteppedClock:

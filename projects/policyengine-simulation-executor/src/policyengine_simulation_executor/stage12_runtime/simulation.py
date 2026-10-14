@@ -42,11 +42,11 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 )
 
 from .dependencies import ComparisonStore, artifact_store, runtime_store
-from .failure_recording import persist_failure_record, report_original_failure
+from .failure_recording import persist_failure_record, report_failure
 from .failures import (
     Stage12Cancellation,
+    Stage12ExecutionError,
     Stage12FailureDetail,
-    failure_detail_from_exception,
     validate_policy_periods,
 )
 from .output_planning import apply_output_plan, validate_output_frames
@@ -518,24 +518,23 @@ def run_single_simulation(
     # Persist any country-package calculation failure before returning a
     # stable exception to Modal.
     except Exception as error:  # noqa: BLE001
-        report_original_failure(
-            error,
-            runtime=runtime,
-            failure_scope="simulation_execution",
-            attributes={"simulation_role": simulation.role.value},
-        )
+        if isinstance(error, Stage12ExecutionError):
+            # A segmented calculation reports its segment failure where it
+            # occurs, before raising this error.
+            detail = error.detail
+        else:
+            detail = report_failure(
+                error,
+                runtime=runtime,
+                failure_scope="simulation_execution",
+                default_code="simulation_execution_failed",
+                attributes={
+                    "simulation_role": simulation.role.value,
+                    "evaluation_id": str(simulation.evaluation_id),
+                    "simulation_execution_id": str(simulation.simulation_execution_id),
+                },
+            )
         failed_at = datetime.now(UTC)
-        detail = failure_detail_from_exception(
-            error,
-            runtime=runtime,
-            scope="stage12_simulation_execution",
-            default_code="simulation_execution_failed",
-            context={
-                "evaluation_id": str(simulation.evaluation_id),
-                "simulation_execution_id": str(simulation.simulation_execution_id),
-                "simulation_role": simulation.role.value,
-            },
-        )
         persist_failure_record(
             partial(
                 _mark_running_simulation_failed,

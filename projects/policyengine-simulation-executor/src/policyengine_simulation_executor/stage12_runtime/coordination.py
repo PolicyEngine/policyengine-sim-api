@@ -57,11 +57,14 @@ from .dependencies import (
     artifact_store,
     runtime_store,
 )
-from .failure_recording import persist_failure_record, report_original_failure
+from .failure_recording import (
+    persist_failure_record,
+    report_failure,
+    report_original_failure,
+)
 from .failures import (
     Stage12ExecutionError,
     Stage12FailureDetail,
-    failure_detail_from_exception,
     failure_detail_from_record,
 )
 from .output_planning import (
@@ -86,14 +89,14 @@ def _next_poll_interval(current: float) -> float:
     )
 
 
-def _log_cancellation_failure(
+def _log_child_operation_failure(
     level: int,
     message: str,
     *,
     simulation: PlannedSimulationExecutionInput,
     error: Exception,
 ) -> None:
-    """Log a cancellation failure with the report and child identifiers.
+    """Log a failed child state update or cancellation with its identifiers.
 
     ``message`` receives the simulation role, simulation execution ID,
     evaluation ID and error type, in that order. The error's own message is
@@ -181,7 +184,7 @@ def _cancel_pending_simulations(
                 detail=detail,
             )
         except Exception as error:  # noqa: BLE001
-            _log_cancellation_failure(
+            _log_child_operation_failure(
                 logging.ERROR,
                 "Stage 12 could not record cancellation of %s simulation %s "
                 "in report %s (%s)",
@@ -202,7 +205,7 @@ def _cancel_pending_simulations(
         try:
             calls[role].cancel()
         except Exception as error:  # noqa: BLE001
-            _log_cancellation_failure(
+            _log_child_operation_failure(
                 logging.WARNING,
                 "Stage 12 could not cancel %s simulation %s in report %s (%s)",
                 simulation=simulation,
@@ -210,43 +213,89 @@ def _cancel_pending_simulations(
             )
 
 
-def _child_failure_detail(
-    *,
-    error: BaseException,
+def _simulation_failure_attributes(
     simulation: PlannedSimulationExecutionInput,
-    store: ComparisonStore,
-    runtime: ObservabilityRuntime | None,
-) -> Stage12FailureDetail:
-    child = store.get_simulation(simulation.simulation_execution_id)
-    if (
-        child.status is ComparisonRunLifecycleStatus.FAILED
-        and child.error_code is not None
-    ):
-        return failure_detail_from_record(
-            error_code=child.error_code,
-            error_summary=child.error_summary,
-        )
-    detail = failure_detail_from_exception(
-        error,
-        runtime=runtime,
-        scope="stage12_simulation_invocation",
-        default_code="simulation_invocation_failed",
-        context={
-            "evaluation_id": str(simulation.evaluation_id),
-            "simulation_role": simulation.role.value,
-        },
+) -> dict[str, object]:
+    return {
+        "simulation_role": simulation.role.value,
+        "evaluation_id": str(simulation.evaluation_id),
+        "simulation_execution_id": str(simulation.simulation_execution_id),
+    }
+
+
+def _log_child_state_failure(
+    *,
+    simulation: PlannedSimulationExecutionInput,
+    error: Exception,
+) -> None:
+    _log_child_operation_failure(
+        logging.ERROR,
+        "Stage 12 could not record the failure of %s simulation %s in report %s (%s)",
+        simulation=simulation,
+        error=error,
     )
-    persist_failure_record(
-        partial(
-            _replace_running_simulation,
+
+
+def _record_child_failure(
+    *,
+    store: ComparisonStore,
+    simulation: PlannedSimulationExecutionInput,
+    detail: Stage12FailureDetail,
+) -> None:
+    """Record a running child as failed with its own cause.
+
+    A child that has already finished keeps its own outcome. A state error is
+    logged rather than raised, so it never replaces the child's failure.
+    """
+
+    try:
+        _replace_running_simulation(
             store=store,
             simulation=simulation,
             status=ComparisonRunLifecycleStatus.FAILED,
             detail=detail,
-        ),
+        )
+    except Exception as state_error:  # noqa: BLE001
+        _log_child_state_failure(simulation=simulation, error=state_error)
+
+
+def _child_failure_detail(
+    *,
+    error: Exception,
+    simulation: PlannedSimulationExecutionInput,
+    store: ComparisonStore,
+    runtime: ObservabilityRuntime | None,
+) -> Stage12FailureDetail:
+    """Report a failed child call and return the failure for its report.
+
+    A failure the child's worker recorded itself takes precedence over the
+    error its call raised. Reading or writing the child's record can fail,
+    for example when the database is unavailable. That error is logged, and
+    the call's own failure is used and still recorded where possible, so a
+    state error never replaces the child's failure.
+    """
+
+    detail = report_failure(
+        error,
         runtime=runtime,
         failure_scope="child_wait",
+        default_code="simulation_invocation_failed",
+        attributes=_simulation_failure_attributes(simulation),
     )
+    try:
+        child = store.get_simulation(simulation.simulation_execution_id)
+    except Exception as state_error:  # noqa: BLE001
+        _log_child_state_failure(simulation=simulation, error=state_error)
+    else:
+        if (
+            child.status is ComparisonRunLifecycleStatus.FAILED
+            and child.error_code is not None
+        ):
+            return failure_detail_from_record(
+                error_code=child.error_code,
+                error_summary=child.error_summary,
+            )
+    _record_child_failure(store=store, simulation=simulation, detail=detail)
     return detail
 
 
@@ -275,12 +324,6 @@ def _observe_simulations(
             except TimeoutError:
                 continue
             except Exception as error:  # noqa: BLE001
-                report_original_failure(
-                    error,
-                    runtime=runtime,
-                    failure_scope="child_wait",
-                    attributes={"simulation_role": role},
-                )
                 detail = _child_failure_detail(
                     error=error,
                     simulation=simulations[role],
@@ -655,32 +698,17 @@ def coordinate_report(
                         observability_context=child_observability_context,
                     )
             except Exception as error:
-                report_original_failure(
+                detail = report_failure(
                     error,
                     runtime=runtime,
                     failure_scope="child_dispatch",
-                    attributes={"simulation_role": simulation.role.value},
-                )
-                detail = failure_detail_from_exception(
-                    error,
-                    runtime=runtime,
-                    scope="stage12_simulation_dispatch",
                     default_code="simulation_dispatch_failed",
-                    context={
-                        "evaluation_id": str(report.evaluation_id),
-                        "simulation_role": simulation.role.value,
-                    },
+                    attributes=_simulation_failure_attributes(simulation),
                 )
-                persist_failure_record(
-                    partial(
-                        _replace_running_simulation,
-                        store=persistence,
-                        simulation=simulation,
-                        status=ComparisonRunLifecycleStatus.FAILED,
-                        detail=detail,
-                    ),
-                    runtime=runtime,
-                    failure_scope="child_dispatch",
+                _record_child_failure(
+                    store=persistence,
+                    simulation=simulation,
+                    detail=detail,
                 )
                 _cancel_pending_simulations(
                     calls=calls,
@@ -802,18 +830,23 @@ def coordinate_report(
     # Persist any coordinator, child-call, aggregation, or artifact failure
     # before returning a stable exception to Modal.
     except Exception as error:  # noqa: BLE001
-        if not isinstance(error, Stage12ExecutionError):
+        if isinstance(error, Stage12ExecutionError):
             # Child, dispatch and wait-timeout failures raise
             # Stage12ExecutionError only after reporting the original failure
-            # and stopping their unfinished peers. Any other failure is
-            # reported here before any database write. If it occurred after a
-            # child started, such as a failed placeholder write or invocation
-            # attach, every started, unfinished child is then stopped so none
-            # keeps running for a failed report.
-            report_original_failure(
+            # and stopping their unfinished peers.
+            detail = error.detail
+        else:
+            # Any other failure is reported here, once, before any database
+            # write. If it occurred after a child started, such as a failed
+            # placeholder write or invocation attach, every started,
+            # unfinished child is then stopped so none keeps running for a
+            # failed report.
+            detail = report_failure(
                 error,
                 runtime=runtime,
                 failure_scope="report_coordination",
+                default_code="report_coordination_failed",
+                attributes={"evaluation_id": str(report.evaluation_id)},
             )
             _cancel_pending_simulations(
                 calls=calls,
@@ -823,13 +856,6 @@ def coordinate_report(
                 detail=_cancellation("the coordinator failed"),
             )
         failed_at = datetime.now(UTC)
-        detail = failure_detail_from_exception(
-            error,
-            runtime=runtime,
-            scope="stage12_report_coordination",
-            default_code="report_coordination_failed",
-            context={"evaluation_id": str(report.evaluation_id)},
-        )
         persist_failure_record(
             partial(
                 persistence.replace_report,

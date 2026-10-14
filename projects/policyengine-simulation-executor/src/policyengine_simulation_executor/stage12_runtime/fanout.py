@@ -18,11 +18,8 @@ from policyengine_simulation_observability.stages import (
 )
 
 from .partition import stage12_region_groups_for_model
-from .failures import (
-    Stage12Cancellation,
-    Stage12ExecutionError,
-    failure_detail_from_exception,
-)
+from .failure_recording import report_failure
+from .failures import Stage12Cancellation, Stage12ExecutionError
 from .segmentation import build_segment_inputs, merge_segment_results
 from .simulation import SimulationCalculation
 
@@ -153,12 +150,19 @@ class Stage12SegmentRunner:
                             type(error).__name__,
                         )
                         continue
-                    detail = failure_detail_from_exception(
+                    detail = report_failure(
                         error,
                         runtime=self.runtime,
-                        scope="stage12_segment_call",
+                        failure_scope="segment_call",
                         default_code="segment_execution_failed",
-                        context={"segment_index": segment_index},
+                        attributes={
+                            "simulation_role": self.simulation.role.value,
+                            "evaluation_id": str(self.simulation.evaluation_id),
+                            "simulation_execution_id": str(
+                                self.simulation.simulation_execution_id
+                            ),
+                            "segment_index": segment_index,
+                        },
                         segment_index=segment_index,
                     )
                     self._cancel_all(handles)

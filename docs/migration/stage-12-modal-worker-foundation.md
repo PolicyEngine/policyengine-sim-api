@@ -335,10 +335,21 @@ identifier, it cancels every started, unfinished simulation in the same way,
 with the summary "Cancelled after the coordinator failed.". The report keeps
 the coordinator's original failure.
 
+Errors while reading or updating simulation records never replace the failure
+that caused them. If the coordinator cannot read or update the failed
+simulation's own record, or record a peer's cancellation, it logs that error
+with the report and simulation identifiers and the error type, but not the
+error's message. The report still records the simulation's failure, the
+failed simulation is never recorded as cancelled, and its peers are still
+cancelled with the reason "Cancelled after the baseline simulation failed."
+(or reform).
+
 Typed input failures, including invalid policy periods and SPM selection
 errors, retain their code and bounded message through the segment, simulation,
 and report layers. Unexpected exceptions are logged with their complete stack
-trace and persisted only as `Simulation failed (correlation_id=...)`.
+trace and persisted only as `Simulation failed (correlation_id=...)`. The
+coordinator and simulation workers report each failure once, before any
+database write, and that report carries the same correlation ID.
 
 Before each v2 deployment, the independent Stage 12 precompute application
 builds three annual US dataset files and 60 current-law baseline files: one for

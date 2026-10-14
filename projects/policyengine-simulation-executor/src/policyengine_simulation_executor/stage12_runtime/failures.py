@@ -4,20 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
-import logging
 from typing import Any
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.spm import spm_error_detail
 from pydantic import BaseModel, ConfigDict
 
 from policyengine_simulation_observability.errors import (
     GENERIC_JOB_FAILURE_MESSAGE,
-    log_and_redact_exception,
     make_correlation_id,
 )
-
-logger = logging.getLogger(__name__)
 
 ERROR_CODE_MAX_LENGTH = 64
 ERROR_SUMMARY_MAX_LENGTH = 512
@@ -89,16 +84,19 @@ def failure_detail_from_record(
     )
 
 
-def failure_detail_from_exception(
+def redacted_failure_detail(
     error: BaseException,
     *,
-    runtime: ObservabilityRuntime | None,
-    scope: str,
     default_code: str,
-    context: dict[str, Any] | None = None,
     segment_index: int | None = None,
 ) -> Stage12FailureDetail:
-    """Retain typed public failures and redact unexpected exception messages."""
+    """Retain typed public failures and redact unexpected exception messages.
+
+    This only describes the failure; it does not report it. Any other error
+    is summarized by a generic message and a new correlation ID, and the
+    caller reports the error once with that ID so the summary leads back to
+    it.
+    """
 
     if isinstance(error, Stage12ExecutionError):
         return error.detail
@@ -116,26 +114,8 @@ def failure_detail_from_exception(
             segment_index=segment_index,
         )
 
-    if runtime is not None:
-        summary = log_and_redact_exception(
-            error,
-            runtime=runtime,
-            scope=scope,
-            context=context,
-        )
-        correlation_id = summary.removeprefix(
-            f"{GENERIC_JOB_FAILURE_MESSAGE} (correlation_id="
-        ).removesuffix(")")
-    else:
-        correlation_id = make_correlation_id()
-        logger.error(
-            "Stage 12 %s failed (correlation_id=%s)",
-            scope,
-            correlation_id,
-            exc_info=error,
-            extra={"correlation_id": correlation_id, **(context or {})},
-        )
-        summary = f"{GENERIC_JOB_FAILURE_MESSAGE} (correlation_id={correlation_id})"
+    correlation_id = make_correlation_id()
+    summary = f"{GENERIC_JOB_FAILURE_MESSAGE} (correlation_id={correlation_id})"
     if segment_index is not None:
         summary = f"Segment {segment_index}: {summary}"
     return _safe_detail(
