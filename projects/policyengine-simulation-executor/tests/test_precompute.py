@@ -282,7 +282,10 @@ class TestRunPrecompute:
     def _run(self, functions, *, force=False):
         lines = []
         digest = precompute.run_precompute(
-            "bucket-x", force=force, echo=lines.append, **functions
+            "bucket-x",
+            force=force,
+            functions=precompute.PrecomputeFunctions(**functions),
+            echo=lines.append,
         )
         return digest, lines
 
