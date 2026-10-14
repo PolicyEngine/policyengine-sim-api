@@ -567,7 +567,16 @@ def _publish(monkeypatch, state, policyengine_version, us_version, uk_version):
     )
 
 
-def _plan(monkeypatch, state, version, us_version, uk_version, force=False):
+def _plan(
+    monkeypatch,
+    state,
+    version,
+    us_version,
+    uk_version,
+    force=False,
+    *,
+    publication_id=None,
+):
     _manifests(monkeypatch, {version: (us_version, uk_version)})
     return registry.plan_routing_publication(
         current_state=state,
@@ -576,6 +585,7 @@ def _plan(monkeypatch, state, version, us_version, uk_version, force=False):
         us_version=us_version,
         uk_version=uk_version,
         force_latest=force,
+        publication_id=publication_id,
     )
 
 
@@ -977,13 +987,17 @@ def test_routing_guard_accepts_the_serialized_caller_workflows(
         ),
         (
             "GITHUB_WORKFLOW_REF",
-            "PolicyEngine/policyengine-sim-api/.github/workflows/"
-            "simulation-deploy.reusable.yml@refs/heads/main",
+            (
+                "PolicyEngine/policyengine-sim-api/.github/workflows/"
+                "simulation-deploy.reusable.yml@refs/heads/main"
+            ),
         ),
         (
             "GITHUB_WORKFLOW_REF",
-            "a-fork/policyengine-sim-api/.github/workflows/"
-            "simulation-deploy.yml@refs/heads/main",
+            (
+                "a-fork/policyengine-sim-api/.github/workflows/"
+                "simulation-deploy.yml@refs/heads/main"
+            ),
         ),
         (
             "GITHUB_WORKFLOW_REF",
@@ -995,18 +1009,24 @@ def test_routing_guard_accepts_the_serialized_caller_workflows(
         ),
         (
             "GITHUB_WORKFLOW_REF",
-            "PolicyEngine/policyengine-sim-api/.github/workflows/"
-            "simulation-deploy.yml@refs/heads/main@extra",
+            (
+                "PolicyEngine/policyengine-sim-api/.github/workflows/"
+                "simulation-deploy.yml@refs/heads/main@extra"
+            ),
         ),
         (
             "GITHUB_WORKFLOW_REF",
-            "PolicyEngine/policyengine-sim-api/.github/workflows/"
-            "simulation-deploy.yml@refs/heads/main extra",
+            (
+                "PolicyEngine/policyengine-sim-api/.github/workflows/"
+                "simulation-deploy.yml@refs/heads/main extra"
+            ),
         ),
         (
             "GITHUB_WORKFLOW_REF",
-            "PolicyEngine/policyengine-sim-api/.github/workflows/"
-            "simulation-deploy.yml.extra@refs/heads/main",
+            (
+                "PolicyEngine/policyengine-sim-api/.github/workflows/"
+                "simulation-deploy.yml.extra@refs/heads/main"
+            ),
         ),
     ],
 )
@@ -1026,6 +1046,10 @@ def test_routing_guard_requires_every_condition(
     [
         ("record_routing_plan", {"plan": {}}),
         ("complete_routing_plan", {"plan": {}}),
+        (
+            "finalize_routing_publication",
+            {"release_environment": "beta", "gates_passed": False},
+        ),
         ("apply_routing_plan", {"plan": {}}),
         ("restore_routing_plans", {"plans": [{}]}),
         ("restore_routing_plan", {"plan": {}}),
@@ -1044,6 +1068,7 @@ def test_routing_guard_requires_every_condition(
     ids=[
         "record",
         "complete",
+        "finalize",
         "apply",
         "restore-plans",
         "restore-plan",
@@ -1101,6 +1126,13 @@ def test_library_writers_refuse_unserialized_calls_before_validation_or_modal_ac
         ),
         ("--record-plan", "missing-plan.json"),
         ("--complete-plan", "missing-plan.json"),
+        (
+            "--finalize-publication",
+            "--release-environment",
+            "beta",
+            "--gates-passed",
+            "false",
+        ),
         ("--apply-plan", "missing-plan.json"),
         ("--restore-plan", "missing-plan.json"),
         ("--restore-latest", "6.2.6"),
@@ -1112,6 +1144,7 @@ def test_library_writers_refuse_unserialized_calls_before_validation_or_modal_ac
         "publish",
         "record",
         "complete",
+        "finalize",
         "apply",
         "restore-plan",
         "rollback-version",
@@ -1414,6 +1447,389 @@ def test_only_matching_live_publication_can_be_completed(monkeypatch, patched_mo
     assert store.get("publication") == {"status": "completed", "plan": pending}
 
 
+@pytest.mark.parametrize("operation", ["apply", "restore", "complete"])
+def test_publication_ownership_compares_the_entire_plan(
+    monkeypatch, patched_modal, operation
+):
+    """A reused publication id never grants permission to a changed plan."""
+
+    before = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
+    store = _store(patched_modal, before)
+    pending = _plan(monkeypatch, before, "6.1.0", "1.1.0", "2.2.0")
+    registry.record_routing_plan(environment="staging", plan=pending)
+    if operation != "apply":
+        registry.apply_routing_plan(environment="staging", plan=pending)
+    changed = json.loads(json.dumps(pending))
+    changed["advances_latest"] = not pending["advances_latest"]
+    registry.validate_routing_plan(changed)
+    assert changed["publication_id"] == pending["publication_id"]
+    saved = json.loads(json.dumps(store.snapshot()))
+    writer = {
+        "apply": registry.apply_routing_plan,
+        "restore": registry.restore_routing_plan,
+        "complete": registry.complete_routing_plan,
+    }[operation]
+    with pytest.raises(registry.RoutingConflict):
+        writer(environment="staging", plan=changed)
+    assert store.snapshot() == saved
+
+
+@pytest.mark.parametrize(
+    ("scenario", "applied", "gates_passed", "expected"),
+    [
+        ("failed_release", True, False, "restored"),
+        ("successful_release", True, True, "completed"),
+        ("upload_failure_before_apply", False, False, "restored"),
+        ("failed_jobs_rerun", True, True, "completed"),
+        ("failed_jobs_rerun_gate_failure", True, False, "restored"),
+        ("failure_inside_deployment_ready", True, True, "completed"),
+        ("passing_gates_but_apply_never_ran", False, True, "restored"),
+    ],
+)
+@pytest.mark.parametrize("first_publication", [False, True])
+def test_finalization_finishes_each_release_and_allows_the_next_one(
+    monkeypatch,
+    patched_modal,
+    scenario,
+    applied,
+    gates_passed,
+    expected,
+    first_publication,
+):
+    """Upload loss and attempt 2 use the full journal, with no artifact reads."""
+
+    before = (
+        None
+        if first_publication
+        else _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
+    )
+    store = _store(patched_modal, before)
+    pending = _plan(
+        monkeypatch,
+        before,
+        "6.1.0",
+        "1.1.0",
+        "2.2.0",
+        publication_id="74401-1-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    if applied:
+        registry.apply_routing_plan(environment="staging", plan=pending)
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2" if "rerun" in scenario else "1")
+    assert (
+        registry.finalize_routing_publication(
+            environment="staging",
+            release_environment="beta",
+            publication_run="74401",
+            gates_passed=gates_passed,
+        )
+        == expected
+    )
+    expected_live = pending["after"] if expected == "completed" else before
+    assert store.get("active") == expected_live
+    assert store.get("publication") == {"status": expected, "plan": pending}
+    # deployment_ready is a reporter after finalization. Losing that reporter
+    # cannot strand the journal or block the next run.
+    if scenario == "failure_inside_deployment_ready":
+        assert store.get("publication")["status"] == "completed"
+    later = _plan(
+        monkeypatch,
+        expected_live,
+        "6.2.0",
+        "1.2.0",
+        "2.3.0",
+        publication_id="74402-1-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=later)
+    registry.apply_routing_plan(environment="staging", plan=later)
+    assert store.get("active") == later["after"]
+
+
+def test_lost_finalizer_is_recovered_by_operator_without_an_artifact(
+    monkeypatch, patched_modal
+):
+    before = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
+    store = _store(patched_modal, before)
+    pending = _plan(
+        monkeypatch,
+        before,
+        "6.1.0",
+        "1.1.0",
+        "2.2.0",
+        publication_id="74401-1-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    registry.apply_routing_plan(environment="staging", plan=pending)
+    later = _plan(monkeypatch, pending["after"], "6.2.0", "1.2.0", "2.3.0")
+    with pytest.raises(
+        registry.RoutingConflict, match="Unfinished routing publication"
+    ):
+        registry.record_routing_plan(environment="staging", plan=later)
+    assert store.get("publication") == {"status": "pending", "plan": pending}
+    assert (
+        registry.finalize_routing_publication(
+            environment="staging", release_environment="beta", gates_passed=False
+        )
+        == "restored"
+    )
+    assert store.get("active") == before
+    assert store.get("publication") == {"status": "restored", "plan": pending}
+    recovered_later = _plan(monkeypatch, before, "6.2.0", "1.2.0", "2.3.0")
+    registry.record_routing_plan(environment="staging", plan=recovered_later)
+    registry.apply_routing_plan(environment="staging", plan=recovered_later)
+    assert store.get("active") == recovered_later["after"]
+
+
+@pytest.mark.parametrize("gates_passed", [False, True])
+@pytest.mark.parametrize(
+    "publication_id",
+    [
+        "74400-1-beta",
+        "744010-1-beta",
+        "74401-1-prod",
+        "74401-1-beta-other",
+        "74401-invalid-beta",
+        "invalid-1-beta",
+    ],
+)
+def test_finalizer_leaves_a_foreign_pending_publication_untouched(
+    monkeypatch, patched_modal, gates_passed, publication_id
+):
+    store = _store(patched_modal, None)
+    pending = _plan(
+        monkeypatch,
+        None,
+        "6.1.0",
+        "1.1.0",
+        "2.2.0",
+        publication_id=publication_id,
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    registry.apply_routing_plan(environment="staging", plan=pending)
+    saved = json.loads(json.dumps(store.snapshot()))
+    assert (
+        registry.finalize_routing_publication(
+            environment="staging",
+            release_environment="beta",
+            publication_run="74401",
+            gates_passed=gates_passed,
+        )
+        == "foreign-publication"
+    )
+    assert store.snapshot() == saved
+
+
+@pytest.mark.parametrize(
+    ("publication_run", "gates_passed"),
+    [("74401", False), ("74401", True), (None, False)],
+)
+def test_finalizer_conflict_is_loud_and_keeps_the_journal_pending(
+    monkeypatch, patched_modal, publication_run, gates_passed
+):
+    before = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
+    store = _store(patched_modal, before)
+    pending = _plan(
+        monkeypatch,
+        before,
+        "6.1.0",
+        "1.1.0",
+        "2.2.0",
+        publication_id="74401-1-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    registry.apply_routing_plan(environment="staging", plan=pending)
+    store["active"] = _publish(monkeypatch, pending["after"], "6.2.0", "1.2.0", "2.3.0")
+    saved = json.loads(json.dumps(store.snapshot()))
+    with pytest.raises(registry.RoutingConflict, match="nothing was restored"):
+        registry.finalize_routing_publication(
+            environment="staging",
+            release_environment="beta",
+            publication_run=publication_run,
+            gates_passed=gates_passed,
+        )
+    assert store.snapshot() == saved
+
+
+@pytest.mark.parametrize("gates_passed", [False, True])
+@pytest.mark.parametrize("journal", ["missing_store", "absent", "foreign_completed"])
+def test_finalizer_without_its_pending_record_changes_nothing(
+    monkeypatch, patched_modal, gates_passed, journal
+):
+    if journal != "missing_store":
+        before = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
+        store = _store(patched_modal, before)
+        if journal == "foreign_completed":
+            plan = _plan(
+                monkeypatch,
+                before,
+                "6.1.0",
+                "1.1.0",
+                "2.2.0",
+                publication_id="74400-1-beta",
+            )
+            registry.record_routing_plan(environment="staging", plan=plan)
+            registry.apply_routing_plan(environment="staging", plan=plan)
+            registry.complete_routing_plan(environment="staging", plan=plan)
+        saved = json.loads(json.dumps(store.snapshot()))
+    assert (
+        registry.finalize_routing_publication(
+            environment="staging",
+            release_environment="beta",
+            publication_run="74401",
+            gates_passed=gates_passed,
+        )
+        == "no-pending"
+    )
+    if journal == "missing_store":
+        assert patched_modal == {}
+    else:
+        assert store.snapshot() == saved
+
+
+@pytest.mark.parametrize("gates_passed", [False, True])
+def test_retry_after_finalization_returns_the_prior_outcome_without_writing(
+    monkeypatch, patched_modal, gates_passed
+):
+    store = _store(patched_modal, None)
+    pending = _plan(
+        monkeypatch,
+        None,
+        "6.1.0",
+        "1.1.0",
+        "2.2.0",
+        publication_id="74401-1-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    registry.apply_routing_plan(environment="staging", plan=pending)
+    args = {
+        "environment": "staging",
+        "release_environment": "beta",
+        "publication_run": "74401",
+        "gates_passed": gates_passed,
+    }
+    expected = "completed" if gates_passed else "restored"
+    assert registry.finalize_routing_publication(**args) == expected
+    saved = json.loads(json.dumps(store.snapshot()))
+
+    def forbidden_write(*args, **kwargs):
+        pytest.fail("an already finalized publication was written again")
+
+    monkeypatch.setattr(registry, "_write_publication_record", forbidden_write)
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    assert registry.finalize_routing_publication(**args) == expected
+    assert store.snapshot() == saved
+
+
+def test_operator_cannot_complete_pending_publications(monkeypatch, patched_modal):
+    store = _store(patched_modal, None)
+    with pytest.raises(
+        ValueError, match="operator recovery requires gates_passed=false"
+    ):
+        registry.finalize_routing_publication(
+            environment="staging", release_environment="beta", gates_passed=True
+        )
+    assert store.snapshot() == {}
+
+
+def test_completed_finalizer_retry_cannot_report_a_release_that_is_no_longer_live(
+    monkeypatch, patched_modal
+):
+    pending = _plan(
+        monkeypatch,
+        None,
+        "6.1.0",
+        "1.1.0",
+        "2.2.0",
+        publication_id="74401-1-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    registry.apply_routing_plan(environment="staging", plan=pending)
+    registry.complete_routing_plan(environment="staging", plan=pending)
+    store = patched_modal["staging/simulation-api-routing-state"]
+    store["active"] = _publish(monkeypatch, pending["after"], "6.2.0", "1.2.0", "2.3.0")
+    saved = json.loads(json.dumps(store.snapshot()))
+    assert (
+        registry.finalize_routing_publication(
+            environment="staging",
+            release_environment="beta",
+            publication_run="74401",
+            gates_passed=True,
+        )
+        == "no-pending"
+    )
+    assert store.snapshot() == saved
+
+
+def test_finalizer_owns_prod_publications_in_the_main_modal_environment(
+    monkeypatch, patched_modal
+):
+    pending = _plan(
+        monkeypatch,
+        None,
+        "6.1.0",
+        "1.1.0",
+        "2.2.0",
+        publication_id="74401-1-prod",
+    )
+    registry.record_routing_plan(environment="main", plan=pending)
+    registry.apply_routing_plan(environment="main", plan=pending)
+    assert (
+        registry.finalize_routing_publication(
+            environment="main",
+            release_environment="prod",
+            publication_run="74401",
+            gates_passed=True,
+        )
+        == "completed"
+    )
+    store = patched_modal["main/simulation-api-routing-state"]
+    assert store.get("publication") == {"status": "completed", "plan": pending}
+
+
+def test_finalizer_rejects_invalid_release_environments(monkeypatch, patched_modal):
+    with pytest.raises(ValueError, match="release_environment must be beta or prod"):
+        registry.finalize_routing_publication(
+            environment="staging", release_environment="staging", gates_passed=False
+        )
+    assert patched_modal == {}
+
+
+@pytest.mark.parametrize(
+    "publication_id",
+    [
+        "invalid-1-beta",
+        "74401-invalid-beta",
+        "74401-1-prod",
+        "74401-1-beta-extra",
+        "b88e8c1b01384bc88885657dcf1b8254",
+    ],
+)
+def test_operator_restores_any_valid_pending_plan_in_the_selected_store(
+    monkeypatch, patched_modal, publication_id
+):
+    pending = _plan(
+        monkeypatch,
+        None,
+        "6.1.0",
+        "1.1.0",
+        "2.2.0",
+        publication_id=publication_id,
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    registry.apply_routing_plan(environment="staging", plan=pending)
+    store = patched_modal["staging/simulation-api-routing-state"]
+    saved = json.loads(json.dumps(store.snapshot()))
+    assert (
+        registry.finalize_routing_publication(
+            environment="staging", release_environment="beta", gates_passed=False
+        )
+        == "restored"
+    )
+    assert saved["publication"]["status"] == "pending"
+    assert store.get("active") is None
+    assert store.get("publication") == {"status": "restored", "plan": pending}
+
+
 @pytest.mark.parametrize("status", ["pending", "completed", "restored"])
 def test_publication_records_are_read_back(monkeypatch, patched_modal, status):
     before = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
@@ -1481,6 +1897,150 @@ def test_cli_records_and_completes_release_publications(
     assert store.get("active") == plan["after"]
     assert store.get("publication") == {"status": "completed", "plan": plan}
     assert ": pending" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("publication_run", "gates_passed", "expected"),
+    [
+        ("74401", "true", "completed"),
+        ("74401", "false", "restored"),
+        ("74400", "false", "foreign-publication"),
+        (None, "false", "restored"),
+    ],
+)
+def test_cli_finalizes_the_printed_journal_and_reports_its_outcome(
+    monkeypatch,
+    patched_modal,
+    tmp_path,
+    capsys,
+    publication_run,
+    gates_passed,
+    expected,
+):
+    store = _store(patched_modal, None)
+    pending = _plan(
+        monkeypatch,
+        None,
+        "6.1.0",
+        "1.1.0",
+        "2.2.0",
+        publication_id="74401-1-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    registry.apply_routing_plan(environment="staging", plan=pending)
+    output = tmp_path / "github-output"
+    output.write_text("existing=kept\n")
+    args = [
+        "--finalize-publication",
+        "--release-environment",
+        "beta",
+        "--gates-passed",
+        gates_passed,
+        "--github-output",
+        str(output),
+    ]
+    if publication_run is not None:
+        args.extend(["--publication-run", publication_run])
+    # Recovery must display the full pending record before the first write.
+    original = registry.finalize_routing_publication
+
+    def finalizer(**kwargs):
+        printed = capsys.readouterr().out
+        assert printed.startswith("Pending routing publication:\n")
+        assert json.loads(printed.partition("\n")[2]) == {
+            "status": "pending",
+            "plan": pending,
+        }
+        return original(**kwargs)
+
+    monkeypatch.setattr(registry, "finalize_routing_publication", finalizer)
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    _main(monkeypatch, *args)
+    assert output.read_text() == f"existing=kept\noutcome={expected}\n"
+    printed = capsys.readouterr().out
+    assert f"Routing publication finalization: {expected}" in printed
+    if expected == "foreign-publication":
+        assert "belongs to another run or environment" in printed
+        assert store.get("publication") == {"status": "pending", "plan": pending}
+        assert store.get("active") == pending["after"]
+    else:
+        assert store.get("publication") == {"status": expected, "plan": pending}
+        assert store.get("active") == (
+            pending["after"] if expected == "completed" else None
+        )
+
+
+def test_cli_missing_journal_is_explicit_and_reports_no_pending(
+    monkeypatch, patched_modal, tmp_path, capsys
+):
+    output = tmp_path / "github-output"
+    _main(
+        monkeypatch,
+        "--finalize-publication",
+        "--publication-run",
+        "74401",
+        "--release-environment",
+        "beta",
+        "--gates-passed",
+        "true",
+        "--github-output",
+        str(output),
+    )
+    assert "No pending routing publication" in capsys.readouterr().out
+    assert output.read_text() == "outcome=no-pending\n"
+    assert patched_modal == {}
+
+
+def test_cli_output_loss_is_retryable_after_the_journal_is_completed(
+    monkeypatch, patched_modal, tmp_path, capsys
+):
+    pending = _plan(
+        monkeypatch,
+        None,
+        "6.1.0",
+        "1.1.0",
+        "2.2.0",
+        publication_id="74401-1-beta",
+    )
+    registry.record_routing_plan(environment="staging", plan=pending)
+    registry.apply_routing_plan(environment="staging", plan=pending)
+    args = [
+        "--finalize-publication",
+        "--publication-run",
+        "74401",
+        "--release-environment",
+        "beta",
+        "--gates-passed",
+        "true",
+        "--github-output",
+    ]
+    with pytest.raises(FileNotFoundError):
+        _main(monkeypatch, *args, str(tmp_path / "missing" / "output"))
+    store = patched_modal["staging/simulation-api-routing-state"]
+    assert store.get("publication") == {"status": "completed", "plan": pending}
+    output = tmp_path / "github-output"
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "2")
+    _main(monkeypatch, *args, str(output))
+    assert "No pending routing publication" in capsys.readouterr().out
+    assert output.read_text() == "outcome=completed\n"
+    assert store.get("publication") == {"status": "completed", "plan": pending}
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        (),
+        ("--release-environment", "beta"),
+        ("--gates-passed", "false"),
+        ("--release-environment", "beta", "--gates-passed", "true"),
+        ("--release-environment", "beta", "--gates-passed", "perhaps"),
+    ],
+)
+def test_cli_finalizer_requires_explicit_safe_inputs(monkeypatch, patched_modal, args):
+    with pytest.raises(SystemExit) as exc:
+        _main(monkeypatch, "--finalize-publication", *args)
+    assert exc.value.code == 2
+    assert patched_modal == {}
 
 
 def test_pending_plan_can_be_inspected_locally_before_upload(

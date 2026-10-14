@@ -25,7 +25,7 @@ REGISTRY_INVOCATION = re.compile(
 ROUTING_LIBRARY_REFERENCE = re.compile(
     r"\b(?:update_version_registry|apply_routing_plan|restore_routing_plans|"
     r"restore_routing_plan|restore_routing_state|publish_routing_state|"
-    r"record_routing_plan|complete_routing_plan)\b"
+    r"record_routing_plan|complete_routing_plan|finalize_routing_publication)\b"
 )
 PROTECTED_SHELL_ENVIRONMENT = frozenset(
     {"MODAL_ENVIRONMENT", "GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_REF"}
@@ -38,6 +38,7 @@ WRITING_OPTIONS = frozenset(
         "--seed-active-from-legacy",
         "--record-plan",
         "--complete-plan",
+        "--finalize-publication",
     }
 )
 READ_ONLY_OPTIONS = frozenset(
@@ -64,6 +65,10 @@ VALUE_OPTIONS = frozenset(
         "--expected-latest",
         "--record-plan",
         "--complete-plan",
+        "--publication-run",
+        "--release-environment",
+        "--gates-passed",
+        "--github-output",
     }
 )
 ROUTING_OPTIONS = (
@@ -108,9 +113,13 @@ def _routing_commands(script: str):
     if not ROUTING_LIBRARY_REFERENCE.search(script):
         return
     for variable in PROTECTED_SHELL_ENVIRONMENT:
+        # Shell builtins remove quotes from assignment operands, so both
+        # export "MODAL_ENVIRONMENT"=main and export "MODAL_ENVIRONMENT=main"
+        # override the same proven environment as an unquoted assignment.
+        shell_name = rf"['\"]?{variable}['\"]?"
         assert not re.search(
-            rf"(?:^|[\s;]){variable}\s*\+?=|\bunset\s+{variable}\b|"
-            rf"\bread\s+{variable}\b|\bprintf\s+-v\s+{variable}\b",
+            rf"(?:^|[\s;]){shell_name}\s*\+?=|\bunset\s+{shell_name}\b|"
+            rf"\bread\s+{shell_name}\b|\bprintf\s+-v\s+{shell_name}\b",
             script,
         ), f"Shell overrides the proven routing environment or write guard: {variable}"
 
@@ -444,6 +453,17 @@ def test_stage12_callers_propagate_distinct_modal_routing_environments():
         ("--apply-plan plan.json", True),
         ("--record-plan plan.json", True),
         ("--complete-plan plan.json", True),
+        (
+            (
+                "--finalize-publication --publication-run 744 --release-environment prod "
+                "--gates-passed true --github-output github-output.txt"
+            ),
+            True,
+        ),
+        (
+            "--finalize-publication --release-environment beta --gates-passed false",
+            True,
+        ),
         ("--restore-plan plan.json", True),
         ("--restore-latest 1.0", True),
         ("--app-name app --plan-out plan.json", False),
@@ -538,7 +558,16 @@ def _environment_for_script(script: str, extra_environment=None):
 
 @pytest.mark.parametrize("variable", sorted(PROTECTED_SHELL_ENVIRONMENT))
 @pytest.mark.parametrize(
-    "form", ["{variable}=main\n", "export {variable}=main\n", "{variable}=main "]
+    "form",
+    [
+        "{variable}=main\n",
+        "export {variable}=main\n",
+        "{variable}=main ",
+        'export "{variable}"=main\n',
+        "export '{variable}'=main\n",
+        'export "{variable}=main"\n',
+        "export '{variable}=main'\n",
+    ],
 )
 def test_routing_shell_cannot_override_proven_environment_or_write_guard(
     variable, form
@@ -648,6 +677,7 @@ def test_routing_discovery_rejects_unsupported_shell_forms(script):
         "restore_routing_plan",
         "restore_routing_state",
         "publish_routing_state",
+        "finalize_routing_publication",
     ],
 )
 def test_inline_python_cannot_bypass_routing_cli_discovery(writer):
@@ -657,6 +687,12 @@ def test_inline_python_cannot_bypass_routing_cli_discovery(writer):
         f"registry.{writer}(environment='main')\n"
         "PYTHON\n"
     )
+    with pytest.raises(AssertionError, match="guarded foreground CLI"):
+        list(_writing_steps({"steps": [{"run": script}]}))
+
+
+def test_finalizer_reference_cannot_bypass_routing_cli_discovery():
+    script = 'uv run python -c "routing.finalize_routing_publication()"'
     with pytest.raises(AssertionError, match="guarded foreground CLI"):
         list(_writing_steps({"steps": [{"run": script}]}))
 

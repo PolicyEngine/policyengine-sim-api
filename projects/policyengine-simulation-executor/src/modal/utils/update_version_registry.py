@@ -11,8 +11,9 @@ import hashlib
 import json
 import os
 import uuid
+from collections.abc import Iterable
 from copy import deepcopy
-from typing import Iterable, NotRequired, TypedDict
+from typing import NotRequired, TypedDict
 
 import modal
 from packaging.version import InvalidVersion, Version
@@ -434,7 +435,7 @@ def validate_routing_plan(plan: object) -> dict:
         if routing_state_digest(plan.get(side)) != plan.get(f"{side}_sha256"):
             raise ValueError(f"the plan's {side} state does not match its digest")
     if not isinstance(plan["after"], dict):
-        raise ValueError("the plan publishes no routing state")
+        raise ValueError("the plan publishes no routing state")  # noqa: TRY004
     return plan
 
 
@@ -522,8 +523,8 @@ def _require_finished_publication(store, *, allowed_plans: Iterable[dict] = ()) 
         raise RoutingConflict(
             f"Unfinished routing publication {pending['publication_id']}: "
             "refusing new routing writes. Inspect --print-pending-plan and restore "
-            "the recorded plan through a serialized workflow before deploying again. "
-            "If its artifact was uploaded, use simulation-rollback with that run id."
+            "the recorded plan through simulation-rollback with target and "
+            "resolve_pending_publication=true before deploying again."
         )
 
 
@@ -537,8 +538,9 @@ def _write_publication_record(store, *, plan: dict, status: str) -> None:
 def record_routing_plan(*, environment: str, plan: dict) -> None:
     """Journal a pending release before its artifact is uploaded or routing changes.
 
-    An interrupted release requires explicit restoration: automatic restoration
-    cannot establish whether its service checks or traffic promotion completed.
+    Its finalizer consumes this durable plan even if the runner loses the local
+    file or uploading its artifact fails. Operator recovery can restore a plan
+    if the finalizer itself is lost.
     """
 
     _require_serialized_routing_workflow()
@@ -648,6 +650,83 @@ def restore_routing_plan(*, environment: str, plan: dict) -> str:
 
     _require_serialized_routing_workflow()
     return restore_routing_plans(environment=environment, plans=[plan])
+
+
+def _publication_owned_by_release(
+    plan: dict, *, publication_run: str | None, release_environment: str
+) -> bool:
+    """Match a workflow run across attempts, or the operator's selected store."""
+
+    if publication_run is None:
+        return True
+
+    parts = str(plan.get("publication_id", "")).split("-")
+    return (
+        len(parts) == 3
+        and parts[1].isdigit()
+        and parts[2] == release_environment
+        and parts[0] == publication_run
+    )
+
+
+def finalize_routing_publication(
+    *,
+    environment: str,
+    release_environment: str,
+    gates_passed: bool,
+    publication_run: str | None = None,
+) -> str:
+    """Finish a release using its durable journal, without a plan artifact.
+
+    A failed-jobs rerun owns every attempt of the same run and environment.
+    Successful gates complete only the plan's live published state; every
+    other owned pending publication is restored. Conflicts leave it pending.
+    Omitting the run selects operator recovery in the chosen Modal store,
+    which can only restore and does not depend on the publication id's format.
+    Already finished records owned by this run return their recorded outcome
+    without writing, so retrying a finalizer after output loss is safe.
+    """
+
+    _require_serialized_routing_workflow()
+    if release_environment not in {"beta", "prod"}:
+        raise ValueError("release_environment must be beta or prod")
+    if publication_run is None and gates_passed:
+        raise ValueError("operator recovery requires gates_passed=false")
+    store = _routing_store(environment, create_if_missing=False)
+    pending = _unfinished_publication(store)
+    if pending is None:
+        record = store.get(ROUTING_PUBLICATION_KEY) if store is not None else None
+        if (
+            record is not None
+            and publication_run is not None
+            and _publication_owned_by_release(
+                record["plan"],
+                publication_run=publication_run,
+                release_environment=release_environment,
+            )
+            and (
+                record["status"] != "completed"
+                or routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
+                == record["plan"]["after_sha256"]
+            )
+        ):
+            return record["status"]
+        return "no-pending"
+    if not _publication_owned_by_release(
+        pending,
+        publication_run=publication_run,
+        release_environment=release_environment,
+    ):
+        return "foreign-publication"
+    if (
+        gates_passed
+        and routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
+        == pending["after_sha256"]
+    ):
+        complete_routing_plan(environment=environment, plan=pending)
+        return "completed"
+    restore_routing_plan(environment=environment, plan=pending)
+    return "restored"
 
 
 def latest_release_identity(state: object) -> dict[str, str]:
@@ -1045,6 +1124,30 @@ def main():
         help="Complete a recorded publication after all release gates pass.",
     )
     parser.add_argument(
+        "--finalize-publication",
+        action="store_true",
+        help="Complete or restore the durable pending publication without an artifact.",
+    )
+    parser.add_argument(
+        "--publication-run",
+        help="With --finalize-publication: owning GitHub run id, ignoring its attempt.",
+    )
+    parser.add_argument(
+        "--release-environment",
+        choices=("beta", "prod"),
+        help="With --finalize-publication: publication's release environment.",
+    )
+    parser.add_argument(
+        "--gates-passed",
+        choices=("true", "false"),
+        help="With --finalize-publication: whether every release gate passed.",
+    )
+    parser.add_argument(
+        "--github-output",
+        metavar="FILE",
+        help="With --finalize-publication: append outcome to a GitHub output file.",
+    )
+    parser.add_argument(
         "--restore-plan",
         metavar="FILE",
         nargs="+",
@@ -1096,6 +1199,7 @@ def main():
         args.apply_plan
         or args.record_plan
         or args.complete_plan
+        or args.finalize_publication
         or args.restore_plan
         or args.restore_latest
         or args.seed_active_from_legacy
@@ -1106,6 +1210,38 @@ def main():
             _require_serialized_routing_workflow()
         except RuntimeError as exc:
             parser.error(str(exc))
+
+    if args.finalize_publication:
+        if args.release_environment is None or args.gates_passed is None:
+            parser.error(
+                "--finalize-publication requires --release-environment and --gates-passed"
+            )
+        if args.publication_run is None and args.gates_passed != "false":
+            parser.error("operator recovery requires --gates-passed false")
+        store = _routing_store(args.environment, create_if_missing=False)
+        pending = _unfinished_publication(store)
+        if pending is None:
+            print("No pending routing publication; routing is unchanged.")
+        else:
+            print("Pending routing publication:")
+            print(
+                json.dumps(store.get(ROUTING_PUBLICATION_KEY), indent=2, sort_keys=True)
+            )
+        outcome = finalize_routing_publication(
+            environment=args.environment,
+            release_environment=args.release_environment,
+            gates_passed=args.gates_passed == "true",
+            publication_run=args.publication_run,
+        )
+        if outcome == "foreign-publication":
+            print(
+                "Pending routing publication belongs to another run or environment; routing is unchanged."
+            )
+        print(f"Routing publication finalization: {outcome}")
+        if args.github_output:
+            with open(args.github_output, "a") as handle:
+                handle.write(f"outcome={outcome}\n")
+        return
 
     if args.record_plan or args.complete_plan:
         with open(args.record_plan or args.complete_plan) as handle:

@@ -434,13 +434,13 @@ jobs:
     if: ${{ inputs.deploy_existing_stack }}
     needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor]
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     environment: ${{ inputs.release_environment }}
     outputs:
-      # The routing plan (state before and after publishing) is written and
-      # kept as an artifact before anything changes, so revert_routing can
-      # restore exactly what this release replaced even if a step after the
-      # write fails.
-      plan_artifact: ${{ steps.keep.outputs.artifact }}
+      # The journal holds the full plan before upload or publication. The
+      # artifact also preserves it for manual rollback after a release.
       before_sha256: ${{ steps.plan.outputs.before_sha256 }}
       after_sha256: ${{ steps.plan.outputs.after_sha256 }}
       # Whether unpinned requests route to this release once it is published.
@@ -508,12 +508,6 @@ jobs:
           path: ${{ runner.temp }}/routing-plan/plan.json
           if-no-files-found: error
           retention-days: 30
-
-      - name: Record the plan artifact
-        id: keep
-        env:
-          ARTIFACT: routing-plan-${{ inputs.release_environment }}-${{ github.run_attempt }}
-        run: echo "artifact=${ARTIFACT}" >> "$GITHUB_OUTPUT"
 
       - name: Publish the planned routing
         working-directory: projects/policyengine-simulation-executor
@@ -1030,36 +1024,20 @@ jobs:
           SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION: ${{ env.TARGET_REVISION }}
         run: .github/scripts/set-cloud-run-simulation-entry-revision.sh
 
-  revert_routing:
-    name: Restore the previous Modal routing after a failed release
-    # update_routing publishes before the deployed-stack gates run. When it
-    # fails after planning, any later gate fails, or the run is cancelled,
-    # restore exactly the routing state this release replaced. The restore
-    # applies only while the live state is still what this release published:
-    # it never overwrites another change, and a plan that was never applied
-    # restores nothing. This covers first publications, older releases that
-    # do not move latest, and every route the release touched. A same-version
-    # redeploy changes only the routing state's generation, and replaces that
-    # version's Modal app in place, which routing cannot undo: redeploy the
-    # previous commit instead. The restore does not depend on the plan's
-    # digests differing: it is also what resolves this release's publication
-    # record, which would otherwise stay pending and refuse every later
-    # deployment.
-    if: >-
-      ${{
-        always() &&
-        inputs.deploy_existing_stack &&
-        needs.update_routing.result != 'skipped' &&
-        (
-          needs.update_routing.result != 'success' ||
-          needs.integration.result != 'success' ||
-          needs.authenticated_test.result != 'success' ||
-          (inputs.promote_entrypoint && needs.promote_entrypoint.result != 'success')
-        )
-      }}
+  finalize_routing:
+    name: Finalize the Modal routing publication
+    # Finish the durable journal after every gate, including failed uploads
+    # and cancelled runs. A rerun owns the same run's earlier attempt; no
+    # artifact or publisher output is needed for completion or restoration.
+    if: ${{ always() && inputs.deploy_existing_stack && needs.update_routing.result != 'skipped' }}
     needs: [update_routing, integration, authenticated_test, promote_entrypoint]
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     environment: ${{ inputs.release_environment }}
+    outputs:
+      outcome: ${{ steps.finalize.outputs.outcome }}
     steps:
       - uses: actions/checkout@v6
 
@@ -1073,43 +1051,54 @@ jobs:
         working-directory: projects/policyengine-simulation-executor
         run: uv sync --frozen
 
-      - name: Download this release's routing plan
-        uses: actions/download-artifact@v4
-        with:
-          # Artifacts are scoped to this run. Runner loss must not hide the
-          # saved plan just because update_routing never reported job outputs.
-          name: routing-plan-${{ inputs.release_environment }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/routing-plan
-
-      - name: Restore the routing this release replaced
+      - name: Finalize the routing publication
+        id: finalize
         working-directory: projects/policyengine-simulation-executor
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
+          PUBLICATION_RUN: ${{ github.run_id }}
+          RELEASE_ENVIRONMENT: ${{ inputs.release_environment }}
+          GATES_PASSED: >-
+            ${{
+              needs.update_routing.result == 'success' &&
+              needs.integration.result == 'success' &&
+              needs.authenticated_test.result == 'success' &&
+              (!inputs.promote_entrypoint || needs.promote_entrypoint.result == 'success')
+            }}
         run: |
-          # Caller workflows serialize routing writes and restores in the
-          # repository-wide simulation-deploy-main concurrency group.
+          # Caller workflows serialize this write with every other routing
+          # write in the simulation-deploy-main concurrency group.
           uv run python -m src.modal.utils.update_version_registry \
             --environment "${MODAL_ENVIRONMENT}" \
-            --restore-plan "${RUNNER_TEMP}/routing-plan/plan.json"
+            --finalize-publication --publication-run "${PUBLICATION_RUN}" \
+            --release-environment "${RELEASE_ENVIRONMENT}" \
+            --gates-passed "${GATES_PASSED}" --github-output "$GITHUB_OUTPUT"
 
   deployment_ready:
     name: Require requested deployment to complete
-    # Run after failures and expected skips so a required skipped phase cannot
-    # make the reusable workflow report a successful partial deployment.
+    # The reporter only reads job results. Journal completion happens before
+    # it, so a failure or cancellation here cannot strand a publication.
     if: ${{ !cancelled() }}
-    needs: [deploy_entrypoint, update_routing, integration, authenticated_test, promote_entrypoint, revert_routing]
+    needs: [deploy_entrypoint, update_routing, integration, authenticated_test, promote_entrypoint, finalize_routing]
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     environment: ${{ inputs.release_environment }}
     steps:
       - name: Check deployment result
         env:
           PROMOTION_REQUESTED: ${{ inputs.promote_entrypoint }}
+          EXISTING_STACK_REQUESTED: ${{ inputs.deploy_existing_stack }}
           ENTRYPOINT_RESULT: ${{ needs.deploy_entrypoint.result }}
+          ROUTING_RESULT: ${{ needs.update_routing.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
           AUTHENTICATED_TEST_RESULT: ${{ needs.authenticated_test.result }}
           PROMOTION_RESULT: ${{ needs.promote_entrypoint.result }}
+          FINALIZE_RESULT: ${{ needs.finalize_routing.result }}
+          FINALIZE_OUTCOME: ${{ needs.finalize_routing.outputs.outcome }}
         run: |
           test "${ENTRYPOINT_RESULT}" = "success"
           test "${INTEGRATION_RESULT}" = "success"
@@ -1119,41 +1108,11 @@ jobs:
           else
             test "${PROMOTION_RESULT}" = "skipped"
           fi
-
-      - uses: actions/checkout@v6
-        if: ${{ inputs.deploy_existing_stack }}
-
-      - uses: actions/setup-python@v6
-        if: ${{ inputs.deploy_existing_stack }}
-        with:
-          python-version: "3.13"
-
-      - uses: astral-sh/setup-uv@v8.1.0
-        if: ${{ inputs.deploy_existing_stack }}
-
-      - name: Install routing publisher dependencies
-        if: ${{ inputs.deploy_existing_stack }}
-        working-directory: projects/policyengine-simulation-executor
-        run: uv sync --frozen
-
-      - name: Download the successful release's routing plan
-        if: ${{ inputs.deploy_existing_stack }}
-        uses: actions/download-artifact@v4
-        with:
-          name: routing-plan-${{ inputs.release_environment }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/routing-plan
-
-      - name: Complete the routing publication after all release gates
-        if: ${{ inputs.deploy_existing_stack }}
-        working-directory: projects/policyengine-simulation-executor
-        env:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-          MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
-        run: |
-          uv run python -m src.modal.utils.update_version_registry \
-            --environment "${MODAL_ENVIRONMENT}" \
-            --complete-plan "${RUNNER_TEMP}/routing-plan/plan.json"
+          if [[ "${EXISTING_STACK_REQUESTED}" = "true" ]]; then
+            test "${ROUTING_RESULT}" = "success"
+            test "${FINALIZE_RESULT}" = "success"
+            test "${FINALIZE_OUTCOME}" = "completed"
+          fi
 
   cleanup_entrypoint_revisions:
     name: Remove superseded Cloud Run revisions

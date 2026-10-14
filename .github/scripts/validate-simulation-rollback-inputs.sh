@@ -19,6 +19,17 @@ case "${TARGET:-}" in
   *) fail "TARGET must be beta or prod" ;;
 esac
 
+case "${RESOLVE_PENDING_PUBLICATION:-false}" in
+  true)
+    [[ -z "${DEPLOY_RUN_ID:-}${POLICYENGINE_VERSION:-}${EXPECTED_LATEST:-}${ENTRYPOINT_REVISION:-}" ]] \
+      || fail "resolve_pending_publication requires all other rollback inputs blank"
+    printf 'Resolving the unfinished %s routing publication from its durable journal.\n' "${TARGET}"
+    exit 0
+    ;;
+  false) ;;
+  *) fail "resolve_pending_publication must be true or false" ;;
+esac
+
 if [[ -n "${DEPLOY_RUN_ID:-}" && -n "${POLICYENGINE_VERSION:-}" ]]; then
   fail "give deploy_run_id or policyengine_version, not both"
 fi

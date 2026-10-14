@@ -259,8 +259,10 @@ def test_every_compared_value_must_agree(path):
     result = {**RESULT, section: {**RESULT[section], key: RESULT[section][key] * 1.01}}
     problems, _ = _check(FakeAPI(result=result))
     assert problems == [
-        f"{LABEL}: {path} served {result[section][key]!r}, "
-        f"computed {RESULT[section][key]!r}"
+        (
+            f"{LABEL}: {path} served {result[section][key]!r}, "
+            f"computed {RESULT[section][key]!r}"
+        )
     ]
 
 
@@ -315,9 +317,12 @@ def test_the_tolerance_is_floating_point_reordering_only(relative, agrees):
     assert sentinel.agree(value, value * (1 + relative)) is agrees
 
 
-@pytest.mark.parametrize(("actual", "agrees"), [(0.009, True), (0.011, False)])
+@pytest.mark.parametrize(
+    ("actual", "agrees"),
+    [(0.009, True), (0.01, True), (-0.01, True), (0.011, False)],
+)
 def test_the_absolute_tolerance_is_one_penny(actual, agrees):
-    """Near zero, numerical agreement admits less than one penny of error."""
+    """Near zero, numerical agreement admits up to and including £0.01 of error."""
 
     assert sentinel.agree(0, actual) is agrees
     assert sentinel.agree(actual, 0) is agrees

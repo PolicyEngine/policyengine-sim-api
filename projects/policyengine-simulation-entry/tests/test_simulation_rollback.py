@@ -6,7 +6,7 @@ Invariants:
 - rollbacks share the deployments' concurrency group, so one never races a
   release;
 - exactly one restore mode is given: a deployment run whose kept routing plan
-  is restored, or a published version to point latest at;
+  is restored, a published version to point latest at, or journal recovery;
 - after restoring, the workflow verifies the stable service serves the whole
   identity latest now routes to (version, app, UK model and dataset digest).
 """
@@ -55,6 +55,43 @@ def test_valid_rollbacks_pass_validation():
     assert "Undoing the routing change of beta deployment run 18273645" in plan.stdout
 
 
+@pytest.mark.parametrize("target", ["beta", "prod"])
+def test_operator_recovery_accepts_only_target_and_pending_resolution(target):
+    result = _validate(TARGET=target, RESOLVE_PENDING_PUBLICATION="true")
+    assert result.returncode == 0, result.stderr
+    assert f"Resolving the unfinished {target} routing publication" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("DEPLOY_RUN_ID", "744001"),
+        ("POLICYENGINE_VERSION", "6.3.0"),
+        ("EXPECTED_LATEST", "6.3.0"),
+        ("ENTRYPOINT_REVISION", "policyengine-simulation-entry-00042-abc"),
+    ],
+)
+def test_operator_recovery_refuses_any_other_rollback_input(name, value):
+    result = _validate(
+        TARGET="prod", RESOLVE_PENDING_PUBLICATION="true", **{name: value}
+    )
+    assert result.returncode == 2
+    assert "requires all other rollback inputs blank" in result.stderr
+
+
+@pytest.mark.parametrize("value", ["yes", "TRUE", "1", "$(id)", "true;false"])
+def test_operator_recovery_refuses_invalid_boolean_input(value):
+    result = _validate(TARGET="prod", RESOLVE_PENDING_PUBLICATION=value)
+    assert result.returncode == 2
+    assert "resolve_pending_publication must be true or false" in result.stderr
+
+
+def test_explicitly_disabled_pending_resolution_keeps_legacy_validation():
+    result = _validate(TARGET="prod", RESOLVE_PENDING_PUBLICATION="false")
+    assert result.returncode == 2
+    assert "give deploy_run_id or policyengine_version" in result.stderr
+
+
 @pytest.mark.parametrize(
     "env",
     [
@@ -95,10 +132,13 @@ def test_rollback_inputs_never_reach_shell_source():
 
 
 def _rollback_steps() -> list[dict]:
+    return _rollback_workflow()["jobs"]["rollback"]["steps"]
+
+
+def _rollback_workflow() -> dict:
     import yaml
 
-    workflow = yaml.safe_load(ROLLBACK_WORKFLOW.read_text(encoding="utf-8"))
-    return workflow["jobs"]["rollback"]["steps"]
+    return yaml.safe_load(ROLLBACK_WORKFLOW.read_text(encoding="utf-8"))
 
 
 def _step_index(steps, fragment):
@@ -123,6 +163,44 @@ def test_rollback_validates_first_and_verifies_last():
     assert download["with"]["run-id"] == "${{ inputs.deploy_run_id }}"
     assert download["with"]["pattern"] == "routing-plan-${{ inputs.target }}-*"
     assert validate < steps.index(download) < restore
+
+
+def test_operator_recovery_prints_the_journal_then_restores_without_artifacts():
+    workflow = _rollback_workflow()
+    inputs = workflow.get("on", workflow.get(True))["workflow_dispatch"]["inputs"]
+    assert inputs["resolve_pending_publication"]["type"] == "boolean"
+    assert inputs["resolve_pending_publication"]["default"] is False
+    job = workflow["jobs"]["rollback"]
+    assert job["env"]["RESOLVE_PENDING_PUBLICATION"] == (
+        "${{ inputs.resolve_pending_publication }}"
+    )
+    steps = job["steps"]
+    validate = _step_index(steps, "validate-simulation-rollback-inputs.sh")
+    recover = _step_index(steps, "--finalize-publication")
+    assert validate < recover
+    step = steps[recover]
+    assert step["if"] == "${{ inputs.resolve_pending_publication }}"
+    assert step["run"].index("--print-pending-plan") < step["run"].index(
+        "--finalize-publication"
+    )
+    assert '--environment "${MODAL_ENVIRONMENT}"' in step["run"]
+    assert '--release-environment "${TARGET}"' in step["run"]
+    assert "--gates-passed false" in step["run"]
+    assert "--publication-run" not in step["run"]
+    assert "--restore-plan" not in step["run"]
+    assert "--restore-latest" not in step["run"]
+    # A first-ever failed release has no restored identity or Cloud Run
+    # service. Recovering its journal still succeeds and unblocks publishing.
+    for fragment in (
+        "--restore-plan",
+        "--print-identity",
+        "google-github-actions/auth@",
+        "google-github-actions/setup-gcloud@",
+        "gcloud run services describe",
+        "cloud-run-simulation-entry-smoke.sh",
+    ):
+        skipped = steps[_step_index(steps, fragment)]
+        assert skipped["if"] == "${{ !inputs.resolve_pending_publication }}"
 
 
 def test_rollback_verifies_the_whole_restored_identity():
