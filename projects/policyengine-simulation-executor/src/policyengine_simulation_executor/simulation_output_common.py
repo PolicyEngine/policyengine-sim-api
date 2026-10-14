@@ -19,6 +19,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Weights read back from a stored artifact may have passed through float32, so
+# "identical" allows a float32 round trip and nothing more.
+WEIGHT_RELATIVE_TOLERANCE = 1e-6
+
 
 def _number(value: ConvertibleToFloat | None, default: float = 0.0) -> float:
     if value is None:
@@ -73,6 +77,41 @@ def _count_output_entities(simulation: Simulation, entity: str, weight: str) -> 
     return float(np.asarray(data[weight], dtype=float).sum())
 
 
+def _warn_on_mismatched_weights(
+    baseline_data: pd.DataFrame, reform_data: pd.DataFrame, entity: str
+) -> None:
+    """Warn when a reform-minus-baseline total's two sides are weighted differently.
+
+    MicroSeries arithmetic keeps the left operand's weights, so reform minus
+    baseline is weighted by the reform's weights alone. That change total
+    only means something when both sides weight the same records identically.
+    Plain frames, which carry no weights, have nothing to compare. The total
+    is still published: this warns rather than refuses until logs show that
+    no legitimate run produces a mismatch.
+    """
+    baseline_weights = getattr(baseline_data, "weights", None)
+    reform_weights = getattr(reform_data, "weights", None)
+    if baseline_weights is None and reform_weights is None:
+        return
+    if (
+        baseline_weights is None
+        or reform_weights is None
+        or len(baseline_weights) != len(reform_weights)
+        or not np.allclose(
+            np.asarray(baseline_weights, dtype=float),
+            np.asarray(reform_weights, dtype=float),
+            rtol=WEIGHT_RELATIVE_TOLERANCE,
+            atol=0.0,
+            equal_nan=True,
+        )
+    ):
+        logger.warning(
+            "Baseline and reform %s frames carry different weights, so their "
+            "change total is weighted by the reform's weights alone",
+            entity,
+        )
+
+
 def _sum_output_variable(simulation: Simulation, variable: str, entity: str) -> float:
     data = _entity_data(simulation, entity)
     if variable in data.columns:
@@ -98,6 +137,7 @@ def _change_output_variable(
 ) -> float:
     baseline_data = _entity_data(baseline, entity)
     reform_data = _entity_data(reform, entity)
+    _warn_on_mismatched_weights(baseline_data, reform_data, entity)
     if variable in baseline_data.columns and variable in reform_data.columns:
         return float((reform_data[variable] - baseline_data[variable]).sum())
 
