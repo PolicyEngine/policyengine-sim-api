@@ -1426,8 +1426,8 @@ def test_each_publication_is_named_by_its_run_attempt_and_environment():
         if step.get("name") == "Plan the routing change"
     )
     assert (
-        '--publication-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RELEASE_ENVIRONMENT}"'
-        in plan["run"]
+        '--publication-id "${GITHUB_RUN_ID}-'
+        '${GITHUB_RUN_ATTEMPT}-${RELEASE_ENVIRONMENT}"' in plan["run"]
     )
     assert plan["env"]["RELEASE_ENVIRONMENT"] == "${{ inputs.release_environment }}"
 
@@ -2083,7 +2083,9 @@ def test_deploy_gates_pass_the_release_identity_to_the_smoke():
         if "cloud-run-simulation-entry-smoke.sh" in step.get("run", "")
     )
     expected = {
-        "EXPECTED_IDENTITY": "${{ inputs.deploy_existing_stack && 'required' || 'none' }}",
+        "EXPECTED_IDENTITY": (
+            "${{ inputs.deploy_existing_stack && 'required' || 'none' }}"
+        ),
         "EXPECTED_APP_NAME": (
             "${{ inputs.deploy_existing_stack && "
             "needs.deploy_executor.outputs.app_name || '' }}"
@@ -2093,7 +2095,8 @@ def test_deploy_gates_pass_the_release_identity_to_the_smoke():
             "needs.prepare.outputs.policyengine_version || '' }}"
         ),
         "EXPECTED_UK_MODEL_VERSION": (
-            "${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_version || '' }}"
+            "${{ inputs.deploy_existing_stack && "
+            "needs.prepare.outputs.uk_version || '' }}"
         ),
         "EXPECTED_UK_DATASET_SHA256": (
             "${{ inputs.deploy_existing_stack && "

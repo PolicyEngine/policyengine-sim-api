@@ -723,7 +723,7 @@ def test_a_plan_is_applied_only_onto_its_own_starting_state(monkeypatch, patched
     plan = _plan(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
     moved = _publish(monkeypatch, state, "6.2.7", "1.1.0", "2.1.0")
     store = _store(patched_modal, moved)
-    with pytest.raises(registry.RoutingConflict, match="nothing was published"):
+    with pytest.raises(registry.RoutingConflictError, match="nothing was published"):
         registry.apply_routing_plan(environment="staging", plan=plan)
     assert store.get("active") == json.loads(json.dumps(moved))
 
@@ -735,7 +735,7 @@ def test_a_restore_never_overwrites_a_later_change(monkeypatch, patched_modal):
     registry.apply_routing_plan(environment="staging", plan=plan)
     later = _publish(monkeypatch, store.get("active"), "6.4.0", "1.2.0", "2.2.0")
     store["active"] = later
-    with pytest.raises(registry.RoutingConflict, match="nothing was restored"):
+    with pytest.raises(registry.RoutingConflictError, match="nothing was restored"):
         registry.restore_routing_plan(environment="staging", plan=plan)
     assert store.get("active") == later
 
@@ -914,7 +914,7 @@ def test_an_old_plan_cannot_withdraw_a_healthy_republication(
     )
     healthy = _plan(monkeypatch, a, "6.1.0", "1.1.0", "2.2.0")
     registry.apply_routing_plan(environment="staging", plan=healthy)
-    with pytest.raises(registry.RoutingConflict, match="nothing was restored"):
+    with pytest.raises(registry.RoutingConflictError, match="nothing was restored"):
         registry.restore_routing_plan(environment="staging", plan=failed)
     assert store.get("active") == healthy["after"]
 
@@ -1273,7 +1273,8 @@ def test_applying_a_plan_verifies_the_written_state(monkeypatch, patched_modal):
     store = DroppedWrite({"active": state})
     patched_modal["staging/simulation-api-routing-state"] = store
     with pytest.raises(
-        registry.RoutingConflict, match="published routing state reads back differently"
+        registry.RoutingConflictError,
+        match="published routing state reads back differently",
     ):
         registry.apply_routing_plan(environment="staging", plan=plan)
     assert store.get("active") == state
@@ -1300,7 +1301,8 @@ def test_restoring_a_plan_verifies_the_written_or_removed_state(
     store = DroppedRestore({"active": plan["after"]})
     patched_modal["staging/simulation-api-routing-state"] = store
     with pytest.raises(
-        registry.RoutingConflict, match="restored routing state reads back differently"
+        registry.RoutingConflictError,
+        match="restored routing state reads back differently",
     ):
         registry.restore_routing_plan(environment="staging", plan=plan)
     assert store.get("active") == plan["after"]
@@ -1317,7 +1319,7 @@ def test_runner_loss_cannot_be_adopted_by_the_next_release(monkeypatch, patched_
     attempted_b = _plan(monkeypatch, store.get("active"), "6.2.0", "1.2.0", "2.3.0")
     for operation in (registry.record_routing_plan, registry.apply_routing_plan):
         with pytest.raises(
-            registry.RoutingConflict, match="Unfinished routing publication"
+            registry.RoutingConflictError, match="Unfinished routing publication"
         ):
             operation(environment="staging", plan=attempted_b)
     assert store.get("active") == failed_a["after"]
@@ -1335,7 +1337,7 @@ def test_runner_loss_cannot_be_adopted_by_the_next_release(monkeypatch, patched_
     registry.apply_routing_plan(environment="staging", plan=healthy_b)
     registry.complete_routing_plan(environment="staging", plan=healthy_b)
     assert "6.1.0" not in store.get("active")["routes"]["policyengine"]
-    with pytest.raises(registry.RoutingConflict, match="nothing was restored"):
+    with pytest.raises(registry.RoutingConflictError, match="nothing was restored"):
         registry.restore_routing_plan(environment="staging", plan=failed_a)
     # A subsequent failed release restores healthy B and cannot resurrect A.
     failed_c = _plan(monkeypatch, healthy_b["after"], "6.3.0", "1.3.0", "2.4.0")
@@ -1372,7 +1374,7 @@ def test_a_failed_same_version_redeploy_is_resolved_by_its_restore(
     # A release gate fails here. Until the restore runs, nothing else may write.
     later = _plan(monkeypatch, live, "6.1.0", "1.1.0", "2.2.0")
     with pytest.raises(
-        registry.RoutingConflict, match="Unfinished routing publication"
+        registry.RoutingConflictError, match="Unfinished routing publication"
     ):
         registry.record_routing_plan(environment="staging", plan=later)
     assert (
@@ -1398,7 +1400,7 @@ def test_recorded_but_unpublished_plan_blocks_writes_until_restored(
     registry.record_routing_plan(environment="staging", plan=pending)
     # Covers loss after recording, before upload or before apply.
     with pytest.raises(
-        registry.RoutingConflict, match="Unfinished routing publication"
+        registry.RoutingConflictError, match="Unfinished routing publication"
     ):
         registry.record_routing_plan(environment="staging", plan=pending)
     assert (
@@ -1422,7 +1424,7 @@ def test_every_other_routing_write_refuses_an_unfinished_release(
     saved = json.loads(json.dumps(store.snapshot()))
     other = _plan(monkeypatch, pending["after"], "6.2.0", "1.2.0", "2.3.0")
     with pytest.raises(
-        registry.RoutingConflict, match="Unfinished routing publication"
+        registry.RoutingConflictError, match="Unfinished routing publication"
     ):
         if writer == "publish":
             registry.publish_routing_state(
@@ -1447,14 +1449,16 @@ def test_only_matching_live_publication_can_be_completed(monkeypatch, patched_mo
     before = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
     store = _store(patched_modal, before)
     pending = _plan(monkeypatch, before, "6.1.0", "1.1.0", "2.2.0")
-    with pytest.raises(registry.RoutingConflict, match="no matching unfinished"):
+    with pytest.raises(registry.RoutingConflictError, match="no matching unfinished"):
         registry.complete_routing_plan(environment="staging", plan=pending)
     registry.record_routing_plan(environment="staging", plan=pending)
-    with pytest.raises(registry.RoutingConflict, match="routing state is not live"):
+    with pytest.raises(
+        registry.RoutingConflictError, match="routing state is not live"
+    ):
         registry.complete_routing_plan(environment="staging", plan=pending)
     registry.apply_routing_plan(environment="staging", plan=pending)
     other = _plan(monkeypatch, before, "6.1.0", "1.1.0", "2.2.0")
-    with pytest.raises(registry.RoutingConflict, match="no matching unfinished"):
+    with pytest.raises(registry.RoutingConflictError, match="no matching unfinished"):
         registry.complete_routing_plan(environment="staging", plan=other)
     assert store.get("publication")["status"] == "pending"
     registry.complete_routing_plan(environment="staging", plan=pending)
@@ -1482,7 +1486,7 @@ def test_publication_ownership_compares_the_entire_plan(
         "restore": registry.restore_routing_plan,
         "complete": registry.complete_routing_plan,
     }[operation]
-    with pytest.raises(registry.RoutingConflict):
+    with pytest.raises(registry.RoutingConflictError):
         writer(environment="staging", plan=changed)
     assert store.snapshot() == saved
 
@@ -1574,7 +1578,7 @@ def test_lost_finalizer_is_recovered_by_operator_without_an_artifact(
     registry.apply_routing_plan(environment="staging", plan=pending)
     later = _plan(monkeypatch, pending["after"], "6.2.0", "1.2.0", "2.3.0")
     with pytest.raises(
-        registry.RoutingConflict, match="Unfinished routing publication"
+        registry.RoutingConflictError, match="Unfinished routing publication"
     ):
         registry.record_routing_plan(environment="staging", plan=later)
     assert store.get("publication") == {"status": "pending", "plan": pending}
@@ -1652,7 +1656,7 @@ def test_finalizer_conflict_is_loud_and_keeps_the_journal_pending(
     registry.apply_routing_plan(environment="staging", plan=pending)
     store["active"] = _publish(monkeypatch, pending["after"], "6.2.0", "1.2.0", "2.3.0")
     saved = json.loads(json.dumps(store.snapshot()))
-    with pytest.raises(registry.RoutingConflict, match="nothing was restored"):
+    with pytest.raises(registry.RoutingConflictError, match="nothing was restored"):
         registry.finalize_routing_publication(
             environment="staging",
             release_environment="beta",
@@ -1863,7 +1867,7 @@ def test_publication_records_are_read_back(monkeypatch, patched_modal, status):
         "restored": registry.restore_routing_plan,
     }[status]
     with pytest.raises(
-        registry.RoutingConflict, match="publication record reads back differently"
+        registry.RoutingConflictError, match="publication record reads back differently"
     ):
         operation(environment="staging", plan=plan)
     assert store.get("active") == (plan["after"] if status == "completed" else before)
@@ -1875,7 +1879,7 @@ def test_recording_checks_the_live_starting_state(monkeypatch, patched_modal):
     plan = _plan(monkeypatch, before, "6.1.0", "1.1.0", "2.2.0")
     later = _publish(monkeypatch, before, "6.2.0", "1.2.0", "2.3.0")
     store = _store(patched_modal, later)
-    with pytest.raises(registry.RoutingConflict, match="changed before recording"):
+    with pytest.raises(registry.RoutingConflictError, match="changed before recording"):
         registry.record_routing_plan(environment="staging", plan=plan)
     assert store.snapshot() == {"active": later}
 
@@ -1889,7 +1893,7 @@ def test_malformed_publication_record_refuses_writes(
     store = _store(patched_modal, None)
     store["publication"] = record
     plan = _plan(monkeypatch, None, "6.1.0", "1.1.0", "2.2.0")
-    with pytest.raises((registry.RoutingConflict, ValueError)):
+    with pytest.raises((registry.RoutingConflictError, ValueError)):
         registry.apply_routing_plan(environment="staging", plan=plan)
     assert store.snapshot() == {"publication": record}
 

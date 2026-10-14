@@ -615,7 +615,8 @@ def _bundle_identities(state: dict) -> dict[str, dict[str, PolicyEngineBundle]]:
                 # One historical entry with an unresolvable dataset must not
                 # take /versions down for every caller; report it without one.
                 logger.warning(
-                    "Cannot resolve the %s dataset of policyengine %s for /versions: %s",
+                    "Cannot resolve the %s dataset of policyengine %s "
+                    "for /versions: %s",
                     country,
                     policyengine_version,
                     exc,

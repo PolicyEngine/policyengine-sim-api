@@ -275,7 +275,10 @@ def _fake_gh(
         jobs.extend(
             [
                 _inventory_job(
-                    job="Complete beta deployment / Publish routing after all services pass"
+                    job=(
+                        "Complete beta deployment / "
+                        "Publish routing after all services pass"
+                    )
                 ),
                 _inventory_job(step="Record the plan artifact"),
                 _inventory_job(conclusion="failure"),

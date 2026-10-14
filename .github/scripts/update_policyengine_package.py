@@ -249,7 +249,7 @@ def bundle_versions() -> None:
     def certificate_sha256(country: str) -> str:
         # Receipt-v1 certificate digest; older wrappers lack the helper.
         try:
-            from policyengine.provenance.receipt import (
+            from policyengine.provenance.receipt import (  # noqa: PLC0415  # older policyengine wrappers lack the receipt helper, so the ImportError is handled here
                 certificate_sha256 as digest,
             )
         except ImportError:

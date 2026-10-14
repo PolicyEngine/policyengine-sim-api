@@ -407,7 +407,7 @@ def build_restored_routing_state(
 ROUTING_PLAN_SCHEMA = "policyengine-simulation.routing-plan/v1"
 
 
-class RoutingConflict(RuntimeError):
+class RoutingConflictError(RuntimeError):
     """The live routing state is not the one a plan expects."""
 
 
@@ -536,8 +536,8 @@ def _require_serialized_routing_workflow() -> None:
         "Routing writes require GitHub Actions in "
         f"{CANONICAL_GITHUB_REPOSITORY} through {workflows}. "
         "Use those workflows, whose simulation-deploy-main concurrency group "
-        "serializes routing writes. Read-only, --dry-run and --plan-out modes are available "
-        "locally."
+        "serializes routing writes. Read-only, --dry-run and --plan-out modes "
+        "are available locally."
     )
     raise RuntimeError(msg)
 
@@ -552,7 +552,7 @@ def _unfinished_publication(store: "modal.Dict | None") -> dict | None:
         "restored",
     }:
         msg = "invalid routing publication record; refusing routing writes"
-        raise RoutingConflict(msg)
+        raise RoutingConflictError(msg)
     validate_routing_plan(record.get("plan"))
     return record["plan"] if record["status"] == "pending" else None
 
@@ -568,7 +568,7 @@ def _require_finished_publication(
             "the recorded plan through simulation-rollback with target and "
             "resolve_pending_publication=true before deploying again."
         )
-        raise RoutingConflict(msg)
+        raise RoutingConflictError(msg)
 
 
 def _write_publication_record(store: "modal.Dict", *, plan: dict, status: str) -> None:
@@ -576,7 +576,7 @@ def _write_publication_record(store: "modal.Dict", *, plan: dict, status: str) -
     store[ROUTING_PUBLICATION_KEY] = record
     if store.get(ROUTING_PUBLICATION_KEY) != record:
         msg = "the routing publication record reads back differently"
-        raise RoutingConflict(msg)
+        raise RoutingConflictError(msg)
 
 
 def record_routing_plan(*, environment: str, plan: dict) -> None:
@@ -595,7 +595,7 @@ def record_routing_plan(*, environment: str, plan: dict) -> None:
         != plan["before_sha256"]
     ):
         msg = "the routing state changed before recording the plan"
-        raise RoutingConflict(msg)
+        raise RoutingConflictError(msg)
     _write_publication_record(store, plan=plan, status="pending")
 
 
@@ -606,13 +606,13 @@ def complete_routing_plan(*, environment: str, plan: dict) -> None:
     store = _routing_store(environment, create_if_missing=False)
     if _unfinished_publication(store) != plan:
         msg = "no matching unfinished routing publication to complete"
-        raise RoutingConflict(msg)
+        raise RoutingConflictError(msg)
     if (
         routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
         != plan["after_sha256"]
     ):
         msg = "the completed release's routing state is not live"
-        raise RoutingConflict(msg)
+        raise RoutingConflictError(msg)
     _write_publication_record(store, plan=plan, status="completed")
 
 
@@ -628,12 +628,12 @@ def apply_routing_plan(*, environment: str, plan: dict) -> None:
             "the routing state changed after this release was planned; "
             "nothing was published"
         )
-        raise RoutingConflict(msg)
+        raise RoutingConflictError(msg)
     store[ROUTING_STATE_ACTIVE_KEY] = plan["after"]
     written = store.get(ROUTING_STATE_ACTIVE_KEY)
     if routing_state_digest(written) != plan["after_sha256"]:
         msg = "the published routing state reads back differently"
-        raise RoutingConflict(msg)
+        raise RoutingConflictError(msg)
 
 
 def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
@@ -658,7 +658,7 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
         if all(plan["before"] is None for plan in plans):
             return "unchanged"
         msg = "there is no routing state to restore into"
-        raise RoutingConflict(msg)
+        raise RoutingConflictError(msg)
     remaining = [
         plan for plan in plans if plan["before_sha256"] != plan["after_sha256"]
     ]
@@ -679,7 +679,7 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
             != plan["before_sha256"]
         ):
             msg = "the restored routing state reads back differently"
-            raise RoutingConflict(msg)
+            raise RoutingConflictError(msg)
         outcome = "restored"
     if outcome == "unchanged" and not any(
         plan["before_sha256"] == digest for plan in plans
@@ -688,7 +688,7 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
             "the routing state is neither what this release replaced nor what "
             "it published; another change was made, so nothing was restored"
         )
-        raise RoutingConflict(msg)
+        raise RoutingConflictError(msg)
     if pending is not None:
         _write_publication_record(store, plan=pending, status="restored")
     return outcome
@@ -1163,7 +1163,9 @@ def main() -> None:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="With publishing arguments: print a routing plan's digests; change nothing.",
+        help=(
+            "With publishing arguments: print a routing plan's digests; change nothing."
+        ),
     )
     parser.add_argument(
         "--plan-out",
@@ -1279,7 +1281,8 @@ def main() -> None:
     if args.finalize_publication:
         if args.release_environment is None or args.gates_passed is None:
             parser.error(
-                "--finalize-publication requires --release-environment and --gates-passed"
+                "--finalize-publication requires --release-environment and "
+                "--gates-passed"
             )
         if args.publication_run is None and args.gates_passed != "false":
             parser.error("operator recovery requires --gates-passed false")
@@ -1300,7 +1303,8 @@ def main() -> None:
         )
         if outcome == "foreign-publication":
             _report(
-                "Pending routing publication belongs to another run or environment; routing is unchanged."
+                "Pending routing publication belongs to another run or "
+                "environment; routing is unchanged."
             )
         _report(f"Routing publication finalization: {outcome}")
         if args.github_output:
