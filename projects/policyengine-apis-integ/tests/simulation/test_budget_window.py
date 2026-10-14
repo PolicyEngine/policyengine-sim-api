@@ -18,12 +18,10 @@ from policyengine_api_simulation_client.types import Unset
 
 @pytest.mark.beta_only
 def test_budget_window_multi_year_batch_completes(
-    budget_window_request,
-    budget_window_years,
+    budget_window_smoke_case,
     decode_response_content,
     submit_budget_window_batch,
     poll_budget_window_batch,
-    us_model_version: str,
 ):
     """A two-year US budget-window batch returns both annual impacts and totals.
 
@@ -31,7 +29,8 @@ def test_budget_window_multi_year_batch_completes(
     When the batch is submitted and polled to completion
     Then the response contains 2026 and 2027 annual impacts plus totals.
     """
-    submit_response = submit_budget_window_batch(budget_window_request)
+    budget_window_years = budget_window_smoke_case.years
+    submit_response = submit_budget_window_batch(budget_window_smoke_case.request)
 
     assert submit_response.status_code == HTTPStatus.OK, (
         "Unexpected submit status "
@@ -42,7 +41,7 @@ def test_budget_window_multi_year_batch_completes(
         f"Unexpected response type: {type(submit_response.parsed)}"
     )
     assert submit_response.parsed.status == "submitted"
-    assert submit_response.parsed.version == us_model_version
+    assert submit_response.parsed.version == budget_window_smoke_case.model_version
 
     batch_job_id = submit_response.parsed.batch_job_id
     assert submit_response.parsed.poll_url == f"/budget-window-jobs/{batch_job_id}"

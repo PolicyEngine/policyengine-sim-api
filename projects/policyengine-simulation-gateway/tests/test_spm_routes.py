@@ -52,12 +52,13 @@ def legacy_route(mock_modal, source, model_version):
         }
 
 
-@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
+@pytest.mark.parametrize("endpoint_case", ENDPOINTS)
 @pytest.mark.parametrize("source", LEGACY_SOURCES)
 @pytest.mark.parametrize("version", [None, "1.715.2"])
 def test_historical_no_wrapper_route_submits_without_spm(
-    mock_modal, client, endpoint, extra, source, version
+    mock_modal, client, endpoint_case, source, version
 ):
+    endpoint, extra = endpoint_case
     legacy_route(mock_modal, source, "1.715.2")
     response = client.post(
         endpoint, json={"country": "us", "version": version, **extra}
@@ -68,12 +69,13 @@ def test_historical_no_wrapper_route_submits_without_spm(
     assert "policyengine_version" not in response.json()["policyengine_bundle"]
 
 
-@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
+@pytest.mark.parametrize("endpoint_case", ENDPOINTS)
 @pytest.mark.parametrize("source", LEGACY_SOURCES)
 @pytest.mark.parametrize("selection", [{}, {"geography_kind": "national"}])
 def test_historical_route_rejects_any_explicit_spm(
-    mock_modal, client, endpoint, extra, source, selection
+    mock_modal, client, endpoint_case, source, selection
 ):
+    endpoint, extra = endpoint_case
     legacy_route(mock_modal, source, "1.715.2")
     response = client.post(endpoint, json={"country": "us", "spm": selection, **extra})
     assert response.status_code == 400
@@ -81,7 +83,7 @@ def test_historical_route_rejects_any_explicit_spm(
     assert mock_modal["func"].calls == []
 
 
-@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
+@pytest.mark.parametrize("endpoint_case", ENDPOINTS)
 @pytest.mark.parametrize(
     ("source", "model_version"),
     [
@@ -93,8 +95,9 @@ def test_historical_route_rejects_any_explicit_spm(
     ],
 )
 def test_missing_wrapper_does_not_certify_unknown_routes(
-    mock_modal, client, endpoint, extra, source, model_version
+    mock_modal, client, endpoint_case, source, model_version
 ):
+    endpoint, extra = endpoint_case
     legacy_route(mock_modal, source, model_version)
     response = client.post(endpoint, json={"country": "us", **extra})
     assert response.status_code == 400

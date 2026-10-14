@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
@@ -191,22 +192,30 @@ exit 0
     )
 
 
+@dataclass(frozen=True)
+class BundledVersions:
+    """Package versions and UK dataset digest the fake ``uv`` reports for 4.1.0."""
+
+    policyengine_version: str = "4.1.0"
+    core_version: str = "999.999.999"
+    spm_version: str = "1.0.0"
+    us_version: str = "1.1.0"
+    uk_version: str = "2.1.0"
+    uk_dataset_sha256: str = "a" * 64
+
+
 def install_fake_uv(
     fake_bin: Path,
     *,
     log: Path,
-    bundled_core_version: str = "999.999.999",
-    bundled_us_version: str = "1.1.0",
-    bundled_uk_version: str = "2.1.0",
-    bundled_policyengine_version: str = "4.1.0",
-    bundled_spm_version: str = "1.0.0",
-    bundled_uk_dataset_sha256: str = "a" * 64,
+    bundled: BundledVersions | None = None,
 ) -> None:
     """Install a fake ``uv`` that appends each call to ``log``.
 
     Only the updater's isolated ``bundle-versions`` query for policyengine
-    4.1.0 prints anything: the ``bundled_*`` versions as ``key=value`` lines.
+    4.1.0 prints anything: the ``bundled`` versions as ``key=value`` lines.
     """
+    bundled = bundled or BundledVersions()
     write_executable(
         fake_bin / "uv",
         f"""#!/usr/bin/env bash
@@ -216,16 +225,16 @@ printf 'uv %s\\n' "$*" >> "{log}"
 if [[ "$1" == "run" \
   && "$*" == *"--isolated --no-project --with policyengine==4.1.0"* \
   && "$*" == *"update_policyengine_package.py bundle-versions"* ]]; then
-  echo "policyengine_version={bundled_policyengine_version}"
-  echo "policyengine_core_version={bundled_core_version}"
-  echo "spm_calculator_version={bundled_spm_version}"
-  echo "us_version={bundled_us_version}"
+  echo "policyengine_version={bundled.policyengine_version}"
+  echo "policyengine_core_version={bundled.core_version}"
+  echo "spm_calculator_version={bundled.spm_version}"
+  echo "us_version={bundled.us_version}"
   echo "us_data_version=1.10.0"
-  echo "uk_version={bundled_uk_version}"
+  echo "uk_version={bundled.uk_version}"
   echo "uk_data_version=1.20.0"
   echo "uk_data_package_version=1.20.0"
   echo "us_dataset_sha256="
-  echo "uk_dataset_sha256={bundled_uk_dataset_sha256}"
+  echo "uk_dataset_sha256={bundled.uk_dataset_sha256}"
   echo "uk_certificate_sha256="
   exit 0
 fi

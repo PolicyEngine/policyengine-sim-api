@@ -88,25 +88,26 @@ class MockRunSimulationFunction:
         return call
 
 
+class MockDict:
+    def __init__(self, data: dict):
+        self._data = data
+
+    def __getitem__(self, key: str):
+        return self._data[key]
+
+    def __setitem__(self, key: str, value):
+        self._data[key] = value
+
+    def get(self, key: str, default=None):
+        return self._data.get(key, default)
+
+
 @pytest.fixture
 def mock_batch_modal(monkeypatch):
     dicts: dict[str, dict] = {}
     call_registry: dict[str, SequencedCall] = {}
     functions: dict[tuple[str, str], object] = {}
     parent_call_id = "parent-123"
-
-    class MockDict:
-        def __init__(self, data: dict):
-            self._data = data
-
-        def __getitem__(self, key: str):
-            return self._data[key]
-
-        def __setitem__(self, key: str, value):
-            self._data[key] = value
-
-        def get(self, key: str, default=None):
-            return self._data.get(key, default)
 
     class MockModalDict:
         @staticmethod

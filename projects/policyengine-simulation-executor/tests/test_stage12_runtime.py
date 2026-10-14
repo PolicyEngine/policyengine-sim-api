@@ -7,6 +7,7 @@ import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Lock
@@ -1204,22 +1205,30 @@ class ImmediateCall:
         return self.result
 
 
+@dataclass(frozen=True)
+class InjectedChildFaults:
+    """Faults a ConcurrentInvoker injects into the child simulations it runs."""
+
+    fail_role: str | None = None
+    incompatible: bool = False
+    wrong_plan_digest: bool = False
+    missing_column: bool = False
+
+
 class ConcurrentInvoker:
     def __init__(
         self,
         artifacts,
         *,
-        fail_role=None,
-        incompatible=False,
-        wrong_plan_digest=False,
-        missing_column=False,
+        faults: InjectedChildFaults | None = None,
         production_result=None,
     ):
+        faults = faults or InjectedChildFaults()
         self.artifacts = artifacts
-        self.fail_role = fail_role
-        self.incompatible = incompatible
-        self.wrong_plan_digest = wrong_plan_digest
-        self.missing_column = missing_column
+        self.fail_role = faults.fail_role
+        self.incompatible = faults.incompatible
+        self.wrong_plan_digest = faults.wrong_plan_digest
+        self.missing_column = faults.missing_column
         self.executor = ThreadPoolExecutor(max_workers=2)
         self.intervals = {}
         self.events = []
@@ -1654,7 +1663,9 @@ def test_repeated_submission_does_not_retry_failed_comparison() -> None:
 def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None:
     store = FakeStore()
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts, fail_role="reform")
+    invoker = ConcurrentInvoker(
+        artifacts, faults=InjectedChildFaults(fail_role="reform")
+    )
 
     with pytest.raises(
         RuntimeError, match="Stage 12 report coordination failed"
@@ -1688,8 +1699,12 @@ def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None
 @pytest.mark.parametrize(
     "invoker",
     [
-        lambda artifacts: ConcurrentInvoker(artifacts, wrong_plan_digest=True),
-        lambda artifacts: ConcurrentInvoker(artifacts, missing_column=True),
+        lambda artifacts: ConcurrentInvoker(
+            artifacts, faults=InjectedChildFaults(wrong_plan_digest=True)
+        ),
+        lambda artifacts: ConcurrentInvoker(
+            artifacts, faults=InjectedChildFaults(missing_column=True)
+        ),
     ],
 )
 def test_coordinator_rejects_artifacts_that_do_not_satisfy_the_shared_plan(
@@ -2169,7 +2184,9 @@ def test_coordinator_reports_a_child_failure_once_when_its_record_is_unwritable(
             coordinator_invocation_id="coordinator-1",
             store=store,
             artifacts=artifacts,
-            invoker=ConcurrentInvoker(artifacts, fail_role="baseline"),
+            invoker=ConcurrentInvoker(
+                artifacts, faults=InjectedChildFaults(fail_role="baseline")
+            ),
             aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
             runtime=TelemetryRecordingRuntime(ordered_events),
         )
@@ -2238,7 +2255,9 @@ def test_coordinator_reports_a_child_dispatch_failure_once() -> None:
 def test_coordinator_rejects_incompatible_row_identity() -> None:
     store = FakeStore()
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts, incompatible=True)
+    invoker = ConcurrentInvoker(
+        artifacts, faults=InjectedChildFaults(incompatible=True)
+    )
 
     with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
         coordinate_report(
