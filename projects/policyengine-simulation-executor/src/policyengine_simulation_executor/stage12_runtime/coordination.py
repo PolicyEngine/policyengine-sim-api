@@ -84,6 +84,37 @@ def _next_poll_interval(current: float) -> float:
     )
 
 
+def _log_cancellation_failure(
+    level: int,
+    message: str,
+    *,
+    simulation: PlannedSimulationExecutionInput,
+    error: Exception,
+) -> None:
+    """Log a cancellation failure with the report and child identifiers.
+
+    ``message`` receives the simulation role, simulation execution ID,
+    evaluation ID and error type, in that order. The error's own message is
+    never logged.
+    """
+
+    error_type = type(error).__name__
+    logger.log(
+        level,
+        message,
+        simulation.role.value,
+        simulation.simulation_execution_id,
+        simulation.evaluation_id,
+        error_type,
+        extra={
+            "evaluation_id": str(simulation.evaluation_id),
+            "simulation_execution_id": str(simulation.simulation_execution_id),
+            "simulation_role": simulation.role.value,
+            "error_type": error_type,
+        },
+    )
+
+
 def _replace_running_simulation(
     *,
     store: ComparisonStore,
@@ -133,10 +164,12 @@ def _cancel_pending_simulations(
                 detail=detail,
             )
         except Exception as error:  # noqa: BLE001
-            logger.error(
-                "Stage 12 peer state cancellation failed for %s (%s)",
-                role,
-                type(error).__name__,
+            _log_cancellation_failure(
+                logging.ERROR,
+                "Stage 12 could not record cancellation of %s simulation %s "
+                "in report %s (%s)",
+                simulation=simulation,
+                error=error,
             )
             continue
         if latest.status is not ComparisonRunLifecycleStatus.INCOMPLETE:
@@ -149,10 +182,11 @@ def _cancel_pending_simulations(
         try:
             calls[role].cancel()
         except Exception as error:  # noqa: BLE001
-            logger.warning(
-                "Stage 12 peer cancellation failed for %s (%s)",
-                role,
-                type(error).__name__,
+            _log_cancellation_failure(
+                logging.WARNING,
+                "Stage 12 could not cancel %s simulation %s in report %s (%s)",
+                simulation=simulation,
+                error=error,
             )
 
 
@@ -277,10 +311,12 @@ def _observe_simulations(
                     try:
                         calls[role].cancel()
                     except Exception as error:  # noqa: BLE001
-                        logger.warning(
-                            "Stage 12 timeout cancellation failed for %s (%s)",
-                            role,
-                            type(error).__name__,
+                        _log_cancellation_failure(
+                            logging.WARNING,
+                            "Stage 12 could not cancel timed-out %s simulation %s "
+                            "in report %s (%s)",
+                            simulation=simulations[role],
+                            error=error,
                         )
             raise wait_timeout
         sleep(poll_interval)
