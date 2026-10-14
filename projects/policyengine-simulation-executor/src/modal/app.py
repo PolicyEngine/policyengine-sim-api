@@ -266,7 +266,7 @@ def _configure_modal_observability(
 
 
 def _set_modal_call_attributes(runtime: "ObservabilityRuntime") -> None:
-    try:
+    try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
         runtime.set_context(function_call_id=modal.current_function_call_id())
     except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal: a failed attribute must never fail the Modal call
         pass

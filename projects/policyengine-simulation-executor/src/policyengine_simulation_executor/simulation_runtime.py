@@ -152,7 +152,7 @@ def setup_gcp_credentials(
                     # the context exits. We restore any prior value of
                     # ``GOOGLE_APPLICATION_CREDENTIALS`` so a retry in the same
                     # container doesn't silently pick up a stale path.
-                    creds_file = tempfile.NamedTemporaryFile(
+                    creds_file = tempfile.NamedTemporaryFile(  # noqa: SIM115  # stays open across the yield; the finally block closes, and so deletes, it
                         mode="w",
                         suffix=".json",
                         delete=True,
@@ -335,9 +335,7 @@ def _normalise_region_code(country: str, region: object) -> str:
         value = value.lower()
     elif prefix == "country":
         value = value.lower().replace(" ", "_")
-    elif prefix in {"congressional_district", "place"}:
-        value = value.upper()
-    elif prefix == "local_authority":
+    elif prefix in {"congressional_district", "place", "local_authority"}:
         value = value.upper()
     return f"{prefix}/{value}"
 
@@ -688,7 +686,7 @@ def _resolve_dataset_selection(
 
     # Region metadata can contain a URI rather than a managed dataset name.
     for name, uri in bundle.dataset_uris.items():
-        if dataset_reference == name or dataset_reference == uri:
+        if dataset_reference in (name, uri):
             return DatasetSelection(name, uri, name == bundle.default_dataset)
     for name, uri in bundle.dataset_uris.items():
         if dataset_reference == runtime_dataset_uri(

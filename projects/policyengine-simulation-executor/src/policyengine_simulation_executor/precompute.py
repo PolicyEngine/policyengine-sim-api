@@ -453,8 +453,10 @@ def verify_determinism_impl(
             differences.append(f"{entity}: missing on one side")
             continue
         left_cols, right_cols = set(left.columns), set(right.columns)
-        for column in sorted(left_cols ^ right_cols):
-            differences.append(f"{entity}.{column}: only on one side")
+        differences.extend(
+            f"{entity}.{column}: only on one side"
+            for column in sorted(left_cols ^ right_cols)
+        )
         for column in sorted(left_cols & right_cols):
             if str(left[column].dtype) != str(right[column].dtype):
                 differences.append(f"{entity}.{column}: dtype differs")

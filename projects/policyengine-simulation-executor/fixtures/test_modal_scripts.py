@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,7 +20,7 @@ def temp_github_output() -> Iterator[str]:
     """Create a temporary file to simulate ``GITHUB_OUTPUT``."""
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as file:
         yield file.name
-    os.unlink(file.name)
+    Path(file.name).unlink()
 
 
 @pytest.fixture
@@ -29,7 +28,7 @@ def temp_github_step_summary() -> Iterator[str]:
     """Create a temporary file to simulate ``GITHUB_STEP_SUMMARY``."""
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".md") as file:
         yield file.name
-    os.unlink(file.name)
+    Path(file.name).unlink()
 
 
 @pytest.fixture
