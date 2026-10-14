@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import modal
@@ -78,14 +79,32 @@ class ReportInvoker(Protocol):
         ...
 
 
-type PreparedReport = tuple[
-    ComparisonReportRecord,
-    ReportExecutionInput,
-    V2WorkerVersion,
-    V2CountryWorker,
-    str,
-    str,
-]
+class ResolvedWorkerVersion(NamedTuple):
+    """A v2 worker version as the manifest loader resolves it."""
+
+    version: str
+    worker: V2WorkerVersion
+    manifest_sha256: str
+
+
+@dataclass(frozen=True)
+class ReportOrigin:
+    """The request a comparison run answers, and the production job it shadows."""
+
+    request_id: str
+    production_identity: str
+    incumbent_execution_id: str | None
+    comparison_status: ResultComparisonStatus
+
+
+@dataclass(frozen=True)
+class PreparedReport:
+    """A comparison run ready to dispatch: its parent row, inputs and worker."""
+
+    parent: ComparisonReportRecord
+    report: ReportExecutionInput
+    worker_version: ResolvedWorkerVersion
+    country_worker: V2CountryWorker
 
 
 class TemporaryStage12UnsupportedRequestError(ValueError):
@@ -217,16 +236,10 @@ class Stage12ComparisonBackend:
         )
         if prepared is None:
             return
-        parent, report, worker, country_worker, version, manifest_sha256 = prepared
         await self._spawn_report(
-            parent=parent,
-            report=report,
-            worker=worker,
-            country_worker=country_worker,
-            version=version,
-            manifest_sha256=manifest_sha256,
+            prepared,
             request_id=request_id,
-            production_function_call_id=parent.production_identity,
+            production_function_call_id=prepared.parent.production_identity,
             observability_id=observability_id,
         )
 
@@ -245,14 +258,8 @@ class Stage12ComparisonBackend:
             request_payload=request_payload,
             request_id=request_id,
         )
-        parent, report, worker, country_worker, version, manifest_sha256 = prepared
         return await self._spawn_report(
-            parent=parent,
-            report=report,
-            worker=worker,
-            country_worker=country_worker,
-            version=version,
-            manifest_sha256=manifest_sha256,
+            prepared,
             request_id=request_id,
             production_function_call_id=None,
             observability_id=observability_id,
@@ -282,15 +289,14 @@ class Stage12ComparisonBackend:
         evaluation_id: UUID,
     ) -> tuple[
         ReportExecutionInput | None,
-        V2WorkerVersion,
+        ResolvedWorkerVersion,
         V2CountryWorker,
-        str,
-        str,
         str | None,
     ]:
-        version, worker, manifest_sha256 = self._manifest_loader.resolve(
-            self._settings.stage12_v2_worker_version
+        worker_version = ResolvedWorkerVersion(
+            *self._manifest_loader.resolve(self._settings.stage12_v2_worker_version)
         )
+        worker = worker_version.worker
         adapted = adapt_annual_comparison(
             request_payload,
             evaluation_id=evaluation_id,
@@ -307,10 +313,8 @@ class Stage12ComparisonBackend:
         skip_reason = adapted.skip_reason.value if adapted.skip_reason else None
         return (
             adapted.report,
-            worker,
+            worker_version,
             country_worker,
-            version,
-            manifest_sha256,
             skip_reason,
         )
 
@@ -318,31 +322,27 @@ class Stage12ComparisonBackend:
         self,
         *,
         evaluation_id: UUID,
-        request_id: str,
-        production_identity: str,
-        incumbent_execution_id: str | None,
-        worker: V2WorkerVersion,
+        origin: ReportOrigin,
+        worker_version: ResolvedWorkerVersion,
         report: ReportExecutionInput,
-        version: str,
-        manifest_sha256: str,
-        comparison_status: ResultComparisonStatus,
     ) -> ComparisonReportRecord:
         bundle = report.baseline.bundle
+        worker = worker_version.worker
         now = datetime.now(UTC)
         return ComparisonReportRecord(
             evaluation_id=evaluation_id,
             status=ComparisonRunLifecycleStatus.PENDING,
             aggregation_status=ComparisonRunAggregationStatus.NOT_STARTED,
-            comparison_status=comparison_status,
+            comparison_status=origin.comparison_status,
             environment=self._settings.environment,
             calculation_flow="economy",
-            originating_request_id=request_id,
-            production_identity=production_identity,
-            incumbent_execution_id=incumbent_execution_id,
-            worker_version=version,
+            originating_request_id=origin.request_id,
+            production_identity=origin.production_identity,
+            incumbent_execution_id=origin.incumbent_execution_id,
+            worker_version=worker_version.version,
             modal_application=worker.application_name,
             report_coordinator_callable=worker.report_coordinator_callable,
-            version_manifest_sha256=manifest_sha256,
+            version_manifest_sha256=worker_version.manifest_sha256,
             policyengine_version=bundle.policyengine_version,
             country_package_name=bundle.country_package_name,
             country_package_version=bundle.country_package_version,
@@ -364,11 +364,9 @@ class Stage12ComparisonBackend:
         request_id: str,
     ) -> PreparedReport:
         evaluation_id = uuid4()
-        report, worker, country_worker, version, manifest_sha256, skip_reason = (
-            self._resolve_report(
-                request_payload=request_payload,
-                evaluation_id=evaluation_id,
-            )
+        report, worker_version, country_worker, skip_reason = self._resolve_report(
+            request_payload=request_payload,
+            evaluation_id=evaluation_id,
         )
         if report is None:
             raise TemporaryStage12UnsupportedRequestError(
@@ -376,16 +374,21 @@ class Stage12ComparisonBackend:
             )
         parent = self._parent_record(
             evaluation_id=evaluation_id,
-            request_id=request_id,
-            production_identity=f"direct:{evaluation_id}",
-            incumbent_execution_id=None,
-            worker=worker,
+            origin=ReportOrigin(
+                request_id=request_id,
+                production_identity=f"direct:{evaluation_id}",
+                incumbent_execution_id=None,
+                comparison_status=ResultComparisonStatus.NOT_REQUESTED,
+            ),
+            worker_version=worker_version,
             report=report,
-            version=version,
-            manifest_sha256=manifest_sha256,
-            comparison_status=ResultComparisonStatus.NOT_REQUESTED,
         )
-        return parent, report, worker, country_worker, version, manifest_sha256
+        return PreparedReport(
+            parent=parent,
+            report=report,
+            worker_version=worker_version,
+            country_worker=country_worker,
+        )
 
     def _prepare_automatic_report(
         self,
@@ -402,9 +405,10 @@ class Stage12ComparisonBackend:
             msg = "accepted production response has no job identifier"
             raise ValueError(msg)
 
-        version, worker, manifest_sha256 = self._manifest_loader.resolve(
-            self._settings.stage12_v2_worker_version
+        worker_version = ResolvedWorkerVersion(
+            *self._manifest_loader.resolve(self._settings.stage12_v2_worker_version)
         )
+        version, worker, manifest_sha256 = worker_version
         evaluation_id = uuid5(
             AUTOMATIC_REPORT_NAMESPACE,
             f"{self._settings.environment}|economy|{production_identity}|{version}|{manifest_sha256}",
@@ -438,38 +442,33 @@ class Stage12ComparisonBackend:
         )
         parent = self._parent_record(
             evaluation_id=evaluation_id,
-            request_id=request_id,
-            production_identity=production_identity,
-            incumbent_execution_id=production_identity,
-            worker=worker,
+            origin=ReportOrigin(
+                request_id=request_id,
+                production_identity=production_identity,
+                incumbent_execution_id=production_identity,
+                comparison_status=ResultComparisonStatus.PENDING,
+            ),
+            worker_version=worker_version,
             report=adapted.report,
-            version=version,
-            manifest_sha256=manifest_sha256,
-            comparison_status=ResultComparisonStatus.PENDING,
         )
-        return (
-            parent,
-            adapted.report,
-            worker,
-            country_worker,
-            version,
-            manifest_sha256,
+        return PreparedReport(
+            parent=parent,
+            report=adapted.report,
+            worker_version=worker_version,
+            country_worker=country_worker,
         )
 
     async def _spawn_report(
         self,
+        prepared: PreparedReport,
         *,
-        parent: ComparisonReportRecord,
-        report: ReportExecutionInput,
-        worker: V2WorkerVersion,
-        country_worker: V2CountryWorker,
-        version: str,
-        manifest_sha256: str,
         request_id: str,
         production_function_call_id: str | None,
         observability_id: str,
     ) -> ComparisonReportRecord:
         """Return after Modal accepts the coordinator; perform no database writes."""
+        parent = prepared.parent
+        version, worker, manifest_sha256 = prepared.worker_version
         artifact_prefix = (
             f"stage-12-runs/{self._settings.environment}/"
             f"{parent.created_at:%Y}/{parent.created_at:%m}/"
@@ -507,7 +506,7 @@ class Stage12ComparisonBackend:
             ):
                 invocation_id = await self._invoker.spawn(
                     worker=worker,
-                    report_payload=report.model_dump(mode="json"),
+                    report_payload=prepared.report.model_dump(mode="json"),
                     parent_payload=parent.model_dump(mode="json"),
                     observability_context=captured_context or None,
                     context_payload={
@@ -519,7 +518,7 @@ class Stage12ComparisonBackend:
                         "worker_version": version,
                         "modal_application": worker.application_name,
                         "simulation_callable": (
-                            country_worker.single_simulation_callable
+                            prepared.country_worker.single_simulation_callable
                         ),
                         "version_manifest_sha256": manifest_sha256,
                         "bundle_manifest_sha256": worker.bundle_manifest_sha256,
