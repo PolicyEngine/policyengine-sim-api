@@ -43,6 +43,7 @@ from policyengine_simulation_executor.national_partition import (
     national_region_groups,
 )
 from policyengine_simulation_executor.segmented_national_reduce import (
+    NationalReduceInputs,
     build_national_output,
 )
 from policyengine_simulation_observability.errors import log_and_redact_exception
@@ -553,11 +554,13 @@ class SegmentedNationalRunner:
         ):
             output = build_national_output(
                 child_results,
-                country=self.country,
-                simulation_params=simulation_params,
-                country_module=country_module,
-                year=_parse_year(simulation_params),
-                resolved_data_version=None,
+                NationalReduceInputs(
+                    country=self.country,
+                    simulation_params=simulation_params,
+                    country_module=country_module,
+                    year=_parse_year(simulation_params),
+                    resolved_data_version=None,
+                ),
                 runtime=self.runtime,
             )
         output.update(
