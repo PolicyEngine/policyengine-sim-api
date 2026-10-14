@@ -19,7 +19,8 @@ previous_revision="${3:-}"
 # - EXPECTED_APP_NAME: the executor app just deployed for it; both that
 #   version and its UK model must route to this app;
 # - EXPECTED_UK_MODEL_VERSION / EXPECTED_UK_DATASET_SHA256: that bundle's UK
-#   model and certified dataset SHA-256;
+#   model and certified dataset SHA-256, or `unrecorded` for a release
+#   published before digests were recorded (then /versions must report none);
 # - EXPECTED_LATEST=true (optional): unpinned requests route to that version
 #   and model.
 # This is the identity the gateway reports from the routing registry; the
@@ -55,8 +56,8 @@ if [ "${expected_identity}" = "required" ] ||
       exit 2
     fi
   done
-  if ! [[ "${expected_uk_dataset_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
-    printf 'EXPECTED_UK_DATASET_SHA256 must be 64 lowercase hexadecimal characters\n' >&2
+  if ! [[ "${expected_uk_dataset_sha256}" =~ ^([0-9a-f]{64}|unrecorded)$ ]]; then
+    printf 'EXPECTED_UK_DATASET_SHA256 must be 64 lowercase hexadecimal characters or unrecorded\n' >&2
     exit 2
   fi
 fi
@@ -159,7 +160,7 @@ if [ "${check_identity}" = "true" ]; then
     identity_failure "policyengine-uk ${served_uk_model} routes to ${served_uk_app:-no app}, expected ${expected_app_name}"
 
   served_dataset="$(jq -r --arg v "${expected_policyengine_version}" '.bundles[$v].uk.dataset_sha256 // ""' "${versions_body}")"
-  [ "${served_dataset}" = "${expected_uk_dataset_sha256}" ] ||
+  [ "${served_dataset:-unrecorded}" = "${expected_uk_dataset_sha256}" ] ||
     identity_failure "the UK dataset SHA-256 served for policyengine ${expected_policyengine_version} is ${served_dataset:-none}, expected ${expected_uk_dataset_sha256}"
 
   if [ "${expected_latest}" = "true" ]; then
@@ -171,7 +172,7 @@ if [ "${check_identity}" = "true" ]; then
 
   printf '%s serves policyengine %s from %s, policyengine-uk %s, UK dataset %s%s\n' \
     "${base_url}" "${expected_policyengine_version}" "${served_app}" \
-    "${served_uk_model}" "${served_dataset}" \
+    "${served_uk_model}" "${served_dataset:-unrecorded}" \
     "$([ "${expected_latest}" = "true" ] && printf ' as latest')"
 fi
 curl --fail --silent --show-error \

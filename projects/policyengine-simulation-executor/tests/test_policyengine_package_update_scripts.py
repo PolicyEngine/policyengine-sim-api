@@ -612,6 +612,61 @@ def test_bundle_versions_matches_policyengine_release_identity() -> None:
     assert "dispatch_verified=true" in result.stdout
 
 
+def test_bundle_versions_reports_the_receipt_certificate_digest(tmp_path) -> None:
+    """#743 review: a wrapper with the receipt helper reports its digest.
+
+    The locked wrapper predates the helper, so a stand-in module provides it:
+    the digest it computes from the UK record must reach the output unchanged,
+    and a dispatch naming another certificate must then be refused.
+    """
+
+    import json
+    import os
+
+    stand_in = tmp_path / "stand_in"
+    stand_in.mkdir()
+    (stand_in / "sitecustomize.py").write_text(
+        "import hashlib, json, sys, types\n"
+        "module = types.ModuleType('policyengine.provenance.receipt')\n"
+        "module.certificate_sha256 = lambda record: hashlib.sha256(\n"
+        "    json.dumps(record, sort_keys=True).encode()).hexdigest()\n"
+        "import policyengine.provenance\n"
+        "sys.modules['policyengine.provenance.receipt'] = module\n"
+    )
+    env = {**os.environ, "PYTHONPATH": str(stand_in)}
+    output = subprocess.run(
+        [sys.executable, str(HELPER), "bundle-versions"],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+    ).stdout
+    installed = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+
+    import hashlib
+
+    from policyengine.bundle import get_current_bundle
+
+    record = get_current_bundle()["data_releases"]["uk"]
+    expected = hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
+    assert installed["uk_certificate_sha256"] == expected
+    mismatch = subprocess.run(
+        [sys.executable, str(HELPER), "verify-dispatch"],
+        input=output,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "RELEASE_PAYLOAD": json.dumps(
+                {"bundle": {"uk": {"certificate_sha256": "d" * 64}}}
+            ),
+        },
+    )
+    assert mismatch.returncode != 0
+    assert "certificate_sha256" in mismatch.stderr
+
+
 def test_verify_dispatch_rejects_another_wrapper_version() -> None:
     import json
 

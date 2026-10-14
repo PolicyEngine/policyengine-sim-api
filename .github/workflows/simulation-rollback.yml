@@ -1,0 +1,239 @@
+name: Roll back Simulation API
+
+# Undo a release's Modal routing, or route unpinned requests back to a
+# policyengine.py release that is already published, optionally move Cloud
+# Run entrypoint traffic back to a retained revision, then verify the stable
+# service serves the restored release.
+#
+# Three ways to restore routing (give exactly one):
+# - resolve_pending_publication: print and restore the unfinished publication
+#   from the durable routing journal, even when no artifact was uploaded.
+# - deploy_run_id: restore exactly the routing state that deployment replaced,
+#   from the plans it kept as artifacts (one per run attempt). Each attempt's
+#   change is undone only while the live state is what that attempt
+#   published, so it never overwrites a later release; the failed release's
+#   routes go too.
+# - policyengine_version: point latest at that published release. Other
+#   releases, including the failed one, stay pinnable.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Environment to roll back"
+        required: true
+        type: choice
+        options:
+          - beta
+          - prod
+      deploy_run_id:
+        description: "Deployment run whose saved routing plans to undo"
+        required: false
+        type: string
+      resolve_pending_publication:
+        description: "Print and restore the target's unfinished publication from its durable journal"
+        required: false
+        default: false
+        type: boolean
+      policyengine_version:
+        description: "Published policyengine.py version to restore as latest"
+        required: false
+        type: string
+      expected_latest:
+        description: "With policyengine_version: refuse unless latest is currently this version"
+        required: false
+        type: string
+      entrypoint_revision:
+        description: "Retained Cloud Run revision to route to (blank: leave traffic)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize routing writes with both deployment workflows, including restores.
+  group: simulation-deploy-main
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    name: Roll back ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    environment: ${{ inputs.target }}
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    env:
+      TARGET: ${{ inputs.target }}
+      DEPLOY_RUN_ID: ${{ inputs.deploy_run_id }}
+      RESOLVE_PENDING_PUBLICATION: ${{ inputs.resolve_pending_publication }}
+      POLICYENGINE_VERSION: ${{ inputs.policyengine_version }}
+      EXPECTED_LATEST: ${{ inputs.expected_latest }}
+      ENTRYPOINT_REVISION: ${{ inputs.entrypoint_revision }}
+      MODAL_ENVIRONMENT: ${{ inputs.target == 'prod' && 'main' || 'staging' }}
+      SERVICE: ${{ inputs.target == 'prod' && 'policyengine-simulation-entry' || 'policyengine-simulation-entry-staging' }}
+      REGION: ${{ vars.SIMULATION_ENTRYPOINT_GCP_REGION || 'us-central1' }}
+      PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Validate the requested rollback
+        run: .github/scripts/validate-simulation-rollback-inputs.sh
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install routing publisher dependencies
+        working-directory: projects/policyengine-simulation-executor
+        run: uv sync --frozen
+
+      - name: Download the deployment's routing plans
+        if: ${{ inputs.deploy_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.deploy_run_id }}
+          github-token: ${{ github.token }}
+          pattern: routing-plan-${{ inputs.target }}-*
+          path: ${{ runner.temp }}/routing-plans
+
+      - name: Restore Modal routing
+        if: ${{ !inputs.resolve_pending_publication }}
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ -n "${DEPLOY_RUN_ID}" ]]; then
+            # Every attempt whose routing job kept a plan must have one here:
+            # restoring without an attempt's plan would stop short of what
+            # the run replaced and still look complete.
+            attempts="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}" --jq .run_attempt)"
+            for attempt in $(seq 1 "${attempts}"); do
+              kept="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${DEPLOY_RUN_ID}/attempts/${attempt}/jobs" \
+                --jq "[.jobs[] | select(.name == \"Complete ${TARGET} deployment / Publish routing after all services pass\") | .steps[] | select(.name == \"Keep the plan for a guarded restore\" and .conclusion == \"success\")] | length" \
+                | awk '{total += $1} END {print total + 0}')"
+              if [[ "${kept}" -gt 0 && ! -f "${RUNNER_TEMP}/routing-plans/routing-plan-${TARGET}-${attempt}/plan.json" ]]; then
+                echo "Attempt ${attempt} of run ${DEPLOY_RUN_ID} kept a ${TARGET} routing plan that cannot be found; if its publication is pending, rerun this workflow with target=${TARGET} and resolve_pending_publication=true, leaving other inputs blank." >&2
+                exit 1
+              fi
+            done
+            # One plan per run attempt, passed oldest first. The restore undoes
+            # every attempt's change that is still live, newest first, and skips
+            # attempts that changed nothing.
+            plans=()
+            for attempt in $(
+              for directory in "${RUNNER_TEMP}"/routing-plans/routing-plan-"${TARGET}"-*/; do
+                name="${directory%/}"
+                name="${name##*-}"
+                if [[ "${name}" =~ ^[0-9]+$ ]]; then echo "${name}"; fi
+              done | sort -n
+            ); do
+              plans+=("${RUNNER_TEMP}/routing-plans/routing-plan-${TARGET}-${attempt}/plan.json")
+            done
+            if [[ ${#plans[@]} -eq 0 ]]; then
+              echo "Deployment run ${DEPLOY_RUN_ID} kept no ${TARGET} routing plan." >&2
+              exit 1
+            fi
+            uv run python -m src.modal.utils.update_version_registry \
+              --environment "${MODAL_ENVIRONMENT}" \
+              --restore-plan "${plans[@]}"
+          else
+            args=(--environment "${MODAL_ENVIRONMENT}" --restore-latest "${POLICYENGINE_VERSION}")
+            if [[ -n "${EXPECTED_LATEST}" ]]; then
+              args+=(--expected-latest "${EXPECTED_LATEST}")
+            fi
+            uv run python -m src.modal.utils.update_version_registry "${args[@]}"
+          fi
+
+      - name: Resolve the unfinished routing publication
+        if: ${{ inputs.resolve_pending_publication }}
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          uv run python -m src.modal.utils.update_version_registry \
+            --environment "${MODAL_ENVIRONMENT}" --print-pending-plan
+          uv run python -m src.modal.utils.update_version_registry \
+            --environment "${MODAL_ENVIRONMENT}" --finalize-publication \
+            --release-environment "${TARGET}" --gates-passed false
+
+      - name: Read the restored release identity
+        if: ${{ !inputs.resolve_pending_publication }}
+        id: identity
+        working-directory: projects/policyengine-simulation-executor
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          uv run python -m src.modal.utils.update_version_registry \
+            --environment "${MODAL_ENVIRONMENT}" --print-identity \
+            | grep -E '^(policyengine_version|app_name|uk_model_version|uk_dataset_sha256)=' \
+            | tee -a "$GITHUB_OUTPUT"
+
+      - uses: google-github-actions/auth@v2
+        if: ${{ !inputs.resolve_pending_publication }}
+        with:
+          workload_identity_provider: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.SIMULATION_ENTRYPOINT_GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        if: ${{ !inputs.resolve_pending_publication }}
+
+      - name: Resolve the stable service
+        if: ${{ !inputs.resolve_pending_publication }}
+        id: service
+        run: |
+          service_json="$(gcloud run services describe "${SERVICE}" \
+            --project "${PROJECT_ID}" --region "${REGION}" --format=json)"
+          echo "url=$(jq -er '.status.url' <<<"${service_json}")" >> "$GITHUB_OUTPUT"
+          echo "revision=$(jq -er '
+            [.status.traffic[]? | select((.percent // 0) == 100) | .revisionName]
+            | if length == 1 then .[0] else error("no single 100 percent revision") end
+          ' <<<"${service_json}")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore entrypoint traffic
+        if: ${{ inputs.entrypoint_revision != '' }}
+        env:
+          SIMULATION_ENTRYPOINT_GCP_PROJECT_ID: ${{ env.PROJECT_ID }}
+          SIMULATION_ENTRYPOINT_GCP_REGION: ${{ env.REGION }}
+          SIMULATION_ENTRYPOINT_SERVICE: ${{ env.SERVICE }}
+          SIMULATION_ENTRYPOINT_TARGET_REVISION: ${{ inputs.entrypoint_revision }}
+          SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION: ${{ steps.service.outputs.revision }}
+        run: |
+          if [[ "${SIMULATION_ENTRYPOINT_TARGET_REVISION}" == "${SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION}" ]]; then
+            echo "${SERVICE} already serves ${SIMULATION_ENTRYPOINT_TARGET_REVISION}."
+          else
+            .github/scripts/set-cloud-run-simulation-entry-revision.sh
+          fi
+
+      - name: Verify the stable service serves the restored release
+        if: ${{ !inputs.resolve_pending_publication }}
+        env:
+          # The whole identity latest now routes to, read from the registry;
+          # a release from before dataset digests were recorded expects none.
+          EXPECTED_IDENTITY: required
+          EXPECTED_POLICYENGINE_VERSION: ${{ steps.identity.outputs.policyengine_version }}
+          EXPECTED_APP_NAME: ${{ steps.identity.outputs.app_name }}
+          EXPECTED_UK_MODEL_VERSION: ${{ steps.identity.outputs.uk_model_version }}
+          EXPECTED_UK_DATASET_SHA256: ${{ steps.identity.outputs.uk_dataset_sha256 || 'unrecorded' }}
+          EXPECTED_LATEST: "true"
+          STABLE_URL: ${{ steps.service.outputs.url }}
+          EXPECTED_REVISION: ${{ inputs.entrypoint_revision }}
+          PREVIOUS_REVISION: ${{ steps.service.outputs.revision }}
+        run: |
+          if [[ -n "${POLICYENGINE_VERSION}" && "${EXPECTED_POLICYENGINE_VERSION}" != "${POLICYENGINE_VERSION}" ]]; then
+            echo "latest routes to ${EXPECTED_POLICYENGINE_VERSION}, not ${POLICYENGINE_VERSION}" >&2
+            exit 1
+          fi
+          .github/scripts/cloud-run-simulation-entry-smoke.sh \
+            "${STABLE_URL}" "${EXPECTED_REVISION}" "${PREVIOUS_REVISION}"

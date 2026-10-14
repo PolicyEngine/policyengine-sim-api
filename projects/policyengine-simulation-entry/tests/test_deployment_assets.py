@@ -5,10 +5,10 @@ import os
 import re
 import subprocess
 import textwrap
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 GITIGNORE = REPOSITORY_ROOT / ".gitignore"
@@ -30,6 +30,9 @@ CLOUD_RUN_DEPLOY_SCRIPT = (
 DEPLOY_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.yml"
 REUSABLE_DEPLOY_WORKFLOW = (
     REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
+)
+ROLLBACK_WORKFLOW = (
+    REPOSITORY_ROOT / ".github" / "workflows" / "simulation-rollback.yml"
 )
 STAGE12_DEPLOY_WORKFLOW = (
     REPOSITORY_ROOT / ".github" / "workflows" / "stage12-deploy.yml"
@@ -340,7 +343,8 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert "SIMULATION_ENTRYPOINT_PUBLIC_URL" not in reusable_workflow
     assert "staging.simulation.api.policyengine.org" not in deploy_workflow
     assert (
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 12
+        # Sentinel, restore and final routing acknowledgement use secrets too.
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 15
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow
@@ -597,10 +601,17 @@ def test_full_stack_promotion_order_is_explicit():
     assert reusable_workflow.index("\n  authenticated_test:") < reusable_workflow.index(
         "\n  promote_entrypoint:"
     )
-    assert (
-        "needs: [prepare, deploy_entrypoint, deploy_executor, authenticated_test]"
-        in reusable_workflow
+    promote_needs = set(
+        _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["promote_entrypoint"]["needs"]
     )
+    assert {
+        "prepare",
+        "deploy_entrypoint",
+        "deploy_executor",
+        "authenticated_test",
+        "sentinel_expected",
+        "update_routing",
+    } <= promote_needs
     assert (
         'cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"'
         in reusable_workflow
@@ -736,9 +747,794 @@ def test_stage12_only_deployment_cannot_redeploy_existing_modal_resources():
         section = match.group("body")
         assert "if: ${{ inputs.deploy_existing_stack }}" in section
 
-    stage12_start = reusable_workflow.index("\n  deploy_stage12_v2:")
-    stage12_section = reusable_workflow[stage12_start:]
+    stage12_section = reusable_workflow[
+        reusable_workflow.index("\n  deploy_stage12_v2:") : reusable_workflow.index(
+            "\n  integration:"
+        )
+    ]
     assert "src.modal.utils.update_version_registry" not in stage12_section
+    finalizer_job = _job_section(reusable_workflow, "finalize_routing")
+    assert "inputs.deploy_existing_stack &&" in finalizer_job
+    sentinel_job = _job_section(reusable_workflow, "sentinel_expected")
+    assert "if: ${{ inputs.deploy_existing_stack }}" in sentinel_job
+
+
+def _job_section(workflow: str, job_name: str) -> str:
+    match = re.search(
+        rf"^  {job_name}:\n(?P<body>.*?)(?=^  [a-z0-9_-]+:\n|\Z)",
+        workflow,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert match is not None, job_name
+    return match.group("body")
+
+
+def _sentinel_check_step(job: dict) -> dict:
+    steps = [
+        step
+        for step in job["steps"]
+        if "src.modal.utils.release_sentinel check" in step.get("run", "")
+    ]
+    assert len(steps) == 1
+    return steps[0]
+
+
+def test_deployed_stack_must_reproduce_the_numerical_sentinel():
+    workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    jobs = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)
+    sentinel_job = _job_section(workflow, "sentinel_expected")
+    assert jobs["sentinel_expected"]["needs"] == "prepare"
+    assert "release_sentinel expected" in sentinel_job
+    assert "secrets.PE_UK_PRIVATE_HF_READ_TOKEN" in sentinel_job
+    assert "secrets.GCP_CREDENTIALS_JSON" in sentinel_job
+    assert ".uk.dataset_sha256 == $d" in sentinel_job
+
+    integration = jobs["integration"]
+    assert "needs.sentinel_expected.result == 'success'" in integration["if"]
+    assert "needs.sentinel_expected.result == 'skipped'" in integration["if"]
+    check = _sentinel_check_step(integration)
+    # Both checks run on every existing-stack deployment, after the identity
+    # smoke, against the candidate and then the stable URL.
+    assert check["if"] == "${{ inputs.deploy_existing_stack }}"
+    assert "needs.deploy_entrypoint.outputs.candidate_url" in check["run"]
+    steps = integration["steps"]
+    smoke = next(
+        index
+        for index, step in enumerate(steps)
+        if "cloud-run-simulation-entry-smoke.sh" in step.get("run", "")
+    )
+    assert smoke < steps.index(check)
+
+    promote = jobs["promote_entrypoint"]
+    stable = _sentinel_check_step(promote)
+    assert stable["if"] == "${{ inputs.deploy_existing_stack }}"
+    assert '--base-url "${STABLE_URL}"' in stable["run"]
+    names = [step.get("name", "") for step in promote["steps"]]
+    # A failing stable sentinel triggers the existing traffic restore step.
+    assert promote["steps"].index(stable) < next(
+        index
+        for index, name in enumerate(names)
+        if name.startswith("Restore previous revision")
+    )
+
+
+# A small evaluator for the GitHub Actions expression subset these workflows
+# use (&&, ||, !, ==, !=, parentheses, status functions, property access and
+# string literals), so conditions are tested by what they decide, not by
+# their text. It follows GitHub's rules where they matter here: a job ``if``
+# with no status function is implicitly ``success() && (...)``; ``==``
+# compares strings case-insensitively and converts mismatched types to
+# numbers (true is 1, null is 0, a non-numeric string is NaN, so
+# ``true == 'true'`` is false).
+_TOKEN = re.compile(r"\s*(\$\{\{|\}\}|&&|\|\||==|!=|!|\(|\)|'[^']*'|[A-Za-z_][\w.-]*)")
+_STATUS_FUNCTIONS = ("always", "success", "failure", "cancelled")
+
+
+def _gh_number(value):
+    if value is None:
+        return 0.0
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if text == "":
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return float("nan")
+
+
+def _gh_equal(left, right) -> bool:
+    if isinstance(left, str) and isinstance(right, str):
+        return left.lower() == right.lower()
+    if type(left) is type(right):
+        return left == right
+    return _gh_number(left) == _gh_number(right)
+
+
+def _gh_eval(expression: str, context: dict, *, job_if: bool = False):
+    tokens = []
+    position = 0
+    text = expression.strip()
+    while position < len(text):
+        match = _TOKEN.match(text, position)
+        assert match, text[position:]
+        tokens.append(match.group(1))
+        position = match.end()
+    tokens = [token for token in tokens if token not in ("${{", "}}")]
+    if job_if and not any(
+        token in _STATUS_FUNCTIONS and tokens[index + 1 : index + 2] == ["("]
+        for index, token in enumerate(tokens)
+    ):
+        tokens = ["success", "(", ")", "&&", "(", *tokens, ")"]
+    results = [job.get("result") for job in (context.get("needs") or {}).values()]
+
+    def status(name):
+        cancelled = bool(context.get("cancelled"))
+        if name == "always":
+            return True
+        if name == "cancelled":
+            return cancelled
+        if name == "failure":
+            return "failure" in results
+        return not cancelled and all(result == "success" for result in results)
+
+    def truthy(value):
+        return value not in (None, False, "", 0)
+
+    def lookup(path):
+        if path in ("true", "false"):
+            return path == "true"
+        value = context
+        for part in path.split("."):
+            value = value.get(part) if isinstance(value, dict) else None
+        return value
+
+    def parse_or(index):
+        left, index = parse_and(index)
+        while index < len(tokens) and tokens[index] == "||":
+            right, index = parse_and(index + 1)
+            left = left if truthy(left) else right
+        return left, index
+
+    def parse_and(index):
+        left, index = parse_compare(index)
+        while index < len(tokens) and tokens[index] == "&&":
+            right, index = parse_compare(index + 1)
+            left = right if truthy(left) else left
+        return left, index
+
+    def parse_compare(index):
+        left, index = parse_unary(index)
+        while index < len(tokens) and tokens[index] in ("==", "!="):
+            operator = tokens[index]
+            right, index = parse_unary(index + 1)
+            equal = _gh_equal(left, right)
+            left = equal if operator == "==" else not equal
+        return left, index
+
+    def parse_unary(index):
+        if tokens[index] == "!":
+            value, index = parse_unary(index + 1)
+            return not truthy(value), index
+        if tokens[index] == "(":
+            value, index = parse_or(index + 1)
+            assert tokens[index] == ")"
+            return value, index + 1
+        token = tokens[index]
+        if token.startswith("'"):
+            return token[1:-1], index + 1
+        if tokens[index + 1 : index + 3] == ["(", ")"]:
+            assert token in _STATUS_FUNCTIONS, token
+            return status(token), index + 3
+        return lookup(token), index + 1
+
+    value, index = parse_or(0)
+    assert index == len(tokens), tokens[index:]
+    return value
+
+
+def test_the_expression_evaluator_follows_github_semantics():
+    context = {"inputs": {"flag": True}, "needs": {"a": {"result": "failure"}}}
+    assert _gh_eval("${{ inputs.flag == 'true' }}", context) is False
+    assert _gh_eval("${{ inputs.flag == true }}", context) is True
+    assert _gh_eval("${{ 'SUCCESS' == 'success' }}", context) is True
+    assert _gh_eval("${{ inputs.missing == '' }}", context) is True
+    # No status function: implicitly success() first, so a failed need skips it.
+    assert not _gh_eval("${{ inputs.flag }}", context, job_if=True)
+    assert _gh_eval("${{ always() && inputs.flag }}", context, job_if=True)
+    assert not _gh_eval("${{ !cancelled() }}", {**context, "cancelled": True})
+
+
+def _routing_context(**overrides):
+    context = {
+        "inputs": {"deploy_existing_stack": True, "promote_entrypoint": True},
+        "github": {"run_id": "744001", "run_attempt": "1"},
+        "needs": {
+            "update_routing": {
+                "result": "success",
+                "outputs": {
+                    "before_sha256": "a" * 64,
+                    "after_sha256": "b" * 64,
+                    "advances_latest": "true",
+                },
+            },
+            "integration": {"result": "success"},
+            "authenticated_test": {"result": "success"},
+            "promote_entrypoint": {"result": "success"},
+        },
+    }
+    for path, value in overrides.items():
+        target = context
+        *parents, last = path.split("__")
+        for part in parents:
+            target = target[part]
+        target[last] = value
+    return context
+
+
+@pytest.mark.parametrize(
+    ("overrides", "finalizes", "gates_passed"),
+    [
+        ({}, True, "true"),
+        ({"needs__integration__result": "failure"}, True, "false"),
+        ({"needs__authenticated_test__result": "cancelled"}, True, "false"),
+        ({"needs__promote_entrypoint__result": "failure"}, True, "false"),
+        # Publication then a failure inside update_routing itself (#744 H2).
+        ({"needs__update_routing__result": "failure"}, True, "false"),
+        (
+            {
+                "inputs__promote_entrypoint": False,
+                "needs__promote_entrypoint__result": "skipped",
+            },
+            True,
+            "true",
+        ),
+        # Missing job outputs cannot prove nothing was published: runner loss
+        # can prevent reporting them even after upload and apply succeeded.
+        (
+            {
+                "needs__update_routing__result": "failure",
+                "needs__update_routing__outputs": {},
+            },
+            True,
+            "false",
+        ),
+        (
+            {
+                "needs__update_routing__result": "failure",
+                "needs__update_routing__outputs": {},
+                "needs__integration__result": "skipped",
+                "needs__authenticated_test__result": "skipped",
+                "needs__promote_entrypoint__result": "skipped",
+            },
+            True,
+            "false",
+        ),
+        # The restore does not depend on the plan's digests: even a plan that
+        # reported equal ones must be restored, because the restore is what
+        # resolves the release's publication record, which would otherwise
+        # refuse every later deployment.
+        (
+            {
+                "needs__integration__result": "failure",
+                "needs__update_routing__outputs__after_sha256": "a" * 64,
+            },
+            True,
+            "false",
+        ),
+        (
+            {
+                "inputs__deploy_existing_stack": False,
+                "needs__integration__result": "failure",
+            },
+            False,
+            "false",
+        ),
+        (
+            {"needs__update_routing__result": "skipped"},
+            False,
+            "false",
+        ),
+        # Stage12 alone never publishes, even when all its gates pass.
+        (
+            {
+                "inputs__deploy_existing_stack": False,
+                "needs__update_routing__result": "skipped",
+            },
+            False,
+            "false",
+        ),
+        # Re-run failed jobs carries a successful attempt-1 publication and
+        # its outputs. Finalization must use the run, never attempt-2 artifacts.
+        (
+            {"github__run_attempt": "2"},
+            True,
+            "true",
+        ),
+        (
+            {
+                "github__run_attempt": "2",
+                "needs__authenticated_test__result": "failure",
+            },
+            True,
+            "false",
+        ),
+        # A cancelled run after publication must still restore routing.
+        (
+            {
+                "cancelled": True,
+                "needs__integration__result": "cancelled",
+                "needs__authenticated_test__result": "skipped",
+                "needs__promote_entrypoint__result": "skipped",
+            },
+            True,
+            "false",
+        ),
+    ],
+    ids=[
+        "all-pass",
+        "integration",
+        "authenticated",
+        "promotion",
+        "routing-job",
+        "no-promotion",
+        "missing-outputs",
+        "runner-lost-all-outputs",
+        "equal-digests",
+        "stack-disabled",
+        "routing-skipped",
+        "stage12-only",
+        "attempt-2-success",
+        "attempt-2-failed-gate",
+        "cancelled",
+    ],
+)
+def test_finalizer_always_resolves_a_publication_with_the_release_gate_outcome(
+    overrides, finalizes, gates_passed
+):
+    finalizer = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["finalize_routing"]
+    step = next(
+        step
+        for step in finalizer["steps"]
+        if "--finalize-publication" in step.get("run", "")
+    )
+    context = _routing_context(**overrides)
+    assert bool(_gh_eval(finalizer["if"], context, job_if=True)) is finalizes
+    assert str(_gh_eval(step["env"]["GATES_PASSED"], context)).lower() == (gates_passed)
+
+
+@pytest.mark.parametrize("job", ["integration", "promote_entrypoint"])
+def test_a_failing_sentinel_fails_its_step(tmp_path, job):
+    """#744 review: `|| true` on the sentinel command must not pass a failure."""
+
+    step = _sentinel_check_step(_workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)[job])
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "uv").write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "$*" == *"release_sentinel check"* ]]; then exit 9; fi\n'
+        "exit 0\n"
+    )
+    (bin_dir / "uv").chmod(0o755)
+    script = step["run"].replace(
+        "${{ needs.deploy_entrypoint.outputs.candidate_url }}", "https://candidate"
+    )
+    result = subprocess.run(
+        # GitHub runs `run` blocks with bash -e -o pipefail.
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "RUNNER_TEMP": str(tmp_path),
+            "STABLE_URL": "https://stable",
+        },
+    )
+    assert result.returncode == 9
+
+
+def test_stage12_only_promotion_runs_whatever_the_skipped_stack_jobs():
+    """#743 review: the explicit status function must stay active."""
+
+    promote = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["promote_entrypoint"]
+    context = {
+        "inputs": {"promote_entrypoint": True, "deploy_existing_stack": False},
+        "needs": {
+            "prepare": {"result": "success"},
+            "deploy_entrypoint": {"result": "success"},
+            "deploy_executor": {"result": "skipped"},
+            "authenticated_test": {"result": "success"},
+            "sentinel_expected": {"result": "skipped"},
+            "update_routing": {"result": "skipped"},
+        },
+    }
+    assert _gh_eval(promote["if"], context, job_if=True)
+    context["needs"]["authenticated_test"]["result"] = "failure"
+    assert not _gh_eval(promote["if"], context, job_if=True)
+    context["needs"]["authenticated_test"]["result"] = "success"
+    context["inputs"]["promote_entrypoint"] = False
+    assert not _gh_eval(promote["if"], context, job_if=True)
+
+
+def test_smoke_rejects_a_latest_wrapper_that_lags_alone(tmp_path: Path):
+    """#743 review: the wrapper's latest is checked, not only the model's."""
+
+    import copy
+
+    versions = copy.deepcopy(VERSIONS_BODY)
+    versions["policyengine"]["latest"] = "6.2.6"
+
+    result = _run_identity_smoke(tmp_path, versions, **IDENTITY)
+
+    assert result.returncode == 1
+    assert "latest routes to policyengine 6.2.6 and policyengine-uk 2.126.8" in (
+        result.stderr
+    )
+
+
+def _run_routing_step_with_a_failing_command(tmp_path, step, failed_command, **env):
+    """Run the real body with Actions' shell and a failing CLI seam."""
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "uv").write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" >> "$UV_CALLS"\n'
+        # Valid output ensures a masked plan/identity failure cannot be
+        # caught accidentally by a later grep rather than the failed CLI.
+        "printf 'before_sha256=before\\nafter_sha256=after\\nadvances_latest=true\\n'\n"
+        "printf 'policyengine_version=6.3.0\\napp_name=simulation-6.3.0\\n'\n"
+        "printf 'uk_model_version=2.126.8\\nuk_dataset_sha256=abc\\n'\n"
+        'if [[ " $* " == *" ${FAILED_COMMAND} "* ]]; then exit 9; fi\n'
+        "exit 0\n"
+    )
+    (bin_dir / "uv").chmod(0o755)
+    (bin_dir / "gh").write_text("#!/usr/bin/env bash\nprintf '1\\n'\n")
+    (bin_dir / "gh").chmod(0o755)
+    runner_temp = tmp_path / "runner-temp"
+    plan = runner_temp / "routing-plans" / "routing-plan-prod-1" / "plan.json"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("{}")
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "RUNNER_TEMP": str(runner_temp),
+            "GITHUB_OUTPUT": str(tmp_path / "github-output"),
+            "GITHUB_RUN_ID": "744001",
+            "GITHUB_RUN_ATTEMPT": "2",
+            "GITHUB_REPOSITORY": "PolicyEngine/policyengine-sim-api",
+            "UV_CALLS": str(tmp_path / "uv-calls"),
+            "FAILED_COMMAND": failed_command,
+            "MODAL_ENVIRONMENT": "main",
+            "PUBLICATION_RUN": "744001",
+            "RELEASE_ENVIRONMENT": "prod",
+            "GATES_PASSED": "true",
+            "APP_NAME": "simulation-6.3.0",
+            "POLICYENGINE_VERSION": "6.3.0",
+            "POLICYENGINE_US_VERSION": "1.0.0",
+            "POLICYENGINE_UK_VERSION": "2.126.8",
+            "FORCE_LATEST": "false",
+            "TARGET": "prod",
+            "DEPLOY_RUN_ID": "",
+            "EXPECTED_LATEST": "",
+            "RESOLVE_PENDING_PUBLICATION": "false",
+            **env,
+        },
+    )
+    assert result.returncode == 9, result.stderr
+    assert failed_command in (tmp_path / "uv-calls").read_text()
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job_name", "command", "env"),
+    [
+        (REUSABLE_DEPLOY_WORKFLOW, "update_routing", "sync", {}),
+        (REUSABLE_DEPLOY_WORKFLOW, "finalize_routing", "sync", {}),
+        (ROLLBACK_WORKFLOW, "rollback", "sync", {}),
+        (REUSABLE_DEPLOY_WORKFLOW, "update_routing", "--plan-out", {}),
+        (REUSABLE_DEPLOY_WORKFLOW, "update_routing", "--record-plan", {}),
+        (REUSABLE_DEPLOY_WORKFLOW, "update_routing", "--apply-plan", {}),
+        (REUSABLE_DEPLOY_WORKFLOW, "finalize_routing", "--finalize-publication", {}),
+        (
+            ROLLBACK_WORKFLOW,
+            "rollback",
+            "--restore-plan",
+            {"DEPLOY_RUN_ID": "744001"},
+        ),
+        (ROLLBACK_WORKFLOW, "rollback", "--restore-latest", {}),
+        (ROLLBACK_WORKFLOW, "rollback", "--print-identity", {}),
+        (
+            ROLLBACK_WORKFLOW,
+            "rollback",
+            "--print-pending-plan",
+            {"RESOLVE_PENDING_PUBLICATION": "true"},
+        ),
+        (
+            ROLLBACK_WORKFLOW,
+            "rollback",
+            "--finalize-publication",
+            {"RESOLVE_PENDING_PUBLICATION": "true"},
+        ),
+    ],
+    ids=[
+        "publication-setup",
+        "finalizer-setup",
+        "manual-rollback-setup",
+        "plan",
+        "record",
+        "apply",
+        "finalize",
+        "manual-restore-plans",
+        "manual-restore-latest",
+        "manual-read-identity",
+        "operator-inspect-pending",
+        "operator-resolve-pending",
+    ],
+)
+def test_a_failing_routing_command_fails_its_step_and_job(
+    tmp_path, workflow, job_name, command, env
+):
+    job = _workflow_jobs(workflow)[job_name]
+    assert "continue-on-error" not in job
+    assert job["defaults"]["run"]["shell"] == "bash"
+    step = next(step for step in job["steps"] if command in step.get("run", ""))
+    assert "continue-on-error" not in step
+    assert step.get("shell", "bash") == "bash"
+    _run_routing_step_with_a_failing_command(tmp_path, step, command, **env)
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job_name"),
+    [
+        (REUSABLE_DEPLOY_WORKFLOW, "update_routing"),
+        (REUSABLE_DEPLOY_WORKFLOW, "finalize_routing"),
+        (REUSABLE_DEPLOY_WORKFLOW, "deployment_ready"),
+        (ROLLBACK_WORKFLOW, "rollback"),
+    ],
+)
+def test_routing_jobs_never_allow_command_failures(workflow, job_name):
+    job = _workflow_jobs(workflow)[job_name]
+    assert "continue-on-error" not in job
+    assert job.get("defaults", {}).get("run", {}).get("shell") == "bash"
+    for step in job["steps"]:
+        assert "continue-on-error" not in step
+        assert step.get("shell", "bash") == "bash"
+        body = step.get("run", "")
+        assert not re.search(r"\|\|\s*true\b", body)
+        assert not re.search(r"\bset\s+\+e\b", body)
+
+
+def test_each_publication_is_named_by_its_run_attempt_and_environment():
+    routing = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["update_routing"]
+    plan = next(
+        step
+        for step in routing["steps"]
+        if step.get("name") == "Plan the routing change"
+    )
+    assert (
+        '--publication-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RELEASE_ENVIRONMENT}"'
+        in plan["run"]
+    )
+    assert plan["env"]["RELEASE_ENVIRONMENT"] == "${{ inputs.release_environment }}"
+
+
+def test_publication_keeps_the_plan_but_finalization_reads_the_journal():
+    jobs = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)
+    routing = jobs["update_routing"]
+    names = [step.get("name") for step in routing["steps"]]
+    plan = names.index("Plan the routing change")
+    journal = names.index("Record the unfinished routing publication")
+    keep = names.index("Keep the plan for a guarded restore")
+    publish = names.index("Publish the planned routing")
+    assert "Record the plan artifact" not in names
+    # The plan is kept before anything is published.
+    assert plan < journal < keep < publish
+    assert "--record-plan" in routing["steps"][journal]["run"]
+    keep_step = routing["steps"][keep]
+    assert keep_step["uses"].startswith("actions/upload-artifact@")
+    assert keep_step["with"]["if-no-files-found"] == "error"
+    assert keep_step["with"]["name"] == (
+        "routing-plan-${{ inputs.release_environment }}-${{ github.run_attempt }}"
+    )
+    assert "--plan-out" in routing["steps"][plan]["run"]
+    assert "--apply-plan" in routing["steps"][publish]["run"]
+    assert routing["outputs"] == {
+        "before_sha256": "${{ steps.plan.outputs.before_sha256 }}",
+        "after_sha256": "${{ steps.plan.outputs.after_sha256 }}",
+        "advances_latest": "${{ steps.plan.outputs.advances_latest }}",
+    }
+
+    assert "revert_routing" not in jobs
+    finalizer = jobs["finalize_routing"]
+    finalize = next(
+        step
+        for step in finalizer["steps"]
+        if "--finalize-publication" in step.get("run", "")
+    )
+    assert not any(
+        step.get("uses", "").startswith("actions/download-artifact@")
+        for step in finalizer["steps"]
+    )
+    assert '--publication-run "${PUBLICATION_RUN}"' in finalize["run"]
+    assert '--release-environment "${RELEASE_ENVIRONMENT}"' in finalize["run"]
+    assert '--gates-passed "${GATES_PASSED}"' in finalize["run"]
+    assert '--github-output "$GITHUB_OUTPUT"' in finalize["run"]
+    assert finalize["env"]["PUBLICATION_RUN"] == "${{ github.run_id }}"
+    assert finalize["env"]["RELEASE_ENVIRONMENT"] == (
+        "${{ inputs.release_environment }}"
+    )
+    assert "github.run_attempt" not in json.dumps(finalizer)
+    assert finalizer["outputs"]["outcome"] == ("${{ steps.finalize.outputs.outcome }}")
+    assert finalize["id"] == "finalize"
+
+    cleanup = _job_section(
+        REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8"),
+        "cleanup_entrypoint_revisions",
+    )
+    assert (
+        "SIMULATION_ENTRYPOINT_ROLLBACK_REVISION: "
+        "${{ needs.deploy_entrypoint.outputs.previous_revision }}"
+    ) in cleanup
+
+
+def test_deployment_ready_requires_the_journal_finalizer_to_complete():
+    jobs = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)
+    ready = jobs["deployment_ready"]
+    assert {
+        "update_routing",
+        "integration",
+        "authenticated_test",
+        "promote_entrypoint",
+        "finalize_routing",
+    } <= set(ready["needs"])
+    finalizer = jobs["finalize_routing"]
+    assert {
+        "update_routing",
+        "integration",
+        "authenticated_test",
+        "promote_entrypoint",
+    } <= set(finalizer["needs"])
+    gate = next(
+        step for step in ready["steps"] if step.get("name") == "Check deployment result"
+    )
+    assert "continue-on-error" not in gate
+    assert gate["env"]["EXISTING_STACK_REQUESTED"] == (
+        "${{ inputs.deploy_existing_stack }}"
+    )
+    assert gate["env"]["ROUTING_RESULT"] == "${{ needs.update_routing.result }}"
+    assert gate["env"]["FINALIZE_RESULT"] == "${{ needs.finalize_routing.result }}"
+    assert gate["env"]["FINALIZE_OUTCOME"] == (
+        "${{ needs.finalize_routing.outputs.outcome }}"
+    )
+    assert not any(
+        "--complete-plan" in step.get("run", "")
+        or step.get("uses", "").startswith("actions/download-artifact@")
+        for step in ready["steps"]
+    )
+
+
+@pytest.mark.parametrize(
+    "failed_gate",
+    [
+        "ENTRYPOINT_RESULT",
+        "INTEGRATION_RESULT",
+        "AUTHENTICATED_TEST_RESULT",
+        "PROMOTION_RESULT",
+        "ROUTING_RESULT",
+        "FINALIZE_RESULT",
+        "FINALIZE_OUTCOME",
+    ],
+)
+def test_failed_release_gate_cannot_report_a_successful_release(tmp_path, failed_gate):
+    ready = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["deployment_ready"]
+    gate = next(
+        step for step in ready["steps"] if step.get("name") == "Check deployment result"
+    )
+    marker = tmp_path / "completed"
+    env = {
+        "PATH": os.environ["PATH"],
+        "PROMOTION_REQUESTED": "true",
+        "ENTRYPOINT_RESULT": "success",
+        "INTEGRATION_RESULT": "success",
+        "AUTHENTICATED_TEST_RESULT": "success",
+        "PROMOTION_RESULT": "success",
+        "EXISTING_STACK_REQUESTED": "true",
+        "ROUTING_RESULT": "success",
+        "FINALIZE_RESULT": "success",
+        "FINALIZE_OUTCOME": "completed",
+    }
+    env[failed_gate] = "failure"
+    # A later step cannot run after this gate under Actions' bash -e behavior.
+    result = subprocess.run(
+        [
+            "bash",
+            "-eo",
+            "pipefail",
+            "-c",
+            gate["run"] + '\ntouch "$1"',
+            "gate",
+            str(marker),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode != 0
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("existing", "result", "outcome", "passes"),
+    [
+        ("true", "success", "completed", True),
+        ("true", "success", "restored", False),
+        ("true", "success", "no-pending", False),
+        ("true", "success", "foreign-publication", False),
+        ("true", "failure", "completed", False),
+        ("true", "cancelled", "", False),
+        ("true", "skipped", "", False),
+        ("false", "skipped", "", True),
+    ],
+)
+def test_release_success_requires_completed_finalization_for_published_routing(
+    existing, result, outcome, passes
+):
+    gate = next(
+        step
+        for step in _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["deployment_ready"][
+            "steps"
+        ]
+        if step.get("name") == "Check deployment result"
+    )
+    completed = subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", gate["run"]],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": os.environ["PATH"],
+            "PROMOTION_REQUESTED": "false",
+            "ENTRYPOINT_RESULT": "success",
+            "INTEGRATION_RESULT": "success",
+            "AUTHENTICATED_TEST_RESULT": "success",
+            "PROMOTION_RESULT": "skipped",
+            "EXISTING_STACK_REQUESTED": existing,
+            "ROUTING_RESULT": "success" if existing == "true" else "skipped",
+            "FINALIZE_RESULT": result,
+            "FINALIZE_OUTCOME": outcome,
+        },
+    )
+    assert (completed.returncode == 0) is passes, completed.stderr
+
+
+@pytest.mark.parametrize(
+    ("existing", "advances", "expected"),
+    [(True, "true", "true"), (True, "false", ""), (False, "true", ""), (True, "", "")],
+)
+def test_latest_is_expected_only_when_the_release_advances_it(
+    existing, advances, expected
+):
+    jobs = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)
+    smoke_step = next(
+        step
+        for step in jobs["integration"]["steps"]
+        if "cloud-run-simulation-entry-smoke.sh" in step.get("run", "")
+    )
+    context = _routing_context(
+        inputs__deploy_existing_stack=existing,
+        needs__update_routing__outputs__advances_latest=advances,
+    )
+    for environment in (smoke_step["env"], jobs["promote_entrypoint"]["env"]):
+        assert _gh_eval(environment["EXPECTED_LATEST"], context) == expected
 
 
 def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
@@ -1053,6 +1849,26 @@ def test_smoke_rejects_identity_expectations_without_a_version(tmp_path: Path):
     assert "EXPECTED_POLICYENGINE_VERSION is required" in result.stderr
 
 
+def test_smoke_accepts_an_unrecorded_digest_only_when_none_is_served(
+    tmp_path: Path,
+):
+    """A release published before digests were recorded serves none."""
+
+    import copy
+
+    versions = copy.deepcopy(VERSIONS_BODY)
+    del versions["bundles"]["6.2.7"]["uk"]["dataset_sha256"]
+    expected = {**IDENTITY, "EXPECTED_UK_DATASET_SHA256": "unrecorded"}
+    (tmp_path / "unrecorded").mkdir()
+    (tmp_path / "served").mkdir()
+    result = _run_identity_smoke(tmp_path / "unrecorded", versions, **expected)
+    assert result.returncode == 0, result.stderr
+    assert "UK dataset unrecorded as latest" in result.stdout
+    served = _run_identity_smoke(tmp_path / "served", VERSIONS_BODY, **expected)
+    assert served.returncode == 1
+    assert "is " + "a" * 64 + ", expected unrecorded" in served.stderr
+
+
 def test_smoke_rejects_worker_routes_to_an_old_app(tmp_path: Path):
     """#743 round-2 review: the version and its model route to the new app."""
 
@@ -1172,13 +1988,19 @@ def test_deploy_gates_pass_the_release_identity_to_the_smoke():
             "${{ inputs.deploy_existing_stack && "
             "needs.prepare.outputs.uk_dataset_sha256 || '' }}"
         ),
-        "EXPECTED_LATEST": "${{ inputs.deploy_existing_stack && 'true' || '' }}",
+        # Latest must route to this release only when it should advance it.
+        "EXPECTED_LATEST": (
+            "${{ inputs.deploy_existing_stack && "
+            "needs.update_routing.outputs.advances_latest == 'true' && 'true' || '' }}"
+        ),
     }
     promote = jobs["promote_entrypoint"]
     for environment in (smoke_step["env"], promote["env"]):
         assert {key: environment.get(key) for key in expected} == expected
     for job in ("integration", "promote_entrypoint"):
-        assert {"prepare", "deploy_executor"} <= set(jobs[job]["needs"])
+        assert {"prepare", "deploy_executor", "update_routing"} <= set(
+            jobs[job]["needs"]
+        )
     # The promotion smoke runs inherit the job environment; no step overrides it.
     for step in promote["steps"]:
         if "cloud-run-simulation-entry-smoke.sh" in step.get("run", ""):
