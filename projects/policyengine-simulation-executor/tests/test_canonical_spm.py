@@ -560,8 +560,10 @@ def test_each_setting_rotates_artifact_identity(key, value):
     }
     changed = {**SELECTION, key: value}
     assert artifact_keys.baseline_key(
-        **common, spm=SELECTION
-    ) != artifact_keys.baseline_key(**common, spm=changed)
+        artifact_keys.BaselineKeyInputs(**common, spm=SELECTION)
+    ) != artifact_keys.baseline_key(
+        artifact_keys.BaselineKeyInputs(**common, spm=changed)
+    )
     ds = {
         "country": "us",
         "dataset": "test",
@@ -573,9 +575,9 @@ def test_each_setting_rotates_artifact_identity(key, value):
         "model_version": "test",
         "policyengine_version": "test",
     }
-    assert artifact_keys.dataset_key(**ds, spm=SELECTION) != artifact_keys.dataset_key(
-        **ds, spm=changed
-    )
+    assert artifact_keys.dataset_key(
+        artifact_keys.DatasetKeyInputs(**ds, spm=SELECTION)
+    ) != artifact_keys.dataset_key(artifact_keys.DatasetKeyInputs(**ds, spm=changed))
 
 
 def test_fanout_and_budget_window_preserve_settings_and_receipts():

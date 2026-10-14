@@ -63,20 +63,9 @@ def canonical_digest(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def dataset_key(
-    *,
-    country: str,
-    dataset: str,
-    year: int,
-    data_version: str,
-    data_artifact_revision: str,
-    source_sha256: str | None,
-    data_build_fingerprint: str | None,
-    model_version: str,
-    policyengine_version: str,
-    spm: dict | None = None,
-) -> str:
-    """Digest identifying one single-year dataset artifact.
+@dataclass(frozen=True)
+class DatasetKeyInputs:
+    """Every input that can change one single-year dataset artifact's bytes.
 
     ``model_version`` and ``policyengine_version`` belong here because the
     single-year build runs a full Microsimulation pass — its output depends
@@ -85,52 +74,71 @@ def dataset_key(
     closes the same-version re-release hole), ``data_build_fingerprint`` the
     certification fingerprint; both may be None when unavailable.
     """
+
+    country: str
+    dataset: str
+    year: int
+    data_version: str
+    data_artifact_revision: str
+    source_sha256: str | None
+    data_build_fingerprint: str | None
+    model_version: str
+    policyengine_version: str
+    spm: dict | None = None
+
+
+def dataset_key(inputs: DatasetKeyInputs) -> str:
+    """Digest identifying one single-year dataset artifact."""
     return canonical_digest(
         {
-            "schema": DATASET_KEY_SCHEMA if spm is None else "ds2-spm",
-            **({"spm": spm} if spm is not None else {}),
-            "country": country.lower(),
-            "dataset": dataset,
-            "year": int(year),
-            "data_version": data_version,
-            "data_artifact_revision": data_artifact_revision,
-            "source_sha256": source_sha256,
-            "data_build_fingerprint": data_build_fingerprint,
-            "model_version": model_version,
-            "policyengine_version": policyengine_version,
+            "schema": DATASET_KEY_SCHEMA if inputs.spm is None else "ds2-spm",
+            **({"spm": inputs.spm} if inputs.spm is not None else {}),
+            "country": inputs.country.lower(),
+            "dataset": inputs.dataset,
+            "year": int(inputs.year),
+            "data_version": inputs.data_version,
+            "data_artifact_revision": inputs.data_artifact_revision,
+            "source_sha256": inputs.source_sha256,
+            "data_build_fingerprint": inputs.data_build_fingerprint,
+            "model_version": inputs.model_version,
+            "policyengine_version": inputs.policyengine_version,
         }
     )
 
 
-def baseline_key(
-    *,
-    country: str,
-    region: str,
-    scope_key: str | None,
-    dataset_digest: str,
-    model_version: str,
-    policyengine_version: str,
-    spm: dict | None = None,
-    policy: str = CURRENT_LAW_POLICY,
-) -> str:
-    """Digest identifying one precomputed baseline simulation artifact.
+@dataclass(frozen=True)
+class BaselineKeyInputs:
+    """Every input that can change one precomputed baseline artifact's bytes.
 
     ``scope_key`` is the ``ScopingStrategy.cache_key`` string (None for an
     unscoped national run); ``region`` is the human-readable label
     ("national", "state/ca", ...). The simulation year rides in via
     ``dataset_digest``.
     """
+
+    country: str
+    region: str
+    scope_key: str | None
+    dataset_digest: str
+    model_version: str
+    policyengine_version: str
+    spm: dict | None = None
+    policy: str = CURRENT_LAW_POLICY
+
+
+def baseline_key(inputs: BaselineKeyInputs) -> str:
+    """Digest identifying one precomputed baseline simulation artifact."""
     return canonical_digest(
         {
-            "schema": BASELINE_KEY_SCHEMA if spm is None else "bl2-spm",
-            **({"spm": spm} if spm is not None else {}),
-            "country": country.lower(),
-            "region": region,
-            "scope_key": scope_key,
-            "dataset_key": dataset_digest,
-            "policy": policy,
-            "model_version": model_version,
-            "policyengine_version": policyengine_version,
+            "schema": BASELINE_KEY_SCHEMA if inputs.spm is None else "bl2-spm",
+            **({"spm": inputs.spm} if inputs.spm is not None else {}),
+            "country": inputs.country.lower(),
+            "region": inputs.region,
+            "scope_key": inputs.scope_key,
+            "dataset_key": inputs.dataset_digest,
+            "policy": inputs.policy,
+            "model_version": inputs.model_version,
+            "policyengine_version": inputs.policyengine_version,
         }
     )
 
@@ -222,16 +230,18 @@ class DatasetArtifactIdentity:
     def digest(self) -> str:
         """Content key over every input that can change this dataset's bytes."""
         return dataset_key(
-            country=self.country,
-            spm=self.spm,
-            dataset=self.dataset,
-            year=self.year,
-            data_version=self.data_version,
-            data_artifact_revision=self.data_artifact_revision,
-            source_sha256=self.source_sha256,
-            data_build_fingerprint=self.data_build_fingerprint,
-            model_version=self.model_version,
-            policyengine_version=self.policyengine_version,
+            DatasetKeyInputs(
+                country=self.country,
+                spm=self.spm,
+                dataset=self.dataset,
+                year=self.year,
+                data_version=self.data_version,
+                data_artifact_revision=self.data_artifact_revision,
+                source_sha256=self.source_sha256,
+                data_build_fingerprint=self.data_build_fingerprint,
+                model_version=self.model_version,
+                policyengine_version=self.policyengine_version,
+            )
         )
 
     @property
@@ -259,13 +269,15 @@ class BaselineArtifactIdentity:
     def digest(self) -> str:
         """Content key; nests the dataset digest, so a dataset change rotates it."""
         return baseline_key(
-            country=self.country,
-            region=self.region,
-            spm=self.spm,
-            scope_key=self.scope_key,
-            dataset_digest=self.dataset.digest,
-            model_version=self.dataset.model_version,
-            policyengine_version=self.dataset.policyengine_version,
+            BaselineKeyInputs(
+                country=self.country,
+                region=self.region,
+                spm=self.spm,
+                scope_key=self.scope_key,
+                dataset_digest=self.dataset.digest,
+                model_version=self.dataset.model_version,
+                policyengine_version=self.dataset.policyengine_version,
+            )
         )
 
     @property
