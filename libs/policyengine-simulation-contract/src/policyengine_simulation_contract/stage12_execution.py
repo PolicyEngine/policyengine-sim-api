@@ -413,8 +413,11 @@ class AggregateReportArtifactPayload(StrictContractModel):
 
         if "spm_config" in self.result:
             raise ValueError("aggregate result must not include legacy spm_config")
-        if "spm_provenance" in self.result:
-            SPMComparisonProvenance.model_validate(self.result["spm_provenance"])
+        # Reports without US SPM calculations serialize this optional field
+        # as null. Validate a supplied record, not the absence of one.
+        provenance = self.result.get("spm_provenance")
+        if provenance is not None:
+            SPMComparisonProvenance.model_validate(provenance)
         return self
 
 

@@ -24,6 +24,7 @@ from policyengine_simulation_contract.spm import (
 )
 from pydantic import ValidationError
 
+from fixtures.fake_object_store import InMemoryObjectStore
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
     comparison_run_prefix,
@@ -193,22 +194,8 @@ def test_private_layout_is_environment_and_date_scoped() -> None:
     )
 
 
-class FakeObjectStore:
-    def __init__(self):
-        self.values = {}
-
-    def upload_bytes(self, path, payload, *, content_type):
-        if path in self.values:
-            return False
-        self.values[path] = payload
-        return True
-
-    def read_bytes(self, path):
-        return self.values.get(path)
-
-
 def test_immutable_retry_accepts_identical_bytes_and_rejects_other_bytes() -> None:
-    objects = FakeObjectStore()
+    objects = InMemoryObjectStore()
     store = Stage12ArtifactStore("private-stage12", store=objects)
 
     first = store._write_immutable("path", b"same", content_type="application/json")
@@ -220,7 +207,7 @@ def test_immutable_retry_accepts_identical_bytes_and_rejects_other_bytes() -> No
 
 
 def test_aggregate_write_rejects_an_undeclared_payload_shape() -> None:
-    store = Stage12ArtifactStore("private-stage12", store=FakeObjectStore())
+    store = Stage12ArtifactStore("private-stage12", store=InMemoryObjectStore())
 
     with pytest.raises(ValueError, match="evaluation_id"):
         store.write_aggregate(
