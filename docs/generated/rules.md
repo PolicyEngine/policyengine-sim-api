@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 28 | 0 | 1 | 13 | 42 |
+| mechanical | 29 | 0 | 1 | 13 | 43 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 28 of 42 rules.
+**Blocking:** 29 of 43 rules.
 
 ## Gaps
 
@@ -44,6 +44,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.deploy.container-context-minimal`
 - `sim.deploy.gcloud-without-terraform`
 - `sim.deploy.numerical-sentinel-gate`
+- `sim.deploy.permission-enforcement-wired`
 - `sim.deploy.promotion-order-explicit`
 - `sim.deploy.release-identity-smoke`
 - `sim.deploy.revision-tags-valid`
@@ -131,6 +132,7 @@ flowchart LR
 | `sim.deploy.image-smoke-covers-every-image-lib` | The image smoke path filter includes every library mounted into a Modal image, so a change to any of them runs the smoke. | mechanical | doc-only | no | nothing | — | — |
 | `sim.deploy.modal-image-smoke` | App entrypoints import inside the real Modal images before merge, whenever a library baked into an image changes. | mechanical | enforced | yes | CI job `image-smoke` | `pr-image-smoke.yml:image-smoke` | — |
 | `sim.deploy.numerical-sentinel-gate` | An existing-stack deployment computes the numerical release sentinel from the exact bundle it installs, and the candidate and stable services must reproduce it; a failing sentinel check fails its step. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
+| `sim.deploy.permission-enforcement-wired` | Simulation Entrypoint permission enforcement defaults to log-only, rejects any value other than 0 or 1, and reaches the candidate revision and every deployed authentication run. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.promotion-order-explicit` | Full-stack promotion order is explicit, and the reusable deployment rejects unexpectedly skipped phases. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.release-identity-smoke` | Deploy gates pass the whole release identity to the entrypoint smoke, which requires every expectation, refuses malformed ones, and rejects a release whose routes, latest pointers, bundle, UK model or UK dataset differ from that identity. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.revision-tags-valid` | Cloud Run revision tags are valid on a workflow's first run and fit the existing service names. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
@@ -155,6 +157,7 @@ flowchart LR
   e_CI_job_image_smoke["CI job image-smoke"]
   j_CI_pr_image_smoke_yml_image_smoke["CI pr-image-smoke.yml:image-smoke"]
   r_sim_deploy_numerical_sentinel_gate("sim.deploy.numerical-sentinel-gate (enforced)")
+  r_sim_deploy_permission_enforcement_wired("sim.deploy.permission-enforcement-wired (enforced)")
   r_sim_deploy_promotion_order_explicit("sim.deploy.promotion-order-explicit (enforced)")
   r_sim_deploy_release_identity_smoke("sim.deploy.release-identity-smoke (enforced)")
   r_sim_deploy_revision_tags_valid("sim.deploy.revision-tags-valid (enforced)")
@@ -172,6 +175,7 @@ flowchart LR
   r_sim_deploy_modal_image_smoke --> e_CI_job_image_smoke
   e_CI_job_image_smoke --> j_CI_pr_image_smoke_yml_image_smoke
   r_sim_deploy_numerical_sentinel_gate --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
+  r_sim_deploy_permission_enforcement_wired --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_promotion_order_explicit --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_release_identity_smoke --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_revision_tags_valid --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py

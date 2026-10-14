@@ -345,6 +345,28 @@ job = "test"
 invocation = "uv run pytest tests/"
 
 [[rule]]
+id = "sim.deploy.permission-enforcement-wired"
+category = "deployment"
+statement = "Simulation Entrypoint permission enforcement defaults to log-only, rejects any value other than 0 or 1, and reaches the candidate revision and every deployed authentication run."
+rationale = "docs/operations"
+scope = [".github/workflows/*.yml", ".github/scripts/*.sh"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_cloud_run_deployment_defaults_permission_enforcement_to_log_only",
+  "tests/test_deployment_assets.py::test_cloud_run_deployment_rejects_invalid_permission_enforcement",
+  "tests/test_deployment_assets.py::test_permission_enforcement_reaches_candidate_and_authenticated_tests",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
 id = "sim.deploy.traffic-changes-exact"
 category = "deployment"
 statement = "Traffic changes target an exact, validated revision, are reversible, and refuse to run over an intervening promotion."
