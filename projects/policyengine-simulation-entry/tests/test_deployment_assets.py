@@ -1077,6 +1077,46 @@ def test_the_expression_evaluator_follows_github_semantics():
     assert not _gh_eval("${{ !cancelled() }}", {**context, "cancelled": True})
 
 
+def test_the_expression_evaluator_returns_operands_and_job_statuses():
+    context = {
+        "inputs": {"name": "beta", "empty": "", "zero": 0, "flag": False},
+        "needs": {"a": {"result": "success"}, "b": {"result": "skipped"}},
+        "steps": "not-a-mapping",
+    }
+    # || and && return one of their operands, as GitHub does, not a boolean.
+    assert _gh_eval("${{ inputs.empty || 'fallback' }}", context) == "fallback"
+    assert _gh_eval("${{ inputs.name || 'fallback' }}", context) == "beta"
+    assert _gh_eval("${{ inputs.name && inputs.zero }}", context) == 0
+    assert _gh_eval("${{ inputs.flag && inputs.name }}", context) is False
+    assert _gh_eval("${{ inputs.name != 'BETA' }}", context) is False
+    assert _gh_eval("${{ !(inputs.empty || inputs.zero) }}", context) is True
+    assert _gh_eval("${{ steps.x.outputs }}", context) is None
+    assert _gh_eval("${{ inputs.missing.deeper }}", context) is None
+    assert _gh_eval("false", context) is False
+    # success() needs every needed job to succeed; failure() needs one failure.
+    assert _gh_eval("${{ success() }}", context) is False
+    assert _gh_eval("${{ failure() }}", context) is False
+    assert _gh_eval("${{ success() }}", {}) is True
+    assert _gh_eval("${{ success() }}", {"cancelled": True}) is False
+    assert _gh_eval("${{ cancelled() }}", {"cancelled": True}) is True
+    # Any status function in a job if replaces the implicit success().
+    assert _gh_eval("${{ inputs.name == 'beta' }}", context, job_if=True) is False
+    assert (
+        _gh_eval("${{ inputs.name == 'beta' || failure() }}", context, job_if=True)
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["${{ unknown() }}", "${{ inputs.name inputs.name }}", "${{ inputs.name @ }}"],
+    ids=["unknown-function", "trailing-token", "unknown-character"],
+)
+def test_the_expression_evaluator_refuses_what_it_cannot_read(expression):
+    with pytest.raises(AssertionError):
+        _gh_eval(expression, {"inputs": {"name": "beta"}})
+
+
 def _routing_context(**overrides):
     context = {
         "inputs": {"deploy_existing_stack": True, "promote_entrypoint": True},
