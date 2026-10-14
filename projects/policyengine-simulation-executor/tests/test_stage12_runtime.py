@@ -1527,11 +1527,11 @@ class ConcurrentInvoker:
         self.production_wait_timeouts = []
         self.output_plans = []
 
-    def spawn(self, *, simulation, environment, **_):
-        parsed = PlannedSimulationExecutionInput.model_validate(simulation)
+    def spawn(self, request):
+        parsed = PlannedSimulationExecutionInput.model_validate(request.simulation)
         role = parsed.role.value
         self.events.append(f"spawn:{role}")
-        self.environments.append(environment)
+        self.environments.append(request.environment)
         self.output_plans.append(parsed.output_plan)
 
         return self._submit(parsed, role)
@@ -2050,8 +2050,10 @@ def test_coordinator_observes_one_role_failure_while_the_peer_is_pending(
     failed_call = FailedCall()
 
     class ConcurrentFailureInvoker:
-        def spawn(self, *, simulation, **_):
-            role = PlannedSimulationExecutionInput.model_validate(simulation).role
+        def spawn(self, request):
+            role = PlannedSimulationExecutionInput.model_validate(
+                request.simulation
+            ).role
             return failed_call if role.value == failed_role else baseline_call
 
         def restore(self, invocation_id):
@@ -2093,8 +2095,10 @@ def test_dispatch_failure_cancels_an_already_started_peer() -> None:
     baseline_call = TimeoutCall("call-baseline")
 
     class DispatchFailureInvoker:
-        def spawn(self, *, simulation, **_):
-            role = PlannedSimulationExecutionInput.model_validate(simulation).role
+        def spawn(self, request):
+            role = PlannedSimulationExecutionInput.model_validate(
+                request.simulation
+            ).role
             if role is SimulationRole.REFORM:
                 msg = "dispatch contains sensitive details"
                 raise ConnectionError(msg)
@@ -2152,8 +2156,8 @@ def test_coordinator_propagates_an_already_persisted_child_failure() -> None:
             raise RuntimeError(msg)
 
     class PersistedFailureInvoker:
-        def spawn(self, *, simulation, **_):
-            parsed = PlannedSimulationExecutionInput.model_validate(simulation)
+        def spawn(self, request):
+            parsed = PlannedSimulationExecutionInput.model_validate(request.simulation)
             if parsed.role is SimulationRole.REFORM:
                 return PersistedFailureCall()
             descriptor = artifacts.add_simulation(parsed, _frames(100.0))
@@ -2286,8 +2290,8 @@ class WorkerRecordedFailureInvoker:
         self.store = store
         self.worker_summary = worker_summary
 
-    def spawn(self, *, simulation, **_):
-        planned = PlannedSimulationExecutionInput.model_validate(simulation)
+    def spawn(self, request):
+        planned = PlannedSimulationExecutionInput.model_validate(request.simulation)
         if planned.role is SimulationRole.BASELINE:
             return WorkerRecordedFailureCall(
                 "call-baseline",
@@ -2663,8 +2667,10 @@ class RefusingDispatchInvoker:
         self.dispatch_error = dispatch_error
         self.events = []
 
-    def spawn(self, *, simulation, **_):
-        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
+    def spawn(self, request):
+        role = PlannedSimulationExecutionInput.model_validate(
+            request.simulation
+        ).role.value
         self.events.append(f"spawn:{role}")
         raise self.dispatch_error
 
@@ -2863,8 +2869,10 @@ class TimeoutInvoker:
     def __init__(self):
         self.events = []
 
-    def spawn(self, *, simulation, **_):
-        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
+    def spawn(self, request):
+        role = PlannedSimulationExecutionInput.model_validate(
+            request.simulation
+        ).role.value
         self.events.append(f"spawn:{role}")
         return TimeoutCall(f"call-{role}")
 
@@ -3031,8 +3039,10 @@ class ScriptedChildInvoker:
         self.events = []
         self.calls = {}
 
-    def spawn(self, *, simulation, **_):
-        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
+    def spawn(self, request):
+        role = PlannedSimulationExecutionInput.model_validate(
+            request.simulation
+        ).role.value
         self.events.append(f"spawn:{role}")
         return self._call(role)
 
@@ -3631,13 +3641,13 @@ def test_failed_child_state_error_does_not_replace_the_child_failure(
 
 
 class ReformDispatchFailureInvoker(ScriptedChildInvoker):
-    def spawn(self, *, simulation, **values):
-        role = PlannedSimulationExecutionInput.model_validate(simulation).role
+    def spawn(self, request):
+        role = PlannedSimulationExecutionInput.model_validate(request.simulation).role
         if role is SimulationRole.REFORM:
             self.events.append("spawn:reform")
             msg = "dispatch contains sensitive details"
             raise ConnectionError(msg)
-        return super().spawn(simulation=simulation, **values)
+        return super().spawn(request)
 
 
 @pytest.mark.parametrize("failing_operation", ["read", "write"])

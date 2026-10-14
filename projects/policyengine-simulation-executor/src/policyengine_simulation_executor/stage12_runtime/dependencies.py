@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from functools import partial
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Protocol
@@ -113,19 +114,22 @@ class ChildCall(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class ChildSpawnRequest:
+    """One child simulation to start: the deployed function and its arguments."""
+
+    application_name: str
+    function_name: str
+    environment: str
+    simulation: dict[str, Any]
+    context: dict[str, Any]
+    observability_context: dict[str, Any] | None
+
+
 class ChildInvoker(Protocol):
     """Launcher for child simulation functions that can reattach to running calls."""
 
-    def spawn(
-        self,
-        *,
-        application_name: str,
-        function_name: str,
-        environment: str,
-        simulation: dict[str, Any],
-        context: dict[str, Any],
-        observability_context: dict[str, Any] | None,
-    ) -> ChildCall:
+    def spawn(self, request: ChildSpawnRequest) -> ChildCall:
         """Start the named deployed function on one simulation without waiting."""
         ...
 
@@ -137,27 +141,18 @@ class ChildInvoker(Protocol):
 class ModalChildInvoker:
     """``ChildInvoker`` backed by functions deployed to Modal."""
 
-    def spawn(
-        self,
-        *,
-        application_name: str,
-        function_name: str,
-        environment: str,
-        simulation: dict[str, Any],
-        context: dict[str, Any],
-        observability_context: dict[str, Any] | None,
-    ) -> ChildCall:
+    def spawn(self, request: ChildSpawnRequest) -> ChildCall:
         """Look up ``application_name.function_name`` in ``environment``; spawn it."""
         modal: Any = import_module("modal")
         function = modal.Function.from_name(
-            application_name,
-            function_name,
-            environment_name=environment,
+            request.application_name,
+            request.function_name,
+            environment_name=request.environment,
         )
         return function.spawn(
-            simulation,
-            context,
-            observability_context=observability_context,
+            request.simulation,
+            request.context,
+            observability_context=request.observability_context,
         )
 
     def restore(self, invocation_id: str) -> ChildCall:

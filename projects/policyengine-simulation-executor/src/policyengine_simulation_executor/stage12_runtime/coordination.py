@@ -53,6 +53,7 @@ from .comparison import compare_completed_report
 from .dependencies import (
     ChildCall,
     ChildInvoker,
+    ChildSpawnRequest,
     ComparisonStore,
     ModalChildInvoker,
     artifact_store,
@@ -813,12 +814,14 @@ class _ReportCoordination:
                     self.runtime.capture_context() if self.runtime is not None else None
                 )
                 call = self.child_invoker.spawn(
-                    application_name=self.invocation.application_name,
-                    function_name=self.context.simulation_callable,
-                    environment=self.context.modal_environment,
-                    simulation=simulation.model_dump(mode="json"),
-                    context=self.context.model_dump(mode="json"),
-                    observability_context=child_observability_context,
+                    ChildSpawnRequest(
+                        application_name=self.invocation.application_name,
+                        function_name=self.context.simulation_callable,
+                        environment=self.context.modal_environment,
+                        simulation=simulation.model_dump(mode="json"),
+                        context=self.context.model_dump(mode="json"),
+                        observability_context=child_observability_context,
+                    )
                 )
         except Exception as error:  # noqa: BLE001  # any dispatch failure is recorded on the child and stops its started peers
             detail = report_failure(

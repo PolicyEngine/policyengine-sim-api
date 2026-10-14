@@ -92,8 +92,8 @@ class FailingSpawnInvoker:
         self.succeeded_child = succeeded_child
         self.spawns = []
 
-    def spawn(self, **call):
-        self.spawns.append(call)
+    def spawn(self, request):
+        self.spawns.append(request)
         if self.succeeded_child is not None:
             self.store.children[self.succeeded_child.simulation_execution_id] = (
                 self.succeeded_child
@@ -545,12 +545,14 @@ def test_modal_child_invoker_spawns_and_restores_deployed_functions(monkeypatch)
     invoker = dependencies.ModalChildInvoker()
 
     spawned = invoker.spawn(
-        application_name="application",
-        function_name="run_single_simulation_us",
-        environment="staging",
-        simulation={"role": "baseline"},
-        context={"request_id": "request-1"},
-        observability_context={"traceparent": "trace"},
+        dependencies.ChildSpawnRequest(
+            application_name="application",
+            function_name="run_single_simulation_us",
+            environment="staging",
+            simulation={"role": "baseline"},
+            context={"request_id": "request-1"},
+            observability_context={"traceparent": "trace"},
+        )
     )
     restored = invoker.restore("call-1")
 
