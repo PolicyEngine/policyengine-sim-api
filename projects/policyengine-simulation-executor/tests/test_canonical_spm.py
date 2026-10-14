@@ -639,7 +639,7 @@ def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
                 "tiny", "tiny", is_default=True
             ),
             policy=policy,
-            region_code="us",
+            region=simulation_runtime.RegionResolution(code="us"),
         )
     assert len(calls) == 2
     assert all(call["spm"] == SELECTION for call in calls)

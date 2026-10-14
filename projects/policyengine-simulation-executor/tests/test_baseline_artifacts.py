@@ -420,8 +420,7 @@ class TestBuildSimulationSelection:
             dataset="dataset",
             dataset_selection=SimpleNamespace(is_default=True),
             policy=None,
-            scoping_strategy=None,
-            region_code="us",
+            region=sr.RegionResolution(code="us"),
         )
         assert wired.plain_kwargs is None
         assert wired.artifact_kwargs["id"] == "bl1-deadbeefdeadbeef"
@@ -456,8 +455,7 @@ class TestBuildSimulationSelection:
             dataset="dataset",
             dataset_selection=SimpleNamespace(is_default=False),
             policy={"gov.x": 1},
-            scoping_strategy=None,
-            region_code="us",
+            region=sr.RegionResolution(code="us"),
         )
         assert wired.artifact_kwargs is None
         assert wired.plain_kwargs["policy"] == {"gov.x": 1}
@@ -497,7 +495,7 @@ def test_bounded_reform_build_keeps_current_law_artifact_reuse(monkeypatch):
     kwargs = {
         "dataset": "dataset",
         "dataset_selection": sr.DatasetSelection("default", "default", is_default=True),
-        "region_code": "uk",
+        "region": sr.RegionResolution(code="uk"),
     }
     params = {"country": "uk", "scope": "macro", "time_period": 2027}
     baseline = sr._build_simulation(params, policy=None, **kwargs)

@@ -10,6 +10,7 @@ from policyengine.utils.parametric_reforms import reform_dict_from_parameter_val
 from policyengine_simulation_executor.simulation_runtime import (
     DEFAULT_YEAR,
     DatasetSelection,
+    RegionResolution,
     _build_simulation,
     _compile_interval_policy,
     _country_module,
@@ -167,7 +168,7 @@ def test_scalar_in_interval_policy_uses_request_year(period, year):
         dataset=dataset,
         dataset_selection=DatasetSelection("in-memory", "in-memory", is_default=False),
         policy=raw,
-        region_code="uk",
+        region=RegionResolution(code="uk"),
     )
 
     assert _parse_year(params) == year
@@ -229,7 +230,7 @@ def test_policy_without_intervals_keeps_original_wrapper_compilation(
         dataset=Dataset(name="in-memory", description="Compilation only", year=2027),
         dataset_selection=DatasetSelection("in-memory", "in-memory", is_default=False),
         policy=raw,
-        region_code="uk",
+        region=RegionResolution(code="uk"),
     )
 
     assert len(calls) == 1

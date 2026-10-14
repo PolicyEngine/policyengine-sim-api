@@ -533,10 +533,11 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
         dataset,
         dataset_selection,
         policy,
-        scoping_strategy=None,
-        region_code=None,
+        region,
     ):
-        build_calls.append((params, dataset, policy, scoping_strategy, region_code))
+        build_calls.append(
+            (params, dataset, policy, region.scoping_strategy, region.code)
+        )
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
 
     class FakeSimulationOutputBuilder:
@@ -667,8 +668,7 @@ def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
         dataset,
         dataset_selection,
         policy,
-        scoping_strategy=None,
-        region_code=None,
+        region,
     ):
         build_count[0] += 1
         return simulations["baseline"] if build_count[0] == 1 else simulations["reform"]
@@ -1074,10 +1074,9 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
         dataset,
         dataset_selection,
         policy,
-        scoping_strategy=None,
-        region_code=None,
+        region,
     ):
-        build_calls.append((params, dataset, policy, scoping_strategy))
+        build_calls.append((params, dataset, policy, region.scoping_strategy))
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
 
     class FakeSimulationOutputBuilder:
@@ -1168,11 +1167,10 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
         dataset,
         dataset_selection,
         policy,
-        scoping_strategy=None,
-        region_code=None,
+        region,
     ):
         build_calls.append(
-            (params, dataset, policy, scoping_strategy, dataset_selection)
+            (params, dataset, policy, region.scoping_strategy, dataset_selection)
         )
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
 
