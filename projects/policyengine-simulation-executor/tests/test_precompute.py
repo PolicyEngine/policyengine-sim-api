@@ -10,6 +10,7 @@ serialization boundary does.
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from typing import ClassVar
 
 import pandas as pd
 import pytest
@@ -287,7 +288,7 @@ class TestRunPrecompute:
 
     def test_spawns_only_misses_and_gates_on_first_computed(self):
         functions = self._functions()
-        digest, lines = self._run(functions)
+        digest, _lines = self._run(functions)
 
         (dataset_spawn,) = functions["build_dataset"].spawn_calls
         assert dataset_spawn[0] == "bucket-x"
@@ -971,7 +972,7 @@ class TestVerifyDeterminismImpl:
             dataset = "dataset"
             tax_benefit_model_version = "model-version"
             scoping_strategy = "scoping"
-            extra_variables = {"extra": 1}
+            extra_variables: ClassVar[dict[str, int]] = {"extra": 1}
             artifact_outcome = None
 
             def ensure(self):

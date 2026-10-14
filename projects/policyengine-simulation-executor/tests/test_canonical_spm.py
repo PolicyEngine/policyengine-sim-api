@@ -75,23 +75,23 @@ def test_country_receipt_is_compacted_at_the_executor_boundary():
 
 
 def result(selection=SELECTION, year="2026"):
-    receipt = dict(
-        schema_version="canonical-spm-provenance-v2",
-        forecast_id="test-only",
-        forecast_sha256=selection["forecast_content_sha256"],
-        scenario=selection["scenario"],
-        geography_kind=selection["geography_kind"],
-        geography_id=selection["geography_id"],
-        county_vintage=selection["county_vintage"],
-        as_of=selection["as_of"],
-        years=[year],
-        runtime_versions={
+    receipt = {
+        "schema_version": "canonical-spm-provenance-v2",
+        "forecast_id": "test-only",
+        "forecast_sha256": selection["forecast_content_sha256"],
+        "scenario": selection["scenario"],
+        "geography_kind": selection["geography_kind"],
+        "geography_id": selection["geography_id"],
+        "county_vintage": selection["county_vintage"],
+        "as_of": selection["as_of"],
+        "years": [year],
+        "runtime_versions": {
             "policyengine": "test-only",
             "policyengine-core": "test-only",
             "policyengine-us": "test-only",
             "spm-calculator": "test-only",
         },
-    )
+    }
     return {
         "spm_provenance": {
             "schema_version": "canonical-spm-comparison-v2",
@@ -119,9 +119,13 @@ def result(selection=SELECTION, year="2026"):
 def test_public_request_roundtrip(model, extra):
     parsed = model(country="us", spm={"geography_kind": "national"}, **extra)
     assert json.loads(parsed.model_dump_json())["spm"]["geography_kind"] == "national"
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match=r"spm\.provider_path\n  Extra inputs are not permitted"
+    ):
         model(country="us", spm={"provider_path": "x"}, **extra)
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match="Only an SPM area selection accepts geography_id"
+    ):
         model(
             country="us",
             spm={"geography_kind": "national", "geography_id": "12345"},
@@ -546,29 +550,29 @@ def test_actual_http_formula_error_contract(monkeypatch, code, observability_run
     ],
 )
 def test_each_setting_rotates_artifact_identity(key, value):
-    common = dict(
-        country="us",
-        region="national",
-        scope_key=None,
-        dataset_digest="d" * 64,
-        model_version="test",
-        policyengine_version="test",
-    )
+    common = {
+        "country": "us",
+        "region": "national",
+        "scope_key": None,
+        "dataset_digest": "d" * 64,
+        "model_version": "test",
+        "policyengine_version": "test",
+    }
     changed = {**SELECTION, key: value}
     assert artifact_keys.baseline_key(
         **common, spm=SELECTION
     ) != artifact_keys.baseline_key(**common, spm=changed)
-    ds = dict(
-        country="us",
-        dataset="test",
-        year=2026,
-        data_version="test",
-        data_artifact_revision="test",
-        source_sha256=None,
-        data_build_fingerprint=None,
-        model_version="test",
-        policyengine_version="test",
-    )
+    ds = {
+        "country": "us",
+        "dataset": "test",
+        "year": 2026,
+        "data_version": "test",
+        "data_artifact_revision": "test",
+        "source_sha256": None,
+        "data_build_fingerprint": None,
+        "model_version": "test",
+        "policyengine_version": "test",
+    }
     assert artifact_keys.dataset_key(**ds, spm=SELECTION) != artifact_keys.dataset_key(
         **ds, spm=changed
     )
@@ -631,7 +635,9 @@ def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
         simulation_runtime._build_simulation(
             {"country": "us", "spm": SELECTION},
             dataset="tiny",
-            dataset_selection=simulation_runtime.DatasetSelection("tiny", "tiny", True),
+            dataset_selection=simulation_runtime.DatasetSelection(
+                "tiny", "tiny", is_default=True
+            ),
             policy=policy,
             region_code="us",
         )

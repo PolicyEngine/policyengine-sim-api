@@ -1,5 +1,6 @@
 """Policy compilation against the installed wrapper, without running a model."""
 
+import re
 from datetime import datetime
 
 import pytest
@@ -109,9 +110,9 @@ def test_unknown_parameter_retains_wrapper_error_and_close_match_hint(uk):
     unknown = "gov.hmrc.income_tax.rates.uk[0].rat"
     raw = {unknown: {"2027-04-06.2028-04-05": 0.21}}
 
-    with pytest.raises(ValueError) as expected:
+    with pytest.raises(ValueError, match=re.escape(unknown)) as expected:
         wrapper_reform.compile_reform(raw, year=2027, model_version=uk.model)
-    with pytest.raises(ValueError) as actual:
+    with pytest.raises(ValueError, match=re.escape(unknown)) as actual:
         _compile_interval_policy(raw, country_module=uk, year=2027)
 
     assert str(actual.value) == str(expected.value)
@@ -133,9 +134,9 @@ def test_unknown_parameter_retains_wrapper_error_and_close_match_hint(uk):
 def test_invalid_policy_period_names_key_in_error(uk, key):
     raw = {UK_RATE: {"2026-04-06.2027-04-05": 0.20, key: 0.21}}
 
-    with pytest.raises(ValueError) as normalise_error:
+    with pytest.raises(ValueError, match=re.escape(key)) as normalise_error:
         _normalise_policy(raw)
-    with pytest.raises(ValueError) as compile_error:
+    with pytest.raises(ValueError, match=re.escape(key)) as compile_error:
         _compile_interval_policy(raw, country_module=uk, year=2027)
 
     assert key in str(normalise_error.value)
@@ -164,7 +165,7 @@ def test_scalar_in_interval_policy_uses_request_year(period, year):
     simulation = _build_simulation(
         params,
         dataset=dataset,
-        dataset_selection=DatasetSelection("in-memory", "in-memory", False),
+        dataset_selection=DatasetSelection("in-memory", "in-memory", is_default=False),
         policy=raw,
         region_code="uk",
     )
@@ -226,7 +227,7 @@ def test_policy_without_intervals_keeps_original_wrapper_compilation(
     simulation = _build_simulation(
         {"country": "uk", "scope": "macro", "time_period": "2027"},
         dataset=Dataset(name="in-memory", description="Compilation only", year=2027),
-        dataset_selection=DatasetSelection("in-memory", "in-memory", False),
+        dataset_selection=DatasetSelection("in-memory", "in-memory", is_default=False),
         policy=raw,
         region_code="uk",
     )

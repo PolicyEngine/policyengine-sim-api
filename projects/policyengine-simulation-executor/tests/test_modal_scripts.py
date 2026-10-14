@@ -60,7 +60,7 @@ class TestModalExtractVersions:
 
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
-        with open(temp_github_output) as f:
+        with Path(temp_github_output).open() as f:
             output = f.read()
 
         assert "policyengine_version=" in output
@@ -278,7 +278,7 @@ class TestSimulationDeploymentSummary:
 
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
-        with open(temp_github_step_summary) as f:
+        with Path(temp_github_step_summary).open() as f:
             summary = f.read()
 
         assert "Simulation API Deployment Summary" in summary
@@ -305,7 +305,7 @@ class TestSimulationDeploymentSummary:
 
         assert result.returncode == 0
 
-        with open(temp_github_step_summary) as f:
+        with Path(temp_github_step_summary).open() as f:
             summary = f.read()
 
         assert "Beta deployment" in summary
@@ -1020,7 +1020,7 @@ class TestAllScriptsHaveShebang:
     def test_all_scripts_have_shebang(self, all_modal_scripts):
         """All scripts should start with #!/bin/bash."""
         for script in all_modal_scripts:
-            with open(script) as f:
+            with script.open() as f:
                 first_line = f.readline().strip()
             assert first_line == "#!/bin/bash", f"{script.name} missing shebang"
 

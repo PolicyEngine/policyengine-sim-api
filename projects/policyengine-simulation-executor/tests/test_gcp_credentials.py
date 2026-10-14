@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 from policyengine_simulation_executor.simulation_runtime import (
@@ -22,13 +23,13 @@ def test_setup_gcp_credentials_deletes_temp_file_on_exit(
     with setup_gcp_credentials(observability_runtime):
         path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
         assert path is not None
-        assert os.path.exists(path)
-        with open(path) as file:
+        assert Path(path).exists()
+        with Path(path).open() as file:
             assert json.loads(file.read())["project_id"] == "p"
 
     # Temp file must be gone after the context exits, and the env var
     # must be cleared so a retry doesn't chase a missing path.
-    assert not os.path.exists(path)
+    assert not Path(path).exists()
     assert os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") is None
 
 
@@ -40,14 +41,18 @@ def test_setup_gcp_credentials_cleans_up_on_exception(
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
 
     captured_path: list[str] = []
-    with pytest.raises(RuntimeError):
+
+    def fail_inside_credentials_context() -> None:
         with setup_gcp_credentials(observability_runtime):
             captured_path.append(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
             msg = "boom"
             raise RuntimeError(msg)
 
+    with pytest.raises(RuntimeError, match="boom"):
+        fail_inside_credentials_context()
+
     assert captured_path
-    assert not os.path.exists(captured_path[0])
+    assert not Path(captured_path[0]).exists()
 
 
 def test_setup_gcp_credentials_preserves_existing_env(

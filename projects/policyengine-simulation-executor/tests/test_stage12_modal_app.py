@@ -178,7 +178,7 @@ def test_v2_static_runtime_file_smoke_uses_exact_uk_worker_image(monkeypatch) ->
     module = _load(monkeypatch)
     sys.modules.pop("src.modal.v2_static_runtime_files_smoke", None)
     smoke = importlib.import_module("src.modal.v2_static_runtime_files_smoke")
-    functions = {name: options for name, options in smoke.app.function_calls}
+    functions = dict(smoke.app.function_calls)
 
     assert functions["smoke_stage12_static_runtime_files"]["image"] is (
         module.uk_worker_image
@@ -208,7 +208,7 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     monkeypatch,
 ) -> None:
     module = _load(monkeypatch)
-    functions = {name: options for name, options in module.app.function_calls}
+    functions = dict(module.app.function_calls)
 
     assert set(functions) == {
         "validate_worker_us",

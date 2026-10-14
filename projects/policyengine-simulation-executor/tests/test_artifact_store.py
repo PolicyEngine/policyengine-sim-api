@@ -6,6 +6,7 @@ overwrites, and manifest content-addressing.
 """
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -34,7 +35,7 @@ class FakeBlob:
         self.store.objects[self.path] = data
 
     def upload_from_filename(self, filename, **kwargs):
-        self._write(open(filename, "rb").read(), **kwargs)
+        self._write(Path(filename).read_bytes(), **kwargs)
 
     def upload_from_string(self, data, **kwargs):
         self._write(data.encode() if isinstance(data, str) else data, **kwargs)
@@ -45,11 +46,11 @@ class FakeBlob:
         if self.path in self.store.broken_downloads:
             # Simulate a mid-stream failure: partial bytes hit disk, then
             # the transport dies.
-            with open(filename, "wb") as handle:
+            with Path(filename).open("wb") as handle:
                 handle.write(self.store.objects[self.path][:1])
             msg = "stream reset"
             raise ConnectionError(msg)
-        with open(filename, "wb") as handle:
+        with Path(filename).open("wb") as handle:
             handle.write(self.store.objects[self.path])
 
     def download_as_bytes(self):

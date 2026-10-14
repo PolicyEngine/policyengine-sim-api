@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Lock
 from types import SimpleNamespace
-from typing import override
+from typing import ClassVar, override
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -540,7 +540,7 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
 
     class Model:
         spm_config = None
-        extra_variables = {}
+        extra_variables: ClassVar[dict[str, list[str]]] = {}
         tax_benefit_model_version = ModelVersion()
         output_dataset = type(
             "OutputDataset",
@@ -556,7 +556,7 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
     monkeypatch.setattr(
         simulation_runtime,
         "setup_gcp_credentials",
-        lambda: nullcontext(),
+        nullcontext,
     )
     monkeypatch.setattr(
         simulation_runtime,
@@ -662,7 +662,7 @@ def test_country_metadata_alignment_rejects_missing_or_mismatched_uk_values() ->
     ],
 )
 def test_uk_artifacts_without_metadata_need_a_routed_national_request(
-    monkeypatch, region_code: str | None, routed: bool, accepted: bool
+    monkeypatch, region_code: str | None, *, routed: bool, accepted: bool
 ) -> None:
     monkeypatch.setattr(
         "policyengine_simulation_executor.uk_local_authority_metadata."

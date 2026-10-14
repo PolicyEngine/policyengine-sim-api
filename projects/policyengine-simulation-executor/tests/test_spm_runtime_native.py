@@ -5,6 +5,7 @@ before dataset loading or child submission and never run a population job.
 """
 
 import os
+import re
 from unittest.mock import Mock
 
 import pytest
@@ -55,7 +56,10 @@ def test_worker_year_boundary_matches_real_provider(
     from spm_calculator.policyengine_adapter import PolicyEngineSPMProvider
 
     provider = PolicyEngineSPMProvider(forecast, geography_kind="national")
-    with pytest.raises(ValueError) as provider_error:
+    with pytest.raises(
+        ValueError,
+        match=re.escape(f"Forecast has no entry for {unavailable_year!r}"),
+    ) as provider_error:
         provider.year_metadata(unavailable_year)
     expected = spm_error_detail(provider_error.value)
     assert expected.code == "SPM_YEAR_UNAVAILABLE"
@@ -82,7 +86,9 @@ def test_worker_scenario_boundary_matches_real_calculator_contract(
     from spm_calculator.axiom_adapter import export_build_spec
 
     scenario = "scenario-not-in-the-pinned-forecast"
-    with pytest.raises(ValueError) as adapter_error:
+    with pytest.raises(
+        ValueError, match=r"^Unknown forecast scenario"
+    ) as adapter_error:
         export_build_spec(forecast, years=[2024], scenario=scenario)
     assert adapter_error.value.code == "SPM_SCENARIO_UNAVAILABLE"
     expected = spm_error_detail(adapter_error.value)
