@@ -69,6 +69,22 @@ from .output_planning import (
 from .simulation import descriptor_from_record, simulation_input_sha256
 from .segmentation import should_segment_simulation
 
+# One child-wait window opens when `coordinate_report` starts. It covers
+# coordinator setup (claiming, output planning including the country model
+# load, child-state creation, retained-artifact reads and dispatch) and the
+# concurrent wait for both simulations, so setup time shortens the children's
+# window instead of the time left after it. The deadline is checked after each
+# polling pass, so the coordinator notices a closed window at most one poll
+# interval (1 s) late. A simulation worker may have a longer Modal timeout
+# (3,900 s for US), but the report stops waiting for it, and cancels it, when
+# this window closes.
+#
+# Budget against the coordinator's 5,100 s Modal timeout in `v2_app.py`: the
+# 3,000 s window leaves 2,100 s. Up to 900 s of that is the production-result
+# wait (`PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS`), which leaves 1,200 s to read
+# and validate both simulation artifacts, aggregate, write the aggregate and
+# comparison artifacts, and record the outcome or failure before Modal stops
+# the coordinator.
 SIMULATION_WAIT_TIMEOUT_SECONDS = 3_000
 SIMULATION_POLL_INITIAL_SECONDS = 0.25
 SIMULATION_POLL_MAX_SECONDS = 1.0
@@ -254,10 +270,10 @@ def _observe_simulations(
     runtime: ObservabilityRuntime | None,
     sleep: Callable[[float], None],
     monotonic: Callable[[], float],
+    deadline: float,
     timeout_seconds: float,
 ) -> None:
     pending = set(calls)
-    deadline = monotonic() + timeout_seconds
     poll_interval = SIMULATION_POLL_INITIAL_SECONDS
 
     while pending:
@@ -301,7 +317,8 @@ def _observe_simulations(
                 error_code="simulation_wait_timeout",
                 error_summary=(
                     "Stage 12 simulations did not finish within "
-                    f"{timeout_seconds:g} seconds."
+                    f"{timeout_seconds:g} seconds of the report coordinator "
+                    "starting."
                 ),
             )
             wait_timeout = Stage12ExecutionError(detail)
@@ -486,6 +503,8 @@ def coordinate_report(
     monotonic: Callable[[], float] = time.monotonic,
     wait_timeout_seconds: float = SIMULATION_WAIT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
+    # Open the shared child-wait window before any setup work.
+    child_wait_deadline = monotonic() + wait_timeout_seconds
     report = ReportExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
     submitted_parent = ComparisonReportRecord.model_validate(parent_payload)
@@ -717,6 +736,7 @@ def coordinate_report(
                 runtime=runtime,
                 sleep=sleep,
                 monotonic=monotonic,
+                deadline=child_wait_deadline,
                 timeout_seconds=wait_timeout_seconds,
             )
         baseline = descriptors["baseline"]

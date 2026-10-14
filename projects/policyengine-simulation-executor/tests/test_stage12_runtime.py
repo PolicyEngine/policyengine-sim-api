@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
 import io
 import json
 import logging
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
@@ -15,6 +17,7 @@ from uuid import UUID, uuid4
 
 import pandas as pd
 import pytest
+from fixtures.fake_modal import install_fake_modal
 from policyengine_observability import (
     DeploymentIdentity,
     LoggingConfig,
@@ -90,6 +93,9 @@ from policyengine_simulation_executor.stage12_runtime import (
 )
 from policyengine_simulation_executor.stage12_runtime.aggregation import (
     validate_uk_local_authority_metadata,
+)
+from policyengine_simulation_executor.stage12_runtime.comparison import (
+    PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS,
 )
 from policyengine_simulation_executor.stage12_runtime.dependencies import (
     runtime_store,
@@ -2437,7 +2443,8 @@ def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_code == "simulation_wait_timeout"
     assert store.parent.error_summary == (
-        "Stage 12 simulations did not finish within 0 seconds."
+        "Stage 12 simulations did not finish within 0 seconds of the report "
+        "coordinator starting."
     )
     assert all(
         child.status is ComparisonRunLifecycleStatus.FAILED
@@ -2843,4 +2850,81 @@ def test_startup_cancellation_state_error_does_not_replace_the_original_failure(
         _coordination_log(caplog, logging.ERROR),
         role="baseline",
         error_type="ConnectionError",
+    )
+
+
+class SteppedClock:
+    def __init__(self, start_seconds=10_000.0):
+        self.current_seconds = start_seconds
+
+    def monotonic(self):
+        return self.current_seconds
+
+    def advance(self, elapsed_seconds):
+        self.current_seconds += elapsed_seconds
+
+
+def _declared_modal_timeouts(monkeypatch):
+    install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.v2_app", None)
+    modal_app = importlib.import_module("src.modal.v2_app")
+    return {
+        name: options.get("timeout") for name, options in modal_app.app.function_calls
+    }
+
+
+# After the child window closes and the production-result wait ends, the
+# coordinator still has to read both simulation artifacts, aggregate, write its
+# artifacts, and record the outcome before Modal stops it.
+MINIMUM_FINISHING_SECONDS = 600
+
+
+@pytest.mark.parametrize("setup_seconds", [0.0, 400.0, 2_000.0])
+def test_child_wait_window_opens_when_the_coordinator_starts(
+    monkeypatch,
+    setup_seconds,
+) -> None:
+    declared_timeouts = _declared_modal_timeouts(monkeypatch)
+    window_seconds = coordination_module.SIMULATION_WAIT_TIMEOUT_SECONDS
+    poll_seconds = coordination_module.SIMULATION_POLL_MAX_SECONDS
+    clock = SteppedClock()
+    coordinator_started_at = clock.monotonic()
+
+    def slow_output_planning(_report):
+        # Loading the country model is coordinator setup, not child time.
+        clock.advance(setup_seconds)
+        return _output_plan()
+
+    store = FakeStore()
+    invoker = ScriptedChildInvoker(clock=clock)
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        _coordinate_with(
+            _report(),
+            store,
+            invoker,
+            output_plan_resolver=slow_output_planning,
+            monotonic=clock.monotonic,
+            sleep=clock.advance,
+        )
+
+    probed_at = invoker.calls["baseline"].probed_at
+    child_waits_began_after = probed_at[0] - coordinator_started_at
+    window_closed_after = probed_at[-1] - coordinator_started_at
+    assert child_waits_began_after == setup_seconds
+    # Setup shortens the children's window rather than the time after it.
+    assert window_seconds <= window_closed_after < window_seconds + poll_seconds
+    assert probed_at[-1] - probed_at[0] == pytest.approx(
+        window_seconds - setup_seconds, abs=poll_seconds
+    )
+    assert (
+        declared_timeouts["coordinate_report"]
+        - window_closed_after
+        - PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS
+        >= MINIMUM_FINISHING_SECONDS
+    )
+    assert store.parent.error_code == "simulation_wait_timeout"
+    assert all(
+        child.error_code == "simulation_wait_timeout"
+        for child in store.children.values()
     )

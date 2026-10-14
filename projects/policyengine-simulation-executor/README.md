@@ -173,16 +173,19 @@ single-container Stage 12 path.
 
 After dispatching both logical simulations, the coordinator checks both Modal
 calls with nonblocking result probes on every polling pass. It does not wait
-for baseline before checking reform. The first failed simulation supplies the
-report's `error_code` and safe `error_summary`; the coordinator marks the
-unresolved peer `incomplete` with `cancelled_after_peer_failure`. A segmented
-peer reads that persisted state, cancels the region-group calls it owns, and
-exits without overwriting the cancellation record. If the coordinator itself
-fails after starting a simulation, it stops every started, unfinished
-simulation the same way and marks it `incomplete` with
-`cancelled_after_coordinator_failure`. Expected input failures
-retain their typed code and message. Unexpected exceptions are logged in full
-and persisted as a generic message with a correlation ID.
+for baseline before checking reform. Both simulations share one 3,000-second
+wait window that opens when the coordinator starts, so coordinator setup comes
+out of that window. When it closes, every unfinished simulation is recorded as
+`failed` with `simulation_wait_timeout` and stopped. The first failed
+simulation supplies the report's `error_code` and safe `error_summary`; the
+coordinator marks the unresolved peer `incomplete` with
+`cancelled_after_peer_failure`. A segmented peer reads that persisted state,
+cancels the region-group calls it owns, and exits without overwriting the
+cancellation record. If the coordinator itself fails after starting a
+simulation, it stops every started, unfinished simulation the same way and
+marks it `incomplete` with `cancelled_after_coordinator_failure`. Expected
+input failures retain their typed code and message. Unexpected exceptions are
+logged in full and persisted as a generic message with a correlation ID.
 
 Stage 12 deployments run `src/modal/stage12_precompute_app.py` against the
 dedicated `STAGE12_CACHE_BUCKET`. It publishes three annual datasets plus 60
