@@ -25,6 +25,9 @@ from .parsing import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+# The packaged bundle layout this loader reads.
+SUPPORTED_BUNDLE_SCHEMA_VERSION = 2
+
 
 def _normalize_stage12_bundle(
     raw_bundle: object,
@@ -32,8 +35,11 @@ def _normalize_stage12_bundle(
     supported_countries: Sequence[CountryId] = SUPPORTED_COUNTRIES,
 ) -> Stage12BundleManifest:
     bundle = require_mapping(raw_bundle, "root")
-    if bundle.get("schema_version") != 2:
-        msg = "PolicyEngine.py bundle schema_version must be 2"
+    if bundle.get("schema_version") != SUPPORTED_BUNDLE_SCHEMA_VERSION:
+        msg = (
+            "PolicyEngine.py bundle schema_version must be "
+            f"{SUPPORTED_BUNDLE_SCHEMA_VERSION}"
+        )
         raise Stage12BundleError(msg)
     policyengine_version = require_text(
         bundle.get("policyengine_version"),
