@@ -30,7 +30,8 @@ names, logging, or observability failure handling, read
 ## GitHub PRs
 
 Never open `policyengine-sim-api` PRs from forks. CI and deployment checks are
-designed for same-repository branches.
+designed for same-repository branches. Agents must never bypass branch rules
+(for example with `gh pr merge --admin`), even with admin credentials.
 
 Before creating or sharing any PR, all developers and agents must:
 
