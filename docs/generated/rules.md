@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 39 | 1 | 0 | 14 | 54 |
+| mechanical | 40 | 1 | 0 | 14 | 55 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 40 of 54 rules.
+**Blocking:** 41 of 55 rules.
 
 ## Gaps
 
@@ -257,6 +257,7 @@ flowchart LR
 | `sim.quality.src-programs-ruff-exemptions` | Programs under src (the Modal deployment utilities, and the OpenAPI and Stage 12 infrastructure commands) may print their output (T201), open URLs from their arguments (S310) and, for the Modal utilities run with python -m, live in a directory that isn't a package (INP001); every other ruff rule applies to them. | mechanical | enforced | yes | ruff per-file ignore of INP001, S310, T201 for `projects/*/src/{modal/utils/*,policyengine_simulation_entry/generate_openapi,policyengine_simulation_entry/stage12_infrastructure,policyengine_simulation_gateway/generate_openapi}.py` | `pr.yml:lint` | — |
 | `sim.quality.tests-pass` | Each project's unit tests pass in its own locked environment. | mechanical | enforced | yes | CI job `test` | `pr.yml:test` | — |
 | `sim.quality.tests-ruff-exemptions` | Test files may use pytest's bare assert, need no docstrings, annotations or named constants for magic numbers, and may reach into private members, live outside packages and import inside a test (S101, D1, ANN, PLR2004, SLF001, INP001, PLC0415). They may also run repository scripts (S603, S607) and use fake credentials (S105, S106), temporary paths (S108), naive datetimes (DTZ001, DTZ007), pickle (S301) and exec (S102), and may import the lazily loaded packages at module level (TID253). Every other ruff rule applies to tests. | mechanical | enforced | yes | ruff per-file ignore of ANN, D1, DTZ001, DTZ007, INP001, PLC0415, PLR2004, S101, S102, S105, S106, S108, S301, S603, S607, SLF001, TID253 for `**/tests/**` | `pr.yml:lint` | — |
+| `sim.quality.unittest-ruff-exemptions` | The shared rules tool's tests use unittest, because the tool needs only the standard library, so ruff's pytest-style rules (PT) don't apply to them. | mechanical | enforced | yes | ruff per-file ignore of PT for `scripts/rules/tests/**` | `pr.yml:lint` | — |
 
 ```mermaid
 flowchart LR
@@ -283,6 +284,8 @@ flowchart LR
   e_CI_job_test["CI job test"]
   r_sim_quality_tests_ruff_exemptions("sim.quality.tests-ruff-exemptions (enforced)")
   e_ruff_per_file_ignore_of_ANN__D1__DTZ001__DTZ007__INP001__PLC0415__PLR2004__S101__S102__S105__S106__S108__S301__S603__S607__SLF001__TID253_for____tests___["ruff per-file ignore of ANN, D1, DTZ001, DTZ007, INP001, PLC0415, PLR2004, S101, S102, S105, S106, S108, S301, S603, S607, SLF001, TID253 for **/tests/**"]
+  r_sim_quality_unittest_ruff_exemptions("sim.quality.unittest-ruff-exemptions (enforced)")
+  e_ruff_per_file_ignore_of_PT_for_scripts_rules_tests___["ruff per-file ignore of PT for scripts/rules/tests/**"]
   r_sim_quality_ci_cd_scripts_ruff_exemptions --> e_ruff_per_file_ignore_of_T201_for__github___
   e_ruff_per_file_ignore_of_T201_for__github___ --> j_CI_pr_yml_lint
   r_sim_quality_command_line_scripts_ruff_exemptions --> e_ruff_per_file_ignore_of_DTZ011__S603__S607__T201_for____scripts___
@@ -303,6 +306,8 @@ flowchart LR
   e_CI_job_test --> j_CI_pr_yml_test
   r_sim_quality_tests_ruff_exemptions --> e_ruff_per_file_ignore_of_ANN__D1__DTZ001__DTZ007__INP001__PLC0415__PLR2004__S101__S102__S105__S106__S108__S301__S603__S607__SLF001__TID253_for____tests___
   e_ruff_per_file_ignore_of_ANN__D1__DTZ001__DTZ007__INP001__PLC0415__PLR2004__S101__S102__S105__S106__S108__S301__S603__S607__SLF001__TID253_for____tests___ --> j_CI_pr_yml_lint
+  r_sim_quality_unittest_ruff_exemptions --> e_ruff_per_file_ignore_of_PT_for_scripts_rules_tests___
+  e_ruff_per_file_ignore_of_PT_for_scripts_rules_tests___ --> j_CI_pr_yml_lint
 ```
 
 ## CI workflows and scripts
