@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 import tempfile
@@ -83,8 +82,10 @@ def update_requirements(
         ),
     }
 
-    for location, dependencies in requirements.items():
-        dependencies = dependencies if isinstance(dependencies, list) else []
+    for location, declared_dependencies in requirements.items():
+        dependencies = (
+            declared_dependencies if isinstance(declared_dependencies, list) else []
+        )
         matches = [
             dependency
             for dependency in dependencies
@@ -140,7 +141,7 @@ def update_requirements(
     ) as temporary:
         temporary.write(text.replace(old_pin, new_pin))
         temporary_path = temporary.name
-    os.replace(temporary_path, pyproject)
+    Path(temporary_path).replace(pyproject)
 
 
 def find_issue(title: str) -> None:
