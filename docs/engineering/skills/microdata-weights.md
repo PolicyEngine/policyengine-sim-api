@@ -42,6 +42,8 @@ weights. Count entities with `_count_output_entities` instead.
   `.tolist()`, `pd.DataFrame(...)`, `pd.Series(...)`) only in
   `simulation_output_common.py`, which holds `_count_output_entities`. Summing
   stripped values gives an unweighted sample total, the mirror image of #767.
+  Within that module, counting entities is the one permanent read; every other
+  read is a recorded exception, and the list of exceptions may only shrink.
 - `sim.microdata.builder-tests-use-weighted-frames`: the output-builder tests
   (`tests/test_simulation_output_*.py`) build entity frames only through
   `fixtures/weighted_frames.weighted_entity_frame`, which returns a
@@ -73,9 +75,14 @@ Each finding needs a decision, recorded in the PR:
 
 - **Fix it.** Count entities with `_count_output_entities`, and aggregate values
   through the weighted frame or the aggregators.
-- **Move it.** A deliberate strip moves into `simulation_output_common.py` with
-  a comment saying why, as `_count_output_entities` does.
+- **Move it, as a recorded exception.** A strip that can't be fixed yet moves
+  into `simulation_output_common.py` as a named helper, with a docstring saying
+  why and what would remove it.
 
-Existing weight-stripping findings are listed in
+Recorded exceptions are listed in
 `rules/baselines/sim-microdata-weight-stripping.txt`. That list may only
-shrink.
+shrink, so adding one is a deliberate change to the rule's baseline. Today it
+holds one: `_unweighted_household_frame`, the plain household frame the UK
+local-authority breakdown hands policyengine's longwise geography impact. It
+goes once that breakdown hands policyengine the simulations, as the
+constituency and US congressional district breakdowns already do.

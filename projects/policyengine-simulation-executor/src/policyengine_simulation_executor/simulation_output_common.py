@@ -8,10 +8,10 @@ from collections.abc import Callable, Mapping
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 from policyengine_simulation_contract.spm import spm_error_detail
 
 if TYPE_CHECKING:
-    import pandas as pd
     from _typeshed import ConvertibleToFloat
     from policyengine.core import Simulation
 
@@ -75,6 +75,23 @@ def _count_output_entities(simulation: Simulation, entity: str, weight: str) -> 
     """
     data = _entity_data(simulation, entity)
     return float(np.asarray(data[weight], dtype=float).sum())
+
+
+def _unweighted_household_frame(simulation: Simulation) -> pd.DataFrame:
+    """Return the household output as a plain DataFrame, without its weights.
+
+    policyengine's ``compute_longwise_uk_geography_impacts`` takes plain frames
+    and weights each area by the baseline's ``household_weight`` column itself.
+    The UK local-authority breakdown calls it directly, so that it can apply
+    this service's boundary metadata. Handing it the weighted frame would weight
+    twice if it ever reduced a column directly.
+
+    This is a recorded exception to sim.microdata.weight-stripping-confined,
+    listed in rules/baselines/sim-microdata-weight-stripping.txt, which may only
+    shrink. It goes once the breakdown hands policyengine the simulations, as
+    the constituency and US congressional district breakdowns already do.
+    """
+    return pd.DataFrame(simulation.output_dataset.data.household)
 
 
 def _warn_on_mismatched_weights(
