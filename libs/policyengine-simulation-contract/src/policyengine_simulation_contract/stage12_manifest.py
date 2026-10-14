@@ -24,6 +24,7 @@ V2_VERSION_MANIFEST_NAME = "simulation-api-v2-version-manifest"
 ACTIVE_MANIFEST_KEY = "active"
 V2_APPLICATION_PREFIX = "policyengine-simulation-v2-py"
 V1_APPLICATION_PREFIX = "policyengine-simulation-py"
+_MAX_MODAL_APPLICATION_NAME_LENGTH = 64
 _CALLABLE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
 
 ManifestText = Annotated[str, Field(min_length=1, max_length=255)]
@@ -165,8 +166,11 @@ def v2_application_name(policyengine_version: str) -> str:
     name = V2_APPLICATION_PREFIX + policyengine_version.replace(".", "-").replace(
         "+", "-"
     )
-    if len(name) > 64:
-        msg = "v2 Modal application name exceeds 64 characters"
+    if len(name) > _MAX_MODAL_APPLICATION_NAME_LENGTH:
+        msg = (
+            "v2 Modal application name exceeds "
+            f"{_MAX_MODAL_APPLICATION_NAME_LENGTH} characters"
+        )
         raise ValueError(msg)
     return name
 
