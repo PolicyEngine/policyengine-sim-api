@@ -197,8 +197,13 @@ class SegmentedNationalRunner:
         self.clock = clock
         # The parent's Modal timeout started before this runner existed; the
         # completion margin inside the default budget covers that gap.
-        self.budget_ends_at = clock() + parent_budget_seconds
+        self.started_at = clock()
+        self.budget_ends_at = self.started_at + parent_budget_seconds
         self.child_retry_count = 0
+        # Overdue attempts replaced by a respawn. They are never polled
+        # again, but every later cancel retries them: the first cancel can
+        # fail, and Modal keeps re-running a stuck input until one succeeds.
+        self.superseded_children: list[ChildExecution] = []
         self.country = str(params.get("country") or "us").lower()
         groups = national_region_groups(self.country)
         if not groups:
@@ -365,6 +370,9 @@ class SegmentedNationalRunner:
                 )
             elif progress_made:
                 current_sleep = self.poll_interval_initial_seconds
+        # Every group has a result; stop any superseded attempt whose first
+        # cancel failed.
+        self._cancel_superseded_children()
         return results  # type: ignore[return-value]
 
     def _respawn_overdue_child(
@@ -392,6 +400,19 @@ class SegmentedNationalRunner:
         else:
             reason = None
         if reason is not None:
+            self.runtime.event(
+                "segmented_national_child_timed_out",
+                severity="ERROR",
+                attributes={
+                    "region_group": overdue.group_label,
+                    "child_attempt": overdue.attempt,
+                    "waited_seconds": round(waited_seconds, 3),
+                    "deadline_seconds": overdue.deadline_seconds,
+                    "remaining_budget_seconds": round(
+                        max(remaining_budget_seconds, 0), 3
+                    ),
+                },
+            )
             self._cancel_all(children)
             raise RuntimeError(
                 "Segmented national child timed out for group "
@@ -399,10 +420,16 @@ class SegmentedNationalRunner:
             ) from None
 
         self._cancel_call(overdue.call)
+        self.superseded_children.append(overdue)
         next_attempt = overdue.attempt + 1
+        try:
+            call = self._spawn_child(overdue.group, attempt=next_attempt)
+        except Exception:
+            self._cancel_all(children)
+            raise
         self.child_retry_count += 1
         logger.warning(
-            "Group %s had no result %.0fs after dispatch; respawning "
+            "Group %s had no result %.0fs after dispatch; respawned it "
             "(attempt %d of %d)",
             overdue.group_label,
             waited_seconds,
@@ -420,11 +447,6 @@ class SegmentedNationalRunner:
             },
         )
         self.runtime.set_context(segmented_child_retry_count=self.child_retry_count)
-        try:
-            call = self._spawn_child(overdue.group, attempt=next_attempt)
-        except Exception:
-            self._cancel_all(children)
-            raise
         return ChildExecution(
             group=overdue.group,
             call=call,
@@ -438,12 +460,26 @@ class SegmentedNationalRunner:
     ) -> None:
         """Fail in-band, cancelling children, before the Modal timeout can
         kill the parent and strand them."""
-        if not pending or self.clock() < self.budget_ends_at:
+        if not pending:
             return
-        self._cancel_all(children)
-        outstanding_groups = ", ".join(
-            children[index].group_label for index in sorted(pending)
+        now = self.clock()
+        if now < self.budget_ends_at:
+            return
+        outstanding = [children[index] for index in sorted(pending)]
+        outstanding_groups = ", ".join(child.group_label for child in outstanding)
+        self.runtime.event(
+            "segmented_national_budget_exhausted",
+            severity="ERROR",
+            attributes={
+                "region_groups": outstanding_groups,
+                "child_attempts": ", ".join(
+                    str(child.attempt) for child in outstanding
+                ),
+                "waited_seconds": round(now - self.started_at, 3),
+                "parent_budget_seconds": self.parent_budget_seconds,
+            },
         )
+        self._cancel_all(children)
         raise RuntimeError(
             "Segmented national run exceeded its "
             f"{self.parent_budget_seconds:.0f}s budget with groups still "
@@ -457,10 +493,15 @@ class SegmentedNationalRunner:
         except Exception:
             pass
 
+    def _cancel_superseded_children(self) -> None:
+        for superseded in self.superseded_children:
+            self._cancel_call(superseded.call)
+
     def _cancel_all(self, children: list[ChildExecution]) -> None:
         """Best-effort cancel so a failed batch doesn't strand workers."""
         for child in children:
             self._cancel_call(child.call)
+        self._cancel_superseded_children()
 
     def _reduce(self, child_results: list[dict], *, country_module) -> dict[str, Any]:
         from policyengine_simulation_executor.simulation_runtime import (

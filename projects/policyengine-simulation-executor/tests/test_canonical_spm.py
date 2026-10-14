@@ -757,6 +757,7 @@ def test_segmented_child_input_error_is_not_redacted_or_retried(monkeypatch):
     runner = object.__new__(SegmentedNationalRunner)
     runner.poll_interval_initial_seconds = 0.001
     runner.poll_interval_max_seconds = 0.001
+    runner.superseded_children = []
     with pytest.raises(SPMInputError) as error:
         runner._collect([child_execution])
     assert error.value.code == "SPM_GEOGRAPHY_REQUIRED"

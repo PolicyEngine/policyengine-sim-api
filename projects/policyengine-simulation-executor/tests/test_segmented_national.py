@@ -150,15 +150,20 @@ class FakeCall:
         error=None,
         errors_once=0,
         before_each_poll=None,
+        cancel_failures=0,
     ):
         self.result = result
         self.polls_until_ready = polls_until_ready
         self.error = error
         self.errors_once = errors_once
         self.before_each_poll = before_each_poll
+        self.cancel_failures = cancel_failures
         self.cancelled = False
+        self.cancel_attempts = 0
+        self.poll_count = 0
 
     def get(self, timeout):
+        self.poll_count += 1
         if self.before_each_poll is not None:
             self.before_each_poll()
         if self.errors_once > 0:
@@ -172,6 +177,10 @@ class FakeCall:
         return self.result
 
     def cancel(self):
+        self.cancel_attempts += 1
+        if self.cancel_failures > 0:
+            self.cancel_failures -= 1
+            raise ConnectionError("cancel RPC failed")
         self.cancelled = True
 
 
@@ -382,9 +391,14 @@ class RecordingRuntime(NoOpObservabilityRuntime):
     def set_context(self, **attributes):
         self.context_updates.append(attributes)
 
+    def events_named(self, event_name):
+        return [options for name, options in self.events if name == event_name]
+
 
 STUCK_GROUP_INDEX = 4
 SECONDS_PER_STUCK_POLL = 100
+# A stuck child reaches the default deadline on this poll.
+POLLS_TO_REACH_DEADLINE = int(sn.CHILD_DEADLINE_SECONDS // SECONDS_PER_STUCK_POLL)
 
 
 def _stuck_call(clock):
@@ -396,8 +410,13 @@ def _stuck_call(clock):
     )
 
 
-def _calls_with_stuck_child(clock, respawned_call):
-    calls = _twenty_calls()
+def _crashing_call(clock):
+    """A child that fails outright (takes a clock to match ``_stuck_call``)."""
+    return FakeCall(None, error=ValueError("child crashed"))
+
+
+def _calls_with_stuck_child(clock, respawned_call, **sibling_options):
+    calls = _twenty_calls(**sibling_options)
     calls[STUCK_GROUP_INDEX] = _stuck_call(clock)
     return [*calls, respawned_call]
 
@@ -426,7 +445,8 @@ class TestSegmentedNationalChildDeadline:
             for index, call in enumerate(calls)
             if index != STUCK_GROUP_INDEX
         )
-        # The respawn waited for the full default deadline, not longer.
+        # The original was respawned as soon as it reached the default
+        # deadline, not later; the respawn finished without moving the clock.
         assert clock() == sn.CHILD_DEADLINE_SECONDS
 
     def test__respawned_child_that_is_also_overdue_fails_the_run(self, bare_country):
@@ -457,6 +477,87 @@ class TestSegmentedNationalChildDeadline:
             runner.run()
         assert calls[STUCK_GROUP_INDEX].cancelled
 
+    def test__failed_respawn_spawn_cancels_every_child(self, bare_country):
+        clock = ManualClock()
+        runtime = RecordingRuntime()
+        calls = _calls_with_stuck_child(
+            clock, FakeCall({"child": "respawned"}), polls_until_ready=10**6
+        )
+        # The 21st spawn, the respawn, fails while every sibling still runs.
+        fake = FakeModal(calls, fail_spawn_at=20)
+        runner = _runner(fake, runtime=runtime, clock=clock)
+
+        with pytest.raises(ConnectionError, match="spawn RPC failed"):
+            runner.run()
+
+        assert all(call.cancelled for call in calls[:20])
+        # A respawn that never spawned is not reported as one.
+        assert not runtime.events_named("segmented_national_child_respawned")
+        assert not any(
+            "segmented_child_retry_count" in update
+            for update in runtime.context_updates
+        )
+
+    def test__late_result_from_the_superseded_child_is_ignored(self, bare_country):
+        clock = ManualClock()
+        # The original's next poll after its deadline would return a result.
+        late_original = FakeCall(
+            {"child": "late original"},
+            polls_until_ready=POLLS_TO_REACH_DEADLINE,
+            before_each_poll=lambda: clock.advance(SECONDS_PER_STUCK_POLL),
+        )
+        calls = _twenty_calls()
+        calls[STUCK_GROUP_INDEX] = late_original
+        calls.append(FakeCall({"child": "respawned"}, polls_until_ready=2))
+        runner = _runner(FakeModal(calls), clock=clock)
+        runner._reduce = lambda results, country_module: results
+
+        results = runner.run()
+
+        assert len(results) == len(runner.groups)
+        assert results[STUCK_GROUP_INDEX] == {"child": "respawned"}
+        assert late_original.poll_count == POLLS_TO_REACH_DEADLINE
+        assert late_original.cancelled
+
+    @pytest.mark.parametrize(
+        "respawned_call_factory",
+        [_crashing_call, _stuck_call],
+        ids=["respawn_fails", "respawn_also_overdue"],
+    )
+    def test__superseded_child_whose_cancel_failed_is_cancelled_on_a_later_failure(
+        self, bare_country, respawned_call_factory
+    ):
+        clock = ManualClock()
+        calls = _calls_with_stuck_child(clock, respawned_call_factory(clock))
+        superseded_original = calls[STUCK_GROUP_INDEX]
+        superseded_original.cancel_failures = 1
+        runner = _runner(FakeModal(calls), clock=clock)
+
+        with pytest.raises(RuntimeError, match="Segmented national child"):
+            runner.run()
+
+        # The cancel at the respawn failed; the later failure path retried it
+        # without polling the superseded original again.
+        assert superseded_original.cancel_attempts == 2
+        assert superseded_original.cancelled
+        assert superseded_original.poll_count == POLLS_TO_REACH_DEADLINE
+
+    def test__superseded_child_whose_cancel_failed_is_cancelled_after_collection(
+        self, bare_country
+    ):
+        clock = ManualClock()
+        calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
+        superseded_original = calls[STUCK_GROUP_INDEX]
+        superseded_original.cancel_failures = 1
+        runner = _runner(FakeModal(calls), clock=clock)
+        runner._reduce = lambda results, country_module: results
+
+        results = runner.run()
+
+        assert results[STUCK_GROUP_INDEX] == {"child": "respawned"}
+        assert superseded_original.cancel_attempts == 2
+        assert superseded_original.cancelled
+
     def test__no_respawn_when_parent_budget_cannot_fit_a_retry(self, bare_country):
         clock = ManualClock()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
@@ -471,6 +572,30 @@ class TestSegmentedNationalChildDeadline:
 
         assert len(fake.spawned_payloads) == 20
         assert calls[STUCK_GROUP_INDEX].cancelled
+
+    def test__respawn_deadline_is_clamped_to_the_remaining_parent_budget(
+        self, bare_country
+    ):
+        clock = ManualClock()
+        runtime = RecordingRuntime()
+        calls = _calls_with_stuck_child(clock, _stuck_call(clock))
+        # At the 900 s child deadline 600 s of a 1,500 s budget remain: enough
+        # for a respawn, but less than a full child deadline.
+        runner = _runner(
+            FakeModal(calls),
+            runtime=runtime,
+            clock=clock,
+            parent_budget_seconds=1500,
+        )
+
+        with pytest.raises(
+            RuntimeError, match=r"no result 600s after dispatch on attempt 2 of 2"
+        ):
+            runner.run()
+
+        [timeout_event] = runtime.events_named("segmented_national_child_timed_out")
+        assert timeout_event["attributes"]["deadline_seconds"] == 600
+        assert not runtime.events_named("segmented_national_budget_exhausted")
 
     def test__exhausted_parent_budget_cancels_children_before_modal_timeout(
         self, bare_country
@@ -505,11 +630,7 @@ class TestSegmentedNationalChildDeadline:
 
         runner.run()
 
-        respawn_events = [
-            options
-            for name, options in runtime.events
-            if name == "segmented_national_child_respawned"
-        ]
+        respawn_events = runtime.events_named("segmented_national_child_respawned")
         assert len(respawn_events) == 1
         assert respawn_events[0]["severity"] == "WARNING"
         assert respawn_events[0]["attributes"]["region_group"] == "+".join(
@@ -517,6 +638,73 @@ class TestSegmentedNationalChildDeadline:
         )
         assert respawn_events[0]["attributes"]["child_attempt"] == 2
         assert {"segmented_child_retry_count": 1} in runtime.context_updates
+
+    @pytest.mark.parametrize(
+        "parent_budget_seconds,expected_attempt,expected_remaining_budget_seconds",
+        # A 3,000 s budget fits both 900 s attempts; a 1,000 s budget leaves
+        # too little after the first attempt for a respawn.
+        [(3000, 2, 1200), (1000, 1, 100)],
+        ids=["respawn_also_overdue", "no_budget_for_a_respawn"],
+    )
+    def test__child_timeout_is_recorded_in_telemetry(
+        self,
+        bare_country,
+        parent_budget_seconds,
+        expected_attempt,
+        expected_remaining_budget_seconds,
+    ):
+        clock = ManualClock()
+        runtime = RecordingRuntime()
+        calls = _calls_with_stuck_child(clock, _stuck_call(clock))
+        runner = _runner(
+            FakeModal(calls),
+            runtime=runtime,
+            clock=clock,
+            parent_budget_seconds=parent_budget_seconds,
+        )
+
+        with pytest.raises(RuntimeError, match="timed out for group"):
+            runner.run()
+
+        assert runtime.events_named("segmented_national_child_timed_out") == [
+            {
+                "severity": "ERROR",
+                "attributes": {
+                    "region_group": "+".join(runner.groups[STUCK_GROUP_INDEX]),
+                    "child_attempt": expected_attempt,
+                    "waited_seconds": sn.CHILD_DEADLINE_SECONDS,
+                    "deadline_seconds": sn.CHILD_DEADLINE_SECONDS,
+                    "remaining_budget_seconds": expected_remaining_budget_seconds,
+                },
+            }
+        ]
+
+    def test__exhausted_parent_budget_is_recorded_in_telemetry(self, bare_country):
+        clock = ManualClock()
+        runtime = RecordingRuntime()
+        calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
+        runner = _runner(
+            FakeModal(calls),
+            runtime=runtime,
+            clock=clock,
+            parent_budget_seconds=500,
+            child_deadline_seconds=10_000,
+        )
+
+        with pytest.raises(RuntimeError, match="exceeded its 500s budget"):
+            runner.run()
+
+        assert runtime.events_named("segmented_national_budget_exhausted") == [
+            {
+                "severity": "ERROR",
+                "attributes": {
+                    "region_groups": "+".join(runner.groups[STUCK_GROUP_INDEX]),
+                    "child_attempts": "1",
+                    "waited_seconds": 500,
+                    "parent_budget_seconds": 500,
+                },
+            }
+        ]
 
     def test__parent_budget_matches_the_modal_function_timeout(self):
         app_source = Path(sn.__file__).with_name("app.py").read_text()
