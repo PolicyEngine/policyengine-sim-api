@@ -42,6 +42,7 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 )
 
 from .dependencies import ComparisonStore, artifact_store, runtime_store
+from .failure_causes import StageProgress, record_failure_cause, tracked_stage
 from .failure_recording import persist_failure_record, report_failure
 from .failures import (
     Stage12Cancellation,
@@ -168,9 +169,18 @@ def calculate_simulation_frames(
     *,
     runtime: ObservabilityRuntime | None = None,
     stage_plan: StagePlan = STAGE12_SIMULATION_STAGES,
+    progress: StageProgress | None = None,
 ) -> SimulationCalculation:
     """Run one policy and return the coordinator-planned entity output tables."""
 
+    if progress is None:
+        progress = StageProgress(role=simulation.role.value)
+    stage_span = partial(
+        tracked_stage,
+        stage_plan=stage_plan,
+        progress=progress,
+        runtime=runtime,
+    )
     if simulation.population.kind != "dataset":
         raise ValueError("Stage 12 society-wide worker requires a dataset population")
     if simulation.population.artifact.uri != simulation.bundle.dataset.uri:
@@ -194,46 +204,24 @@ def calculate_simulation_frames(
         setup_gcp_credentials,
     )
 
-    credential_span = (
-        runtime.span(stage_plan.name(Stage.CREDENTIAL_SETUP))
-        if runtime is not None
-        else nullcontext()
-    )
-    with credential_span, setup_gcp_credentials():
-        country_span = (
-            runtime.span(stage_plan.name(Stage.COUNTRY_MODULE_LOAD))
-            if runtime is not None
-            else nullcontext()
-        )
-        with country_span:
+    with (
+        stage_span(Stage.CREDENTIAL_SETUP),
+        setup_gcp_credentials(),
+    ):
+        with stage_span(Stage.COUNTRY_MODULE_LOAD):
             country_module = _country_module(country)
-        region_span = (
-            runtime.span(stage_plan.name(Stage.REGION_RESOLUTION))
-            if runtime is not None
-            else nullcontext()
-        )
-        with region_span:
+        with stage_span(Stage.REGION_RESOLUTION):
             region = _resolve_region(
                 country_module=country_module,
                 country=country,
                 params=params,
             )
-        dataset_resolution_span = (
-            runtime.span(stage_plan.name(Stage.DATASET_RESOLUTION))
-            if runtime is not None
-            else nullcontext()
-        )
-        with dataset_resolution_span:
+        with stage_span(Stage.DATASET_RESOLUTION):
             dataset_selection = _resolve_dataset_selection(
                 params,
                 region_resolution=region,
             )
-        dataset_span = (
-            runtime.span(stage_plan.name(Stage.DATASET_LOAD))
-            if runtime is not None
-            else nullcontext()
-        )
-        with dataset_span:
+        with stage_span(Stage.DATASET_LOAD):
             dataset = _load_dataset(
                 params,
                 selection=dataset_selection,
@@ -247,19 +235,9 @@ def calculate_simulation_frames(
         _require_certified_uk_weight_matrix(
             region.scoping_strategy, dataset, dataset_selection
         )
-        policy_span = (
-            runtime.span(stage_plan.name(Stage.POLICY_NORMALIZATION))
-            if runtime is not None
-            else nullcontext()
-        )
-        with policy_span:
+        with stage_span(Stage.POLICY_NORMALIZATION):
             policy = _normalise_policy(simulation.policy)
-        build_span = (
-            runtime.span(stage_plan.name(Stage.SIMULATION_BUILD))
-            if runtime is not None
-            else nullcontext()
-        )
-        with build_span:
+        with stage_span(Stage.SIMULATION_BUILD):
             model = build_stage12_simulation(
                 params,
                 dataset=dataset,
@@ -270,19 +248,13 @@ def calculate_simulation_frames(
                 region_code=region.code,
                 execution=simulation,
             )
-        calculation_span = (
-            runtime.span(stage_plan.name(Stage.STAGE12_CALCULATION))
-            if runtime is not None
-            else nullcontext()
-        )
-        with calculation_span:
+        with stage_span(Stage.STAGE12_CALCULATION):
             apply_output_plan(model, simulation.output_plan)
-            cache_span = (
-                runtime.span(stage_plan.name(Stage.STAGE12_CACHE_LOOKUP))
-                if runtime is not None and hasattr(model, "stage12_cache_outcome")
+            with (
+                stage_span(Stage.STAGE12_CACHE_LOOKUP)
+                if hasattr(model, "stage12_cache_outcome")
                 else nullcontext()
-            )
-            with cache_span:
+            ):
                 model.ensure()
         cache_outcome = getattr(model, "stage12_cache_outcome", None)
         if runtime is not None and cache_outcome is not None:
@@ -443,14 +415,16 @@ def run_single_simulation(
             return False
         return latest.status is not ComparisonRunLifecycleStatus.RUNNING
 
+    progress = StageProgress(role=simulation.role.value)
+    stage_span = partial(
+        tracked_stage,
+        stage_plan=STAGE12_SIMULATION_STAGES,
+        progress=progress,
+        runtime=runtime,
+    )
     try:
         validate_policy_periods(simulation.policy)
-        input_span = (
-            runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_INPUT_WRITE))
-            if runtime is not None
-            else nullcontext()
-        )
-        with input_span:
+        with stage_span(Stage.STAGE12_INPUT_WRITE):
             artifact_storage.write_input(
                 prefix=context.artifact_prefix,
                 simulation=simulation,
@@ -460,14 +434,13 @@ def run_single_simulation(
         if segmented_calculator is not None and should_segment_simulation(simulation):
             calculated = segmented_calculator(simulation, cancellation_requested)
         elif calculator is calculate_simulation_frames:
-            calculated = calculate_simulation_frames(simulation, runtime=runtime)
-        else:
-            calculation_span = (
-                runtime.span(STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_CALCULATION))
-                if runtime is not None
-                else nullcontext()
+            calculated = calculate_simulation_frames(
+                simulation,
+                runtime=runtime,
+                progress=progress,
             )
-            with calculation_span:
+        else:
+            with stage_span(Stage.STAGE12_CALCULATION):
                 calculated = calculator(simulation)
         if isinstance(calculated, SimulationCalculation):
             frames = calculated.frames
@@ -478,14 +451,7 @@ def run_single_simulation(
             calculation_provenance = None
             uk_local_authority_metadata = None
         validate_output_frames(frames, simulation.output_plan)
-        artifact_span = (
-            runtime.span(
-                STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE)
-            )
-            if runtime is not None
-            else nullcontext()
-        )
-        with artifact_span:
+        with stage_span(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE):
             descriptor = artifact_storage.write_simulation(
                 prefix=context.artifact_prefix,
                 simulation=simulation,
@@ -515,8 +481,8 @@ def run_single_simulation(
         return descriptor.model_dump(mode="json")
     except Stage12Cancellation:
         raise RuntimeError("Stage 12 simulation was cancelled") from None
-    # Persist any country-package calculation failure before returning a
-    # stable exception to Modal.
+    # Persist a redacted cause for any country-package calculation failure
+    # before returning a stable exception to Modal.
     except Exception as error:  # noqa: BLE001
         if isinstance(error, Stage12ExecutionError):
             # A segmented calculation reports its segment failure where it
@@ -533,7 +499,9 @@ def run_single_simulation(
                     "evaluation_id": str(simulation.evaluation_id),
                     "simulation_execution_id": str(simulation.simulation_execution_id),
                 },
+                progress=progress,
             )
+        record_failure_cause(runtime, error, detail.error_summary)
         failed_at = datetime.now(UTC)
         persist_failure_record(
             partial(

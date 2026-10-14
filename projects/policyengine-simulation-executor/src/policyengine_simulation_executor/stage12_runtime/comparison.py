@@ -22,6 +22,7 @@ from policyengine_simulation_executor.stage12_timeouts import (
 )
 
 from .dependencies import ChildInvoker, ComparisonStore
+from .failure_causes import failure_summary
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ def compare_completed_report(
                             "comparison_schema_version": None,
                             "comparison_completed_at": failed_at,
                             "comparison_error_code": "result_comparison_failed",
-                            "comparison_error_summary": type(error).__name__,
+                            "comparison_error_summary": failure_summary(error),
                             "updated_at": failed_at,
                         }
                     )

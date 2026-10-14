@@ -188,8 +188,9 @@ without overwriting the record; it is cancelled through Modal only if that
 record could not be written. An error while reading or updating a simulation
 record is logged with its identifiers and never replaces the failure that
 caused it. Expected input failures retain their typed code and message.
-Unexpected exceptions are reported once, in full, and persisted as a generic
-message with the same correlation ID.
+Unexpected exceptions are reported once, in full, and persisted as their
+redacted cause (type, stage, simulation role and redacted message) followed
+by the same correlation ID.
 
 Stage 12 deployments run `src/modal/stage12_precompute_app.py` against the
 dedicated `STAGE12_CACHE_BUCKET`. It publishes three annual datasets plus 60

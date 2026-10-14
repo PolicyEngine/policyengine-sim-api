@@ -179,7 +179,9 @@ def test_second_poll_error_cancels_all_started_segments() -> None:
     assert all(call.cancelled == 1 for call in function.calls)
     assert error.value.detail.error_code == "segment_execution_failed"
     assert error.value.detail.segment_index == 0
-    assert "second" not in error.value.detail.error_summary
+    assert error.value.detail.error_summary.startswith(
+        "Segment 0: RuntimeError: second (correlation_id="
+    )
 
 
 def test_dispatch_error_cancels_segments_that_already_started() -> None:

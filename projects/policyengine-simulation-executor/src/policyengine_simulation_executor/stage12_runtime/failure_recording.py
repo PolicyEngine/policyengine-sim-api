@@ -8,6 +8,7 @@ from contextlib import suppress
 
 from policyengine_observability import ObservabilityRuntime
 
+from .failure_causes import StageProgress
 from .failures import Stage12FailureDetail, redacted_failure_detail
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ def report_failure(
     default_code: str,
     attributes: Mapping[str, object] | None = None,
     segment_index: int | None = None,
+    progress: StageProgress | None = None,
 ) -> Stage12FailureDetail:
     """Report a failure once and return the safe detail to persist for it.
 
@@ -28,13 +30,14 @@ def report_failure(
     ``report_original_failure`` requires. An unexpected error's detail has a
     new correlation ID, and the report carries the same ID, so the redacted
     summary persisted for callers leads back to this one record of the
-    original error.
+    original error. ``progress`` names the failing stage in that summary.
     """
 
     detail = redacted_failure_detail(
         error,
         default_code=default_code,
         segment_index=segment_index,
+        progress=progress,
     )
     correlation = (
         {"correlation_id": detail.correlation_id}
@@ -72,22 +75,24 @@ def report_original_failure(
     )
 
 
-def persist_failure_record(
-    write_failure_record: Callable[[], object],
+def persist_failure_record[WriteResult](
+    write_failure_record: Callable[[], WriteResult],
     *,
     runtime: ObservabilityRuntime | None,
     failure_scope: str,
-) -> None:
+) -> WriteResult | None:
     """Attempt a failure write without letting its error replace the original.
 
-    The caller raises the same failure after this returns, whether or not the
+    Returns what the write returned, or ``None`` when the write failed. The
+    caller raises the same failure after this returns, whether or not the
     record was written: a child handler re-raises the original error, and the
     report and simulation handlers raise their stable ``RuntimeError``. The
-    original cause then remains visible only in telemetry.
+    original exception then remains visible only in telemetry; the record
+    holds its redacted summary.
     """
 
     try:
-        write_failure_record()
+        return write_failure_record()
     except Exception as persistence_error:  # noqa: BLE001
         _emit_error(
             "Stage 12 failure record could not be persisted",
@@ -95,6 +100,7 @@ def persist_failure_record(
             runtime=runtime,
             attributes={"stage12_failure_scope": failure_scope},
         )
+        return None
 
 
 def _emit_error(

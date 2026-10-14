@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from contextlib import nullcontext
+from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
@@ -57,6 +56,7 @@ from .dependencies import (
     artifact_store,
     runtime_store,
 )
+from .failure_causes import StageProgress, record_failure_cause, tracked_stage
 from .failure_recording import (
     persist_failure_record,
     report_failure,
@@ -265,6 +265,7 @@ def _child_failure_detail(
     simulation: PlannedSimulationExecutionInput,
     store: ComparisonStore,
     runtime: ObservabilityRuntime | None,
+    progress: StageProgress,
 ) -> Stage12FailureDetail:
     """Report a failed child call and return the failure for its report.
 
@@ -281,6 +282,7 @@ def _child_failure_detail(
         failure_scope="child_wait",
         default_code="simulation_invocation_failed",
         attributes=_simulation_failure_attributes(simulation),
+        progress=progress,
     )
     try:
         child = store.get_simulation(simulation.simulation_execution_id)
@@ -306,6 +308,8 @@ def _observe_simulations(
     descriptors: dict[str, SimulationArtifactDescriptor],
     store: ComparisonStore,
     runtime: ObservabilityRuntime | None,
+    progress: StageProgress,
+    wait_stage_name: str,
     sleep: Callable[[float], None],
     monotonic: Callable[[], float],
     deadline: float,
@@ -319,8 +323,10 @@ def _observe_simulations(
         for role in sorted(pending):
             call = calls[role]
             try:
-                result = call.get(timeout=0)
-                descriptor = SimulationArtifactDescriptor.model_validate(result)
+                # The probe records the child's role, so a failure names it.
+                with progress.stage(wait_stage_name, role=role):
+                    result = call.get(timeout=0)
+                    descriptor = SimulationArtifactDescriptor.model_validate(result)
             except TimeoutError:
                 continue
             except Exception as error:  # noqa: BLE001
@@ -329,6 +335,7 @@ def _observe_simulations(
                     simulation=simulations[role],
                     store=store,
                     runtime=runtime,
+                    progress=progress,
                 )
                 _cancel_pending_simulations(
                     calls=calls,
@@ -547,12 +554,15 @@ def coordinate_report(
         if context.production_function_call_id is not None
         else STAGE12_CANONICAL_REPORT_STAGES
     )
-    claim_span = (
-        runtime.span(stage_plan.name(Stage.STAGE12_COORDINATOR_CLAIM))
-        if runtime is not None
-        else nullcontext()
+    progress = StageProgress()
+    stage_span = partial(
+        tracked_stage,
+        stage_plan=stage_plan,
+        progress=progress,
+        runtime=runtime,
     )
-    with claim_span:
+    stage_scope = partial(stage_span, operation=True)
+    with stage_span(Stage.STAGE12_COORDINATOR_CLAIM):
         parent, should_execute = _claim_parent(
             submitted=submitted_parent,
             coordinator_invocation_id=coordinator_invocation_id,
@@ -568,18 +578,6 @@ def coordinate_report(
     calls: dict[str, ChildCall] = {}
     simulations: dict[str, PlannedSimulationExecutionInput] = {}
     try:
-
-        def stage_scope(
-            stage: Stage,
-            attributes: Mapping[str, object] | None = None,
-        ):
-            if runtime is None:
-                return nullcontext()
-            return runtime.operation(
-                stage_plan.name(stage),
-                attributes=attributes,
-            )
-
         with stage_scope(Stage.STAGE12_COORDINATOR_PREPARATION):
             context = context.model_copy(
                 update={
@@ -617,12 +615,7 @@ def coordinate_report(
         simulations = {
             simulation.role.value: simulation for simulation in planned_simulations
         }
-        child_state_span = (
-            runtime.span(stage_plan.name(Stage.STAGE12_CHILD_STATE_CREATE))
-            if runtime is not None
-            else nullcontext()
-        )
-        with child_state_span:
+        with stage_span(Stage.STAGE12_CHILD_STATE_CREATE):
             children = {
                 simulation.role: persistence.create_or_resolve_simulation(
                     _child_record(
@@ -677,15 +670,10 @@ def coordinate_report(
                 )
             )
             try:
-                dispatch_span = (
-                    runtime.span(
-                        stage_plan.name(Stage.STAGE12_CHILD_DISPATCH),
-                        attributes={"simulation_role": simulation.role.value},
-                    )
-                    if runtime is not None
-                    else nullcontext()
-                )
-                with dispatch_span:
+                with stage_span(
+                    Stage.STAGE12_CHILD_DISPATCH,
+                    {"simulation_role": simulation.role.value},
+                ):
                     child_observability_context = (
                         runtime.capture_context() if runtime is not None else None
                     )
@@ -704,6 +692,7 @@ def coordinate_report(
                     failure_scope="child_dispatch",
                     default_code="simulation_dispatch_failed",
                     attributes=_simulation_failure_attributes(simulation),
+                    progress=progress,
                 )
                 _record_child_failure(
                     store=persistence,
@@ -729,18 +718,15 @@ def coordinate_report(
             )
         # Every required call has been started before the coordinator observes
         # baseline and reform together through nonblocking result probes.
-        wait_span = (
-            runtime.span(stage_plan.name(Stage.STAGE12_CHILD_WAIT))
-            if runtime is not None
-            else nullcontext()
-        )
-        with wait_span:
+        with stage_span(Stage.STAGE12_CHILD_WAIT):
             _observe_simulations(
                 calls=calls,
                 simulations=simulations,
                 descriptors=descriptors,
                 store=persistence,
                 runtime=runtime,
+                progress=progress,
+                wait_stage_name=stage_plan.name(Stage.STAGE12_CHILD_WAIT),
                 sleep=sleep,
                 monotonic=monotonic,
                 deadline=child_wait_deadline,
@@ -749,12 +735,7 @@ def coordinate_report(
         baseline = descriptors["baseline"]
         reform = descriptors["reform"]
         validate_aligned_outputs(report, output_plan, baseline, reform)
-        artifact_read_span = (
-            runtime.span(stage_plan.name(Stage.STAGE12_ARTIFACT_READ))
-            if runtime is not None
-            else nullcontext()
-        )
-        with artifact_read_span:
+        with stage_span(Stage.STAGE12_ARTIFACT_READ):
             baseline_payload = artifact_storage.read(baseline.artifact.uri)
             reform_payload = artifact_storage.read(reform.artifact.uri)
         if sha256(baseline_payload).hexdigest() != baseline.artifact.content_sha256:
@@ -771,12 +752,7 @@ def coordinate_report(
         )
         validate_output_frames(baseline_frames, output_plan)
         validate_output_frames(reform_frames, output_plan)
-        aggregation_span = (
-            runtime.span(stage_plan.name(Stage.STAGE12_AGGREGATION))
-            if runtime is not None
-            else nullcontext()
-        )
-        with aggregation_span:
+        with stage_span(Stage.STAGE12_AGGREGATION):
             aggregate = aggregator(
                 report=report,
                 baseline_frames=baseline_frames,
@@ -785,12 +761,7 @@ def coordinate_report(
                 reform_descriptor=reform,
                 uk_local_authority_metadata=uk_local_authority_metadata,
             )
-        aggregate_write_span = (
-            runtime.span(stage_plan.name(Stage.STAGE12_AGGREGATE_ARTIFACT_WRITE))
-            if runtime is not None
-            else nullcontext()
-        )
-        with aggregate_write_span:
+        with stage_span(Stage.STAGE12_AGGREGATE_ARTIFACT_WRITE):
             aggregate_artifact = artifact_storage.write_aggregate(
                 prefix=context.artifact_prefix,
                 payload=aggregate,
@@ -827,8 +798,8 @@ def coordinate_report(
             stage_plan=stage_plan,
         )
         return descriptor.model_dump(mode="json")
-    # Persist any coordinator, child-call, aggregation, or artifact failure
-    # before returning a stable exception to Modal.
+    # Persist a redacted cause for any coordinator, child-call, aggregation, or
+    # artifact failure before returning a stable exception to Modal.
     except Exception as error:  # noqa: BLE001
         if isinstance(error, Stage12ExecutionError):
             # Child, dispatch and wait-timeout failures raise
@@ -847,6 +818,7 @@ def coordinate_report(
                 failure_scope="report_coordination",
                 default_code="report_coordination_failed",
                 attributes={"evaluation_id": str(report.evaluation_id)},
+                progress=progress,
             )
             _cancel_pending_simulations(
                 calls=calls,
@@ -855,6 +827,7 @@ def coordinate_report(
                 store=persistence,
                 detail=_cancellation("the coordinator failed"),
             )
+        record_failure_cause(runtime, error, detail.error_summary)
         failed_at = datetime.now(UTC)
         persist_failure_record(
             partial(

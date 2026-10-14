@@ -347,9 +347,13 @@ cancelled with the reason "Cancelled after the baseline simulation failed."
 Typed input failures, including invalid policy periods and SPM selection
 errors, retain their code and bounded message through the segment, simulation,
 and report layers. Unexpected exceptions are logged with their complete stack
-trace and persisted only as `Simulation failed (correlation_id=...)`. The
-coordinator and simulation workers report each failure once, before any
-database write, and that report carries the same correlation ID.
+trace and persisted as their redacted cause followed by the correlation ID,
+for example `OperationalError in stage12_child_state_create: ...
+(correlation_id=...)`. Redaction is described in the executor's
+`stage12_runtime.failure_causes` module; the cause is shortened, never the
+correlation ID, to fit the 512-character summary. The coordinator and
+simulation workers report each failure once, before any database write, and
+that report carries the same correlation ID.
 
 Before each v2 deployment, the independent Stage 12 precompute application
 builds three annual US dataset files and 60 current-law baseline files: one for

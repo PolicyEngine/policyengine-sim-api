@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import sys
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
@@ -59,6 +60,7 @@ from policyengine_simulation_contract.stage12_execution import (
     stage12_output_plan_sha256,
 )
 from policyengine_simulation_contract.spm import (
+    SPMComparisonProvenance,
     SPMRuntimeVersions,
     SPMSelection,
     build_spm_provenance,
@@ -243,6 +245,7 @@ def coordinate_report(*args, **kwargs):
 class RecordingRuntime:
     def __init__(self) -> None:
         self.operations: list[tuple[str, dict[str, object]]] = []
+        self.recorded_exceptions: list[Exception] = []
 
     @contextmanager
     def operation(self, name, *, attributes=None, **_kwargs):
@@ -254,6 +257,10 @@ class RecordingRuntime:
 
     def capture_context(self):
         return {}
+
+    def record_exception(self, error, *, handled, status_code=None):
+        assert handled
+        self.recorded_exceptions.append(error)
 
 
 def _context() -> Stage12InvocationContext:
@@ -780,7 +787,7 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
     store.children[simulation.simulation_execution_id] = _child(simulation)
 
     def fail(_simulation):
-        raise RuntimeError("contains sensitive calculation values")
+        raise RuntimeError("country package calculation failed")
 
     with pytest.raises(
         RuntimeError, match="Stage 12 simulation execution failed"
@@ -794,12 +801,72 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
             calculator=fail,
         )
 
-    assert "sensitive" not in str(error.value)
+    assert "country package calculation failed" not in str(error.value)
     child = store.children[simulation.simulation_execution_id]
     assert child.status is ComparisonRunLifecycleStatus.FAILED
     assert child.error_code == "simulation_execution_failed"
-    assert child.error_summary.startswith("Simulation failed (correlation_id=")
-    assert "sensitive" not in child.error_summary
+    assert _failure_cause(child.error_summary) == (
+        "RuntimeError in stage12_calculation (baseline): "
+        "country package calculation failed"
+    )
+
+
+def test_single_worker_persists_and_records_a_redacted_cause() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    runtime = RecordingRuntime()
+
+    def fail(_simulation):
+        raise RuntimeError(
+            "could not reach postgresql://runtime:database-secret@db.example/postgres"
+        )
+
+    with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=fail,
+            runtime=runtime,
+        )
+
+    child = store.children[simulation.simulation_execution_id]
+    assert _failure_cause(child.error_summary) == (
+        "RuntimeError in stage12_calculation (baseline): "
+        "could not reach postgresql://[REDACTED]@db.example/postgres"
+    )
+    assert "database-secret" not in child.error_summary
+    [recorded_cause] = runtime.recorded_exceptions
+    assert str(recorded_cause) == child.error_summary
+
+
+def test_single_worker_names_the_failing_artifact_write_stage() -> None:
+    class FailingSimulationArtifacts(FakeArtifacts):
+        def write_simulation(self, **_kwargs):
+            raise OSError("bucket write rejected")
+
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+
+    with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            store=store,
+            artifacts=FailingSimulationArtifacts(),
+            calculator=lambda _: _frames(),
+        )
+
+    assert _failure_cause(
+        store.children[simulation.simulation_execution_id].error_summary
+    ) == (
+        "OSError in stage12_simulation_artifact_write (baseline): bucket write rejected"
+    )
 
 
 def test_single_worker_preserves_typed_failure_values() -> None:
@@ -862,13 +929,22 @@ def _connection_limit_error() -> OperationalError:
     )
 
 
-def _correlation_id(error_summary: str) -> str:
-    """Return the correlation ID in a redacted failure summary."""
+CORRELATION_SUFFIX = re.compile(r" \(correlation_id=(?P<correlation_id>[0-9a-f]+)\)\Z")
 
-    prefix = "Simulation failed (correlation_id="
-    assert error_summary.startswith(prefix)
-    assert error_summary.endswith(")")
-    return error_summary.removeprefix(prefix).removesuffix(")")
+
+def _correlation_id(error_summary: str) -> str:
+    """Return the correlation ID that ends a redacted failure summary."""
+
+    match = CORRELATION_SUFFIX.search(error_summary)
+    assert match is not None, error_summary
+    return match["correlation_id"]
+
+
+def _failure_cause(error_summary: str) -> str:
+    """Return the redacted cause before a failure summary's correlation ID."""
+
+    _correlation_id(error_summary)
+    return CORRELATION_SUFFIX.sub("", error_summary)
 
 
 class TelemetryRecordingRuntime(RecordingRuntime):
@@ -953,6 +1029,10 @@ def test_single_worker_reports_failure_before_an_unwritable_failure_record() -> 
         "correlation_id": _correlation_id(failure_write[1]),
     }
     assert failure_write[0] == "failure_write"
+    assert _failure_cause(failure_write[1]) == (
+        "ValueError in stage12_calculation (baseline): "
+        "country column missing from household data"
+    )
     assert persistence_report[0] == "telemetry"
     assert persistence_report[1][0] == (
         "Stage 12 failure record could not be persisted"
@@ -1366,7 +1446,7 @@ class ConcurrentInvoker:
             started = time.monotonic()
             time.sleep(0.05)
             if role == self.fail_role:
-                raise RuntimeError("child failed with sensitive values")
+                raise RuntimeError("child calculation failed")
             frames = _frames(100.0 if role == "baseline" else 120.0)
             if self.missing_column and role == "reform":
                 frames["household"] = frames["household"].drop(
@@ -1663,6 +1743,50 @@ def test_comparison_failure_does_not_change_successful_stage12_report() -> None:
     assert artifacts.comparison_writes == []
 
 
+class UnavailableProductionCall:
+    object_id = "production-job-1"
+
+    def get(self, *, timeout=None):
+        raise ConnectionError(
+            "production result unavailable at "
+            "https://storage.example.com/result.json?X-Goog-Signature=signed-value"
+        )
+
+
+class UnavailableProductionInvoker(ConcurrentInvoker):
+    def restore(self, invocation_id):
+        if invocation_id == "production-job-1":
+            return UnavailableProductionCall()
+        return super().restore(invocation_id)
+
+
+def test_comparison_failure_stores_a_redacted_cause() -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    context = _context().model_copy(
+        update={"production_function_call_id": "production-job-1"}
+    )
+
+    coordinate_report(
+        _report().model_dump(mode="json"),
+        context.model_dump(mode="json"),
+        _automatic_parent().model_dump(mode="json"),
+        application_name=context.modal_application,
+        coordinator_invocation_id="coordinator-1",
+        store=store,
+        artifacts=artifacts,
+        invoker=UnavailableProductionInvoker(artifacts),
+        aggregator=lambda **_: _aggregate_payload({"budget": 100}),
+    )
+
+    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
+    assert store.parent.comparison_status is ResultComparisonStatus.FAILED
+    assert store.parent.comparison_error_summary == (
+        "ConnectionError: production result unavailable at "
+        "https://storage.example.com/result.json?[REDACTED]"
+    )
+
+
 def test_repeated_submission_does_not_retry_failed_comparison() -> None:
     store = FakeStore()
     parent = _automatic_parent()
@@ -1735,12 +1859,13 @@ def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None
             aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
         )
 
-    assert "sensitive" not in str(error.value)
+    assert "child calculation failed" not in str(error.value)
 
     assert artifacts.aggregate_writes == []
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
-    assert store.parent.error_summary.startswith("Simulation failed (correlation_id=")
-    assert "sensitive" not in store.parent.error_summary
+    assert _failure_cause(store.parent.error_summary) == (
+        "RuntimeError in stage12_child_wait (reform): child calculation failed"
+    )
     failed_child = store.children[REFORM_ID]
     assert failed_child.status is ComparisonRunLifecycleStatus.FAILED
     assert failed_child.error_code == "simulation_invocation_failed"
@@ -1969,7 +2094,7 @@ def test_coordinator_rejects_artifacts_that_do_not_satisfy_the_shared_plan(
 def test_coordinator_records_failure_when_child_persistence_fails() -> None:
     class FailingChildStore(FakeStore):
         def create_or_resolve_simulation(self, record):
-            raise RuntimeError("sensitive database detail")
+            raise RuntimeError("database rejected the child record")
 
     store = FailingChildStore()
 
@@ -1987,7 +2112,123 @@ def test_coordinator_records_failure_when_child_persistence_fails() -> None:
 
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_code == "report_coordination_failed"
-    assert store.parent.error_summary.startswith("Simulation failed (correlation_id=")
+    assert _failure_cause(store.parent.error_summary) == (
+        "RuntimeError in stage12_child_state_create: database rejected the child record"
+    )
+
+
+class WorkerRecordedFailureCall:
+    """A child whose worker persisted its cause before Modal raised."""
+
+    def __init__(self, object_id, store, simulation_execution_id, worker_summary):
+        self.object_id = object_id
+        self.store = store
+        self.simulation_execution_id = simulation_execution_id
+        self.worker_summary = worker_summary
+
+    def get(self, *, timeout=None):
+        child = self.store.children[self.simulation_execution_id]
+        self.store.children[self.simulation_execution_id] = child.model_copy(
+            update={
+                "status": ComparisonRunLifecycleStatus.FAILED,
+                "error_code": "simulation_execution_failed",
+                "error_summary": self.worker_summary,
+                "completed_at": NOW,
+            }
+        )
+        raise RuntimeError("Stage 12 simulation execution failed")
+
+
+class UnreachedCall:
+    def __init__(self, object_id):
+        self.object_id = object_id
+
+    def get(self, *, timeout=None):
+        raise AssertionError("the coordinator observes baseline first")
+
+    def cancel(self):
+        return None
+
+
+class WorkerRecordedFailureInvoker:
+    def __init__(self, store, worker_summary):
+        self.store = store
+        self.worker_summary = worker_summary
+
+    def spawn(self, *, simulation, **_):
+        planned = PlannedSimulationExecutionInput.model_validate(simulation)
+        if planned.role is SimulationRole.BASELINE:
+            return WorkerRecordedFailureCall(
+                "call-baseline",
+                self.store,
+                planned.simulation_execution_id,
+                self.worker_summary,
+            )
+        return UnreachedCall("call-reform")
+
+    def restore(self, invocation_id):
+        raise AssertionError(f"unexpected restored invocation {invocation_id}")
+
+
+def test_coordinator_keeps_the_cause_recorded_by_a_failed_worker() -> None:
+    store = FakeStore()
+    worker_summary = (
+        "ValueError in stage12_calculation (baseline): "
+        "Variable 'country' not found in household data "
+        "(correlation_id=0123456789abcdef0123456789abcdef)"
+    )
+    runtime = RecordingRuntime()
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=FakeArtifacts(),
+            invoker=WorkerRecordedFailureInvoker(store, worker_summary),
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
+            runtime=runtime,
+        )
+
+    failed_child = store.children[BASELINE_ID]
+    assert failed_child.error_code == "simulation_execution_failed"
+    assert failed_child.error_summary == worker_summary
+    assert store.parent.error_code == "simulation_execution_failed"
+    assert store.parent.error_summary == worker_summary
+    [recorded_cause] = runtime.recorded_exceptions
+    assert str(recorded_cause) == worker_summary
+
+
+def test_coordinator_names_the_stage_that_rejected_the_aggregate() -> None:
+    class RejectingAggregateArtifacts(FakeArtifacts):
+        def write_aggregate(self, *, prefix, payload):
+            SPMComparisonProvenance.model_validate(payload["result"]["spm_provenance"])
+
+    store = FakeStore()
+    artifacts = RejectingAggregateArtifacts()
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=ConcurrentInvoker(artifacts),
+            aggregator=lambda **_: {"result": {"spm_provenance": None}},
+        )
+
+    assert _failure_cause(store.parent.error_summary) == (
+        "ValidationError in stage12_aggregate_artifact_write: "
+        "1 validation error for SPMComparisonProvenance: "
+        "Input should be a valid dictionary or instance "
+        "of SPMComparisonProvenance [model_type]"
+    )
 
 
 def test_coordinator_builds_its_store_with_the_coordinator_runtime(
@@ -2225,6 +2466,9 @@ def test_coordinator_reports_failure_before_an_unwritable_failure_record() -> No
     }
     assert original_report[1][2] is aggregation_error
     assert failure_write[0] == "failure_write"
+    assert _failure_cause(failure_write[1]) == (
+        "ValueError in stage12_aggregation: aggregate failed validation"
+    )
     assert isinstance(persistence_report[1][2], OperationalError)
     assert store.parent.status is ComparisonRunLifecycleStatus.RUNNING
 
@@ -2275,6 +2519,9 @@ def test_coordinator_reports_a_child_failure_once_when_its_record_is_unwritable(
     # The report record is still written after the child record could not be.
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_code == "simulation_invocation_failed"
+    assert _failure_cause(store.parent.error_summary) == (
+        "RuntimeError in stage12_child_wait (baseline): child calculation failed"
+    )
 
 
 class RefusingDispatchInvoker:
@@ -2332,8 +2579,49 @@ def test_coordinator_reports_a_child_dispatch_failure_once() -> None:
     assert invoker.events == ["spawn:baseline"]
     assert baseline_child.status is ComparisonRunLifecycleStatus.FAILED
     assert baseline_child.error_code == "simulation_dispatch_failed"
+    assert _failure_cause(baseline_child.error_summary) == (
+        "ConnectionError in stage12_child_dispatch (baseline): "
+        "Modal refused the dispatch"
+    )
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_summary == baseline_child.error_summary
+
+
+def test_coordinator_records_a_redacted_dispatch_failure_cause() -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    invoker = RefusingDispatchInvoker(
+        ConnectionError("Modal rejected the call with token=opaque-token")
+    )
+    runtime = RecordingRuntime()
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=invoker,
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
+            runtime=runtime,
+        )
+
+    assert invoker.events == ["spawn:baseline"]
+    assert artifacts.aggregate_writes == []
+    failed_child = store.children[BASELINE_ID]
+    assert failed_child.status is ComparisonRunLifecycleStatus.FAILED
+    assert failed_child.error_code == "simulation_dispatch_failed"
+    assert _failure_cause(failed_child.error_summary) == (
+        "ConnectionError in stage12_child_dispatch (baseline): "
+        "Modal rejected the call with token=[REDACTED]"
+    )
+    assert store.parent.error_code == "simulation_dispatch_failed"
+    assert store.parent.error_summary == failed_child.error_summary
+    [recorded_cause] = runtime.recorded_exceptions
+    assert str(recorded_cause) == failed_child.error_summary
 
 
 def test_coordinator_rejects_incompatible_row_identity() -> None:
@@ -2703,7 +2991,11 @@ def _assert_original_coordinator_failure(error, store) -> None:
     assert isinstance(error.value.__context__, StartupWriteError)
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_code == "report_coordination_failed"
-    assert "sensitive" not in store.parent.error_summary
+    original_error = error.value.__context__
+    assert _failure_cause(store.parent.error_summary).startswith(
+        f"{type(original_error).__name__} "
+    )
+    assert _failure_cause(store.parent.error_summary).endswith(f": {original_error}")
 
 
 def _coordination_log(caplog, level):
@@ -3355,10 +3647,19 @@ def test_an_unexpected_failure_is_reported_exactly_once(
     correlation_id = _correlation_id(error_summary)
     logged_failures = [record for record in caplog.records if record.exc_info]
     if runtime is not None:
-        [(kind, message, attributes, reported_error)] = runtime.reports
+        [(kind, message, attributes, reported_error)] = [
+            report for report in runtime.reports if report[0] == "log"
+        ]
         assert (kind, message) == ("log", "Stage 12 execution failed")
         assert reported_error is original_error
         assert attributes["correlation_id"] == correlation_id
+        # The redacted cause, never the original error, is also attached to
+        # the failing operation, once.
+        [recorded_cause] = [
+            report[3] for report in runtime.reports if report[0] == "exception"
+        ]
+        assert str(recorded_cause) == error_summary
+        assert sorted(report[0] for report in runtime.reports) == ["exception", "log"]
         assert logged_failures == []
     else:
         [logged_failure] = logged_failures
@@ -3416,7 +3717,13 @@ def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
 
     child = store.children[BASELINE_ID]
     assert child.error_code == "segment_execution_failed"
-    [(kind, message, attributes, reported_error)] = runtime.reports
+    [(kind, message, attributes, reported_error)] = [
+        report for report in runtime.reports if report[0] == "log"
+    ]
+    [recorded_cause] = [
+        report[3] for report in runtime.reports if report[0] == "exception"
+    ]
+    assert str(recorded_cause) == child.error_summary
     assert (kind, message) == ("log", "Stage 12 execution failed")
     assert reported_error is segment_error
     assert attributes == {

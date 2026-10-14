@@ -9,10 +9,9 @@ from typing import Any
 from policyengine_simulation_contract.spm import spm_error_detail
 from pydantic import BaseModel, ConfigDict
 
-from policyengine_simulation_observability.errors import (
-    GENERIC_JOB_FAILURE_MESSAGE,
-    make_correlation_id,
-)
+from policyengine_simulation_observability.errors import make_correlation_id
+
+from .failure_causes import StageProgress, failure_summary
 
 ERROR_CODE_MAX_LENGTH = 64
 ERROR_SUMMARY_MAX_LENGTH = 512
@@ -89,13 +88,15 @@ def redacted_failure_detail(
     *,
     default_code: str,
     segment_index: int | None = None,
+    progress: StageProgress | None = None,
 ) -> Stage12FailureDetail:
     """Retain typed public failures and redact unexpected exception messages.
 
     This only describes the failure; it does not report it. Any other error
-    is summarized by a generic message and a new correlation ID, and the
-    caller reports the error once with that ID so the summary leads back to
-    it.
+    is summarized by its redacted cause (see ``failure_summary``), naming the
+    stage ``progress`` recorded, and a new correlation ID. The caller reports
+    the error once with that ID so the summary leads back to it. The cause is
+    shortened, never the ID, to fit the summary limit.
     """
 
     if isinstance(error, Stage12ExecutionError):
@@ -115,12 +116,14 @@ def redacted_failure_detail(
         )
 
     correlation_id = make_correlation_id()
-    summary = f"{GENERIC_JOB_FAILURE_MESSAGE} (correlation_id={correlation_id})"
+    correlation = f" (correlation_id={correlation_id})"
+    cause = failure_summary(error, progress=progress)
     if segment_index is not None:
-        summary = f"Segment {segment_index}: {summary}"
+        cause = f"Segment {segment_index}: {cause}"
+    cause = _bounded(cause, ERROR_SUMMARY_MAX_LENGTH - len(correlation))
     return _safe_detail(
         error_code=default_code,
-        error_summary=summary,
+        error_summary=f"{cause}{correlation}",
         correlation_id=correlation_id,
         segment_index=segment_index,
     )
