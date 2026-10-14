@@ -10,9 +10,11 @@ class InMemoryObjectStore:
     """Keep uploaded objects by path, refusing to replace an existing one."""
 
     def __init__(self) -> None:
+        """Start with no stored objects."""
         self.objects: dict[str, bytes] = {}
 
     def upload_bytes(self, path: str, payload: bytes, *, content_type: str) -> bool:
+        """Store ``payload`` at ``path`` and report whether this call created it."""
         # The real store uploads with ``if_generation_match=0``: an existing
         # object is left in place and the call reports that it created nothing.
         if path in self.objects:
@@ -21,4 +23,5 @@ class InMemoryObjectStore:
         return True
 
     def read_bytes(self, path: str) -> bytes | None:
+        """Return the bytes stored at ``path``, or None when nothing is there."""
         return self.objects.get(path)
