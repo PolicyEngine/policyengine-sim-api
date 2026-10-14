@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 
 import pytest
@@ -2070,3 +2071,100 @@ def test_pending_plan_can_be_inspected_locally_before_upload(
     _main(monkeypatch, "--print-pending-plan")
     assert json.loads(capsys.readouterr().out) == plan
     assert store.snapshot() == saved
+
+
+def _routing_state(**overrides):
+    state = {
+        "schema_version": 1,
+        "generation": "4.19.1:app-4-19-1",
+        "latest": {"policyengine": "4.19.1", "us": "1.687.0", "uk": "2.88.14"},
+        "routes": {
+            "policyengine": {"4.19.1": "app-4-19-1"},
+            "us": {"1.687.0": "app-4-19-1"},
+            "uk": {"2.88.14": "app-4-19-1"},
+        },
+        "bundles": {
+            "4.19.1": {"app_name": "app-4-19-1", "policyengine_version": "4.19.1"}
+        },
+    }
+    for path, value in overrides.items():
+        section, _, key = path.partition(".")
+        if key:
+            state[section] = {**state[section], key: value}
+        else:
+            state[section] = value
+    return state
+
+
+@pytest.mark.parametrize(
+    ("overrides", "required", "message"),
+    [
+        ({"schema_version": 2}, (), "Routing state schema_version must be 1"),
+        ({"latest.us": ""}, (), "Routing state latest.us is missing"),
+        (
+            {"latest.uk": "9.9.9"},
+            (),
+            "Routing state latest.uk='9.9.9' has no route",
+        ),
+        (
+            {"latest.policyengine": None},
+            (),
+            "Routing state latest.policyengine is missing",
+        ),
+        (
+            {"routes.policyengine": {}, "latest.policyengine": None},
+            ("4.19.1",),
+            "Routing state latest.policyengine is missing",
+        ),
+        (
+            {"bundles": {}},
+            ("4.19.1",),
+            "Routing state policyengine route '4.19.1' has no bundle manifest",
+        ),
+        (
+            {
+                "bundles": {
+                    "4.19.1": {"app_name": "app-4-19-1", "policyengine_version": "4"}
+                }
+            },
+            (),
+            "Routing state bundle manifest key does not match policyengine_version "
+            "for '4.19.1'",
+        ),
+        (
+            {
+                "bundles": {
+                    "4.19.1": {"app_name": "other", "policyengine_version": "4.19.1"}
+                }
+            },
+            (),
+            "Routing state bundle manifest app_name does not match route for '4.19.1'",
+        ),
+        (
+            {"latest.us": "", "bundles": {}},
+            ("4.19.1",),
+            "Routing state latest.us is missing",
+        ),
+    ],
+)
+def test_validate_routing_state_reports_the_first_inconsistency(
+    overrides, required, message
+):
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+        registry.validate_routing_state(
+            _routing_state(**overrides),
+            required_policyengine_manifests=required,
+        )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {},
+        {"bundles": {}},
+        {"bundles": {"4.19.1": "not-a-manifest"}},
+        {"routes.policyengine": {}, "latest.policyengine": None, "bundles": {}},
+    ],
+)
+def test_validate_routing_state_accepts_consistent_states(overrides):
+    registry.validate_routing_state(_routing_state(**overrides))
