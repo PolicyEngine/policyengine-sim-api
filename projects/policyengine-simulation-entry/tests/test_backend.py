@@ -249,3 +249,61 @@ async def test_get_connection_error_is_retried_once():
 
     assert result.status_code == 200
     assert gateway_attempts == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("health_status", "expected"),
+    [(200, True), (204, False), (503, False)],
+)
+async def test_readiness_requires_a_200_health_response(health_status, expected):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token":
+            return httpx.Response(
+                200,
+                json={"access_token": "service-token", "expires_in": 3600},
+            )
+        assert request.method == "GET"
+        assert request.url.path == "/health"
+        return httpx.Response(health_status, json={"status": "healthy"})
+
+    backend = OldGatewayBackend(
+        make_settings(),
+        transport=httpx.MockTransport(handler),
+    )
+    await backend.start()
+    try:
+        assert await backend.ready() is expected
+    finally:
+        await backend.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.ConnectError("refused"), httpx.ReadTimeout("slow")],
+    ids=["unreachable", "timed-out"],
+)
+async def test_readiness_is_false_when_the_gateway_cannot_answer(failure):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token":
+            return httpx.Response(
+                200,
+                json={"access_token": "service-token", "expires_in": 3600},
+            )
+        raise failure
+
+    backend = OldGatewayBackend(
+        make_settings(),
+        transport=httpx.MockTransport(handler),
+    )
+    await backend.start()
+    try:
+        assert await backend.ready() is False
+    finally:
+        await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_readiness_is_false_before_the_backend_starts():
+    assert await OldGatewayBackend(make_settings()).ready() is False
