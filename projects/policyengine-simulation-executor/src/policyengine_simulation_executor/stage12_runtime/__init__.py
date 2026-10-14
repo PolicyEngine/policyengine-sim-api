@@ -5,7 +5,11 @@ from .aggregation import (
     build_aggregate_report,
     build_spm_result,
 )
-from .coordination import coordinate_report
+from .coordination import (
+    CoordinatorDependencies,
+    CoordinatorInvocation,
+    coordinate_report,
+)
 from .simulation import (
     SimulationCalculation,
     calculate_simulation_frames,
@@ -18,6 +22,8 @@ from .simulation import (
 _build_spm_result = build_spm_result
 
 __all__ = [
+    "CoordinatorDependencies",
+    "CoordinatorInvocation",
     "RetainedSimulationOutput",
     "SimulationCalculation",
     "build_aggregate_report",
