@@ -504,3 +504,61 @@ def test_successful_coordination_records_every_stage_and_state():
         assert child.started_at == CLAIMED_AT
         assert child.updated_at == CLAIMED_AT
         assert child.simulation_callable == "run_single_simulation_us"
+
+
+def test_modal_child_invoker_spawns_and_restores_deployed_functions(monkeypatch):
+    from types import SimpleNamespace
+
+    from policyengine_simulation_executor.stage12_runtime import dependencies
+
+    calls = []
+
+    def from_name(*args, **kwargs):
+        calls.append(("from_name", args, kwargs))
+
+        def spawn(*spawn_args, **spawn_kwargs):
+            calls.append(("spawn", spawn_args, spawn_kwargs))
+            return "spawned-call"
+
+        return SimpleNamespace(spawn=spawn)
+
+    def from_id(invocation_id):
+        calls.append(("from_id", (invocation_id,), {}))
+        return "restored-call"
+
+    fake_modal = SimpleNamespace(
+        Function=SimpleNamespace(from_name=from_name),
+        FunctionCall=SimpleNamespace(from_id=from_id),
+    )
+
+    def import_modal(module_name):
+        assert module_name == "modal"
+        return fake_modal
+
+    monkeypatch.setattr(dependencies, "import_module", import_modal)
+    invoker = dependencies.ModalChildInvoker()
+
+    spawned = invoker.spawn(
+        application_name="application",
+        function_name="run_single_simulation_us",
+        environment="staging",
+        simulation={"role": "baseline"},
+        context={"request_id": "request-1"},
+        observability_context={"traceparent": "trace"},
+    )
+    restored = invoker.restore("call-1")
+
+    assert (spawned, restored) == ("spawned-call", "restored-call")
+    assert calls == [
+        (
+            "from_name",
+            ("application", "run_single_simulation_us"),
+            {"environment_name": "staging"},
+        ),
+        (
+            "spawn",
+            ({"role": "baseline"}, {"request_id": "request-1"}),
+            {"observability_context": {"traceparent": "trace"}},
+        ),
+        ("from_id", ("call-1",), {}),
+    ]
