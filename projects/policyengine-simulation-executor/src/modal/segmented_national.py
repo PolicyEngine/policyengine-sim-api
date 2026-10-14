@@ -52,7 +52,7 @@ from policyengine_simulation_observability.stages import (
     Stage,
 )
 from policyengine_simulation_observability.telemetry import split_internal_payload
-from src.modal.fanout import build_child_payload, next_backoff
+from src.modal.fanout import PollBackoff, build_child_payload, next_backoff
 
 import modal
 
@@ -67,6 +67,14 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL_INITIAL_SECONDS = 0.5
 POLL_INTERVAL_MAX_SECONDS = 8.0
 POLL_INTERVAL_BACKOFF_FACTOR = 2.0
+DEFAULT_POLL_BACKOFF = PollBackoff(
+    initial_seconds=POLL_INTERVAL_INITIAL_SECONDS,
+    maximum_seconds=POLL_INTERVAL_MAX_SECONDS,
+    factor=POLL_INTERVAL_BACKOFF_FACTOR,
+)
+# A child's poll may fail this many times in a row before the job fails:
+# one transient poll-RPC blip is retried, a real child failure repeats.
+CONSECUTIVE_POLL_ERROR_LIMIT = 2
 
 # The dedicated children pool (see module docstring).
 SEGMENT_FUNCTION_NAME = "run_simulation_segment"
@@ -190,8 +198,7 @@ class SegmentedNationalRunner:
         app_name: str,
         runtime: ObservabilityRuntime,
         modal_module: ModuleType | None = None,
-        poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
-        poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
+        poll_backoff: PollBackoff = DEFAULT_POLL_BACKOFF,
         child_deadline_seconds: float = CHILD_DEADLINE_SECONDS,
         parent_budget_seconds: float = (
             PARENT_FUNCTION_TIMEOUT_SECONDS - PARENT_COMPLETION_MARGIN_SECONDS
@@ -208,8 +215,9 @@ class SegmentedNationalRunner:
         self.runtime = runtime
         self.progress = progress
         self.modal = modal if modal_module is None else modal_module
-        self.poll_interval_initial_seconds = poll_interval_seconds
-        self.poll_interval_max_seconds = poll_interval_max_seconds
+        self.poll_interval_initial_seconds = poll_backoff.initial_seconds
+        self.poll_interval_max_seconds = poll_backoff.maximum_seconds
+        self.poll_interval_backoff_factor = poll_backoff.factor
         self.child_deadline_seconds = child_deadline_seconds
         self.parent_budget_seconds = parent_budget_seconds
         self.clock = clock
@@ -356,7 +364,7 @@ class SegmentedNationalRunner:
                     # real child failure re-raises on the next probe too.
                     attempts = poll_errors.get(index, 0) + 1
                     poll_errors[index] = attempts
-                    if attempts < 2:
+                    if attempts < CONSECUTIVE_POLL_ERROR_LIMIT:
                         logger.warning(
                             "Poll error for group %s (attempt %d), retrying: %s",
                             child.group_label,
@@ -396,7 +404,7 @@ class SegmentedNationalRunner:
                 time.sleep(current_sleep)
                 current_sleep = next_backoff(
                     current_sleep,
-                    factor=POLL_INTERVAL_BACKOFF_FACTOR,
+                    factor=self.poll_interval_backoff_factor,
                     maximum=self.poll_interval_max_seconds,
                 )
             elif progress_made:

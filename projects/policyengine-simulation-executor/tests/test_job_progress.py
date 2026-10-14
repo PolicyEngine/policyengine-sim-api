@@ -36,6 +36,7 @@ from policyengine_simulation_executor.simulation_runtime import (
     _run_simulation_impl_core,
 )
 from src.modal import segmented_national as sn
+from src.modal.fanout import PollBackoff
 
 T0 = datetime(2026, 10, 13, 12, 0, 0, tzinfo=UTC)
 
@@ -658,8 +659,11 @@ def _segmented_runner(calls, progress, monkeypatch):
         app_name="policyengine-simulation-py-test",
         runtime=NoOpObservabilityRuntime(),
         modal_module=fake_modal,
-        poll_interval_seconds=0.001,
-        poll_interval_max_seconds=0.002,
+        poll_backoff=PollBackoff(
+            initial_seconds=0.001,
+            maximum_seconds=0.002,
+            factor=sn.POLL_INTERVAL_BACKOFF_FACTOR,
+        ),
         progress=progress,
     )
 
