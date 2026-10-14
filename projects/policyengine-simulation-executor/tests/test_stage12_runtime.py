@@ -716,7 +716,7 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
     store.children[simulation.simulation_execution_id] = _child(simulation)
 
     def fail(_simulation):
-        raise RuntimeError("contains sensitive calculation values")
+        raise RuntimeError("country package calculation failed")
 
     with pytest.raises(
         RuntimeError, match="Stage 12 simulation execution failed"
@@ -730,13 +730,13 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
             calculator=fail,
         )
 
-    assert "sensitive" not in str(error.value)
+    assert "country package calculation failed" not in str(error.value)
     child = store.children[simulation.simulation_execution_id]
     assert child.status is ComparisonRunLifecycleStatus.FAILED
     assert child.error_code == "simulation_execution_failed"
     assert child.error_summary == (
         "RuntimeError in stage12_calculation (baseline): "
-        "contains sensitive calculation values"
+        "country package calculation failed"
     )
 
 
@@ -1254,7 +1254,7 @@ class ConcurrentInvoker:
             started = time.monotonic()
             time.sleep(0.05)
             if role == self.fail_role:
-                raise RuntimeError("child failed with sensitive values")
+                raise RuntimeError("child calculation failed")
             frames = _frames(100.0 if role == "baseline" else 120.0)
             if self.missing_column and role == "reform":
                 frames["household"] = frames["household"].drop(
@@ -1551,6 +1551,50 @@ def test_comparison_failure_does_not_change_successful_stage12_report() -> None:
     assert artifacts.comparison_writes == []
 
 
+class UnavailableProductionCall:
+    object_id = "production-job-1"
+
+    def get(self, *, timeout=None):
+        raise ConnectionError(
+            "production result unavailable at "
+            "https://storage.example.com/result.json?X-Goog-Signature=signed-value"
+        )
+
+
+class UnavailableProductionInvoker(ConcurrentInvoker):
+    def restore(self, invocation_id):
+        if invocation_id == "production-job-1":
+            return UnavailableProductionCall()
+        return super().restore(invocation_id)
+
+
+def test_comparison_failure_stores_a_redacted_cause() -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    context = _context().model_copy(
+        update={"production_function_call_id": "production-job-1"}
+    )
+
+    coordinate_report(
+        _report().model_dump(mode="json"),
+        context.model_dump(mode="json"),
+        _automatic_parent().model_dump(mode="json"),
+        application_name=context.modal_application,
+        coordinator_invocation_id="coordinator-1",
+        store=store,
+        artifacts=artifacts,
+        invoker=UnavailableProductionInvoker(artifacts),
+        aggregator=lambda **_: {"result": {"budget": 100}},
+    )
+
+    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
+    assert store.parent.comparison_status is ResultComparisonStatus.FAILED
+    assert store.parent.comparison_error_summary == (
+        "ConnectionError: production result unavailable at "
+        "https://storage.example.com/result.json?[REDACTED]"
+    )
+
+
 def test_repeated_submission_does_not_retry_failed_comparison() -> None:
     store = FakeStore()
     parent = _automatic_parent()
@@ -1623,9 +1667,11 @@ def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None
             aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
         )
 
-    assert "sensitive" not in str(error.value)
+    assert "child calculation failed" not in str(error.value)
 
-    expected_summary = "RuntimeError in stage12_child_wait (reform): child failed with sensitive values"
+    expected_summary = (
+        "RuntimeError in stage12_child_wait (reform): child calculation failed"
+    )
     assert artifacts.aggregate_writes == []
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_summary == expected_summary
@@ -1668,7 +1714,7 @@ def test_coordinator_rejects_artifacts_that_do_not_satisfy_the_shared_plan(
 def test_coordinator_records_failure_when_child_persistence_fails() -> None:
     class FailingChildStore(FakeStore):
         def create_or_resolve_simulation(self, record):
-            raise RuntimeError("sensitive database detail")
+            raise RuntimeError("database rejected the child record")
 
     store = FailingChildStore()
 
@@ -1687,8 +1733,60 @@ def test_coordinator_records_failure_when_child_persistence_fails() -> None:
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_code == "report_coordination_failed"
     assert store.parent.error_summary == (
-        "RuntimeError in stage12_child_state_create: sensitive database detail"
+        "RuntimeError in stage12_child_state_create: database rejected the child record"
     )
+
+
+class RefusingDispatchInvoker:
+    def __init__(self, dispatch_error):
+        self.dispatch_error = dispatch_error
+        self.events = []
+
+    def spawn(self, *, simulation, **_):
+        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
+        self.events.append(f"spawn:{role}")
+        raise self.dispatch_error
+
+    def restore(self, invocation_id):
+        raise AssertionError(f"unexpected restored invocation {invocation_id}")
+
+
+def test_coordinator_records_a_redacted_dispatch_failure_cause() -> None:
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    invoker = RefusingDispatchInvoker(
+        ConnectionError("Modal rejected the call with token=opaque-token")
+    )
+    runtime = RecordingRuntime()
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=artifacts,
+            invoker=invoker,
+            aggregator=lambda **_: {"must": "not run"},
+            runtime=runtime,
+        )
+
+    expected_summary = (
+        "ConnectionError in stage12_child_dispatch (baseline): "
+        "Modal rejected the call with token=[REDACTED]"
+    )
+    assert invoker.events == ["spawn:baseline"]
+    assert artifacts.aggregate_writes == []
+    failed_child = store.children[BASELINE_ID]
+    assert failed_child.status is ComparisonRunLifecycleStatus.FAILED
+    assert failed_child.error_code == "simulation_dispatch_failed"
+    assert failed_child.error_summary == expected_summary
+    assert store.parent.error_code == "report_coordination_failed"
+    assert store.parent.error_summary == expected_summary
+    [recorded_cause] = runtime.recorded_exceptions
+    assert str(recorded_cause) == expected_summary
 
 
 class WorkerRecordedFailureCall:
@@ -2079,23 +2177,8 @@ def test_coordinator_reports_a_child_failure_once_when_its_record_is_unwritable(
     # The report record is still written after the child record could not be.
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_summary == (
-        "RuntimeError in stage12_child_wait (baseline): "
-        "child failed with sensitive values"
+        "RuntimeError in stage12_child_wait (baseline): child calculation failed"
     )
-
-
-class RefusingDispatchInvoker:
-    def __init__(self, dispatch_error):
-        self.dispatch_error = dispatch_error
-        self.events = []
-
-    def spawn(self, *, simulation, **_):
-        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
-        self.events.append(f"spawn:{role}")
-        raise self.dispatch_error
-
-    def restore(self, invocation_id):
-        raise AssertionError(f"unexpected restored invocation {invocation_id}")
 
 
 def test_coordinator_reports_a_child_dispatch_failure_once() -> None:
@@ -2232,7 +2315,7 @@ class TimeoutCall:
         self.object_id = object_id
 
     def get(self, *, timeout=None):
-        raise TimeoutError("contains sensitive timeout details")
+        raise TimeoutError("child result was not ready")
 
 
 class TimeoutInvoker:
@@ -2268,13 +2351,12 @@ def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
             aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
         )
 
-    assert "sensitive" not in str(error.value)
+    assert "child result was not ready" not in str(error.value)
 
     assert invoker.events == ["spawn:baseline", "spawn:reform"]
     assert artifacts.aggregate_writes == []
     expected_summary = (
-        "TimeoutError in stage12_child_wait (baseline): "
-        "contains sensitive timeout details"
+        "TimeoutError in stage12_child_wait (baseline): child result was not ready"
     )
     assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
     assert store.parent.error_summary == expected_summary
