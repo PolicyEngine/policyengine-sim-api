@@ -1824,7 +1824,7 @@ def test_coordinator_observes_one_role_failure_while_the_peer_is_pending(
             store=store,
             artifacts=artifacts,
             invoker=ConcurrentFailureInvoker(),
-            aggregator=lambda **_: {"must": "not run"},
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
             sleep=lambda _: pytest.fail("failure should be observed before sleeping"),
         )
 
@@ -1927,7 +1927,7 @@ def test_coordinator_propagates_an_already_persisted_child_failure() -> None:
             store=store,
             artifacts=artifacts,
             invoker=PersistedFailureInvoker(),
-            aggregator=lambda **_: {"must": "not run"},
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
         )
 
     assert store.children[REFORM_ID].error_code == "invalid_policy_period"
@@ -2517,7 +2517,7 @@ def test_closed_wait_window_is_reported_before_its_failure_records() -> None:
             store=store,
             artifacts=FakeArtifacts(),
             invoker=invoker,
-            aggregator=lambda **_: {"must": "not run"},
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
             runtime=TelemetryRecordingRuntime(ordered_events),
             wait_timeout_seconds=0,
         )
@@ -2687,7 +2687,7 @@ def _coordinate_with(report, store, invoker, **coordinator_options):
         coordinator_invocation_id="coordinator-1",
         store=store,
         invoker=invoker,
-        aggregator=lambda **_: {"must": "not run"},
+        aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
         **coordinator_options,
     )
 
