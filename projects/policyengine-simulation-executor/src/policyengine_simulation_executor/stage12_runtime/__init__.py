@@ -1,6 +1,10 @@
 """Independent Stage 12 simulation execution and report coordination."""
 
-from .aggregation import build_aggregate_report, build_spm_result
+from .aggregation import (
+    RetainedSimulationOutput,
+    build_aggregate_report,
+    build_spm_result,
+)
 from .coordination import coordinate_report
 from .failures import (
     Stage12CancellationError,
@@ -35,6 +39,7 @@ from .simulation import (
 _build_spm_result = build_spm_result
 
 __all__ = [
+    "RetainedSimulationOutput",
     "SimulationCalculation",
     "Stage12CancellationError",
     "Stage12ExecutionError",

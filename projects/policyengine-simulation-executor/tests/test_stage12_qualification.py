@@ -133,10 +133,10 @@ def test_qualification_runs_matching_inputs_through_both_complete_paths() -> Non
 
     def aggregate_builder(**arguments):
         assert arguments["report"] == report
-        assert arguments["baseline_frames"] is baseline
-        assert arguments["reform_frames"] is reform
-        assert arguments["baseline_descriptor"].bundle == report.baseline.bundle
-        assert arguments["reform_descriptor"].bundle == report.reform.bundle
+        assert arguments["baseline"].frames is baseline
+        assert arguments["reform"].frames is reform
+        assert arguments["baseline"].descriptor.bundle == report.baseline.bundle
+        assert arguments["reform"].descriptor.bundle == report.reform.bundle
         return {
             "result": {
                 "model_version": report.baseline.bundle.country_package_version,

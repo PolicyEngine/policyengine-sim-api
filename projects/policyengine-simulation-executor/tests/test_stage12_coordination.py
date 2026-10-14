@@ -449,14 +449,7 @@ def test_successful_coordination_records_every_stage_and_state():
     )
 
     assert aggregated == [
-        [
-            "baseline_descriptor",
-            "baseline_frames",
-            "reform_descriptor",
-            "reform_frames",
-            "report",
-            "uk_local_authority_metadata",
-        ]
+        ["baseline", "reform", "report", "uk_local_authority_metadata"]
     ]
     assert runtime.events == [
         ("span", "stage12_coordinator_claim", {}),

@@ -81,6 +81,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
     serialize_simulation_frames,
 )
 from policyengine_simulation_executor.stage12_runtime import (
+    RetainedSimulationOutput,
     SimulationCalculation,
     Stage12SegmentRunner,
     _build_spm_result,
@@ -1189,10 +1190,12 @@ def test_aggregate_stand_ins_preserve_policy_and_cliff_options(monkeypatch) -> N
 
     result = build_aggregate_report(
         report=report,
-        baseline_frames=frames,
-        reform_frames=frames,
-        baseline_descriptor=artifacts.add_simulation(report.baseline),
-        reform_descriptor=artifacts.add_simulation(report.reform),
+        baseline=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.baseline)
+        ),
+        reform=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.reform)
+        ),
     )
 
     assert result["result"] == {"captured": True}
@@ -1249,10 +1252,12 @@ def test_aggregate_stand_ins_keep_bounded_policy_end_dates(monkeypatch) -> None:
 
     build_aggregate_report(
         report=report,
-        baseline_frames=frames,
-        reform_frames=frames,
-        baseline_descriptor=artifacts.add_simulation(report.baseline),
-        reform_descriptor=artifacts.add_simulation(report.reform),
+        baseline=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.baseline)
+        ),
+        reform=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.reform)
+        ),
     )
 
     for role, stop in (("baseline", "2026-12-31"), ("reform", "2027-12-31")):
@@ -1325,10 +1330,12 @@ def test_uk_aggregate_without_spm_provenance_is_written(monkeypatch) -> None:
 
     aggregate = build_aggregate_report(
         report=report,
-        baseline_frames=uk_frames,
-        reform_frames=uk_frames,
-        baseline_descriptor=artifacts.add_simulation(report.baseline),
-        reform_descriptor=artifacts.add_simulation(report.reform),
+        baseline=RetainedSimulationOutput(
+            uk_frames, artifacts.add_simulation(report.baseline)
+        ),
+        reform=RetainedSimulationOutput(
+            uk_frames, artifacts.add_simulation(report.reform)
+        ),
     )
     assert aggregate["result"]["spm_provenance"] is None
 
@@ -1376,10 +1383,12 @@ def test_aggregate_report_wraps_builder_output_with_report_provenance(
 
     result = build_aggregate_report(
         report=report,
-        baseline_frames=frames(100.0),
-        reform_frames=frames(120.0),
-        baseline_descriptor=artifacts.add_simulation(report.baseline),
-        reform_descriptor=artifacts.add_simulation(report.reform),
+        baseline=RetainedSimulationOutput(
+            frames(100.0), artifacts.add_simulation(report.baseline)
+        ),
+        reform=RetainedSimulationOutput(
+            frames(120.0), artifacts.add_simulation(report.reform)
+        ),
         uk_local_authority_metadata=None,
     )
 
@@ -1614,10 +1623,10 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
     assert result["artifact"]["uri"] == (
         f"gs://private/{context.artifact_prefix}/reports/aggregate.json"
     )
-    assert observed["baseline_frames"]["household"][
+    assert observed["baseline"].frames["household"][
         "household_net_income"
     ].tolist() == [100.0]
-    assert observed["reform_frames"]["household"]["household_net_income"].tolist() == [
+    assert observed["reform"].frames["household"]["household_net_income"].tolist() == [
         120.0
     ]
     assert observed["uk_local_authority_metadata"] is None

@@ -41,6 +41,7 @@ from policyengine_simulation_executor.stage12_timeouts import (
 )
 
 from .aggregation import (
+    RetainedSimulationOutput,
     build_aggregate_report,
     validate_aligned_outputs,
     validate_uk_local_authority_metadata,
@@ -792,10 +793,8 @@ def coordinate_report(
         with stage_span(Stage.STAGE12_AGGREGATION):
             aggregate = aggregator(
                 report=report,
-                baseline_frames=baseline_frames,
-                reform_frames=reform_frames,
-                baseline_descriptor=baseline,
-                reform_descriptor=reform,
+                baseline=RetainedSimulationOutput(baseline_frames, baseline),
+                reform=RetainedSimulationOutput(reform_frames, reform),
                 uk_local_authority_metadata=uk_local_authority_metadata,
             )
         with stage_span(Stage.STAGE12_AGGREGATE_ARTIFACT_WRITE):
