@@ -739,7 +739,11 @@ def test_gateway_submission_uses_registry_capability_before_spawn(monkeypatch):
 
 
 def test_segmented_child_input_error_is_not_redacted_or_retried(monkeypatch):
-    from src.modal.segmented_national import ChildExecution, SegmentedNationalRunner
+    from src.modal.segmented_national import (
+        CHILD_DEADLINE_SECONDS,
+        ChildExecution,
+        SegmentedNationalRunner,
+    )
 
     child = SimpleNamespace(
         get=Mock(
@@ -752,7 +756,7 @@ def test_segmented_child_input_error_is_not_redacted_or_retried(monkeypatch):
         call=child,
         attempt=1,
         dispatched_at=0.0,
-        deadline_seconds=900.0,
+        deadline_seconds=CHILD_DEADLINE_SECONDS,
     )
     runner = object.__new__(SegmentedNationalRunner)
     runner.poll_interval_initial_seconds = 0.001

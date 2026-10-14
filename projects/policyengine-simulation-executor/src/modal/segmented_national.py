@@ -63,7 +63,7 @@ SEGMENT_FUNCTION_NAME = "run_simulation_segment"
 # Seconds from dispatch before a child with no result is cancelled and
 # respawned. Successful children took 124 s at the median and at most 302 s
 # in the week to 13 October 2026, apart from one 2,672 s outlier.
-CHILD_DEADLINE_SECONDS = 900.0
+CHILD_DEADLINE_SECONDS = 1200.0
 # Must equal the run_simulation timeout in src/modal/app.py.
 PARENT_FUNCTION_TIMEOUT_SECONDS = 3600.0
 # Parent time kept back for the reduce, result return, and the work done

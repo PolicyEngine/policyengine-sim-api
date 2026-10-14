@@ -562,8 +562,12 @@ class TestSegmentedNationalChildDeadline:
         clock = ManualClock()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
         fake = FakeModal(calls)
-        # At the 900 s child deadline only 100 s of a 1,000 s budget remain.
-        runner = _runner(fake, clock=clock, parent_budget_seconds=1000)
+        # At the child deadline only 100 s of the parent budget remain.
+        runner = _runner(
+            fake,
+            clock=clock,
+            parent_budget_seconds=sn.CHILD_DEADLINE_SECONDS + 100,
+        )
 
         with pytest.raises(
             RuntimeError, match=r"only 100s of the parent budget remains"
@@ -579,13 +583,13 @@ class TestSegmentedNationalChildDeadline:
         clock = ManualClock()
         runtime = RecordingRuntime()
         calls = _calls_with_stuck_child(clock, _stuck_call(clock))
-        # At the 900 s child deadline 600 s of a 1,500 s budget remain: enough
-        # for a respawn, but less than a full child deadline.
+        # At the child deadline 600 s of the parent budget remain: enough for
+        # a respawn, but less than a full child deadline.
         runner = _runner(
             FakeModal(calls),
             runtime=runtime,
             clock=clock,
-            parent_budget_seconds=1500,
+            parent_budget_seconds=sn.CHILD_DEADLINE_SECONDS + 600,
         )
 
         with pytest.raises(
@@ -641,9 +645,12 @@ class TestSegmentedNationalChildDeadline:
 
     @pytest.mark.parametrize(
         "parent_budget_seconds,expected_attempt,expected_remaining_budget_seconds",
-        # A 3,000 s budget fits both 900 s attempts; a 1,000 s budget leaves
-        # too little after the first attempt for a respawn.
-        [(3000, 2, 1200), (1000, 1, 100)],
+        # The first budget fits both attempts with 600 s to spare; the second
+        # leaves too little after the first attempt for a respawn.
+        [
+            (2 * sn.CHILD_DEADLINE_SECONDS + 600, 2, 600),
+            (sn.CHILD_DEADLINE_SECONDS + 100, 1, 100),
+        ],
         ids=["respawn_also_overdue", "no_budget_for_a_respawn"],
     )
     def test__child_timeout_is_recorded_in_telemetry(
