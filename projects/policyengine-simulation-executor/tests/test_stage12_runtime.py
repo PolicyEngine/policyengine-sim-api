@@ -2464,6 +2464,61 @@ def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
     )
 
 
+def test_closed_wait_window_is_reported_before_its_failure_records() -> None:
+    ordered_events: list[tuple[str, object]] = []
+
+    class UnwritableFailureStore(FakeStore):
+        def replace_simulation_if_status(self, record, *, expected_status):
+            if record.status is ComparisonRunLifecycleStatus.FAILED:
+                ordered_events.append(("failure_write", record.error_code))
+                raise _connection_limit_error()
+            return super().replace_simulation_if_status(
+                record, expected_status=expected_status
+            )
+
+        def replace_report(self, record):
+            if record.status is ComparisonRunLifecycleStatus.FAILED:
+                ordered_events.append(("failure_write", record.error_code))
+                raise _connection_limit_error()
+            return super().replace_report(record)
+
+    store = UnwritableFailureStore()
+    invoker = TimeoutInvoker()
+
+    with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=FakeArtifacts(),
+            invoker=invoker,
+            aggregator=lambda **_: {"must": "not run"},
+            runtime=TelemetryRecordingRuntime(ordered_events),
+            wait_timeout_seconds=0,
+        )
+
+    original_report, *failure_writes, persistence_report = ordered_events
+    event_kind, (message, attributes, reported_error) = original_report
+    assert event_kind == "telemetry"
+    assert message == "Stage 12 execution failed"
+    assert attributes == {"stage12_failure_scope": "child_wait_timeout"}
+    assert reported_error.detail.error_code == "simulation_wait_timeout"
+    # Both cancellation records and the report record were attempted after
+    # the closed window had already been reported.
+    assert failure_writes == [
+        ("failure_write", "simulation_cancelled"),
+        ("failure_write", "simulation_cancelled"),
+        ("failure_write", "simulation_wait_timeout"),
+    ]
+    assert persistence_report[1][0] == (
+        "Stage 12 failure record could not be persisted"
+    )
+    assert store.parent.status is ComparisonRunLifecycleStatus.RUNNING
+
+
 class StartupWriteError(Exception):
     """A coordinator persistence failure after a child may have started."""
 
