@@ -11,8 +11,8 @@ from types import SimpleNamespace
 import pytest
 from conftest import NoOpObservabilityRuntime
 from fixtures.fake_modal import install_fake_modal
+from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from fixtures.spm_doubles import installed_spm_selection, spm_capable_simulation
-from fixtures.test_simulation_api_contracts import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_contract.job_progress import (
     JobExecution,
     JobProgressRecord,
