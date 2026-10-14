@@ -276,7 +276,7 @@ class SegmentedNationalRunner:
             self.runtime.set_context(partition_uncovered_regions=",".join(uncovered))
             self.groups[-1] = list(self.groups[-1]) + uncovered
 
-    def _spawn_child(self, group: list[str], *, attempt: int) -> Any:
+    def _spawn_child(self, group: list[str], *, attempt: int) -> modal.FunctionCall:
         payload = build_group_child_payload(self.params, group)
         observability_context = self.runtime.capture_context()
         with self.runtime.span(
@@ -503,7 +503,7 @@ class SegmentedNationalRunner:
         )
 
     @staticmethod
-    def _cancel_call(call: Any) -> None:
+    def _cancel_call(call: modal.FunctionCall) -> None:
         try:
             call.cancel()
         except Exception:
