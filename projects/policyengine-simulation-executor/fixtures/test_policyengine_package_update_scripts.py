@@ -73,21 +73,33 @@ def write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
+@dataclass(frozen=True)
+class FakeGitState:
+    """What the fake ``git`` reports about the update branch and working tree.
+
+    ``remote_branch_exists`` and ``diff_has_changes`` set the ``ls-remote``
+    and ``diff`` exit codes, and ``show`` prints the update branch's pyproject
+    pinning ``branch_pin``.
+    """
+
+    remote_branch_exists: bool = False
+    diff_has_changes: bool = False
+    branch_pin: str = "4.1.0"
+
+
 def install_fake_git(
     fake_bin: Path,
     *,
     root: Path,
     log: Path,
-    remote_branch_exists: bool = False,
-    diff_has_changes: bool = False,
-    branch_pin: str = "4.1.0",
+    state: FakeGitState | None = None,
 ) -> None:
     """Install a fake ``git`` that appends each call to ``log``.
 
-    ``remote_branch_exists`` and ``diff_has_changes`` set the ``ls-remote``
-    and ``diff`` exit codes, and ``show`` prints the update branch's pyproject
-    pinning ``branch_pin``; every other command succeeds silently.
+    It answers ``ls-remote``, ``diff`` and ``show`` as ``state`` says; every
+    other command succeeds silently.
     """
+    state = state or FakeGitState()
     write_executable(
         fake_bin / "git",
         f"""#!/usr/bin/env bash
@@ -100,21 +112,21 @@ if [[ "$1" == "rev-parse" && "$2" == "--show-toplevel" ]]; then
 fi
 
 if [[ "$1" == "ls-remote" ]]; then
-  if [[ "{int(remote_branch_exists)}" == "1" ]]; then
+  if [[ "{int(state.remote_branch_exists)}" == "1" ]]; then
     exit 0
   fi
   exit 2
 fi
 
 if [[ "$1" == "diff" ]]; then
-  if [[ "{int(diff_has_changes)}" == "1" ]]; then
+  if [[ "{int(state.diff_has_changes)}" == "1" ]]; then
     exit 1
   fi
   exit 0
 fi
 
 if [[ "$1" == "show" ]]; then
-  printf '[project]\ndependencies = ["policyengine[models]=={branch_pin}"]\n'
+  printf '[project]\ndependencies = ["policyengine[models]=={state.branch_pin}"]\n'
   exit 0
 fi
 
