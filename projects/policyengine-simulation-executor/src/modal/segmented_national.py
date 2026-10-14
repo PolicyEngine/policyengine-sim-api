@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -56,6 +55,8 @@ from src.modal.fanout import build_child_payload, next_backoff
 import modal
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from policyengine_observability import ObservabilityRuntime
 
 logger = logging.getLogger(__name__)
