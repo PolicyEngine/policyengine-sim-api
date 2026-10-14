@@ -197,7 +197,7 @@ invocation = "uv run pytest tests/"
 [[rule]]
 id = "sim.stage12.deployment-scope"
 category = "stage12"
-statement = "Main-branch deploys roll out Stage 12 in both environments; a Stage 12-only deploy runs candidate tests and the requested promotion but never redeploys existing Modal resources; the Stage 12 worker can request a Google OIDC token."
+statement = "Main-branch deploys roll out Stage 12 in both environments; a Stage 12-only deploy runs candidate tests and the requested promotion but never redeploys existing Modal resources or runs the existing stack's complete integration suite; the Stage 12 worker can request a Google OIDC token."
 rationale = "docs/operations"
 scope = [".github/workflows/*.yml"]
 tier = "mechanical"
@@ -210,6 +210,7 @@ nodes = [
   "tests/test_deployment_assets.py::test_main_deployment_automatically_deploys_stage12_in_both_environments",
   "tests/test_deployment_assets.py::test_stage12_only_deployment_runs_candidate_tests_and_requested_promotion",
   "tests/test_deployment_assets.py::test_stage12_only_deployment_cannot_redeploy_existing_modal_resources",
+  "tests/test_deployment_assets.py::test_stage12_only_deployment_skips_existing_stack_integration_suite",
   "tests/test_deployment_assets.py::test_stage12_worker_deployment_can_request_a_google_oidc_token",
   "tests/test_deployment_assets.py::test_stage12_only_promotion_runs_whatever_the_skipped_stack_jobs",
 ]
