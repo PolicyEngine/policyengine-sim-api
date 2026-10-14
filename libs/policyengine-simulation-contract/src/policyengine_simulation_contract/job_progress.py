@@ -83,6 +83,9 @@ class JobProgressRecord(BaseModel):
     finished_at: AwareDatetime | None = None
     # None only between the worker start and its choice of execution path.
     execution: JobExecution | None = None
+    # Modal can run the same call again after a preemption; each run of the
+    # call is one attempt, and later attempts continue the same record.
+    attempts: int = Field(default=1, ge=1)
     segments: JobSegmentProgress | None = None
     stage_durations: dict[JobStage, NonNegativeFloat] = Field(default_factory=dict)
 

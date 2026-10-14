@@ -112,6 +112,10 @@ are the only main-path measurements that separate the baseline from the
 reform calculation, because both run inside `economic_impact_analysis`. The
 attribute set is bounded by the `JobStage` enum.
 
+Modal can run the same call again after a preemption, under the same call
+id. A later attempt continues the stored stage record, so the durations add
+up over attempts, and `job_attempts` counts them.
+
 ## Metric resource identity
 
 Every process that emits OpenTelemetry metrics must have a unique

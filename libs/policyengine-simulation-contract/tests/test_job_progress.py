@@ -334,6 +334,12 @@ class TestJobProgressModels:
         with pytest.raises(ValidationError):
             JobSegmentProgress(completed=21, total=20)
 
+    def test__record_without_attempts_counts_one_attempt(self):
+        payload = _record().model_dump(mode="json")
+        payload.pop("attempts")
+
+        assert JobProgressRecord.model_validate(payload).attempts == 1
+
     def test__record_requires_timezone_aware_times(self):
         with pytest.raises(ValidationError):
             _record(started_at=datetime(2026, 10, 13, 12, 0, 30))

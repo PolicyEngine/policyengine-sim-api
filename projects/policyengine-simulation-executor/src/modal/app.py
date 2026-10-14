@@ -264,8 +264,13 @@ def _job_progress_reporter():
     The gateway's ``job_id`` is the spawned call's ``object_id``, which is
     this call's ``current_function_call_id()``. Without one there is nothing
     to key the record by, so nothing is reported.
+
+    Budget-window children are ordinary ``run_simulation`` calls, so each
+    writes a record under its own call id. ``/budget-window-jobs`` does not
+    read those records yet; the writes are a few small Dict puts per year.
     """
     from policyengine_simulation_contract.job_progress_state import (
+        get_job_progress,
         put_job_progress,
     )
     from policyengine_simulation_executor.job_progress import (
@@ -279,24 +284,28 @@ def _job_progress_reporter():
         job_id = None
     if not job_id:
         return NULL_JOB_PROGRESS
-    return StoredJobProgressReporter(job_id, write=put_job_progress)
+    return StoredJobProgressReporter(
+        job_id, write=put_job_progress, read=get_job_progress
+    )
 
 
 def _record_stage_durations(runtime, progress) -> None:
     """Attach the job's stage durations to its operation telemetry.
 
     Main-path traces cannot split the baseline from the reform calculation:
-    both run inside ``economic_impact_analysis``. These attributes can.
+    both run inside ``economic_impact_analysis``. These attributes can. The
+    durations add up over attempts when Modal runs the call again.
     """
     durations = progress.stage_durations()
     if not durations:
         return
     try:
         runtime.set_context(
+            job_attempts=progress.attempts(),
             **{
                 f"job_stage_seconds_{stage.value}": seconds
                 for stage, seconds in durations.items()
-            }
+            },
         )
     except Exception:  # noqa: BLE001 - telemetry is non-fatal
         pass

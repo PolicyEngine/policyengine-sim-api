@@ -18,6 +18,7 @@ from policyengine_simulation_contract.job_progress import (
     JobProgressRecord,
     JobSegmentProgress,
     JobStage,
+    job_progress_fields,
 )
 
 from policyengine_simulation_executor import simulation_runtime as sr
@@ -249,6 +250,153 @@ class TestStoredJobProgressReporter:
         assert len(warnings) == 1
         assert "ConnectionError" in warnings[0].message
         assert "modal unavailable" not in warnings[0].message
+
+
+def _earlier_attempt(**overrides) -> JobProgressRecord:
+    values = {
+        "stage": JobStage.REFORM,
+        "execution": JobExecution.MONOLITHIC,
+        "started_at": T0 - timedelta(seconds=100),
+        "stage_started_at": T0 - timedelta(seconds=30),
+        "stage_durations": {JobStage.LOADING_DATA: 40.0, JobStage.BASELINE: 30.0},
+    }
+    return JobProgressRecord(**{**values, **overrides})
+
+
+def _restarted_reporter(earlier):
+    clock = _Clock()
+    writer = _RecordingWriter()
+    reporter = StoredJobProgressReporter(
+        "fc-job-1", write=writer, read=lambda job_id: earlier, clock=clock
+    )
+    return reporter, writer, clock
+
+
+def _running_progress(record: JobProgressRecord) -> int:
+    return job_progress_fields(
+        status="running", submitted_at=None, record=record, reports_stages=True
+    )["progress"]
+
+
+class TestRestartedAttempt:
+    """Modal can run the same call again after a preemption (same call id)."""
+
+    def test__restart_continues_the_earlier_record(self):
+        reporter, writer, _ = _restarted_reporter(_earlier_attempt())
+
+        reporter.start()
+
+        first = writer.writes[0][1]
+        assert first.started_at == T0 - timedelta(seconds=100)
+        assert first.attempts == 2
+        assert first.execution is JobExecution.MONOLITHIC
+        assert first.stage_durations == {
+            JobStage.LOADING_DATA: 40.0,
+            JobStage.BASELINE: 30.0,
+        }
+        # Clients still see the stage the earlier attempt reached.
+        assert first.stage is JobStage.REFORM
+        assert first.stage_started_at == T0 - timedelta(seconds=30)
+
+    def test__restart_never_moves_progress_backwards(self):
+        reporter, writer, clock = _restarted_reporter(_earlier_attempt())
+
+        reporter.start()
+        clock.advance(10)
+        reporter.set_execution(JobExecution.MONOLITHIC)
+        reporter.enter(JobStage.BASELINE)
+        clock.advance(20)
+        reporter.enter(JobStage.REFORM)
+        clock.advance(30)
+        reporter.enter(JobStage.OUTPUTS)
+
+        progress = [_running_progress(record) for _, record in writer.writes]
+        assert progress == sorted(progress)
+        assert progress[0] == 67
+        assert progress[-1] == 97
+        # Held at the earlier attempt's reform stage, then this attempt's own.
+        reform_starts = [
+            record.stage_started_at
+            for _, record in writer.writes
+            if record.stage is JobStage.REFORM
+        ]
+        assert reform_starts[0] == T0 - timedelta(seconds=30)
+        assert reform_starts[-1] == T0 + timedelta(seconds=30)
+
+    def test__durations_add_up_over_attempts(self):
+        reporter, writer, clock = _restarted_reporter(_earlier_attempt())
+
+        reporter.start()
+        clock.advance(5)
+        reporter.enter(JobStage.BASELINE)
+        clock.advance(10)
+        reporter.finish()
+
+        assert writer.last.stage_durations == {
+            JobStage.LOADING_DATA: 45.0,
+            JobStage.BASELINE: 40.0,
+        }
+        assert reporter.attempts() == 2
+
+    def test__failure_reports_the_stage_this_attempt_stopped_in(self):
+        reporter, writer, clock = _restarted_reporter(_earlier_attempt())
+
+        reporter.start()
+        clock.advance(5)
+        reporter.finish()
+
+        assert writer.last.stage is JobStage.LOADING_DATA
+        assert writer.last.finished_at == T0 + timedelta(seconds=5)
+
+    def test__a_finished_earlier_attempt_is_continued_too(self):
+        # A preempted attempt can run its ``finally`` block before it stops.
+        earlier = _earlier_attempt(finished_at=T0 - timedelta(seconds=1))
+        reporter, writer, _ = _restarted_reporter(earlier)
+
+        reporter.start()
+
+        assert writer.last.attempts == 2
+        assert writer.last.finished_at is None
+        assert writer.last.stage is JobStage.REFORM
+
+    def test__segmented_restart_is_held_until_simulating(self):
+        earlier = _earlier_attempt(
+            stage=JobStage.SIMULATING,
+            execution=JobExecution.SEGMENTED,
+            segments=JobSegmentProgress(completed=15, total=20),
+        )
+        reporter, writer, _ = _restarted_reporter(earlier)
+
+        reporter.start()
+        reporter.set_execution(JobExecution.SEGMENTED)
+        reporter.start_segments(20)
+
+        # The earlier record already says segmented, so set_execution writes
+        # nothing; every write shows simulating.
+        assert [record.stage for _, record in writer.writes] == [
+            JobStage.SIMULATING,
+            JobStage.SIMULATING,
+            JobStage.SIMULATING,
+        ]
+        assert writer.last.segments == JobSegmentProgress(completed=0, total=20)
+        progress = [_running_progress(record) for _, record in writer.writes]
+        assert progress == sorted(progress)
+
+    def test__unreadable_earlier_record_starts_fresh(self, caplog):
+        def failing_read(job_id):
+            raise ConnectionError("modal unavailable")
+
+        writer = _RecordingWriter()
+        reporter = StoredJobProgressReporter(
+            "fc-job-1", write=writer, read=failing_read, clock=_Clock()
+        )
+
+        with caplog.at_level(logging.WARNING):
+            reporter.start()
+
+        assert writer.last.attempts == 1
+        assert writer.last.started_at == T0
+        assert "ConnectionError" in caplog.text
 
 
 class TestStageReportingSimulation:
@@ -565,7 +713,7 @@ def _stage_attributes(events) -> list[tuple[int, dict]]:
 
 
 class TestModalRunSimulation:
-    def _wire(self, app, monkeypatch, dispatch):
+    def _wire(self, app, monkeypatch, dispatch, earlier=None):
         from policyengine_simulation_contract import job_progress_state
 
         events = []
@@ -577,6 +725,9 @@ class TestModalRunSimulation:
             job_progress_state,
             "put_job_progress",
             lambda job_id, record: writes.append((job_id, record)),
+        )
+        monkeypatch.setattr(
+            job_progress_state, "get_job_progress", lambda job_id: earlier
         )
         monkeypatch.setattr(
             app,
@@ -604,12 +755,30 @@ class TestModalRunSimulation:
         assert writes[-1][1].finished_at is not None
         [(index, attributes)] = _stage_attributes(events)
         assert set(attributes) == {
+            "job_attempts",
             "job_stage_seconds_loading_data",
             "job_stage_seconds_reform",
         }
+        assert attributes["job_attempts"] == 1
         # Durations reach the operation before it ends, then the runtime stops.
         assert index < events.index("operation_end")
         assert events[-1] == "shutdown"
+
+    def test__rerun_of_the_same_call_continues_its_record(self, modal_app, monkeypatch):
+        def dispatch(params, *, app_name, runtime, progress):
+            progress.set_execution(JobExecution.MONOLITHIC)
+            return {"ok": True}
+
+        events, writes = self._wire(
+            modal_app, monkeypatch, dispatch, earlier=_earlier_attempt()
+        )
+
+        assert modal_app.run_simulation({"country": "us"}) == {"ok": True}
+
+        assert writes[0][1].stage is JobStage.REFORM
+        assert writes[0][1].attempts == 2
+        [(_, attributes)] = _stage_attributes(events)
+        assert attributes["job_attempts"] == 2
 
     def test__failed_job_still_records_where_it_stopped(self, modal_app, monkeypatch):
         def dispatch(params, *, app_name, runtime, progress):

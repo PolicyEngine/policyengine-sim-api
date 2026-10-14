@@ -58,7 +58,12 @@ in 20 region segments, so it moves through `loading_data`, `simulating` and
 `outputs`.
 
 The `run_simulation` worker writes a stage record to the Modal Dict
-`simulation-api-job-progress`, keyed by `job_id`. The gateway reports
+`simulation-api-job-progress`, keyed by `job_id`. If Modal runs the same call
+again after a preemption, the new attempt continues that record and keeps
+the reported stage until it reaches a stage at least as far along, so
+`progress` never moves backwards. Budget-window children are ordinary
+`run_simulation` calls and write their own records, which
+`/budget-window-jobs` does not read yet. The gateway reports
 `queued` for a job without a record only when the worker app's bundle
 manifest declares `job_progress`; apps deployed before stage reporting never
 write a record, so their jobs get no stage fields. A failed read or a
