@@ -142,7 +142,9 @@ class ConnectionOpener(Protocol):
         connect: Callable[[], Connection],
         *,
         operation_name: str,
-    ) -> Connection: ...
+    ) -> Connection:
+        """Return the connection ``connect`` opens for ``operation_name``."""
+        ...
 
 
 def open_connection_once(
@@ -151,7 +153,6 @@ def open_connection_once(
     operation_name: str,
 ) -> Connection:
     """Open a connection once, so a refused connection fails the operation."""
-
     return connect()
 
 

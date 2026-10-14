@@ -46,7 +46,6 @@ def open_connection_with_retry(
     Errors other than ``OperationalError`` propagate immediately, and retries
     stop once the retry budget is spent.
     """
-
     started = monotonic()
     attempt = 1
     delay_ceiling = INITIAL_RETRY_DELAY_SECONDS
