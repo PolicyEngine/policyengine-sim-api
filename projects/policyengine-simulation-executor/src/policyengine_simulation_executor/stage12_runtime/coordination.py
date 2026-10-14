@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager, nullcontext
+from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
@@ -52,7 +51,12 @@ from .dependencies import (
     artifact_store,
     runtime_store,
 )
-from .failure_causes import StageProgress, failure_summary, record_failure_cause
+from .failure_causes import (
+    StageProgress,
+    failure_summary,
+    record_failure_cause,
+    tracked_stage,
+)
 from .failure_recording import persist_failure_record, report_original_failure
 from .output_planning import (
     plan_simulation_input,
@@ -62,11 +66,6 @@ from .output_planning import (
 from .simulation import descriptor_from_record, simulation_input_sha256
 
 SIMULATION_WAIT_TIMEOUT_SECONDS = 3_000
-
-
-def _simulation_role(attributes: Mapping[str, object] | None) -> str | None:
-    role = attributes.get("simulation_role") if attributes is not None else None
-    return str(role) if role is not None else None
 
 
 def _child_record(
@@ -269,12 +268,15 @@ def coordinate_report(
         if context.production_function_call_id is not None
         else STAGE12_CANONICAL_REPORT_STAGES
     )
-    claim_span = (
-        runtime.span(stage_plan.name(Stage.STAGE12_COORDINATOR_CLAIM))
-        if runtime is not None
-        else nullcontext()
+    progress = StageProgress()
+    stage_span = partial(
+        tracked_stage,
+        stage_plan=stage_plan,
+        progress=progress,
+        runtime=runtime,
     )
-    with claim_span:
+    stage_scope = partial(stage_span, operation=True)
+    with stage_span(Stage.STAGE12_COORDINATOR_CLAIM):
         parent, should_execute = _claim_parent(
             submitted=submitted_parent,
             coordinator_invocation_id=coordinator_invocation_id,
@@ -288,7 +290,6 @@ def coordinate_report(
         }
     descriptors: dict[str, SimulationArtifactDescriptor] = {}
     calls: dict[str, ChildCall] = {}
-    progress = StageProgress()
     # A child failure is reported where it occurs and then propagates to the
     # report handler below, which must not report the same error twice.
     reported_child_failure: Exception | None = None
@@ -296,38 +297,6 @@ def coordinate_report(
     # rather than the generic exception Modal returns to the coordinator.
     child_failure_summary: str | None = None
     try:
-
-        @contextmanager
-        def stage_scope(
-            stage: Stage,
-            attributes: Mapping[str, object] | None = None,
-        ) -> Iterator[None]:
-            stage_name = stage_plan.name(stage)
-            operation = (
-                runtime.operation(stage_name, attributes=attributes)
-                if runtime is not None
-                else nullcontext()
-            )
-            with (
-                progress.stage(stage_name, role=_simulation_role(attributes)),
-                operation,
-            ):
-                yield
-
-        @contextmanager
-        def stage_span(
-            stage: Stage,
-            attributes: Mapping[str, object] | None = None,
-        ) -> Iterator[None]:
-            stage_name = stage_plan.name(stage)
-            span = (
-                runtime.span(stage_name, attributes=attributes)
-                if runtime is not None
-                else nullcontext()
-            )
-            with progress.stage(stage_name, role=_simulation_role(attributes)), span:
-                yield
-
         with stage_scope(Stage.STAGE12_COORDINATOR_PREPARATION):
             context = context.model_copy(
                 update={

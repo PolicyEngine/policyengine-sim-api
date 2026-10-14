@@ -18,9 +18,10 @@ the contract's ``ErrorSummary`` length.
 
 Redaction covers only this summary and the cause recorded with it. The
 exception events that ``runtime.span`` and ``runtime.operation`` scopes
-export when an exception leaves them carry the original message, filtered
-only by the observability package's own redaction; this module does not
-change them.
+export when an exception leaves them, and the original-failure record that
+``failure_recording`` logs before a failure write, carry the original
+message, filtered only by the observability package's own redaction; this
+module does not change them.
 """
 
 from __future__ import annotations
@@ -28,12 +29,13 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Iterator, Mapping
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from urllib.parse import urlsplit
 
 from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import ErrorSummary
+from policyengine_simulation_observability.stages import Stage, StagePlan
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.exc import StatementError
 
@@ -140,6 +142,35 @@ class StageProgress:
             self.stage_finished = True
 
 
+@contextmanager
+def tracked_stage(
+    stage: Stage,
+    attributes: Mapping[str, object] | None = None,
+    *,
+    stage_plan: StagePlan,
+    progress: StageProgress,
+    runtime: ObservabilityRuntime | None,
+    operation: bool = False,
+) -> Iterator[None]:
+    """Run a block as one Stage 12 stage for telemetry and failure causes.
+
+    The block runs inside the stage's span, or its operation when
+    ``operation`` is true, and ``progress`` records the stage so that a
+    failure names it. A ``simulation_role`` attribute sets the stage's role.
+    """
+
+    stage_name = stage_plan.name(stage)
+    scope: AbstractContextManager[object]
+    if runtime is None:
+        scope = nullcontext()
+    elif operation:
+        scope = runtime.operation(stage_name, attributes=attributes)
+    else:
+        scope = runtime.span(stage_name, attributes=attributes)
+    with progress.stage(stage_name, role=_simulation_role(attributes)), scope:
+        yield
+
+
 class Stage12FailureCause(Exception):
     """A redacted stand-in for a failure, safe to export to telemetry."""
 
@@ -207,6 +238,11 @@ def record_failure_cause(
         runtime.record_exception(cause, handled=True)
     except Exception:  # noqa: BLE001 - telemetry must not change the outcome
         logger.warning("stage12_failure_cause_not_recorded")
+
+
+def _simulation_role(attributes: Mapping[str, object] | None) -> str | None:
+    role = attributes.get("simulation_role") if attributes is not None else None
+    return str(role) if role is not None else None
 
 
 def _location(progress: StageProgress | None) -> str:

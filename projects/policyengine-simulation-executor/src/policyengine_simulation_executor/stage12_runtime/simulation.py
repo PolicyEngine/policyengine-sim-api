@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager, nullcontext
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
@@ -39,7 +38,12 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 )
 
 from .dependencies import ComparisonStore, artifact_store, runtime_store
-from .failure_causes import StageProgress, failure_summary, record_failure_cause
+from .failure_causes import (
+    StageProgress,
+    failure_summary,
+    record_failure_cause,
+    tracked_stage,
+)
 from .failure_recording import persist_failure_record, report_original_failure
 from .output_planning import apply_output_plan, validate_output_frames
 
@@ -108,19 +112,6 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
         raise RuntimeError("simulation provenance differs from the installed bundle")
 
 
-@contextmanager
-def _simulation_stage(
-    stage: Stage,
-    *,
-    runtime: ObservabilityRuntime | None,
-    progress: StageProgress,
-) -> Iterator[None]:
-    stage_name = STAGE12_SIMULATION_STAGES.name(stage)
-    span = runtime.span(stage_name) if runtime is not None else nullcontext()
-    with progress.stage(stage_name), span:
-        yield
-
-
 def calculate_simulation_frames(
     simulation: PlannedSimulationExecutionInput,
     *,
@@ -131,6 +122,12 @@ def calculate_simulation_frames(
 
     if progress is None:
         progress = StageProgress(role=simulation.role.value)
+    stage_span = partial(
+        tracked_stage,
+        stage_plan=STAGE12_SIMULATION_STAGES,
+        progress=progress,
+        runtime=runtime,
+    )
     if simulation.population.kind != "dataset":
         raise ValueError("Stage 12 society-wide worker requires a dataset population")
     if simulation.population.artifact.uri != simulation.bundle.dataset.uri:
@@ -156,29 +153,23 @@ def calculate_simulation_frames(
     )
 
     with (
-        _simulation_stage(Stage.CREDENTIAL_SETUP, runtime=runtime, progress=progress),
+        stage_span(Stage.CREDENTIAL_SETUP),
         setup_gcp_credentials(),
     ):
-        with _simulation_stage(
-            Stage.COUNTRY_MODULE_LOAD, runtime=runtime, progress=progress
-        ):
+        with stage_span(Stage.COUNTRY_MODULE_LOAD):
             country_module = _country_module(country)
-        with _simulation_stage(
-            Stage.REGION_RESOLUTION, runtime=runtime, progress=progress
-        ):
+        with stage_span(Stage.REGION_RESOLUTION):
             region = _resolve_region(
                 country_module=country_module,
                 country=country,
                 params=params,
             )
-        with _simulation_stage(
-            Stage.DATASET_RESOLUTION, runtime=runtime, progress=progress
-        ):
+        with stage_span(Stage.DATASET_RESOLUTION):
             dataset_selection = _resolve_dataset_selection(
                 params,
                 region_resolution=region,
             )
-        with _simulation_stage(Stage.DATASET_LOAD, runtime=runtime, progress=progress):
+        with stage_span(Stage.DATASET_LOAD):
             dataset = _load_dataset(
                 params,
                 selection=dataset_selection,
@@ -192,13 +183,9 @@ def calculate_simulation_frames(
         _require_certified_uk_weight_matrix(
             region.scoping_strategy, dataset, dataset_selection
         )
-        with _simulation_stage(
-            Stage.POLICY_NORMALIZATION, runtime=runtime, progress=progress
-        ):
+        with stage_span(Stage.POLICY_NORMALIZATION):
             policy = _normalise_policy(simulation.policy)
-        with _simulation_stage(
-            Stage.SIMULATION_BUILD, runtime=runtime, progress=progress
-        ):
+        with stage_span(Stage.SIMULATION_BUILD):
             model = _build_simulation(
                 params,
                 dataset=dataset,
@@ -207,9 +194,7 @@ def calculate_simulation_frames(
                 scoping_strategy=region.scoping_strategy,
                 region_code=region.code,
             )
-        with _simulation_stage(
-            Stage.STAGE12_CALCULATION, runtime=runtime, progress=progress
-        ):
+        with stage_span(Stage.STAGE12_CALCULATION):
             apply_output_plan(model, simulation.output_plan)
             model.ensure()
         output_data = getattr(getattr(model, "output_dataset", None), "data", None)
@@ -315,10 +300,14 @@ def run_single_simulation(
     )
     persistence.replace_simulation(running)
     progress = StageProgress(role=simulation.role.value)
+    stage_span = partial(
+        tracked_stage,
+        stage_plan=STAGE12_SIMULATION_STAGES,
+        progress=progress,
+        runtime=runtime,
+    )
     try:
-        with _simulation_stage(
-            Stage.STAGE12_INPUT_WRITE, runtime=runtime, progress=progress
-        ):
+        with stage_span(Stage.STAGE12_INPUT_WRITE):
             artifact_storage.write_input(
                 prefix=context.artifact_prefix,
                 simulation=simulation,
@@ -330,9 +319,7 @@ def run_single_simulation(
                 progress=progress,
             )
         else:
-            with _simulation_stage(
-                Stage.STAGE12_CALCULATION, runtime=runtime, progress=progress
-            ):
+            with stage_span(Stage.STAGE12_CALCULATION):
                 calculated = calculator(simulation)
         if isinstance(calculated, SimulationCalculation):
             frames = calculated.frames
@@ -343,11 +330,7 @@ def run_single_simulation(
             calculation_provenance = None
             uk_local_authority_metadata = None
         validate_output_frames(frames, simulation.output_plan)
-        with _simulation_stage(
-            Stage.STAGE12_SIMULATION_ARTIFACT_WRITE,
-            runtime=runtime,
-            progress=progress,
-        ):
+        with stage_span(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE):
             descriptor = artifact_storage.write_simulation(
                 prefix=context.artifact_prefix,
                 simulation=simulation,
