@@ -402,3 +402,86 @@ def test_resolve_runtime_bundle_dataset_uri_preserves_nondefault_override_with_r
         resolve_runtime_bundle_dataset_uri("us", "custom_dataset_label")
         == "custom_dataset_label"
     )
+
+
+def test_country_release_bundle_reports_the_certified_default_dataset_sha256():
+    manifest = get_current_bundle()
+
+    for country in ("us", "uk"):
+        release = manifest["data_releases"][country]
+        certified = release["certified_data_artifact"]
+        assert certified["dataset"] == release["default_dataset"]
+        assert (
+            get_country_release_bundle(country).default_dataset_sha256
+            == certified["sha256"]
+        )
+
+
+def test_default_dataset_sha256_falls_back_to_the_dataset_pin(
+    policyengine_uk_data_release,
+):
+    # The fixture's certified artifact names the default dataset but has no
+    # sha256; the dataset's own pin is used instead.
+    policyengine_uk_data_release["datasets"]["enhanced_frs_2024_25"]["sha256"] = (
+        "b" * 64
+    )
+    get_country_release_bundle.cache_clear()
+
+    assert get_country_release_bundle("uk").default_dataset_sha256 == "b" * 64
+
+
+def _helper(data_release, manifest=None):
+    from types import SimpleNamespace
+
+    return release_bundle_module._default_dataset_sha256(
+        default_dataset="enhanced_frs_2024_25",
+        data_release=data_release,
+        manifest=manifest or SimpleNamespace(certified_data_artifact=None, datasets={}),
+    )
+
+
+def test_default_dataset_sha256_rules():
+    from types import SimpleNamespace
+
+    certified = {"dataset": "enhanced_frs_2024_25", "sha256": "a" * 64}
+    assert _helper({"certified_data_artifact": certified}) == "a" * 64
+    # Another dataset's certified hash is never borrowed.
+    other = {"dataset": "populace_uk_2023", "sha256": "c" * 64}
+    assert _helper({"certified_data_artifact": other}) is None
+    assert (
+        _helper(
+            {
+                "certified_data_artifact": other,
+                "datasets": {"enhanced_frs_2024_25": {"sha256": "d" * 64}},
+            }
+        )
+        == "d" * 64
+    )
+    # Malformed values are dropped, never reported.
+    for malformed in (
+        "XYZ",
+        "-" + "a" * 63,  # int(value, 16) accepts a sign
+        "a" * 32 + "_" + "a" * 31,  # and underscores
+        " " + "a" * 63,
+        "a" * 64 + "\n",
+        "a" * 63,
+        "g" * 64,
+        64,
+    ):
+        assert (
+            _helper({"certified_data_artifact": {**certified, "sha256": malformed}})
+            is None
+        ), malformed
+    # The manifest model is the last resort.
+    manifest = SimpleNamespace(
+        certified_data_artifact=SimpleNamespace(
+            dataset="enhanced_frs_2024_25", sha256="e" * 64
+        ),
+        datasets={},
+    )
+    assert _helper({}, manifest) == "e" * 64
+    manifest = SimpleNamespace(
+        certified_data_artifact=None,
+        datasets={"enhanced_frs_2024_25": SimpleNamespace(sha256="F" * 64)},
+    )
+    assert _helper({}, manifest) == "f" * 64

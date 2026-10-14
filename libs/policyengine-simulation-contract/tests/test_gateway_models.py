@@ -459,6 +459,7 @@ class TestOperationalResponses:
             "policyengine": {"latest": "4.10.0"},
             "us": {"latest": "1.500.0"},
             "uk": {"latest": "2.66.0"},
+            "bundles": {},
         }
 
     def test_health_and_readiness_statuses_are_constrained(self):
@@ -615,6 +616,7 @@ class TestBudgetWindowBatchSubmitResponse:
                 "data_version": None,
                 "spm": None,
                 "dataset": "default",
+                "dataset_sha256": None,
             },
         }
 
@@ -683,3 +685,27 @@ class TestBudgetWindowBatchStatusResponse:
             "errors": None,
         }
         assert dumped["result"]["kind"] == "budgetWindow"
+
+
+def test_policyengine_bundle_dataset_sha256_is_optional_and_hex():
+    import pytest
+    from pydantic import ValidationError
+    from policyengine_simulation_contract.gateway_models import PolicyEngineBundle
+
+    assert PolicyEngineBundle(model_version="2.126.8").dataset_sha256 is None
+    assert (
+        PolicyEngineBundle(
+            model_version="2.126.8", dataset_sha256="a" * 64
+        ).dataset_sha256
+        == "a" * 64
+    )
+    for bad in ("A" * 64, "a" * 63, "not-a-digest"):
+        with pytest.raises(ValidationError):
+            PolicyEngineBundle(model_version="2.126.8", dataset_sha256=bad)
+
+
+def test_versions_response_bundles_default_to_empty():
+    from policyengine_simulation_contract.gateway_models import VersionsResponse
+
+    response = VersionsResponse(policyengine={}, us={}, uk={})
+    assert response.bundles == {}

@@ -77,7 +77,7 @@ policyengine-stage12-persistence = { path = "../../libs/policyengine-stage12-per
 policyengine-simulation-gateway = { path = "../policyengine-simulation-gateway", editable = true }
 
 [project.optional-dependencies]
-test = [ "pytest>=8.3.4", "pytest-asyncio>=0.25.3", "pytest-cov>=6.1.1",]
+test = [ "pytest>=8.3.4", "pytest-asyncio>=0.25.3", "pytest-cov>=6.1.1", "hypothesis>=6.100",]
 build = [ "pyright>=1.1.401", "black>=25.1.0", "openapi-python-client>=0.21.6",]
 
 [tool.pytest.ini_options]

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 
 # Remove every Cloud Run entrypoint revision except the exact revision that
-# passed the deployment workflow and now receives all stable service traffic.
+# passed the deployment workflow and now receives all stable service traffic,
+# and the rollback revision: the one that served before this deployment, kept
+# so simulation-rollback.yml can move traffic back to it.
 
 set -euo pipefail
 
@@ -10,6 +12,7 @@ project_id="${SIMULATION_ENTRYPOINT_GCP_PROJECT_ID:?SIMULATION_ENTRYPOINT_GCP_PR
 region="${SIMULATION_ENTRYPOINT_GCP_REGION:-us-central1}"
 service="${SIMULATION_ENTRYPOINT_SERVICE:?SIMULATION_ENTRYPOINT_SERVICE is required}"
 successful_revision="${SIMULATION_ENTRYPOINT_SUCCESSFUL_REVISION:?SIMULATION_ENTRYPOINT_SUCCESSFUL_REVISION is required}"
+rollback_revision="${SIMULATION_ENTRYPOINT_ROLLBACK_REVISION:-}"
 
 fail() {
   printf 'Cloud Run revision cleanup error: %s\n' "$1" >&2
@@ -18,6 +21,12 @@ fail() {
 
 [[ "${successful_revision}" =~ ^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$ ]] \
   || fail "SIMULATION_ENTRYPOINT_SUCCESSFUL_REVISION is invalid"
+if [[ -n "${rollback_revision}" ]]; then
+  [[ "${rollback_revision}" =~ ^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$ ]] \
+    || fail "SIMULATION_ENTRYPOINT_ROLLBACK_REVISION is invalid"
+  [[ "${rollback_revision}" != "${successful_revision}" ]] \
+    || rollback_revision=""
+fi
 
 service_json="$(
   "${gcloud_bin}" run services describe "${service}" \
@@ -99,10 +108,19 @@ if ((${#old_tags[@]} > 0)); then
     --quiet
 fi
 
+if [[ -n "${rollback_revision}" ]] && ! jq -e --arg revision "${rollback_revision}" '
+  any(.[]; .metadata.name == $revision)
+' >/dev/null <<<"${revisions_json}"; then
+  printf 'Rollback revision %s no longer exists; nothing to retain for rollback.\n' \
+    "${rollback_revision}"
+  rollback_revision=""
+fi
+
 deleted_count=0
 while IFS= read -r revision; do
   [[ -n "${revision}" ]] || continue
   [[ "${revision}" == "${successful_revision}" ]] && continue
+  [[ -n "${rollback_revision}" && "${revision}" == "${rollback_revision}" ]] && continue
   "${gcloud_bin}" run revisions delete "${revision}" \
     --project "${project_id}" \
     --region "${region}" \
@@ -119,4 +137,9 @@ done < <(
 printf 'Retained successful Cloud Run revision %s for %s.\n' \
   "${successful_revision}" \
   "${service}"
+if [[ -n "${rollback_revision}" ]]; then
+  printf 'Retained rollback Cloud Run revision %s for %s.\n' \
+    "${rollback_revision}" \
+    "${service}"
+fi
 printf 'Deleted %s older Cloud Run revision(s).\n' "${deleted_count}"

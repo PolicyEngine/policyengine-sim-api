@@ -33,6 +33,52 @@ touching image inputs run an in-image import smoke (`src/modal/smoke_app.py` via
 group or lock invalidates the image layer cache, including the artifact
 fetch layer below.
 
+## Routing publication and rollback
+
+Routing writes run only through `simulation-deploy.yml`, `stage12-deploy.yml`,
+or `simulation-rollback.yml` in `PolicyEngine/policyengine-sim-api`. These
+workflows share the repository-wide `simulation-deploy-main` concurrency group
+with `cancel-in-progress: false`, which serializes publication and restoration.
+The routing CLI and library check the GitHub Actions repository and caller workflow
+before writing. Run the deployment or rollback workflow to change routing; local
+read-only queries, `--dry-run`, and `--plan-out` remain available.
+
+Before changing live routing, each publication keeps its plan as an artifact,
+including a unique publication ID and the complete state it replaces. Recovery
+and deployment-run rollback restore that state only while the corresponding
+publication is still active. Manual rollback checks the plan inventory across
+all run attempts before restoring the chain. A version-mode rollback instead
+moves latest to an already published version and keeps other versions pinnable.
+Routing writes and recovery use no lease or lock expiry wait.
+For a same-version redeploy that replaced a Modal app in place, redeploy the
+previous commit to recover its code; restoring routing alone cannot recover it.
+
+Before uploading a deployment plan, the workflow records the full plan as a pending
+publication in the routing store. The always-running `finalize_routing` job reads
+that journal after every release gate: if all gates pass and live routing matches
+the planned state, it marks the publication completed; otherwise it restores the
+recorded previous state and marks it restored. Finalization uses the deployment
+run ID and release environment, so failed-job reruns can finish an earlier attempt.
+Artifact upload failure does not prevent recovery. `deployment_ready` requires a
+successful finalizer with outcome `completed` before reporting the release green.
+
+Until completion or restoration, new routing writes refuse to proceed. If the
+finalizer's runner is lost, run `simulation-rollback.yml` with `target=beta` or
+`target=prod` and `resolve_pending_publication=true`. Leave `deploy_run_id`,
+`policyengine_version`, `expected_latest`, and `entrypoint_revision` blank. This
+serialized recovery prints the pending plan and invokes the same finalizer with
+failed gates against the target's journal, restoring even a plan that was never
+applied or uploaded. It only resolves Modal routing; inspect Cloud Run traffic
+separately after an interrupted promotion. If live routing is neither the plan's
+previous nor planned state, recovery fails and leaves the record pending for an
+operator to investigate. A finalizer for another deployment run cannot modify it.
+
+For a completed release, use `deploy_run_id=<original GitHub run ID>` with `target`
+to restore its saved artifact plans, or `policyengine_version=<published version>`
+to move latest to that release. Leave `resolve_pending_publication=false` in both
+modes. Read-only `--print-pending-plan --environment staging|main` also displays the
+durable plan without changing routing.
+
 ## Baseline artifact pipeline (precompute → store → image fetch)
 
 The precompute app fills a content-addressed GCS store with single-year US

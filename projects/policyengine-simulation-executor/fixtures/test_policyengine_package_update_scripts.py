@@ -73,7 +73,10 @@ def install_fake_git(
     log: Path,
     remote_branch_exists: bool = False,
     diff_has_changes: bool = False,
+    branch_pin: str = "4.1.0",
 ) -> None:
+    """A fake git; ``show`` prints the update branch's pyproject pinning ``branch_pin``."""
+
     write_executable(
         fake_bin / "git",
         f"""#!/usr/bin/env bash
@@ -96,6 +99,11 @@ if [[ "$1" == "diff" ]]; then
   if [[ "{int(diff_has_changes)}" == "1" ]]; then
     exit 1
   fi
+  exit 0
+fi
+
+if [[ "$1" == "show" ]]; then
+  printf '[project]\ndependencies = ["policyengine[models]=={branch_pin}"]\n'
   exit 0
 fi
 
@@ -177,6 +185,7 @@ def install_fake_uv(
     bundled_uk_version: str = "2.1.0",
     bundled_policyengine_version: str = "4.1.0",
     bundled_spm_version: str = "1.0.0",
+    bundled_uk_dataset_sha256: str = "a" * 64,
 ) -> None:
     write_executable(
         fake_bin / "uv",
@@ -194,6 +203,10 @@ if [[ "$1" == "run" \
   echo "us_data_version=1.10.0"
   echo "uk_version={bundled_uk_version}"
   echo "uk_data_version=1.20.0"
+  echo "uk_data_package_version=1.20.0"
+  echo "us_dataset_sha256="
+  echo "uk_dataset_sha256={bundled_uk_dataset_sha256}"
+  echo "uk_certificate_sha256="
   exit 0
 fi
 
