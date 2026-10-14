@@ -6,12 +6,21 @@ redacted message. Without the message an operator cannot tell a database
 session limit from a validation defect, because both surface as a generic
 exception class.
 
-Messages are redacted before they are stored or exported. Redaction removes
-credentials embedded in URLs, signed URL query strings, secret-looking
-key/value pairs, bearer and access tokens, the values of this process's
-secret environment variables, Pydantic validation input values and SQL
-statement parameters. The summary fits the 512-character ``error_summary``
-column and contract field.
+The summary stored in ``error_summary`` and the ``Stage12FailureCause``
+recorded to telemetry are redacted. Redaction removes credentials embedded in
+URLs, the query strings of URLs and paths, secret-looking key/value pairs
+(including quoted JSON and dictionary keys), ``Authorization`` and cookie
+header values, bearer and other known access tokens, the values of this
+process's secret environment variables, Pydantic validation input values, SQL
+statement parameters and the row values that database constraint errors
+echo. Redaction reads a bounded prefix of the message, and the summary fits
+the contract's ``ErrorSummary`` length.
+
+Redaction covers only this summary and the cause recorded with it. The
+exception events that ``runtime.span`` and ``runtime.operation`` scopes
+export when an exception leaves them carry the original message, filtered
+only by the observability package's own redaction; this module does not
+change them.
 """
 
 from __future__ import annotations
@@ -24,11 +33,17 @@ from contextlib import contextmanager
 from urllib.parse import urlsplit
 
 from policyengine_observability import ObservabilityRuntime
-from pydantic import ValidationError
+from policyengine_simulation_contract.stage12_execution import ErrorSummary
+from pydantic import TypeAdapter, ValidationError
+from sqlalchemy.exc import StatementError
 
 from policyengine_simulation_executor.hf_access_validation import HF_RUNTIME_ENV_NAME
 
-MAX_FAILURE_SUMMARY_LENGTH = 512
+# The longest ``error_summary`` the contract accepts.
+MAX_FAILURE_SUMMARY_LENGTH: int = TypeAdapter(ErrorSummary).json_schema()["maxLength"]
+# Redaction reads at most this much of a message. The cap bounds the cost of
+# redacting an arbitrarily long message and is far above the summary length.
+MAX_REDACTED_MESSAGE_LENGTH = 4_096
 REDACTED = "[REDACTED]"
 TRUNCATION_MARKER = "..."
 SECRET_ENVIRONMENT_VARIABLES = ("STAGE12_DATABASE_URL", HF_RUNTIME_ENV_NAME)
@@ -39,25 +54,62 @@ _PRIVATE_KEY_BLOCK = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)",
     re.DOTALL,
 )
-_URL_CREDENTIALS = re.compile(r"(?P<scheme>\b[a-zA-Z][a-zA-Z0-9+.-]*://)[^\s/@'\"]+@")
-_URL_QUERY = re.compile(
-    r"(?P<address>\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s?'\"]+)\?[^\s'\"]+"
+# A pattern that could start anywhere in a run of word characters only starts
+# where the run starts, so matching stays linear in the length of the message.
+_URL_SCHEME = r"(?<![a-zA-Z0-9+.-])[a-zA-Z][a-zA-Z0-9+.-]*://"
+# User information runs to the last "@" before the path, so a password that
+# contains "@" is removed whole.
+_URL_CREDENTIALS = re.compile(rf"(?P<scheme>{_URL_SCHEME})[^\s/'\"]+@")
+# Every URL matches, with or without a query, so a failed match never
+# rescans the rest of a long address.
+_URL_ADDRESS = re.compile(
+    rf"(?P<address>{_URL_SCHEME}[^\s?'\"]+)(?P<query>\?[^\s'\"]+)?"
+)
+# A query string without a scheme, such as on a signed object path.
+_QUERY_STRING = re.compile(r"\?(?=[\w.~%+-]++=)[^\s'\"]+")
+# A quoted value may contain escaped quotes. A value whose closing quote was
+# cut off runs to the end of the message.
+_QUOTED_VALUE = r"\"(?:[^\"\\]|\\.)*(?:\"|\Z)|'(?:[^'\\]|\\.)*(?:'|\Z)"
+# An unquoted header value can contain spaces, as in "Basic <credentials>" or
+# a Digest parameter list, so it runs to the end of the line.
+_CREDENTIAL_HEADER = re.compile(
+    r"(?<![\w-])(?P<key>[\w-]*(?:authorization|cookie))"
+    r"(?P<separator>[\"']?\s*[=:]\s*)"
+    rf"(?P<value>{_QUOTED_VALUE}|[^\r\n]*)",
+    re.IGNORECASE | re.DOTALL,
 )
 _BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
+_SECRET_KEY = (
+    r"[\w-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key"
+    r"|private[_-]?key|credentials?|signature|sig)"
+)
 _SECRET_ASSIGNMENT = re.compile(
-    r"(?i)\b(?P<key>[a-z0-9_-]*(?:password|passwd|pwd|secret|token|api[_-]?key"
-    r"|access[_-]?key|private[_-]?key|authorization|credentials?))"
-    r"(?P<separator>\s*[=:]\s*)(?P<value>\"[^\"]*\"|'[^']*'|[^\s,;)\]}]+)"
+    rf"(?<![\w-])(?P<key>{_SECRET_KEY})(?P<separator>[\"']?\s*[=:]\s*)"
+    rf"(?P<value>{re.escape(REDACTED)}|{_QUOTED_VALUE}|[^\s,;)\]}}]+)",
+    re.IGNORECASE | re.DOTALL,
 )
 _KNOWN_TOKEN_FORMATS = re.compile(
     r"\b(?:hf_[A-Za-z0-9]{20,}"
     r"|gh[pousr]_[A-Za-z0-9]{20,}"
     r"|AIza[0-9A-Za-z_-]{35}"
     r"|ya29\.[0-9A-Za-z_-]+"
-    r"|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)"
+    r"|(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)"
 )
-_PYDANTIC_INPUT_VALUE = re.compile(r"input_value=.*?(?=, input_type=)", re.DOTALL)
-_SQL_PARAMETERS = re.compile(r"\[parameters: .*?\](?=\s*(?:\(Background|$))", re.DOTALL)
+_PYDANTIC_INPUT_VALUE = re.compile(
+    r"input_value=.*?(?:(?=, input_type=)|\Z)",
+    re.DOTALL,
+)
+_SQL_PARAMETERS = re.compile(
+    r"\[parameters: .*?(?:\](?=\s*(?:\(Background|\Z))|\Z)",
+    re.DOTALL,
+)
+# PostgreSQL constraint violations echo the row's values in their detail. A
+# value can contain a line break, so redaction runs to the end of the message.
+_CONSTRAINT_KEY_VALUES = re.compile(
+    r"\bKey \((?P<columns>[^()\r\n]*(?:\([^()\r\n]*\)[^()\r\n]*)*)\)=\(.*",
+    re.DOTALL,
+)
+_FAILING_ROW_VALUES = re.compile(r"\bFailing row contains \(.*", re.DOTALL)
 _SQLALCHEMY_BACKGROUND = re.compile(r"\(Background on this error at: [^)]*\)")
 _WHITESPACE = re.compile(r"\s+")
 
@@ -93,23 +145,36 @@ class Stage12FailureCause(Exception):
 
 
 def redact_failure_message(message: str) -> str:
-    """Remove credentials, tokens and input values from an exception message."""
+    """Remove credentials, tokens and stored values from an exception message.
 
-    redacted = _PRIVATE_KEY_BLOCK.sub(REDACTED, message)
+    Only the first ``MAX_REDACTED_MESSAGE_LENGTH`` characters are redacted and
+    returned. The word that limit cuts is dropped, because part of a secret
+    may no longer match its pattern.
+    """
+
+    truncated = len(message) > MAX_REDACTED_MESSAGE_LENGTH
+    redacted = (
+        _before_last_word(message[:MAX_REDACTED_MESSAGE_LENGTH])
+        if truncated
+        else message
+    )
+    redacted = _PRIVATE_KEY_BLOCK.sub(REDACTED, redacted)
     for secret in _secret_environment_values():
         redacted = redacted.replace(secret, REDACTED)
     redacted = _URL_CREDENTIALS.sub(rf"\g<scheme>{REDACTED}@", redacted)
-    redacted = _URL_QUERY.sub(rf"\g<address>?{REDACTED}", redacted)
+    redacted = _URL_ADDRESS.sub(_without_url_query, redacted)
+    redacted = _QUERY_STRING.sub(f"?{REDACTED}", redacted)
+    redacted = _CREDENTIAL_HEADER.sub(rf"\g<key>\g<separator>{REDACTED}", redacted)
     redacted = _BEARER_TOKEN.sub(f"Bearer {REDACTED}", redacted)
-    redacted = _SECRET_ASSIGNMENT.sub(
-        rf"\g<key>\g<separator>{REDACTED}",
-        redacted,
-    )
+    redacted = _SECRET_ASSIGNMENT.sub(rf"\g<key>\g<separator>{REDACTED}", redacted)
     redacted = _KNOWN_TOKEN_FORMATS.sub(REDACTED, redacted)
     redacted = _PYDANTIC_INPUT_VALUE.sub(f"input_value={REDACTED}", redacted)
     redacted = _SQL_PARAMETERS.sub(f"[parameters: {REDACTED}]", redacted)
+    redacted = _CONSTRAINT_KEY_VALUES.sub(rf"Key (\g<columns>)={REDACTED}", redacted)
+    redacted = _FAILING_ROW_VALUES.sub(f"Failing row contains {REDACTED}", redacted)
     redacted = _SQLALCHEMY_BACKGROUND.sub("", redacted)
-    return _WHITESPACE.sub(" ", redacted).strip()
+    redacted = _WHITESPACE.sub(" ", redacted).strip()
+    return f"{redacted}{TRUNCATION_MARKER}" if truncated else redacted
 
 
 def failure_summary(
@@ -159,11 +224,11 @@ def _location(progress: StageProgress | None) -> str:
 def _failure_message(error: BaseException) -> str:
     if isinstance(error, ValidationError):
         return _validation_message(error)
-    database_error = getattr(error, "orig", None)
-    if isinstance(database_error, BaseException) and hasattr(error, "statement"):
-        # SQLAlchemy wraps the driver error with the statement and parameters.
-        # The driver message carries the cause without stored values.
-        return f"{type(database_error).__name__}: {database_error}"
+    if isinstance(error, StatementError) and error.orig is not None:
+        # SQLAlchemy wraps the driver error with the statement and its
+        # parameters, so only the driver error is reported. Its detail can
+        # still echo row values, which redaction removes.
+        return f"{type(error.orig).__name__}: {error.orig}"
     return str(error)
 
 
@@ -180,6 +245,17 @@ def _validation_message(error: ValidationError) -> str:
     count = error.error_count()
     noun = "error" if count == 1 else "errors"
     return f"{count} validation {noun} for {error.title}: {'; '.join(details)}"
+
+
+def _without_url_query(url_match: re.Match[str]) -> str:
+    if url_match["query"] is None:
+        return url_match[0]
+    return f"{url_match['address']}?{REDACTED}"
+
+
+def _before_last_word(text: str) -> str:
+    words = text.rsplit(maxsplit=1)
+    return words[0] if len(words) == 2 else ""
 
 
 def _secret_environment_values() -> tuple[str, ...]:

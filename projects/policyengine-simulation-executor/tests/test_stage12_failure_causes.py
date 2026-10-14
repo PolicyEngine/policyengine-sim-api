@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from policyengine_simulation_contract.spm import SPMComparisonProvenance
-from pydantic import BaseModel, ValidationError
-from sqlalchemy.exc import OperationalError
+from policyengine_simulation_contract.stage12_execution import ErrorSummary
+from pydantic import BaseModel, TypeAdapter, ValidationError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
+from policyengine_simulation_executor.stage12_runtime import failure_causes
 from policyengine_simulation_executor.stage12_runtime.failure_causes import (
     MAX_FAILURE_SUMMARY_LENGTH,
+    MAX_REDACTED_MESSAGE_LENGTH,
     Stage12FailureCause,
     StageProgress,
     failure_summary,
     record_failure_cause,
+    redact_failure_message,
 )
 
 DATABASE_PASSWORD = "pooler-password-value"
@@ -25,10 +31,20 @@ SESSION_LIMIT_MESSAGE = (
     "FATAL: (EMAXCONNSESSION) max clients reached in session mode - "
     "max clients are limited to pool_size: 15"
 )
+# Shapes that made the earlier patterns backtrack quadratically.
+PATHOLOGICAL_MESSAGE_UNITS = ("a-", "a.", "eyJ-", "a://", "s://a@")
+# Redacting this many pathological characters took several seconds before the
+# patterns were made linear.
+UNCAPPED_PATHOLOGICAL_LENGTH = 20_000
+MAX_PATHOLOGICAL_SECONDS = 1.0
 
 
 class DriverOperationalError(Exception):
     """Stands in for the database driver's own connection error."""
+
+
+class DriverIntegrityError(Exception):
+    """Stands in for the database driver's constraint violation."""
 
 
 class RecordingRuntime:
@@ -137,6 +153,100 @@ def test_tokens_and_signed_urls_are_redacted(message, secret) -> None:
     assert "[REDACTED]" in summary
 
 
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            'request body {"password": "json-password", "user": "runtime"}',
+            'request body {"password": [REDACTED], "user": "runtime"}',
+        ),
+        (
+            'request body {"password":"escaped \\"quote\\" password"}',
+            'request body {"password":[REDACTED]}',
+        ),
+        ("options {'token': 'dict-token'}", "options {'token': [REDACTED]}"),
+        ("options {'api_key': 'dict-api-key'}", "options {'api_key': [REDACTED]}"),
+        (
+            "connect(password='two word password') failed",
+            "connect(password=[REDACTED]) failed",
+        ),
+    ],
+)
+def test_quoted_secret_keys_are_redacted(message, expected) -> None:
+    assert redact_failure_message(message) == expected
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("Authorization: Basic YWxpY2U6c2VjcmV0", "Authorization: [REDACTED]"),
+        ("Authorization: Token opaque-api-token", "Authorization: [REDACTED]"),
+        (
+            'Authorization: Digest username="runtime", response="6629fae4"',
+            "Authorization: [REDACTED]",
+        ),
+        ("Authorization: opaque-header-value", "Authorization: [REDACTED]"),
+        (
+            "Proxy-Authorization: Basic YWxpY2U6c2VjcmV0",
+            "Proxy-Authorization: [REDACTED]",
+        ),
+        (
+            "headers {'Authorization': 'Basic YWxpY2U6c2VjcmV0', 'Accept': 'json'}",
+            "headers {'Authorization': [REDACTED], 'Accept': 'json'}",
+        ),
+        ("Cookie: session=opaque-session", "Cookie: [REDACTED]"),
+    ],
+)
+def test_authorization_header_values_are_redacted(message, expected) -> None:
+    assert redact_failure_message(message) == expected
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "GET /bucket/data.h5?X-Goog-Algorithm=GOOG4&X-Goog-Signature=abc failed",
+            "GET /bucket/data.h5?[REDACTED] failed",
+        ),
+        (
+            "read bucket/data.h5?X-Amz-Signature=abc rejected",
+            "read bucket/data.h5?[REDACTED] rejected",
+        ),
+        (
+            "blob container/data.h5?sv=2024-01-01&sig=abc expired",
+            "blob container/data.h5?[REDACTED] expired",
+        ),
+        (
+            "canonical query X-Goog-Signature=abc mismatch",
+            "canonical query X-Goog-Signature=[REDACTED] mismatch",
+        ),
+        ("request sig=abc rejected", "request sig=[REDACTED] rejected"),
+    ],
+)
+def test_signed_query_parameters_without_a_scheme_are_redacted(
+    message, expected
+) -> None:
+    assert redact_failure_message(message) == expected
+
+
+def test_url_password_containing_an_at_sign_is_redacted_whole() -> None:
+    message = "could not connect to postgresql://runtime:pass@word@db.example/postgres"
+
+    assert redact_failure_message(message) == (
+        "could not connect to postgresql://[REDACTED]@db.example/postgres"
+    )
+
+
+def test_secret_environment_value_in_an_assignment_is_redacted_once(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("STAGE12_DATABASE_URL", DATABASE_URL)
+
+    summary = failure_summary(RuntimeError(f"password={DATABASE_PASSWORD} rejected"))
+
+    assert summary == "RuntimeError: password=[REDACTED] rejected"
+
+
 def test_validation_input_values_are_not_persisted() -> None:
     class HouseholdIncome(BaseModel):
         employment_income: float
@@ -200,6 +310,111 @@ def test_database_errors_report_the_driver_cause_without_parameters() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("driver_message", "expected_message"),
+    [
+        (
+            (
+                'duplicate key value violates unique constraint "reports_pkey"\n'
+                "DETAIL:  Key (evaluation_id)=(stored-identifier) already exists."
+            ),
+            (
+                'duplicate key value violates unique constraint "reports_pkey" '
+                "DETAIL: Key (evaluation_id)=[REDACTED]"
+            ),
+        ),
+        (
+            (
+                'duplicate key value violates unique constraint "users_email_key"\n'
+                "DETAIL:  Key (lower(email))=(stored@example.com) already exists."
+            ),
+            (
+                'duplicate key value violates unique constraint "users_email_key" '
+                "DETAIL: Key (lower(email))=[REDACTED]"
+            ),
+        ),
+        (
+            (
+                'null value in column "status" violates not-null constraint\n'
+                "DETAIL:  Failing row contains (stored-identifier, stored\nvalue, null)."
+            ),
+            (
+                'null value in column "status" violates not-null constraint '
+                "DETAIL: Failing row contains [REDACTED]"
+            ),
+        ),
+    ],
+)
+def test_constraint_violations_keep_the_cause_without_row_values(
+    driver_message, expected_message
+) -> None:
+    error = IntegrityError(
+        "INSERT INTO stage12_eval_reports (evaluation_id) VALUES (%(id)s)",
+        {"id": "stored-identifier"},
+        DriverIntegrityError(driver_message),
+    )
+
+    summary = failure_summary(error)
+
+    assert "stored" not in summary
+    assert summary == f"IntegrityError: DriverIntegrityError: {expected_message}"
+
+
+@pytest.mark.parametrize(
+    ("secret_construct", "kept_length", "secret_fragment"),
+    [
+        (
+            "postgresql://runtime:cutpassword@db.example/postgres",
+            30,
+            "cutpass",
+        ),
+        ("{'password': 'open sesame word'}", 28, "sesame"),
+        ("[parameters: {'summary': 'stored row value'}]", 36, "stored"),
+    ],
+)
+def test_a_secret_cut_by_the_redaction_limit_is_not_exposed(
+    secret_construct, kept_length, secret_fragment
+) -> None:
+    padding_length = MAX_REDACTED_MESSAGE_LENGTH - kept_length
+    padding = ("padding " * padding_length)[:padding_length]
+    message = f"{padding}{secret_construct} and more"
+    kept_text = message[:MAX_REDACTED_MESSAGE_LENGTH]
+    assert secret_fragment in kept_text
+
+    redacted = redact_failure_message(message)
+
+    assert secret_fragment not in redacted
+    assert redacted.endswith("...")
+
+
+@pytest.mark.parametrize("message_unit", PATHOLOGICAL_MESSAGE_UNITS)
+def test_long_pathological_messages_are_summarised_quickly(message_unit) -> None:
+    message = message_unit * (1_000_000 // len(message_unit))
+
+    started = time.perf_counter()
+    summary = failure_summary(RuntimeError(message))
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < MAX_PATHOLOGICAL_SECONDS
+    assert len(summary) <= MAX_FAILURE_SUMMARY_LENGTH
+
+
+@pytest.mark.parametrize("message_unit", PATHOLOGICAL_MESSAGE_UNITS)
+def test_redaction_patterns_are_linear_without_the_length_cap(
+    monkeypatch, message_unit
+) -> None:
+    monkeypatch.setattr(
+        failure_causes, "MAX_REDACTED_MESSAGE_LENGTH", UNCAPPED_PATHOLOGICAL_LENGTH
+    )
+    message = message_unit * (UNCAPPED_PATHOLOGICAL_LENGTH // len(message_unit))
+
+    started = time.perf_counter()
+    redact_failure_message(message)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < MAX_PATHOLOGICAL_SECONDS
+
+
 def test_summary_is_bounded_to_the_persisted_column_length() -> None:
     summary = failure_summary(
         ValueError("x" * 2_000), progress=StageProgress(role="reform")
@@ -207,6 +422,7 @@ def test_summary_is_bounded_to_the_persisted_column_length() -> None:
 
     assert len(summary) == MAX_FAILURE_SUMMARY_LENGTH
     assert summary.endswith("...")
+    assert TypeAdapter(ErrorSummary).validate_python(summary) == summary
 
 
 def test_unprintable_errors_still_produce_a_summary() -> None:
