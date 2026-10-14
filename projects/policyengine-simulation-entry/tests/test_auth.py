@@ -50,17 +50,17 @@ def _static_decoder(public_key) -> auth_module.JWTDecoder:
 
 def _use_static_signing_key(monkeypatch, public_key) -> None:
     decoder = _static_decoder(public_key)
-    monkeypatch.setattr(auth_module, "_decoder", lambda issuer, audience: decoder)
+    monkeypatch.setattr(auth_module, "_decoder", lambda _issuer, _audience: decoder)
 
 
 def test_missing_token_preserves_403_contract(monkeypatch):
     class Decoder:
-        def __call__(self, token, runtime):
+        def __call__(self, token, runtime):  # noqa: ARG002  # stands in for JWTDecoder.__call__
             from fastapi import HTTPException
 
             raise HTTPException(status_code=403)
 
-    monkeypatch.setattr(auth_module, "_decoder", lambda issuer, audience: Decoder())
+    monkeypatch.setattr(auth_module, "_decoder", lambda _issuer, _audience: Decoder())
     app = create_app(settings=make_settings(), backend=FakeBackend())
 
     with TestClient(app) as client:
@@ -71,11 +71,11 @@ def test_missing_token_preserves_403_contract(monkeypatch):
 
 def test_public_routes_do_not_require_token(monkeypatch):
     class Decoder:
-        def __call__(self, token, runtime):
+        def __call__(self, token, runtime):  # noqa: ARG002  # stands in for JWTDecoder.__call__
             msg = "public route attempted authentication"
             raise AssertionError(msg)
 
-    monkeypatch.setattr(auth_module, "_decoder", lambda issuer, audience: Decoder())
+    monkeypatch.setattr(auth_module, "_decoder", lambda _issuer, _audience: Decoder())
     app = create_app(settings=make_settings(), backend=FakeBackend())
 
     with TestClient(app) as client:

@@ -19,6 +19,11 @@ if TYPE_CHECKING:
     from policyengine_simulation_entry.config import Settings
 
 _bearer = HTTPBearer(auto_error=False)
+# CallerAuthenticator's dependency marker, shared as a module-level default.
+# The Annotated form can't be used: this module postpones annotations, and
+# FastAPI resolves them against the callable's __globals__, which a callable
+# instance doesn't have.
+_bearer_credentials = Depends(_bearer)
 logger = logging.getLogger(__name__)
 
 type CallerPermission = Literal[
@@ -97,7 +102,7 @@ class CallerAuthenticator:
 
     def __call__(
         self,
-        token: HTTPAuthorizationCredentials | None = Depends(_bearer),
+        token: HTTPAuthorizationCredentials | None = _bearer_credentials,
     ) -> CallerIdentity | None:
         """Return the verified caller, or None when auth is not required.
 

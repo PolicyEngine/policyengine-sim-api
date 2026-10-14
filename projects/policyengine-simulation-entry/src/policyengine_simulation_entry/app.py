@@ -205,7 +205,7 @@ def create_app(
         observability_id = normalize_observability_id(value)
         request.state.observability_id = observability_id
         if observability_id is not None:
-            try:
+            try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
                 runtime.set_context(observability_id=observability_id)
             except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
                 pass
@@ -235,7 +235,7 @@ def create_app(
         current = normalize_observability_id(request.state.observability_id)
         downstream = backend_observability_id(headers)
         if current is not None and downstream is not None and current != downstream:
-            try:
+            try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
                 runtime.event(
                     "simulation_entry_observability_id_mismatch",
                     attributes={
@@ -321,7 +321,7 @@ def create_app(
         backend_started = time.monotonic()
         route = _route_template(request)
         event_identifiers: RequestIdentifiers = identifiers or {}
-        try:
+        try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
             runtime.set_context(backend="old_gateway", **event_identifiers)
         except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
             pass
