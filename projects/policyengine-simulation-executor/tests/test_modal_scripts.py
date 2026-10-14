@@ -225,6 +225,9 @@ class TestModalImageSmoke:
             REPO_ROOT / "projects/policyengine-simulation-executor/src/modal/v2_app.py",
             REPO_ROOT
             / "projects/policyengine-simulation-executor/src/modal/precompute_app.py",
+            REPO_ROOT
+            / "projects/policyengine-simulation-executor/src/modal"
+            / "stage12_precompute_app.py",
         )
         sources = "\n".join(path.read_text(encoding="utf-8") for path in paths)
 

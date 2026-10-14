@@ -8,6 +8,10 @@ from pathlib import Path
 
 import modal
 
+from policyengine_simulation_executor.hf_access_validation import (
+    HF_MODAL_SECRET_NAME,
+    HF_RUNTIME_ENV_NAME,
+)
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 
 STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
@@ -16,9 +20,13 @@ RESOLVED_BUNDLE = load_stage12_bundle()
 
 app = modal.App("policyengine-stage12-cache-precompute")
 gcp_secret = modal.Secret.from_name("stage12-evaluation-gcp-credentials")
-data_secret = modal.Secret.from_name("policyengine-data-credentials")
-hf_secret = modal.Secret.from_name("huggingface-token", required_keys=["HF_TOKEN"])
-worker_secrets = [gcp_secret, data_secret, hf_secret]
+# The read-only Hugging Face credential the other simulation apps mount. The
+# US cache reads only the public policyengine/populace-us dataset repository.
+hf_secret = modal.Secret.from_name(
+    HF_MODAL_SECRET_NAME,
+    required_keys=[HF_RUNTIME_ENV_NAME],
+)
+worker_secrets = [gcp_secret, hf_secret]
 
 
 def _bundle_install_command() -> str:
@@ -48,7 +56,7 @@ precompute_image = (
         frozen=True,
         extra_options="--only-group modal-simulation-image",
     )
-    .run_commands(_bundle_install_command(), secrets=[data_secret, hf_secret])
+    .run_commands(_bundle_install_command(), secrets=[hf_secret])
     .env({"POLICYENGINE_DATA_FOLDER": STAGE12_DATA_DIR})
     .add_local_python_source(
         "src.modal",

@@ -194,13 +194,17 @@ message with the same correlation ID.
 Stage 12 deployments run `src/modal/stage12_precompute_app.py` against the
 dedicated `STAGE12_CACHE_BUCKET`. It publishes three annual datasets plus 60
 current-law US baseline files and emits
-`STAGE12_CACHE_MANIFEST_DIGEST=<sha256>`. The US worker image downloads and
-verifies the manifest's 63 files during image construction. The release
-validation checks the recorded manifest, hashes a baseline file, and requires
-a real calculation to load that file without recomputing it. Worker validation
-also calculates a US household under a nonempty CTC reform using the frontend
-interval format `2026-01-01.2100-12-31`. The cache manifest digest is then
-stored in the separate v2 version manifest.
+`STAGE12_CACHE_MANIFEST_DIGEST=<sha256>`. Like the v2 workers, its image and
+functions mount only the read-only `pe-uk-private-hf-read-token` Hugging Face
+secret, which supplies `HUGGING_FACE_TOKEN`, and
+`stage12-evaluation-gcp-credentials`; the US data it reads comes from the
+public `policyengine/populace-us` dataset repository. The US worker image
+downloads and verifies the manifest's 63 files during image construction. The
+release validation checks the recorded manifest, hashes a baseline file, and
+requires a real calculation to load that file without recomputing it. Worker
+validation also calculates a US household under a nonempty CTC reform using
+the frontend interval format `2026-01-01.2100-12-31`. The cache manifest
+digest is then stored in the separate v2 version manifest.
 
 The cache is an optimization, not required state for a calculation: an absent
 file causes a normal calculation, and a file missing planned output columns is
