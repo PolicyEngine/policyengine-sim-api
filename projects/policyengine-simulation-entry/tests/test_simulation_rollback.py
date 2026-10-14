@@ -345,9 +345,7 @@ def _run_restore(
 def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
     """#744 review: a later attempt must not hide an earlier publication."""
     attempts = [1, 10, 2, 9]
-    result = _run_restore(
-        tmp_path, 10, {attempt: 1 for attempt in attempts}, present=attempts
-    )
+    result = _run_restore(tmp_path, 10, dict.fromkeys(attempts, 1), present=attempts)
     assert result.returncode == 0, result.stderr
     passed = result.stdout.split("--restore-plan\n", 1)[1].split()
     assert [Path(path).parent.name for path in passed] == [
@@ -414,7 +412,8 @@ def test_rollbacks_share_the_deployment_concurrency_group():
     )
     rollback = group.search(ROLLBACK_WORKFLOW.read_text(encoding="utf-8"))
     deploy = group.search(DEPLOY_WORKFLOW.read_text(encoding="utf-8"))
-    assert rollback and deploy
+    assert rollback
+    assert deploy
     assert rollback.group("group") == deploy.group("group") == "simulation-deploy-main"
     assert "cancel-in-progress: false" in ROLLBACK_WORKFLOW.read_text(encoding="utf-8")
 

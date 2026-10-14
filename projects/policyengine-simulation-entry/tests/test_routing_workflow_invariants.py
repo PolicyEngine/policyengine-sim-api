@@ -146,9 +146,8 @@ def _routing_commands(script: str):
         assert REGISTRY_INVOCATION.search(line), (
             f"Routing library calls must use the guarded foreground CLI: {line}"
         )
-        assert "$(" not in line and "`" not in line, (
-            f"Unsupported routing command substitution: {line}"
-        )
+        assert "$(" not in line, f"Unsupported routing command substitution: {line}"
+        assert "`" not in line, f"Unsupported routing command substitution: {line}"
         tokens = _shell_tokens(line)
         assert not any(
             token in {"{", "}"}
@@ -250,7 +249,8 @@ def _called_workflow(job: dict, workflows: dict[str, dict]) -> str | None:
         # Same-repository qualified calls must obey the same writer invariant
         # as relative calls, including when pinned to a ref or commit.
         path, separator, reference = uses[len(canonical_prefix) :].partition("@")
-        assert separator and reference, f"Missing reusable workflow ref: {uses}"
+        assert separator, f"Missing reusable workflow ref: {uses}"
+        assert reference, f"Missing reusable workflow ref: {uses}"
         assert path.startswith(".github/workflows/"), uses
     else:
         return None
@@ -299,7 +299,8 @@ def _guard_allowed_workflows() -> set[str]:
     )
     value = assignment.value
     if isinstance(value, ast.Call):
-        assert isinstance(value.func, ast.Name) and value.func.id == "frozenset"
+        assert isinstance(value.func, ast.Name)
+        assert value.func.id == "frozenset"
         value = value.args[0]
     return set(ast.literal_eval(value))
 
@@ -406,7 +407,8 @@ def _depends_on(workflow: dict, job_id: str, predecessor: str) -> bool:
 
 
 def _ordered(left, right, workflows):
-    for (path, left_job), (other_path, right_job) in zip(left, right):
+    # Compare the chains' common prefix: one may call further reusable workflows.
+    for (path, left_job), (other_path, right_job) in zip(left, right, strict=False):
         assert path == other_path
         if left_job != right_job:
             return _depends_on(workflows[path], left_job, right_job) or _depends_on(
@@ -673,7 +675,7 @@ def test_routing_pipeline_cannot_make_writers_parallel():
     ],
 )
 def test_routing_discovery_rejects_unsupported_shell_forms(script):
-    with pytest.raises(AssertionError, match="Unsupported|foreground"):
+    with pytest.raises(AssertionError, match=r"Unsupported|foreground"):
         list(_routing_commands(script))
 
 

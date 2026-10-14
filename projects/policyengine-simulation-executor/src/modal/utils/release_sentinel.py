@@ -33,6 +33,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
 from importlib import metadata
+from pathlib import Path
 from typing import Any
 
 SCHEMA = "policyengine-sim-api.release-sentinel/v1"
@@ -345,13 +346,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "expected":
         expected = compute_expected()
-        with open(args.output, "w") as handle:
+        with Path(args.output).open("w") as handle:
             json.dump(expected, handle, indent=2, sort_keys=True)
         for case in expected["cases"]:
             _report(f"{case['case_id']} ({case['seconds']}s): {case['values']}")
         return 0
 
-    with open(args.expected) as handle:
+    with Path(args.expected).open() as handle:
         expected = json.load(handle)
     problems = check_deployment(
         args.base_url,

@@ -53,7 +53,7 @@ def serialized_workflow(monkeypatch):
 
 
 @pytest.fixture
-def patched_modal(monkeypatch, serialized_workflow):
+def patched_modal(monkeypatch, serialized_workflow):  # noqa: ARG001  # requested for its side effect; usefixtures has no effect on fixtures
     stores: dict[str, FakeDict] = {}
 
     class _Dict:
@@ -469,11 +469,10 @@ def test_seed_active_routing_state_from_legacy_merges_existing_active(
     assert state["latest"]["policyengine"] == "4.19.1"
 
 
-@pytest.mark.usefixtures("fake_bundle_metadata")
+@pytest.mark.usefixtures("fake_bundle_metadata", "serialized_workflow")
 def test_main_publishes_routing_state(
     patched_modal,
     monkeypatch,
-    serialized_workflow,
 ):
     monkeypatch.setattr(
         sys,
@@ -520,7 +519,7 @@ def test_country_bundle_metadata_records_the_certified_dataset_sha256(monkeypatc
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.release_bundle.get_country_release_bundle",
-        lambda country: bundle,
+        lambda _country: bundle,
     )
 
     metadata = registry._country_bundle_metadata("uk")
@@ -592,8 +591,8 @@ def _plan(
     version,
     us_version,
     uk_version,
-    force=False,
     *,
+    force=False,
     publication_id=None,
 ):
     _manifests(monkeypatch, {version: (us_version, uk_version)})
@@ -660,9 +659,9 @@ def test_publish_then_restore_returns_exactly_the_previous_state(releases, legac
             state["routes"]["policyengine"]["5.9.0"] = _app("5.9.0")
             state["routes"]["uk"]["2.1.0"] = _app("5.9.0")
         for version, us, uk, force in releases[:-1]:
-            state = _plan(monkeypatch, state, version, us, uk, force)["after"]
+            state = _plan(monkeypatch, state, version, us, uk, force=force)["after"]
         version, us, uk, force = releases[-1]
-        plan = _plan(monkeypatch, state, version, us, uk, force)
+        plan = _plan(monkeypatch, state, version, us, uk, force=force)
         if state is not None:
             stores["staging/simulation-api-routing-state"] = FakeDict(
                 {"active": json.loads(json.dumps(state))}
@@ -765,7 +764,7 @@ def test_plans_say_whether_latest_routes_to_the_release(
     monkeypatch, version, force, advances
 ):
     state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
-    plan = _plan(monkeypatch, state, version, "1.1.0", "2.1.0", force)
+    plan = _plan(monkeypatch, state, version, "1.1.0", "2.1.0", force=force)
     assert plan["advances_latest"] is advances
 
 
@@ -815,9 +814,8 @@ def _main(monkeypatch, *args):
     registry.main()
 
 
-def test_main_plans_applies_and_restores(
-    patched_modal, monkeypatch, capsys, tmp_path, serialized_workflow
-):
+@pytest.mark.usefixtures("serialized_workflow")
+def test_main_plans_applies_and_restores(patched_modal, monkeypatch, capsys, tmp_path):
     state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
     store = _store(patched_modal, state)
     _manifests(monkeypatch, {"6.3.0": ("1.1.0", "2.2.0")})
@@ -858,9 +856,8 @@ def test_main_plans_applies_and_restores(
     assert store.get("active") == json.loads(json.dumps(state))
 
 
-def test_main_prints_and_restores_latest(
-    patched_modal, monkeypatch, capsys, serialized_workflow
-):
+@pytest.mark.usefixtures("serialized_workflow")
+def test_main_prints_and_restores_latest(patched_modal, monkeypatch, capsys):
     state = _publish(monkeypatch, None, "6.2.6", "1.1.0", "2.1.0")
     state = _publish(monkeypatch, state, "6.3.0", "1.1.0", "2.2.0")
     store = _store(patched_modal, state)
@@ -937,9 +934,8 @@ def test_a_chain_of_attempts_is_undone_in_order(monkeypatch, patched_modal):
     )
 
 
-def test_main_restores_several_plans(
-    patched_modal, monkeypatch, capsys, tmp_path, serialized_workflow
-):
+@pytest.mark.usefixtures("serialized_workflow")
+def test_main_restores_several_plans(patched_modal, monkeypatch, capsys, tmp_path):
     a = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
     store = _store(patched_modal, a)
     first = _plan(monkeypatch, a, "6.1.0", "1.1.0", "2.2.0")
@@ -976,8 +972,9 @@ def test_plans_carry_their_publication_id(monkeypatch):
     ["simulation-deploy.yml", "stage12-deploy.yml", "simulation-rollback.yml"],
 )
 @pytest.mark.parametrize("ref", ["refs/heads/main", "refs/tags/v6.3.0", "a" * 40])
+@pytest.mark.usefixtures("serialized_workflow")
 def test_routing_guard_accepts_the_serialized_caller_workflows(
-    monkeypatch, serialized_workflow, workflow, ref
+    monkeypatch, workflow, ref
 ):
     monkeypatch.setenv(
         "GITHUB_WORKFLOW_REF",
@@ -1045,9 +1042,8 @@ def test_routing_guard_accepts_the_serialized_caller_workflows(
         ),
     ],
 )
-def test_routing_guard_requires_every_condition(
-    monkeypatch, serialized_workflow, variable, value
-):
+@pytest.mark.usefixtures("serialized_workflow")
+def test_routing_guard_requires_every_condition(monkeypatch, variable, value):
     if value is None:
         monkeypatch.delenv(variable, raising=False)
     else:
@@ -1105,8 +1101,9 @@ def test_routing_guard_requires_every_condition(
     ],
     ids=["local", "not-actions", "fork", "unserialized-workflow"],
 )
+@pytest.mark.usefixtures("serialized_workflow")
 def test_library_writers_refuse_unserialized_calls_before_validation_or_modal_access(
-    monkeypatch, serialized_workflow, patched_modal, writer, kwargs, variable, value
+    monkeypatch, patched_modal, writer, kwargs, variable, value
 ):
     if variable is None:
         for name in ("GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_REF"):
@@ -1114,7 +1111,7 @@ def test_library_writers_refuse_unserialized_calls_before_validation_or_modal_ac
     else:
         monkeypatch.setenv(variable, value)
 
-    def forbidden_access(*args, **kwargs):
+    def forbidden_access(*_args, **_kwargs):
         pytest.fail("a refused library write accessed Modal or delegated its write")
 
     monkeypatch.setattr(registry.modal.Dict, "from_name", forbidden_access)
@@ -1181,8 +1178,9 @@ def test_library_writers_refuse_unserialized_calls_before_validation_or_modal_ac
     ],
     ids=["local", "not-actions", "fork", "unserialized-workflow"],
 )
+@pytest.mark.usefixtures("serialized_workflow")
 def test_main_refuses_unserialized_writes_before_accessing_modal_or_plan_files(
-    monkeypatch, patched_modal, capsys, serialized_workflow, args, variable, value
+    monkeypatch, patched_modal, capsys, args, variable, value
 ):
     if variable is None:
         for name in ("GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_WORKFLOW_REF"):
@@ -1190,7 +1188,7 @@ def test_main_refuses_unserialized_writes_before_accessing_modal_or_plan_files(
     else:
         monkeypatch.setenv(variable, value)
 
-    def forbidden_modal_access(*args, **kwargs):
+    def forbidden_modal_access(*_args, **_kwargs):
         pytest.fail("a refused CLI write accessed Modal")
 
     monkeypatch.setattr(registry.modal.Dict, "from_name", forbidden_modal_access)
@@ -1422,9 +1420,8 @@ def test_every_other_routing_write_refuses_an_unfinished_release(
     registry.apply_routing_plan(environment="staging", plan=pending)
     saved = json.loads(json.dumps(store.snapshot()))
     other = _plan(monkeypatch, pending["after"], "6.2.0", "1.2.0", "2.3.0")
-    with pytest.raises(
-        registry.RoutingConflictError, match="Unfinished routing publication"
-    ):
+
+    def write_routing():
         if writer == "publish":
             registry.publish_routing_state(
                 environment="staging",
@@ -1441,6 +1438,11 @@ def test_every_other_routing_write_refuses_an_unfinished_release(
             registry.seed_active_routing_state_from_legacy(environment="staging")
         else:
             registry.restore_routing_plans(environment="staging", plans=[other])
+
+    with pytest.raises(
+        registry.RoutingConflictError, match="Unfinished routing publication"
+    ):
+        write_routing()
     assert store.snapshot() == saved
 
 
@@ -1726,7 +1728,7 @@ def test_retry_after_finalization_returns_the_prior_outcome_without_writing(
     assert registry.finalize_routing_publication(**args) == expected
     saved = json.loads(json.dumps(store.snapshot()))
 
-    def forbidden_write(*args, **kwargs):
+    def forbidden_write(*_args, **_kwargs):
         pytest.fail("an already finalized publication was written again")
 
     monkeypatch.setattr(registry, "_write_publication_record", forbidden_write)
@@ -1735,7 +1737,7 @@ def test_retry_after_finalization_returns_the_prior_outcome_without_writing(
     assert store.snapshot() == saved
 
 
-def test_operator_cannot_complete_pending_publications(monkeypatch, patched_modal):
+def test_operator_cannot_complete_pending_publications(patched_modal):
     store = _store(patched_modal, None)
     with pytest.raises(
         ValueError, match="operator recovery requires gates_passed=false"
@@ -1801,7 +1803,7 @@ def test_finalizer_owns_prod_publications_in_the_main_modal_environment(
     assert store.get("publication") == {"status": "completed", "plan": pending}
 
 
-def test_finalizer_rejects_invalid_release_environments(monkeypatch, patched_modal):
+def test_finalizer_rejects_invalid_release_environments(patched_modal):
     with pytest.raises(ValueError, match="release_environment must be beta or prod"):
         registry.finalize_routing_publication(
             environment="staging", release_environment="staging", gates_passed=False
