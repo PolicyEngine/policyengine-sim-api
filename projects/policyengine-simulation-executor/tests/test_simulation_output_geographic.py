@@ -5,8 +5,8 @@ from __future__ import annotations
 from contextlib import nullcontext
 from types import SimpleNamespace
 
-import pandas as pd
 import pytest
+from fixtures.weighted_frames import weighted_entity_frame
 from policyengine.data.uk_geography_assets import CONSTITUENCY_ASSET_SPEC
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
@@ -33,7 +33,7 @@ def _uk_simulation(
     code: str,
     income: float,
 ) -> SimpleNamespace:
-    household = pd.DataFrame(
+    household = weighted_entity_frame(
         {
             "la_code_oa": [code],
             "household_net_income": [income],
@@ -214,7 +214,7 @@ def test_uk_geographic_outputs_are_never_dropped_for_missing_area_codes(
         "_required_uk_geography_lookup_csv_path",
         lambda _: pytest.fail("a dataset without area codes needs no lookup"),
     )
-    household = pd.DataFrame(
+    household = weighted_entity_frame(
         {
             "region": ["LONDON"],
             "household_net_income": [100.0],
