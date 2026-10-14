@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.stage12_worker_validation import (
+    WorkerValidationSeams,
     _run_non_serving_calculation,
     validate_country_worker,
 )
@@ -31,11 +32,13 @@ def test_validation_checks_dataset_and_non_serving_calculation() -> None:
     result = validate_country_worker(
         country="us",
         expected_bundle_manifest_sha256=resolved.bundle_manifest_sha256,
-        environment=_environment(),
-        dataset_path_resolver=lambda _: "/installed/populace_us_2024.h5",
-        dataset_check=lambda path, digest: datasets.append((path, digest)),
-        calculation_check=countries.append,
-        cache_check=lambda digest: {"manifest_sha256": digest},
+        seams=WorkerValidationSeams(
+            environment=_environment(),
+            dataset_path_resolver=lambda _: "/installed/populace_us_2024.h5",
+            dataset_check=lambda path, digest: datasets.append((path, digest)),
+            calculation_check=countries.append,
+            cache_check=lambda digest: {"manifest_sha256": digest},
+        ),
     )
 
     assert result["validated"] is True
@@ -117,11 +120,13 @@ def test_uk_validation_loads_packaged_local_authority_resources() -> None:
     result = validate_country_worker(
         country="uk",
         expected_bundle_manifest_sha256=resolved.bundle_manifest_sha256,
-        environment=_environment(),
-        dataset_path_resolver=lambda _: "/installed/enhanced_frs_2024_25.h5",
-        dataset_check=lambda *_: None,
-        calculation_check=lambda _: None,
-        local_authority_resource_check=checks.append,
+        seams=WorkerValidationSeams(
+            environment=_environment(),
+            dataset_path_resolver=lambda _: "/installed/enhanced_frs_2024_25.h5",
+            dataset_check=lambda *_: None,
+            calculation_check=lambda _: None,
+            local_authority_resource_check=checks.append,
+        ),
     )
 
     assert result["validated"] is True
@@ -134,10 +139,12 @@ def test_validation_rejects_digest_mismatch_before_dataset_access() -> None:
         validate_country_worker(
             country="us",
             expected_bundle_manifest_sha256="0" * 64,
-            environment=_environment(),
-            dataset_path_resolver=lambda _: "/installed/populace_us_2024.h5",
-            dataset_check=lambda path, _: accessed.append(path),
-            calculation_check=lambda _: None,
+            seams=WorkerValidationSeams(
+                environment=_environment(),
+                dataset_path_resolver=lambda _: "/installed/populace_us_2024.h5",
+                dataset_check=lambda path, _: accessed.append(path),
+                calculation_check=lambda _: None,
+            ),
         )
     assert accessed == []
 
@@ -158,11 +165,13 @@ def test_us_validation_reports_the_verified_cache_release() -> None:
         country="us",
         expected_bundle_manifest_sha256=resolved.bundle_manifest_sha256,
         expected_cache_manifest_sha256="c" * 64,
-        environment=_environment(),
-        dataset_path_resolver=lambda _: "/installed/populace_us_2024.h5",
-        dataset_check=lambda *_: None,
-        calculation_check=lambda _: None,
-        cache_check=lambda digest: seen.append(digest) or cache,
+        seams=WorkerValidationSeams(
+            environment=_environment(),
+            dataset_path_resolver=lambda _: "/installed/populace_us_2024.h5",
+            dataset_check=lambda *_: None,
+            calculation_check=lambda _: None,
+            cache_check=lambda digest: seen.append(digest) or cache,
+        ),
     )
 
     assert seen == ["c" * 64]
@@ -200,10 +209,12 @@ def test_validation_rejects_missing_secret_values(environment) -> None:
         validate_country_worker(
             country="us",
             expected_bundle_manifest_sha256=resolved.bundle_manifest_sha256,
-            environment=environment,
-            dataset_path_resolver=lambda _: "/installed/populace_us_2024.h5",
-            dataset_check=lambda *_: None,
-            calculation_check=lambda _: None,
+            seams=WorkerValidationSeams(
+                environment=environment,
+                dataset_path_resolver=lambda _: "/installed/populace_us_2024.h5",
+                dataset_check=lambda *_: None,
+                calculation_check=lambda _: None,
+            ),
         )
 
 
@@ -213,10 +224,12 @@ def test_validation_rejects_missing_installed_dataset() -> None:
         validate_country_worker(
             country="us",
             expected_bundle_manifest_sha256=resolved.bundle_manifest_sha256,
-            environment=_environment(),
-            dataset_path_resolver=lambda _: None,
-            dataset_check=lambda *_: None,
-            calculation_check=lambda _: None,
+            seams=WorkerValidationSeams(
+                environment=_environment(),
+                dataset_path_resolver=lambda _: None,
+                dataset_check=lambda *_: None,
+                calculation_check=lambda _: None,
+            ),
         )
 
 
@@ -300,7 +313,7 @@ def _validate(country="us", expected_digest=None, **seams):
         expected_bundle_manifest_sha256=(
             expected_digest or load_stage12_bundle().bundle_manifest_sha256
         ),
-        **seams,
+        seams=WorkerValidationSeams(**seams),
     )
 
 

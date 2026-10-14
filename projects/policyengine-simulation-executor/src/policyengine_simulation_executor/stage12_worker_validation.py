@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from hashlib import sha256
 from importlib import import_module
 from pathlib import Path
@@ -177,23 +178,38 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class WorkerValidationSeams:
+    """What worker validation reads and runs; the defaults inspect this worker.
+
+    ``environment`` defaults to the process environment. The checks default
+    to the installed dataset path, a streamed digest of that dataset, a
+    non-serving household calculation, the UK local-authority resources and
+    the installed Stage 12 cache.
+    """
+
+    environment: Mapping[str, str] | None = None
+    dataset_path_resolver: Callable[[CountryId], str | None] = (
+        _resolve_installed_dataset_path
+    )
+    dataset_check: Callable[[str, str], None] = _check_dataset_access
+    calculation_check: Callable[[CountryId], None] = _run_non_serving_calculation
+    local_authority_resource_check: Callable[[str], None] = (
+        _check_uk_local_authority_dataset
+    )
+    cache_check: Callable[[str], dict[str, Any]] = _check_installed_cache
+
+
 def validate_country_worker(
     *,
     country: CountryId,
     expected_bundle_manifest_sha256: str,
     expected_cache_manifest_sha256: str | None = None,
-    environment: Mapping[str, str] | None = None,
-    dataset_path_resolver: Callable[[CountryId], str | None] = (
-        _resolve_installed_dataset_path
-    ),
-    dataset_check: Callable[[str, str], None] = _check_dataset_access,
-    calculation_check: Callable[[CountryId], None] = _run_non_serving_calculation,
-    local_authority_resource_check: Callable[[str], None] = (
-        _check_uk_local_authority_dataset
-    ),
-    cache_check: Callable[[str], dict[str, Any]] = _check_installed_cache,
+    seams: WorkerValidationSeams | None = None,
 ) -> dict[str, Any]:
     """Validate imports, installed bundle, secrets, data, and calculation."""
+    seams = seams or WorkerValidationSeams()
+    environment = seams.environment
     runtime_environment = environment if environment is not None else os.environ
     _require_secret_environment(runtime_environment)
     # Import the same typed persistence package and coordinator modules loaded
@@ -212,7 +228,7 @@ def validate_country_worker(
         msg = f"installed PolicyEngine.py bundle does not support {country!r}"
         raise RuntimeError(msg) from None
     import_module(f"policyengine.tax_benefit_models.{country}")
-    installed_dataset_path = dataset_path_resolver(country)
+    installed_dataset_path = seams.dataset_path_resolver(country)
     if installed_dataset_path is None:
         msg = f"installed certified dataset is unavailable for {country!r}"
         raise RuntimeError(msg)
@@ -221,13 +237,13 @@ def validate_country_worker(
         for dataset in country_bundle.datasets
         if dataset.identity == country_bundle.default_dataset
     )
-    dataset_check(installed_dataset_path, selected_dataset.sha256)
+    seams.dataset_check(installed_dataset_path, selected_dataset.sha256)
     if country == "uk":
-        local_authority_resource_check(installed_dataset_path)
-    calculation_check(country)
+        seams.local_authority_resource_check(installed_dataset_path)
+    seams.calculation_check(country)
     cache = None
     if country == "us" and expected_cache_manifest_sha256:
-        cache = cache_check(expected_cache_manifest_sha256)
+        cache = seams.cache_check(expected_cache_manifest_sha256)
     return {
         "validated": True,
         "country": country,
