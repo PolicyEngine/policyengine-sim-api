@@ -13,6 +13,7 @@ from policyengine_simulation_executor.national_partition import (
     US_NATIONAL_REGION_GROUPS,
 )
 from src.modal import segmented_national as sn
+from src.modal.fanout import PollBackoff
 
 NATIONAL = {"country": "us", "scope": "macro", "time_period": "2026"}
 TEST_RUNTIME = NoOpObservabilityRuntime()
@@ -222,8 +223,11 @@ def _runner(fake_modal, params=None, runtime=TEST_RUNTIME, **runner_options):
         app_name="policyengine-simulation-py-test",
         runtime=runtime,
         modal_module=fake_modal,
-        poll_interval_seconds=0.001,
-        poll_interval_max_seconds=0.002,
+        poll_backoff=PollBackoff(
+            initial_seconds=0.001,
+            maximum_seconds=0.002,
+            factor=sn.POLL_INTERVAL_BACKOFF_FACTOR,
+        ),
         **runner_options,
     )
 
