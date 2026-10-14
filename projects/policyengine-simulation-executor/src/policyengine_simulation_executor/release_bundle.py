@@ -70,7 +70,7 @@ def _default_dataset_sha256(
     *,
     default_dataset: str,
     data_release: Mapping,
-    manifest,
+    manifest: CountryReleaseManifest,
 ) -> str | None:
     """The certified SHA-256 of the default dataset, from the bundle.
 
