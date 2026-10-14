@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from hashlib import sha256
 from typing import Any
 
@@ -38,6 +39,7 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 )
 
 from .dependencies import ComparisonStore, artifact_store, runtime_store
+from .failure_recording import persist_failure_record, report_original_failure
 from .output_planning import apply_output_plan, validate_output_frames
 
 
@@ -304,7 +306,7 @@ def run_single_simulation(
     simulation = PlannedSimulationExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
     _require_context(simulation, context, required_country=required_country)
-    persistence = store or runtime_store()
+    persistence = store or runtime_store(runtime)
     artifact_storage = artifacts or artifact_store()
     child = persistence.get_simulation(simulation.simulation_execution_id)
     if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
@@ -385,16 +387,27 @@ def run_single_simulation(
     # Persist any country-package calculation failure before returning a
     # stable exception to Modal.
     except Exception as error:  # noqa: BLE001
+        report_original_failure(
+            error,
+            runtime=runtime,
+            failure_scope="simulation_execution",
+            attributes={"simulation_role": simulation.role.value},
+        )
         failed_at = datetime.now(UTC)
-        persistence.replace_simulation(
-            running.model_copy(
-                update={
-                    "status": ComparisonRunLifecycleStatus.FAILED,
-                    "error_code": "simulation_execution_failed",
-                    "error_summary": type(error).__name__,
-                    "updated_at": failed_at,
-                    "completed_at": failed_at,
-                }
-            )
+        persist_failure_record(
+            partial(
+                persistence.replace_simulation,
+                running.model_copy(
+                    update={
+                        "status": ComparisonRunLifecycleStatus.FAILED,
+                        "error_code": "simulation_execution_failed",
+                        "error_summary": type(error).__name__,
+                        "updated_at": failed_at,
+                        "completed_at": failed_at,
+                    }
+                ),
+            ),
+            runtime=runtime,
+            failure_scope="simulation_execution",
         )
         raise RuntimeError("Stage 12 simulation execution failed") from None
