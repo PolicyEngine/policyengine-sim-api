@@ -51,7 +51,6 @@ def _app(version: str) -> str:
 
 def routing_state() -> dict:
     """Two releases, published in order; 6.2.7 is latest."""
-
     releases = {
         "6.2.6": ("1.700.0", "2.125.1", "5" * 64),
         "6.2.7": ("1.700.0", "2.126.8", "a" * 64),
@@ -92,7 +91,6 @@ def test_smoke_fixture_is_the_gateway_versions_response(mock_modal, client):
 
 def test_versions_survives_an_unresolvable_historical_dataset(mock_modal, client):
     """Review M1: one bad entry is reported without a dataset, not a 500."""
-
     state = routing_state()
     state["bundles"]["6.2.6"]["uk"]["default_dataset_uri"] = (
         "gs://policyengine-uk-data-private/enhanced_frs_2024_25.h5@1.39.0"
@@ -115,7 +113,6 @@ def test_versions_skips_country_entries_without_a_model_version(
     mock_modal, client, model_version
 ):
     """#743 review: a blank or non-string model is no identity at all."""
-
     state = routing_state()
     if model_version == "missing":
         del state["bundles"]["6.2.6"]["uk"]["model_version"]

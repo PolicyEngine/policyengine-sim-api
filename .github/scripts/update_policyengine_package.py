@@ -285,7 +285,6 @@ def verify_dispatch() -> None:
     promotable is refused. ``dispatch_verified`` is true only when at least
     one field was compared. Prints digests for the PR body.
     """
-
     raw = os.environ.get("RELEASE_PAYLOAD", "").strip()
     payload = json.loads(raw) if raw and raw != "null" else {}
     installed = {}

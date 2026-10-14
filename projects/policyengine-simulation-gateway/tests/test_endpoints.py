@@ -1106,7 +1106,6 @@ class TestVersionEndpoints:
         self, mock_modal, client: TestClient, malformed
     ):
         """#743 round-2 review: a digest with a trailing newline gave a 500."""
-
         state = deepcopy(TEST_ROUTING_STATE)
         state["bundles"]["4.10.0"]["uk"] = {
             **state["bundles"]["4.10.0"]["uk"],

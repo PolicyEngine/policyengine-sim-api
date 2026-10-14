@@ -62,12 +62,11 @@ _SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}")
 
 
 def _sha256_or_none(value: object) -> str | None:
-    """A SHA-256 as 64 lowercase hex digits, or ``None`` when malformed.
+    """Return a SHA-256 as 64 lowercase hex digits, or ``None`` when malformed.
 
     Only hexadecimal digits count: ``int(value, 16)`` would also accept a
     sign, underscores or surrounding whitespace.
     """
-
     if isinstance(value, str) and _SHA256_HEX.fullmatch(value):
         return value.lower()
     return None
@@ -79,12 +78,11 @@ def _default_dataset_sha256(
     data_release: Mapping,
     manifest: CountryReleaseManifest,
 ) -> str | None:
-    """The certified SHA-256 of the default dataset, from the bundle.
+    """Return the certified SHA-256 of the default dataset, from the bundle.
 
     The certified data artifact's hash counts only when that artifact is the
     default dataset; otherwise the default dataset's own artifact pin is used.
     """
-
     certified = _mapping(data_release.get("certified_data_artifact"))
     if certified.get("dataset") == default_dataset:
         digest = _sha256_or_none(certified.get("sha256"))

@@ -632,7 +632,6 @@ RELEASES = st.lists(
 @given(releases=RELEASES, legacy=st.booleans())
 def test_publish_then_restore_returns_exactly_the_previous_state(releases, legacy):
     """#744 review: first, repeat and older releases are all undone exactly."""
-
     monkeypatch = pytest.MonkeyPatch()
     stores: dict = {}
     try:
@@ -684,7 +683,6 @@ def test_publish_then_restore_returns_exactly_the_previous_state(releases, legac
 
 def test_the_review_counterexample_restores_every_pin(monkeypatch, patched_modal):
     """Legacy 6.0/model1, then 6.1/model2, then a failed 6.2/model1."""
-
     state = registry._coerce_routing_state(None)
     state["routes"]["policyengine"]["6.0.0"] = _app("6.0.0")
     state["routes"]["uk"]["2.1.0"] = _app("6.0.0")
@@ -888,7 +886,6 @@ def test_latest_identity_of_an_empty_or_legacy_state_is_blank():
 
 def test_a_failed_retry_attempt_cannot_hide_the_publication(monkeypatch, patched_modal):
     """#744 review: attempt 1 published A to B; attempt 2 republished B."""
-
     a = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
     store = _store(patched_modal, a)
     first = _plan(monkeypatch, a, "6.1.0", "1.1.0", "2.2.0")
@@ -908,7 +905,6 @@ def test_an_old_plan_cannot_withdraw_a_healthy_republication(
     monkeypatch, patched_modal
 ):
     """#744 review: A to B failed and was restored; a healthy run republished B."""
-
     a = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
     store = _store(patched_modal, a)
     failed = _plan(monkeypatch, a, "6.1.0", "1.1.0", "2.2.0")
@@ -1312,7 +1308,6 @@ def test_restoring_a_plan_verifies_the_written_or_removed_state(
 
 def test_runner_loss_cannot_be_adopted_by_the_next_release(monkeypatch, patched_modal):
     """Failed A cannot become successful B's starting state or rollback target."""
-
     original = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
     store = _store(patched_modal, original)
     failed_a = _plan(monkeypatch, original, "6.1.0", "1.1.0", "2.2.0")
@@ -1362,7 +1357,6 @@ def test_a_failed_same_version_redeploy_is_resolved_by_its_restore(
     A plan's published state carries its own publication id, so even a
     same-version redeploy differs from what it replaces and has a restore.
     """
-
     live = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
     store = _store(patched_modal, live)
     redeploy = _plan(monkeypatch, live, "6.0.0", "1.1.0", "2.1.0")
@@ -1472,7 +1466,6 @@ def test_publication_ownership_compares_the_entire_plan(
     monkeypatch, patched_modal, operation
 ):
     """A reused publication id never grants permission to a changed plan."""
-
     before = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
     store = _store(patched_modal, before)
     pending = _plan(monkeypatch, before, "6.1.0", "1.1.0", "2.2.0")
@@ -1517,7 +1510,6 @@ def test_finalization_finishes_each_release_and_allows_the_next_one(
     first_publication,
 ):
     """Upload loss and attempt 2 use the full journal, with no artifact reads."""
-
     before = (
         None
         if first_publication

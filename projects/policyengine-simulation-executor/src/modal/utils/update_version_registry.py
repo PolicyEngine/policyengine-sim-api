@@ -347,7 +347,6 @@ def build_restored_routing_state(
     the routing plan its deployment recorded (:func:`restore_routing_plan`):
     which app served a model version before cannot be read from the state.
     """
-
     state = _coerce_routing_state(current_state)
     current_latest = state["latest"].get("policyengine")
     if expected_latest is not None and current_latest != expected_latest:
@@ -404,7 +403,6 @@ class RoutingConflict(RuntimeError):
 
 def routing_state_digest(state: object) -> str:
     """SHA-256 of a routing state's canonical JSON (``null`` when absent)."""
-
     text = json.dumps(state, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -423,7 +421,7 @@ def plan_routing_publication(
     force_latest: bool = False,
     publication_id: str | None = None,
 ) -> dict:
-    """The routing state before and after publishing a release, with digests.
+    """Plan the routing state before and after publishing a release, with digests.
 
     The published state's ``generation`` names this publication uniquely
     (``publication_id``, by default a random one), so a later publication of
@@ -431,7 +429,6 @@ def plan_routing_publication(
     restored over it. ``advances_latest`` says whether unpinned requests
     route to this release once the plan is applied.
     """
-
     publication_id = publication_id or uuid.uuid4().hex
     before = _json_copy(current_state) if current_state is not None else None
     after = _json_copy(
@@ -459,8 +456,7 @@ def plan_routing_publication(
 
 
 def validate_routing_plan(plan: object) -> dict:
-    """A plan whose digests match its states, or ``ValueError``."""
-
+    """Return a plan whose digests match its states, or raise ``ValueError``."""
     if not isinstance(plan, dict) or plan.get("schema") != ROUTING_PLAN_SCHEMA:
         raise ValueError(f"not a {ROUTING_PLAN_SCHEMA} routing plan")
     for side in ("before", "after"):
@@ -498,7 +494,6 @@ SERIALIZED_ROUTING_WORKFLOW_FILES = frozenset(
 
 def _require_serialized_routing_workflow() -> None:
     """Refuse routing writes outside the workflows that serialize them."""
-
     # GitHub associates a reusable workflow's github context with its caller,
     # so GITHUB_WORKFLOW_REF identifies the caller, not the reusable file:
     # https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#github-context
@@ -576,7 +571,6 @@ def record_routing_plan(*, environment: str, plan: dict) -> None:
     file or uploading its artifact fails. Operator recovery can restore a plan
     if the finalizer itself is lost.
     """
-
     _require_serialized_routing_workflow()
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=True)
@@ -591,7 +585,6 @@ def record_routing_plan(*, environment: str, plan: dict) -> None:
 
 def complete_routing_plan(*, environment: str, plan: dict) -> None:
     """Acknowledge the owning release only after all its gates have passed."""
-
     _require_serialized_routing_workflow()
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=False)
@@ -607,7 +600,6 @@ def complete_routing_plan(*, environment: str, plan: dict) -> None:
 
 def apply_routing_plan(*, environment: str, plan: dict) -> None:
     """Publish ``plan``'s state if the live state is still its starting point."""
-
     _require_serialized_routing_workflow()
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=True)
@@ -633,7 +625,6 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
     starting state no plan replaced (nothing was applied, or it was already
     undone). Any other live state is a conflict and nothing is changed.
     """
-
     _require_serialized_routing_workflow()
     for plan in plans:
         validate_routing_plan(plan)
@@ -681,7 +672,6 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
 
 def restore_routing_plan(*, environment: str, plan: dict) -> str:
     """Undo one plan: ``restored``, ``unchanged`` (never applied) or a conflict."""
-
     _require_serialized_routing_workflow()
     return restore_routing_plans(environment=environment, plans=[plan])
 
@@ -690,7 +680,6 @@ def _publication_owned_by_release(
     plan: dict, *, publication_run: str | None, release_environment: str
 ) -> bool:
     """Match a workflow run across attempts, or the operator's selected store."""
-
     if publication_run is None:
         return True
 
@@ -720,7 +709,6 @@ def finalize_routing_publication(
     Already finished records owned by this run return their recorded outcome
     without writing, so retrying a finalizer after output loss is safe.
     """
-
     _require_serialized_routing_workflow()
     if release_environment not in {"beta", "prod"}:
         raise ValueError("release_environment must be beta or prod")
@@ -764,8 +752,7 @@ def finalize_routing_publication(
 
 
 def latest_release_identity(state: object) -> dict[str, str]:
-    """What unpinned requests are routed to: version, app, UK model and dataset."""
-
+    """Describe what unpinned requests route to: version, app, UK model and dataset."""
     routing = _coerce_routing_state(state)
     version = routing["latest"].get("policyengine") or ""
     manifest = routing["bundles"].get(version) or {}
@@ -1043,8 +1030,7 @@ def publish_routing_state(
 
 
 def read_latest_policyengine_version(*, environment: str) -> str | None:
-    """The policyengine.py version unpinned requests are routed to now."""
-
+    """Return the policyengine.py version unpinned requests are routed to now."""
     snapshot = _modal_dict_snapshot(
         name=ROUTING_STATE_DICT_NAME, environment=environment
     )
@@ -1058,6 +1044,7 @@ def restore_routing_state(
     policyengine_version: str,
     expected_latest: str | None = None,
 ) -> RoutingState:
+    """Point ``latest`` back at a published policyengine.py version and store it."""
     _require_serialized_routing_workflow()
     store = modal.Dict.from_name(
         ROUTING_STATE_DICT_NAME,

@@ -622,8 +622,10 @@ def test_a_bundle_that_states_no_model_version_contradicts_nothing(
 
 
 def test_poll_bodies_carry_the_dataset_sha256_only_when_recorded(mock_modal, client):
-    """A worker bundle with a certified dataset digest reports it in raw
-    202 bodies; one without keeps the legacy key set."""
+    """Report a recorded dataset digest in raw 202 bodies.
+
+    A worker bundle without a certified dataset digest keeps the legacy key set.
+    """
     from copy import deepcopy
 
     from fixtures.gateway_endpoints import TEST_ROUTING_STATE

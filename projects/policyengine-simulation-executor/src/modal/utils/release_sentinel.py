@@ -1,4 +1,4 @@
-"""Numerical release sentinel: the deployed API computes what the bundle computes.
+r"""Numerical release sentinel: the deployed API computes what the bundle computes.
 
 ``expected`` runs each sentinel request in this process through
 ``run_simulation_impl``, the pure implementation the Modal simulation worker
@@ -17,7 +17,7 @@ stale cache or a broken route.
 Usage::
 
     python -m src.modal.utils.release_sentinel expected --output sentinel.json
-    python -m src.modal.utils.release_sentinel check --base-url URL \\
+    python -m src.modal.utils.release_sentinel check --base-url URL \
         --expected sentinel.json
 """
 
@@ -79,8 +79,7 @@ class SentinelError(RuntimeError):
 
 
 def worker_payload(request: Mapping[str, Any]) -> dict[str, Any]:
-    """The payload the gateway forwards to the worker for ``request``."""
-
+    """Build the payload the gateway forwards to the worker for ``request``."""
     from policyengine_simulation_contract.gateway_models import SimulationRequest
 
     return SimulationRequest.model_validate(dict(request)).model_dump(
@@ -91,6 +90,7 @@ def worker_payload(request: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def value_at(result: Mapping[str, Any], path: str) -> float:
+    """Return the finite number at the dotted ``path`` in ``result``."""
     node: Any = result
     for key in path.split("."):
         if not isinstance(node, Mapping) or key not in node:
@@ -105,7 +105,6 @@ def value_at(result: Mapping[str, Any], path: str) -> float:
 
 def agree(expected: float, actual: float) -> bool:
     """Equal up to floating-point reduction order (symmetric)."""
-
     return abs(expected - actual) <= max(
         ABS_TOL, REL_TOL * max(abs(expected), abs(actual))
     )
@@ -146,7 +145,6 @@ def compute_expected(
     cases: tuple[dict[str, Any], ...] = SENTINEL_CASES,
 ) -> dict[str, Any]:
     """Run every case in this process and record its values."""
-
     runner = runner or _local_runner()
     identity = dict(identity or _bundle_identity())
     if not identity["uk"].get("dataset_sha256"):
@@ -201,8 +199,7 @@ def _http(
 
 
 def access_token(environ: Mapping[str, str] = os.environ) -> str | None:
-    """A client-credentials token when the test auth variables are configured."""
-
+    """Return a client-credentials token when the test auth variables are configured."""
     present = [name for name in _AUTH_VARS if environ.get(name)]
     if not present:
         if _truthy(environ.get("SIMULATION_TEST_AUTH_REQUIRED")):
@@ -249,7 +246,6 @@ def check_deployment(
     clock: Callable[[], float] = time.monotonic,
 ) -> list[str]:
     """Submit each expected case to ``base_url`` and return what disagrees."""
-
     if expected.get("schema") != SCHEMA:
         raise SentinelError(f"expected file schema is {expected.get('schema')!r}")
     http = http or _http
@@ -320,6 +316,7 @@ def check_deployment(
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the ``expected`` or ``check`` command and return its exit status."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
     expected_parser = commands.add_parser("expected", help="compute in-process values")

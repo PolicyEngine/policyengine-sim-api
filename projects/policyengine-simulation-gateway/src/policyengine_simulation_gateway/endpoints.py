@@ -521,13 +521,12 @@ _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 
 def _certified_dataset_sha256(country_bundle: dict) -> str | None:
-    """The certified SHA-256 of the app's default dataset, if recorded.
+    """Return the certified SHA-256 of the app's default dataset, if recorded.
 
     ``dataset`` in a bundle response is always the app's default dataset URI
     (``_resolve_dataset_uri_from_app_bundle``), so the digest describes it.
     Malformed or missing values are omitted rather than repeated.
     """
-
     digest = country_bundle.get("default_dataset_sha256")
     # fullmatch: ``$`` would also accept a trailing newline.
     if isinstance(digest, str) and _SHA256_HEX.fullmatch(digest):
@@ -584,7 +583,6 @@ def _bundle_identities(state: dict) -> dict[str, dict[str, PolicyEngineBundle]]:
     dataset cannot be resolved is reported without a dataset rather than
     failing the whole response.
     """
-
     identities: dict[str, dict[str, PolicyEngineBundle]] = {}
     for policyengine_version, app_bundle in _routing_state_bundles(state).items():
         if not isinstance(app_bundle, dict):
