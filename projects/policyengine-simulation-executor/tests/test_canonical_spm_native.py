@@ -31,6 +31,7 @@ def test_worker_baseline_reform_national_local_cache_and_receipts(
     from policyengine.core.simulation import _cache
     from policyengine_simulation_executor.simulation_runtime import (
         DatasetSelection,
+        RegionResolution,
         _build_simulation,
     )
     from policyengine_simulation_executor.spm import simulation_spm_result
@@ -50,14 +51,14 @@ def test_worker_baseline_reform_national_local_cache_and_receipts(
         dataset=native_dataset,
         dataset_selection=dataset_selection,
         policy=None,
-        region_code="us",
+        region=RegionResolution(code="us"),
     )
     reform = _build_simulation(
         params,
         dataset=native_dataset,
         dataset_selection=dataset_selection,
         policy={"gov.irs.credits.ctc.amount.base[0].amount": 3000},
-        region_code="us",
+        region=RegionResolution(code="us"),
     )
     for simulation in (baseline, reform):
         simulation.extra_variables = {"spm_unit": ["spm_unit_spm_threshold"]}
@@ -84,7 +85,7 @@ def test_worker_baseline_reform_national_local_cache_and_receipts(
         dataset=native_dataset,
         dataset_selection=dataset_selection,
         policy=None,
-        region_code="us",
+        region=RegionResolution(code="us"),
     )
     replay.id = baseline.id
     replay.ensure()
@@ -96,7 +97,7 @@ def test_worker_baseline_reform_national_local_cache_and_receipts(
         dataset=native_dataset,
         dataset_selection=dataset_selection,
         policy=None,
-        region_code="us",
+        region=RegionResolution(code="us"),
     )
     local.id = baseline.id
     assert local.storage_id != baseline.storage_id
@@ -125,6 +126,7 @@ def test_native_state_only_worker_requires_geography_and_explicit_national_works
     from policyengine_simulation_contract.spm import spm_error_detail
     from policyengine_simulation_executor.simulation_runtime import (
         DatasetSelection,
+        RegionResolution,
         _build_simulation,
     )
 
@@ -143,7 +145,7 @@ def test_native_state_only_worker_requires_geography_and_explicit_national_works
         dataset=native_dataset,
         dataset_selection=dataset_selection,
         policy=None,
-        region_code="us",
+        region=RegionResolution(code="us"),
     )
     with pytest.raises(ValueError) as error:  # noqa: PT011  # the typed code is asserted below; the message depends on which installed layer rejects the missing county
         simulation.run()
@@ -153,7 +155,7 @@ def test_native_state_only_worker_requires_geography_and_explicit_national_works
         dataset=native_dataset,
         dataset_selection=dataset_selection,
         policy=None,
-        region_code="us",
+        region=RegionResolution(code="us"),
     )
     national.run()
     assert national.spm_provenance()["geography_kind"] == "national"

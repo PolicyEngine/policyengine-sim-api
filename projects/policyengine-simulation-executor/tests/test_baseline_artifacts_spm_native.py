@@ -28,6 +28,7 @@ def _baseline(dataset, *, geography="national", tax_only=False):
     )
     from policyengine_simulation_executor.simulation_runtime import (
         DatasetSelection,
+        RegionResolution,
         _build_simulation,
     )
 
@@ -44,7 +45,7 @@ def _baseline(dataset, *, geography="national", tax_only=False):
             "bounded-native-test", "native", is_default=False
         ),
         policy=None,
-        region_code="us",
+        region=RegionResolution(code="us"),
     )
     baseline = ArtifactBaselineSimulation.model_construct(**built.__dict__)
     baseline.id = "bl1-native-receipt"

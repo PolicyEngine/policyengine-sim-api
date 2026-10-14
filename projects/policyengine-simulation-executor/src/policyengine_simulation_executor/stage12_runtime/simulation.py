@@ -206,8 +206,7 @@ def calculate_simulation_frames(
                 dataset=dataset,
                 dataset_selection=dataset_selection,
                 policy=policy,
-                scoping_strategy=region.scoping_strategy,
-                region_code=region.code,
+                region=region,
             )
         with stage_span(Stage.STAGE12_CALCULATION):
             apply_output_plan(model, simulation.output_plan)

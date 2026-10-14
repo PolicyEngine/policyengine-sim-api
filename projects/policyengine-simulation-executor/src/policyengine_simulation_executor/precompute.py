@@ -330,8 +330,7 @@ def _prepare_cohort_baseline(
         dataset=dataset,
         dataset_selection=dataset_selection,
         policy=None,
-        scoping_strategy=resolution.scoping_strategy,
-        region_code=resolution.code,
+        region=resolution,
     )
     if baseline.id != expected.simulation_id:
         msg = (
