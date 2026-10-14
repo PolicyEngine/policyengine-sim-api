@@ -86,7 +86,7 @@ _CREDENTIAL_HEADER = re.compile(
 )
 _BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
 _SECRET_KEY = (
-    r"[\w-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key"
+    r"[\w-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key"  # noqa: S105  # a pattern for secret-looking key names, not a secret
     r"|private[_-]?key|credentials?|signature|sig)"
 )
 _SECRET_ASSIGNMENT = re.compile(

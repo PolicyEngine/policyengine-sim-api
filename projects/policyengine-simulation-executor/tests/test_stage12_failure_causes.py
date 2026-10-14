@@ -20,7 +20,7 @@ from policyengine_simulation_executor.stage12_runtime.failure_causes import (
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-DATABASE_PASSWORD = "pooler-password-value"
+DATABASE_PASSWORD = "pooler-password-value"  # noqa: S105  # fake password; the tests check that redaction removes it
 DATABASE_URL = (
     f"postgresql://postgres.project:{DATABASE_PASSWORD}"
     "@pooler.example.com:5432/postgres"
