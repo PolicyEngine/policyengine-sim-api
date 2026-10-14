@@ -68,14 +68,12 @@ jobs:
         enable-cache: true
 
     - name: Install dependencies
-      run: |
-        cd ${{ matrix.project }}
-        uv sync --extra test
+      working-directory: ${{ matrix.project }}
+      run: uv sync --extra test
 
     - name: Run tests
-      run: |
-        cd ${{ matrix.project }}
-        uv run pytest tests/ -v
+      working-directory: ${{ matrix.project }}
+      run: uv run pytest tests/ -v
 
   lint:
     name: Lint
@@ -99,13 +97,7 @@ jobs:
       run: uv tool install ruff==0.15.22
 
     - name: Run ruff format check
-      run: |
-        for dir in projects/*/src libs/*/src; do
-          if [ -d "$dir" ]; then
-            echo "Checking format in $dir..."
-            uv run ruff format --check $dir
-          fi
-        done
+      run: uv run ruff format --check projects/*/src libs/*/src
 
   quality-guards:
     name: Quality guards
@@ -184,26 +176,16 @@ jobs:
         ./scripts/generate-clients.sh
 
     - name: Start services
-      run: |
-        docker compose -f deployment/docker-compose.yml up -d
-        # Wait for services to be ready
-        sleep 10
-        # Check services are responding
-        for i in {1..30}; do
-          if curl -f http://localhost:8082/ping/alive; then
-            echo "Services are ready!"
-            break
-          fi
-          echo "Waiting for services... (attempt $i/30)"
-          sleep 2
-        done
+      run: .github/scripts/start-local-services.sh deployment/docker-compose.yml
+
+    - name: Install integration test dependencies
+      working-directory: projects/policyengine-apis-integ
+      run: uv sync --extra test
 
     - name: Run integration tests (local services only)
-      run: |
-        cd projects/policyengine-apis-integ
-        uv sync --extra test
-        # Run tests against local Docker services only (not Modal staging)
-        uv run pytest tests/ -v -m "not requires_gcp and not beta_only"
+      working-directory: projects/policyengine-apis-integ
+      # Run tests against local Docker services only (not Modal staging)
+      run: uv run pytest tests/ -v -m "not requires_gcp and not beta_only"
 
     - name: Show service logs on failure
       if: failure()

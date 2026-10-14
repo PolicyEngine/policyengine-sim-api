@@ -782,7 +782,7 @@ job = "quality-guards"
 invocation = "run_quality_guards.py"
 [rule.baseline]
 file = "rules/baselines/ci-multiline-run.txt"
-count = 32
+count = 13
 [rule.proof]
 bad_fixture = "scripts/rules/tests/fixtures/ci_scripts/multiline_bad"
 good_fixture = "scripts/rules/tests/fixtures/ci_scripts/multiline_good"
@@ -798,7 +798,7 @@ statement = "Every shell script a workflow calls is run by at least one test."
 rationale = "docs/engineering/skills/ci-workflows.md#testing-a-workflow-script"
 scope = [".github/scripts/*.sh"]
 tier = "mechanical"
-status = "ratcheted"
+status = "enforced"
 autofix = false
 [rule.enforcer]
 kind = "quality-guard"
@@ -807,9 +807,6 @@ name = "ci-scripts"
 workflow = ".github/workflows/pr.yml"
 job = "quality-guards"
 invocation = "run_quality_guards.py"
-[rule.baseline]
-file = "rules/baselines/ci-untested-scripts.txt"
-count = 4
 [rule.proof]
 bad_fixture = "scripts/rules/tests/fixtures/ci_scripts/untested_bad"
 good_fixture = "scripts/rules/tests/fixtures/ci_scripts/untested_good"
@@ -825,7 +822,7 @@ statement = "Every shell script under .github/scripts/ passes shellcheck."
 rationale = "docs/engineering/skills/ci-workflows.md#writing-a-workflow-script"
 scope = [".github/scripts/*.sh"]
 tier = "mechanical"
-status = "ratcheted"
+status = "enforced"
 autofix = false
 [rule.enforcer]
 kind = "quality-guard"
@@ -834,9 +831,6 @@ name = "ci-scripts"
 workflow = ".github/workflows/pr.yml"
 job = "quality-guards"
 invocation = "run_quality_guards.py"
-[rule.baseline]
-file = "rules/baselines/ci-shellcheck.txt"
-count = 1
 [rule.proof]
 bad_fixture = "scripts/rules/tests/fixtures/ci_scripts/shellcheck/bad_script.sh"
 good_fixture = "scripts/rules/tests/fixtures/ci_scripts/shellcheck/good_script.sh"

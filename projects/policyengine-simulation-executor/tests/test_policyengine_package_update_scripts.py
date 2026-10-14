@@ -47,6 +47,15 @@ def test_update_policyengine_package_uses_a_separate_python_helper() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_update_policyengine_workflow_runs_the_tested_script() -> None:
+    workflow = (
+        SCRIPT.parent.parent / "workflows" / "check-policyengine-updates.yml"
+    ).read_text(encoding="utf-8")
+
+    assert SCRIPT.name == "update-policyengine-package.sh"
+    assert "run: bash .github/scripts/update-policyengine-package.sh" in workflow
+
+
 def test_update_policyengine_workflow_requests_issue_and_pr_permissions() -> None:
     workflow = (
         SCRIPT.parent.parent / "workflows" / "check-policyengine-updates.yml"

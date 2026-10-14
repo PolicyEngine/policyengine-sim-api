@@ -27,6 +27,9 @@ STAGE12_VALIDATION_SCRIPT = (
 CLOUD_RUN_DEPLOY_SCRIPT = (
     REPOSITORY_ROOT / ".github" / "scripts" / "deploy-cloud-run-simulation-entry.sh"
 )
+DEPLOYMENT_READY_SCRIPT = (
+    REPOSITORY_ROOT / ".github" / "scripts" / "simulation-deployment-ready.sh"
+)
 DEPLOY_WORKFLOW = REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.yml"
 REUSABLE_DEPLOY_WORKFLOW = (
     REPOSITORY_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
@@ -762,6 +765,15 @@ def test_reusable_deployment_rejects_unexpected_skipped_phases():
         "promote_entrypoint",
     ):
         assert dependency in completion_body
+    assert "run: .github/scripts/simulation-deployment-ready.sh" in completion_body
+    for result in (
+        "ENTRYPOINT_RESULT: ${{ needs.deploy_entrypoint.result }}",
+        "INTEGRATION_RESULT: ${{ needs.integration.result }}",
+        "AUTHENTICATED_TEST_RESULT: ${{ needs.authenticated_test.result }}",
+        "PROMOTION_RESULT: ${{ needs.promote_entrypoint.result }}",
+    ):
+        assert result in completion_body
+    readiness_check = DEPLOYMENT_READY_SCRIPT.read_text(encoding="utf-8")
     for expected_result in (
         'test "${ENTRYPOINT_RESULT}" = "success"',
         'test "${INTEGRATION_RESULT}" = "success"',
@@ -769,7 +781,7 @@ def test_reusable_deployment_rejects_unexpected_skipped_phases():
         'test "${PROMOTION_RESULT}" = "success"',
         'test "${PROMOTION_RESULT}" = "skipped"',
     ):
-        assert expected_result in completion_body
+        assert expected_result in readiness_check
 
 
 def test_complete_integration_suite_is_configured_for_beta_only():
@@ -1555,6 +1567,7 @@ def test_failed_release_gate_cannot_report_a_successful_release(tmp_path, failed
         capture_output=True,
         text=True,
         env=env,
+        cwd=REPOSITORY_ROOT,
     )
     assert result.returncode != 0
     assert not marker.exists()
@@ -1588,6 +1601,7 @@ def test_release_success_requires_completed_finalization_for_published_routing(
         check=False,
         capture_output=True,
         text=True,
+        cwd=REPOSITORY_ROOT,
         env={
             "PATH": os.environ["PATH"],
             "PROMOTION_REQUESTED": "false",

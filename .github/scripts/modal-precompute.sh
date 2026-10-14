@@ -22,7 +22,7 @@ fi
 # waste the whole run.
 if [ -z "${GITHUB_OUTPUT:-}" ]; then
   echo "GITHUB_OUTPUT is required (the manifest digest is exported there)." >&2
-  echo 'For local runs: export GITHUB_OUTPUT="$(mktemp)".' >&2
+  echo "For local runs: export GITHUB_OUTPUT=\"\$(mktemp)\"." >&2
   exit 1
 fi
 
