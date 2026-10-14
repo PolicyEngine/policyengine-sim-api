@@ -143,7 +143,7 @@ def main() -> None:
     output_path = Path(__file__).resolve().parents[2] / "artifacts" / "openapi.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path, "w") as f:
+    with output_path.open("w") as f:
         json.dump(openapi_spec, f, indent=2)
 
     print(f"OpenAPI spec written to {output_path}")

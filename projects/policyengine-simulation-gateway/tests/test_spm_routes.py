@@ -52,7 +52,7 @@ def legacy_route(mock_modal, source, model_version):
         }
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 @pytest.mark.parametrize("source", LEGACY_SOURCES)
 @pytest.mark.parametrize("version", [None, "1.715.2"])
 def test_historical_no_wrapper_route_submits_without_spm(
@@ -68,7 +68,7 @@ def test_historical_no_wrapper_route_submits_without_spm(
     assert "policyengine_version" not in response.json()["policyengine_bundle"]
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 @pytest.mark.parametrize("source", LEGACY_SOURCES)
 @pytest.mark.parametrize("selection", [{}, {"geography_kind": "national"}])
 def test_historical_route_rejects_any_explicit_spm(
@@ -81,9 +81,9 @@ def test_historical_route_rejects_any_explicit_spm(
     assert mock_modal["func"].calls == []
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 @pytest.mark.parametrize(
-    "source,model_version",
+    ("source", "model_version"),
     [
         ("legacy-country-dict", "1.824.7"),
         ("legacy-seed", "1.824.7"),
@@ -102,7 +102,7 @@ def test_missing_wrapper_does_not_certify_unknown_routes(
     assert mock_modal["func"].calls == []
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 def test_legacy_seed_cannot_erase_future_wrapper_from_app_name(
     mock_modal, client, endpoint, extra
 ):
@@ -144,7 +144,7 @@ def shared_app_state(mock_modal, *, sibling_model):
     return state
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 def test_shared_app_resolves_unique_country_model_bundle(
     mock_modal, client, endpoint, extra
 ):
@@ -167,7 +167,7 @@ def test_latest_route_alias_does_not_create_ambiguous_bundle(mock_modal, client)
     assert response.json()["policyengine_bundle"]["policyengine_version"] == "5.3.0"
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 def test_shared_app_with_ambiguous_country_model_requires_explicit_bundle(
     mock_modal, client, endpoint, extra
 ):
@@ -186,7 +186,7 @@ def test_shared_app_with_ambiguous_country_model_requires_explicit_bundle(
     assert mock_modal["func"].last_payload["spm"]["scenario"] == "ce_trend"
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 @pytest.mark.parametrize("sibling_model", [None, "", "   ", 42])
 def test_shared_app_with_missing_model_metadata_is_ambiguous(
     mock_modal, client, endpoint, extra, sibling_model
@@ -436,7 +436,7 @@ def test_canonical_poll_bodies_still_carry_the_capability(mock_modal, client):
     assert bundle["spm"]["defaults"]["scenario"] == "ce_trend"
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 def test_publishing_does_not_revoke_a_seeded_country_route(
     mock_modal, client, endpoint, extra
 ):
@@ -460,7 +460,7 @@ def wrapper_route_without_manifest(mock_modal, wrapper):
     mock_modal["dicts"]["simulation-api-routing-state"] = {"active": state}
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 @pytest.mark.parametrize("wrapper", ["5.2.0", "5.3.0"])
 def test_pinned_wrapper_route_without_manifest_submits_without_spm(
     mock_modal, client, endpoint, extra, wrapper
@@ -480,7 +480,7 @@ def test_pinned_wrapper_route_without_manifest_submits_without_spm(
     assert response.json()["policyengine_bundle"]["model_version"] == wrapper
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 @pytest.mark.parametrize("wrapper", ["5.2.0", "5.3.0"])
 def test_pinned_wrapper_through_legacy_dicts_submits_without_spm(
     mock_modal, client, endpoint, extra, wrapper
@@ -496,7 +496,7 @@ def test_pinned_wrapper_through_legacy_dicts_submits_without_spm(
     assert "spm" not in mock_modal["func"].last_payload
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 def test_unpinned_wrapper_route_without_manifest_still_fails_closed(
     mock_modal, client, endpoint, extra
 ):
@@ -514,7 +514,7 @@ def test_unpinned_wrapper_route_without_manifest_still_fails_closed(
     assert mock_modal["func"].calls == []
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 def test_stated_model_version_still_contradicts_the_wrapper_pin(
     mock_modal, client, endpoint, extra
 ):
@@ -557,7 +557,7 @@ def republished_wrapper_state(mock_modal, *, model_version):
     return state
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 def test_stale_country_route_is_refused_rather_than_served(
     mock_modal, client, endpoint, extra
 ):
@@ -573,13 +573,14 @@ def test_stale_country_route_is_refused_rather_than_served(
     )
     assert response.status_code == 400
     detail = response.json()["detail"]
-    assert "1.459.0" in detail and "1.470.0" in detail
+    assert "1.459.0" in detail
+    assert "1.470.0" in detail
     # A routing refusal, not an SPM one.
     assert "errors" not in response.json()
     assert mock_modal["func"].calls == []
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 def test_a_country_route_its_bundle_still_states_is_served(
     mock_modal, client, endpoint, extra
 ):
@@ -598,7 +599,7 @@ def test_a_country_route_its_bundle_still_states_is_served(
     assert bundle["model_version"] == "1.459.0"
 
 
-@pytest.mark.parametrize("endpoint,extra", ENDPOINTS)
+@pytest.mark.parametrize(("endpoint", "extra"), ENDPOINTS)
 @pytest.mark.parametrize("model_version", [None, "", "   ", 42])
 def test_a_bundle_that_states_no_model_version_contradicts_nothing(
     mock_modal, client, endpoint, extra, model_version
