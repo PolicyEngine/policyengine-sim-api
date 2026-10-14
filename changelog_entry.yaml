@@ -1,6 +1,7 @@
 - bump: patch
   changes:
     added:
+      - Made the budget's reform-minus-baseline totals log a warning when the baseline and reform household frames carry different weights, since the change is then weighted by the reform's weights alone
       - Added weighted-microdata rules to the registry, with proof from the #767 household count; the executor's code never aggregates a weight column as a value, reads raw values from weighted frames only in simulation_output_common.py (the UK geography builders' plain DataFrame handoff is baselined for a decision), and its output-builder tests build entity frames through one shared factory with non-uniform weights, while a doc-only rule records that weights, values, labels and counts each allow different operations
       - Made CLAUDE.md and the Copilot instructions thin pointers to AGENTS.md, required workflow logic longer than one line to live in tested and shellchecked scripts, and registered the tracking-issue rule
       - Added a rules registry (rules/registry.toml) with a standard-library tool that validates it, checks every rule is enforced where it claims, and renders docs/generated/rules.md and the Rules block in AGENTS.md
