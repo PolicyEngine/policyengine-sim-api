@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 from policyengine_simulation_executor import segmented_national_reduce as reduce_mod
 from policyengine_simulation_executor.segmented_national_reduce import (
+    NationalReduceInputs,
     PrecomputedSimulation,
     _us_dataset_from_frames,
     build_national_output,
@@ -129,10 +130,12 @@ class TestBuildNationalOutputWiring:
         country_module = SimpleNamespace(model=object())
         result = build_national_output(
             [_child([1], [10]), _child([2], [20])],
-            country="us",
-            simulation_params={"country": "us", "scope": "macro"},
-            country_module=country_module,
-            year=2026,
+            NationalReduceInputs(
+                country="us",
+                simulation_params={"country": "us", "scope": "macro"},
+                country_module=country_module,
+                year=2026,
+            ),
         )
 
         assert result == {"budget": {"budgetary_impact": -42.0}}
@@ -152,10 +155,12 @@ class TestBuildNationalOutputWiring:
         with pytest.raises(ValueError, match="US only"):
             build_national_output(
                 [_child([1], [10])],
-                country="uk",
-                simulation_params={},
-                country_module=SimpleNamespace(model=object()),
-                year=2026,
+                NationalReduceInputs(
+                    country="uk",
+                    simulation_params={},
+                    country_module=SimpleNamespace(model=object()),
+                    year=2026,
+                ),
             )
 
     @pytest.mark.parametrize(
@@ -190,11 +195,13 @@ class TestBuildNationalOutputWiring:
 
         build_national_output(
             [_child([1], [10]), _child([2], [20])],
-            country="us",
-            simulation_params=simulation_params,
-            country_module=country_module,
-            year=2027,
-            resolved_data_version=resolved_data_version,
+            NationalReduceInputs(
+                country="us",
+                simulation_params=simulation_params,
+                country_module=country_module,
+                year=2027,
+                resolved_data_version=resolved_data_version,
+            ),
             runtime=runtime,
         )
 
@@ -252,10 +259,12 @@ class TestBuildNationalOutputWiring:
         ]
         result = build_national_output(
             children,
-            country="us",
-            simulation_params={"country": "us", "scope": "macro"},
-            country_module=SimpleNamespace(model=object()),
-            year=2026,
+            NationalReduceInputs(
+                country="us",
+                simulation_params={"country": "us", "scope": "macro"},
+                country_module=SimpleNamespace(model=object()),
+                year=2026,
+            ),
         )
         assert result["model_version"] == "1.764.6"
         assert result["data_version"] == "buildm-x"

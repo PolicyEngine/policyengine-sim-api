@@ -342,9 +342,10 @@ class TestSegmentedNationalRunner:
     def test__reduce_receives_clean_params_and_all_children(self, monkeypatch):
         captured = {}
 
-        def fake_build_national_output(child_results, **kwargs):
+        def fake_build_national_output(child_results, inputs, *, runtime):
             captured["children"] = child_results
-            captured.update(kwargs)
+            captured["runtime"] = runtime
+            captured.update(vars(inputs))
             return {"budget": {}}
 
         monkeypatch.setattr(sn, "build_national_output", fake_build_national_output)
@@ -850,7 +851,9 @@ def stub_reduce(monkeypatch):
     The reduce itself is covered by test_segmented_national_reduce.
     """
     monkeypatch.setattr(
-        sn, "build_national_output", lambda _children, **_kwargs: {"budget": {}}
+        sn,
+        "build_national_output",
+        lambda _children, _inputs, **_kwargs: {"budget": {}},
     )
 
 

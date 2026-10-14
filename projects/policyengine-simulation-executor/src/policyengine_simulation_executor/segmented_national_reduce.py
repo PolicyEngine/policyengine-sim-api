@@ -25,6 +25,7 @@ Two hazards this module exists to handle:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -121,14 +122,21 @@ def _us_dataset_from_frames(
     )
 
 
+@dataclass(frozen=True)
+class NationalReduceInputs:
+    """The national run's facts that the reduce passes to the output builder."""
+
+    country: str
+    simulation_params: dict[str, Any]
+    country_module: ModuleType
+    year: int
+    resolved_data_version: str | None = None
+
+
 def build_national_output(
     child_outputs: list[dict],
+    inputs: NationalReduceInputs,
     *,
-    country: str,
-    simulation_params: dict[str, Any],
-    country_module: ModuleType,
-    year: int,
-    resolved_data_version: str | None = None,
     runtime: ObservabilityRuntime | None = None,
 ) -> dict[str, Any]:
     """Reduce the children's microdata into the full national macro output dict.
@@ -137,13 +145,15 @@ def build_national_output(
     with ``resolved_region_code=country`` so the national congressional
     district table populates. No model recompute occurs.
     """
+    country = inputs.country
+    country_module = inputs.country_module
     if country.lower() != "us":
         msg = f"No segmented-national reduce for country {country!r} (US only)"
         raise ValueError(msg)
 
     sides = concatenate_microdata(child_outputs)
     datasets = {
-        side: _us_dataset_from_frames(frames, year=year)
+        side: _us_dataset_from_frames(frames, year=inputs.year)
         for side, frames in sides.items()
     }
 
@@ -158,12 +168,12 @@ def build_national_output(
 
     builder = SimulationOutputBuilder(
         country=country,
-        simulation_params=simulation_params,
+        simulation_params=inputs.simulation_params,
         country_module=country_module,
         dataset=datasets["baseline"],
         baseline=stand_in(datasets["baseline"]),
         reform=stand_in(datasets["reform"]),
-        resolved_data_version=resolved_data_version,
+        resolved_data_version=inputs.resolved_data_version,
         resolved_region_code=country,
         runtime=runtime,
     )
