@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_contract.spm import build_spm_comparison_provenance
@@ -143,13 +144,19 @@ def _dataset_from_frames(
     )
 
 
+@dataclass(frozen=True)
+class RetainedSimulationOutput:
+    """One role's retained output frames and the artifact descriptor they came from."""
+
+    frames: Mapping[str, pd.DataFrame]
+    descriptor: SimulationArtifactDescriptor
+
+
 def build_aggregate_report(
     *,
     report: ReportExecutionInput,
-    baseline_frames: Mapping[str, pd.DataFrame],
-    reform_frames: Mapping[str, pd.DataFrame],
-    baseline_descriptor: SimulationArtifactDescriptor,
-    reform_descriptor: SimulationArtifactDescriptor,
+    baseline: RetainedSimulationOutput,
+    reform: RetainedSimulationOutput,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> dict[str, Any]:
     """Build the aggregate report payload from retained baseline and reform frames.
@@ -172,12 +179,12 @@ def build_aggregate_report(
     country_module = _country_module(country)
     datasets = {
         "baseline": _dataset_from_frames(
-            baseline_frames,
+            baseline.frames,
             country=country,
             year=report.baseline.year,
         ),
         "reform": _dataset_from_frames(
-            reform_frames,
+            reform.frames,
             country=country,
             year=report.reform.year,
         ),
@@ -222,8 +229,8 @@ def build_aggregate_report(
     output.update(
         build_spm_result(
             report=report,
-            baseline_descriptor=baseline_descriptor,
-            reform_descriptor=reform_descriptor,
+            baseline_descriptor=baseline.descriptor,
+            reform_descriptor=reform.descriptor,
         )
     )
     return {

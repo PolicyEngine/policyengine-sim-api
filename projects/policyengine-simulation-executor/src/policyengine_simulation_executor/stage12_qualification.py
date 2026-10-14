@@ -42,6 +42,7 @@ from policyengine_simulation_executor.stage12_parity import (
     compare_simulation_frames,
 )
 from policyengine_simulation_executor.stage12_runtime import (
+    RetainedSimulationOutput,
     SimulationCalculation,
     build_aggregate_report,
     calculate_simulation_frames,
@@ -342,10 +343,10 @@ def _v2_aggregate_result(
     reform_descriptor = _descriptor(reform.planned_input, reform.calculation)
     v2_report = aggregate_builder(
         report=report,
-        baseline_frames=baseline.calculation.frames,
-        reform_frames=reform.calculation.frames,
-        baseline_descriptor=baseline_descriptor,
-        reform_descriptor=reform_descriptor,
+        baseline=RetainedSimulationOutput(
+            baseline.calculation.frames, baseline_descriptor
+        ),
+        reform=RetainedSimulationOutput(reform.calculation.frames, reform_descriptor),
         uk_local_authority_metadata=validate_uk_local_authority_metadata(
             report.baseline.geography.country,
             baseline.calculation.uk_local_authority_metadata,
