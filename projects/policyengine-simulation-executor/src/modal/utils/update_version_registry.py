@@ -13,6 +13,7 @@ import os
 import uuid
 from collections.abc import Iterable
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
@@ -227,8 +228,19 @@ def validate_routing_state(
         raise ValueError(msg)
 
     required_manifests = set(required_policyengine_manifests)
+    _validate_latest_routes(
+        state,
+        require_policyengine=bool(
+            state["routes"]["policyengine"] or required_manifests
+        ),
+    )
+    _validate_bundle_manifests(state, required_manifests)
+
+
+def _validate_latest_routes(state: RoutingState, *, require_policyengine: bool) -> None:
+    """Require each US, UK and (when required) policyengine latest to be routed."""
     required_latest_routes = ["us", "uk"]
-    if state["routes"]["policyengine"] or required_manifests:
+    if require_policyengine:
         required_latest_routes.append("policyengine")
 
     for route_name in required_latest_routes:
@@ -240,6 +252,14 @@ def validate_routing_state(
             msg = f"Routing state latest.{route_name}={latest!r} has no route"
             raise ValueError(msg)
 
+
+def _validate_bundle_manifests(
+    state: RoutingState, required_manifests: set[str]
+) -> None:
+    """Require each stored manifest to match its policyengine route.
+
+    A route may lack a manifest unless its version is in ``required_manifests``.
+    """
     for policyengine_version, app_name in state["routes"]["policyengine"].items():
         manifest = state["bundles"].get(policyengine_version)
         if not isinstance(manifest, dict):
@@ -278,13 +298,20 @@ def _assert_version_matches_manifest(
         raise ValueError(msg)
 
 
+@dataclass(frozen=True)
+class DeployedAppVersions:
+    """A deployed simulation app and the package versions it serves."""
+
+    app_name: str
+    policyengine_version: str
+    us_version: str
+    uk_version: str
+
+
 def build_next_routing_state(
     *,
     current_state: object,
-    app_name: str,
-    policyengine_version: str,
-    us_version: str,
-    uk_version: str,
+    deployed: DeployedAppVersions,
     force_latest: bool = False,
 ) -> RoutingState:
     """Return ``current_state`` with routes and the bundle manifest for a new app added.
@@ -293,6 +320,10 @@ def build_next_routing_state(
     ``force_latest`` (an intentional rollback). Raises ValueError when the US
     or UK version differs from the installed bundle's model version.
     """
+    app_name = deployed.app_name
+    policyengine_version = deployed.policyengine_version
+    us_version = deployed.us_version
+    uk_version = deployed.uk_version
     manifest = build_bundle_manifest_metadata(
         app_name=app_name,
         policyengine_version=policyengine_version,
@@ -425,10 +456,7 @@ def _json_copy(value: object) -> object:
 def plan_routing_publication(
     *,
     current_state: object,
-    app_name: str,
-    policyengine_version: str,
-    us_version: str,
-    uk_version: str,
+    deployed: DeployedAppVersions,
     force_latest: bool = False,
     publication_id: str | None = None,
 ) -> dict:
@@ -441,14 +469,13 @@ def plan_routing_publication(
     route to this release once the plan is applied.
     """
     publication_id = publication_id or uuid.uuid4().hex
+    app_name = deployed.app_name
+    policyengine_version = deployed.policyengine_version
     before = _json_copy(current_state) if current_state is not None else None
     after = _json_copy(
         build_next_routing_state(
             current_state=deepcopy(current_state),
-            app_name=app_name,
-            policyengine_version=policyengine_version,
-            us_version=us_version,
-            uk_version=uk_version,
+            deployed=deployed,
             force_latest=force_latest,
         )
     )
@@ -1030,10 +1057,7 @@ def seed_active_routing_state_from_legacy(*, environment: str) -> RoutingState:
 def publish_routing_state(
     *,
     environment: str,
-    app_name: str,
-    policyengine_version: str,
-    us_version: str,
-    uk_version: str,
+    deployed: DeployedAppVersions,
     force_latest: bool = False,
 ) -> RoutingState:
     """Add a deployed app to the active routing state and store it in one write."""
@@ -1046,10 +1070,7 @@ def publish_routing_state(
     _require_finished_publication(store)
     next_state = build_next_routing_state(
         current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
-        app_name=app_name,
-        policyengine_version=policyengine_version,
-        us_version=us_version,
-        uk_version=uk_version,
+        deployed=deployed,
         force_latest=force_latest,
     )
     store[ROUTING_STATE_ACTIVE_KEY] = next_state
@@ -1391,14 +1412,17 @@ def main() -> None:
     missing_args = [name for name, value in required_args.items() if not value]
     if missing_args:
         parser.error(f"the following arguments are required: {', '.join(missing_args)}")
+    deployed = DeployedAppVersions(
+        app_name=args.app_name,
+        policyengine_version=args.policyengine_version,
+        us_version=args.us_version,
+        uk_version=args.uk_version,
+    )
 
     if args.plan_out or args.dry_run:
         plan = plan_routing_publication(
             current_state=active_state(),
-            app_name=args.app_name,
-            policyengine_version=args.policyengine_version,
-            us_version=args.us_version,
-            uk_version=args.uk_version,
+            deployed=deployed,
             force_latest=args.force_latest,
             publication_id=args.publication_id,
         )
@@ -1419,10 +1443,7 @@ def main() -> None:
 
     state = publish_routing_state(
         environment=args.environment,
-        app_name=args.app_name,
-        policyengine_version=args.policyengine_version,
-        us_version=args.us_version,
-        uk_version=args.uk_version,
+        deployed=deployed,
         force_latest=args.force_latest,
     )
     _report()
