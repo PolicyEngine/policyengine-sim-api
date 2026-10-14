@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 from fixtures.test_policyengine_package_update_scripts import (
     SCRIPT,
+    BundledVersions,
     install_fake_gh,
     install_fake_git,
     install_fake_uv,
@@ -185,7 +186,7 @@ def test_update_policyengine_package_opens_pr_for_existing_branch_without_open_p
     ("uv_kwargs", "git_kwargs", "payload", "message"),
     [
         (
-            {"bundled_uk_version": "2.0.9"},
+            {"bundled": BundledVersions(uk_version="2.0.9")},
             {},
             '{"version":"4.1.0","bundle":{"uk":{"model_version":"2.1.0"}}}',
             "does not match the release dispatch",
@@ -198,7 +199,7 @@ def test_update_policyengine_package_opens_pr_for_existing_branch_without_open_p
             "does not match the release dispatch",
         ),
         (
-            {"bundled_policyengine_version": "4.0.9"},
+            {"bundled": BundledVersions(policyengine_version="4.0.9")},
             {},
             "",
             "reports bundle 4.0.9, expected 4.1.0",
@@ -313,7 +314,7 @@ def test_update_policyengine_package_stops_when_loaded_bundle_is_not_target(
     install_fake_uv(
         fake_bin,
         log=uv_log,
-        bundled_policyengine_version="4.0.0",
+        bundled=BundledVersions(policyengine_version="4.0.0"),
     )
 
     result = run_updater(

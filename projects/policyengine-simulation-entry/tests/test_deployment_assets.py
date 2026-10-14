@@ -310,12 +310,9 @@ def test_stage12_runtime_uses_typed_dml_without_raw_sql_or_schema_changes() -> N
     assert "create_all(" not in sources
 
 
-def test_deployment_uses_gcloud_workflow_without_terraform():
-    deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
-    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
-    stage12_workflow = STAGE12_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
-    cloud_run_deploy_script = CLOUD_RUN_DEPLOY_SCRIPT.read_text(encoding="utf-8")
-
+def _assert_gcloud_deployment_jobs(
+    reusable_workflow: str, cloud_run_deploy_script: str
+) -> None:
     assert "deploy-cloud-run-simulation-entry.sh" in reusable_workflow
     assert "gcloud run deploy" in cloud_run_deploy_script
     assert "set-cloud-run-simulation-entry-revision.sh" in reusable_workflow
@@ -332,6 +329,11 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
         "needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor]"
         in reusable_workflow
     )
+
+
+def _assert_beta_then_prod_release(
+    deploy_workflow: str, reusable_workflow: str
+) -> None:
     assert "needs: beta" in deploy_workflow
     assert deploy_workflow.index("beta:") < deploy_workflow.index("prod:")
     assert "release_environment: beta" in deploy_workflow
@@ -347,6 +349,9 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert "entrypoint_public_url" not in reusable_workflow
     assert "SIMULATION_ENTRYPOINT_PUBLIC_URL" not in reusable_workflow
     assert "staging.simulation.api.policyengine.org" not in deploy_workflow
+
+
+def _assert_deployment_environment_settings(reusable_workflow: str) -> None:
     assert (
         # Sentinel, restore and final routing acknowledgement use secrets too.
         reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 15
@@ -367,6 +372,31 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
         reusable_workflow.count("vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME") == 1
     )
     assert "simulation-entry-old-gateway-client-secret" not in reusable_workflow
+
+
+def _assert_stage12_deploy_targets(stage12_workflow: str) -> None:
+    assert "deploy-stage12-staging:" in stage12_workflow
+    assert "deploy-stage12-production:" in stage12_workflow
+    assert stage12_workflow.count("deploy_existing_stack: false") == 2
+    assert stage12_workflow.count("deploy_stage12_v2: true") == 2
+    assert "release_environment: beta" in stage12_workflow
+    assert "deployment_environment: staging" in stage12_workflow
+    assert "modal_environment: staging" in stage12_workflow
+    assert "release_environment: prod" in stage12_workflow
+    assert "deployment_environment: production" in stage12_workflow
+    assert "modal_environment: main" in stage12_workflow
+    assert "DEPLOY_STAGE12_PRODUCTION" in stage12_workflow
+
+
+def test_deployment_uses_gcloud_workflow_without_terraform():
+    deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    stage12_workflow = STAGE12_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    cloud_run_deploy_script = CLOUD_RUN_DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    _assert_gcloud_deployment_jobs(reusable_workflow, cloud_run_deploy_script)
+    _assert_beta_then_prod_release(deploy_workflow, reusable_workflow)
+    _assert_deployment_environment_settings(reusable_workflow)
     assert AUTHENTICATED_TESTS.joinpath("test_deployed_auth.py").is_file()
     assert not list(
         (REPOSITORY_ROOT / "projects" / "policyengine-simulation-entry" / "infra").glob(
@@ -379,17 +409,7 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
         / "scripts"
         / "configure-cloud-run-simulation-entry-domains.sh"
     ).exists()
-    assert "deploy-stage12-staging:" in stage12_workflow
-    assert "deploy-stage12-production:" in stage12_workflow
-    assert stage12_workflow.count("deploy_existing_stack: false") == 2
-    assert stage12_workflow.count("deploy_stage12_v2: true") == 2
-    assert "release_environment: beta" in stage12_workflow
-    assert "deployment_environment: staging" in stage12_workflow
-    assert "modal_environment: staging" in stage12_workflow
-    assert "release_environment: prod" in stage12_workflow
-    assert "deployment_environment: production" in stage12_workflow
-    assert "modal_environment: main" in stage12_workflow
-    assert "DEPLOY_STAGE12_PRODUCTION" in stage12_workflow
+    _assert_stage12_deploy_targets(stage12_workflow)
 
 
 def test_cloud_run_deployment_does_not_interpolate_github_values_in_shell():

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pandas as pd
@@ -199,17 +200,24 @@ def _macro_baseline_reform():
     return baseline, reform
 
 
+@dataclass(frozen=True)
+class BuilderOptions:
+    """Optional inputs for a SimulationOutputBuilder built from fakes."""
+
+    analysis: object = None
+    include_cliffs: bool | None = None
+    resolved_region_code: str | None = "us"
+    uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
+
+
 def _simulation_output_builder(
     country: str,
     baseline,
     reform,
-    analysis=None,
-    *,
-    include_cliffs: bool | None = None,
-    resolved_region_code: str | None = "us",
-    uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
+    options: BuilderOptions | None = None,
 ) -> SimulationOutputBuilder:
-    analysis = analysis or fake_analysis()
+    options = options or BuilderOptions()
+    analysis = options.analysis or fake_analysis()
 
     def economic_impact_analysis(
         _baseline_simulation,
@@ -223,8 +231,8 @@ def _simulation_output_builder(
         "country": country,
         "data_version": "1.115.5" if country == "us" else "1.55.10",
     }
-    if include_cliffs is not None:
-        simulation_params["include_cliffs"] = include_cliffs
+    if options.include_cliffs is not None:
+        simulation_params["include_cliffs"] = options.include_cliffs
 
     country_module = SimpleNamespace(
         model=SimpleNamespace(version="1.715.2" if country == "us" else "2.88.20"),
@@ -237,8 +245,8 @@ def _simulation_output_builder(
         dataset=SimpleNamespace(metadata={}),
         baseline=baseline,
         reform=reform,
-        resolved_region_code=resolved_region_code,
-        uk_local_authority_metadata=uk_local_authority_metadata,
+        resolved_region_code=options.resolved_region_code,
+        uk_local_authority_metadata=options.uk_local_authority_metadata,
     )
 
 
@@ -500,7 +508,7 @@ def test_builder_passes_resolved_region_to_congressional_district_output(monkeyp
         "us",
         baseline,
         reform,
-        resolved_region_code="state/ut",
+        BuilderOptions(resolved_region_code="state/ut"),
     )
 
     assert builder._build_congressional_district_impact() == (
@@ -1031,8 +1039,7 @@ def test_builder_serializes_cliff_impact_when_requested(monkeypatch):
         "us",
         baseline,
         reform,
-        analysis=analysis,
-        include_cliffs=True,
+        BuilderOptions(analysis=analysis, include_cliffs=True),
     ).build()
 
     assert output.cliff_impact is not None
@@ -1832,7 +1839,7 @@ def test_uk_local_authority_impact_receives_detected_boundary_metadata(monkeypat
         "uk",
         baseline,
         reform,
-        uk_local_authority_metadata=metadata,
+        BuilderOptions(uk_local_authority_metadata=metadata),
     )._build_uk_local_authority_impact()
     assert result is not None
     assert result.model_dump(mode="json") == expected
