@@ -400,3 +400,193 @@ def test_main_check_exit_codes(tmp_path, monkeypatch, capsys):
         == 1
     )
     assert "does not reproduce" in capsys.readouterr().err
+
+
+# --- Characterization: check_deployment's problem order and polling ----------
+
+
+class ScriptedAPI:
+    """Answer each call with the next scripted response and record the call."""
+
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def __call__(self, method, url, *, token=None, body=None):
+        self.calls.append((method, url, token, body))
+        return self.responses.pop(0)
+
+
+SERVED_BUNDLE = {
+    "policyengine_version": "6.2.6",
+    "model_version": "2.125.1",
+    "dataset_sha256": "5" * 64,
+}
+SUBMITTED = (200, {}, {"job_id": "fc-1", "policyengine_bundle": SERVED_BUNDLE})
+COMPLETE = (200, {}, {"status": "complete", "result": RESULT})
+
+
+def _check_scripted(api, expected=None, **kwargs):
+    if expected is None:
+        expected, _ = _expected()
+    sleeps = []
+    problems = sentinel.check_deployment(
+        "https://candidate.example/",
+        expected,
+        token="t0ken",  # noqa: S106  # fake bearer token; the HTTP calls are stubbed
+        http=api,
+        sleep=sleeps.append,
+        **kwargs,
+    )
+    return problems, sleeps
+
+
+def test_check_submits_then_polls_the_job_url_with_the_token():
+    api = ScriptedAPI(SUBMITTED, (202, {}, {"status": "submitted"}), COMPLETE)
+
+    problems, sleeps = _check_scripted(api, poll_seconds=7)
+
+    assert problems == []
+    assert sleeps == [7]
+    expected, _ = _expected()
+    case = expected["cases"][0]
+    assert api.calls == [
+        (
+            "POST",
+            "https://candidate.example/simulate/economy/comparison",
+            "t0ken",
+            {**case["request"], "policyengine_version": "6.2.6"},
+        ),
+        ("GET", "https://candidate.example/jobs/fc-1", "t0ken", None),
+        ("GET", "https://candidate.example/jobs/fc-1", "t0ken", None),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("headers", "slept"),
+    [
+        ({"Retry-After": "3"}, 3.0),
+        ({"retry-after": "4.5"}, 4.5),
+        ({"RETRY-AFTER": "-2"}, 0.0),
+        ({"Retry-After": "soon"}, 7),
+        ({}, 7),
+    ],
+    ids=["header", "lowercase", "negative", "unparseable", "missing"],
+)
+@pytest.mark.parametrize("status", [202, 429, 503])
+def test_check_waits_for_a_pending_job_as_retry_after_says(status, headers, slept):
+    api = ScriptedAPI(SUBMITTED, (status, headers, {"status": "submitted"}), COMPLETE)
+
+    problems, sleeps = _check_scripted(api, poll_seconds=7)
+
+    assert problems == []
+    assert sleeps == [slept]
+
+
+def test_check_reports_identity_problems_before_value_problems():
+    served = {"policyengine_version": "6.2.3", "model_version": "2.102.3"}
+    result = {**RESULT, "budget": {**RESULT["budget"], "budgetary_impact": 6.2e9}}
+    api = ScriptedAPI(
+        (200, {}, {"job_id": "fc-1", "policyengine_bundle": served}),
+        (200, {}, {"status": "complete", "result": result}),
+    )
+
+    problems, _ = _check_scripted(api)
+
+    assert problems == [
+        f"{LABEL}: served policyengine_version '6.2.3', expected '6.2.6'",
+        f"{LABEL}: served model_version '2.102.3', expected '2.125.1'",
+        f"{LABEL}: served dataset_sha256 None, expected '{'5' * 64}'",
+        f"{LABEL}: budget.budgetary_impact served 6200000000.0, computed 6100000000.0",
+    ]
+
+
+def test_check_reports_a_submit_without_a_bundle_as_three_identity_problems():
+    api = ScriptedAPI((200, {}, {"job_id": "fc-1"}), COMPLETE)
+
+    problems, _ = _check_scripted(api)
+
+    assert problems == [
+        f"{LABEL}: served policyengine_version None, expected '6.2.6'",
+        f"{LABEL}: served model_version None, expected '2.125.1'",
+        f"{LABEL}: served dataset_sha256 None, expected '{'5' * 64}'",
+    ]
+
+
+def test_check_reports_a_submit_that_returned_no_object():
+    api = ScriptedAPI((200, {}, ["job"]))
+
+    problems, sleeps = _check_scripted(api)
+
+    assert problems == [f"{LABEL}: submit returned HTTP 200: ['job']"]
+    assert sleeps == []
+    assert len(api.calls) == 1
+
+
+def test_check_reports_a_job_body_that_is_not_an_object():
+    api = ScriptedAPI(SUBMITTED, (200, {}, "complete"))
+
+    problems, _ = _check_scripted(api)
+
+    assert problems == [f"{LABEL}: job returned HTTP 200: complete"]
+
+
+def test_check_gives_up_once_the_deadline_has_passed():
+    ticks = iter([0, 100, 200, 300])
+    pending = (202, {}, {"status": "submitted"})
+    api = ScriptedAPI(SUBMITTED, pending, pending, pending)
+
+    problems, sleeps = _check_scripted(
+        api, timeout_seconds=250, poll_seconds=5, clock=lambda: next(ticks)
+    )
+
+    assert problems == [f"{LABEL}: no result within 250s"]
+    assert sleeps == [5, 5]
+    assert len(api.calls) == 4
+
+
+def test_check_still_compares_the_object_result_of_a_failed_job():
+    api = ScriptedAPI(SUBMITTED, (200, {}, {"status": "failed", "result": {}}))
+
+    problems, _ = _check_scripted(api)
+
+    assert problems == [
+        f"{LABEL}: job ended 'failed'",
+        *(f"{LABEL}: the result has no {path}" for path in COMPARED),
+    ]
+
+
+def test_check_continues_with_the_next_case_after_a_failed_one():
+    expected, _ = _expected()
+    second = {**expected["cases"][0], "case_id": "second"}
+    expected = {**expected, "cases": [expected["cases"][0], second]}
+    api = ScriptedAPI((500, {}, {"detail": "boom"}), SUBMITTED, COMPLETE)
+
+    problems, _ = _check_scripted(api, expected=expected)
+
+    assert problems == [f"{LABEL}: submit returned HTTP 500: {{'detail': 'boom'}}"]
+    assert [call[0] for call in api.calls] == ["POST", "POST", "GET"]
+
+
+def test_check_refuses_another_schema_before_any_request():
+    api = ScriptedAPI()
+
+    with pytest.raises(
+        sentinel.SentinelError, match=r"^expected file schema is 'other'$"
+    ):
+        sentinel.check_deployment("https://x", {"schema": "other"}, http=api)
+
+    assert api.calls == []
+
+
+def test_access_token_refuses_a_failed_or_empty_token_response(monkeypatch):
+    environ = dict.fromkeys(sentinel._AUTH_VARS, "x")
+    for response in ((401, {}, {"access_token": "minted"}), (200, {}, {})):
+        monkeypatch.setattr(
+            sentinel, "_http", lambda *_args, answer=response, **_kwargs: answer
+        )
+        with pytest.raises(
+            sentinel.SentinelError,
+            match=rf"^token request failed with HTTP {response[0]}$",
+        ):
+            sentinel.access_token(environ)
