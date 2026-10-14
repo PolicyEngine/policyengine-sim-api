@@ -1,0 +1,10 @@
+# Tolerated existing violations. This list may only shrink.
+#
+# Rule sim.microdata.weight-stripping-confined. Each entry is
+# <module>::<function>::<expression>, and each needs a decision: keep the
+# weights, or move the read into simulation_output_common.py with a reason.
+#
+# The UK geography builders hand policyengine's longwise geography impact a
+# plain DataFrame of the household frame, which weights by its
+# household_weight column itself.
+projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_output_geographic.py::_output_household::pd.DataFrame(simulation.output_dataset.data.household)

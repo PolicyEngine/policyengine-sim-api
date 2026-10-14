@@ -32,6 +32,10 @@ id = "observability"
 title = "Observability"
 
 [[category]]
+id = "microdata"
+title = "Weighted microdata"
+
+[[category]]
 id = "quality"
 title = "Code quality and tests"
 
@@ -692,6 +696,92 @@ status = "doc-only"
 autofix = false
 [rule.enforcer]
 kind = "none"
+
+# --- Weighted microdata ---------------------------------------------------
+
+[[rule]]
+id = "sim.microdata.weights-not-values"
+category = "microdata"
+statement = "Microdata columns are weights, values, labels or counts: weights are only summed plainly to count entities or passed as weights=, values are aggregated with their own entity's weights, labels only group or filter, and counts derive from weights."
+rationale = "docs/engineering/skills/microdata-weights.md#weights-arent-values"
+scope = ["projects/policyengine-simulation-executor/src/**/*.py"]
+tier = "mechanical"
+status = "doc-only"
+autofix = false
+[rule.enforcer]
+kind = "none"
+
+[[rule]]
+id = "sim.microdata.weights-not-aggregated-as-values"
+category = "microdata"
+statement = "A weight column is never aggregated as a value: never the variable of a weighted aggregator (_sum_output_variable, _change_output_variable, Aggregate, ChangeAggregate) or frame[<weight>] followed by a weighted reduction; count entities with _count_output_entities."
+rationale = "docs/engineering/skills/microdata-weights.md#rules"
+scope = ["projects/policyengine-simulation-executor/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-executor"
+nodes = ["tests/test_microdata_weight_boundaries.py::test_weights_are_never_aggregated_as_values"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.microdata.weights-not-aggregated-as-values/bad_simulation_output_budget.py"
+good_fixture = "rules/fixtures/sim.microdata.weights-not-aggregated-as-values/good_simulation_output_budget.py"
+project = "projects/policyengine-simulation-executor"
+test = "tests/test_microdata_weight_boundaries.py::test_rule_proof_weights_not_aggregated_as_values"
+
+[[rule]]
+id = "sim.microdata.weight-stripping-confined"
+category = "microdata"
+statement = "Raw values are read from a weighted frame or column (np.asarray, np.array, .values, .to_numpy(), .tolist(), pd.DataFrame or pd.Series) only in simulation_output_common.py, the module that holds _count_output_entities."
+rationale = "docs/engineering/skills/microdata-weights.md#handling-a-finding"
+scope = ["projects/policyengine-simulation-executor/src/**/*.py"]
+tier = "mechanical"
+status = "ratcheted"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-executor"
+nodes = ["tests/test_microdata_weight_boundaries.py::test_weight_stripping_stays_in_the_designated_module"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.microdata.weight-stripping-confined/bad_simulation_output_budget.py"
+good_fixture = "rules/fixtures/sim.microdata.weight-stripping-confined/good_simulation_output_budget.py"
+project = "projects/policyengine-simulation-executor"
+test = "tests/test_microdata_weight_boundaries.py::test_rule_proof_weight_stripping_confined"
+[rule.baseline]
+file = "rules/baselines/sim-microdata-weight-stripping.txt"
+count = 1
+
+[[rule]]
+id = "sim.microdata.builder-tests-use-weighted-frames"
+category = "microdata"
+statement = "Output-builder tests build entity frames only through fixtures/weighted_frames.weighted_entity_frame, as MicroDataFrames with non-uniform weights, never as plain pd.DataFrames."
+rationale = "docs/engineering/skills/microdata-weights.md#rules"
+scope = ["projects/policyengine-simulation-executor/tests/test_simulation_output_*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-executor"
+nodes = ["tests/test_microdata_weight_boundaries.py::test_builder_tests_build_entity_frames_with_weights"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.microdata.builder-tests-use-weighted-frames/bad_test_simulation_output_budget.py"
+good_fixture = "rules/fixtures/sim.microdata.builder-tests-use-weighted-frames/good_test_simulation_output_budget.py"
+project = "projects/policyengine-simulation-executor"
+test = "tests/test_microdata_weight_boundaries.py::test_rule_proof_builder_tests_use_weighted_frames"
 
 # --- Code quality and tests ------------------------------------------------
 

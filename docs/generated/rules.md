@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 40 | 1 | 0 | 14 | 55 |
+| mechanical | 42 | 2 | 0 | 15 | 59 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 41 of 55 rules.
+**Blocking:** 44 of 59 rules.
 
 ## Gaps
 
@@ -22,6 +22,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.boundaries.unit-tests-need-no-services`: Unit tests never require real network credentials, Modal, Hugging Face, GCP or deployed services; those seams are mocked.
 - `sim.contracts.regenerate-clients`: When public API schemas change, regenerate the clients and run the generated-client integration tests.
 - `sim.deploy.image-smoke-covers-every-image-lib`: The image smoke path filter includes every library mounted into a Modal image, so a change to any of them runs the smoke.
+- `sim.microdata.weights-not-values`: Microdata columns are weights, values, labels or counts: weights are only summed plainly to count entities or passed as weights=, values are aggregated with their own entity's weights, labels only group or filter, and counts derive from weights.
 - `sim.observability.failures-never-break-requests`: Invalid observability configuration fails at build or deploy time, and telemetry failures at runtime never fail a request or computation.
 - `sim.observability.header-transport-only`: observability_id travels only in the X-PolicyEngine-Observability-Id header, never in a simulation JSON body, and polling never invents one.
 - `sim.observability.id-is-diagnostic-only`: observability_id has diagnostic meaning only: never use it for idempotency, authorization, database identity, routing or business logic.
@@ -65,6 +66,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 ### Ratcheted (existing violations still tolerated)
 
 - `sim.ci.multiline-run-is-script`: 13 remaining in `rules/baselines/ci-multiline-run.txt`
+- `sim.microdata.weight-stripping-confined`: 1 remaining in `rules/baselines/sim-microdata-weight-stripping.txt`
 
 ### Exceptions and review dates
 
@@ -240,6 +242,31 @@ flowchart LR
   r_sim_observability_header_transport_only -.-> gap_unenforced
   r_sim_observability_id_is_diagnostic_only -.-> gap_unenforced
   r_sim_observability_registered_stages_only -.-> gap_unenforced
+```
+
+## Weighted microdata
+
+| Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sim.microdata.builder-tests-use-weighted-frames` | Output-builder tests build entity frames only through fixtures/weighted_frames.weighted_entity_frame, as MicroDataFrames with non-uniform weights, never as plain pd.DataFrames. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-executor/tests/test_microdata_weight_boundaries.py` | `pr.yml:test` | yes |
+| `sim.microdata.weight-stripping-confined` | Raw values are read from a weighted frame or column (np.asarray, np.array, .values, .to_numpy(), .tolist(), pd.DataFrame or pd.Series) only in simulation_output_common.py, the module that holds _count_output_entities. | mechanical | ratcheted | yes | pytest `projects/policyengine-simulation-executor/tests/test_microdata_weight_boundaries.py` | `pr.yml:test` | yes |
+| `sim.microdata.weights-not-aggregated-as-values` | A weight column is never aggregated as a value: never the variable of a weighted aggregator (_sum_output_variable, _change_output_variable, Aggregate, ChangeAggregate) or frame[<weight>] followed by a weighted reduction; count entities with _count_output_entities. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-executor/tests/test_microdata_weight_boundaries.py` | `pr.yml:test` | yes |
+| `sim.microdata.weights-not-values` | Microdata columns are weights, values, labels or counts: weights are only summed plainly to count entities or passed as weights=, values are aggregated with their own entity's weights, labels only group or filter, and counts derive from weights. | mechanical | doc-only | no | nothing | — | — |
+
+```mermaid
+flowchart LR
+  r_sim_microdata_builder_tests_use_weighted_frames("sim.microdata.builder-tests-use-weighted-frames (enforced)")
+  e_pytest_projects_policyengine_simulation_executor_tests_test_microdata_weight_boundaries_py["pytest projects/policyengine-simulation-executor/tests/test_microdata_weight_boundaries.py"]
+  j_CI_pr_yml_test["CI pr.yml:test"]
+  r_sim_microdata_weight_stripping_confined("sim.microdata.weight-stripping-confined (ratcheted)")
+  r_sim_microdata_weights_not_aggregated_as_values("sim.microdata.weights-not-aggregated-as-values (enforced)")
+  r_sim_microdata_weights_not_values("sim.microdata.weights-not-values (doc-only)")
+  gap_unenforced>"not enforced"]
+  r_sim_microdata_builder_tests_use_weighted_frames --> e_pytest_projects_policyengine_simulation_executor_tests_test_microdata_weight_boundaries_py
+  e_pytest_projects_policyengine_simulation_executor_tests_test_microdata_weight_boundaries_py --> j_CI_pr_yml_test
+  r_sim_microdata_weight_stripping_confined --> e_pytest_projects_policyengine_simulation_executor_tests_test_microdata_weight_boundaries_py
+  r_sim_microdata_weights_not_aggregated_as_values --> e_pytest_projects_policyengine_simulation_executor_tests_test_microdata_weight_boundaries_py
+  r_sim_microdata_weights_not_values -.-> gap_unenforced
 ```
 
 ## Code quality and tests

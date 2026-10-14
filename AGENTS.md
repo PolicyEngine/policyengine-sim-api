@@ -18,6 +18,10 @@ Before changing correlation identifiers, telemetry transport, spans, stage
 names, logging, or observability failure handling, read
 `docs/engineering/skills/observability.md`.
 
+When changing code that aggregates simulation microdata (the output builders,
+the national reduce, Stage 12 aggregation, or anything that reads
+`output_dataset.data`), read `docs/engineering/skills/microdata-weights.md`.
+
 When adding or changing a GitHub Actions workflow step or a script under
 `.github/scripts/`, read `docs/engineering/skills/ci-workflows.md`.
 
@@ -137,6 +141,13 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 - `sim.observability.header-transport-only`: observability_id travels only in the X-PolicyEngine-Observability-Id header, never in a simulation JSON body, and polling never invents one. (doc-only, not checked: follow it yourself)
 - `sim.observability.id-is-diagnostic-only`: observability_id has diagnostic meaning only: never use it for idempotency, authorization, database identity, routing or business logic. (doc-only, not checked: follow it yourself)
 - `sim.observability.registered-stages-only`: Span names come from the stage plans in policyengine_simulation_observability.stages; runtime code never adds span-name string literals. (doc-only, not checked: follow it yourself)
+
+### Weighted microdata
+
+- `sim.microdata.builder-tests-use-weighted-frames`: Output-builder tests build entity frames only through fixtures/weighted_frames.weighted_entity_frame, as MicroDataFrames with non-uniform weights, never as plain pd.DataFrames. (blocking: pytest `projects/policyengine-simulation-executor/tests/test_microdata_weight_boundaries.py`)
+- `sim.microdata.weight-stripping-confined`: Raw values are read from a weighted frame or column (np.asarray, np.array, .values, .to_numpy(), .tolist(), pd.DataFrame or pd.Series) only in simulation_output_common.py, the module that holds _count_output_entities. (blocking: pytest `projects/policyengine-simulation-executor/tests/test_microdata_weight_boundaries.py`)
+- `sim.microdata.weights-not-aggregated-as-values`: A weight column is never aggregated as a value: never the variable of a weighted aggregator (_sum_output_variable, _change_output_variable, Aggregate, ChangeAggregate) or frame[<weight>] followed by a weighted reduction; count entities with _count_output_entities. (blocking: pytest `projects/policyengine-simulation-executor/tests/test_microdata_weight_boundaries.py`)
+- `sim.microdata.weights-not-values`: Microdata columns are weights, values, labels or counts: weights are only summed plainly to count entities or passed as weights=, values are aggregated with their own entity's weights, labels only group or filter, and counts derive from weights. (doc-only, not checked: follow it yourself)
 
 ### Code quality and tests
 
