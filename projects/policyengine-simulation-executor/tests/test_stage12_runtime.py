@@ -1584,7 +1584,7 @@ def test_comparison_failure_stores_a_redacted_cause() -> None:
         store=store,
         artifacts=artifacts,
         invoker=UnavailableProductionInvoker(artifacts),
-        aggregator=lambda **_: {"result": {"budget": 100}},
+        aggregator=lambda **_: _aggregate_payload({"budget": 100}),
     )
 
     assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
@@ -1769,7 +1769,7 @@ def test_coordinator_records_a_redacted_dispatch_failure_cause() -> None:
             store=store,
             artifacts=artifacts,
             invoker=invoker,
-            aggregator=lambda **_: {"must": "not run"},
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
             runtime=runtime,
         )
 
@@ -1857,7 +1857,7 @@ def test_coordinator_keeps_the_cause_recorded_by_a_failed_worker() -> None:
             store=store,
             artifacts=FakeArtifacts(),
             invoker=WorkerRecordedFailureInvoker(store, worker_summary),
-            aggregator=lambda **_: {"must": "not run"},
+            aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
             runtime=runtime,
         )
 
