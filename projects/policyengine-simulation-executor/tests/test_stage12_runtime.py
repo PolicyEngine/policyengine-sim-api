@@ -76,12 +76,22 @@ from policyengine_simulation_executor.stage12_runtime import (
 from policyengine_simulation_executor.stage12_runtime import (
     coordinate_report as coordinate_report_impl,
 )
+from policyengine_simulation_executor.stage12_runtime import (
+    coordination as coordination_module,
+)
+from policyengine_simulation_executor.stage12_runtime import (
+    simulation as simulation_module,
+)
 from policyengine_simulation_executor.stage12_runtime.aggregation import (
     validate_uk_local_authority_metadata,
+)
+from policyengine_simulation_executor.stage12_runtime.dependencies import (
+    runtime_store,
 )
 from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata,
 )
+from policyengine_stage12_persistence import store as persistence_store_module
 from sqlalchemy.exc import OperationalError
 
 NOW = datetime(2026, 9, 15, tzinfo=UTC)
@@ -726,37 +736,30 @@ class TelemetryRecordingRuntime(RecordingRuntime):
         )
 
 
-def test_single_worker_retries_a_claim_that_could_not_connect(monkeypatch) -> None:
-    monkeypatch.setattr(database_retry, "INITIAL_RETRY_DELAY_SECONDS", 0.0)
-
-    class BusyPoolerStore(FakeStore):
-        def __init__(self):
-            super().__init__()
-            self.read_attempts = 0
-
-        def get_simulation(self, simulation_execution_id):
-            self.read_attempts += 1
-            if self.read_attempts == 1:
-                raise _connection_limit_error()
-            return super().get_simulation(simulation_execution_id)
-
-    store = BusyPoolerStore()
+def test_single_worker_builds_its_store_with_the_worker_runtime(monkeypatch) -> None:
+    store = FakeStore()
     simulation = _planned_simulation(SimulationRole.BASELINE)
     store.children[simulation.simulation_execution_id] = _child(simulation)
+    store_runtimes = []
 
-    result = run_single_simulation(
+    def record_store_runtime(runtime):
+        store_runtimes.append(runtime)
+        return store
+
+    monkeypatch.setattr(simulation_module, "runtime_store", record_store_runtime)
+    runtime = RecordingRuntime()
+
+    run_single_simulation(
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        store=store,
         artifacts=FakeArtifacts(),
         calculator=lambda _: _frames(),
+        runtime=runtime,
     )
 
-    assert store.read_attempts == 2
-    assert result["role"] == "baseline"
-    child = store.children[simulation.simulation_execution_id]
-    assert child.status is ComparisonRunLifecycleStatus.SUCCEEDED
+    # The runtime store reports each connection retry through this runtime.
+    assert store_runtimes == [runtime]
 
 
 def test_single_worker_reports_failure_before_an_unwritable_failure_record() -> None:
@@ -1517,23 +1520,19 @@ def test_coordinator_records_failure_when_child_persistence_fails() -> None:
     assert store.parent.error_summary == "RuntimeError"
 
 
-def test_coordinator_retries_a_claim_that_could_not_connect(monkeypatch) -> None:
-    monkeypatch.setattr(database_retry, "INITIAL_RETRY_DELAY_SECONDS", 0.0)
+def test_coordinator_builds_its_store_with_the_coordinator_runtime(
+    monkeypatch,
+) -> None:
+    store = FakeStore()
+    store_runtimes = []
 
-    class BusyPoolerStore(FakeStore):
-        def __init__(self):
-            super().__init__()
-            self.claim_attempts = 0
+    def record_store_runtime(runtime):
+        store_runtimes.append(runtime)
+        return store
 
-        def create_or_resolve_report(self, record):
-            self.claim_attempts += 1
-            if self.claim_attempts <= 2:
-                raise _connection_limit_error()
-            return super().create_or_resolve_report(record)
-
-    store = BusyPoolerStore()
+    monkeypatch.setattr(coordination_module, "runtime_store", record_store_runtime)
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts)
+    runtime = RecordingRuntime()
 
     coordinate_report(
         _report().model_dump(mode="json"),
@@ -1541,34 +1540,45 @@ def test_coordinator_retries_a_claim_that_could_not_connect(monkeypatch) -> None
         _parent().model_dump(mode="json"),
         application_name=_context().modal_application,
         coordinator_invocation_id="coordinator-1",
-        store=store,
         artifacts=artifacts,
-        invoker=invoker,
+        invoker=ConcurrentInvoker(artifacts),
         aggregator=lambda **_: {"result": "complete"},
+        runtime=runtime,
     )
 
-    assert store.claim_attempts == 3
-    assert invoker.events == ["spawn:baseline", "spawn:reform"]
+    # The runtime store reports each connection retry through this runtime.
+    assert store_runtimes == [runtime]
     assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
 
 
-def test_coordinator_does_not_retry_a_claim_that_failed_after_connecting() -> None:
-    class RejectingStore(FakeStore):
+def test_coordinator_does_not_deduplicate_against_its_own_claim_after_a_lost_commit() -> (
+    None
+):
+    # SQLAlchemy raises a failed COMMIT without a statement, like a refused
+    # connection, although the claim may already be durable.
+    lost_commit_reply = OperationalError(
+        None,
+        None,
+        Exception("server closed the connection unexpectedly"),
+    )
+
+    class LostCommitReplyStore(FakeStore):
         def __init__(self):
             super().__init__()
             self.claim_attempts = 0
 
         def create_or_resolve_report(self, record):
             self.claim_attempts += 1
-            raise OperationalError(
-                "INSERT INTO comparison_reports",
-                {},
-                Exception("server closed the connection unexpectedly"),
-            )
+            claim = super().create_or_resolve_report(record)
+            if self.claim_attempts == 1:
+                raise lost_commit_reply
+            return claim
 
-    store = RejectingStore()
+    store = LostCommitReplyStore()
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts)
 
-    with pytest.raises(OperationalError):
+    with pytest.raises(OperationalError) as error:
         coordinate_report(
             _report().model_dump(mode="json"),
             _context().model_dump(mode="json"),
@@ -1576,11 +1586,131 @@ def test_coordinator_does_not_retry_a_claim_that_failed_after_connecting() -> No
             application_name=_context().modal_application,
             coordinator_invocation_id="coordinator-1",
             store=store,
-            artifacts=FakeArtifacts(),
-            invoker=ConcurrentInvoker(FakeArtifacts()),
+            artifacts=artifacts,
+            invoker=invoker,
         )
 
+    # A retry would find this coordinator's own running claim and return a
+    # deduplicated success without dispatching either simulation.
+    assert error.value is lost_commit_reply
     assert store.claim_attempts == 1
+    assert invoker.events == []
+
+
+class ScriptedResult:
+    def __init__(self, row):
+        self.row = row
+
+    def mappings(self):
+        return self
+
+    def one_or_none(self):
+        return self.row
+
+    def one(self):
+        return self.row
+
+
+class ScriptedConnection:
+    """Answer each statement with the next scripted row."""
+
+    def __init__(self, rows, *, commit_error=None):
+        self.rows = list(rows)
+        self.statement_count = 0
+        self.commit_error = commit_error
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exception_details):
+        return None
+
+    @contextmanager
+    def begin(self):
+        yield
+        if self.commit_error is not None:
+            raise self.commit_error
+
+    def execute(self, _statement):
+        self.statement_count += 1
+        return ScriptedResult(self.rows.pop(0))
+
+
+class BusyPoolerEngine:
+    """Refuse the first connections, as a session pooler at its limit does."""
+
+    def __init__(self, rows, *, refused_connections=0, commit_error=None):
+        self.connection = ScriptedConnection(rows, commit_error=commit_error)
+        self.refused_connections = refused_connections
+        self.connection_attempts = 0
+
+    def connect(self):
+        self.connection_attempts += 1
+        if self.connection_attempts <= self.refused_connections:
+            raise _connection_limit_error()
+        return self.connection
+
+
+def _runtime_store_over(engine, monkeypatch, runtime):
+    monkeypatch.setattr(database_retry, "INITIAL_RETRY_DELAY_SECONDS", 0.0)
+    monkeypatch.setattr(
+        persistence_store_module,
+        "create_stage12_engine",
+        lambda _database_url: engine,
+    )
+    return runtime_store(runtime)
+
+
+def test_runtime_store_retries_a_refused_connection_for_child_state_creation(
+    monkeypatch,
+) -> None:
+    ordered_events: list[tuple[str, object]] = []
+    child = _child(_planned_simulation(SimulationRole.BASELINE))
+    engine = BusyPoolerEngine(
+        [_parent().model_dump(mode="python"), child.model_dump(mode="python")],
+        refused_connections=1,
+    )
+    store = _runtime_store_over(
+        engine, monkeypatch, TelemetryRecordingRuntime(ordered_events)
+    )
+
+    result = store.create_or_resolve_simulation(child)
+
+    assert result.created is True
+    assert result.record == child
+    assert engine.connection_attempts == 2
+    assert engine.connection.statement_count == 2
+    [(event_kind, (message, attributes, error))] = ordered_events
+    assert event_kind == "telemetry"
+    assert message == "Stage 12 database connection unavailable; retrying"
+    assert attributes["stage12_database_operation"] == "create_or_resolve_simulation"
+    assert attributes["stage12_database_failed_attempt"] == 1
+    assert isinstance(error, OperationalError)
+
+
+def test_runtime_store_does_not_retry_a_failed_commit(monkeypatch) -> None:
+    ordered_events: list[tuple[str, object]] = []
+    lost_commit_reply = OperationalError(
+        None,
+        None,
+        Exception("server closed the connection unexpectedly"),
+    )
+    report = _parent()
+    engine = BusyPoolerEngine(
+        [report.model_dump(mode="python")],
+        commit_error=lost_commit_reply,
+    )
+    store = _runtime_store_over(
+        engine, monkeypatch, TelemetryRecordingRuntime(ordered_events)
+    )
+
+    with pytest.raises(OperationalError) as failure:
+        store.create_or_resolve_report(report)
+
+    assert failure.value is lost_commit_reply
+    assert engine.connection_attempts == 1
+    assert engine.connection.statement_count == 1
+    assert ordered_events == []
 
 
 def test_coordinator_reports_failure_before_an_unwritable_failure_record() -> None:

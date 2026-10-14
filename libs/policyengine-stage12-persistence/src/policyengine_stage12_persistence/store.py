@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
 from policyengine_simulation_contract.stage12_execution import (
@@ -17,8 +19,7 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from sqlalchemy import Engine, create_engine, select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.engine import URL, make_url
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.engine import URL, Connection, make_url
 from sqlalchemy.pool import NullPool
 
 from policyengine_stage12_persistence.tables import (
@@ -125,17 +126,31 @@ def create_stage12_engine(database_url: str) -> Engine:
     )
 
 
-def is_connection_unavailable_error(error: BaseException) -> bool:
-    """Return whether a database connection could not be opened.
+class ConnectionOpener(Protocol):
+    """Open the database connection that one store operation uses.
 
-    SQLAlchemy wraps a DBAPI failure raised while opening a connection without
-    a statement. The database therefore received no work, so the operation can
-    be retried without risking a duplicate write. Session-pooler connection
-    limits (``EMAXCONNSESSION``) and connect timeouts fail this way; a failed
-    statement does not.
+    ``connect`` only opens a connection; it sends no application statement.
+    The operation's statements, and the COMMIT or ROLLBACK that ends it, run
+    after the opener returns. An opener may therefore retry ``connect``
+    without risking a duplicate write, and never sees a later failure.
     """
 
-    return isinstance(error, OperationalError) and error.statement is None
+    def __call__(
+        self,
+        connect: Callable[[], Connection],
+        *,
+        operation_name: str,
+    ) -> Connection: ...
+
+
+def open_connection_once(
+    connect: Callable[[], Connection],
+    *,
+    operation_name: str,
+) -> Connection:
+    """Open a connection once, so a refused connection fails the operation."""
+
+    return connect()
 
 
 def _database_value(value: Any) -> Any:
@@ -171,12 +186,31 @@ class Stage12PersistenceStore:
         database_url: str | None = None,
         *,
         engine: Engine | None = None,
+        open_connection: ConnectionOpener = open_connection_once,
     ) -> None:
         if engine is None:
             if database_url is None:
                 raise ValueError("Stage 12 database URL is required")
             engine = create_stage12_engine(database_url)
         self.engine = engine
+        self._open_connection = open_connection
+
+    @contextmanager
+    def _connection(self, operation_name: str) -> Iterator[Connection]:
+        # Opening the connection is the only step the opener sees. Every
+        # statement, COMMIT and ROLLBACK runs after the opener returns, so
+        # an opener that retries can never repeat work the database received.
+        connection = self._open_connection(
+            self.engine.connect,
+            operation_name=operation_name,
+        )
+        with connection:
+            yield connection
+
+    @contextmanager
+    def _transaction(self, operation_name: str) -> Iterator[Connection]:
+        with self._connection(operation_name) as connection, connection.begin():
+            yield connection
 
     def create_or_resolve_report(
         self,
@@ -189,7 +223,7 @@ class Stage12PersistenceStore:
             .on_conflict_do_nothing(constraint=REPORT_IDENTITY_CONSTRAINT)
             .returning(*comparison_reports.c)
         )
-        with self.engine.begin() as connection:
+        with self._transaction("create_or_resolve_report") as connection:
             created = connection.execute(statement).mappings().one_or_none()
             if created is not None:
                 return ComparisonReportPersistenceResult(
@@ -218,7 +252,7 @@ class Stage12PersistenceStore:
             return ComparisonReportPersistenceResult(record=resolved, created=False)
 
     def get_report(self, evaluation_id: UUID) -> ComparisonReportRecord:
-        with self.engine.connect() as connection:
+        with self._connection("get_report") as connection:
             row = (
                 connection.execute(
                     select(comparison_reports).where(
@@ -244,7 +278,7 @@ class Stage12PersistenceStore:
                 comparison_simulations.c.simulation_execution_id,
             )
         )
-        with self.engine.connect() as connection:
+        with self._connection("list_simulations") as connection:
             rows = connection.execute(statement).mappings().all()
         return tuple(_simulation(row) for row in rows)
 
@@ -253,7 +287,7 @@ class Stage12PersistenceStore:
         record: ComparisonReportRecord,
     ) -> ComparisonReportRecord:
         values = _record_values(record)
-        with self.engine.begin() as connection:
+        with self._transaction("replace_report") as connection:
             row = (
                 connection.execute(
                     select(comparison_reports)
@@ -295,7 +329,7 @@ class Stage12PersistenceStore:
         record: ComparisonReportRecord,
     ) -> ComparisonReportRecord:
         values = _record_values(record)
-        with self.engine.begin() as connection:
+        with self._transaction("replace_report_result_comparison") as connection:
             row = (
                 connection.execute(
                     select(comparison_reports)
@@ -346,7 +380,7 @@ class Stage12PersistenceStore:
             .on_conflict_do_nothing(constraint=SIMULATION_IDENTITY_CONSTRAINT)
             .returning(*comparison_simulations.c)
         )
-        with self.engine.begin() as connection:
+        with self._transaction("create_or_resolve_simulation") as connection:
             parent_row = (
                 connection.execute(
                     select(comparison_reports).where(
@@ -395,7 +429,7 @@ class Stage12PersistenceStore:
         self,
         simulation_execution_id: UUID,
     ) -> ComparisonSimulationRecord:
-        with self.engine.connect() as connection:
+        with self._connection("get_simulation") as connection:
             row = (
                 connection.execute(
                     select(comparison_simulations).where(
@@ -417,7 +451,7 @@ class Stage12PersistenceStore:
         record: ComparisonSimulationRecord,
     ) -> ComparisonSimulationRecord:
         values = _record_values(record)
-        with self.engine.begin() as connection:
+        with self._transaction("replace_simulation") as connection:
             row = (
                 connection.execute(
                     select(comparison_simulations)
@@ -479,7 +513,7 @@ class Stage12PersistenceStore:
             )
             .returning(*comparison_simulations.c)
         )
-        with self.engine.begin() as connection:
+        with self._transaction("attach_simulation_invocation") as connection:
             row = connection.execute(statement).mappings().one_or_none()
             if row is None:
                 row = (

@@ -1,4 +1,4 @@
-"""Bounded retry for Stage 12 database work that could not open a connection."""
+"""Bounded retry for Stage 12 database connections that could not be opened."""
 
 from __future__ import annotations
 
@@ -7,39 +7,40 @@ import random
 import time
 from collections.abc import Callable
 from contextlib import suppress
-from typing import TypeVar
 
 from policyengine_observability import ObservabilityRuntime
-from policyengine_stage12_persistence import is_connection_unavailable_error
+from sqlalchemy.engine import Connection
+from sqlalchemy.exc import OperationalError
 
 logger = logging.getLogger(__name__)
 
-OperationResult = TypeVar("OperationResult")
-
 # Coordinators and workers start in bursts against a session pooler with a
-# fixed client limit. A short, jittered wait lets concurrent starts spread out
-# instead of failing a report before any simulation work has begun.
+# fixed client limit. A short, jittered wait lets concurrent connections
+# spread out instead of failing a report on one refused connection.
 CONNECTION_RETRY_BUDGET_SECONDS = 60.0
 INITIAL_RETRY_DELAY_SECONDS = 1.0
 MAXIMUM_RETRY_DELAY_SECONDS = 15.0
 RETRY_DELAY_GROWTH_FACTOR = 2.0
 
 
-def retry_when_connection_unavailable(
-    operation: Callable[[], OperationResult],
+def open_connection_with_retry(
+    connect: Callable[[], Connection],
     *,
     operation_name: str,
     runtime: ObservabilityRuntime | None = None,
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
     choose_delay: Callable[[float, float], float] = random.uniform,
-) -> OperationResult:
-    """Run ``operation``, retrying only failures to open a database connection.
+) -> Connection:
+    """Open a Stage 12 database connection, retrying while it is refused.
 
-    The database received no statement when a connection could not be opened,
-    so repeating the operation cannot duplicate a write. Every other error,
-    including a failed statement, propagates immediately. Retries stop once
-    the retry budget is spent and the final connection error propagates.
+    The persistence store passes only its connect step here. Failing that step
+    means no connection opened and no statement reached the database, so
+    opening it again cannot duplicate a write. The store runs the operation's
+    statements and its COMMIT or ROLLBACK after this returns; their failures,
+    including a COMMIT whose reply was lost, propagate without a retry.
+    Errors other than ``OperationalError`` propagate immediately, and retries
+    stop once the retry budget is spent.
     """
 
     started = monotonic()
@@ -47,10 +48,8 @@ def retry_when_connection_unavailable(
     delay_ceiling = INITIAL_RETRY_DELAY_SECONDS
     while True:
         try:
-            return operation()
-        except Exception as error:
-            if not is_connection_unavailable_error(error):
-                raise
+            return connect()
+        except OperationalError as error:
             remaining_budget = CONNECTION_RETRY_BUDGET_SECONDS - (monotonic() - started)
             if remaining_budget <= 0:
                 raise

@@ -1,11 +1,13 @@
-"""Tests for retrying Stage 12 database work that could not connect."""
+"""Tests for retrying Stage 12 database connections that could not be opened."""
 
 from __future__ import annotations
+
+import logging
 
 import pytest
 from policyengine_simulation_executor.stage12_runtime import database_retry
 from policyengine_simulation_executor.stage12_runtime.database_retry import (
-    retry_when_connection_unavailable,
+    open_connection_with_retry,
 )
 from sqlalchemy.exc import OperationalError
 
@@ -16,14 +18,6 @@ def _connection_limit_error() -> OperationalError:
         None,
         None,
         Exception("(EMAXCONNSESSION) max clients reached in session mode"),
-    )
-
-
-def _failed_statement_error() -> OperationalError:
-    return OperationalError(
-        "UPDATE comparison_reports SET status = %(status)s",
-        {"status": "failed"},
-        Exception("server closed the connection unexpectedly"),
     )
 
 
@@ -55,41 +49,46 @@ class RetryLogRuntime:
         )
 
 
+class OpenedConnection:
+    """Stand in for the connection a successful connect step returns."""
+
+
 def _upper_bound_delay(lower_bound: float, upper_bound: float) -> float:
     return upper_bound
 
 
-def test_connection_failures_are_retried_with_growing_bounded_delays() -> None:
+def test_refused_connections_are_retried_with_growing_bounded_delays() -> None:
     clock = ManualClock()
     runtime = RetryLogRuntime()
+    opened_connection = OpenedConnection()
     attempts: list[int] = []
 
-    def claim_after_two_connection_failures() -> str:
+    def connect_after_two_refusals() -> OpenedConnection:
         attempts.append(len(attempts) + 1)
         if len(attempts) <= 2:
             raise _connection_limit_error()
-        return "claimed"
+        return opened_connection
 
-    result = retry_when_connection_unavailable(
-        claim_after_two_connection_failures,
-        operation_name="coordinator_claim",
+    result = open_connection_with_retry(
+        connect_after_two_refusals,
+        operation_name="create_or_resolve_simulation",
         runtime=runtime,
         sleep=clock.sleep,
         monotonic=clock.monotonic,
         choose_delay=_upper_bound_delay,
     )
 
-    assert result == "claimed"
+    assert result is opened_connection
     assert attempts == [1, 2, 3]
     assert clock.sleeps == [1.0, 2.0]
     assert [record["attributes"] for record in runtime.records] == [
         {
-            "stage12_database_operation": "coordinator_claim",
+            "stage12_database_operation": "create_or_resolve_simulation",
             "stage12_database_failed_attempt": 1,
             "stage12_database_retry_delay_seconds": 1.0,
         },
         {
-            "stage12_database_operation": "coordinator_claim",
+            "stage12_database_operation": "create_or_resolve_simulation",
             "stage12_database_failed_attempt": 2,
             "stage12_database_retry_delay_seconds": 2.0,
         },
@@ -110,15 +109,15 @@ def test_jittered_delay_stays_between_half_and_all_of_the_ceiling() -> None:
 
     attempts: list[int] = []
 
-    def connect_on_third_attempt() -> str:
+    def connect_on_third_attempt() -> OpenedConnection:
         attempts.append(1)
         if len(attempts) < 3:
             raise _connection_limit_error()
-        return "connected"
+        return OpenedConnection()
 
-    retry_when_connection_unavailable(
+    open_connection_with_retry(
         connect_on_third_attempt,
-        operation_name="simulation_claim",
+        operation_name="get_simulation",
         sleep=clock.sleep,
         monotonic=clock.monotonic,
         choose_delay=lowest_delay,
@@ -128,22 +127,18 @@ def test_jittered_delay_stays_between_half_and_all_of_the_ceiling() -> None:
     assert clock.sleeps == [0.5, 1.0]
 
 
-@pytest.mark.parametrize(
-    "error_factory",
-    [_failed_statement_error, lambda: ValueError("invalid comparison record")],
-)
-def test_statement_and_application_errors_are_not_retried(error_factory) -> None:
+def test_errors_other_than_a_refused_connection_are_not_retried() -> None:
     clock = ManualClock()
     attempts: list[int] = []
 
-    def fail_without_connection_problem() -> None:
+    def fail_with_invalid_connection_options() -> None:
         attempts.append(1)
-        raise error_factory()
+        raise ValueError("invalid connection option")
 
-    with pytest.raises(type(error_factory())):
-        retry_when_connection_unavailable(
-            fail_without_connection_problem,
-            operation_name="coordinator_claim",
+    with pytest.raises(ValueError, match="invalid connection option"):
+        open_connection_with_retry(
+            fail_with_invalid_connection_options,
+            operation_name="get_report",
             sleep=clock.sleep,
             monotonic=clock.monotonic,
         )
@@ -161,9 +156,9 @@ def test_retries_stop_when_the_budget_is_spent() -> None:
         raise _connection_limit_error()
 
     with pytest.raises(OperationalError, match="EMAXCONNSESSION"):
-        retry_when_connection_unavailable(
+        open_connection_with_retry(
             never_connect,
-            operation_name="coordinator_claim",
+            operation_name="create_or_resolve_report",
             sleep=clock.sleep,
             monotonic=clock.monotonic,
             choose_delay=_upper_bound_delay,
@@ -181,21 +176,52 @@ def test_retry_telemetry_failure_does_not_stop_the_retry() -> None:
             raise RuntimeError("telemetry exporter unavailable")
 
     clock = ManualClock()
+    opened_connection = OpenedConnection()
     attempts: list[int] = []
 
-    def connect_on_second_attempt() -> str:
+    def connect_on_second_attempt() -> OpenedConnection:
         attempts.append(1)
         if len(attempts) == 1:
             raise _connection_limit_error()
-        return "connected"
+        return opened_connection
 
     assert (
-        retry_when_connection_unavailable(
+        open_connection_with_retry(
             connect_on_second_attempt,
-            operation_name="coordinator_claim",
+            operation_name="create_or_resolve_report",
             runtime=FailingRuntime(),
             sleep=clock.sleep,
             monotonic=clock.monotonic,
         )
-        == "connected"
+        is opened_connection
     )
+
+
+def test_retry_is_logged_when_no_observability_runtime_is_available(
+    caplog,
+) -> None:
+    clock = ManualClock()
+    attempts: list[int] = []
+
+    def connect_on_second_attempt() -> OpenedConnection:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise _connection_limit_error()
+        return OpenedConnection()
+
+    with caplog.at_level(logging.WARNING, logger=database_retry.__name__):
+        open_connection_with_retry(
+            connect_on_second_attempt,
+            operation_name="replace_simulation",
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            choose_delay=_upper_bound_delay,
+        )
+
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING
+    assert record.getMessage() == (
+        "Stage 12 database connection unavailable for replace_simulation; "
+        "retrying attempt 2 after 1.000 seconds"
+    )
+    assert isinstance(record.exc_info[1], OperationalError)

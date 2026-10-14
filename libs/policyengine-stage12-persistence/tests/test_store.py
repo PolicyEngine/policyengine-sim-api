@@ -13,10 +13,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonSimulationRecord,
     SimulationRole,
 )
-from policyengine_stage12_persistence import (
-    Stage12PersistenceStore,
-    is_connection_unavailable_error,
-)
+from policyengine_stage12_persistence import Stage12PersistenceStore
 from policyengine_stage12_persistence import store as store_module
 from policyengine_stage12_persistence.store import normalized_database_url
 from sqlalchemy import create_engine
@@ -64,33 +61,6 @@ def test_runtime_engine_closes_connections_between_transactions(
             assert connection.exec_driver_sql("SELECT 1").scalar_one() == 1
     finally:
         engine.dispose()
-
-
-def test_connection_failures_are_distinguished_from_failed_statements(
-    tmp_path,
-) -> None:
-    unreachable_database = tmp_path / "missing-directory" / "stage12.db"
-    unreachable_engine = create_engine(f"sqlite:///{unreachable_database}")
-    reachable_engine = create_engine("sqlite://")
-    try:
-        with (
-            pytest.raises(OperationalError) as connection_failure,
-            unreachable_engine.begin(),
-        ):
-            pass
-        with (
-            pytest.raises(OperationalError) as statement_failure,
-            reachable_engine.begin() as connection,
-        ):
-            connection.exec_driver_sql("SELECT * FROM missing_table")
-    finally:
-        unreachable_engine.dispose()
-        reachable_engine.dispose()
-
-    # No statement reached the database, so the operation is safe to retry.
-    assert is_connection_unavailable_error(connection_failure.value)
-    assert not is_connection_unavailable_error(statement_failure.value)
-    assert not is_connection_unavailable_error(RuntimeError("not a database error"))
 
 
 def _report() -> ComparisonReportRecord:
@@ -164,10 +134,33 @@ class FakeResult:
         return self.rows or []
 
 
+def _refused_connection_error() -> OperationalError:
+    # SQLAlchemy wraps a DBAPI failure raised while connecting without a
+    # statement, exactly as it wraps a failed COMMIT.
+    return OperationalError(
+        None,
+        None,
+        Exception("(EMAXCONNSESSION) max clients reached in session mode"),
+    )
+
+
 class FakeConnection:
-    def __init__(self, results):
+    def __init__(self, results, *, commit_error=None):
         self.results = list(results)
         self.statements = []
+        self.commit_error = commit_error
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exception_details):
+        return None
+
+    @contextmanager
+    def begin(self):
+        yield
+        if self.commit_error is not None:
+            raise self.commit_error
 
     def execute(self, statement):
         assert isinstance(statement, ClauseElement)
@@ -176,16 +169,118 @@ class FakeConnection:
 
 
 class FakeEngine:
-    def __init__(self, results):
-        self.connection = FakeConnection(results)
+    def __init__(self, results, *, refused_connections=0, commit_error=None):
+        self.connection = FakeConnection(results, commit_error=commit_error)
+        self.refused_connections = refused_connections
+        self.connection_attempts = 0
 
-    @contextmanager
-    def begin(self):
-        yield self.connection
-
-    @contextmanager
     def connect(self):
-        yield self.connection
+        self.connection_attempts += 1
+        if self.connection_attempts <= self.refused_connections:
+            raise _refused_connection_error()
+        return self.connection
+
+
+class RetryingConnectionOpener:
+    """Record each operation's connection and retry one refused connection."""
+
+    def __init__(self):
+        self.operation_names = []
+        self.refusals = []
+
+    def __call__(self, connect, *, operation_name):
+        self.operation_names.append(operation_name)
+        try:
+            return connect()
+        except OperationalError as refusal:
+            self.refusals.append(refusal)
+            return connect()
+
+
+def _sqlalchemy_commit_failure(monkeypatch) -> OperationalError:
+    """Return the error SQLAlchemy raises when a COMMIT's reply is lost."""
+
+    engine = create_engine("sqlite://")
+
+    def commit_then_lose_the_reply(dbapi_connection):
+        dbapi_connection.commit()
+        raise sqlite3.OperationalError("server closed the connection unexpectedly")
+
+    monkeypatch.setattr(engine.dialect, "do_commit", commit_then_lose_the_reply)
+    try:
+        with (
+            pytest.raises(OperationalError) as commit_failure,
+            engine.begin() as connection,
+        ):
+            connection.exec_driver_sql("SELECT 1")
+    finally:
+        engine.dispose()
+    return commit_failure.value
+
+
+def test_operations_open_connections_through_the_opener_before_any_statement() -> None:
+    report = _report()
+    simulation = _simulation()
+    engine = FakeEngine(
+        [
+            FakeResult(row=_row(report)),
+            FakeResult(row=_row(simulation)),
+            FakeResult(row=_row(simulation)),
+        ],
+        refused_connections=1,
+    )
+    opener = RetryingConnectionOpener()
+    store = Stage12PersistenceStore(
+        engine=engine,  # type: ignore[arg-type]
+        open_connection=opener,
+    )
+
+    created = store.create_or_resolve_simulation(simulation)
+    read = store.get_simulation(SIMULATION_ID)
+
+    assert created.record == simulation
+    assert read == simulation
+    assert opener.operation_names == ["create_or_resolve_simulation", "get_simulation"]
+    # The refusal reached the opener before the store sent any statement.
+    assert len(opener.refusals) == 1
+    assert engine.connection_attempts == 3
+    assert len(engine.connection.statements) == 3
+
+
+def test_commit_failure_is_raised_after_the_opener_returns(monkeypatch) -> None:
+    # A failed COMMIT carries no statement, like a refused connection, but the
+    # write may already be durable. Only where it occurs tells them apart.
+    lost_commit_reply = _sqlalchemy_commit_failure(monkeypatch)
+    assert lost_commit_reply.statement is None
+    report = _report()
+    engine = FakeEngine(
+        [FakeResult(row=_row(report))],
+        commit_error=lost_commit_reply,
+    )
+    opener = RetryingConnectionOpener()
+    store = Stage12PersistenceStore(
+        engine=engine,  # type: ignore[arg-type]
+        open_connection=opener,
+    )
+
+    with pytest.raises(OperationalError) as failure:
+        store.create_or_resolve_report(report)
+
+    assert failure.value is lost_commit_reply
+    assert opener.operation_names == ["create_or_resolve_report"]
+    assert opener.refusals == []
+    assert engine.connection_attempts == 1
+    assert len(engine.connection.statements) == 1
+
+
+def test_default_store_does_not_retry_a_refused_connection() -> None:
+    engine = FakeEngine([], refused_connections=1)
+    store = Stage12PersistenceStore(engine=engine)  # type: ignore[arg-type]
+
+    with pytest.raises(OperationalError, match="EMAXCONNSESSION"):
+        store.get_report(REPORT_ID)
+
+    assert engine.connection_attempts == 1
 
 
 def test_create_and_read_report_use_sqlalchemy_statements_only() -> None:

@@ -44,7 +44,6 @@ from .aggregation import (
     validate_uk_local_authority_metadata,
 )
 from .comparison import compare_completed_report
-from .database_retry import retry_when_connection_unavailable
 from .dependencies import (
     ChildCall,
     ChildInvoker,
@@ -243,7 +242,7 @@ def coordinate_report(
         context=context,
         parent=submitted_parent,
     )
-    persistence = store or runtime_store()
+    persistence = store or runtime_store(runtime)
     artifact_storage = artifacts or artifact_store()
     child_invoker = invoker or ModalChildInvoker()
     stage_plan: StagePlan = (
@@ -257,15 +256,10 @@ def coordinate_report(
         else nullcontext()
     )
     with claim_span:
-        parent, should_execute = retry_when_connection_unavailable(
-            partial(
-                _claim_parent,
-                submitted=submitted_parent,
-                coordinator_invocation_id=coordinator_invocation_id,
-                store=persistence,
-            ),
-            operation_name="coordinator_claim",
-            runtime=runtime,
+        parent, should_execute = _claim_parent(
+            submitted=submitted_parent,
+            coordinator_invocation_id=coordinator_invocation_id,
+            store=persistence,
         )
     if not should_execute:
         return {
