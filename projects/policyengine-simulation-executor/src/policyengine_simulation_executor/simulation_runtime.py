@@ -751,6 +751,7 @@ def _build_simulation(
 ) -> Simulation:
     from policyengine_simulation_executor.baseline_artifacts import (
         ArtifactBaselineSimulation,
+        BaselineIdentityRequest,
         deterministic_baseline_id,
     )
     from policyengine_simulation_executor.spm import (
@@ -770,13 +771,15 @@ def _build_simulation(
     )
     scoping_strategy = region.scoping_strategy
     simulation_id = deterministic_baseline_id(
-        params,
-        country=country,
-        dataset_is_default=dataset_selection.is_default,
-        policy=policy,
-        region_code=region.code,
-        scoping_strategy=scoping_strategy,
-        year=_parse_year(params),
+        BaselineIdentityRequest(
+            params,
+            country=country,
+            dataset_is_default=dataset_selection.is_default,
+            policy=policy,
+            region_code=region.code,
+            scoping_strategy=scoping_strategy,
+            year=_parse_year(params),
+        )
     )
     if simulation_id is not None:
         # Deterministic id: ensure() loads a precomputed baseline artifact

@@ -121,6 +121,7 @@ def _cohort_resolution(
 def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
     """Identity via the executor's own resolution path (writer==reader)."""
     from policyengine_simulation_executor.baseline_artifacts import (
+        BaselineIdentityRequest,
         qualifying_baseline_identity,
     )
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
@@ -130,13 +131,15 @@ def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
     params, _, resolution = _cohort_resolution(year, group)
     dataset_selection = _resolve_dataset_selection(params, region_resolution=resolution)
     identity = qualifying_baseline_identity(
-        params,
-        country=PRECOMPUTE_COUNTRY,
-        dataset_is_default=dataset_selection.is_default,
-        policy=None,
-        region_code=resolution.code,
-        scoping_strategy=resolution.scoping_strategy,
-        year=year,
+        BaselineIdentityRequest(
+            params,
+            country=PRECOMPUTE_COUNTRY,
+            dataset_is_default=dataset_selection.is_default,
+            policy=None,
+            region_code=resolution.code,
+            scoping_strategy=resolution.scoping_strategy,
+            year=year,
+        )
     )
     if identity is None:
         msg = (
