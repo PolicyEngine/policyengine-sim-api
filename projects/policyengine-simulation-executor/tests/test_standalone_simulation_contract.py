@@ -59,7 +59,7 @@ def test_standalone_simulation_openapi_keeps_legacy_schema_names():
 
 
 def test_standalone_simulation_route_returns_legacy_macro_contract(monkeypatch):
-    def fake_run_simulation_impl(params, *, runtime):
+    def fake_run_simulation_impl(params, *, runtime):  # noqa: ARG001  # keyword-only, as the route passes it
         assert params == {"country": "us", "reform": {}}
         return CURRENT_SINGLE_YEAR_MACRO_RESULT
 
@@ -78,7 +78,7 @@ def test_standalone_simulation_route_returns_legacy_macro_contract(monkeypatch):
 
 
 def test_standalone_simulation_route_forwards_include_cliffs(monkeypatch):
-    def fake_run_simulation_impl(params, *, runtime):
+    def fake_run_simulation_impl(params, *, runtime):  # noqa: ARG001  # keyword-only, as the route passes it
         assert params == {
             "country": "us",
             "reform": {},

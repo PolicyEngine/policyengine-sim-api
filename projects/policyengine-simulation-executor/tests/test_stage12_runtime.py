@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Lock
 from types import SimpleNamespace
+from typing import override
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -459,7 +460,7 @@ class FakeArtifacts:
     def write_simulation(
         self,
         *,
-        prefix,
+        prefix,  # noqa: ARG002  # mirrors the Stage 12 artifact writer, which callers pass prefix= by keyword
         simulation,
         frames,
         calculation_provenance=None,
@@ -500,7 +501,7 @@ class FakeArtifacts:
         self.aggregate_writes.append(payload)
         return reference
 
-    def write_comparison(self, *, prefix, payload):
+    def write_comparison(self, *, prefix, payload):  # noqa: ARG002  # mirrors the Stage 12 artifact writer, which callers pass prefix= by keyword
         encoded = canonical_json_bytes(payload)
         digest = sha256(encoded).hexdigest()
         uri = "gs://private/comparison.json"
@@ -560,12 +561,12 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
     monkeypatch.setattr(
         simulation_runtime,
         "_country_module",
-        lambda country: country_module,
+        lambda _country: country_module,
     )
     monkeypatch.setattr(
         simulation_runtime,
         "_resolve_region",
-        lambda **kwargs: region,
+        lambda **_kwargs: region,
     )
 
     def resolve_dataset(params, *, region_resolution):
@@ -573,12 +574,12 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
         received["region"] = region_resolution
         return selection
 
-    def load_dataset(params, *, selection, country_module):
+    def load_dataset(_params, *, selection, country_module):
         received["load_selection"] = selection
         received["load_country_module"] = country_module
         return dataset
 
-    def build_simulation(params, *, dataset, dataset_selection, **kwargs):
+    def build_simulation(_params, *, dataset, dataset_selection, **_kwargs):
         received["build_dataset"] = dataset
         received["build_selection"] = dataset_selection
         return Model()
@@ -2101,6 +2102,7 @@ def test_coordinator_rejects_artifacts_that_do_not_satisfy_the_shared_plan(
 
 def test_coordinator_records_failure_when_child_persistence_fails() -> None:
     class FailingChildStore(FakeStore):
+        @override
         def create_or_resolve_simulation(self, record):
             msg = "database rejected the child record"
             raise RuntimeError(msg)
@@ -2727,7 +2729,7 @@ class TimeoutCall:
         self.object_id = object_id
         self.cancelled = 0
 
-    def get(self, *, timeout=None):
+    def get(self, *, timeout=None):  # noqa: ARG002  # mirrors modal.FunctionCall.get, which callers pass timeout= by keyword
         msg = "contains sensitive timeout details"
         raise TimeoutError(msg)
 

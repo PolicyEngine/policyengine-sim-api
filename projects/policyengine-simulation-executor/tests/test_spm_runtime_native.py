@@ -38,7 +38,7 @@ def _worker_entrypoint(params, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "period,unavailable_year",
+    ("period", "unavailable_year"),
     [
         ({"time_period": "2021"}, 2021),
         ({"time_period": "2036"}, 2036),

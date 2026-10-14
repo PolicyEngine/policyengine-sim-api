@@ -23,7 +23,7 @@ class SequencedCall:
         self._done = False
         self._tracker.started(self.object_id)
 
-    def get(self, timeout: int = 0):
+    def get(self, timeout: int = 0):  # noqa: ARG002  # mirrors modal.FunctionCall.get, which callers pass timeout= by keyword
         event = self._events[0]
         if isinstance(event, TimeoutError):
             self._events.popleft()

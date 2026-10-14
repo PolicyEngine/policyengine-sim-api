@@ -134,7 +134,8 @@ def stub_identity_sources(monkeypatch):
 
 
 class TestIdentityCollection:
-    def test_collected_identity_matches_golden(self, stub_identity_sources):
+    @pytest.mark.usefixtures("stub_identity_sources")
+    def test_collected_identity_matches_golden(self):
         identity = ak.collect_dataset_identity("us", 2026)
         assert identity.digest == _DATASET_GOLDEN
         assert identity.filename == "populace_cps_year_2026.h5"
@@ -166,7 +167,8 @@ class TestIdentityCollection:
         }
         assert ak.collect_dataset_identity("us", 2026).digest == _DATASET_GOLDEN
 
-    def test_baseline_identity_composes(self, stub_identity_sources):
+    @pytest.mark.usefixtures("stub_identity_sources")
+    def test_baseline_identity_composes(self):
         identity = ak.collect_baseline_identity(
             "us",
             2026,
@@ -194,12 +196,12 @@ class TestIdentityCollection:
                 return {"year": year, "scenario": scenario, "as_of": as_of}
 
         monkeypatch.setattr(
-            executor_spm, "_forecast", lambda expected_sha256: _StubForecast()
+            executor_spm, "_forecast", lambda _expected_sha256: _StubForecast()
         )
         monkeypatch.setattr(
             executor_spm,
             "_prevalidate_selection",
-            lambda selection_json, start_year, window_size: None,
+            lambda _selection_json, _start_year, _window_size: None,
         )
 
         capability = stub_identity_sources.installed_spm_capability()
@@ -249,7 +251,7 @@ class TestWrapperStorageIdAgreement:
     """
 
     @pytest.fixture
-    def identity(self, stub_identity_sources):
+    def identity(self, stub_identity_sources):  # noqa: ARG002  # requested for its side effect; usefixtures has no effect on fixtures
         """Build the identity directly from an already-resolved selection.
 
         ``collect_baseline_identity`` resolves the selection through the

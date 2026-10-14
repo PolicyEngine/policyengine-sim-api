@@ -140,7 +140,7 @@ class MockChildCall:
         self.error = error
         self.runtime.child_started(object_id)
 
-    def get(self, timeout: int = 0):
+    def get(self, timeout: int = 0):  # noqa: ARG002  # mirrors modal.FunctionCall.get, which callers pass timeout= by keyword
         self.runtime.child_finished(self.object_id)
         if self.error is not None:
             raise self.error
@@ -162,7 +162,7 @@ class MockParentBatchCall:
         self._polls = 0
         self._result = None
 
-    def get(self, timeout: int = 0):
+    def get(self, timeout: int = 0):  # noqa: ARG002  # mirrors modal.FunctionCall.get, which callers pass timeout= by keyword
         if self._result is not None:
             return self._result
         if self._polls == 0:
@@ -227,11 +227,11 @@ def budget_window_semi_integration_client(
         def __init__(self):
             self.context: dict = {}
 
-        def span(self, *args, **kwargs):
+        def span(self, *_args, **_kwargs):
             return nullcontext()
 
         @contextmanager
-        def operation(self, *args, remote_context=None, **kwargs):
+        def operation(self, *_args, remote_context=None, **_kwargs):
             previous = self.context
             self.context = dict(remote_context or {})
             try:
@@ -245,10 +245,10 @@ def budget_window_semi_integration_client(
         def set_context(self, **attributes):
             self.context.update(attributes)
 
-        def event(self, *args, **kwargs):
+        def event(self, *_args, **_kwargs):
             return None
 
-        def record_exception(self, *args, **kwargs):
+        def record_exception(self, *_args, **_kwargs):
             return None
 
     runtime.observability = PropagatingRuntime()
