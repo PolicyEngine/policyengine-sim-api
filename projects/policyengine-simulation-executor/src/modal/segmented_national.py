@@ -443,10 +443,11 @@ class SegmentedNationalRunner:
                 },
             )
             self._cancel_all(children)
-            raise RuntimeError(
+            msg = (
                 "Segmented national child timed out for group "
                 f"{overdue.group_label}: {reason}"
-            ) from None
+            )
+            raise RuntimeError(msg) from None
 
         self._cancel_call(overdue.call)
         self.superseded_children.append(overdue)
@@ -512,17 +513,18 @@ class SegmentedNationalRunner:
             },
         )
         self._cancel_all(children)
-        raise RuntimeError(
+        msg = (
             "Segmented national run exceeded its "
             f"{self.parent_budget_seconds:.0f}s budget with groups still "
             f"running: {outstanding_groups}"
         )
+        raise RuntimeError(msg)
 
     @staticmethod
     def _cancel_call(call: modal.FunctionCall) -> None:
         try:
             call.cancel()
-        except Exception:
+        except Exception:  # noqa: BLE001  # best-effort cleanup: a failed cancel must not mask the failure being raised, and superseded calls are cancelled again later
             pass
 
     def _cancel_superseded_children(self) -> None:

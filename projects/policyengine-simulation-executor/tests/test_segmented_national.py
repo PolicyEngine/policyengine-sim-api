@@ -180,7 +180,8 @@ class FakeCall:
         self.cancel_attempts += 1
         if self.cancel_failures > 0:
             self.cancel_failures -= 1
-            raise ConnectionError("cancel RPC failed")
+            msg = "cancel RPC failed"
+            raise ConnectionError(msg)
         self.cancelled = True
 
 
