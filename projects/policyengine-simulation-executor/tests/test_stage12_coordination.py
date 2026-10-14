@@ -570,3 +570,93 @@ def test_modal_child_invoker_spawns_and_restores_deployed_functions(monkeypatch)
         ),
         ("from_id", ("call-1",), {}),
     ]
+
+
+def _shadow_run(store, artifacts, invoker, runtime=None):
+    context = _context().model_copy(
+        update={"production_function_call_id": "production-job-1"}
+    )
+    parent = _parent().model_copy(
+        update={
+            "production_identity": "production-job-1",
+            "incumbent_execution_id": "production-job-1",
+            "comparison_status": ResultComparisonStatus.PENDING,
+        }
+    )
+    return _coordinate(
+        context,
+        parent,
+        store=store,
+        artifacts=artifacts,
+        invoker=invoker,
+        aggregator=lambda **_: _aggregate_payload({"budget": {"total": 100.0}}),
+        runtime=runtime,
+    )
+
+
+def test_shadow_comparison_logs_its_outcome_and_times_its_stage(caplog):
+    import logging
+
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    runtime = TracingRuntime()
+    invoker = ConcurrentInvoker(
+        artifacts, production_result={"budget": {"total": 100.0}}
+    )
+
+    with caplog.at_level(logging.INFO):
+        _shadow_run(store, artifacts, invoker, runtime)
+
+    assert runtime.events[-1] == ("span", "stage12_result_comparison", {})
+    assert all(name.startswith("stage12_") for _kind, name, _ in runtime.events if name)
+    [record] = [
+        item
+        for item in caplog.records
+        if item.getMessage() == "stage12_result_comparison_completed"
+    ]
+    assert record.name == "policyengine_simulation_executor.stage12_runtime.comparison"
+    assert record.levelno == logging.INFO
+    assert record.evaluation_id == str(EVALUATION_ID)
+    assert record.production_job_id == "production-job-1"
+    assert record.comparison_status == "matched"
+    assert record.difference_count == 0
+    assert store.parent.comparison_status is ResultComparisonStatus.MATCHED
+
+
+def test_comparison_state_update_failure_is_logged_without_values(caplog):
+    import logging
+
+    store = FakeStore()
+    artifacts = FakeArtifacts()
+    invoker = ConcurrentInvoker(artifacts, production_result="not-an-object")
+
+    def unavailable_report(_evaluation_id):
+        msg = "database unavailable with sensitive detail"
+        raise ConnectionError(msg)
+
+    store.get_report = unavailable_report
+
+    with caplog.at_level(logging.INFO):
+        result = _shadow_run(store, artifacts, invoker)
+
+    assert result["evaluation_id"] == str(EVALUATION_ID)
+    assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
+    assert store.parent.comparison_status is ResultComparisonStatus.RUNNING
+    state_record, failure_record = [
+        item
+        for item in caplog.records
+        if item.getMessage()
+        in {
+            "stage12_result_comparison_state_update_failed",
+            "stage12_result_comparison_failed",
+        }
+    ]
+    assert state_record.getMessage() == "stage12_result_comparison_state_update_failed"
+    assert state_record.levelno == logging.ERROR
+    assert state_record.exc_info is not None
+    assert state_record.evaluation_id == str(EVALUATION_ID)
+    assert state_record.production_job_id == "production-job-1"
+    assert failure_record.getMessage() == "stage12_result_comparison_failed"
+    assert failure_record.levelno == logging.ERROR
+    assert failure_record.exc_info is None
+    assert failure_record.error_type == "ValidationError"
