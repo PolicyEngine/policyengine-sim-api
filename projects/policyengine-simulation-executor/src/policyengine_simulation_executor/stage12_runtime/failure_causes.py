@@ -29,17 +29,21 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import ErrorSummary
-from policyengine_simulation_observability.stages import Stage, StagePlan
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.exc import StatementError
 
 from policyengine_simulation_executor.hf_access_validation import HF_RUNTIME_ENV_NAME
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
+
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_observability.stages import Stage, StagePlan
 
 # The longest ``error_summary`` the contract accepts.
 MAX_FAILURE_SUMMARY_LENGTH: int = TypeAdapter(ErrorSummary).json_schema()["maxLength"]
