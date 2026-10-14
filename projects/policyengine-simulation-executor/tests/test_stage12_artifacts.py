@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
+from fixtures.fake_object_store import InMemoryObjectStore
 from policyengine_simulation_contract.spm import (
     SPMRuntimeVersions,
     SPMSelection,
@@ -22,7 +23,6 @@ from policyengine_simulation_contract.stage12_execution import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
-from fixtures.fake_object_store import InMemoryObjectStore
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
     comparison_run_prefix,

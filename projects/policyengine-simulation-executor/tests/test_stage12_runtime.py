@@ -14,6 +14,8 @@ from uuid import UUID, uuid4
 
 import pandas as pd
 import pytest
+from fixtures.fake_object_store import InMemoryObjectStore
+from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_observability import (
     DeploymentIdentity,
     LoggingConfig,
@@ -64,8 +66,6 @@ from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
-from fixtures.fake_object_store import InMemoryObjectStore
-from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
     canonical_json_bytes,

@@ -9,13 +9,13 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-from fixtures.spm_doubles import (
-    installed_spm_selection,
-    spm_capable_simulation,
-)
 from fixtures.macro_output import (
     CURRENT_SINGLE_YEAR_MACRO_KEYS,
     CURRENT_SINGLE_YEAR_MACRO_RESULT,
+)
+from fixtures.spm_doubles import (
+    installed_spm_selection,
+    spm_capable_simulation,
 )
 from fixtures.test_simulation_output_builder import (
     BASELINE_POVERTY_BY_AGE,
