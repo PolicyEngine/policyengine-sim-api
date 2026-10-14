@@ -623,7 +623,7 @@ def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
     monkeypatch.setattr(
         baseline_artifacts,
         "deterministic_baseline_id",
-        lambda *_args, **kwargs: "baseline-id" if kwargs["policy"] is None else None,
+        lambda request: "baseline-id" if request.policy is None else None,
     )
     monkeypatch.setattr(
         baseline_artifacts, "ArtifactBaselineSimulation", lambda **k: calls.append(k)
@@ -658,13 +658,15 @@ def test_identity_errors_do_not_degrade_to_an_unidentified_baseline(monkeypatch)
     )
     with pytest.raises(SPMInputError):
         baseline_artifacts.deterministic_baseline_id(
-            {},
-            country="us",
-            dataset_is_default=True,
-            policy=None,
-            region_code="us",
-            scoping_strategy=None,
-            year=2026,
+            baseline_artifacts.BaselineIdentityRequest(
+                {},
+                country="us",
+                dataset_is_default=True,
+                policy=None,
+                region_code="us",
+                scoping_strategy=None,
+                year=2026,
+            )
         )
 
 

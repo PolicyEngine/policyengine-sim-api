@@ -62,7 +62,7 @@ class TestDeterministicBaselineId:
             "year": 2026,
         }
         kwargs.update(overrides)
-        return ba.deterministic_baseline_id(kwargs.pop("params"), **kwargs)
+        return ba.deterministic_baseline_id(ba.BaselineIdentityRequest(**kwargs))
 
     def test_national_baseline_qualifies(self, collected):
         assert self._id(collected) == "bl1-deadbeefdeadbeef"
@@ -102,13 +102,15 @@ class TestDeterministicBaselineId:
         assert self._id(collected, policy=policy) is None
         assert (
             ba.qualifying_baseline_identity(
-                {"scope": "macro"},
-                country="us",
-                dataset_is_default=True,
-                policy=policy,
-                region_code="us",
-                scoping_strategy=None,
-                year=2026,
+                ba.BaselineIdentityRequest(
+                    {"scope": "macro"},
+                    country="us",
+                    dataset_is_default=True,
+                    policy=policy,
+                    region_code="us",
+                    scoping_strategy=None,
+                    year=2026,
+                )
             )
             is None
         )
@@ -145,13 +147,15 @@ class TestDeterministicBaselineId:
         monkeypatch.setattr(ak, "collect_baseline_identity", boom)
         assert (
             ba.deterministic_baseline_id(
-                {"scope": "macro"},
-                country="us",
-                dataset_is_default=True,
-                policy=None,
-                region_code="us",
-                scoping_strategy=None,
-                year=2026,
+                ba.BaselineIdentityRequest(
+                    {"scope": "macro"},
+                    country="us",
+                    dataset_is_default=True,
+                    policy=None,
+                    region_code="us",
+                    scoping_strategy=None,
+                    year=2026,
+                )
             )
             is None
         )
@@ -404,8 +408,8 @@ class TestBuildSimulationSelection:
             lambda _country: SimpleNamespace(model=SimpleNamespace(id="us-model")),
         )
 
-        def fake_deterministic_id(params, **kwargs):
-            recorded.id_kwargs = {"params": params, **kwargs}
+        def fake_deterministic_id(request):
+            recorded.id_kwargs = vars(request)
             return recorded.id
 
         monkeypatch.setattr(ba, "deterministic_baseline_id", fake_deterministic_id)
@@ -540,7 +544,9 @@ class TestIdentityErrorContract:
 
         monkeypatch.setattr(ak, "collect_baseline_identity", boom)
         with pytest.raises(RuntimeError, match="receipt unreadable"):
-            ba.qualifying_baseline_identity(**self._kwargs())
+            ba.qualifying_baseline_identity(
+                ba.BaselineIdentityRequest(**self._kwargs())
+            )
 
     def test_deterministic_id_swallows_collection_errors(self, monkeypatch):
         def boom(*_args, **_kwargs):
@@ -548,7 +554,10 @@ class TestIdentityErrorContract:
             raise RuntimeError(msg)
 
         monkeypatch.setattr(ak, "collect_baseline_identity", boom)
-        assert ba.deterministic_baseline_id(**self._kwargs()) is None
+        assert (
+            ba.deterministic_baseline_id(ba.BaselineIdentityRequest(**self._kwargs()))
+            is None
+        )
 
 
 def _year_data(person_columns=None):

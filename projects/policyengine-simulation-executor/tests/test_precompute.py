@@ -384,6 +384,7 @@ class TestWriterReaderContract:
     def test_precompute_identity_equals_runtime_id(self):
         from policyengine_simulation_executor import simulation_runtime as sr
         from policyengine_simulation_executor.baseline_artifacts import (
+            BaselineIdentityRequest,
             deterministic_baseline_id,
         )
 
@@ -398,13 +399,15 @@ class TestWriterReaderContract:
             params, region_resolution=resolution
         )
         reader_id = deterministic_baseline_id(
-            params,
-            country="us",
-            dataset_is_default=dataset_selection.is_default,
-            policy=None,
-            region_code=resolution.code,
-            scoping_strategy=resolution.scoping_strategy,
-            year=2026,
+            BaselineIdentityRequest(
+                params,
+                country="us",
+                dataset_is_default=dataset_selection.is_default,
+                policy=None,
+                region_code=resolution.code,
+                scoping_strategy=resolution.scoping_strategy,
+                year=2026,
+            )
         )
         assert writer_identity.simulation_id == reader_id
         assert writer_identity.store_path.endswith(f"/{writer_identity.storage_id}.h5")
