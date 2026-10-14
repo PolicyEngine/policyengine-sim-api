@@ -748,9 +748,8 @@ def test_single_worker_persists_and_records_a_redacted_cause() -> None:
     runtime = RecordingRuntime()
 
     def fail(_simulation):
-        raise RuntimeError(
-            "could not reach postgresql://runtime:database-secret@db.example/postgres"
-        )
+        msg = "could not reach postgresql://runtime:database-secret@db.example/postgres"
+        raise RuntimeError(msg)
 
     with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
         run_single_simulation(
@@ -776,7 +775,8 @@ def test_single_worker_persists_and_records_a_redacted_cause() -> None:
 def test_single_worker_names_the_failing_artifact_write_stage() -> None:
     class FailingSimulationArtifacts(FakeArtifacts):
         def write_simulation(self, **_kwargs):
-            raise OSError("bucket write rejected")
+            msg = "bucket write rejected"
+            raise OSError(msg)
 
     store = FakeStore()
     simulation = _planned_simulation(SimulationRole.BASELINE)
@@ -1557,10 +1557,11 @@ class UnavailableProductionCall:
     object_id = "production-job-1"
 
     def get(self, *, timeout=None):
-        raise ConnectionError(
+        msg = (
             "production result unavailable at "
             "https://storage.example.com/result.json?X-Goog-Signature=signed-value"
         )
+        raise ConnectionError(msg)
 
 
 class UnavailableProductionInvoker(ConcurrentInvoker):
@@ -1812,7 +1813,8 @@ class WorkerRecordedFailureCall:
                 "completed_at": NOW,
             }
         )
-        raise RuntimeError("Stage 12 simulation execution failed")
+        msg = "Stage 12 simulation execution failed"
+        raise RuntimeError(msg)
 
 
 class UnreachedCall:
@@ -1820,7 +1822,8 @@ class UnreachedCall:
         self.object_id = object_id
 
     def get(self, *, timeout=None):
-        raise AssertionError("the coordinator waits for baseline first")
+        msg = "the coordinator waits for baseline first"
+        raise AssertionError(msg)
 
 
 class WorkerRecordedFailureInvoker:
@@ -1840,7 +1843,8 @@ class WorkerRecordedFailureInvoker:
         return UnreachedCall("call-reform")
 
     def restore(self, invocation_id):
-        raise AssertionError(f"unexpected restored invocation {invocation_id}")
+        msg = f"unexpected restored invocation {invocation_id}"
+        raise AssertionError(msg)
 
 
 def test_coordinator_keeps_the_cause_recorded_by_a_failed_worker() -> None:
