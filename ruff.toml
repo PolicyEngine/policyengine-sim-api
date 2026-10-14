@@ -76,6 +76,9 @@ ignore = ["D203", "D213"]
 # sentinel opens URLs from its arguments. The Modal utilities run with
 # python -m from a directory that isn't a package.
 "projects/*/src/{modal/utils/*,policyengine_simulation_entry/generate_openapi,policyengine_simulation_entry/stage12_infrastructure,policyengine_simulation_gateway/generate_openapi}.py" = ["INP001", "S310", "T201"]
+# The shared rules tool needs only the standard library, so its tests use
+# unittest on purpose; pytest-style rules don't apply to them.
+"scripts/rules/tests/**" = ["PT"]
 
 [lint.flake8-tidy-imports]
 # Heavy or optional packages that load only inside the function that needs
