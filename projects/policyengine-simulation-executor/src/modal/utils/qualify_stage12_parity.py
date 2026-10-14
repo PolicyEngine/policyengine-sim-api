@@ -9,6 +9,7 @@ from typing import Any
 
 from policyengine_simulation_executor.stage12_parity import NumericalTolerance
 from policyengine_simulation_executor.stage12_qualification import (
+    ParityTolerances,
     qualify_report_parity,
 )
 
@@ -58,8 +59,10 @@ def main() -> None:
     receipt = qualify_report_parity(
         _json_object(arguments.existing_request),
         _json_object(arguments.report_input),
-        simulation_tolerances=_tolerances(arguments.simulation_tolerances),
-        aggregate_tolerances=_tolerances(arguments.aggregate_tolerances),
+        tolerances=ParityTolerances(
+            simulation=_tolerances(arguments.simulation_tolerances),
+            aggregate=_tolerances(arguments.aggregate_tolerances),
+        ),
     )
     print(receipt.model_dump_json())
 
