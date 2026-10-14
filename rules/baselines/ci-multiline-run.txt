@@ -1,5 +1,4 @@
 # Tolerated existing violations. This list may only shrink.
-.github/workflows/simulation-deploy.reusable.yml :: deployment_ready :: Check deployment result
 .github/workflows/simulation-deploy.reusable.yml :: finalize_routing :: Finalize the routing publication
 .github/workflows/simulation-deploy.reusable.yml :: integration :: Check the deployed stack reproduces the sentinel numbers
 .github/workflows/simulation-deploy.reusable.yml :: promote_entrypoint :: Verify the stable service reproduces the sentinel numbers
@@ -7,7 +6,6 @@
 .github/workflows/simulation-deploy.reusable.yml :: update_routing :: Plan the routing change
 .github/workflows/simulation-deploy.reusable.yml :: update_routing :: Publish the planned routing
 .github/workflows/simulation-deploy.reusable.yml :: update_routing :: Record the unfinished routing publication
-.github/workflows/simulation-deploy.yml :: summary :: Report promotion status
 .github/workflows/simulation-rollback.yml :: rollback :: Read the restored release identity
 .github/workflows/simulation-rollback.yml :: rollback :: Resolve the stable service
 .github/workflows/simulation-rollback.yml :: rollback :: Resolve the unfinished routing publication

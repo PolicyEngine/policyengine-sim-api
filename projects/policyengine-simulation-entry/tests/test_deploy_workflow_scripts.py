@@ -436,3 +436,94 @@ def test_stage12_ready_requires_all_or_none_of_the_v2_jobs(
     )
 
     assert result.returncode == (0 if passes else 1)
+
+
+# --- deployment_ready -------------------------------------------------------
+
+DEPLOYMENT_READY = "simulation-deployment-ready.sh"
+
+
+def test_deploy_workflow_checks_deployment_results_with_the_tested_script():
+    workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    step = _step(workflow, "Check deployment result")
+
+    for declaration in (
+        "PROMOTION_REQUESTED: ${{ inputs.promote_entrypoint }}",
+        "ENTRYPOINT_RESULT: ${{ needs.deploy_entrypoint.result }}",
+        "INTEGRATION_RESULT: ${{ needs.integration.result }}",
+        "AUTHENTICATED_TEST_RESULT: ${{ needs.authenticated_test.result }}",
+        "PROMOTION_RESULT: ${{ needs.promote_entrypoint.result }}",
+        "EXISTING_STACK_REQUESTED: ${{ inputs.deploy_existing_stack }}",
+        "ROUTING_RESULT: ${{ needs.update_routing.result }}",
+        "FINALIZE_RESULT: ${{ needs.finalize_routing.result }}",
+        "FINALIZE_OUTCOME: ${{ needs.finalize_routing.outputs.outcome }}",
+        f"run: .github/scripts/{DEPLOYMENT_READY}\n",
+    ):
+        assert declaration in step
+
+
+@pytest.mark.parametrize(
+    ("promotion_requested", "results", "passes"),
+    [
+        ("true", ("success", "success", "success", "success"), True),
+        ("false", ("success", "success", "success", "skipped"), True),
+        ("true", ("success", "success", "success", "skipped"), False),
+        ("false", ("success", "success", "success", "success"), False),
+        ("true", ("success", "success", "skipped", "success"), False),
+        ("false", ("success", "skipped", "success", "skipped"), False),
+        ("false", ("failure", "success", "success", "skipped"), False),
+    ],
+)
+def test_deployment_ready_rejects_unexpected_skipped_phases(
+    fakes, promotion_requested, results, passes
+):
+    entrypoint, integration, authenticated_test, promotion = results
+
+    result = run_script(
+        DEPLOYMENT_READY,
+        env=fakes.env(
+            PROMOTION_REQUESTED=promotion_requested,
+            ENTRYPOINT_RESULT=entrypoint,
+            INTEGRATION_RESULT=integration,
+            AUTHENTICATED_TEST_RESULT=authenticated_test,
+            PROMOTION_RESULT=promotion,
+            EXISTING_STACK_REQUESTED="false",
+            ROUTING_RESULT="skipped",
+            FINALIZE_RESULT="skipped",
+            FINALIZE_OUTCOME="",
+        ),
+    )
+
+    assert result.returncode == (0 if passes else 1)
+
+
+@pytest.mark.parametrize(
+    ("routing", "finalize", "outcome", "passes"),
+    [
+        ("success", "success", "completed", True),
+        ("success", "success", "restored", False),
+        ("success", "failure", "completed", False),
+        ("success", "skipped", "", False),
+        ("skipped", "success", "completed", False),
+        ("failure", "success", "completed", False),
+    ],
+)
+def test_deployment_ready_requires_a_completed_routing_publication(
+    fakes, routing, finalize, outcome, passes
+):
+    result = run_script(
+        DEPLOYMENT_READY,
+        env=fakes.env(
+            PROMOTION_REQUESTED="true",
+            ENTRYPOINT_RESULT="success",
+            INTEGRATION_RESULT="success",
+            AUTHENTICATED_TEST_RESULT="success",
+            PROMOTION_RESULT="success",
+            EXISTING_STACK_REQUESTED="true",
+            ROUTING_RESULT=routing,
+            FINALIZE_RESULT=finalize,
+            FINALIZE_OUTCOME=outcome,
+        ),
+    )
+
+    assert result.returncode == (0 if passes else 1)

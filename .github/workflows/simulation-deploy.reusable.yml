@@ -1017,20 +1017,7 @@ jobs:
           PROMOTION_RESULT: ${{ needs.promote_entrypoint.result }}
           FINALIZE_RESULT: ${{ needs.finalize_routing.result }}
           FINALIZE_OUTCOME: ${{ needs.finalize_routing.outputs.outcome }}
-        run: |
-          test "${ENTRYPOINT_RESULT}" = "success"
-          test "${INTEGRATION_RESULT}" = "success"
-          test "${AUTHENTICATED_TEST_RESULT}" = "success"
-          if [[ "${PROMOTION_REQUESTED}" = "true" ]]; then
-            test "${PROMOTION_RESULT}" = "success"
-          else
-            test "${PROMOTION_RESULT}" = "skipped"
-          fi
-          if [[ "${EXISTING_STACK_REQUESTED}" = "true" ]]; then
-            test "${ROUTING_RESULT}" = "success"
-            test "${FINALIZE_RESULT}" = "success"
-            test "${FINALIZE_OUTCOME}" = "completed"
-          fi
+        run: .github/scripts/simulation-deployment-ready.sh
 
   cleanup_entrypoint_revisions:
     name: Remove superseded Cloud Run revisions
