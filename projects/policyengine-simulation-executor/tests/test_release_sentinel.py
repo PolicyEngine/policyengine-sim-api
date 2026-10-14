@@ -181,7 +181,7 @@ class FakeAPI:
         return 200, {}, {"status": "complete", "result": self.result}
 
 
-def _check(api, **kwargs):
+def _check(api, **polling):
     expected, _ = _expected()
     sleeps = []
     problems = sentinel.check_deployment(
@@ -189,8 +189,7 @@ def _check(api, **kwargs):
         expected,
         token="t0ken",
         http=api,
-        sleep=sleeps.append,
-        **kwargs,
+        polling=sentinel.JobPolling(sleep=sleeps.append, **polling),
     )
     return problems, sleeps
 
@@ -426,7 +425,7 @@ SUBMITTED = (200, {}, {"job_id": "fc-1", "policyengine_bundle": SERVED_BUNDLE})
 COMPLETE = (200, {}, {"status": "complete", "result": RESULT})
 
 
-def _check_scripted(api, expected=None, **kwargs):
+def _check_scripted(api, expected=None, **polling):
     if expected is None:
         expected, _ = _expected()
     sleeps = []
@@ -435,8 +434,7 @@ def _check_scripted(api, expected=None, **kwargs):
         expected,
         token="t0ken",  # noqa: S106  # fake bearer token; the HTTP calls are stubbed
         http=api,
-        sleep=sleeps.append,
-        **kwargs,
+        polling=sentinel.JobPolling(sleep=sleeps.append, **polling),
     )
     return problems, sleeps
 
