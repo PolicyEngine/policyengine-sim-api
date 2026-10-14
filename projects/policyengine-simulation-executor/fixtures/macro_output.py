@@ -1,4 +1,9 @@
-"""Fixtures for simulation API contract tests."""
+"""A complete current single-year macro result and its key sets.
+
+The API contract, output builder, standalone app and Stage 12 runtime tests
+all need a valid ``SingleYearMacroOutput`` payload. This module is its one
+shared home, so no test lane imports another lane's fixture module.
+"""
 
 CURRENT_SINGLE_YEAR_MACRO_KEYS = {
     "spm_provenance",

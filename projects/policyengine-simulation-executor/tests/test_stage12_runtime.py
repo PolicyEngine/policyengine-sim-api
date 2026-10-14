@@ -62,7 +62,8 @@ from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
-from fixtures.test_simulation_api_contracts import CURRENT_SINGLE_YEAR_MACRO_RESULT
+from fixtures.fake_object_store import InMemoryObjectStore
+from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
     canonical_json_bytes,
@@ -988,20 +989,6 @@ def test_aggregate_stand_ins_keep_bounded_policy_end_dates(monkeypatch) -> None:
     for role, stop in (("baseline", "2026-12-31"), ("reform", "2027-12-31")):
         (value,) = observed[role].policy.parameter_values
         assert value.end_date == datetime.strptime(stop, "%Y-%m-%d"), role
-
-
-class InMemoryObjectStore:
-    def __init__(self) -> None:
-        self.objects: dict[str, bytes] = {}
-
-    def upload_bytes(self, path, payload, *, content_type):
-        if path in self.objects:
-            return False
-        self.objects[path] = payload
-        return True
-
-    def read_bytes(self, path):
-        return self.objects.get(path)
 
 
 def _uk_report() -> ReportExecutionInput:
