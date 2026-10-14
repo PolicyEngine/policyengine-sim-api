@@ -13,6 +13,8 @@ from policyengine_simulation_executor.simulation_microdata import (
 )
 from policyengine_simulation_executor.stage12_parity import ParityMismatchError
 from policyengine_simulation_executor.stage12_qualification import (
+    ParityTolerances,
+    QualificationRunners,
     _run_stage12_simulation_for_qualification,
     qualify_report_parity,
 )
@@ -147,9 +149,11 @@ def test_qualification_runs_matching_inputs_through_both_complete_paths() -> Non
     receipt = qualify_report_parity(
         _existing_request(),
         report,
-        existing_runner=existing_runner,
-        single_simulation_runner=single_runner,
-        aggregate_builder=aggregate_builder,
+        runners=QualificationRunners(
+            existing=existing_runner,
+            single_simulation=single_runner,
+            aggregate=aggregate_builder,
+        ),
     )
 
     assert {call.role for call in simulation_calls} == {
@@ -194,9 +198,11 @@ def test_qualification_fails_with_bounded_diagnostic_without_output_values() -> 
         qualify_report_parity(
             _existing_request(),
             report,
-            existing_runner=existing_runner,
-            single_simulation_runner=single_runner,
-            aggregate_builder=lambda **_: {"result": {}},
+            runners=QualificationRunners(
+                existing=existing_runner,
+                single_simulation=single_runner,
+                aggregate=lambda **_: {"result": {}},
+            ),
         )
 
     assert error.value.code == "numeric_value_mismatch"
@@ -240,7 +246,7 @@ def test_qualification_rejects_existing_executor_provenance_mismatch() -> None:
         qualify_report_parity(
             _existing_request(),
             report,
-            existing_runner=existing_runner,
+            runners=QualificationRunners(existing=existing_runner),
         )
 
     assert error.value.code == "country_package_provenance_mismatch"
@@ -283,20 +289,24 @@ def test_qualification_receipt_records_every_digest_and_tolerance_field() -> Non
     receipt = qualify_report_parity(
         _existing_request(),
         report,
-        existing_runner=_matching_existing_runner(report, baseline, reform),
-        single_simulation_runner=_matching_single_runner(baseline, reform),
-        aggregate_builder=lambda **_: {
-            "result": {
-                "model_version": report.baseline.bundle.country_package_version,
-                "data_version": report.baseline.bundle.dataset.artifact_revision,
-                "budget": {"budgetary_impact": 20.0},
-            }
-        },
-        simulation_tolerances={
-            "person.person_household_id": NumericalTolerance(),
-            "household.household_net_income": NumericalTolerance(absolute=0.1),
-        },
-        aggregate_tolerances={"budget.budgetary_impact": NumericalTolerance()},
+        runners=QualificationRunners(
+            existing=_matching_existing_runner(report, baseline, reform),
+            single_simulation=_matching_single_runner(baseline, reform),
+            aggregate=lambda **_: {
+                "result": {
+                    "model_version": report.baseline.bundle.country_package_version,
+                    "data_version": report.baseline.bundle.dataset.artifact_revision,
+                    "budget": {"budgetary_impact": 20.0},
+                }
+            },
+        ),
+        tolerances=ParityTolerances(
+            simulation={
+                "person.person_household_id": NumericalTolerance(),
+                "household.household_net_income": NumericalTolerance(absolute=0.1),
+            },
+            aggregate={"budget.budgetary_impact": NumericalTolerance()},
+        ),
     )
 
     dumped = receipt.model_dump(mode="json")
@@ -361,10 +371,12 @@ def test_existing_result_is_checked_before_v2_simulations_run(
         qualify_report_parity(
             _existing_request(),
             report,
-            existing_runner=_matching_existing_runner(
-                report, baseline, reform, **overrides
+            runners=QualificationRunners(
+                existing=_matching_existing_runner(
+                    report, baseline, reform, **overrides
+                ),
+                single_simulation=_matching_single_runner(baseline, reform, calls),
             ),
-            single_simulation_runner=_matching_single_runner(baseline, reform, calls),
         )
 
     assert (error.value.code, error.value.path) == (code, path)
@@ -381,9 +393,11 @@ def test_v2_aggregate_without_a_result_object_is_rejected(v2_report) -> None:
         qualify_report_parity(
             _existing_request(),
             report,
-            existing_runner=_matching_existing_runner(report, baseline, reform),
-            single_simulation_runner=_matching_single_runner(baseline, reform),
-            aggregate_builder=lambda **_: v2_report,
+            runners=QualificationRunners(
+                existing=_matching_existing_runner(report, baseline, reform),
+                single_simulation=_matching_single_runner(baseline, reform),
+                aggregate=lambda **_: v2_report,
+            ),
         )
 
     assert (error.value.code, error.value.path) == (
@@ -432,8 +446,10 @@ def test_default_existing_runner_uses_and_shuts_down_a_local_runtime(
             qualify_report_parity(
                 _existing_request(),
                 report,
-                single_simulation_runner=_matching_single_runner(baseline, reform),
-                aggregate_builder=lambda **_: {"result": []},
+                runners=QualificationRunners(
+                    single_simulation=_matching_single_runner(baseline, reform),
+                    aggregate=lambda **_: {"result": []},
+                ),
             )
 
     assert events == [
