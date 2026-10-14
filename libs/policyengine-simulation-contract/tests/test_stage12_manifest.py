@@ -174,12 +174,16 @@ def test_v1_and_v2_publication_and_removal_are_bidirectionally_isolated() -> Non
 def test_manifest_rejects_incomplete_or_unvalidated_worker() -> None:
     value = _worker().model_dump(mode="json")
     value.pop("report_coordinator_callable")
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match=r"report_coordinator_callable\n  Field required"
+    ):
         V2WorkerVersion.model_validate(value)
 
     value = _worker().model_dump(mode="json")
     value["validation"]["validated"] = False
-    with pytest.raises(ValueError):
+    with pytest.raises(
+        ValueError, match=r"validation\.validated\n  Input should be True"
+    ):
         V2WorkerVersion.model_validate(value)
 
 
