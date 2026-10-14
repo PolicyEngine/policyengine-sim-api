@@ -154,15 +154,18 @@ def main(*, force: bool = False) -> None:
         resolve_bucket_name,
     )
     from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # local entrypoint: loaded only when the precompute runs
+        PrecomputeFunctions,
         run_precompute,
     )
 
     run_precompute(
         resolve_bucket_name(),
         force=force,
-        plan_artifacts=plan_artifacts,
-        build_dataset=build_dataset,
-        compute_baseline=compute_baseline,
-        verify_determinism=verify_determinism,
-        publish_manifest=publish_manifest,
+        functions=PrecomputeFunctions(
+            plan_artifacts=plan_artifacts,
+            build_dataset=build_dataset,
+            compute_baseline=compute_baseline,
+            verify_determinism=verify_determinism,
+            publish_manifest=publish_manifest,
+        ),
     )
