@@ -938,10 +938,12 @@ def test_versions_http_retains_capability_contract_version(monkeypatch):
     )
     state = registry.build_next_routing_state(
         current_state=None,
-        app_name="test-app",
-        policyengine_version="9.9.9",
-        us_version="test-us",
-        uk_version="test-uk",
+        deployed=registry.DeployedAppVersions(
+            app_name="test-app",
+            policyengine_version="9.9.9",
+            us_version="test-us",
+            uk_version="test-uk",
+        ),
     )
     monkeypatch.setattr(endpoints, "_active_routing_state", lambda: state)
     response = TestClient(create_gateway_app()).get("/versions")

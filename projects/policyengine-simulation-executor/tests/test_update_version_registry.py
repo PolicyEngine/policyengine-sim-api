@@ -131,10 +131,12 @@ def test__is_newer_version__does_not_advance_on_equal():
 def test_validate_routing_state_accepts_complete_state():
     state = registry.build_next_routing_state(
         current_state=None,
-        app_name="policyengine-simulation-py4-19-1",
-        policyengine_version="4.19.1",
-        us_version="1.687.0",
-        uk_version="2.88.14",
+        deployed=registry.DeployedAppVersions(
+            app_name="policyengine-simulation-py4-19-1",
+            policyengine_version="4.19.1",
+            us_version="1.687.0",
+            uk_version="2.88.14",
+        ),
     )
 
     registry.validate_routing_state(state)
@@ -188,10 +190,12 @@ def test_bundle_manifest_declares_job_progress_capability(monkeypatch):
 def test_validate_routing_state_rejects_missing_latest_route():
     state = registry.build_next_routing_state(
         current_state=None,
-        app_name="policyengine-simulation-py4-19-1",
-        policyengine_version="4.19.1",
-        us_version="1.687.0",
-        uk_version="2.88.14",
+        deployed=registry.DeployedAppVersions(
+            app_name="policyengine-simulation-py4-19-1",
+            policyengine_version="4.19.1",
+            us_version="1.687.0",
+            uk_version="2.88.14",
+        ),
     )
     state["routes"]["us"].pop("1.687.0")
 
@@ -203,10 +207,12 @@ def test_validate_routing_state_rejects_missing_latest_route():
 def test_validate_routing_state_allows_migrated_policyengine_route_without_bundle():
     state = registry.build_next_routing_state(
         current_state=None,
-        app_name="policyengine-simulation-py4-19-1",
-        policyengine_version="4.19.1",
-        us_version="1.687.0",
-        uk_version="2.88.14",
+        deployed=registry.DeployedAppVersions(
+            app_name="policyengine-simulation-py4-19-1",
+            policyengine_version="4.19.1",
+            us_version="1.687.0",
+            uk_version="2.88.14",
+        ),
     )
     state["bundles"].pop("4.19.1")
 
@@ -217,10 +223,12 @@ def test_validate_routing_state_allows_migrated_policyengine_route_without_bundl
 def test_validate_routing_state_rejects_required_policyengine_route_without_bundle():
     state = registry.build_next_routing_state(
         current_state=None,
-        app_name="policyengine-simulation-py4-19-1",
-        policyengine_version="4.19.1",
-        us_version="1.687.0",
-        uk_version="2.88.14",
+        deployed=registry.DeployedAppVersions(
+            app_name="policyengine-simulation-py4-19-1",
+            policyengine_version="4.19.1",
+            us_version="1.687.0",
+            uk_version="2.88.14",
+        ),
     )
     state["bundles"].pop("4.19.1")
 
@@ -235,18 +243,22 @@ def test_validate_routing_state_rejects_required_policyengine_route_without_bund
 def test_build_next_routing_state_preserves_existing_routes():
     current_state = registry.build_next_routing_state(
         current_state=None,
-        app_name="policyengine-simulation-py4-18-0",
-        policyengine_version="4.18.0",
-        us_version="1.687.0",
-        uk_version="2.88.14",
+        deployed=registry.DeployedAppVersions(
+            app_name="policyengine-simulation-py4-18-0",
+            policyengine_version="4.18.0",
+            us_version="1.687.0",
+            uk_version="2.88.14",
+        ),
     )
 
     next_state = registry.build_next_routing_state(
         current_state=current_state,
-        app_name="policyengine-simulation-py4-19-1",
-        policyengine_version="4.19.1",
-        us_version="1.687.0",
-        uk_version="2.88.14",
+        deployed=registry.DeployedAppVersions(
+            app_name="policyengine-simulation-py4-19-1",
+            policyengine_version="4.19.1",
+            us_version="1.687.0",
+            uk_version="2.88.14",
+        ),
     )
 
     assert (
@@ -265,18 +277,22 @@ def test_build_next_routing_state_preserves_existing_routes():
 def test_build_next_routing_state_keeps_existing_latest_when_incoming_older():
     current_state = registry.build_next_routing_state(
         current_state=None,
-        app_name="policyengine-simulation-py4-19-1",
-        policyengine_version="4.19.1",
-        us_version="1.687.0",
-        uk_version="2.88.14",
+        deployed=registry.DeployedAppVersions(
+            app_name="policyengine-simulation-py4-19-1",
+            policyengine_version="4.19.1",
+            us_version="1.687.0",
+            uk_version="2.88.14",
+        ),
     )
 
     next_state = registry.build_next_routing_state(
         current_state=current_state,
-        app_name="policyengine-simulation-py4-18-0",
-        policyengine_version="4.18.0",
-        us_version="1.687.0",
-        uk_version="2.88.14",
+        deployed=registry.DeployedAppVersions(
+            app_name="policyengine-simulation-py4-18-0",
+            policyengine_version="4.18.0",
+            us_version="1.687.0",
+            uk_version="2.88.14",
+        ),
     )
 
     assert next_state["latest"]["policyengine"] == "4.19.1"
@@ -290,18 +306,22 @@ def test_build_next_routing_state_keeps_existing_latest_when_incoming_older():
 def test_build_next_routing_state_force_latest_allows_downgrade():
     current_state = registry.build_next_routing_state(
         current_state=None,
-        app_name="policyengine-simulation-py4-19-1",
-        policyengine_version="4.19.1",
-        us_version="1.687.0",
-        uk_version="2.88.14",
+        deployed=registry.DeployedAppVersions(
+            app_name="policyengine-simulation-py4-19-1",
+            policyengine_version="4.19.1",
+            us_version="1.687.0",
+            uk_version="2.88.14",
+        ),
     )
 
     next_state = registry.build_next_routing_state(
         current_state=current_state,
-        app_name="policyengine-simulation-py4-18-0",
-        policyengine_version="4.18.0",
-        us_version="1.687.0",
-        uk_version="2.88.14",
+        deployed=registry.DeployedAppVersions(
+            app_name="policyengine-simulation-py4-18-0",
+            policyengine_version="4.18.0",
+            us_version="1.687.0",
+            uk_version="2.88.14",
+        ),
         force_latest=True,
     )
 
@@ -313,10 +333,12 @@ def test_build_next_routing_state_rejects_country_version_mismatch():
     with pytest.raises(ValueError, match="US version"):
         registry.build_next_routing_state(
             current_state=None,
-            app_name="policyengine-simulation-py4-19-1",
-            policyengine_version="4.19.1",
-            us_version="1.999.0",
-            uk_version="2.88.14",
+            deployed=registry.DeployedAppVersions(
+                app_name="policyengine-simulation-py4-19-1",
+                policyengine_version="4.19.1",
+                us_version="1.999.0",
+                uk_version="2.88.14",
+            ),
         )
 
 
@@ -326,10 +348,12 @@ def test_publish_routing_state_writes_only_active_snapshot(
 ):
     registry.publish_routing_state(
         environment="main",
-        app_name="policyengine-simulation-py4-19-1",
-        policyengine_version="4.19.1",
-        us_version="1.687.0",
-        uk_version="2.88.14",
+        deployed=registry.DeployedAppVersions(
+            app_name="policyengine-simulation-py4-19-1",
+            policyengine_version="4.19.1",
+            us_version="1.687.0",
+            uk_version="2.88.14",
+        ),
     )
 
     assert set(patched_modal) == {"main/simulation-api-routing-state"}
@@ -448,10 +472,12 @@ def test_seed_active_routing_state_from_legacy_merges_existing_active(
 
     current_state = registry.build_next_routing_state(
         current_state=None,
-        app_name="policyengine-simulation-py4-19-1",
-        policyengine_version="4.19.1",
-        us_version="1.687.0",
-        uk_version="2.88.14",
+        deployed=registry.DeployedAppVersions(
+            app_name="policyengine-simulation-py4-19-1",
+            policyengine_version="4.19.1",
+            us_version="1.687.0",
+            uk_version="2.88.14",
+        ),
     )
     patched_modal["main/simulation-api-routing-state"] = FakeDict(
         {"active": current_state}
@@ -577,10 +603,12 @@ def _publish(monkeypatch, state, policyengine_version, us_version, uk_version):
     _manifests(monkeypatch, {policyengine_version: (us_version, uk_version)})
     return registry.build_next_routing_state(
         current_state=state,
-        app_name=_app(policyengine_version),
-        policyengine_version=policyengine_version,
-        us_version=us_version,
-        uk_version=uk_version,
+        deployed=registry.DeployedAppVersions(
+            app_name=_app(policyengine_version),
+            policyengine_version=policyengine_version,
+            us_version=us_version,
+            uk_version=uk_version,
+        ),
     )
 
 
@@ -597,10 +625,12 @@ def _plan(
     _manifests(monkeypatch, {version: (us_version, uk_version)})
     return registry.plan_routing_publication(
         current_state=state,
-        app_name=_app(version),
-        policyengine_version=version,
-        us_version=us_version,
-        uk_version=uk_version,
+        deployed=registry.DeployedAppVersions(
+            app_name=_app(version),
+            policyengine_version=version,
+            us_version=us_version,
+            uk_version=uk_version,
+        ),
         force_latest=force,
         publication_id=publication_id,
     )
@@ -955,10 +985,12 @@ def test_plans_carry_their_publication_id(monkeypatch):
     _manifests(monkeypatch, {"6.3.0": ("1.1.0", "2.2.0")})
     plan = registry.plan_routing_publication(
         current_state=state,
-        app_name=_app("6.3.0"),
-        policyengine_version="6.3.0",
-        us_version="1.1.0",
-        uk_version="2.2.0",
+        deployed=registry.DeployedAppVersions(
+            app_name=_app("6.3.0"),
+            policyengine_version="6.3.0",
+            us_version="1.1.0",
+            uk_version="2.2.0",
+        ),
         publication_id="run-7-attempt-2-prod",
     )
     assert plan["publication_id"] == "run-7-attempt-2-prod"
@@ -1067,10 +1099,12 @@ def test_routing_guard_requires_every_condition(monkeypatch, variable, value):
         (
             "publish_routing_state",
             {
-                "app_name": "policyengine-simulation-py6-3-0",
-                "policyengine_version": "6.3.0",
-                "us_version": "1.1.0",
-                "uk_version": "2.2.0",
+                "deployed": registry.DeployedAppVersions(
+                    app_name="policyengine-simulation-py6-3-0",
+                    policyengine_version="6.3.0",
+                    us_version="1.1.0",
+                    uk_version="2.2.0",
+                ),
             },
         ),
         ("seed_active_routing_state_from_legacy", {}),
@@ -1424,10 +1458,12 @@ def test_every_other_routing_write_refuses_an_unfinished_release(
         if writer == "publish":
             registry.publish_routing_state(
                 environment="staging",
-                app_name=_app("6.2.0"),
-                policyengine_version="6.2.0",
-                us_version="1.2.0",
-                uk_version="2.3.0",
+                deployed=registry.DeployedAppVersions(
+                    app_name=_app("6.2.0"),
+                    policyengine_version="6.2.0",
+                    us_version="1.2.0",
+                    uk_version="2.3.0",
+                ),
             )
         elif writer == "latest":
             registry.restore_routing_state(
