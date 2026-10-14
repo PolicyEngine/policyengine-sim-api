@@ -105,7 +105,7 @@ class NoOpObservability:
     def record_artifact_manifest(self, manifest: TracerArtifactManifest) -> None:
         """Discard the manifest."""
 
-    def span(self, name: str, attributes: Mapping[str, Any] | None = None) -> NoOpSpan:
+    def span(self, name: str, attributes: Mapping[str, Any] | None = None) -> NoOpSpan:  # noqa: ARG002  # implements the Observability protocol's span()
         """Return a span that records nothing."""
         return NoOpSpan()
 
