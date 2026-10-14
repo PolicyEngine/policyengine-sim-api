@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import pytest
 from policyengine_fastapi.observability import (
     NoOpObservability,
     ObservabilityConfig,
@@ -30,13 +31,8 @@ def test_parse_header_value_pairs__supports_commas_and_newlines():
 
 
 def test_parse_header_value_pairs__raises_for_invalid_pair():
-    try:
+    with pytest.raises(ValueError, match="key=value"):
         parse_header_value_pairs("Authorization")
-    except ValueError as error:
-        assert "key=value" in str(error)
-    else:
-        msg = "Expected invalid OTLP header parsing to fail"
-        raise AssertionError(msg)
 
 
 def test_observability_config_disabled__returns_disabled_defaults():
@@ -108,7 +104,7 @@ def test_contract_models__serialize_expected_shapes():
 
 
 def test_contract_models__reject_extra_fields():
-    try:
+    with pytest.raises(ValidationError, match="unexpected"):
         SimulationLifecycleEvent(
             event_name="simulation.stage.completed",
             stage=SimulationStage.WORKER_COMPLETED,
@@ -118,11 +114,6 @@ def test_contract_models__reject_extra_fields():
             observability_id="run-789",
             unexpected=True,
         )
-    except ValidationError as error:
-        assert "unexpected" in str(error)
-    else:
-        msg = "Expected extra field validation to fail"
-        raise AssertionError(msg)
 
 
 def test_noop_observability__accepts_calls_without_side_effects():

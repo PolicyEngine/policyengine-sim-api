@@ -1,6 +1,7 @@
 """FastAPI dependency that verifies RS256 bearer JWTs against an issuer's JWKS."""
 
 import logging
+from typing import Annotated
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -20,7 +21,7 @@ class JWTDecoder:
     or yields None when ``auto_error`` is False.
     """
 
-    def __init__(self, issuer: str, audience: str, auto_error: bool = True) -> None:
+    def __init__(self, issuer: str, audience: str, *, auto_error: bool = True) -> None:
         """Store the expected claims and create a JWKS client for the issuer.
 
         Keys are fetched from ``{issuer}.well-known/jwks.json``, so ``issuer``
@@ -34,9 +35,9 @@ class JWTDecoder:
 
     def __call__(
         self,
-        token: HTTPAuthorizationCredentials | None = Depends(
-            HTTPBearer(auto_error=False)
-        ),
+        token: Annotated[
+            HTTPAuthorizationCredentials | None, Depends(HTTPBearer(auto_error=False))
+        ],
     ) -> dict[str, str] | None:
         """Return the verified token's claims.
 
@@ -64,10 +65,10 @@ class JWTDecoder:
             ).key
         except jwt.exceptions.PyJWKClientError as error:
             LOG.error("Unable to get public key for JWT validation: %s", error)  # noqa: TRY400  # callers control the token, so a traceback per bad token would let them flood the logs
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN) from error
         except jwt.exceptions.DecodeError as error:
             LOG.error("Unable to get public key for JWT validation: %s", error)  # noqa: TRY400  # callers control the token, so a traceback per bad token would let them flood the logs
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN) from error
 
         try:
             payload = jwt.decode(
@@ -77,7 +78,8 @@ class JWTDecoder:
                 audience=self.audience,
                 issuer=self.issuer,
             )
-        except Exception as error:  # noqa: BLE001  # any decode or claim-validation failure must become a 403, never a 500
+        # Any decode or claim-validation failure must become a 403, never a 500.
+        except Exception as error:
             LOG.info("Invalid bearer token: %s", error)
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN) from error
         return payload
