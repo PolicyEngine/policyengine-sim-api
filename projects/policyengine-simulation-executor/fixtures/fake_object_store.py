@@ -12,7 +12,7 @@ class InMemoryObjectStore:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
 
-    def upload_bytes(self, path, payload, *, content_type):
+    def upload_bytes(self, path: str, payload: bytes, *, content_type: str) -> bool:
         # The real store uploads with ``if_generation_match=0``: an existing
         # object is left in place and the call reports that it created nothing.
         if path in self.objects:
@@ -20,5 +20,5 @@ class InMemoryObjectStore:
         self.objects[path] = payload
         return True
 
-    def read_bytes(self, path):
+    def read_bytes(self, path: str) -> bytes | None:
         return self.objects.get(path)
