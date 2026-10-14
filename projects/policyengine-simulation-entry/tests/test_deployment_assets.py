@@ -976,7 +976,8 @@ def _gh_equal(left, right) -> bool:
     return _gh_number(left) == _gh_number(right)
 
 
-def _gh_eval(expression: str, context: dict, *, job_if: bool = False):
+def _gh_tokens(expression: str) -> list[str]:
+    """Split an expression into tokens, dropping its ``${{`` and ``}}``."""
     tokens = []
     position = 0
     text = expression.strip()
@@ -985,77 +986,106 @@ def _gh_eval(expression: str, context: dict, *, job_if: bool = False):
         assert match, text[position:]
         tokens.append(match.group(1))
         position = match.end()
-    tokens = [token for token in tokens if token not in ("${{", "}}")]
-    if job_if and not any(
+    return [token for token in tokens if token not in ("${{", "}}")]
+
+
+def _gh_calls_a_status_function(tokens: list[str]) -> bool:
+    return any(
         token in _STATUS_FUNCTIONS and tokens[index + 1 : index + 2] == ["("]
         for index, token in enumerate(tokens)
-    ):
-        tokens = ["success", "(", ")", "&&", "(", *tokens, ")"]
-    results = [job.get("result") for job in (context.get("needs") or {}).values()]
+    )
 
-    def status(name):
-        cancelled = bool(context.get("cancelled"))
+
+def _gh_truthy(value) -> bool:
+    return value not in (None, False, "", 0)
+
+
+class _GitHubExpression:
+    """A recursive-descent evaluation of one tokenized expression in a context.
+
+    Each ``_parse_*`` method reads from a token index and returns the value
+    it read and the index after it, from the loosest operator (``||``) to the
+    tightest (``!``, parentheses and operands).
+    """
+
+    def __init__(self, tokens: list[str], context: dict) -> None:
+        self.tokens = tokens
+        self.context = context
+        self.results = [
+            job.get("result") for job in (context.get("needs") or {}).values()
+        ]
+
+    def evaluate(self):
+        value, index = self._parse_or(0)
+        assert index == len(self.tokens), self.tokens[index:]
+        return value
+
+    def _next_is(self, index: int, operators: tuple[str, ...]) -> bool:
+        return index < len(self.tokens) and self.tokens[index] in operators
+
+    def _status(self, name: str) -> bool:
+        cancelled = bool(self.context.get("cancelled"))
         if name == "always":
             return True
         if name == "cancelled":
             return cancelled
         if name == "failure":
-            return "failure" in results
-        return not cancelled and all(result == "success" for result in results)
+            return "failure" in self.results
+        return not cancelled and all(result == "success" for result in self.results)
 
-    def truthy(value):
-        return value not in (None, False, "", 0)
-
-    def lookup(path):
+    def _lookup(self, path: str):
         if path in ("true", "false"):
             return path == "true"
-        value = context
+        value = self.context
         for part in path.split("."):
             value = value.get(part) if isinstance(value, dict) else None
         return value
 
-    def parse_or(index):
-        left, index = parse_and(index)
-        while index < len(tokens) and tokens[index] == "||":
-            right, index = parse_and(index + 1)
-            left = left if truthy(left) else right
+    def _parse_or(self, index: int):
+        left, index = self._parse_and(index)
+        while self._next_is(index, ("||",)):
+            right, index = self._parse_and(index + 1)
+            left = left if _gh_truthy(left) else right
         return left, index
 
-    def parse_and(index):
-        left, index = parse_compare(index)
-        while index < len(tokens) and tokens[index] == "&&":
-            right, index = parse_compare(index + 1)
-            left = right if truthy(left) else left
+    def _parse_and(self, index: int):
+        left, index = self._parse_compare(index)
+        while self._next_is(index, ("&&",)):
+            right, index = self._parse_compare(index + 1)
+            left = right if _gh_truthy(left) else left
         return left, index
 
-    def parse_compare(index):
-        left, index = parse_unary(index)
-        while index < len(tokens) and tokens[index] in ("==", "!="):
-            operator = tokens[index]
-            right, index = parse_unary(index + 1)
+    def _parse_compare(self, index: int):
+        left, index = self._parse_unary(index)
+        while self._next_is(index, ("==", "!=")):
+            operator = self.tokens[index]
+            right, index = self._parse_unary(index + 1)
             equal = _gh_equal(left, right)
             left = equal if operator == "==" else not equal
         return left, index
 
-    def parse_unary(index):
-        if tokens[index] == "!":
-            value, index = parse_unary(index + 1)
-            return not truthy(value), index
-        if tokens[index] == "(":
-            value, index = parse_or(index + 1)
-            assert tokens[index] == ")"
+    def _parse_unary(self, index: int):
+        symbol = self.tokens[index]
+        if symbol == "!":
+            value, index = self._parse_unary(index + 1)
+            return not _gh_truthy(value), index
+        if symbol == "(":
+            value, index = self._parse_or(index + 1)
+            assert self.tokens[index] == ")"
             return value, index + 1
-        token = tokens[index]
-        if token.startswith("'"):
-            return token[1:-1], index + 1
-        if tokens[index + 1 : index + 3] == ["(", ")"]:
-            assert token in _STATUS_FUNCTIONS, token
-            return status(token), index + 3
-        return lookup(token), index + 1
+        if symbol.startswith("'"):
+            return symbol[1:-1], index + 1
+        if self.tokens[index + 1 : index + 3] == ["(", ")"]:
+            assert symbol in _STATUS_FUNCTIONS, symbol
+            return self._status(symbol), index + 3
+        return self._lookup(symbol), index + 1
 
-    value, index = parse_or(0)
-    assert index == len(tokens), tokens[index:]
-    return value
+
+def _gh_eval(expression: str, context: dict, *, job_if: bool = False):
+    tokens = _gh_tokens(expression)
+    if job_if and not _gh_calls_a_status_function(tokens):
+        tokens = ["success", "(", ")", "&&", "(", *tokens, ")"]
+    return _GitHubExpression(tokens, context).evaluate()
 
 
 def test_the_expression_evaluator_follows_github_semantics():
