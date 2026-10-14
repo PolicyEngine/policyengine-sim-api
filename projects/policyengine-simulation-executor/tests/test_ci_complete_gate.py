@@ -63,6 +63,19 @@ def test_pr_workflow_is_gated() -> None:
     assert gate_violations(workflow) == []
 
 
+def test_image_smoke_runs_only_at_the_bottom_of_a_stack() -> None:
+    smoke = yaml.safe_load(
+        (REPO / ".github" / "workflows" / "pr-image-smoke.yml").read_text()
+    )
+    stack_condition = (
+        "(!github.event.pull_request.stack || "
+        "github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref)"
+    )
+
+    for job_id, job in smoke["jobs"].items():
+        assert stack_condition in job.get("if", ""), job_id
+
+
 def test_gate_check_rejects_an_ungated_job() -> None:
     workflow = {
         "jobs": {
@@ -76,6 +89,18 @@ def test_gate_check_rejects_an_ungated_job() -> None:
         f"{GATE_JOB} does not need test",
         f"test must have if: {FULL_CI_CONDITION}",
     ]
+
+
+def test_rule_proof_gate_check() -> None:
+    fixtures = REPO / "rules" / "fixtures" / "sim.process.stacked-prs-full-ci-at-bottom"
+    bad = yaml.safe_load((fixtures / "bad_pr.yml").read_text())
+    good = yaml.safe_load((fixtures / "good_pr.yml").read_text())
+
+    assert gate_violations(bad) == [
+        f"{GATE_JOB} does not need test",
+        f"test must have if: {FULL_CI_CONDITION}",
+    ]
+    assert gate_violations(good) == []
 
 
 def _run_gate(

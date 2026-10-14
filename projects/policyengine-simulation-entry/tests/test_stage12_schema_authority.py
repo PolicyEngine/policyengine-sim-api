@@ -31,6 +31,15 @@ def test_simulation_runtimes_contain_no_schema_ddl() -> None:
     assert violations == []
 
 
+def test_rule_proof_stage12_no_schema_ddl() -> None:
+    """Proof for rule sim.stage12.no-schema-ddl (rules/registry.toml)."""
+    fixtures = REPOSITORY_ROOT / "rules/fixtures/sim.stage12.no-schema-ddl"
+    bad = (fixtures / "bad_stage12_runtime.py").read_text(encoding="utf-8")
+    good = (fixtures / "good_stage12_runtime.py").read_text(encoding="utf-8")
+    assert DDL_PATTERN.search(bad) is not None
+    assert DDL_PATTERN.search(good) is None
+
+
 def test_simulation_repository_has_no_schema_migration_chain() -> None:
     assert not list(REPOSITORY_ROOT.glob("alembic*.ini"))
     assert not list(REPOSITORY_ROOT.rglob("alembic/versions"))

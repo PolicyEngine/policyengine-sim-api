@@ -16,3 +16,5 @@ Current skills:
 - `observability.md`: identifier ownership, HTTP and Modal transport,
   persistence, registered runtime stages, trace boundaries, and failure
   isolation.
+- `rules-registry.md`: how rules are registered in `rules/registry.toml`,
+  enforced, proven, and rendered into `docs/generated/rules.md`.
