@@ -314,6 +314,13 @@ the cancellation state, it cancels all region-group calls it owns and exits.
 Atomic status replacement prevents a late calculation result from replacing
 that cancellation record.
 
+If the coordinator itself fails after starting a simulation, for example while
+recording a later dispatch or attaching a started call's invocation
+identifier, it stops every started, unfinished simulation in the same way and
+marks it `incomplete` with `cancelled_after_coordinator_failure`. Simulations
+that already finished are left unchanged, and the report keeps the
+coordinator's original failure.
+
 Typed input failures, including invalid policy periods and SPM selection
 errors, retain their code and bounded message through the segment, simulation,
 and report layers. Unexpected exceptions are logged with their complete stack
@@ -462,7 +469,9 @@ contains the complete temporary parent and child execution metadata, including
 private artifact references and digests, but never returns artifact contents.
 For a failed report, the parent record contains the originating safe failure;
 the failed simulation contains the same values, and a peer stopped because of
-that failure is `incomplete` with `cancelled_after_peer_failure`.
+that failure is `incomplete` with `cancelled_after_peer_failure`. A simulation
+stopped because the coordinator failed is `incomplete` with
+`cancelled_after_coordinator_failure`.
 Cloud Run therefore requires no additional object-storage permission for this
 interface.
 

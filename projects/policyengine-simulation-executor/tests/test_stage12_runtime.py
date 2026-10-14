@@ -2644,3 +2644,203 @@ def test_timeout_cancellation_failure_log_identifies_the_report_and_child(
         role="reform",
         error_type="ConnectionError",
     )
+
+
+class StartupWriteError(Exception):
+    """A coordinator persistence failure after a child may have started."""
+
+
+class PlaceholderWriteFailingStore(FakeStore):
+    def __init__(self, failing_simulation_id):
+        super().__init__()
+        self.failing_simulation_id = failing_simulation_id
+
+    def replace_simulation(self, record):
+        # The coordinator's only plain replacement is the dispatch placeholder.
+        if record.simulation_execution_id == self.failing_simulation_id:
+            raise StartupWriteError("placeholder write contains sensitive details")
+        return super().replace_simulation(record)
+
+
+class AttachFailingStore(FakeStore):
+    def __init__(self, failing_simulation_id):
+        super().__init__()
+        self.failing_simulation_id = failing_simulation_id
+
+    def attach_simulation_invocation(self, simulation_execution_id, **values):
+        if simulation_execution_id == self.failing_simulation_id:
+            raise StartupWriteError("attach contains sensitive details")
+        return super().attach_simulation_invocation(simulation_execution_id, **values)
+
+
+def _assert_cancelled_after_coordinator_failure(child) -> None:
+    assert child.status is ComparisonRunLifecycleStatus.INCOMPLETE
+    assert child.error_code == "cancelled_after_coordinator_failure"
+    assert child.error_summary == "Cancelled after report coordination failed."
+    assert child.completed_at is not None
+
+
+def _assert_original_coordinator_failure(error, store) -> None:
+    assert isinstance(error.value.__context__, StartupWriteError)
+    assert store.parent.status is ComparisonRunLifecycleStatus.FAILED
+    assert store.parent.error_code == "report_coordination_failed"
+    assert "sensitive" not in store.parent.error_summary
+
+
+@pytest.mark.parametrize("segmented", [True, False])
+def test_failed_placeholder_write_stops_the_started_baseline(segmented) -> None:
+    store = PlaceholderWriteFailingStore(REFORM_ID)
+    invoker = ScriptedChildInvoker()
+
+    with pytest.raises(
+        RuntimeError, match="Stage 12 report coordination failed"
+    ) as error:
+        _coordinate_with(_report_with_segmentation(segmented=segmented), store, invoker)
+
+    _assert_original_coordinator_failure(error, store)
+    assert invoker.events == ["spawn:baseline"]
+    _assert_cancelled_after_coordinator_failure(store.children[BASELINE_ID])
+    # A segmented worker stops itself, and its region-group calls, once it
+    # reads the cancelled record; Modal does not cancel spawned calls
+    # recursively.
+    assert invoker.calls["baseline"].cancel_count == (0 if segmented else 1)
+    assert store.children[REFORM_ID].status is ComparisonRunLifecycleStatus.PENDING
+
+
+@pytest.mark.parametrize(
+    ("failing_role", "started_roles"),
+    [
+        ("baseline", ["baseline"]),
+        ("reform", ["baseline", "reform"]),
+    ],
+)
+def test_failed_invocation_attach_stops_every_started_child(
+    failing_role,
+    started_roles,
+) -> None:
+    store = AttachFailingStore(_simulation_id(failing_role))
+    invoker = ScriptedChildInvoker()
+
+    with pytest.raises(
+        RuntimeError, match="Stage 12 report coordination failed"
+    ) as error:
+        _coordinate_with(_report_with_segmentation(segmented=False), store, invoker)
+
+    _assert_original_coordinator_failure(error, store)
+    assert invoker.events == [f"spawn:{role}" for role in started_roles]
+    # The child whose invocation could not be attached is stopped as well.
+    for role in started_roles:
+        _assert_cancelled_after_coordinator_failure(
+            store.children[_simulation_id(role)]
+        )
+        assert invoker.calls[role].cancel_count == 1
+    if failing_role == "baseline":
+        assert store.children[REFORM_ID].status is ComparisonRunLifecycleStatus.PENDING
+
+
+def test_startup_failure_stops_a_call_restored_from_an_earlier_attempt() -> None:
+    report = _report_with_segmentation(segmented=False)
+    store = PlaceholderWriteFailingStore(REFORM_ID)
+    store.children[BASELINE_ID] = _child(report.baseline).model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.RUNNING,
+            "modal_invocation_id": "call-baseline",
+            "started_at": NOW,
+        }
+    )
+    invoker = ScriptedChildInvoker()
+
+    with pytest.raises(
+        RuntimeError, match="Stage 12 report coordination failed"
+    ) as error:
+        _coordinate_with(report, store, invoker)
+
+    _assert_original_coordinator_failure(error, store)
+    assert invoker.events == ["restore:baseline"]
+    _assert_cancelled_after_coordinator_failure(store.children[BASELINE_ID])
+    assert invoker.calls["baseline"].cancel_count == 1
+
+
+def test_startup_failure_leaves_a_finished_child_unchanged() -> None:
+    report = _report_with_segmentation(segmented=False)
+    store = AttachFailingStore(REFORM_ID)
+    artifacts = FakeArtifacts()
+    baseline_descriptor = artifacts.add_simulation(report.baseline)
+    finished_baseline = _child(report.baseline).model_copy(
+        update={
+            "status": ComparisonRunLifecycleStatus.SUCCEEDED,
+            "output_uri": baseline_descriptor.artifact.uri,
+            "output_sha256": baseline_descriptor.artifact.content_sha256,
+            "output_schema_version": 1,
+            "row_identity_columns": baseline_descriptor.row_identity.identifier_columns,
+            "row_count": baseline_descriptor.row_identity.row_count,
+            "row_identity_sha256": baseline_descriptor.row_identity.identity_sha256,
+            "completed_at": NOW,
+        }
+    )
+    store.children[BASELINE_ID] = finished_baseline
+    invoker = ScriptedChildInvoker()
+
+    with pytest.raises(
+        RuntimeError, match="Stage 12 report coordination failed"
+    ) as error:
+        _coordinate_with(report, store, invoker, artifacts=artifacts)
+
+    _assert_original_coordinator_failure(error, store)
+    assert invoker.events == ["spawn:reform"]
+    assert store.children[BASELINE_ID] == finished_baseline
+    _assert_cancelled_after_coordinator_failure(store.children[REFORM_ID])
+    assert invoker.calls["reform"].cancel_count == 1
+
+
+def test_startup_cancellation_error_does_not_replace_the_original_failure(
+    caplog,
+) -> None:
+    store = PlaceholderWriteFailingStore(REFORM_ID)
+    invoker = ScriptedChildInvoker(
+        cancel_errors={
+            "baseline": ConnectionError("cancel request contains sensitive details")
+        }
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger=coordination_module.__name__),
+        pytest.raises(
+            RuntimeError, match="Stage 12 report coordination failed"
+        ) as error,
+    ):
+        _coordinate_with(_report_with_segmentation(segmented=False), store, invoker)
+
+    _assert_original_coordinator_failure(error, store)
+    assert invoker.calls["baseline"].cancel_count == 1
+    _assert_cancelled_after_coordinator_failure(store.children[BASELINE_ID])
+    _assert_log_identifies_child(
+        _coordination_log(caplog, logging.WARNING),
+        role="baseline",
+        error_type="ConnectionError",
+    )
+
+
+def test_startup_cancellation_state_error_does_not_replace_the_original_failure(
+    caplog,
+) -> None:
+    class FailingStore(PlaceholderWriteFailingStore, CancellationStateFailingStore):
+        pass
+
+    store = FailingStore(REFORM_ID)
+    invoker = ScriptedChildInvoker()
+
+    with (
+        caplog.at_level(logging.WARNING, logger=coordination_module.__name__),
+        pytest.raises(
+            RuntimeError, match="Stage 12 report coordination failed"
+        ) as error,
+    ):
+        _coordinate_with(_report_with_segmentation(segmented=False), store, invoker)
+
+    _assert_original_coordinator_failure(error, store)
+    _assert_log_identifies_child(
+        _coordination_log(caplog, logging.ERROR),
+        role="baseline",
+        error_type="ConnectionError",
+    )

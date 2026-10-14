@@ -177,7 +177,10 @@ for baseline before checking reform. The first failed simulation supplies the
 report's `error_code` and safe `error_summary`; the coordinator marks the
 unresolved peer `incomplete` with `cancelled_after_peer_failure`. A segmented
 peer reads that persisted state, cancels the region-group calls it owns, and
-exits without overwriting the cancellation record. Expected input failures
+exits without overwriting the cancellation record. If the coordinator itself
+fails after starting a simulation, it stops every started, unfinished
+simulation the same way and marks it `incomplete` with
+`cancelled_after_coordinator_failure`. Expected input failures
 retain their typed code and message. Unexpected exceptions are logged in full
 and persisted as a generic message with a correlation ID.
 

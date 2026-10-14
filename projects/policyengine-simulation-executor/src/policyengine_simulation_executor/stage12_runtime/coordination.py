@@ -140,21 +140,36 @@ def _replace_running_simulation(
     return result
 
 
+COORDINATOR_FAILURE_CANCELLATION = Stage12FailureDetail(
+    error_code="cancelled_after_coordinator_failure",
+    error_summary="Cancelled after report coordination failed.",
+)
+
+
+def _peer_failure_cancellation(failed_role: str) -> Stage12FailureDetail:
+    return Stage12FailureDetail(
+        error_code="cancelled_after_peer_failure",
+        error_summary=f"Cancelled after {failed_role} simulation failed.",
+    )
+
+
 def _cancel_pending_simulations(
     *,
     calls: dict[str, ChildCall],
     simulations: dict[str, PlannedSimulationExecutionInput],
     roles: set[str],
     store: ComparisonStore,
-    failed_role: str,
+    detail: Stage12FailureDetail,
 ) -> None:
-    detail = Stage12FailureDetail(
-        error_code="cancelled_after_peer_failure",
-        error_summary=f"Cancelled after {failed_role} simulation failed.",
-    )
+    """Record each started, unfinished child as incomplete, then stop it.
+
+    A child whose record is no longer running has already finished or been
+    stopped, so it is left unchanged. State-update and cancellation errors are
+    logged rather than raised, so they never replace the failure that caused
+    the cancellation.
+    """
+
     for role in sorted(roles):
-        if role == failed_role:
-            continue
         simulation = simulations[role]
         try:
             latest = _replace_running_simulation(
@@ -270,9 +285,9 @@ def _observe_simulations(
                 _cancel_pending_simulations(
                     calls=calls,
                     simulations=simulations,
-                    roles=pending,
+                    roles=pending - {role},
                     store=store,
-                    failed_role=role,
+                    detail=_peer_failure_cancellation(role),
                 )
                 raise Stage12ExecutionError(detail) from None
             descriptors[role] = descriptor
@@ -512,6 +527,7 @@ def coordinate_report(
         }
     descriptors: dict[str, SimulationArtifactDescriptor] = {}
     calls: dict[str, ChildCall] = {}
+    simulations: dict[str, PlannedSimulationExecutionInput] = {}
     try:
 
         def stage_scope(
@@ -675,7 +691,7 @@ def coordinate_report(
                     simulations=simulations,
                     roles=set(calls),
                     store=persistence,
-                    failed_role=simulation.role.value,
+                    detail=_peer_failure_cancellation(simulation.role.value),
                 )
                 raise Stage12ExecutionError(detail) from None
             calls[simulation.role.value] = call
@@ -788,13 +804,24 @@ def coordinate_report(
     # before returning a stable exception to Modal.
     except Exception as error:  # noqa: BLE001
         if not isinstance(error, Stage12ExecutionError):
-            # Child dispatch, child and wait-timeout failures raise
+            # Child, dispatch and wait-timeout failures raise
             # Stage12ExecutionError only after reporting the original failure
-            # where it occurred.
+            # and stopping their unfinished peers. Any other failure is
+            # reported here before any database write. If it occurred after a
+            # child started, such as a failed placeholder write or invocation
+            # attach, every started, unfinished child is then stopped so none
+            # keeps running for a failed report.
             report_original_failure(
                 error,
                 runtime=runtime,
                 failure_scope="report_coordination",
+            )
+            _cancel_pending_simulations(
+                calls=calls,
+                simulations=simulations,
+                roles=set(calls) - set(descriptors),
+                store=persistence,
+                detail=COORDINATOR_FAILURE_CANCELLATION,
             )
         failed_at = datetime.now(UTC)
         detail = failure_detail_from_exception(
