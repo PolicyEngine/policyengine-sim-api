@@ -401,7 +401,7 @@ POLLS_TO_REACH_DEADLINE = int(sn.CHILD_DEADLINE_SECONDS // SECONDS_PER_STUCK_POL
 
 
 def _stuck_call(clock):
-    """A child that never finishes; each poll of it moves the clock on."""
+    """Return a child that never finishes; each poll of it moves the clock on."""
     return FakeCall(
         None,
         polls_until_ready=10**6,
@@ -410,7 +410,7 @@ def _stuck_call(clock):
 
 
 def _crashing_call(clock):
-    """A child that fails outright (takes a clock to match ``_stuck_call``)."""
+    """Return a child that fails outright (takes a clock to match ``_stuck_call``)."""
     return FakeCall(None, error=ValueError("child crashed"))
 
 

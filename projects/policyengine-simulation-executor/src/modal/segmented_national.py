@@ -174,6 +174,7 @@ class ChildExecution:
 
     @property
     def group_label(self) -> str:
+        """Region codes joined with "+", as logs and telemetry name the group."""
         return "+".join(self.group)
 
 
@@ -484,8 +485,11 @@ class SegmentedNationalRunner:
     def _fail_if_budget_exhausted(
         self, children: list[ChildExecution], pending: set[int]
     ) -> None:
-        """Fail in-band, cancelling children, before the Modal timeout can
-        kill the parent and strand them."""
+        """Fail in-band, cancelling children, once the parent budget is spent.
+
+        Failing here, before the Modal timeout can kill the parent, keeps the
+        children from being stranded.
+        """
         if not pending:
             return
         now = self.clock()
