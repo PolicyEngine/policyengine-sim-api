@@ -955,7 +955,7 @@ class TelemetryRecordingRuntime(RecordingRuntime):
         super().__init__()
         self.ordered_events = ordered_events
 
-    def log(self, message, *, severity="INFO", attributes=None, error=None):
+    def log(self, message, *, severity="INFO", attributes=None, error=None):  # noqa: ARG002  # mirrors ObservabilityRuntime.log, which callers pass severity= by keyword
         self.ordered_events.append(
             ("telemetry", (message, dict(attributes or {}), error))
         )
