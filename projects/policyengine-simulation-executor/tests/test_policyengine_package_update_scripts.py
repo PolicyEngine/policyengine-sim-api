@@ -10,6 +10,7 @@ import pytest
 from fixtures.test_policyengine_package_update_scripts import (
     SCRIPT,
     BundledVersions,
+    FakeGitState,
     install_fake_gh,
     install_fake_git,
     install_fake_uv,
@@ -115,7 +116,7 @@ def test_update_policyengine_package_dry_run_reports_existing_branch_recovery(
         fake_bin,
         root=fake_repo,
         log=git_log,
-        remote_branch_exists=True,
+        state=FakeGitState(remote_branch_exists=True),
     )
 
     result = run_updater(
@@ -159,7 +160,7 @@ def test_update_policyengine_package_opens_pr_for_existing_branch_without_open_p
         fake_bin,
         root=fake_repo,
         log=git_log,
-        remote_branch_exists=True,
+        state=FakeGitState(remote_branch_exists=True),
     )
     install_fake_gh(fake_bin, log=gh_log)
     install_fake_uv(fake_bin, log=uv_log)
@@ -183,28 +184,28 @@ def test_update_policyengine_package_opens_pr_for_existing_branch_without_open_p
 
 
 @pytest.mark.parametrize(
-    ("uv_kwargs", "git_kwargs", "payload", "message"),
+    "recovery_case",
     [
         (
-            {"bundled": BundledVersions(uk_version="2.0.9")},
-            {},
+            BundledVersions(uk_version="2.0.9"),
+            "4.1.0",
             '{"version":"4.1.0","bundle":{"uk":{"model_version":"2.1.0"}}}',
             "does not match the release dispatch",
         ),
         (
-            {},
-            {},
+            BundledVersions(),
+            "4.1.0",
             '{"version":"4.1.0","qualification":{"uk":{"verdict":"rejected",'
             '"promotable":false}}}',
             "does not match the release dispatch",
         ),
         (
-            {"bundled": BundledVersions(policyengine_version="4.0.9")},
-            {},
+            BundledVersions(policyengine_version="4.0.9"),
+            "4.1.0",
             "",
             "reports bundle 4.0.9, expected 4.1.0",
         ),
-        ({}, {"branch_pin": "4.0.5"}, "", "pins policyengine 4.0.5, expected 4.1.0"),
+        (BundledVersions(), "4.0.5", "", "pins policyengine 4.0.5, expected 4.1.0"),
     ],
     ids=["bundle-mismatch", "rejected-verdict", "wrong-wrapper", "stale-branch"],
 )
@@ -212,22 +213,23 @@ def test_a_recovered_branch_gets_no_pr_without_verification(
     fake_bin: Path,
     fake_repo: Path,
     tmp_path: Path,
-    uv_kwargs: dict,
-    git_kwargs: dict,
-    payload: str,
-    message: str,
+    recovery_case: tuple[BundledVersions, str, str, str],
 ) -> None:
-    """#743 round-2 review: branch recovery may not bypass validation."""
+    """#743 round-2 review: branch recovery may not bypass validation.
+
+    ``recovery_case`` is the bundle the fake ``uv`` reports, the policyengine
+    pin on the recovered branch, the release payload and the expected error.
+    """
+    bundled, branch_pin, payload, message = recovery_case
     gh_log = tmp_path / "gh.log"
     install_fake_git(
         fake_bin,
         root=fake_repo,
         log=tmp_path / "git.log",
-        remote_branch_exists=True,
-        **git_kwargs,
+        state=FakeGitState(remote_branch_exists=True, branch_pin=branch_pin),
     )
     install_fake_gh(fake_bin, log=gh_log)
-    install_fake_uv(fake_bin, log=tmp_path / "uv.log", **uv_kwargs)
+    install_fake_uv(fake_bin, log=tmp_path / "uv.log", bundled=bundled)
 
     result = run_updater(
         env=updater_env(fake_bin, LATEST_OVERRIDE="4.1.0", RELEASE_PAYLOAD=payload),
@@ -246,7 +248,12 @@ def test_update_policyengine_package_updates_only_wrapper_requirements(
     git_log = tmp_path / "git.log"
     gh_log = tmp_path / "gh.log"
     uv_log = tmp_path / "uv.log"
-    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_git(
+        fake_bin,
+        root=fake_repo,
+        log=git_log,
+        state=FakeGitState(diff_has_changes=True),
+    )
     install_fake_gh(fake_bin, log=gh_log)
     install_fake_uv(fake_bin, log=uv_log)
 
@@ -286,7 +293,12 @@ def test_update_policyengine_package_creates_and_links_missing_issue(
     git_log = tmp_path / "git.log"
     gh_log = tmp_path / "gh.log"
     uv_log = tmp_path / "uv.log"
-    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_git(
+        fake_bin,
+        root=fake_repo,
+        log=git_log,
+        state=FakeGitState(diff_has_changes=True),
+    )
     install_fake_gh(fake_bin, log=gh_log, open_issue="")
     install_fake_uv(fake_bin, log=uv_log)
 
@@ -309,7 +321,12 @@ def test_update_policyengine_package_stops_when_loaded_bundle_is_not_target(
     git_log = tmp_path / "git.log"
     gh_log = tmp_path / "gh.log"
     uv_log = tmp_path / "uv.log"
-    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_git(
+        fake_bin,
+        root=fake_repo,
+        log=git_log,
+        state=FakeGitState(diff_has_changes=True),
+    )
     install_fake_gh(fake_bin, log=gh_log)
     install_fake_uv(
         fake_bin,
@@ -335,7 +352,12 @@ def test_update_policyengine_package_requires_modal_models_requirement(
     git_log = tmp_path / "git.log"
     gh_log = tmp_path / "gh.log"
     uv_log = tmp_path / "uv.log"
-    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_git(
+        fake_bin,
+        root=fake_repo,
+        log=git_log,
+        state=FakeGitState(diff_has_changes=True),
+    )
     install_fake_gh(fake_bin, log=gh_log)
     install_fake_uv(fake_bin, log=uv_log)
     pyproject = fake_repo / "simulation" / "pyproject.toml"
@@ -362,7 +384,12 @@ def test_update_policyengine_package_rejects_direct_component_requirements(
     git_log = tmp_path / "git.log"
     gh_log = tmp_path / "gh.log"
     uv_log = tmp_path / "uv.log"
-    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_git(
+        fake_bin,
+        root=fake_repo,
+        log=git_log,
+        state=FakeGitState(diff_has_changes=True),
+    )
     install_fake_gh(fake_bin, log=gh_log)
     install_fake_uv(fake_bin, log=uv_log)
     pyproject = fake_repo / "simulation" / "pyproject.toml"
@@ -692,7 +719,12 @@ def test_update_policyengine_package_stops_when_dispatch_names_another_dataset(
     git_log = tmp_path / "git.log"
     gh_log = tmp_path / "gh.log"
     uv_log = tmp_path / "uv.log"
-    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_git(
+        fake_bin,
+        root=fake_repo,
+        log=git_log,
+        state=FakeGitState(diff_has_changes=True),
+    )
     install_fake_gh(fake_bin, log=gh_log)
     install_fake_uv(fake_bin, log=uv_log)
 
@@ -721,7 +753,12 @@ def test_update_policyengine_package_accepts_a_matching_dispatch(
     git_log = tmp_path / "git.log"
     gh_log = tmp_path / "gh.log"
     uv_log = tmp_path / "uv.log"
-    install_fake_git(fake_bin, root=fake_repo, log=git_log, diff_has_changes=True)
+    install_fake_git(
+        fake_bin,
+        root=fake_repo,
+        log=git_log,
+        state=FakeGitState(diff_has_changes=True),
+    )
     install_fake_gh(fake_bin, log=gh_log)
     install_fake_uv(fake_bin, log=uv_log)
 
