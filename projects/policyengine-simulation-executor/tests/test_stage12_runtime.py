@@ -1157,6 +1157,87 @@ def test_uk_aggregate_without_spm_provenance_is_written(monkeypatch) -> None:
     assert json.loads(stored_aggregate)["result"]["spm_provenance"] is None
 
 
+def test_aggregate_report_wraps_builder_output_with_report_provenance(
+    monkeypatch,
+) -> None:
+    from policyengine_simulation_executor import simulation_output_builder
+
+    report = _report()
+    report = report.model_copy(
+        update={"reform": report.reform.model_copy(update={"policy": {}})}
+    )
+    entities = ("person", "marital_unit", "family", "spm_unit", "tax_unit")
+
+    def frames(income):
+        return {
+            **{entity: pd.DataFrame({f"{entity}_id": [1]}) for entity in entities},
+            "household": pd.DataFrame(
+                {"household_id": [1], "household_net_income": [income]}
+            ),
+        }
+
+    observed = {}
+
+    class CapturingBuilder:
+        def __init__(self, **values):
+            observed.update(values)
+
+        def serialize(self):
+            return {"budget": {"budgetary_impact": 1.0}}
+
+    monkeypatch.setattr(
+        simulation_output_builder, "SimulationOutputBuilder", CapturingBuilder
+    )
+    artifacts = FakeArtifacts()
+
+    result = build_aggregate_report(
+        report=report,
+        baseline_frames=frames(100.0),
+        reform_frames=frames(120.0),
+        baseline_descriptor=artifacts.add_simulation(report.baseline),
+        reform_descriptor=artifacts.add_simulation(report.reform),
+        uk_local_authority_metadata=None,
+    )
+
+    assert result == {
+        "contract_version": 1,
+        "aggregate_schema_version": 1,
+        "evaluation_id": str(EVALUATION_ID),
+        "requested_aggregates": [item.value for item in report.requested_aggregates],
+        "bundle": report.baseline.bundle.model_dump(mode="json"),
+        "result": {"budget": {"budgetary_impact": 1.0}},
+    }
+    assert list(observed) == [
+        "country",
+        "simulation_params",
+        "country_module",
+        "dataset",
+        "baseline",
+        "reform",
+        "resolved_data_version",
+        "resolved_region_code",
+        "uk_local_authority_metadata",
+    ]
+    assert observed["country"] == "us"
+    assert observed["simulation_params"] == {
+        "country": "us",
+        "scope": "macro",
+        "data": report.baseline.bundle.dataset.uri,
+        "data_version": report.baseline.bundle.dataset.artifact_revision,
+        "time_period": str(report.baseline.year),
+        "region": report.baseline.geography.region,
+    }
+    assert observed["dataset"] is observed["baseline"].output_dataset
+    for role, income in (("baseline", 100.0), ("reform", 120.0)):
+        household = observed[role].output_dataset.data.household
+        assert household["household_net_income"].tolist() == [income]
+    assert observed["resolved_data_version"] == (
+        report.baseline.bundle.dataset.artifact_revision
+    )
+    assert observed["resolved_region_code"] == report.baseline.geography.region
+    assert observed["uk_local_authority_metadata"] is None
+
+
 def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:
     payload = _planned_simulation(SimulationRole.BASELINE).model_dump(mode="json")
     payload["baseline"] = {}
