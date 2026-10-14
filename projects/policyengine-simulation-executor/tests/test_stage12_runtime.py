@@ -1751,7 +1751,8 @@ class RefusingDispatchInvoker:
         raise self.dispatch_error
 
     def restore(self, invocation_id):
-        raise AssertionError(f"unexpected restored invocation {invocation_id}")
+        msg = f"unexpected restored invocation {invocation_id}"
+        raise AssertionError(msg)
 
 
 def test_coordinator_records_a_redacted_dispatch_failure_cause() -> None:
