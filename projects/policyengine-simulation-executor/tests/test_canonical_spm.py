@@ -272,7 +272,7 @@ def test_result_transport_rejects_legacy_sibling_config():
 def test_sync_compatibility_endpoint_preserves_explicit_null(
     monkeypatch, observability_runtime
 ):
-    import policyengine_simulation_executor.simulation as simulation
+    from policyengine_simulation_executor import simulation
 
     captured = []
 
@@ -350,7 +350,7 @@ class TestResolutionIsNotRepeatedWork:
     @staticmethod
     def _stub_provider(monkeypatch, capability=CAPABILITY):
         """Count the two pieces of work a resolution repeats."""
-        import policyengine_simulation_executor.spm as spm
+        from policyengine_simulation_executor import spm
 
         year_metadata = Mock(return_value={})
         constructions = Mock(
@@ -484,7 +484,7 @@ class TestResolutionIsNotRepeatedWork:
 
     def test_the_installed_capability_is_read_once(self, monkeypatch):
         import policyengine.bundle
-        import policyengine_simulation_executor.spm as spm
+        from policyengine_simulation_executor import spm
 
         reads = Mock(return_value={"measurements": {}})
         monkeypatch.setattr(policyengine.bundle, "get_current_bundle", reads)
@@ -498,7 +498,7 @@ class TestResolutionIsNotRepeatedWork:
 
     def test_an_unavailable_capability_is_rederived_every_time(self, monkeypatch):
         import policyengine.bundle
-        import policyengine_simulation_executor.spm as spm
+        from policyengine_simulation_executor import spm
 
         reads = Mock(side_effect=ValueError("bundle configuration unavailable"))
         monkeypatch.setattr(policyengine.bundle, "get_current_bundle", reads)
@@ -607,9 +607,9 @@ def test_fanout_and_budget_window_preserve_settings_and_receipts():
 
 
 def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
-    import policyengine_simulation_executor.spm as spm
     from policyengine_simulation_executor import (
         baseline_artifacts,
+        spm,
         stage_reporting_simulation,
     )
 
