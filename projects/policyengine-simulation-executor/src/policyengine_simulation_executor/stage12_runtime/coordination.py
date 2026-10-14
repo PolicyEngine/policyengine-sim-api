@@ -208,7 +208,6 @@ def _mark_child_failed(
     Modal returned the worker's stable exception, so that cause is kept rather
     than overwritten. A succeeded child is left unchanged and has no cause.
     """
-
     latest = persistence.get_simulation(simulation_execution_id)
     if latest.status is ComparisonRunLifecycleStatus.SUCCEEDED:
         return None
