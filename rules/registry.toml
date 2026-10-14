@@ -737,7 +737,7 @@ test = "tests/test_microdata_weight_boundaries.py::test_rule_proof_weights_not_a
 [[rule]]
 id = "sim.microdata.weight-stripping-confined"
 category = "microdata"
-statement = "Raw values are read from a weighted frame or column (np.asarray, np.array, .values, .to_numpy(), .tolist(), pd.DataFrame or pd.Series) only in simulation_output_common.py, the module that holds _count_output_entities."
+statement = "Raw values are read from a weighted frame or column (np.asarray, np.array, .values, .to_numpy(), .tolist(), pd.DataFrame or pd.Series) only in simulation_output_common.py; there, counting entities is always allowed and every other read is a recorded exception whose list may only shrink."
 rationale = "docs/engineering/skills/microdata-weights.md#handling-a-finding"
 scope = ["projects/policyengine-simulation-executor/src/**/*.py"]
 tier = "mechanical"
@@ -746,7 +746,10 @@ autofix = false
 [rule.enforcer]
 kind = "pytest"
 project = "projects/policyengine-simulation-executor"
-nodes = ["tests/test_microdata_weight_boundaries.py::test_weight_stripping_stays_in_the_designated_module"]
+nodes = [
+  "tests/test_microdata_weight_boundaries.py::test_weight_stripping_stays_in_the_designated_module",
+  "tests/test_microdata_weight_boundaries.py::test_weight_stripping_review_ratchets_the_designated_module",
+]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
