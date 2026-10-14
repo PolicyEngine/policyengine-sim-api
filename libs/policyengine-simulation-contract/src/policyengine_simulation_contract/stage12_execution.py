@@ -726,6 +726,12 @@ class ComparisonReportRecord(StrictContractModel):
         ``error_code``, and the retention window is at most 30 days.
         """
         _validate_retention(self.created_at, self.retention_expires_at)
+        self._validate_report_state()
+        self._validate_comparison_state()
+        return self
+
+    def _validate_report_state(self) -> None:
+        """Check the aggregate output fields against the report's status."""
         output_fields = (
             self.aggregate_output_uri,
             self.aggregate_output_sha256,
@@ -756,55 +762,72 @@ class ComparisonReportRecord(StrictContractModel):
         ):
             msg = "a failed or skipped report requires an error_code"
             raise ValueError(msg)
-        comparison_output_fields = (
-            self.comparison_output_uri,
-            self.comparison_output_sha256,
-            self.comparison_schema_version,
-        )
+
+    def _validate_comparison_state(self) -> None:
+        """Check the result comparison fields against the comparison's status."""
         if self.comparison_status in {
             ResultComparisonStatus.NOT_REQUESTED,
             ResultComparisonStatus.PENDING,
             ResultComparisonStatus.RUNNING,
         }:
-            if any(value is not None for value in comparison_output_fields):
-                msg = "an incomplete comparison cannot reference an output artifact"
-                raise ValueError(msg)
-            if self.comparison_completed_at is not None:
-                msg = "an incomplete comparison cannot have completed_at"
-                raise ValueError(msg)
-            if self.comparison_error_code is not None:
-                msg = "an incomplete comparison cannot have an error_code"
-                raise ValueError(msg)
-            if self.comparison_error_summary is not None:
-                msg = "an incomplete comparison cannot have an error_summary"
-                raise ValueError(msg)
+            self._validate_incomplete_comparison()
         elif self.comparison_status in {
             ResultComparisonStatus.MATCHED,
             ResultComparisonStatus.DIFFERENT,
         }:
-            if not all(value is not None for value in comparison_output_fields):
-                msg = "a completed comparison requires an output artifact"
-                raise ValueError(msg)
-            if self.comparison_completed_at is None:
-                msg = "a completed comparison requires completed_at"
-                raise ValueError(msg)
-            if self.comparison_error_code is not None:
-                msg = "a completed comparison cannot have an error_code"
-                raise ValueError(msg)
-            if self.comparison_error_summary is not None:
-                msg = "a completed comparison cannot have an error_summary"
-                raise ValueError(msg)
+            self._validate_completed_comparison()
         else:
-            if any(value is not None for value in comparison_output_fields):
-                msg = "a failed comparison cannot reference an output artifact"
-                raise ValueError(msg)
-            if self.comparison_completed_at is None:
-                msg = "a failed comparison requires completed_at"
-                raise ValueError(msg)
-            if self.comparison_error_code is None:
-                msg = "a failed comparison requires an error_code"
-                raise ValueError(msg)
-        return self
+            self._validate_failed_comparison()
+
+    @property
+    def _comparison_output_fields(self) -> tuple[object, ...]:
+        return (
+            self.comparison_output_uri,
+            self.comparison_output_sha256,
+            self.comparison_schema_version,
+        )
+
+    def _validate_incomplete_comparison(self) -> None:
+        """Reject outputs, completion and errors on a comparison still to finish."""
+        if any(value is not None for value in self._comparison_output_fields):
+            msg = "an incomplete comparison cannot reference an output artifact"
+            raise ValueError(msg)
+        if self.comparison_completed_at is not None:
+            msg = "an incomplete comparison cannot have completed_at"
+            raise ValueError(msg)
+        if self.comparison_error_code is not None:
+            msg = "an incomplete comparison cannot have an error_code"
+            raise ValueError(msg)
+        if self.comparison_error_summary is not None:
+            msg = "an incomplete comparison cannot have an error_summary"
+            raise ValueError(msg)
+
+    def _validate_completed_comparison(self) -> None:
+        """Require an output and completion, and no error, on a finished comparison."""
+        if not all(value is not None for value in self._comparison_output_fields):
+            msg = "a completed comparison requires an output artifact"
+            raise ValueError(msg)
+        if self.comparison_completed_at is None:
+            msg = "a completed comparison requires completed_at"
+            raise ValueError(msg)
+        if self.comparison_error_code is not None:
+            msg = "a completed comparison cannot have an error_code"
+            raise ValueError(msg)
+        if self.comparison_error_summary is not None:
+            msg = "a completed comparison cannot have an error_summary"
+            raise ValueError(msg)
+
+    def _validate_failed_comparison(self) -> None:
+        """Require completion and an error code, but no output, on a failure."""
+        if any(value is not None for value in self._comparison_output_fields):
+            msg = "a failed comparison cannot reference an output artifact"
+            raise ValueError(msg)
+        if self.comparison_completed_at is None:
+            msg = "a failed comparison requires completed_at"
+            raise ValueError(msg)
+        if self.comparison_error_code is None:
+            msg = "a failed comparison requires an error_code"
+            raise ValueError(msg)
 
 
 class ComparisonSimulationRecord(StrictContractModel):
