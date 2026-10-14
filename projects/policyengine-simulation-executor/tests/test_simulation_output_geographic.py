@@ -82,7 +82,7 @@ def test_required_uk_lookup_rejects_missing_asset(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "policyengine.outputs.uk_geography_impact.resolve_uk_geography_lookup_csv_path",
-        lambda *args, **kwargs: None,
+        lambda *_args, **_kwargs: None,
     )
 
     with pytest.raises(FileNotFoundError, match="constituency lookup CSV"):

@@ -199,7 +199,7 @@ def test_area_regions_count_as_routed_only_when_both_have_a_dataset(
 ) -> None:
     monkeypatch.setattr(
         "policyengine.provenance.manifest.get_release_manifest",
-        lambda country: SimpleNamespace(
+        lambda _country: SimpleNamespace(
             region_datasets={region_type: object() for region_type in region_types}
         ),
     )

@@ -100,7 +100,7 @@ def test_uk_dataset_smoke_validates_installed_codes_against_packaged_resources(
     monkeypatch.setattr(
         smoke_module,
         "resolve_local_bundle_dataset_path",
-        lambda country, requested: "/installed/enhanced_frs_2024_25.h5",
+        lambda _country, _requested_data: "/installed/enhanced_frs_2024_25.h5",
     )
     monkeypatch.setattr(
         smoke_module,

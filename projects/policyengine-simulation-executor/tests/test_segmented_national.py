@@ -21,7 +21,9 @@ TEST_RUNTIME = NoOpObservabilityRuntime()
 def _bare_country_module():
     """Return a country module whose model has no loadable region registry."""
     return SimpleNamespace(
-        model=SimpleNamespace(get_region=lambda code: None, region_registry=None)
+        model=SimpleNamespace(
+            get_region=lambda _region_code: None, region_registry=None
+        )
     )
 
 
@@ -161,7 +163,7 @@ class FakeCall:
         self.cancel_attempts = 0
         self.poll_count = 0
 
-    def get(self, timeout):
+    def get(self, timeout):  # noqa: ARG002  # mirrors modal.FunctionCall.get, which callers pass timeout= by keyword
         self.poll_count += 1
         if self.before_each_poll is not None:
             self.before_each_poll()
@@ -232,17 +234,18 @@ def _twenty_calls(**kwargs):
 
 @pytest.fixture
 def bare_country(monkeypatch):
-    monkeypatch.setattr(sr, "_country_module", lambda c: _bare_country_module())
+    monkeypatch.setattr(sr, "_country_module", lambda _country: _bare_country_module())
 
 
 class TestSegmentedNationalRunner:
-    def test__spawns_one_child_per_group_into_the_segment_pool(
-        self, monkeypatch, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__spawns_one_child_per_group_into_the_segment_pool(self, monkeypatch):
         fake = FakeModal(_twenty_calls())
         runner = _runner(fake)
         monkeypatch.setattr(
-            runner, "_reduce", lambda results, country_module: {"ok": results}
+            runner,
+            "_reduce",
+            lambda results, country_module: {"ok": results},  # noqa: ARG005  # run() passes country_module= by keyword
         )
 
         result = runner.run()
@@ -266,51 +269,48 @@ class TestSegmentedNationalRunner:
         )
         assert result == {"ok": [{"child": i} for i in range(20)]}
 
-    def test__collects_out_of_order_completions_in_group_order(
-        self, monkeypatch, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__collects_out_of_order_completions_in_group_order(self, monkeypatch):
         calls = [
             FakeCall({"child": i}, polls_until_ready=(19 - i) % 3) for i in range(20)
         ]
         runner = _runner(FakeModal(calls))
-        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)  # noqa: ARG005  # run() passes country_module= by keyword
         assert runner.run() == [{"child": i} for i in range(20)]
 
-    def test__child_failure_fails_fast_and_cancels_the_rest(
-        self, monkeypatch, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__child_failure_fails_fast_and_cancels_the_rest(self, monkeypatch):
         calls = _twenty_calls(polls_until_ready=5)
         calls[7] = FakeCall(None, error=ValueError("boom"))
         runner = _runner(FakeModal(calls))
-        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)  # noqa: ARG005  # run() passes country_module= by keyword
 
         with pytest.raises(RuntimeError, match="Segmented national child failed"):
             runner.run()
         assert all(c.cancelled for c in calls if c.error is None)
 
-    def test__one_transient_poll_error_is_tolerated(self, monkeypatch, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__one_transient_poll_error_is_tolerated(self, monkeypatch):
         # A single control-plane blip on one handle must not kill the job.
         calls = _twenty_calls()
         calls[3] = FakeCall({"child": 3}, errors_once=1)
         runner = _runner(FakeModal(calls))
-        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)  # noqa: ARG005  # run() passes country_module= by keyword
         assert runner.run() == [{"child": i} for i in range(20)]
 
-    def test__spawn_failure_cancels_already_spawned_children(
-        self, monkeypatch, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__spawn_failure_cancels_already_spawned_children(self, monkeypatch):
         calls = _twenty_calls(polls_until_ready=100)
         fake = FakeModal(calls, fail_spawn_at=15)
         runner = _runner(fake)
-        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)  # noqa: ARG005  # run() passes country_module= by keyword
 
         with pytest.raises(ConnectionError):
             runner.run()
         assert all(c.cancelled for c in calls[:15])
 
-    def test__uncovered_registry_states_ride_in_the_last_group(
-        self, monkeypatch, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__uncovered_registry_states_ride_in_the_last_group(self, monkeypatch):
         partition_codes = [
             code for group in US_NATIONAL_REGION_GROUPS for code in group
         ]
@@ -322,14 +322,14 @@ class TestSegmentedNationalRunner:
         )
         country_module = SimpleNamespace(
             model=SimpleNamespace(
-                get_region=lambda code: None, region_registry=registry
+                get_region=lambda _region_code: None, region_registry=registry
             )
         )
-        monkeypatch.setattr(sr, "_country_module", lambda c: country_module)
+        monkeypatch.setattr(sr, "_country_module", lambda _country: country_module)
 
         fake = FakeModal([FakeCall({"child": i}) for i in range(20)])
         runner = _runner(fake)
-        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)  # noqa: ARG005  # run() passes country_module= by keyword
         runner.run()
 
         assert runner.groups[-1][-1] == "state/pr"
@@ -348,7 +348,9 @@ class TestSegmentedNationalRunner:
             return {"budget": {}}
 
         monkeypatch.setattr(sn, "build_national_output", fake_build_national_output)
-        monkeypatch.setattr(sr, "_country_module", lambda c: _bare_country_module())
+        monkeypatch.setattr(
+            sr, "_country_module", lambda _country: _bare_country_module()
+        )
 
         params = {
             **NATIONAL,
@@ -736,16 +738,16 @@ class TestDispatchRunSimulation:
     def test__eligible_national_takes_the_segmented_path(self, monkeypatch):
         calls = {}
 
-        def fake_segmented(params, *, app_name, runtime, progress):
+        def fake_segmented(params, *, app_name, runtime, progress):  # noqa: ARG001  # keyword-only, as dispatch_run_simulation passes them
             calls["segmented"] = (params, app_name)
             return {"segmented": True}
 
         monkeypatch.setattr(sn, "run_segmented_national_impl", fake_segmented)
-        monkeypatch.setattr(executor_spm, "normalize_runtime_spm", lambda params: None)
+        monkeypatch.setattr(executor_spm, "normalize_runtime_spm", lambda _params: None)
         monkeypatch.setattr(
             sr,
             "run_simulation_impl",
-            lambda params, **kwargs: pytest.fail("monolithic path must not run"),
+            lambda _params, **_kwargs: pytest.fail("monolithic path must not run"),
         )
         result = sn.dispatch_run_simulation(
             dict(NATIONAL), app_name="app-x", runtime=TEST_RUNTIME
@@ -765,11 +767,11 @@ class TestDispatchRunSimulation:
         monkeypatch.setattr(
             sn,
             "run_segmented_national_impl",
-            lambda *a, **k: pytest.fail("segmented path must not run"),
+            lambda *_args, **_kwargs: pytest.fail("segmented path must not run"),
         )
-        monkeypatch.setattr(executor_spm, "normalize_runtime_spm", lambda params: None)
+        monkeypatch.setattr(executor_spm, "normalize_runtime_spm", lambda _params: None)
         monkeypatch.setattr(
-            sr, "run_simulation_impl", lambda params, **kwargs: {"monolithic": True}
+            sr, "run_simulation_impl", lambda _params, **_kwargs: {"monolithic": True}
         )
         assert sn.dispatch_run_simulation(
             params, app_name="app-x", runtime=TEST_RUNTIME
@@ -838,14 +840,13 @@ def stub_reduce(monkeypatch):
     The reduce itself is covered by test_segmented_national_reduce.
     """
     monkeypatch.setattr(
-        sn, "build_national_output", lambda children, **kwargs: {"budget": {}}
+        sn, "build_national_output", lambda _children, **_kwargs: {"budget": {}}
     )
 
 
 class TestSegmentedNationalSPM:
-    def test__child_receipts_combine_into_one_national_receipt(
-        self, bare_country, stub_reduce
-    ):
+    @pytest.mark.usefixtures("bare_country", "stub_reduce")
+    def test__child_receipts_combine_into_one_national_receipt(self):
         fake = FakeModal([FakeCall(_spm_child(i)) for i in range(20)])
         runner = _runner(fake, params={**NATIONAL, "spm": SPM_SELECTION})
 
@@ -865,7 +866,7 @@ class TestSegmentedNationalSPM:
         assert output["budget"] == {}
 
     @pytest.mark.parametrize(
-        "rogue,reason",
+        ("rogue", "reason"),
         [
             (
                 _spm_child(7, selection={**SPM_SELECTION, "scenario": "zero_real"}),
@@ -875,9 +876,8 @@ class TestSegmentedNationalSPM:
             (_spm_child_missing(7, "county_vintage"), "complete resolved"),
         ],
     )
-    def test__child_receipt_disagreeing_with_the_request_is_typed(
-        self, bare_country, stub_reduce, rogue, reason
-    ):
+    @pytest.mark.usefixtures("bare_country", "stub_reduce")
+    def test__child_receipt_disagreeing_with_the_request_is_typed(self, rogue, reason):
         # One segment computed something other than what was requested:
         # fail with the public typed code, never publish a mixed national
         # result whose receipt does not describe every segment.
@@ -889,7 +889,8 @@ class TestSegmentedNationalSPM:
             runner.run()
         assert error.value.code == "SPM_CONFIGURATION_UNAVAILABLE"
 
-    def test__unrequested_child_receipt_is_typed(self, bare_country, stub_reduce):
+    @pytest.mark.usefixtures("bare_country", "stub_reduce")
+    def test__unrequested_child_receipt_is_typed(self):
         # A historical request must not inherit a child's stray receipt.
         calls = [FakeCall({"child": i}) for i in range(20)]
         calls[3] = FakeCall(_spm_child(3))
@@ -898,7 +899,8 @@ class TestSegmentedNationalSPM:
         with pytest.raises(SPMInputError, match="Unexpected SPM receipt"):
             runner.run()
 
-    def test__a_run_without_spm_adds_no_receipt_keys(self, bare_country, stub_reduce):
+    @pytest.mark.usefixtures("bare_country", "stub_reduce")
+    def test__a_run_without_spm_adds_no_receipt_keys(self):
         runner = _runner(FakeModal([FakeCall({"child": i}) for i in range(20)]))
         assert runner.run() == {"budget": {}}
 
@@ -908,11 +910,11 @@ class TestDispatchResolvesSPM:
         # Children and the parent's receipt check must both see the
         # worker-resolved selection, not the caller's partial one.
         monkeypatch.setattr(
-            executor_spm, "normalize_runtime_spm", lambda params: SPM_SELECTION
+            executor_spm, "normalize_runtime_spm", lambda _params: SPM_SELECTION
         )
         seen = {}
 
-        def fake_segmented(params, *, app_name, runtime, progress):
+        def fake_segmented(params, *, app_name, runtime, progress):  # noqa: ARG001  # keyword-only, as dispatch_run_simulation passes them
             seen["params"] = params
             return {"segmented": True}
 
@@ -930,7 +932,7 @@ class TestDispatchResolvesSPM:
     def test__typed_spm_error_spawns_nothing(self, monkeypatch):
         # Resolution failures are cheap only if they happen before 20
         # children are spawned.
-        def unavailable(params):
+        def unavailable(_params):
             error_code = "SPM_GEOGRAPHY_REQUIRED"
             raise SPMInputError(error_code, "County required")
 
@@ -938,12 +940,12 @@ class TestDispatchResolvesSPM:
         monkeypatch.setattr(
             sn,
             "run_segmented_national_impl",
-            lambda *a, **k: pytest.fail("segmented path must not run"),
+            lambda *_args, **_kwargs: pytest.fail("segmented path must not run"),
         )
         monkeypatch.setattr(
             sr,
             "run_simulation_impl",
-            lambda params, **kwargs: pytest.fail("monolithic path must not run"),
+            lambda _params, **_kwargs: pytest.fail("monolithic path must not run"),
         )
 
         with pytest.raises(SPMInputError) as error:

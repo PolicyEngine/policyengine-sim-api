@@ -61,7 +61,7 @@ def _baseline(dataset, *, geography="national", tax_only=False):
 
 
 @pytest.mark.parametrize(
-    "damage, expected_outcome",
+    ("damage", "expected_outcome"),
     [
         ("tax_only_columns", "incomplete"),
         ("empty_years", "incomplete"),

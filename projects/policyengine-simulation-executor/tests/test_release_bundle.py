@@ -108,9 +108,8 @@ def test_country_release_bundle_exposes_model_and_data_versions():
         assert bundle.default_dataset_uri == release["default_dataset_uri"]
 
 
-def test_policyengine_data_release_keeps_build_and_package_versions_distinct(
-    policyengine_uk_data_release,
-):
+@pytest.mark.usefixtures("policyengine_uk_data_release")
+def test_policyengine_data_release_keeps_build_and_package_versions_distinct():
     bundle = get_country_release_bundle("uk")
 
     assert bundle.data_version == "policyengine-uk-data-1.56.16"
@@ -232,17 +231,15 @@ def test_resolve_runtime_bundle_dataset_uri_maps_dataset_name_to_its_bundle_uri(
     )
 
 
-def test_policyengine_data_release_default_resolves_to_gcs_package_version(
-    policyengine_uk_data_release,
-):
+@pytest.mark.usefixtures("policyengine_uk_data_release")
+def test_policyengine_data_release_default_resolves_to_gcs_package_version():
     assert resolve_runtime_bundle_dataset_uri("uk", None, prefer_local=False) == (
         "gs://policyengine-uk-data-private/enhanced_frs_2024_25.h5@1.56.16"
     )
 
 
-def test_policyengine_data_release_preserves_explicit_legacy_populace_dataset(
-    policyengine_uk_data_release,
-):
+@pytest.mark.usefixtures("policyengine_uk_data_release")
+def test_policyengine_data_release_preserves_explicit_legacy_populace_dataset():
     assert resolve_runtime_bundle_dataset_uri(
         "uk", "populace_uk_2023", prefer_local=False
     ) == (

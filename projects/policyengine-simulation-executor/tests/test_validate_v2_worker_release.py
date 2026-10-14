@@ -9,7 +9,7 @@ from src.modal.utils import validate_v2_worker_release as validation
 def test_all_country_results_must_match_the_deployment_bundle(monkeypatch) -> None:
     invocation_ids: list[str] = []
 
-    def fake_spawn_validation(*, application_name, function_name, environment):
+    def fake_spawn_validation(*, application_name, function_name, environment):  # noqa: ARG001  # keyword-only, as the validator passes them
         country = function_name.rsplit("_", maxsplit=1)[1]
         resolved = validation.load_stage12_bundle()
         bundle = next(

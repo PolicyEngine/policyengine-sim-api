@@ -354,7 +354,7 @@ class TestWriterReaderContract:
 
         state = install_identity_stubs(monkeypatch)
         monkeypatch.setattr(
-            sr, "get_country_release_bundle", lambda country: state.bundle
+            sr, "get_country_release_bundle", lambda _country: state.bundle
         )
 
     @pytest.fixture
@@ -374,12 +374,13 @@ class TestWriterReaderContract:
         monkeypatch.setattr(
             sr,
             "_country_module",
-            lambda country: SimpleNamespace(
+            lambda _country: SimpleNamespace(
                 model=SimpleNamespace(get_region=get_region)
             ),
         )
 
-    def test_precompute_identity_equals_runtime_id(self, identity_stubs, fake_regions):
+    @pytest.mark.usefixtures("identity_stubs", "fake_regions")
+    def test_precompute_identity_equals_runtime_id(self):
         from policyengine_simulation_executor import simulation_runtime as sr
         from policyengine_simulation_executor.baseline_artifacts import (
             deterministic_baseline_id,
@@ -466,12 +467,12 @@ class TestPlanArtifactsImpl:
         monkeypatch.setattr(
             national_partition,
             "national_region_groups",
-            lambda country: [["state/ca"], ["state/ny", "state/wv"]],
+            lambda _country: [["state/ca"], ["state/ny", "state/wv"]],
         )
         monkeypatch.setattr(
             artifact_keys,
             "collect_dataset_identity",
-            lambda country, year: SimpleNamespace(
+            lambda _country, year: SimpleNamespace(
                 digest=f"ds-{year}",
                 store_path=f"datasets/us/ds-{year}/populace_year_{year}.h5",
                 filename=f"populace_year_{year}.h5",
@@ -491,7 +492,7 @@ class TestPlanArtifactsImpl:
         monkeypatch.setattr(
             release_bundle,
             "get_country_release_bundle",
-            lambda country: SimpleNamespace(
+            lambda _country: SimpleNamespace(
                 policyengine_version="4.22.0",
                 model_version="1.0.0",
                 data_version="1.2.3",
@@ -501,7 +502,8 @@ class TestPlanArtifactsImpl:
         )
         return SimpleNamespace(existing=existing)
 
-    def test_plan_enumerates_years_and_cohorts_with_presence(self, planning_stubs):
+    @pytest.mark.usefixtures("planning_stubs")
+    def test_plan_enumerates_years_and_cohorts_with_presence(self):
         plan = precompute.plan_artifacts_impl("bucket-x")
 
         assert [entry.year for entry in plan.datasets] == [2026, 2027, 2025]
@@ -544,11 +546,12 @@ class TestPlanArtifactsImpl:
         assert [entry.year for entry in work.datasets] == [2027, 2025]
         assert len(work.baselines) == 5
 
-    def test_empty_partition_fails_loudly(self, planning_stubs, monkeypatch):
+    @pytest.mark.usefixtures("planning_stubs")
+    def test_empty_partition_fails_loudly(self, monkeypatch):
         from policyengine_simulation_executor import national_partition
 
         monkeypatch.setattr(
-            national_partition, "national_region_groups", lambda country: []
+            national_partition, "national_region_groups", lambda _country: []
         )
         with pytest.raises(RuntimeError, match="No national partition"):
             precompute.plan_artifacts_impl("bucket-x")
@@ -559,16 +562,16 @@ class TestCohortIdentityGuard:
         from policyengine_simulation_executor import baseline_artifacts as ba
         from policyengine_simulation_executor import simulation_runtime as sr
 
-        monkeypatch.setattr(sr, "_country_module", lambda country: SimpleNamespace())
+        monkeypatch.setattr(sr, "_country_module", lambda _country: SimpleNamespace())
         monkeypatch.setattr(
             sr,
             "_resolve_region",
-            lambda **kwargs: SimpleNamespace(
+            lambda **_kwargs: SimpleNamespace(
                 code="x", dataset_reference=None, scoping_strategy=None
             ),
         )
         monkeypatch.setattr(
-            ba, "qualifying_baseline_identity", lambda *args, **kwargs: None
+            ba, "qualifying_baseline_identity", lambda *_args, **_kwargs: None
         )
         with pytest.raises(RuntimeError, match="diverged"):
             precompute.cohort_identity(2026, ["state/ca"])
@@ -610,19 +613,21 @@ class TestBuildDatasetImpl:
                 (tmp_path / state.identity.filename).write_bytes(b"h5-bytes")
 
         monkeypatch.setattr(
-            artifact_keys, "collect_dataset_identity", lambda c, y: state.identity
+            artifact_keys,
+            "collect_dataset_identity",
+            lambda _country, _year: state.identity,
         )
         monkeypatch.setattr(artifact_store, "ArtifactStore", FakeStore)
         monkeypatch.setattr(sr, "resolve_data_folder", lambda: str(tmp_path))
         monkeypatch.setattr(
             sr,
             "_country_module",
-            lambda country: SimpleNamespace(ensure_datasets=fake_ensure_datasets),
+            lambda _country: SimpleNamespace(ensure_datasets=fake_ensure_datasets),
         )
         monkeypatch.setattr(
             release_bundle,
             "get_country_release_bundle",
-            lambda country: SimpleNamespace(default_dataset="populace_cps"),
+            lambda _country: SimpleNamespace(default_dataset="populace_cps"),
         )
         return state
 
@@ -739,18 +744,18 @@ class TestComputeBaselineImpl:
         monkeypatch.setattr(
             artifact_keys,
             "collect_dataset_identity",
-            lambda country, year: SimpleNamespace(
+            lambda _country, year: SimpleNamespace(
                 store_path=f"datasets/us/ds-{year}/populace_year_{year}.h5",
                 filename=f"populace_year_{year}.h5",
             ),
         )
         monkeypatch.setattr(artifact_store, "ArtifactStore", FakeStore)
         monkeypatch.setattr(sr, "resolve_data_folder", lambda: str(tmp_path))
-        monkeypatch.setattr(sr, "_country_module", lambda country: SimpleNamespace())
+        monkeypatch.setattr(sr, "_country_module", lambda _country: SimpleNamespace())
         monkeypatch.setattr(
             sr,
             "_resolve_region",
-            lambda **kwargs: SimpleNamespace(
+            lambda **_kwargs: SimpleNamespace(
                 code="state/ca+state/wv",
                 scoping_strategy="scoping",
                 dataset_reference=None,
@@ -759,10 +764,10 @@ class TestComputeBaselineImpl:
         monkeypatch.setattr(
             sr,
             "_load_dataset",
-            lambda params, country_module, selection: "dataset",
+            lambda _params, country_module, selection: "dataset",  # noqa: ARG005  # the runtime passes country_module= and selection= by keyword
         )
         monkeypatch.setattr(
-            sr, "_build_simulation", lambda params, **kwargs: state.baseline
+            sr, "_build_simulation", lambda _params, **_kwargs: state.baseline
         )
         return state
 
@@ -987,7 +992,7 @@ class TestVerifyDeterminismImpl:
         monkeypatch.setattr(
             precompute,
             "_prepare_cohort_baseline",
-            lambda bucket, expected: (FakeStore(), tmp_path, FakeBaseline()),
+            lambda _bucket, _expected: (FakeStore(), tmp_path, FakeBaseline()),
         )
         monkeypatch.setattr("policyengine.core.Simulation", FakeFresh)
         if on_disk:

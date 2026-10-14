@@ -125,7 +125,8 @@ def test__is_newer_version__does_not_advance_on_equal():
     assert registry._is_newer_version("1.500.0", "1.500.0") is False
 
 
-def test_validate_routing_state_accepts_complete_state(fake_bundle_metadata):
+@pytest.mark.usefixtures("fake_bundle_metadata")
+def test_validate_routing_state_accepts_complete_state():
     state = registry.build_next_routing_state(
         current_state=None,
         app_name="policyengine-simulation-py4-19-1",
@@ -137,8 +138,8 @@ def test_validate_routing_state_accepts_complete_state(fake_bundle_metadata):
     registry.validate_routing_state(state)
 
 
+@pytest.mark.usefixtures("fake_bundle_metadata")
 def test_bundle_manifest_records_policyengine_6_spm_capability(
-    fake_bundle_metadata,
     monkeypatch,
 ):
     from policyengine.bundle import get_current_bundle
@@ -148,7 +149,7 @@ def test_bundle_manifest_records_policyengine_6_spm_capability(
     monkeypatch.setattr(
         executor_spm,
         "_forecast",
-        lambda expected_sha256: _StubForecast(),
+        lambda _expected_sha256: _StubForecast(),
     )
 
     bundle = get_current_bundle()
@@ -183,7 +184,8 @@ def test_bundle_manifest_declares_job_progress_capability(
     assert metadata["job_progress"] == JOB_PROGRESS_CAPABILITY_VERSION
 
 
-def test_validate_routing_state_rejects_missing_latest_route(fake_bundle_metadata):
+@pytest.mark.usefixtures("fake_bundle_metadata")
+def test_validate_routing_state_rejects_missing_latest_route():
     state = registry.build_next_routing_state(
         current_state=None,
         app_name="policyengine-simulation-py4-19-1",
@@ -197,9 +199,8 @@ def test_validate_routing_state_rejects_missing_latest_route(fake_bundle_metadat
         registry.validate_routing_state(state)
 
 
-def test_validate_routing_state_allows_migrated_policyengine_route_without_bundle(
-    fake_bundle_metadata,
-):
+@pytest.mark.usefixtures("fake_bundle_metadata")
+def test_validate_routing_state_allows_migrated_policyengine_route_without_bundle():
     state = registry.build_next_routing_state(
         current_state=None,
         app_name="policyengine-simulation-py4-19-1",
@@ -212,9 +213,8 @@ def test_validate_routing_state_allows_migrated_policyengine_route_without_bundl
     registry.validate_routing_state(state)
 
 
-def test_validate_routing_state_rejects_required_policyengine_route_without_bundle(
-    fake_bundle_metadata,
-):
+@pytest.mark.usefixtures("fake_bundle_metadata")
+def test_validate_routing_state_rejects_required_policyengine_route_without_bundle():
     state = registry.build_next_routing_state(
         current_state=None,
         app_name="policyengine-simulation-py4-19-1",
@@ -231,7 +231,8 @@ def test_validate_routing_state_rejects_required_policyengine_route_without_bund
         )
 
 
-def test_build_next_routing_state_preserves_existing_routes(fake_bundle_metadata):
+@pytest.mark.usefixtures("fake_bundle_metadata")
+def test_build_next_routing_state_preserves_existing_routes():
     current_state = registry.build_next_routing_state(
         current_state=None,
         app_name="policyengine-simulation-py4-18-0",
@@ -260,9 +261,8 @@ def test_build_next_routing_state_preserves_existing_routes(fake_bundle_metadata
     assert next_state["latest"]["us"] == "1.687.0"
 
 
-def test_build_next_routing_state_keeps_existing_latest_when_incoming_older(
-    fake_bundle_metadata,
-):
+@pytest.mark.usefixtures("fake_bundle_metadata")
+def test_build_next_routing_state_keeps_existing_latest_when_incoming_older():
     current_state = registry.build_next_routing_state(
         current_state=None,
         app_name="policyengine-simulation-py4-19-1",
@@ -286,9 +286,8 @@ def test_build_next_routing_state_keeps_existing_latest_when_incoming_older(
     )
 
 
-def test_build_next_routing_state_force_latest_allows_downgrade(
-    fake_bundle_metadata,
-):
+@pytest.mark.usefixtures("fake_bundle_metadata")
+def test_build_next_routing_state_force_latest_allows_downgrade():
     current_state = registry.build_next_routing_state(
         current_state=None,
         app_name="policyengine-simulation-py4-19-1",
@@ -309,9 +308,8 @@ def test_build_next_routing_state_force_latest_allows_downgrade(
     assert next_state["latest"]["policyengine"] == "4.18.0"
 
 
-def test_build_next_routing_state_rejects_country_version_mismatch(
-    fake_bundle_metadata,
-):
+@pytest.mark.usefixtures("fake_bundle_metadata")
+def test_build_next_routing_state_rejects_country_version_mismatch():
     with pytest.raises(ValueError, match="US version"):
         registry.build_next_routing_state(
             current_state=None,
@@ -322,9 +320,9 @@ def test_build_next_routing_state_rejects_country_version_mismatch(
         )
 
 
+@pytest.mark.usefixtures("fake_bundle_metadata")
 def test_publish_routing_state_writes_only_active_snapshot(
     patched_modal,
-    fake_bundle_metadata,
 ):
     registry.publish_routing_state(
         environment="main",
@@ -424,9 +422,9 @@ def test_build_legacy_seed_routing_state_allows_country_only_legacy_routes():
     )
 
 
+@pytest.mark.usefixtures("fake_bundle_metadata")
 def test_seed_active_routing_state_from_legacy_merges_existing_active(
     patched_modal,
-    fake_bundle_metadata,
 ):
     patched_modal["main/simulation-api-policyengine-versions"] = FakeDict(
         {
@@ -470,9 +468,9 @@ def test_seed_active_routing_state_from_legacy_merges_existing_active(
     assert state["latest"]["policyengine"] == "4.19.1"
 
 
+@pytest.mark.usefixtures("fake_bundle_metadata")
 def test_main_publishes_routing_state(
     patched_modal,
-    fake_bundle_metadata,
     monkeypatch,
     serialized_workflow,
 ):

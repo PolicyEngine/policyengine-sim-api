@@ -143,14 +143,15 @@ def test_invalid_policy_period_names_key_in_error(uk, key):
 
 
 @pytest.mark.parametrize(
-    "period,year",
+    ("period", "year"),
     [
         ({"time_period": "2031", "year": "2030"}, 2031),
         ({"year": "2032"}, 2032),
         ({}, DEFAULT_YEAR),
     ],
 )
-def test_scalar_in_interval_policy_uses_request_year(uk, period, year):
+@pytest.mark.usefixtures("uk")
+def test_scalar_in_interval_policy_uses_request_year(period, year):
     params = {"country": "uk", "scope": "macro", **period}
     raw = {
         UK_RATE: {"2027-04-06.2028-04-05": 0.21},
@@ -244,7 +245,7 @@ def test_policy_without_intervals_keeps_original_wrapper_compilation(
 
 
 @pytest.mark.parametrize(
-    "key, start, stop",
+    ("key", "start", "stop"),
     [
         ("2027-4-6", _naive_policy_date(2027, 4, 6), None),
         (

@@ -149,7 +149,7 @@ def test_wrappers_validate_dicts_in_and_dump_models_out(precompute_module, monke
     plan = _sample_plan()
     seen = {}
 
-    monkeypatch.setattr(lib, "plan_artifacts_impl", lambda bucket: plan)
+    monkeypatch.setattr(lib, "plan_artifacts_impl", lambda _bucket: plan)
     assert precompute_module.plan_artifacts("bucket-x") == plan.model_dump()
 
     dataset_result = DatasetBuildResult(
@@ -190,7 +190,7 @@ def test_wrappers_validate_dicts_in_and_dump_models_out(precompute_module, monke
 
     verdict = DeterminismVerdict(equal=True, differences=[])
     monkeypatch.setattr(
-        lib, "verify_determinism_impl", lambda bucket, expected: verdict
+        lib, "verify_determinism_impl", lambda _bucket, _expected: verdict
     )
     assert (
         precompute_module.verify_determinism("bucket-x", plan.baselines[0].model_dump())
@@ -232,7 +232,7 @@ def test_local_entrypoint_wires_bucket_force_and_handles(
         return "digest"
 
     monkeypatch.setattr(
-        artifact_store, "resolve_bucket_name", lambda explicit=None: "bucket-env"
+        artifact_store, "resolve_bucket_name", lambda _explicit=None: "bucket-env"
     )
     monkeypatch.setattr(lib, "run_precompute", fake_run_precompute)
 

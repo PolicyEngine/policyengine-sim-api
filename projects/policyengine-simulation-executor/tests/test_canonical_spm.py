@@ -107,7 +107,7 @@ def result(selection=SELECTION, year="2026"):
 
 
 @pytest.mark.parametrize(
-    "model,extra",
+    ("model", "extra"),
     [
         (SimulationRequest, {}),
         (
@@ -175,7 +175,7 @@ def test_unknown_bundle_fails_closed_and_historical_uk_remain():
 
 
 @pytest.mark.parametrize(
-    "kind,area", [("county", None), ("national", None), ("metro", "35620")]
+    ("kind", "area"), [("county", None), ("national", None), ("metro", "35620")]
 )
 def test_partial_selection_survives_ordinary_nested_json(kind, area):
     capability = {
@@ -272,7 +272,7 @@ def test_sync_compatibility_endpoint_preserves_explicit_null(
 
     captured = []
 
-    def capture(params, *, runtime):
+    def capture(params, *, runtime):  # noqa: ARG001  # keyword-only, as the route passes it
         captured.append(params)
         error_code = "SPM_GEOGRAPHY_REQUIRED"
         raise SPMInputError(error_code, "intentional test stop")
@@ -294,7 +294,7 @@ def test_year_alias_is_validated_before_dataset_loading(monkeypatch):
     monkeypatch.setattr(
         release_bundle,
         "get_country_release_bundle",
-        lambda country: SimpleNamespace(
+        lambda _country: SimpleNamespace(
             policyengine_version="test", model_version="test"
         ),
     )
@@ -302,12 +302,12 @@ def test_year_alias_is_validated_before_dataset_loading(monkeypatch):
     year_metadata = Mock(
         side_effect=SPMInputError("SPM_YEAR_UNAVAILABLE", "2040 is unavailable")
     )
-    monkeypatch.setattr(spm, "_forecast", lambda sha: object())
+    monkeypatch.setattr(spm, "_forecast", lambda _expected_sha256: object())
     monkeypatch.setitem(
         sys.modules,
         "spm_calculator.policyengine_adapter",
         SimpleNamespace(
-            PolicyEngineSPMProvider=lambda *a, **k: SimpleNamespace(
+            PolicyEngineSPMProvider=lambda *_args, **_kwargs: SimpleNamespace(
                 year_metadata=year_metadata
             )
         ),
@@ -338,7 +338,7 @@ class TestResolutionIsNotRepeatedWork:
         monkeypatch.setattr(
             release_bundle,
             "get_country_release_bundle",
-            lambda country: SimpleNamespace(
+            lambda _country: SimpleNamespace(
                 policyengine_version="test", model_version="test"
             ),
         )
@@ -350,10 +350,12 @@ class TestResolutionIsNotRepeatedWork:
 
         year_metadata = Mock(return_value={})
         constructions = Mock(
-            side_effect=lambda *a, **k: SimpleNamespace(year_metadata=year_metadata)
+            side_effect=lambda *_args, **_kwargs: SimpleNamespace(
+                year_metadata=year_metadata
+            )
         )
         monkeypatch.setattr(spm, "runtime_spm_capability", lambda: capability)
-        monkeypatch.setattr(spm, "_forecast", lambda sha: object())
+        monkeypatch.setattr(spm, "_forecast", lambda _expected_sha256: object())
         monkeypatch.setitem(
             sys.modules,
             "spm_calculator.policyengine_adapter",
@@ -533,7 +535,7 @@ def test_actual_http_formula_error_contract(monkeypatch, code, observability_run
 
 
 @pytest.mark.parametrize(
-    "key,value",
+    ("key", "value"),
     [
         ("forecast_content_sha256", "b" * 64),
         ("scenario", "zero_real"),
@@ -608,14 +610,14 @@ def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
     )
 
     calls = []
-    monkeypatch.setattr(spm, "normalize_runtime_spm", lambda params: SELECTION)
+    monkeypatch.setattr(spm, "normalize_runtime_spm", lambda _params: SELECTION)
     monkeypatch.setattr(
         simulation_runtime, "_country_module", lambda _: SimpleNamespace(model="test")
     )
     monkeypatch.setattr(
         baseline_artifacts,
         "deterministic_baseline_id",
-        lambda *a, **k: "baseline-id" if k["policy"] is None else None,
+        lambda *_args, **kwargs: "baseline-id" if kwargs["policy"] is None else None,
     )
     monkeypatch.setattr(
         baseline_artifacts, "ArtifactBaselineSimulation", lambda **k: calls.append(k)
@@ -707,18 +709,18 @@ def test_gateway_submission_uses_registry_capability_before_spawn(monkeypatch):
         country_model_version="test-only",
         route_provenance=None,
     )
-    monkeypatch.setattr(endpoints, "resolve_route", lambda *args: route)
+    monkeypatch.setattr(endpoints, "resolve_route", lambda *_args: route)
     bundle = PolicyEngineBundle(
         model_version="test-only", policyengine_version="test-only", spm=CAPABILITY
     )
-    monkeypatch.setattr(endpoints, "_build_policyengine_bundle", lambda *args: bundle)
+    monkeypatch.setattr(endpoints, "_build_policyengine_bundle", lambda *_args: bundle)
     spawn = Mock(return_value=SimpleNamespace(object_id="job"))
     monkeypatch.setattr(
         endpoints,
         "modal",
         SimpleNamespace(
             Function=SimpleNamespace(
-                from_name=lambda *args: SimpleNamespace(spawn=spawn)
+                from_name=lambda *_args: SimpleNamespace(spawn=spawn)
             )
         ),
     )
@@ -744,7 +746,7 @@ def test_gateway_submission_uses_registry_capability_before_spawn(monkeypatch):
     spawn.assert_not_called()
 
 
-def test_segmented_child_input_error_is_not_redacted_or_retried(monkeypatch):
+def test_segmented_child_input_error_is_not_redacted_or_retried():
     from src.modal.segmented_national import (
         CHILD_DEADLINE_SECONDS,
         ChildExecution,
@@ -867,7 +869,7 @@ def test_optional_analysis_does_not_swallow_spm_input_errors(code):
 
 
 @pytest.mark.parametrize(
-    "date_fields,expected_as_of",
+    ("date_fields", "expected_as_of"),
     [({"as_of": None}, None), ({}, "2026-01-01")],
 )
 def test_as_of_presence_survives_budget_parent(date_fields, expected_as_of):
@@ -922,7 +924,7 @@ def test_versions_http_retains_capability_contract_version(monkeypatch):
         "spm": CAPABILITY,
     }
     monkeypatch.setattr(
-        registry, "build_bundle_manifest_metadata", lambda **kwargs: metadata
+        registry, "build_bundle_manifest_metadata", lambda **_kwargs: metadata
     )
     state = registry.build_next_routing_state(
         current_state=None,
