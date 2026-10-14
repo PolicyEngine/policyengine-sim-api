@@ -432,7 +432,7 @@ def _check_scripted(api, expected=None, **polling):
     problems = sentinel.check_deployment(
         "https://candidate.example/",
         expected,
-        token="t0ken",  # noqa: S106  # fake bearer token; the HTTP calls are stubbed
+        token="t0ken",
         http=api,
         polling=sentinel.JobPolling(sleep=sleeps.append, **polling),
     )
