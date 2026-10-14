@@ -288,3 +288,113 @@ def test_uk_dataset_check_admits_missing_codes_only_when_area_regions_are_routed
 
     routed["value"] = True
     _check_uk_local_authority_dataset(national)
+
+
+def _validate(country="us", expected_digest=None, **seams):
+    seams.setdefault("environment", _environment())
+    seams.setdefault("dataset_path_resolver", lambda _: f"/installed/{country}.h5")
+    seams.setdefault("dataset_check", lambda *_: None)
+    seams.setdefault("calculation_check", lambda _: None)
+    return validate_country_worker(
+        country=country,
+        expected_bundle_manifest_sha256=(
+            expected_digest or load_stage12_bundle().bundle_manifest_sha256
+        ),
+        **seams,
+    )
+
+
+@pytest.mark.parametrize("country", ["us", "uk"])
+def test_validation_reports_the_complete_installed_bundle(country) -> None:
+    resolved = load_stage12_bundle()
+    country_bundle = next(
+        item for item in resolved.bundle.countries if item.country == country
+    )
+    events = []
+
+    result = _validate(
+        country,
+        dataset_check=lambda path, _digest: events.append(("dataset", path)),
+        calculation_check=lambda name: events.append(("calculation", name)),
+        local_authority_resource_check=lambda path: events.append(("uk", path)),
+    )
+
+    assert result == {
+        "validated": True,
+        "country": country,
+        "policyengine_version": resolved.bundle.policyengine_version,
+        "country_package_name": country_bundle.country_package_name,
+        "country_package_version": country_bundle.country_package_version,
+        "dataset_identity": country_bundle.default_dataset,
+        "dataset_uri": country_bundle.default_dataset_uri,
+        "data_artifact_revision": country_bundle.data_artifact_revision,
+        "bundle_manifest_sha256": resolved.bundle_manifest_sha256,
+        "cache": None,
+    }
+    expected_events = [("dataset", f"/installed/{country}.h5")]
+    if country == "uk":
+        expected_events.append(("uk", f"/installed/{country}.h5"))
+    expected_events.append(("calculation", country))
+    assert events == expected_events
+
+
+def test_validation_rejects_a_country_the_bundle_does_not_serve(monkeypatch) -> None:
+    from policyengine_simulation_executor import stage12_worker_validation
+
+    resolved = load_stage12_bundle()
+    us_only = resolved.model_copy(
+        update={
+            "bundle": resolved.bundle.model_copy(
+                update={
+                    "countries": tuple(
+                        item
+                        for item in resolved.bundle.countries
+                        if item.country == "us"
+                    )
+                }
+            )
+        }
+    )
+    monkeypatch.setattr(
+        stage12_worker_validation, "load_stage12_bundle", lambda: us_only
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        _validate("uk")
+
+    assert str(error.value) == "installed PolicyEngine.py bundle does not support 'uk'"
+    assert error.value.__cause__ is None
+    assert error.value.__suppress_context__ is True
+
+
+def test_validation_uses_the_process_environment_by_default(monkeypatch) -> None:
+    for name, value in _environment().items():
+        monkeypatch.setenv(name, value)
+
+    assert _validate(environment=None)["validated"] is True
+
+    monkeypatch.delenv("STAGE12_ARTIFACT_BUCKET")
+    with pytest.raises(
+        RuntimeError,
+        match=r"^Stage 12 worker is missing required secret values: "
+        r"STAGE12_ARTIFACT_BUCKET$",
+    ):
+        _validate(environment=None)
+
+
+def test_digest_mismatch_is_checked_before_any_dataset_access() -> None:
+    events = []
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            r"^installed PolicyEngine\.py bundle digest differs "
+            r"from deployment input$"
+        ),
+    ):
+        _validate(
+            expected_digest="0" * 64,
+            dataset_path_resolver=lambda _: events.append("resolve"),
+        )
+
+    assert events == []
