@@ -2,7 +2,7 @@
 
 from collections.abc import ItemsView, KeysView
 from copy import deepcopy
-from typing import Self
+from typing import ClassVar, Self
 
 import pytest
 from policyengine_simulation_contract.macro_output import (
@@ -98,6 +98,7 @@ def _runtime_dataset_uri(
     country_bundle: dict,
     dataset_uri: str,
     revision: str | None = None,
+    *,
     use_bundle_default: bool = True,
 ) -> str:
     dataset_without_revision, existing_revision = _split_revision(dataset_uri)
@@ -203,8 +204,8 @@ class MockDict:
 class MockFunctionCall:
     """Mock for Modal FunctionCall returned by spawn."""
 
-    registry = {}
-    from_id_errors = {}
+    registry: ClassVar[dict[str, "MockFunctionCall"]] = {}
+    from_id_errors: ClassVar[dict[str, BaseException]] = {}
 
     def __init__(self, object_id: str = "mock-job-id-123") -> None:
         """Register a complete call whose result is a valid zeroed macro output.
@@ -260,7 +261,7 @@ class MockFunctionCall:
         self.running = False
         self.__class__.registry[object_id] = self
 
-    def get(self, timeout: int = 0) -> object:
+    def get(self, timeout: int = 0) -> object:  # noqa: ARG002  # mirrors modal.FunctionCall.get
         """Return the result; raise TimeoutError while running, or the set error."""
         if self.running:
             raise TimeoutError
@@ -374,7 +375,7 @@ def mock_modal(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
     class MockModalDict:
         @staticmethod
-        def from_name(name: str, create_if_missing: bool = False) -> MockDict:
+        def from_name(name: str, *, create_if_missing: bool = False) -> MockDict:
             if create_if_missing and name not in mock_dicts:
                 mock_dicts[name] = {}
             if name not in mock_dicts:

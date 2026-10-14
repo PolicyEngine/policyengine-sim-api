@@ -121,7 +121,7 @@ def test_gateway_image_mounts_local_packages(monkeypatch):
 def test_web_app_secrets(monkeypatch):
     app = import_gateway_app(monkeypatch)
 
-    function_kwargs = {name: kwargs for name, kwargs in app.app.function_calls}
+    function_kwargs = dict(app.app.function_calls)
     assert function_kwargs["web_app"]["secrets"] == [
         app.gateway_auth_secret,
     ]

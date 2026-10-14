@@ -483,9 +483,9 @@ def _resolve_from_legacy_dicts(
             raise ValueError(msg)
         try:
             app_name = policyengine_versions[policyengine_version]
-        except KeyError:
+        except KeyError as error:
             msg = f"Unknown policyengine.py version {policyengine_version}"
-            raise ValueError(msg)
+            raise ValueError(msg) from error
         return RouteResolution(
             app_name=app_name,
             response_version=policyengine_version,
@@ -494,14 +494,11 @@ def _resolve_from_legacy_dicts(
         )
 
     country_versions = modal.Dict.from_name(f"simulation-api-{country}-versions")
-    if version is None:
-        resolved_version = country_versions["latest"]
-    else:
-        resolved_version = version
+    resolved_version = country_versions["latest"] if version is None else version
 
     try:
         app_name = country_versions[resolved_version]
-    except KeyError:
+    except KeyError as error:
         policyengine_versions = _optional_modal_dict(POLICYENGINE_VERSION_DICT_NAME)
         if policyengine_versions is not None and version is not None:
             try:
@@ -516,7 +513,7 @@ def _resolve_from_legacy_dicts(
                     bundle_manifest={},
                 )
         msg = f"Unknown version {resolved_version} for country {country}"
-        raise ValueError(msg)
+        raise ValueError(msg) from error
 
     return RouteResolution(
         app_name=app_name,
@@ -727,7 +724,7 @@ def _bind_observability_id(
     observability_id = normalize_observability_id(value)
     http_request.state.observability_id = observability_id
     if observability_id is not None:
-        try:
+        try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
             runtime.set_context(observability_id=observability_id)
         except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
             pass
@@ -887,7 +884,7 @@ async def submit_simulation(
             )
     except ValueError as e:
         runtime.record_exception(e, handled=True, status_code=400)
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     runtime.set_context(
         resolved_app_name=route.app_name,
@@ -997,7 +994,7 @@ async def submit_budget_window_batch(
             )
     except ValueError as e:
         runtime.record_exception(e, handled=True, status_code=400)
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     runtime.set_context(
         resolved_app_name=route.app_name,
@@ -1105,7 +1102,9 @@ async def get_job_status(
     except Exception as exc:
         if _is_modal_job_not_found(exc):
             runtime.record_exception(exc, handled=True, status_code=404)
-            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+            raise HTTPException(
+                status_code=404, detail=f"Job not found: {job_id}"
+            ) from exc
         runtime.record_exception(exc, handled=False, status_code=500)
         raise
 
@@ -1127,10 +1126,14 @@ async def get_job_status(
         running_metadata = with_progress("running")
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
             return running_job_response(running_metadata, headers=response_headers)
-    except Exception as exc:  # noqa: BLE001  # call.get re-raises whatever the worker raised; every failure becomes a failed-job response, logged with its traceback by log_and_redact_exception
+    # call.get re-raises whatever the worker raised; every failure becomes a
+    # failed-job response, logged with its traceback by log_and_redact_exception.
+    except Exception as exc:
         if _is_modal_job_not_found(exc):
             runtime.record_exception(exc, handled=True, status_code=404)
-            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+            raise HTTPException(
+                status_code=404, detail=f"Job not found: {job_id}"
+            ) from exc
         detail = spm_error_detail(exc)
         if detail:
             return failed_job_response(

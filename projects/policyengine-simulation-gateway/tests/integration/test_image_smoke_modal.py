@@ -28,6 +28,7 @@ def test_gateway_image_smoke():
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        check=False,
         timeout=1200,
     )
     assert result.returncode == 0, result.stdout + result.stderr
