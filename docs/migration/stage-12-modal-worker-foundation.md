@@ -359,9 +359,22 @@ Before each v2 deployment, the independent Stage 12 precompute application
 builds three annual US dataset files and 60 current-law baseline files: one for
 each of 20 region groups in 2025, 2026, and 2027. Cache identities include the
 bundle manifest digest, package and data versions, source-data digest, year,
-region membership, scoping identity, output-plan digest, and optional SPM
-configuration. Objects are content-addressed and written with a create-only
-condition; an existing object must have the expected digest and size.
+region membership, scoping identity, output-plan digest, and the resolved SPM
+selection the worker builds the simulation with. A baseline file has the name
+.py's `Simulation.storage_id` gives the file it saves and loads: the identity's
+simulation ID followed by the SPM selection's digest. Objects are
+content-addressed and written with a create-only condition; an existing object
+must have the expected digest and size. A stored file is never replaced, so
+precompute computes only missing files and has no force option; the v1
+`force_recompute` input does not reach it. To replace a bad file, delete it and
+deploy again: the run recomputes it and repeats the determinism check.
+
+Before publishing, precompute loads one stored baseline from the cache and
+compares it with a fresh calculation. The check runs whenever a run computed
+baselines, and also whenever no earlier run recorded a pass for the planned
+baselines, so running again after a failed check repeats the check rather than
+skipping it. A pass is recorded in the cache bucket, and the manifest is
+published only when that record exists.
 
 Precompute publishes a canonical manifest containing all 63 files. The
 deployment passes that manifest's SHA-256 digest into the US image build. The
@@ -370,6 +383,15 @@ cache release in worker-validation metadata and the v2 version manifest. The UK
 and coordinator images do not contain these files. Deployment validation runs
 one real 2026 region-group baseline and requires it to load the precomputed
 file without recalculation.
+
+Readers released before cache releases reject fields they do not know, and
+the manifest is published before the Cloud Run revision that reads it is
+promoted. The publisher therefore writes the manifest under the
+`active-with-cache` key and the same manifest without cache releases under the
+`active` key, which those readers keep reading. Current readers read
+`active-with-cache`, falling back to `active` only before the first publish
+that writes both keys. Removing the `active` copy needs a later change, once
+no deployed or rollback revision reads it.
 
 Only an empty-policy baseline using the bundle's default dataset and an exact
 region-group scope can read a baseline cache file. Reform calculations always

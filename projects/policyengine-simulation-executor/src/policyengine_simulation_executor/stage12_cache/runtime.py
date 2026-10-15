@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from policyengine.core import Simulation
@@ -34,6 +35,7 @@ def qualifying_cache_identity(
     resolved: ResolvedStage12Bundle,
     dataset_is_default: bool,
     scoping_strategy: Any,
+    spm: Mapping[str, Any] | None,
 ) -> Stage12BaselineCacheIdentity | None:
     """Return a safe cache identity, or None for an ineligible simulation."""
 
@@ -61,6 +63,7 @@ def qualifying_cache_identity(
         resolved=resolved,
         region_codes=region_codes,
         scope_key=scope_key,
+        spm=spm,
     )
 
 

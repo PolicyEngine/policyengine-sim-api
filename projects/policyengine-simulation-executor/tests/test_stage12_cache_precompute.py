@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
+from google.api_core.exceptions import NotFound, PreconditionFailed
+from policyengine_simulation_executor import simulation_runtime
 from policyengine_simulation_executor.stage12_cache import precompute
 from policyengine_simulation_executor.stage12_cache.models import (
     BaselinePlanEntry,
@@ -13,7 +16,14 @@ from policyengine_simulation_executor.stage12_cache.models import (
     DatasetPlanEntry,
     PrecomputePlan,
 )
+from policyengine_simulation_executor.stage12_cache.store import Stage12CacheStore
+from policyengine_simulation_executor.stage12_runtime import (
+    simulation as simulation_module,
+)
 from policyengine_simulation_executor.stage12_runtime.partition import US_REGION_GROUPS
+from policyengine_simulation_executor.stage12_runtime.simulation import (
+    SimulationCalculation,
+)
 from pydantic import ValidationError
 
 
@@ -29,7 +39,7 @@ def _bundle() -> CacheBundleIdentity:
     )
 
 
-def _plan(*, exists: bool = False) -> PrecomputePlan:
+def _plan(*, exists: bool = False, verified: bool | None = None) -> PrecomputePlan:
     datasets = tuple(
         DatasetPlanEntry(
             year=year,
@@ -47,6 +57,7 @@ def _plan(*, exists: bool = False) -> PrecomputePlan:
             region_codes=group,
             digest=f"baseline-{year}-{index}",
             path=f"baselines/us/baseline-{year}-{index}/stage12-bl1-{index}.h5",
+            filename=f"stage12-bl1-{index}.h5",
             simulation_id=f"stage12-bl1-{index}",
             output_plan_sha256="b" * 64,
             exists=exists,
@@ -60,7 +71,61 @@ def _plan(*, exists: bool = False) -> PrecomputePlan:
         baselines=baselines,
         bundle=_bundle(),
         partition_sha256="c" * 64,
+        # A warm store came from a run whose determinism check passed.
+        determinism_verified=exists if verified is None else verified,
     )
+
+
+class _FakeBlob:
+    """A GCS blob over a dict, honouring create-only uploads."""
+
+    def __init__(self, objects: dict, path: str):
+        self.objects = objects
+        self.path = path
+        self.metadata = None
+
+    def exists(self) -> bool:
+        return self.path in self.objects
+
+    def reload(self) -> None:
+        if self.path not in self.objects:
+            raise NotFound(self.path)
+        self.metadata = self.objects[self.path]["metadata"]
+
+    def upload_from_string(self, payload, *, content_type, if_generation_match):
+        assert if_generation_match == 0
+        if self.path in self.objects:
+            raise PreconditionFailed(self.path)
+        self.objects[self.path] = {"payload": payload, "metadata": self.metadata}
+
+    def download_as_bytes(self) -> bytes:
+        if self.path not in self.objects:
+            raise NotFound(self.path)
+        return self.objects[self.path]["payload"]
+
+
+class _FakeClient:
+    def __init__(self):
+        self.objects: dict[str, dict] = {}
+
+    def bucket(self, _name: str):
+        return SimpleNamespace(blob=lambda path: _FakeBlob(self.objects, path))
+
+
+def _use_store(monkeypatch, client: _FakeClient) -> None:
+    monkeypatch.setattr(
+        precompute,
+        "Stage12CacheStore",
+        lambda bucket: Stage12CacheStore(bucket, client=client),
+    )
+
+
+def _store_every_planned_file(client: _FakeClient, plan: PrecomputePlan) -> None:
+    for entry in (*plan.datasets, *plan.baselines):
+        client.objects[entry.path] = {
+            "payload": b"h5",
+            "metadata": {"sha256": "f" * 64, "size_bytes": "2"},
+        }
 
 
 def test_plan_shape_matches_v1_year_window_and_twenty_groups() -> None:
@@ -83,14 +148,12 @@ def test_strict_plan_rejects_unknown_modal_boundary_fields() -> None:
         PrecomputePlan.model_validate(payload)
 
 
-def test_work_selection_is_idempotent_and_force_selects_everything() -> None:
-    cold = precompute.select_work(_plan(), force=False)
-    warm = precompute.select_work(_plan(exists=True), force=False)
-    forced = precompute.select_work(_plan(exists=True), force=True)
+def test_work_selection_computes_only_missing_files() -> None:
+    cold = precompute.select_work(_plan())
+    warm = precompute.select_work(_plan(exists=True))
 
     assert len(cold.datasets) == 3 and len(cold.baselines) == 60
     assert warm.datasets == () and warm.baselines == ()
-    assert len(forced.datasets) == 3 and len(forced.baselines) == 60
 
 
 class _Call:
@@ -160,7 +223,6 @@ def test_precompute_finishes_dataset_wave_before_baseline_wave() -> None:
 
     digest = precompute.run_precompute(
         "cache-bucket",
-        force=False,
         plan_artifacts=planner,
         build_dataset=dataset,
         compute_baseline=baseline,
@@ -177,12 +239,14 @@ def test_precompute_finishes_dataset_wave_before_baseline_wave() -> None:
     )
     assert len(dataset.spawn_calls) == 3
     assert len(baseline.spawn_calls) == 60
-    assert len(verify.remote_calls) == 1
+    assert verify.remote_calls == [
+        ("cache-bucket", plan.model_dump(), plan.baselines[0].model_dump())
+    ]
     assert digest == "manifest-digest"
     assert lines[-1] == "STAGE12_CACHE_MANIFEST_DIGEST=manifest-digest"
 
 
-def test_warm_precompute_skips_builds_and_determinism_validation() -> None:
+def test_warm_verified_precompute_skips_builds_and_determinism_check() -> None:
     events = []
     plan = _plan(exists=True)
     planner = _Function(lambda _: plan.model_dump(), events, "plan")
@@ -194,7 +258,6 @@ def test_warm_precompute_skips_builds_and_determinism_validation() -> None:
 
     precompute.run_precompute(
         "cache-bucket",
-        force=False,
         plan_artifacts=planner,
         build_dataset=unused,
         compute_baseline=unused,
@@ -247,7 +310,6 @@ def test_failed_determinism_validation_prevents_manifest_publication() -> None:
     with pytest.raises(SystemExit, match="person.age differs"):
         precompute.run_precompute(
             "cache-bucket",
-            force=False,
             plan_artifacts=planner,
             build_dataset=dataset,
             compute_baseline=baseline,
@@ -273,3 +335,162 @@ def test_manifest_records_content_hashes_and_sizes() -> None:
     assert len(manifest.artifacts) == 63
     assert all(item.content_sha256 == "f" * 64 for item in manifest.artifacts)
     assert all(item.size_bytes == 123 for item in manifest.artifacts)
+
+
+@pytest.mark.parametrize("passes", [True, False])
+def test_a_run_with_no_new_baselines_still_checks_unverified_ones(
+    passes: bool,
+) -> None:
+    events = []
+    plan = _plan(exists=True, verified=False)
+    planner = _Function(lambda _: plan.model_dump(), events, "plan")
+    unused = _Function(lambda *_: pytest.fail("unexpected build"), events, "build")
+    verify = _Function(
+        lambda *_: {
+            "equal": passes,
+            "differences": [] if passes else ["person.age: values differ"],
+        },
+        events,
+        "verify",
+    )
+    publish = _Function(lambda *_: "manifest-digest", events, "publish")
+
+    def run() -> None:
+        precompute.run_precompute(
+            "cache-bucket",
+            plan_artifacts=planner,
+            build_dataset=unused,
+            compute_baseline=unused,
+            verify_determinism=verify,
+            publish_manifest=publish,
+            echo=lambda _line: None,
+        )
+
+    if passes:
+        run()
+        assert len(publish.remote_calls) == 1
+    else:
+        with pytest.raises(SystemExit, match="person.age"):
+            run()
+        assert publish.remote_calls == []
+    assert verify.remote_calls == [
+        ("cache-bucket", plan.model_dump(), plan.baselines[0].model_dump())
+    ]
+
+
+def test_publish_requires_a_recorded_determinism_pass(monkeypatch) -> None:
+    client = _FakeClient()
+    _use_store(monkeypatch, client)
+    plan = _plan(exists=True, verified=False)
+    _store_every_planned_file(client, plan)
+
+    with pytest.raises(RuntimeError, match="have not passed determinism"):
+        precompute.publish_manifest_impl("cache-bucket", plan)
+    assert not any(path.startswith("manifests/") for path in client.objects)
+
+    Stage12CacheStore("cache-bucket", client=client).write_json(
+        precompute.determinism_record_path(plan.baselines),
+        precompute.determinism_record(plan.baselines),
+    )
+    digest = precompute.publish_manifest_impl("cache-bucket", plan)
+
+    assert f"manifests/{digest}.json" in client.objects
+
+
+def _frames(age: int) -> dict[str, pd.DataFrame]:
+    return {"person": pd.DataFrame({"person_id": [1], "age": [age]})}
+
+
+@pytest.mark.parametrize(
+    ("cached_outcome", "fresh_age", "expected"),
+    [
+        ("hit", 30, "recorded"),
+        ("hit", 31, "not recorded"),
+        ("miss", 30, "rejected"),
+    ],
+)
+def test_determinism_check_records_only_a_pass_that_loaded_the_stored_file(
+    monkeypatch, tmp_path, cached_outcome: str, fresh_age: int, expected: str
+) -> None:
+    client = _FakeClient()
+    _use_store(monkeypatch, client)
+    plan = _plan(exists=True, verified=False)
+    probe = plan.baselines[0]
+    (tmp_path / probe.filename).write_bytes(b"h5")
+    monkeypatch.setattr(simulation_runtime, "resolve_data_folder", lambda: tmp_path)
+    monkeypatch.setattr(precompute, "_ensure_dataset_file", lambda *_: None)
+    monkeypatch.setattr(
+        precompute,
+        "_scoped_planned_simulation",
+        lambda _year, _group, *, reform=False: "reform" if reform else "baseline",
+    )
+    calculations = {
+        "baseline": SimulationCalculation(
+            frames=_frames(30), cache_outcome=cached_outcome
+        ),
+        "reform": SimulationCalculation(frames=_frames(fresh_age)),
+    }
+    monkeypatch.setattr(
+        simulation_module,
+        "calculate_simulation_frames",
+        lambda planned: calculations[planned],
+    )
+    record_path = precompute.determinism_record_path(plan.baselines)
+
+    if expected == "rejected":
+        with pytest.raises(RuntimeError, match="did not load the stored baseline"):
+            precompute.verify_determinism_impl("cache-bucket", plan, probe)
+    else:
+        verdict = precompute.verify_determinism_impl("cache-bucket", plan, probe)
+        assert verdict.equal is (expected == "recorded")
+    assert (record_path in client.objects) is (expected == "recorded")
+
+
+def test_planned_baseline_file_is_the_one_the_worker_saves_and_loads(
+    monkeypatch,
+) -> None:
+    """Uses the real bundle, US model and .py naming: no stubbed ensure()."""
+
+    from policyengine.core import Dataset
+    from policyengine.tax_benefit_models.common.model_version import (
+        output_dataset_filepath,
+    )
+    from policyengine_simulation_executor.stage12_cache.runtime import (
+        Stage12CachedSimulation,
+    )
+
+    client = _FakeClient()
+    _use_store(monkeypatch, client)
+    plan = precompute.plan_artifacts_impl("cache-bucket")
+    entry = plan.baselines[0]
+    planned = precompute._scoped_planned_simulation(entry.year, entry.region_codes)
+    params = simulation_module.simulation_runtime_params(planned)
+    country_module = simulation_runtime._country_module("us")
+    region = simulation_runtime._resolve_region(
+        country_module=country_module, country="us", params=params
+    )
+    dataset_path = "/opt/policyengine/stage12-data/populace_year_2026.h5"
+
+    worker_model = simulation_module.build_stage12_simulation(
+        params,
+        dataset=Dataset(
+            name="in-memory",
+            description="Naming only",
+            year=entry.year,
+            filepath=dataset_path,
+        ),
+        dataset_selection=SimpleNamespace(is_default=True),
+        country_module=country_module,
+        policy=None,
+        scoping_strategy=region.scoping_strategy,
+        region_code=region.code,
+        execution=planned,
+    )
+
+    assert isinstance(worker_model, Stage12CachedSimulation)
+    assert worker_model.id == entry.simulation_id
+    assert output_dataset_filepath(worker_model).name == entry.filename
+    assert entry.path.endswith(f"/{entry.filename}")
+    # A US simulation always resolves an SPM selection, which .py names.
+    assert entry.filename != f"{entry.simulation_id}.h5"
+    assert plan.determinism_verified is False

@@ -618,7 +618,7 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           STAGE12_CACHE_BUCKET: ${{ vars.STAGE12_CACHE_BUCKET }}
-        run: ../../.github/scripts/stage12-cache-precompute.sh "${{ inputs.modal_environment }}" "${{ inputs.force_recompute }}"
+        run: ../../.github/scripts/stage12-cache-precompute.sh "${{ inputs.modal_environment }}"
 
       - name: Deploy the additional versioned v2 Modal application
         working-directory: projects/policyengine-simulation-executor

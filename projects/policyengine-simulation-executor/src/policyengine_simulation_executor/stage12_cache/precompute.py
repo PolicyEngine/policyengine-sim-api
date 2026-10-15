@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from policyengine_simulation_contract.stage12_execution import (
@@ -14,6 +15,7 @@ from policyengine_simulation_contract.stage12_execution import (
     DatasetPopulationInput,
     DatasetProvenance,
     GeographySelection,
+    PlannedSimulationExecutionInput,
     ReportAggregate,
     ReportExecutionInput,
     SimulationExecutionInput,
@@ -31,6 +33,7 @@ from policyengine_simulation_executor.stage12_runtime.partition import (
 )
 
 from .keys import (
+    Stage12BaselineCacheIdentity,
     canonical_digest,
     collect_baseline_identity,
     collect_dataset_identity,
@@ -52,6 +55,7 @@ from .store import Stage12CacheStore
 
 PRECOMPUTE_YEARS = (2026, 2027, 2025)
 MANIFEST_DIGEST_PREFIX = "STAGE12_CACHE_MANIFEST_DIGEST="
+DETERMINISM_SCHEMA = "stage12-dv1"
 
 
 def manifest_digest_line(digest: str) -> str:
@@ -156,6 +160,42 @@ def _scope_key(year: int, group: tuple[str, ...]) -> str:
     return value
 
 
+def _baseline_identity(
+    year: int, group: tuple[str, ...]
+) -> tuple[PlannedSimulationExecutionInput, Stage12BaselineCacheIdentity]:
+    """Return a planned baseline and the identity its worker reads it under."""
+
+    from policyengine_simulation_executor.spm import normalize_runtime_spm
+    from policyengine_simulation_executor.stage12_runtime.simulation import (
+        simulation_runtime_params,
+    )
+
+    simulation = _scoped_planned_simulation(year, group)
+    identity = collect_baseline_identity(
+        simulation,
+        resolved=load_stage12_bundle(),
+        region_codes=group,
+        scope_key=_scope_key(year, group),
+        # The selection the worker builds the simulation with, which names
+        # the file .py saves and loads.
+        spm=normalize_runtime_spm(simulation_runtime_params(simulation)),
+    )
+    return simulation, identity
+
+
+def determinism_record(baselines: Sequence[BaselinePlanEntry]) -> dict[str, Any]:
+    """Return the record a passing determinism check writes for these baselines."""
+
+    return {
+        "schema": DETERMINISM_SCHEMA,
+        "baselines": [entry.digest for entry in baselines],
+    }
+
+
+def determinism_record_path(baselines: Sequence[BaselinePlanEntry]) -> str:
+    return f"determinism/us/{canonical_digest(determinism_record(baselines))}.json"
+
+
 def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
     resolved = load_stage12_bundle()
     store = Stage12CacheStore(bucket)
@@ -173,13 +213,7 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
             )
         )
         for index, group in enumerate(US_REGION_GROUPS):
-            simulation = _scoped_planned_simulation(year, group)
-            identity = collect_baseline_identity(
-                simulation,
-                resolved=resolved,
-                region_codes=group,
-                scope_key=_scope_key(year, group),
-            )
+            simulation, identity = _baseline_identity(year, group)
             baselines.append(
                 BaselinePlanEntry(
                     year=year,
@@ -187,6 +221,7 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
                     region_codes=group,
                     digest=identity.digest,
                     path=identity.store_path,
+                    filename=identity.filename,
                     simulation_id=identity.simulation_id,
                     output_plan_sha256=stage12_output_plan_sha256(
                         simulation.output_plan
@@ -202,13 +237,16 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
         partition_sha256=canonical_digest(
             {"groups": [list(group) for group in US_REGION_GROUPS]}
         ),
+        determinism_verified=store.exists(determinism_record_path(baselines)),
     )
 
 
-def select_work(plan: PrecomputePlan, *, force: bool) -> WorkSelection:
+def select_work(plan: PrecomputePlan) -> WorkSelection:
+    """Select only missing files: a stored cache file is never replaced."""
+
     return WorkSelection(
-        datasets=tuple(entry for entry in plan.datasets if force or not entry.exists),
-        baselines=tuple(entry for entry in plan.baselines if force or not entry.exists),
+        datasets=tuple(entry for entry in plan.datasets if not entry.exists),
+        baselines=tuple(entry for entry in plan.baselines if not entry.exists),
     )
 
 
@@ -255,13 +293,8 @@ def compute_baseline_impl(
         calculate_simulation_frames,
     )
 
-    group = tuple(expected.region_codes)
-    simulation = _scoped_planned_simulation(expected.year, group)
-    identity = collect_baseline_identity(
-        simulation,
-        resolved=load_stage12_bundle(),
-        region_codes=group,
-        scope_key=_scope_key(expected.year, group),
+    simulation, identity = _baseline_identity(
+        expected.year, tuple(expected.region_codes)
     )
     if identity.store_path != expected.path:
         raise RuntimeError("planned and runtime Stage 12 baseline identities differ")
@@ -270,7 +303,9 @@ def compute_baseline_impl(
     calculate_simulation_frames(simulation)
     local_path = Path(resolve_data_folder()) / identity.filename
     if not local_path.exists():
-        raise RuntimeError("Stage 12 baseline calculation produced no cache file")
+        raise RuntimeError(
+            f"Stage 12 baseline calculation produced no cache file {identity.filename}"
+        )
     uploaded, stored = Stage12CacheStore(bucket).upload_file(expected.path, local_path)
     return BaselineBuildResult(
         **stored.model_dump(),
@@ -284,21 +319,34 @@ def compute_baseline_impl(
 
 
 def verify_determinism_impl(
-    bucket: str, expected: BaselinePlanEntry
+    bucket: str, plan: PrecomputePlan, expected: BaselinePlanEntry
 ) -> DeterminismVerdict:
+    """Compare a stored baseline with a fresh calculation and record a pass."""
+
     from policyengine_simulation_executor.simulation_runtime import resolve_data_folder
     from policyengine_simulation_executor.stage12_runtime.simulation import (
         calculate_simulation_frames,
     )
 
+    from .runtime import CACHE_HIT
+
+    if expected not in plan.baselines:
+        raise RuntimeError("Stage 12 determinism probe is not a planned baseline")
+    store = Stage12CacheStore(bucket)
     group = tuple(expected.region_codes)
     baseline = _scoped_planned_simulation(expected.year, group)
     reform = _scoped_planned_simulation(expected.year, group, reform=True)
     _ensure_dataset_file(bucket, expected.year)
-    local_path = Path(resolve_data_folder()) / f"{expected.simulation_id}.h5"
+    local_path = Path(resolve_data_folder()) / expected.filename
     if not local_path.exists():
-        Stage12CacheStore(bucket).download_file(expected.path, local_path)
-    cached = calculate_simulation_frames(baseline).frames
+        store.download_file(expected.path, local_path)
+    cached_calculation = calculate_simulation_frames(baseline)
+    if cached_calculation.cache_outcome != CACHE_HIT:
+        raise RuntimeError(
+            "Stage 12 determinism check did not load the stored baseline "
+            f"(cache outcome {cached_calculation.cache_outcome})"
+        )
+    cached = cached_calculation.frames
     fresh = calculate_simulation_frames(reform).frames
     differences = []
     for entity in sorted(set(cached) | set(fresh)):
@@ -314,6 +362,11 @@ def verify_determinism_impl(
                 differences.append(f"{entity}.{column}: dtype differs")
             elif not left[column].equals(right[column]):
                 differences.append(f"{entity}.{column}: values differ")
+    if not differences:
+        store.write_json(
+            determinism_record_path(plan.baselines),
+            determinism_record(plan.baselines),
+        )
     return DeterminismVerdict(
         equal=not differences,
         differences=tuple(differences[:50]),
@@ -341,7 +394,7 @@ def build_manifest(plan: PrecomputePlan, store: Stage12CacheStore) -> CacheManif
             ManifestArtifact(
                 type="baseline",
                 path=entry.path,
-                filename=f"{entry.simulation_id}.h5",
+                filename=entry.filename,
                 year=entry.year,
                 identity_digest=entry.digest,
                 content_sha256=stored.content_sha256,
@@ -358,13 +411,16 @@ def build_manifest(plan: PrecomputePlan, store: Stage12CacheStore) -> CacheManif
 
 def publish_manifest_impl(bucket: str, plan: PrecomputePlan) -> str:
     store = Stage12CacheStore(bucket)
+    # Checked here, not only by the caller, so no run can publish baselines
+    # that never passed the determinism check.
+    if not store.exists(determinism_record_path(plan.baselines)):
+        raise RuntimeError("Stage 12 cache baselines have not passed determinism")
     return store.write_manifest(build_manifest(plan, store).canonical_payload())
 
 
 def run_precompute(
     bucket: str,
     *,
-    force: bool,
     plan_artifacts: RemoteFunction,
     build_dataset: RemoteFunction,
     compute_baseline: RemoteFunction,
@@ -373,7 +429,7 @@ def run_precompute(
     echo: Callable[[str], None] = print,
 ) -> str:
     plan = PrecomputePlan.model_validate(plan_artifacts.remote(bucket))
-    work = select_work(plan, force=force)
+    work = select_work(plan)
     dataset_calls = [
         build_dataset.spawn(bucket, entry.model_dump()) for entry in work.datasets
     ]
@@ -384,9 +440,13 @@ def run_precompute(
     ]
     for call in baseline_calls:
         BaselineBuildResult.model_validate(call.get())
-    if work.baselines:
+    # A run that computed baselines checks one of them. A run that computed
+    # none still checks one when no earlier run recorded a pass, so a failed
+    # check cannot be skipped by running again.
+    if work.baselines or not plan.determinism_verified:
+        probe = work.baselines[0] if work.baselines else plan.baselines[0]
         verdict = DeterminismVerdict.model_validate(
-            verify_determinism.remote(bucket, work.baselines[0].model_dump())
+            verify_determinism.remote(bucket, plan.model_dump(), probe.model_dump())
         )
         if not verdict.equal:
             raise SystemExit(

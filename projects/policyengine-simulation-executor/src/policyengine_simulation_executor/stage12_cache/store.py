@@ -140,8 +140,7 @@ class Stage12CacheStore:
         finally:
             partial.unlink(missing_ok=True)
 
-    def write_manifest(self, payload: Mapping[str, Any]) -> str:
-        digest = canonical_digest(payload)
+    def write_json(self, path: str, payload: Mapping[str, Any]) -> None:
         encoded = json.dumps(
             payload,
             sort_keys=True,
@@ -149,11 +148,11 @@ class Stage12CacheStore:
             ensure_ascii=True,
             allow_nan=False,
         ).encode("utf-8")
-        self.upload_bytes(
-            f"manifests/{digest}.json",
-            encoded,
-            content_type="application/json",
-        )
+        self.upload_bytes(path, encoded, content_type="application/json")
+
+    def write_manifest(self, payload: Mapping[str, Any]) -> str:
+        digest = canonical_digest(payload)
+        self.write_json(f"manifests/{digest}.json", payload)
         return digest
 
     def read_manifest(self, digest: str) -> Mapping[str, Any] | None:

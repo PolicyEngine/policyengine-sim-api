@@ -195,9 +195,14 @@ by the same correlation ID.
 Stage 12 deployments run `src/modal/stage12_precompute_app.py` against the
 dedicated `STAGE12_CACHE_BUCKET`. It publishes three annual datasets plus 60
 current-law US baseline files and emits
-`STAGE12_CACHE_MANIFEST_DIGEST=<sha256>`. Like the v2 workers, its image and
-functions mount only the read-only `pe-uk-private-hf-read-token` Hugging Face
-secret, which supplies `HUGGING_FACE_TOKEN`, and
+`STAGE12_CACHE_MANIFEST_DIGEST=<sha256>`. Baseline files have the names .py
+saves and loads them under (`Simulation.storage_id`, which includes the SPM
+selection's digest). Stored files are never replaced: a run computes only
+missing files, takes no `--force`, and publishes the manifest only once a
+determinism check of the planned baselines has a recorded pass. Like the v2
+workers, its image and functions mount only the read-only
+`pe-uk-private-hf-read-token` Hugging Face secret, which supplies
+`HUGGING_FACE_TOKEN`, and
 `stage12-evaluation-gcp-credentials`; the US data it reads comes from the
 public `policyengine/populace-us` dataset repository. The US worker image
 downloads and verifies the manifest's 63 files during image construction. The

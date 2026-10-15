@@ -127,14 +127,19 @@ def compute_baseline(bucket: str, expected: dict) -> dict:
     timeout=3600,
     secrets=worker_secrets,
 )
-def verify_determinism(bucket: str, expected: dict) -> dict:
-    from policyengine_simulation_executor.stage12_cache.models import BaselinePlanEntry
+def verify_determinism(bucket: str, plan: dict, expected: dict) -> dict:
+    from policyengine_simulation_executor.stage12_cache.models import (
+        BaselinePlanEntry,
+        PrecomputePlan,
+    )
     from policyengine_simulation_executor.stage12_cache.precompute import (
         verify_determinism_impl,
     )
 
     return verify_determinism_impl(
-        bucket, BaselinePlanEntry.model_validate(expected)
+        bucket,
+        PrecomputePlan.model_validate(plan),
+        BaselinePlanEntry.model_validate(expected),
     ).model_dump()
 
 
@@ -155,7 +160,7 @@ def publish_manifest(bucket: str, plan: dict) -> str:
 
 
 @app.local_entrypoint()
-def main(force: bool = False):
+def main():
     from policyengine_simulation_executor.stage12_cache.precompute import (
         run_precompute,
     )
@@ -165,7 +170,6 @@ def main(force: bool = False):
 
     run_precompute(
         resolve_cache_bucket(),
-        force=force,
         plan_artifacts=plan_artifacts,
         build_dataset=build_dataset,
         compute_baseline=compute_baseline,

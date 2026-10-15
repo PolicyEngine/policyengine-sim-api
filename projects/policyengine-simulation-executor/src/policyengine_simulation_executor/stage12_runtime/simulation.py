@@ -92,6 +92,7 @@ def build_stage12_simulation(
         resolved=resolved,
         dataset_is_default=dataset_selection.is_default,
         scoping_strategy=scoping_strategy,
+        spm=selection,
     )
     simulation_type = Stage12CachedSimulation if identity is not None else Simulation
     model = simulation_type(
@@ -106,6 +107,20 @@ def build_stage12_simulation(
         model.configure_stage12_cache(execution.output_plan)
     del region_code
     return model
+
+
+def simulation_runtime_params(
+    simulation: PlannedSimulationExecutionInput,
+) -> dict[str, Any]:
+    """Return the parameters a Stage 12 simulation is resolved and built from."""
+
+    return {
+        "country": simulation.geography.country,
+        "scope": "macro",
+        "time_period": str(simulation.year),
+        "region": simulation.geography.region,
+        **simulation.options,
+    }
 
 
 def simulation_input_sha256(simulation: SimulationExecutionInput) -> str:
@@ -188,13 +203,7 @@ def calculate_simulation_frames(
         raise ValueError("population artifact differs from bundle dataset provenance")
     _require_installed_bundle(simulation)
     country = simulation.geography.country
-    params: dict[str, Any] = {
-        "country": country,
-        "scope": "macro",
-        "time_period": str(simulation.year),
-        "region": simulation.geography.region,
-        **simulation.options,
-    }
+    params = simulation_runtime_params(simulation)
     from policyengine_simulation_executor.simulation_runtime import (
         _country_module,
         _load_dataset,

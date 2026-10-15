@@ -83,7 +83,7 @@ class Stage12BaselineCacheIdentity:
     region_codes: tuple[str, ...]
     scope_key: str
     output_plan_sha256: str
-    optional_configuration: Any = None
+    spm: Mapping[str, Any] | None = None
 
     @property
     def payload(self) -> dict[str, Any]:
@@ -94,7 +94,7 @@ class Stage12BaselineCacheIdentity:
             "region_codes": list(self.region_codes),
             "scope_key": self.scope_key,
             "output_plan_sha256": self.output_plan_sha256,
-            "optional_configuration": self.optional_configuration,
+            "spm": dict(self.spm) if self.spm is not None else None,
             "policy": CURRENT_LAW_POLICY,
         }
 
@@ -107,8 +107,20 @@ class Stage12BaselineCacheIdentity:
         return f"{BASELINE_SCHEMA}-{self.digest[:_ID_DIGEST_CHARS]}"
 
     @property
+    def storage_id(self) -> str:
+        """The name .py saves and loads this baseline under.
+
+        Mirrors ``policyengine.core.Simulation.storage_id``: a US simulation
+        always has a resolved SPM selection, so .py appends its digest.
+        """
+
+        if self.spm is None:
+            return self.simulation_id
+        return f"{self.simulation_id}-spm-{canonical_digest(self.spm)}"
+
+    @property
     def filename(self) -> str:
-        return f"{self.simulation_id}.h5"
+        return f"{self.storage_id}.h5"
 
     @property
     def store_path(self) -> str:
@@ -160,10 +172,14 @@ def collect_baseline_identity(
     resolved: ResolvedStage12Bundle,
     region_codes: tuple[str, ...],
     scope_key: str,
+    spm: Mapping[str, Any] | None,
 ) -> Stage12BaselineCacheIdentity:
-    """Build the identity shared by the Stage 12 writer and reader."""
+    """Build the identity shared by the Stage 12 writer and reader.
 
-    optional_configuration = simulation.options.get("spm")
+    ``spm`` is the resolved selection the simulation is built with, so the
+    identity's file name matches the one .py saves and loads.
+    """
+
     return Stage12BaselineCacheIdentity(
         dataset=collect_dataset_identity(
             resolved,
@@ -173,5 +189,5 @@ def collect_baseline_identity(
         region_codes=region_codes,
         scope_key=scope_key,
         output_plan_sha256=stage12_output_plan_sha256(simulation.output_plan),
-        optional_configuration=optional_configuration,
+        spm=spm,
     )

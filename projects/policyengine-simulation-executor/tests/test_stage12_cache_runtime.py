@@ -14,6 +14,7 @@ from policyengine_simulation_contract.stage12_bundle import (
 )
 from policyengine_simulation_contract.stage12_execution import SimulationRole
 from policyengine_simulation_executor.stage12_cache.keys import (
+    canonical_digest,
     collect_baseline_identity,
     collect_dataset_identity,
 )
@@ -25,6 +26,16 @@ from policyengine_simulation_executor.stage12_cache.runtime import (
     qualifying_cache_identity,
 )
 from test_stage12_runtime import _planned_simulation
+
+# A resolved selection, as normalize_runtime_spm returns for every US request.
+SPM_SELECTION = {
+    "forecast_content_sha256": "e" * 64,
+    "scenario": "ce_trend",
+    "geography_kind": "county",
+    "geography_id": None,
+    "county_vintage": "2020",
+    "as_of": None,
+}
 
 
 def _resolved() -> ResolvedStage12Bundle:
@@ -83,18 +94,24 @@ def test_cache_writer_and_reader_share_full_identity() -> None:
         resolved=resolved,
         dataset_is_default=True,
         scoping_strategy=strategy,
+        spm=SPM_SELECTION,
     )
     writer = collect_baseline_identity(
         simulation,
         resolved=resolved,
         region_codes=("state/ca",),
         scope_key=strategy.cache_key,
+        spm=SPM_SELECTION,
     )
 
     assert reader == writer
     assert reader is not None
     assert reader.simulation_id.startswith("stage12-bl1-")
-    assert reader.store_path.endswith(f"/{reader.simulation_id}.h5")
+    # Named as .py's Simulation.storage_id names the file it saves and loads.
+    assert reader.filename == (
+        f"{reader.simulation_id}-spm-{canonical_digest(SPM_SELECTION)}.h5"
+    )
+    assert reader.store_path.endswith(f"/{reader.filename}")
 
 
 def test_dataset_and_baseline_inputs_rotate_cache_identity() -> None:
@@ -111,12 +128,21 @@ def test_dataset_and_baseline_inputs_rotate_cache_identity() -> None:
         resolved=resolved,
         region_codes=("state/ca",),
         scope_key="state/ca",
+        spm=SPM_SELECTION,
     )
     ny = collect_baseline_identity(
         simulation,
         resolved=resolved,
         region_codes=("state/ny",),
         scope_key="state/ny",
+        spm=SPM_SELECTION,
+    )
+    national_spm = collect_baseline_identity(
+        simulation,
+        resolved=resolved,
+        region_codes=("state/ca",),
+        scope_key="state/ca",
+        spm={**SPM_SELECTION, "geography_kind": "national"},
     )
     first_entity = simulation.output_plan.entities[0]
     changed_plan = collect_baseline_identity(
@@ -142,9 +168,11 @@ def test_dataset_and_baseline_inputs_rotate_cache_identity() -> None:
         resolved=resolved,
         region_codes=("state/ca",),
         scope_key="state/ca",
+        spm=SPM_SELECTION,
     )
     assert ca.digest != ny.digest
     assert changed_plan.digest != ca.digest
+    assert national_spm.digest != ca.digest
 
 
 def test_only_current_law_default_dataset_baseline_qualifies() -> None:
@@ -155,6 +183,7 @@ def test_only_current_law_default_dataset_baseline_qualifies() -> None:
         "resolved": _resolved(),
         "dataset_is_default": True,
         "scoping_strategy": _strategy(),
+        "spm": SPM_SELECTION,
     }
     assert qualifying_cache_identity(baseline, **kwargs) is not None
     assert (

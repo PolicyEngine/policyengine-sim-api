@@ -35,6 +35,7 @@ class BaselinePlanEntry(StrictCacheModel):
     region_codes: Annotated[tuple[str, ...], Field(min_length=1)]
     digest: str
     path: str
+    filename: str
     simulation_id: str
     output_plan_sha256: str
     exists: bool
@@ -47,6 +48,7 @@ class PrecomputePlan(StrictCacheModel):
     baselines: tuple[BaselinePlanEntry, ...]
     bundle: CacheBundleIdentity
     partition_sha256: str
+    determinism_verified: bool
 
 
 class WorkSelection(StrictCacheModel):

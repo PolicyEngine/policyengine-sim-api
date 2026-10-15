@@ -814,16 +814,35 @@ class TestStage12CachePrecompute:
         assert "--force" not in calls
         assert emitted == f"manifest_digest={digest}\n"
 
-    def test_rejects_invalid_digest_and_passes_force(self, tmp_path):
+    def test_rejects_an_invalid_digest(self, tmp_path):
         result, calls, emitted = self._run_with_fake_uv(
             tmp_path,
             "STAGE12_CACHE_MANIFEST_DIGEST=not-a-digest",
-            "true",
         )
 
         assert result.returncode != 0
-        assert calls.rstrip().endswith("--force")
+        assert calls.strip() == (
+            "run modal run --env=staging src/modal/stage12_precompute_app.py"
+        )
         assert emitted == ""
+
+    def test_v1_force_recompute_never_reaches_the_immutable_cache(self):
+        """Stored Stage 12 cache files cannot be replaced, so nothing forces
+        a rebuild of them."""
+        reusable_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
+        ).read_text(encoding="utf-8")
+        cache_step = next(
+            line
+            for line in reusable_workflow.splitlines()
+            if "stage12-cache-precompute.sh" in line
+        )
+
+        assert cache_step.strip() == (
+            "run: ../../.github/scripts/stage12-cache-precompute.sh "
+            '"${{ inputs.modal_environment }}"'
+        )
+        assert "--force" not in self.script.read_text(encoding="utf-8")
 
 
 class TestModalRecordDeployment:
