@@ -313,7 +313,7 @@ def _permission_events(event: Mock) -> list[dict[str, object]]:
 
 
 @pytest.mark.parametrize(
-    ("method", "path", "body", "permission", "authorized_status"),
+    ("method", "path", "body", "permission", "_authorized_status"),
     PROTECTED_ROUTES,
 )
 def test_enforced_route_rejects_caller_without_its_permission(
@@ -321,7 +321,7 @@ def test_enforced_route_rejects_caller_without_its_permission(
     path,
     body,
     permission,
-    authorized_status,
+    _authorized_status,
 ):
     backend = FakeBackend()
     other_permissions = [item for item in ALL_PERMISSIONS if item != permission]
@@ -551,7 +551,7 @@ def test_permission_telemetry_failure_does_not_change_response(
 
 
 @pytest.mark.parametrize(
-    ("method", "path", "body", "permission", "authorized_status"),
+    ("method", "path", "body", "_permission", "authorized_status"),
     PROTECTED_ROUTES,
 )
 def test_disabled_authentication_allows_enforced_routes(
@@ -559,15 +559,15 @@ def test_disabled_authentication_allows_enforced_routes(
     method,
     path,
     body,
-    permission,
+    _permission,
     authorized_status,
 ):
     class Decoder:
-        def __call__(self, token, runtime):
+        def __call__(self, token, runtime):  # noqa: ARG002  # stands in for JWTDecoder.__call__
             msg = "disabled authentication decoded a token"
             raise AssertionError(msg)
 
-    monkeypatch.setattr(auth_module, "_decoder", lambda issuer, audience: Decoder())
+    monkeypatch.setattr(auth_module, "_decoder", lambda _issuer, _audience: Decoder())
     app = create_app(
         settings=make_settings(
             auth_required=False,
@@ -588,11 +588,11 @@ def test_disabled_authentication_allows_enforced_routes(
 
 def test_public_routes_stay_public_when_permissions_are_enforced(monkeypatch):
     class Decoder:
-        def __call__(self, token, runtime):
+        def __call__(self, token, runtime):  # noqa: ARG002  # stands in for JWTDecoder.__call__
             msg = "public route attempted authentication"
             raise AssertionError(msg)
 
-    monkeypatch.setattr(auth_module, "_decoder", lambda issuer, audience: Decoder())
+    monkeypatch.setattr(auth_module, "_decoder", lambda _issuer, _audience: Decoder())
     app = create_app(
         settings=make_settings(enforce_permissions=True),
         backend=FakeBackend(),
