@@ -757,7 +757,7 @@ def _job_progress_payload(
     job_metadata: dict,
     status: JobStatus,
 ) -> dict:
-    """Optional stage fields for a status response.
+    """Return the optional stage fields for a status response.
 
     Stage reporting never changes the status, the result or the HTTP code: a
     failed or malformed read drops the stage fields instead of guessing.

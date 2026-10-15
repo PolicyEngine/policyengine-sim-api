@@ -16,6 +16,8 @@ from pydantic import PrivateAttr
 
 
 class StageReportingSimulation(Simulation):
+    """A Simulation that calls back once, when its first ``ensure()`` starts."""
+
     _on_first_ensure: Callable[[], None] | None = PrivateAttr(default=None)
 
     def on_first_ensure(self, callback: Callable[[], None]) -> None:
@@ -23,10 +25,10 @@ class StageReportingSimulation(Simulation):
 
         ``callback`` must not raise: it runs inside the calculation.
         """
-
         self._on_first_ensure = callback
 
     def ensure(self) -> None:
+        """Run any pending first-ensure callback, then ``Simulation.ensure()``."""
         callback = self._on_first_ensure
         # Clear before the call so cached copies never carry the callback.
         self._on_first_ensure = None

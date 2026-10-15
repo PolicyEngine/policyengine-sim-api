@@ -36,53 +36,75 @@ def _utc_now() -> datetime:
 
 
 class JobProgressReporter(Protocol):
-    def start(self) -> None: ...
+    """Stage boundaries the runtime reports while an annual job runs."""
 
-    def set_execution(self, execution: JobExecution) -> None: ...
+    def start(self) -> None:
+        """Begin the job at the ``loading_data`` stage."""
+        ...
 
-    def enter(self, stage: JobStage) -> None: ...
+    def set_execution(self, execution: JobExecution) -> None:
+        """Record whether the job runs as one calculation or in segments."""
+        ...
 
-    def start_segments(self, total: int) -> None: ...
+    def enter(self, stage: JobStage) -> None:
+        """Close the current stage and begin ``stage``."""
+        ...
 
-    def segment_completed(self) -> None: ...
+    def start_segments(self, total: int) -> None:
+        """Enter the ``simulating`` stage with ``total`` region segments to run."""
+        ...
 
-    def finish(self) -> None: ...
+    def segment_completed(self) -> None:
+        """Count one more finished region segment."""
+        ...
 
-    def interrupt(self) -> None: ...
+    def finish(self) -> None:
+        """Close the current stage after the job succeeds or fails."""
+        ...
 
-    def stage_durations(self) -> dict[JobStage, float]: ...
+    def interrupt(self) -> None:
+        """Close the current stage but leave the job running for a retry."""
+        ...
 
-    def attempts(self) -> int: ...
+    def stage_durations(self) -> dict[JobStage, float]:
+        """Return the seconds spent in each ended stage."""
+        ...
+
+    def attempts(self) -> int:
+        """Return how many times Modal has started this call."""
+        ...
 
 
 class NullJobProgressReporter:
     """Reports nothing."""
 
     def start(self) -> None:
-        pass
+        """Do nothing; no record is kept."""
 
     def set_execution(self, execution: JobExecution) -> None:
-        pass
+        """Discard the execution path."""
 
     def enter(self, stage: JobStage) -> None:
-        pass
+        """Discard the stage."""
 
     def start_segments(self, total: int) -> None:
-        pass
+        """Discard the segment count."""
 
     def segment_completed(self) -> None:
-        pass
+        """Discard the finished segment."""
 
     def finish(self) -> None:
-        pass
+        """Do nothing; there is no stage to close."""
 
     def interrupt(self) -> None:
-        pass
+        """Do nothing; there is no stage to close."""
 
     def stage_durations(self) -> dict[JobStage, float]:
+        """Return no durations, since no stage is timed."""
         return {}
 
     def attempts(self) -> int:
+        """Return 1, since no earlier attempt is known."""
         return 1
 
 
@@ -111,6 +133,11 @@ class StoredJobProgressReporter:
         read: ProgressReader | None = None,
         clock: Callable[[], datetime] = _utc_now,
     ) -> None:
+        """Report ``job_id``'s stages through ``write``, timed by ``clock``.
+
+        With ``read``, ``start()`` continues the record that an earlier
+        attempt of the same call wrote.
+        """
         self.job_id = job_id
         self._write = write
         self._read = read
@@ -125,9 +152,14 @@ class StoredJobProgressReporter:
 
     @property
     def record(self) -> JobProgressRecord | None:
+        """Return this attempt's record, without any earlier attempt's held stage."""
         return self._record
 
     def start(self) -> None:
+        """Write the first record, continuing an earlier attempt's if there is one.
+
+        Calls after the first do nothing.
+        """
         if self._record is not None:
             return
         now = self._clock()
@@ -151,6 +183,7 @@ class StoredJobProgressReporter:
         self._publish()
 
     def set_execution(self, execution: JobExecution) -> None:
+        """Record the execution path, starting the record first if needed."""
         if self._record is None:
             self.start()
         record = self._record
@@ -162,6 +195,11 @@ class StoredJobProgressReporter:
         self._publish()
 
     def enter(self, stage: JobStage) -> None:
+        """Close the current stage and begin ``stage``, starting the record first.
+
+        Entering the current stage again, or any stage after ``finish()``,
+        changes nothing.
+        """
         if self._record is None:
             self.start()
         record = self._record
@@ -175,6 +213,10 @@ class StoredJobProgressReporter:
         self._publish()
 
     def start_segments(self, total: int) -> None:
+        """Enter ``simulating`` and record ``total`` segments, none completed.
+
+        A total below 1 records no segment count.
+        """
         self.enter(JobStage.SIMULATING)
         record = self._record
         if record is None or record.finished_at is not None or total < 1:
@@ -183,6 +225,7 @@ class StoredJobProgressReporter:
         self._publish()
 
     def segment_completed(self) -> None:
+        """Count one more completed segment, never beyond the total."""
         record = self._record
         if record is None or record.finished_at is not None:
             return
@@ -197,7 +240,6 @@ class StoredJobProgressReporter:
 
     def finish(self) -> None:
         """Close the current stage. Runs after success and after failure."""
-
         record = self._record
         if record is None or record.finished_at is not None or self._interrupted:
             return
@@ -216,7 +258,6 @@ class StoredJobProgressReporter:
         attempt continues from the furthest stage reached. ``finish()`` does
         nothing afterwards.
         """
-
         record = self._record
         if record is None or record.finished_at is not None or self._interrupted:
             return
@@ -226,12 +267,12 @@ class StoredJobProgressReporter:
 
     def stage_durations(self) -> dict[JobStage, float]:
         """Seconds per ended stage over all attempts; complete after ``finish()``."""
-
         if self._record is None:
             return {}
         return dict(self._record.stage_durations)
 
     def attempts(self) -> int:
+        """Return this attempt's number, counting from 1."""
         return 1 if self._record is None else self._record.attempts
 
     def _earlier_attempt(self) -> JobProgressRecord | None:
@@ -250,8 +291,7 @@ class StoredJobProgressReporter:
             return None
 
     def _published(self, record: JobProgressRecord) -> JobProgressRecord:
-        """The record clients see: never behind an earlier attempt's stage."""
-
+        """Return the record clients see, never behind an earlier attempt's stage."""
         snapshot = record.model_copy(deep=True)
         if self._held is None:
             return snapshot

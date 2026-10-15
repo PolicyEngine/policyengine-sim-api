@@ -261,7 +261,7 @@ def _set_modal_call_attributes(runtime: "ObservabilityRuntime") -> None:
 
 
 def _job_progress_reporter() -> "JobProgressReporter":
-    """A stage reporter for this call, keyed by its public ``job_id``.
+    """Return a stage reporter for this call, keyed by its public ``job_id``.
 
     The gateway's ``job_id`` is the spawned call's ``object_id``, which is
     this call's ``current_function_call_id()``. Without one there is nothing
