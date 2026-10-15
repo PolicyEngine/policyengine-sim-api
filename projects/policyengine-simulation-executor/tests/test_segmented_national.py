@@ -144,7 +144,10 @@ class TestBuildGroupChildPayload:
 
 
 class FakeCall:
-    """A FunctionCall whose result resolves after N polls (or raises)."""
+    """A FunctionCall whose result resolves after N polls (or raises).
+
+    Setting ``cancel_failures`` makes that many cancels fail first.
+    """
 
     def __init__(
         self,
@@ -153,14 +156,13 @@ class FakeCall:
         error=None,
         errors_once=0,
         before_each_poll=None,
-        cancel_failures=0,
     ):
         self.result = result
         self.polls_until_ready = polls_until_ready
         self.error = error
         self.errors_once = errors_once
         self.before_each_poll = before_each_poll
-        self.cancel_failures = cancel_failures
+        self.cancel_failures = 0
         self.cancelled = False
         self.cancel_attempts = 0
         self.poll_count = 0
