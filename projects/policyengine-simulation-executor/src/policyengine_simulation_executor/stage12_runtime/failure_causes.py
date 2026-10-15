@@ -312,8 +312,9 @@ def _without_url_query(url_match: re.Match[str]) -> str:
 
 
 def _before_last_word(text: str) -> str:
+    # rsplit with maxsplit=1 returns at most two parts.
     words = text.rsplit(maxsplit=1)
-    return words[0] if len(words) == 2 else ""
+    return words[0] if len(words) > 1 else ""
 
 
 def _secret_environment_values() -> tuple[str, ...]:
