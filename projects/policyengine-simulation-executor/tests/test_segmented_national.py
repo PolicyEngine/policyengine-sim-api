@@ -10,6 +10,10 @@ from conftest import NoOpObservabilityRuntime
 from policyengine_simulation_contract.spm import SPMInputError
 from policyengine_simulation_executor import simulation_runtime as sr
 from policyengine_simulation_executor import spm as executor_spm
+from policyengine_simulation_executor.job_progress import (
+    NULL_JOB_PROGRESS,
+    NullJobProgressReporter,
+)
 from policyengine_simulation_executor.national_partition import (
     US_NATIONAL_REGION_GROUPS,
 )
@@ -473,6 +477,43 @@ class TestSegmentedNationalRunnerTiming:
         assert runner.clock is clock
         assert runner.started_at == 50
         assert runner.budget_ends_at == 950
+
+
+class TestSegmentedNationalRunnerReporting:
+    def test__runner_reports_to_its_runtime_and_no_job_progress_by_default(self):
+        runner = sn.SegmentedNationalRunner(
+            dict(NATIONAL),
+            app_name="policyengine-simulation-py-test",
+            runtime=TEST_RUNTIME,
+            modal_module=FakeModal([]),
+        )
+
+        assert runner.runtime is TEST_RUNTIME
+        assert runner.progress is NULL_JOB_PROGRESS
+
+    def test__impl_gives_the_runner_its_runtime_and_job_progress(self, monkeypatch):
+        runtime = NoOpObservabilityRuntime()
+        progress = NullJobProgressReporter()
+        reported_to = {}
+
+        def record_reporting(runner):
+            reported_to["runtime"] = runner.runtime
+            reported_to["progress"] = runner.progress
+            return {"ok": True}
+
+        monkeypatch.setattr(sn, "modal", FakeModal([]))
+        monkeypatch.setattr(sn.SegmentedNationalRunner, "run", record_reporting)
+
+        result = sn.run_segmented_national_impl(
+            dict(NATIONAL),
+            app_name="policyengine-simulation-py-test",
+            runtime=runtime,
+            progress=progress,
+        )
+
+        assert result == {"ok": True}
+        assert reported_to["runtime"] is runtime
+        assert reported_to["progress"] is progress
 
 
 class TestSegmentedNationalChildDeadline:
