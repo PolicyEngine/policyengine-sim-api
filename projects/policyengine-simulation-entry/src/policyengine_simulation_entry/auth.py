@@ -1,9 +1,11 @@
-"""Inbound bearer authentication for protected Simulation Entrypoint routes."""
+"""Inbound bearer authentication and permission checks for protected routes."""
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from functools import lru_cache
+from typing import Literal
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -15,6 +17,14 @@ from policyengine_simulation_entry.schemas import CallerIdentity
 
 _bearer = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)
+
+type CallerPermission = Literal[
+    "simulation:submit",
+    "simulation:read",
+    "stage12:operate",
+]
+type AuthenticationDependency = Callable[[], CallerIdentity | None]
+type AuthorizationDependency = Callable[..., CallerIdentity | None]
 
 
 class JWTDecoder:
@@ -91,3 +101,96 @@ def reset_decoder_cache() -> None:
     """Clear the decoder cache for tests and credential rotations."""
 
     _decoder.cache_clear()
+
+
+def is_client_credentials(identity: CallerIdentity) -> bool:
+    """Return whether the token was issued to a machine client."""
+
+    return "client-credentials" in identity.grant_types or (
+        identity.subject is not None and identity.subject.endswith("@clients")
+    )
+
+
+def granted_permissions(identity: CallerIdentity) -> frozenset[str]:
+    """Return the permissions a token grants.
+
+    The RBAC ``permissions`` claim counts for every token. The OAuth ``scope``
+    claim counts only for client-credentials tokens, whose scopes come from the
+    client's grant. Unless RBAC is enabled on the API, Auth0 copies whatever
+    API scopes a user's application requested into a user token's ``scope``,
+    so there it proves nothing.
+    """
+
+    scopes = (
+        identity.scope.split()
+        if identity.scope and is_client_credentials(identity)
+        else []
+    )
+    return frozenset([*(identity.permissions or []), *scopes])
+
+
+class CallerAuthorizer:
+    """Build FastAPI dependencies that check one Auth0 permission per route.
+
+    With enforcement disabled, a caller that lacks the permission is recorded
+    and allowed, so missing grants can be found before enforcement begins.
+    """
+
+    def __init__(
+        self,
+        *,
+        authenticate: AuthenticationDependency,
+        enforce: bool,
+        runtime: ObservabilityRuntime,
+    ):
+        self.authenticate = authenticate
+        self.enforce = enforce
+        self.runtime = runtime
+
+    def require_permission(
+        self,
+        permission: CallerPermission,
+    ) -> AuthorizationDependency:
+        """Return a dependency that yields the caller holding ``permission``."""
+
+        def authorized_caller(
+            identity: CallerIdentity | None = Depends(self.authenticate),
+        ) -> CallerIdentity | None:
+            return self.authorize(identity, permission)
+
+        return authorized_caller
+
+    def authorize(
+        self,
+        identity: CallerIdentity | None,
+        permission: CallerPermission,
+    ) -> CallerIdentity | None:
+        # No identity means caller authentication is disabled, which settings
+        # validation permits only outside production. There are no claims to
+        # check, so the request proceeds.
+        if identity is None or permission in granted_permissions(identity):
+            return identity
+        self._record_missing_permission(identity, permission)
+        if self.enforce:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        return identity
+
+    def _record_missing_permission(
+        self,
+        identity: CallerIdentity,
+        permission: CallerPermission,
+    ) -> None:
+        attributes: dict[str, str | bool] = {
+            "permission": permission,
+            "enforced": self.enforce,
+        }
+        if identity.authorized_party:
+            attributes["client_id"] = identity.authorized_party
+        try:
+            self.runtime.event(
+                "simulation_entry_permission_missing",
+                severity="WARNING",
+                attributes=attributes,
+            )
+        except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+            pass

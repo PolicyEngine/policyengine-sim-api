@@ -13,6 +13,9 @@ PROBE_PAYLOAD = {
     "scope": "macro",
     "reform": {},
 }
+# A read-only route guarded by stage12:operate, which the deployed test client
+# must not hold. The nil identifier never names a real Stage 12 report.
+PERMISSION_PROBE_PATH = "/internal/stage12/reports/00000000-0000-0000-0000-000000000000"
 
 
 def _required(name: str) -> str:
@@ -25,6 +28,20 @@ def _required(name: str) -> str:
 @pytest.fixture(scope="session")
 def base_url() -> str:
     return _required("SIMULATION_ENTRYPOINT_TEST_BASE_URL").rstrip("/")
+
+
+@pytest.fixture(scope="session")
+def permission_enforcement() -> None:
+    value = (
+        os.environ.get("SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS", "").strip()
+        or "0"
+    )
+    if value not in {"0", "1"}:
+        raise RuntimeError(
+            "SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS must be 0 or 1."
+        )
+    if value == "0":
+        pytest.skip("The target environment logs missing permissions only.")
 
 
 @pytest.fixture(scope="session")
@@ -83,3 +100,20 @@ def test_valid_token_reaches_authenticated_old_gateway(
     # submitted. Reaching this 400 proves both authentication hops succeeded.
     assert response.status_code == 400
     assert response.headers["x-policyengine-simulation-backend"] == "old_gateway"
+
+
+def test_enforced_permissions_reject_token_without_route_permission(
+    permission_enforcement: None,
+    base_url: str,
+    access_token: str,
+):
+    response = httpx.get(
+        f"{base_url}{PERMISSION_PROBE_PATH}",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=30,
+    )
+
+    # The token is valid, so only the missing stage12:operate permission can
+    # produce this 403. Any other status means enforcement is off or the test
+    # client has been granted stage12:operate.
+    assert response.status_code == 403

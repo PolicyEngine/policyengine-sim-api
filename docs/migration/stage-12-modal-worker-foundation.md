@@ -270,7 +270,10 @@ The existing Cloud Run Simulation Entrypoint exposes these operator-only routes:
 - `GET /internal/stage12/reports/{evaluation_id}` reads its temporary parent and
   child execution metadata.
 
-Both routes enforce the Simulation Entrypoint's existing bearer authentication.
+Both routes enforce the Simulation Entrypoint's existing bearer authentication
+and require the `stage12:operate` permission. Missing permissions are only
+logged until `SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS=1`; see the
+entrypoint's `DEPLOYMENT.md`.
 `POST /internal/stage12/reports` accepts new work only when
 `STAGE12_ENABLED=1`; with a missing or zero value it returns HTTP 503 without
 creating a parent record or invoking Modal. The status route remains available
