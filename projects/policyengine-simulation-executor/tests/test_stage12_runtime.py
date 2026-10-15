@@ -245,7 +245,7 @@ class RecordingRuntime:
     def capture_context(self):
         return {}
 
-    def record_exception(self, error, *, handled, status_code=None):
+    def record_exception(self, error, *, handled, status_code=None):  # noqa: ARG002  # mirrors ObservabilityRuntime.record_exception, which callers pass status_code= by keyword
         assert handled
         self.recorded_exceptions.append(error)
 
@@ -1557,7 +1557,7 @@ def test_comparison_failure_does_not_change_successful_stage12_report() -> None:
 class UnavailableProductionCall:
     object_id = "production-job-1"
 
-    def get(self, *, timeout=None):
+    def get(self, *, timeout=None):  # noqa: ARG002  # mirrors modal.FunctionCall.get, which callers pass timeout= by keyword
         msg = (
             "production result unavailable at "
             "https://storage.example.com/result.json?X-Goog-Signature=signed-value"
@@ -1805,7 +1805,7 @@ class WorkerRecordedFailureCall:
         self.simulation_execution_id = simulation_execution_id
         self.worker_summary = worker_summary
 
-    def get(self, *, timeout=None):
+    def get(self, *, timeout=None):  # noqa: ARG002  # mirrors modal.FunctionCall.get, which callers pass timeout= by keyword
         child = self.store.children[self.simulation_execution_id]
         self.store.children[self.simulation_execution_id] = child.model_copy(
             update={
@@ -1823,7 +1823,7 @@ class UnreachedCall:
     def __init__(self, object_id):
         self.object_id = object_id
 
-    def get(self, *, timeout=None):
+    def get(self, *, timeout=None):  # noqa: ARG002  # mirrors modal.FunctionCall.get, which callers pass timeout= by keyword
         msg = "the coordinator waits for baseline first"
         raise AssertionError(msg)
 
@@ -1882,7 +1882,7 @@ def test_coordinator_keeps_the_cause_recorded_by_a_failed_worker() -> None:
 
 def test_coordinator_names_the_stage_that_rejected_the_aggregate() -> None:
     class RejectingAggregateArtifacts(FakeArtifacts):
-        def write_aggregate(self, *, prefix, payload):
+        def write_aggregate(self, *, prefix, payload):  # noqa: ARG002  # mirrors the Stage 12 artifact writer, which callers pass prefix= by keyword
             SPMComparisonProvenance.model_validate(payload["result"]["spm_provenance"])
 
     store = FakeStore()
