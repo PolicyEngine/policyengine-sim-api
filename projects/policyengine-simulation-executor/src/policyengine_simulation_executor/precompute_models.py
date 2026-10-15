@@ -20,7 +20,7 @@ digests. A regression test locks the digest of a fixed payload.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -148,7 +148,7 @@ class BaselineComputeResult(_StrictModel):
     year: int
     group: list[str]
     simulation_id: str
-    outcome: Optional[ArtifactOutcome]
+    outcome: ArtifactOutcome | None
     uploaded: bool
     compute_seconds: float
     size_bytes: int

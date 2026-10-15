@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from native_spm_support import materialize_native_household
 
 pytestmark = pytest.mark.skipif(

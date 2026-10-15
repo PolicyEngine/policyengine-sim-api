@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
 import logging
+from functools import lru_cache
 
+import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-import jwt
 from policyengine_observability import ObservabilityRuntime
 
 from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.schemas import CallerIdentity
-
 
 _bearer = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)

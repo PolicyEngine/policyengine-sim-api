@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import argparse
 import os
+from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Mapping
 
 from policyengine_simulation_executor.artifact_store import ArtifactStore
 from policyengine_simulation_executor.precompute_models import DeployedMarker

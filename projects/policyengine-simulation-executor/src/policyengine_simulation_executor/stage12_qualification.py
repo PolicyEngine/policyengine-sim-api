@@ -16,8 +16,6 @@ from policyengine_observability import (
     OTelConfig,
     ServiceIdentity,
 )
-from pydantic import BaseModel, ConfigDict
-
 from policyengine_simulation_contract.stage12_execution import (
     ArtifactMediaType,
     ArtifactReference,
@@ -26,6 +24,8 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationArtifactDescriptor,
     stage12_output_plan_sha256,
 )
+from pydantic import BaseModel, ConfigDict
+
 from policyengine_simulation_executor.simulation_microdata import (
     rebuild_entity_frame,
 )

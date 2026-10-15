@@ -7,7 +7,6 @@ import os
 import httpx
 import pytest
 
-
 PROTECTED_PATH = "/simulate/economy/comparison"
 PROBE_PAYLOAD = {
     "country": "__authentication_probe__",

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
 from types import MappingProxyType
+
 import pandas as pd
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,

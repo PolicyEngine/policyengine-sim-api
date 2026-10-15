@@ -34,6 +34,7 @@ def _required_uk_geography_lookup_csv_path(spec: UKGeographyAssetSpec) -> str:
     from policyengine.outputs.uk_geography_impact import (
         resolve_uk_geography_lookup_csv_path,
     )
+
     from policyengine_simulation_executor.simulation_runtime import (
         setup_gcp_credentials,
     )
@@ -180,12 +181,8 @@ def _should_build_us_congressional_district_impact(region_code: str | None) -> b
     if region_code is None:
         return True
     normalized_region_code = region_code.lower()
-    return (
-        normalized_region_code == "us"
-        or normalized_region_code.startswith("state/")
-        # A region group is a union of whole states; the CD table computed over
-        # its households is exactly its member states' districts.
-        or normalized_region_code.startswith("region_group/")
+    return normalized_region_code == "us" or normalized_region_code.startswith(
+        ("state/", "region_group/")
     )
 
 
@@ -275,6 +272,7 @@ def build_uk_local_authority_impact(
     from policyengine.outputs.uk_geography_impact import (
         compute_longwise_uk_geography_impacts,
     )
+
     from policyengine_simulation_executor.uk_local_authority_metadata import (
         load_uk_local_authority_resources,
     )

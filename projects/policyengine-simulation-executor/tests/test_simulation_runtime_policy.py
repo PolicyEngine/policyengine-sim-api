@@ -6,7 +6,6 @@ import pytest
 from policyengine.core import Dataset, Policy
 from policyengine.tax_benefit_models.common import reform as wrapper_reform
 from policyengine.utils.parametric_reforms import reform_dict_from_parameter_values
-
 from policyengine_simulation_executor.simulation_runtime import (
     DEFAULT_YEAR,
     DatasetSelection,

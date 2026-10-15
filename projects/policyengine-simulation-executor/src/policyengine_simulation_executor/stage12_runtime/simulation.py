@@ -11,6 +11,7 @@ from typing import Any
 
 import pandas as pd
 from policyengine_observability import ObservabilityRuntime
+from policyengine_simulation_contract.spm import SPMProvenance
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
@@ -21,7 +22,6 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12InvocationContext,
     stage12_output_plan_sha256,
 )
-from policyengine_simulation_contract.spm import SPMProvenance
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,

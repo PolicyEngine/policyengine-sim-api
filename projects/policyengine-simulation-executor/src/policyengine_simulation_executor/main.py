@@ -1,16 +1,18 @@
+import logging
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
-from policyengine_fastapi.exit import exit
-from policyengine_simulation_executor import initialize
-from policyengine_simulation_observability.observability import (
-    init_simulation_observability,
-)
 from policyengine_fastapi import ping
+from policyengine_fastapi.exit import exit
 from policyengine_fastapi.health import (
     HealthRegistry,
     HealthSystemReporter,
 )
-import logging
+from policyengine_simulation_observability.observability import (
+    init_simulation_observability,
+)
+
+from policyengine_simulation_executor import initialize
 
 """
 specific example instantiation of the app configured by a .env file

@@ -13,6 +13,7 @@ from uuid import UUID
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+from policyengine_simulation_contract.spm import SPMProvenance
 from policyengine_simulation_contract.stage12_execution import (
     SIMULATION_PARQUET_PAYLOAD_CONTRACT,
     AggregateReportArtifactPayload,
@@ -24,7 +25,6 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationArtifactDescriptor,
     stage12_output_plan_sha256,
 )
-from policyengine_simulation_contract.spm import SPMProvenance
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
 from policyengine_simulation_executor.artifact_store import ArtifactStore

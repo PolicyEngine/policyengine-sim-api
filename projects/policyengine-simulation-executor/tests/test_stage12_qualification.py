@@ -7,7 +7,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import pytest
-
 from policyengine_simulation_contract.stage12_execution import SimulationRole
 from policyengine_simulation_executor.simulation_microdata import (
     extract_output_microdata,
@@ -17,7 +16,6 @@ from policyengine_simulation_executor.stage12_qualification import (
     qualify_report_parity,
 )
 from policyengine_simulation_executor.stage12_runtime import SimulationCalculation
-
 from test_stage12_runtime import _report
 
 

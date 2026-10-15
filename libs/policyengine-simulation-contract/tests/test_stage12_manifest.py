@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
-
 from policyengine_simulation_contract.stage12_bundle import (
     ResolvedStage12Bundle,
     Stage12BundleManifest,

@@ -3,7 +3,7 @@
 import re
 from collections.abc import Sequence
 from datetime import date
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -37,14 +37,12 @@ class SPMSelection(BaseModel):
         frozen=True, extra="forbid", json_schema_extra=_selection_schema
     )
 
-    forecast_content_sha256: Optional[str] = Field(
-        default=None, pattern=r"^[0-9a-f]{64}$"
-    )
-    scenario: Optional[str] = Field(default=None, min_length=1, pattern=r"^\S+$")
+    forecast_content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    scenario: str | None = Field(default=None, min_length=1, pattern=r"^\S+$")
     geography_kind: Literal["county", "national", "metro"] = "county"
-    geography_id: Optional[str] = Field(default=None, min_length=1)
+    geography_id: str | None = Field(default=None, min_length=1)
     county_vintage: str = Field(default="2020", pattern=r"^[0-9]{4}$")
-    as_of: Optional[str] = None
+    as_of: str | None = None
 
     @model_serializer(mode="wrap")
     def serialize_selection(
@@ -153,9 +151,9 @@ class SPMProvenance(BaseModel):
     forecast_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     scenario: str = Field(min_length=1, pattern=r"^\S+$")
     geography_kind: Literal["county", "national", "metro"]
-    geography_id: Optional[str] = Field(min_length=1)
+    geography_id: str | None = Field(min_length=1)
     county_vintage: str = Field(pattern=r"^[0-9]{4}$")
-    as_of: Optional[date]
+    as_of: date | None
     years: tuple[str, ...]
     runtime_versions: "SPMRuntimeVersions"
 

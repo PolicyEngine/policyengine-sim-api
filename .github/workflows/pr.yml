@@ -99,6 +99,9 @@ jobs:
     - name: Run ruff format check
       run: uv run ruff format --check projects/*/src libs/*/src
 
+    - name: Run ruff check
+      run: uv run ruff check .
+
   quality-guards:
     name: Quality guards
     # Full CI runs only on the lowest unmerged pull request in a stack.

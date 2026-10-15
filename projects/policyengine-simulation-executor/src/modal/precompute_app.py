@@ -17,13 +17,13 @@ semantics.
 
 from __future__ import annotations
 
-import modal
-
 from src.modal.app import (
     build_runtime_simulation_image,
     gcp_secret,
     hf_secret,
 )
+
+import modal
 
 app = modal.App("policyengine-simulation-precompute")
 

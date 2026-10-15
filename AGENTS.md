@@ -138,7 +138,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 - `sim.quality.every-project-tested`: Every project and library with unit tests runs them in the PR test matrix. (doc-only, not checked: follow it yourself)
 - `sim.quality.ruff-format-src`: Source code under projects/*/src and libs/*/src is formatted with ruff format. (blocking: ruff format)
 - `sim.quality.ruff-format-tests`: Test code is formatted with ruff format too; CI currently checks only src directories. (doc-only, not checked: follow it yourself)
-- `sim.quality.ruff-lint`: Python code passes ruff check with the rules selected in ruff.toml (ruff's defaults, made explicit); CI does not run ruff check yet. (advisory: ruff check (E4, E7, E9, F), not blocking)
+- `sim.quality.ruff-lint`: All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. (blocking: ruff check (E4, E7, E9, F, FLY, FURB, I, PIE, PYI, RET, RSE, UP, W))
 - `sim.quality.tests-pass`: Each project's unit tests pass in its own locked environment. (blocking: CI job `test`)
 
 ### CI workflows and scripts

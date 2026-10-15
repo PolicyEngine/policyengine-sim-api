@@ -1,5 +1,5 @@
-import sys
 import importlib
+import sys
 
 
 def test_gateway_models_import_does_not_import_fastapi_endpoints(

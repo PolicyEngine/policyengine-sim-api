@@ -1,5 +1,4 @@
 import pytest
-
 from policyengine_simulation_observability.stages import (
     RUN_STAGE_REGISTRY,
     RunConfiguration,

@@ -8,7 +8,6 @@ from policyengine_observability import (
     GoogleCloudLogDestination,
     StdoutLogDestination,
 )
-
 from policyengine_simulation_observability.identifiers import (
     OBSERVABILITY_ID_HEADER,
 )

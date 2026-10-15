@@ -6,7 +6,6 @@ import json
 import os
 
 import pytest
-
 from policyengine_simulation_executor.simulation_runtime import (
     _normalize_credentials_blob,
     setup_gcp_credentials,

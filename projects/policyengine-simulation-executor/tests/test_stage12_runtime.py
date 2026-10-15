@@ -14,6 +14,8 @@ from uuid import UUID, uuid4
 
 import pandas as pd
 import pytest
+from fixtures.fake_object_store import InMemoryObjectStore
+from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_observability import (
     DeploymentIdentity,
     LoggingConfig,
@@ -24,6 +26,13 @@ from policyengine_observability import (
     configure,
 )
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
+from policyengine_simulation_contract.spm import (
+    SPMComparisonProvenance,
+    SPMRuntimeVersions,
+    SPMSelection,
+    build_spm_provenance,
+    validate_spm_calculation_provenance,
+)
 from policyengine_simulation_contract.stage12_execution import (
     AggregateReportArtifactPayload,
     ArtifactMediaType,
@@ -53,19 +62,10 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12OutputPlan,
     stage12_output_plan_sha256,
 )
-from policyengine_simulation_contract.spm import (
-    SPMComparisonProvenance,
-    SPMRuntimeVersions,
-    SPMSelection,
-    build_spm_provenance,
-    validate_spm_calculation_provenance,
-)
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
-from fixtures.fake_object_store import InMemoryObjectStore
-from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
     canonical_json_bytes,

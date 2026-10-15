@@ -3,15 +3,14 @@
 import json
 
 import pytest
-
 from policyengine_api_simulation_client import models as generated_models
 from policyengine_api_simulation_client.models import (
     BudgetWindowAnnualImpact,
+    SimulationRequest,
+    SingleYearMacroOutput,
     SPMCapability,
     SPMComparisonProvenance,
     SPMSelection,
-    SingleYearMacroOutput,
-    SimulationRequest,
 )
 
 

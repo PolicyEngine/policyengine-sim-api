@@ -243,7 +243,7 @@ class MockFunctionCall:
 
     def get(self, timeout: int = 0):
         if self.running:
-            raise TimeoutError()
+            raise TimeoutError
         if self.error is not None:
             raise self.error
         return self.result
@@ -321,7 +321,6 @@ class MockModalException:
 def mock_modal(monkeypatch):
     """Patch Modal calls in the gateway endpoints module."""
     from policyengine_simulation_contract import budget_window_state, dataset_uri
-
     from policyengine_simulation_gateway import endpoints
 
     mock_func = MockFunction()
