@@ -522,7 +522,7 @@ class SegmentedNationalRunner:
 
     @staticmethod
     def _cancel_call(call: modal.FunctionCall) -> None:
-        try:
+        try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
             call.cancel()
         except Exception:  # noqa: BLE001, S110  # best-effort cleanup: a failed cancel must not mask the failure being raised, and superseded calls are cancelled again later
             pass

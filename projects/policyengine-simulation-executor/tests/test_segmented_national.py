@@ -414,7 +414,7 @@ def _stuck_call(clock):
     )
 
 
-def _crashing_call(clock):
+def _crashing_call(_clock):
     """Return a child that fails outright (takes a clock to match ``_stuck_call``)."""
     return FakeCall(None, error=ValueError("child crashed"))
 
@@ -426,13 +426,14 @@ def _calls_with_stuck_child(clock, respawned_call, **sibling_options):
 
 
 class TestSegmentedNationalChildDeadline:
-    def test__overdue_child_is_cancelled_and_respawned_once(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__overdue_child_is_cancelled_and_respawned_once(self):
         clock = ManualClock()
         respawned_call = FakeCall({"child": "respawned"})
         calls = _calls_with_stuck_child(clock, respawned_call)
         fake = FakeModal(calls)
         runner = _runner(fake, clock=clock)
-        runner._reduce = lambda results, country_module: results
+        runner._reduce = lambda results, country_module: results  # noqa: ARG005  # run() passes country_module= by keyword
 
         results = runner.run()
 
@@ -453,7 +454,8 @@ class TestSegmentedNationalChildDeadline:
         # deadline, not later; the respawn finished without moving the clock.
         assert clock() == sn.CHILD_DEADLINE_SECONDS
 
-    def test__respawned_child_that_is_also_overdue_fails_the_run(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__respawned_child_that_is_also_overdue_fails_the_run(self):
         clock = ManualClock()
         calls = _calls_with_stuck_child(clock, _stuck_call(clock))
         runner = _runner(FakeModal(calls), clock=clock)
@@ -468,7 +470,8 @@ class TestSegmentedNationalChildDeadline:
         assert calls[STUCK_GROUP_INDEX].cancelled
         assert calls[-1].cancelled
 
-    def test__respawned_child_failure_names_the_respawn(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__respawned_child_failure_names_the_respawn(self):
         clock = ManualClock()
         failing_respawn = FakeCall(None, error=ValueError("child crashed"))
         calls = _calls_with_stuck_child(clock, failing_respawn)
@@ -481,7 +484,8 @@ class TestSegmentedNationalChildDeadline:
             runner.run()
         assert calls[STUCK_GROUP_INDEX].cancelled
 
-    def test__failed_respawn_spawn_cancels_every_child(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__failed_respawn_spawn_cancels_every_child(self):
         clock = ManualClock()
         runtime = RecordingRuntime()
         calls = _calls_with_stuck_child(
@@ -502,7 +506,8 @@ class TestSegmentedNationalChildDeadline:
             for update in runtime.context_updates
         )
 
-    def test__late_result_from_the_superseded_child_is_ignored(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__late_result_from_the_superseded_child_is_ignored(self):
         clock = ManualClock()
         # The original's next poll after its deadline would return a result.
         late_original = FakeCall(
@@ -514,7 +519,7 @@ class TestSegmentedNationalChildDeadline:
         calls[STUCK_GROUP_INDEX] = late_original
         calls.append(FakeCall({"child": "respawned"}, polls_until_ready=2))
         runner = _runner(FakeModal(calls), clock=clock)
-        runner._reduce = lambda results, country_module: results
+        runner._reduce = lambda results, country_module: results  # noqa: ARG005  # run() passes country_module= by keyword
 
         results = runner.run()
 
@@ -528,8 +533,9 @@ class TestSegmentedNationalChildDeadline:
         [_crashing_call, _stuck_call],
         ids=["respawn_fails", "respawn_also_overdue"],
     )
+    @pytest.mark.usefixtures("bare_country")
     def test__superseded_child_whose_cancel_failed_is_cancelled_on_a_later_failure(
-        self, bare_country, respawned_call_factory
+        self, respawned_call_factory
     ):
         clock = ManualClock()
         calls = _calls_with_stuck_child(clock, respawned_call_factory(clock))
@@ -546,15 +552,14 @@ class TestSegmentedNationalChildDeadline:
         assert superseded_original.cancelled
         assert superseded_original.poll_count == POLLS_TO_REACH_DEADLINE
 
-    def test__superseded_child_whose_cancel_failed_is_cancelled_after_collection(
-        self, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__superseded_child_whose_cancel_failed_is_cancelled_after_collection(self):
         clock = ManualClock()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
         superseded_original = calls[STUCK_GROUP_INDEX]
         superseded_original.cancel_failures = 1
         runner = _runner(FakeModal(calls), clock=clock)
-        runner._reduce = lambda results, country_module: results
+        runner._reduce = lambda results, country_module: results  # noqa: ARG005  # run() passes country_module= by keyword
 
         results = runner.run()
 
@@ -562,7 +567,8 @@ class TestSegmentedNationalChildDeadline:
         assert superseded_original.cancel_attempts == 2
         assert superseded_original.cancelled
 
-    def test__no_respawn_when_parent_budget_cannot_fit_a_retry(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__no_respawn_when_parent_budget_cannot_fit_a_retry(self):
         clock = ManualClock()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
         fake = FakeModal(calls)
@@ -581,9 +587,8 @@ class TestSegmentedNationalChildDeadline:
         assert len(fake.spawned_payloads) == 20
         assert calls[STUCK_GROUP_INDEX].cancelled
 
-    def test__respawn_deadline_is_clamped_to_the_remaining_parent_budget(
-        self, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__respawn_deadline_is_clamped_to_the_remaining_parent_budget(self):
         clock = ManualClock()
         runtime = RecordingRuntime()
         calls = _calls_with_stuck_child(clock, _stuck_call(clock))
@@ -605,9 +610,8 @@ class TestSegmentedNationalChildDeadline:
         assert timeout_event["attributes"]["deadline_seconds"] == 600
         assert not runtime.events_named("segmented_national_budget_exhausted")
 
-    def test__exhausted_parent_budget_cancels_children_before_modal_timeout(
-        self, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__exhausted_parent_budget_cancels_children_before_modal_timeout(self):
         clock = ManualClock()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
         fake = FakeModal(calls)
@@ -629,12 +633,13 @@ class TestSegmentedNationalChildDeadline:
         assert calls[STUCK_GROUP_INDEX].cancelled
         assert len(fake.spawned_payloads) == 20
 
-    def test__respawn_is_recorded_in_telemetry(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__respawn_is_recorded_in_telemetry(self):
         clock = ManualClock()
         runtime = RecordingRuntime()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
         runner = _runner(FakeModal(calls), runtime=runtime, clock=clock)
-        runner._reduce = lambda results, country_module: results
+        runner._reduce = lambda results, country_module: results  # noqa: ARG005  # run() passes country_module= by keyword
 
         runner.run()
 
@@ -648,7 +653,11 @@ class TestSegmentedNationalChildDeadline:
         assert {"segmented_child_retry_count": 1} in runtime.context_updates
 
     @pytest.mark.parametrize(
-        "parent_budget_seconds,expected_attempt,expected_remaining_budget_seconds",
+        (
+            "parent_budget_seconds",
+            "expected_attempt",
+            "expected_remaining_budget_seconds",
+        ),
         # The first budget fits both attempts with 600 s to spare; the second
         # leaves too little after the first attempt for a respawn.
         [
@@ -657,9 +666,9 @@ class TestSegmentedNationalChildDeadline:
         ],
         ids=["respawn_also_overdue", "no_budget_for_a_respawn"],
     )
+    @pytest.mark.usefixtures("bare_country")
     def test__child_timeout_is_recorded_in_telemetry(
         self,
-        bare_country,
         parent_budget_seconds,
         expected_attempt,
         expected_remaining_budget_seconds,
@@ -690,7 +699,8 @@ class TestSegmentedNationalChildDeadline:
             }
         ]
 
-    def test__exhausted_parent_budget_is_recorded_in_telemetry(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__exhausted_parent_budget_is_recorded_in_telemetry(self):
         clock = ManualClock()
         runtime = RecordingRuntime()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
