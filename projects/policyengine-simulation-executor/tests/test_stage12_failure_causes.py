@@ -50,7 +50,7 @@ class RecordingRuntime:
     def __init__(self) -> None:
         self.recorded_errors: list[tuple[Exception, bool]] = []
 
-    def record_exception(self, error, *, handled, status_code=None) -> None:
+    def record_exception(self, error, *, handled, status_code=None) -> None:  # noqa: ARG002  # mirrors ObservabilityRuntime.record_exception, which callers pass status_code= by keyword
         self.recorded_errors.append((error, handled))
 
 
@@ -64,7 +64,10 @@ def test_summary_names_type_stage_role_and_message() -> None:
     progress = StageProgress(role="reform")
     msg = "Variable 'country' not found in household data"
 
-    with pytest.raises(ValueError) as caught, progress.stage("stage12_calculation"):
+    with (
+        pytest.raises(ValueError, match=msg) as caught,
+        progress.stage("stage12_calculation"),
+    ):
         raise ValueError(msg)
 
     assert failure_summary(caught.value, progress=progress) == (
