@@ -659,10 +659,12 @@ def _segmented_runner(calls, progress, monkeypatch):
         app_name="policyengine-simulation-py-test",
         runtime=NoOpObservabilityRuntime(),
         modal_module=fake_modal,
-        poll_backoff=PollBackoff(
-            initial_seconds=0.001,
-            maximum_seconds=0.002,
-            factor=sn.POLL_INTERVAL_BACKOFF_FACTOR,
+        timing=sn.SegmentedRunTiming(
+            poll_backoff=PollBackoff(
+                initial_seconds=0.001,
+                maximum_seconds=0.002,
+                factor=sn.POLL_INTERVAL_BACKOFF_FACTOR,
+            ),
         ),
         progress=progress,
     )

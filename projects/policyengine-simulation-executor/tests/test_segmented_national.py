@@ -218,18 +218,20 @@ class FakeModal:
         return self._calls[len(self.spawned_payloads) - 1]
 
 
-def _runner(fake_modal, params=None, runtime=TEST_RUNTIME, **runner_options):
+def _runner(fake_modal, params=None, runtime=TEST_RUNTIME, **timing_options):
     return sn.SegmentedNationalRunner(
         params or dict(NATIONAL),
         app_name="policyengine-simulation-py-test",
         runtime=runtime,
         modal_module=fake_modal,
-        poll_backoff=PollBackoff(
-            initial_seconds=0.001,
-            maximum_seconds=0.002,
-            factor=sn.POLL_INTERVAL_BACKOFF_FACTOR,
+        timing=sn.SegmentedRunTiming(
+            poll_backoff=PollBackoff(
+                initial_seconds=0.001,
+                maximum_seconds=0.002,
+                factor=sn.POLL_INTERVAL_BACKOFF_FACTOR,
+            ),
+            **timing_options,
         ),
-        **runner_options,
     )
 
 

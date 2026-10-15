@@ -94,6 +94,26 @@ MINIMUM_RETRY_WINDOW_SECONDS = 300.0
 # The first dispatch plus one respawn after a missed deadline.
 MAX_CHILD_ATTEMPTS = 2
 
+
+@dataclass(frozen=True)
+class SegmentedRunTiming:
+    """How the runner spaces its polls and how long it waits for children.
+
+    ``child_deadline_seconds`` runs from each child's dispatch and
+    ``parent_budget_seconds`` from the runner's start, both read from
+    ``clock``.
+    """
+
+    poll_backoff: PollBackoff = DEFAULT_POLL_BACKOFF
+    child_deadline_seconds: float = CHILD_DEADLINE_SECONDS
+    parent_budget_seconds: float = (
+        PARENT_FUNCTION_TIMEOUT_SECONDS - PARENT_COMPLETION_MARGIN_SECONDS
+    )
+    clock: Callable[[], float] = time.monotonic
+
+
+DEFAULT_RUN_TIMING = SegmentedRunTiming()
+
 # Parent-scoped keys never forwarded to children. (The shared payload
 # builder owns _telemetry: stripped, then re-attached when present.)
 # `region` is stripped because v1-style national parents carry
@@ -198,12 +218,7 @@ class SegmentedNationalRunner:
         app_name: str,
         runtime: ObservabilityRuntime,
         modal_module: ModuleType | None = None,
-        poll_backoff: PollBackoff = DEFAULT_POLL_BACKOFF,
-        child_deadline_seconds: float = CHILD_DEADLINE_SECONDS,
-        parent_budget_seconds: float = (
-            PARENT_FUNCTION_TIMEOUT_SECONDS - PARENT_COMPLETION_MARGIN_SECONDS
-        ),
-        clock: Callable[[], float] = time.monotonic,
+        timing: SegmentedRunTiming = DEFAULT_RUN_TIMING,
         progress: JobProgressReporter = NULL_JOB_PROGRESS,
     ) -> None:
         """Resolve the country's region groups and a lazy segment-worker handle.
@@ -215,16 +230,16 @@ class SegmentedNationalRunner:
         self.runtime = runtime
         self.progress = progress
         self.modal = modal if modal_module is None else modal_module
-        self.poll_interval_initial_seconds = poll_backoff.initial_seconds
-        self.poll_interval_max_seconds = poll_backoff.maximum_seconds
-        self.poll_interval_backoff_factor = poll_backoff.factor
-        self.child_deadline_seconds = child_deadline_seconds
-        self.parent_budget_seconds = parent_budget_seconds
-        self.clock = clock
+        self.poll_interval_initial_seconds = timing.poll_backoff.initial_seconds
+        self.poll_interval_max_seconds = timing.poll_backoff.maximum_seconds
+        self.poll_interval_backoff_factor = timing.poll_backoff.factor
+        self.child_deadline_seconds = timing.child_deadline_seconds
+        self.parent_budget_seconds = timing.parent_budget_seconds
+        self.clock = timing.clock
         # The parent's Modal timeout started before this runner existed; the
         # completion margin inside the default budget covers that gap.
-        self.started_at = clock()
-        self.budget_ends_at = self.started_at + parent_budget_seconds
+        self.started_at = self.clock()
+        self.budget_ends_at = self.started_at + self.parent_budget_seconds
         self.child_retry_count = 0
         # Overdue attempts replaced by a respawn. They are never polled
         # again, but every later cancel retries them: the first cancel can
