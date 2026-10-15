@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import NamedTuple
 from unittest.mock import Mock
 
 import jwt
@@ -202,56 +203,79 @@ BUDGET_WINDOW_PAYLOAD = {
 }
 STAGE12_REPORT_PATH = "/internal/stage12/reports/00000000-0000-0000-0000-000000000001"
 
+
+class ProtectedRoute(NamedTuple):
+    """A protected route's request, the permission it requires and its status."""
+
+    method: str
+    path: str
+    body: dict[str, object] | None
+    permission: str
+    authorized_status: int
+
+
 # Each protected route, the permission it requires, and the status its handler
 # returns once authorized. Stage 12 is disabled and unconfigured in these
 # tests, so an authorized Stage 12 request reaches the handler's 503 response.
 PROTECTED_ROUTES = [
     pytest.param(
-        "post",
-        "/simulate/economy/comparison",
-        COMPARISON_PAYLOAD,
-        "simulation:submit",
-        200,
+        ProtectedRoute(
+            "post",
+            "/simulate/economy/comparison",
+            COMPARISON_PAYLOAD,
+            "simulation:submit",
+            200,
+        ),
         id="submit-comparison",
     ),
     pytest.param(
-        "post",
-        "/simulate/economy/budget-window",
-        BUDGET_WINDOW_PAYLOAD,
-        "simulation:submit",
-        200,
+        ProtectedRoute(
+            "post",
+            "/simulate/economy/budget-window",
+            BUDGET_WINDOW_PAYLOAD,
+            "simulation:submit",
+            200,
+        ),
         id="submit-budget-window",
     ),
     pytest.param(
-        "get",
-        "/jobs/job-1",
-        None,
-        "simulation:read",
-        200,
+        ProtectedRoute(
+            "get",
+            "/jobs/job-1",
+            None,
+            "simulation:read",
+            200,
+        ),
         id="poll-job",
     ),
     pytest.param(
-        "get",
-        "/budget-window-jobs/batch-1",
-        None,
-        "simulation:read",
-        200,
+        ProtectedRoute(
+            "get",
+            "/budget-window-jobs/batch-1",
+            None,
+            "simulation:read",
+            200,
+        ),
         id="poll-budget-window",
     ),
     pytest.param(
-        "post",
-        "/internal/stage12/reports",
-        COMPARISON_PAYLOAD,
-        "stage12:operate",
-        503,
+        ProtectedRoute(
+            "post",
+            "/internal/stage12/reports",
+            COMPARISON_PAYLOAD,
+            "stage12:operate",
+            503,
+        ),
         id="stage12-submit",
     ),
     pytest.param(
-        "get",
-        STAGE12_REPORT_PATH,
-        None,
-        "stage12:operate",
-        503,
+        ProtectedRoute(
+            "get",
+            STAGE12_REPORT_PATH,
+            None,
+            "stage12:operate",
+            503,
+        ),
         id="stage12-status",
     ),
 ]
@@ -312,19 +336,10 @@ def _permission_events(event: Mock) -> list[dict[str, object]]:
     ]
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "body", "permission", "_authorized_status"),
-    PROTECTED_ROUTES,
-)
-def test_enforced_route_rejects_caller_without_its_permission(
-    method,
-    path,
-    body,
-    permission,
-    _authorized_status,
-):
+@pytest.mark.parametrize("route", PROTECTED_ROUTES)
+def test_enforced_route_rejects_caller_without_its_permission(route):
     backend = FakeBackend()
-    other_permissions = [item for item in ALL_PERMISSIONS if item != permission]
+    other_permissions = [item for item in ALL_PERMISSIONS if item != route.permission]
     app = _app_for(
         _identity(
             permissions=other_permissions,
@@ -335,29 +350,20 @@ def test_enforced_route_rejects_caller_without_its_permission(
     )
 
     with TestClient(app) as client:
-        result = _send(client, method, path, body)
+        result = _send(client, route.method, route.path, route.body)
 
     assert result.status_code == 403
     assert backend.requests == []
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "body", "permission", "authorized_status"),
-    PROTECTED_ROUTES,
-)
-def test_enforced_route_accepts_caller_with_only_its_permission(
-    method,
-    path,
-    body,
-    permission,
-    authorized_status,
-):
-    app = _app_for(_identity(permissions=[permission]), enforce=True)
+@pytest.mark.parametrize("route", PROTECTED_ROUTES)
+def test_enforced_route_accepts_caller_with_only_its_permission(route):
+    app = _app_for(_identity(permissions=[route.permission]), enforce=True)
 
     with TestClient(app) as client:
-        result = _send(client, method, path, body)
+        result = _send(client, route.method, route.path, route.body)
 
-    assert result.status_code == authorized_status
+    assert result.status_code == route.authorized_status
 
 
 @pytest.mark.parametrize(
@@ -462,28 +468,18 @@ def test_enforced_missing_permission_records_permission_and_client(monkeypatch):
     ]
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "body", "permission", "authorized_status"),
-    PROTECTED_ROUTES,
-)
-def test_log_only_mode_allows_and_records_missing_permission(
-    monkeypatch,
-    method,
-    path,
-    body,
-    permission,
-    authorized_status,
-):
+@pytest.mark.parametrize("route", PROTECTED_ROUTES)
+def test_log_only_mode_allows_and_records_missing_permission(monkeypatch, route):
     app = _app_for(_identity(permissions=[], azp="unmigrated-client"), enforce=False)
 
     with TestClient(app) as client:
         event = _record_events(client, monkeypatch)
-        result = _send(client, method, path, body)
+        result = _send(client, route.method, route.path, route.body)
 
-    assert result.status_code == authorized_status
+    assert result.status_code == route.authorized_status
     assert _permission_events(event) == [
         {
-            "permission": permission,
+            "permission": route.permission,
             "enforced": False,
             "client_id": "unmigrated-client",
         }
@@ -550,18 +546,8 @@ def test_permission_telemetry_failure_does_not_change_response(
     ]
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "body", "_permission", "authorized_status"),
-    PROTECTED_ROUTES,
-)
-def test_disabled_authentication_allows_enforced_routes(
-    monkeypatch,
-    method,
-    path,
-    body,
-    _permission,
-    authorized_status,
-):
+@pytest.mark.parametrize("route", PROTECTED_ROUTES)
+def test_disabled_authentication_allows_enforced_routes(monkeypatch, route):
     class Decoder:
         def __call__(self, token, runtime):
             msg = "disabled authentication decoded a token"
@@ -580,9 +566,9 @@ def test_disabled_authentication_allows_enforced_routes(
 
     with TestClient(app) as client:
         event = _record_events(client, monkeypatch)
-        result = _send(client, method, path, body)
+        result = _send(client, route.method, route.path, route.body)
 
-    assert result.status_code == authorized_status
+    assert result.status_code == route.authorized_status
     assert _permission_events(event) == []
 
 
