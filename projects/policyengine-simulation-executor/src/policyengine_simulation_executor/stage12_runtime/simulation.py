@@ -39,6 +39,7 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 from .dependencies import ComparisonStore, artifact_store, runtime_store
 from .failure_causes import (
     StageProgress,
+    StageTracking,
     failure_summary,
     record_failure_cause,
     tracked_stage,
@@ -137,9 +138,7 @@ def calculate_simulation_frames(
         progress = StageProgress(role=simulation.role.value)
     stage_span = partial(
         tracked_stage,
-        stage_plan=STAGE12_SIMULATION_STAGES,
-        progress=progress,
-        runtime=runtime,
+        tracking=StageTracking(STAGE12_SIMULATION_STAGES, progress, runtime),
     )
     if simulation.population.kind != "dataset":
         msg = "Stage 12 society-wide worker requires a dataset population"
@@ -338,9 +337,7 @@ def run_single_simulation(
     progress = StageProgress(role=simulation.role.value)
     stage_span = partial(
         tracked_stage,
-        stage_plan=STAGE12_SIMULATION_STAGES,
-        progress=progress,
-        runtime=runtime,
+        tracking=StageTracking(STAGE12_SIMULATION_STAGES, progress, runtime),
     )
     try:
         with stage_span(Stage.STAGE12_INPUT_WRITE):

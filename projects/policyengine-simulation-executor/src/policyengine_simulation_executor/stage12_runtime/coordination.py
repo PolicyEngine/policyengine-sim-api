@@ -55,6 +55,7 @@ from .dependencies import (
 )
 from .failure_causes import (
     StageProgress,
+    StageTracking,
     failure_summary,
     record_failure_cause,
     tracked_stage,
@@ -350,19 +351,18 @@ class _ReportCoordination:
         """The telemetry runtime, or None when the coordinator records nothing."""
         return self.dependencies.runtime
 
+    @property
+    def stage_tracking(self) -> StageTracking:
+        """How this report's stages are named, recorded and timed."""
+        return StageTracking(self.stage_plan, self.progress, self.runtime)
+
     def span(
         self,
         stage: Stage,
         attributes: Mapping[str, object] | None = None,
     ) -> AbstractContextManager[object]:
         """Track ``stage`` for failure causes and time it as a span."""
-        return tracked_stage(
-            stage,
-            attributes,
-            stage_plan=self.stage_plan,
-            progress=self.progress,
-            runtime=self.runtime,
-        )
+        return tracked_stage(stage, attributes, tracking=self.stage_tracking)
 
     def stage_scope(
         self,
@@ -371,12 +371,7 @@ class _ReportCoordination:
     ) -> AbstractContextManager[object]:
         """Track ``stage`` for failure causes and record it as an operation."""
         return tracked_stage(
-            stage,
-            attributes,
-            stage_plan=self.stage_plan,
-            progress=self.progress,
-            runtime=self.runtime,
-            operation=True,
+            stage, attributes, tracking=self.stage_tracking, operation=True
         )
 
     def run(self, parent: ComparisonReportRecord) -> dict[str, Any]:
