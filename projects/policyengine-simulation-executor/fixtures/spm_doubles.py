@@ -33,6 +33,7 @@ def spm_receipt(selection, year="2026"):
 
 def spm_capable_simulation(selection, year="2026", **attributes):
     """Return a stand-in for a simulation that measured ``selection``."""
+    attributes.setdefault("on_first_ensure", lambda callback: None)
     if selection is None:
         return SimpleNamespace(**attributes)
     return SimpleNamespace(

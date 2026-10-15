@@ -23,10 +23,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from policyengine.core import Simulation
 from pydantic import PrivateAttr
 
 from policyengine_simulation_executor import artifact_keys
+from policyengine_simulation_executor.stage_reporting_simulation import (
+    StageReportingSimulation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +141,7 @@ def deterministic_baseline_id(
     return None if identity is None else identity.simulation_id
 
 
-class ArtifactBaselineSimulation(Simulation):
+class ArtifactBaselineSimulation(StageReportingSimulation):
     """A Simulation whose ``ensure()`` validates what it loads."""
 
     _computed_this_process: bool = PrivateAttr(default=False)

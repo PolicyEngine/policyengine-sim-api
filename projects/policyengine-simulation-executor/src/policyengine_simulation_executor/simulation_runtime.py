@@ -21,12 +21,17 @@ from typing import Any
 
 from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
+from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     Stage,
 )
 from policyengine_simulation_observability.telemetry import split_internal_payload
 
+from policyengine_simulation_executor.job_progress import (
+    NULL_JOB_PROGRESS,
+    JobProgressReporter,
+)
 from policyengine_simulation_executor.release_bundle import (
     get_country_release_bundle,
     resolve_bundle_dataset_name,
@@ -151,6 +156,7 @@ def run_simulation_impl(
     params: dict,
     *,
     runtime: ObservabilityRuntime,
+    progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict:
     """
     Execute economic simulation.
@@ -162,7 +168,7 @@ def run_simulation_impl(
     # cleaned up on exit so we never leave signed JSON material on disk.
     with setup_gcp_credentials(runtime):
         try:
-            return _run_simulation_impl_core(params, runtime=runtime)
+            return _run_simulation_impl_core(params, runtime=runtime, progress=progress)
         except ValueError as exc:
             # Gateway images intentionally do not install country packages.
             # Transport the public error through the shared contract instead.
@@ -684,13 +690,14 @@ def _build_simulation(
     scoping_strategy=None,
     region_code: str | None = None,
 ):
-    from policyengine.core import Simulation
-
     from policyengine_simulation_executor.baseline_artifacts import (
         ArtifactBaselineSimulation,
         deterministic_baseline_id,
     )
     from policyengine_simulation_executor.spm import normalize_runtime_spm
+    from policyengine_simulation_executor.stage_reporting_simulation import (
+        StageReportingSimulation,
+    )
 
     selection = normalize_runtime_spm(params)
     params = {**params, **({"spm": selection} if selection is not None else {})}
@@ -721,7 +728,7 @@ def _build_simulation(
             policy=policy,
             scoping_strategy=scoping_strategy,
         )
-    return Simulation(
+    return StageReportingSimulation(
         **spm_kwargs,
         dataset=dataset,
         tax_benefit_model_version=country_module.model,
@@ -730,10 +737,17 @@ def _build_simulation(
     )
 
 
+def _report_calculation_start(
+    simulation, progress: JobProgressReporter, stage: JobStage
+) -> None:
+    simulation.on_first_ensure(lambda: progress.enter(stage))
+
+
 def _run_simulation_impl_core(
     params: dict,
     *,
     runtime: ObservabilityRuntime,
+    progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict:
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
         simulation_params, telemetry, metadata = split_internal_payload(params)
@@ -823,6 +837,9 @@ def _run_simulation_impl_core(
             region_code=region_resolution.code,
         )
 
+    _report_calculation_start(baseline, progress, JobStage.BASELINE)
+    _report_calculation_start(reform, progress, JobStage.REFORM)
+
     logger.info("Calculating economic impact")
     builder = SimulationOutputBuilder(
         country=country,
@@ -835,6 +852,7 @@ def _run_simulation_impl_core(
         resolved_region_code=region_resolution.code,
         runtime=runtime,
         uk_local_authority_metadata=uk_local_authority_metadata,
+        progress=progress,
     )
     output = builder.serialize()
     output.update(

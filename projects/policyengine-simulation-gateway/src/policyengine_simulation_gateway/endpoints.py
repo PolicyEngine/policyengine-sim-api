@@ -5,6 +5,7 @@ FastAPI endpoints for the Gateway API.
 import logging
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TypedDict
 
 import modal
@@ -36,6 +37,13 @@ from policyengine_simulation_contract.gateway_models import (
 from policyengine_simulation_contract.hf_dataset import (
     HuggingFaceDatasetReferenceError,
 )
+from policyengine_simulation_contract.job_progress import (
+    JOB_PROGRESS_CAPABILITY_KEY,
+    JobStatus,
+    job_progress_fields,
+    supported_job_progress_capability,
+)
+from policyengine_simulation_contract.job_progress_state import get_job_progress
 from policyengine_simulation_contract.spm import (
     SPMCapability,
     SPMInputError,
@@ -69,6 +77,10 @@ POLICYENGINE_VERSION_DICT_NAME = "simulation-api-policyengine-versions"
 ROUTING_STATE_DICT_NAME = "simulation-api-routing-state"
 ROUTING_STATE_ACTIVE_KEY = "active"
 SUPPORTED_ROUTE_KINDS = ("policyengine", "us", "uk")
+# Job metadata keys that the status response never echoes directly.
+_INTERNAL_JOB_METADATA_KEYS = frozenset(
+    {"observability_id", "submitted_at", JOB_PROGRESS_CAPABILITY_KEY}
+)
 
 
 class VersionRoutingState(TypedDict, total=False):
@@ -662,12 +674,24 @@ def _serialize_job_metadata(
     resolved_app_name: str,
     bundle: PolicyEngineBundle,
     observability_id: str | None = None,
+    *,
+    submitted_at: datetime | None = None,
+    job_progress: int | None = None,
 ) -> dict:
     return {
         "resolved_app_name": resolved_app_name,
         "policyengine_bundle": _bundle_payload(bundle),
         "observability_id": observability_id,
+        "submitted_at": None if submitted_at is None else submitted_at.isoformat(),
+        JOB_PROGRESS_CAPABILITY_KEY: job_progress,
     }
+
+
+def _route_job_progress_capability(route: RouteResolution) -> int | None:
+    manifest = route.bundle_manifest
+    if not isinstance(manifest, dict):
+        return None
+    return supported_job_progress_capability(manifest.get(JOB_PROGRESS_CAPABILITY_KEY))
 
 
 def _bind_observability_id(
@@ -707,8 +731,43 @@ def _public_job_metadata(job_metadata: dict | None) -> dict:
     if not isinstance(job_metadata, dict):
         return {}
     return {
-        key: value for key, value in job_metadata.items() if key != "observability_id"
+        key: value
+        for key, value in job_metadata.items()
+        if key not in _INTERNAL_JOB_METADATA_KEYS
     }
+
+
+def _job_progress_payload(
+    runtime: ObservabilityRuntime,
+    job_id: str,
+    job_metadata: dict,
+    status: JobStatus,
+) -> dict:
+    """Optional stage fields for a status response.
+
+    Stage reporting never changes the status, the result or the HTTP code: a
+    failed or malformed read drops the stage fields instead of guessing.
+    """
+    reports_stages = (
+        supported_job_progress_capability(job_metadata.get(JOB_PROGRESS_CAPABILITY_KEY))
+        is not None
+    )
+    record = None
+    if reports_stages:
+        try:
+            with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_PROGRESS_READ)):
+                record = get_job_progress(job_id)
+        except Exception as exc:  # noqa: BLE001 - stage reporting is optional
+            logger.warning(
+                "Job progress unavailable for %s: %s", job_id, type(exc).__name__
+            )
+            reports_stages = False
+    return job_progress_fields(
+        status=status,
+        submitted_at=job_metadata.get("submitted_at"),
+        record=record,
+        reports_stages=reports_stages,
+    )
 
 
 def _build_budget_window_parent_payload(
@@ -853,6 +912,7 @@ async def submit_simulation(
     # Spawn the job (returns immediately). ``Function.from_name`` is a lazy
     # handle — the control-plane RPC (hydration) happens inside ``spawn`` —
     # so both live under the spawn segment to time the real network cost.
+    submitted_at = datetime.now(UTC)
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
         sim_func = modal.Function.from_name(route.app_name, "run_simulation")
         call = sim_func.spawn(
@@ -862,7 +922,13 @@ async def submit_simulation(
 
     runtime.set_context(job_id=call.object_id)
 
-    job_metadata = _serialize_job_metadata(route.app_name, bundle, observability_id)
+    job_metadata = _serialize_job_metadata(
+        route.app_name,
+        bundle,
+        observability_id,
+        submitted_at=submitted_at,
+        job_progress=_route_job_progress_capability(route),
+    )
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_METADATA_WRITE)):
         _job_metadata_store()[call.object_id] = job_metadata
 
@@ -1018,16 +1084,24 @@ async def get_job_status(job_id: str, request: Request, response: Response):
         runtime.record_exception(exc, handled=False, status_code=500)
         raise
 
+    def with_progress(status: JobStatus) -> dict:
+        return {
+            **public_metadata,
+            **_job_progress_payload(runtime, job_id, job_metadata, status),
+        }
+
     try:
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)):
             result = call.get(timeout=0)
+        complete_metadata = with_progress("complete")
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
             return JobStatusResponse(
-                status="complete", result=result, **public_metadata
+                status="complete", result=result, **complete_metadata
             )
     except TimeoutError:
+        running_metadata = with_progress("running")
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
-            return running_job_response(public_metadata, headers=response_headers)
+            return running_job_response(running_metadata, headers=response_headers)
     except Exception as exc:
         if _is_modal_job_not_found(exc):
             runtime.record_exception(exc, handled=True, status_code=404)
@@ -1037,7 +1111,7 @@ async def get_job_status(job_id: str, request: Request, response: Response):
             return failed_job_response(
                 error=detail.message,
                 errors=[detail.model_dump()],
-                job_metadata=public_metadata,
+                job_metadata=with_progress("failed"),
                 headers=response_headers,
             )
         redacted = log_and_redact_exception(
@@ -1046,10 +1120,11 @@ async def get_job_status(job_id: str, request: Request, response: Response):
             scope="simulation_job_status",
             context={"job_id": job_id},
         )
+        failed_metadata = with_progress("failed")
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
             return failed_job_response(
                 error=redacted,
-                job_metadata=public_metadata,
+                job_metadata=failed_metadata,
                 headers=response_headers,
             )
 

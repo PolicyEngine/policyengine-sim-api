@@ -102,6 +102,20 @@ operations:
 `simulation_role` attribute. The other planning operations include the
 `country` attribute.
 
+### Annual job stage durations
+
+`run_simulation` records client-visible job stages (see
+`policyengine_simulation_contract.job_progress`). Before its operation ends,
+it sets one `job_stage_seconds_<stage>` attribute for each ended stage, for
+example `job_stage_seconds_baseline` and `job_stage_seconds_reform`. These
+are the only main-path measurements that separate the baseline from the
+reform calculation, because both run inside `economic_impact_analysis`. The
+attribute set is bounded by the `JobStage` enum.
+
+Modal can run the same call again after a preemption, under the same call
+id. A later attempt continues the stored stage record, so the durations add
+up over attempts, and `job_attempts` counts them.
+
 ## Metric resource identity
 
 Every process that emits OpenTelemetry metrics must have a unique

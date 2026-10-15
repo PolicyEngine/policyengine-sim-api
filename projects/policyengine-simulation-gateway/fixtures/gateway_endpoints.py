@@ -320,7 +320,11 @@ class MockModalException:
 @pytest.fixture
 def mock_modal(monkeypatch):
     """Patch Modal calls in the gateway endpoints module."""
-    from policyengine_simulation_contract import budget_window_state, dataset_uri
+    from policyengine_simulation_contract import (
+        budget_window_state,
+        dataset_uri,
+        job_progress_state,
+    )
     from policyengine_simulation_gateway import endpoints
 
     mock_func = MockFunction()
@@ -354,6 +358,7 @@ def mock_modal(monkeypatch):
 
     monkeypatch.setattr(endpoints, "modal", MockModal)
     monkeypatch.setattr(budget_window_state, "modal", MockModal)
+    monkeypatch.setattr(job_progress_state, "modal", MockModal)
     monkeypatch.setattr(
         dataset_uri,
         "with_hf_revision",

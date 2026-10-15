@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from policyengine_observability import ObservabilityRuntime
+from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
@@ -21,6 +22,10 @@ from policyengine_simulation_executor import (
     simulation_output_inequality,
     simulation_output_labor,
     simulation_output_poverty,
+)
+from policyengine_simulation_executor.job_progress import (
+    NULL_JOB_PROGRESS,
+    JobProgressReporter,
 )
 from policyengine_simulation_executor.release_bundle import get_country_release_bundle
 from policyengine_simulation_executor.simulation_macro_output import (
@@ -53,6 +58,7 @@ class SimulationOutputBuilder:
     resolved_region_code: str | None = None
     runtime: ObservabilityRuntime | None = None
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
+    progress: JobProgressReporter = NULL_JOB_PROGRESS
     _analysis: Any = field(default=None, init=False)
 
     def __post_init__(self) -> None:
@@ -70,6 +76,8 @@ class SimulationOutputBuilder:
                     self.reform,
                     include_cliff_impacts=self._include_cliff_impacts(),
                 )
+            # Both simulations have run; the rest is output aggregation.
+            self.progress.enter(JobStage.OUTPUTS)
         return self._analysis
 
     def _include_cliff_impacts(self) -> bool:

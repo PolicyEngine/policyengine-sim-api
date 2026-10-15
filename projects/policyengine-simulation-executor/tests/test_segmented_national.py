@@ -733,7 +733,7 @@ class TestDispatchRunSimulation:
     def test__eligible_national_takes_the_segmented_path(self, monkeypatch):
         calls = {}
 
-        def fake_segmented(params, *, app_name, runtime):
+        def fake_segmented(params, *, app_name, runtime, progress):
             calls["segmented"] = (params, app_name)
             return {"segmented": True}
 
@@ -907,7 +907,7 @@ class TestDispatchResolvesSPM:
         )
         seen = {}
 
-        def fake_segmented(params, *, app_name, runtime):
+        def fake_segmented(params, *, app_name, runtime, progress):
             seen["params"] = params
             return {"segmented": True}
 
