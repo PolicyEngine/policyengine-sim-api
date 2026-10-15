@@ -532,7 +532,8 @@ def test_permission_telemetry_failure_does_not_change_response(
 
         def fail_permission_event(name, **kwargs):
             if name == "simulation_entry_permission_missing":
-                raise RuntimeError("telemetry unavailable")
+                msg = "telemetry unavailable"
+                raise RuntimeError(msg)
             return emit(name, **kwargs)
 
         failing_event = Mock(side_effect=fail_permission_event)
@@ -563,7 +564,8 @@ def test_disabled_authentication_allows_enforced_routes(
 ):
     class Decoder:
         def __call__(self, token, runtime):
-            raise AssertionError("disabled authentication decoded a token")
+            msg = "disabled authentication decoded a token"
+            raise AssertionError(msg)
 
     monkeypatch.setattr(auth_module, "_decoder", lambda issuer, audience: Decoder())
     app = create_app(
@@ -587,7 +589,8 @@ def test_disabled_authentication_allows_enforced_routes(
 def test_public_routes_stay_public_when_permissions_are_enforced(monkeypatch):
     class Decoder:
         def __call__(self, token, runtime):
-            raise AssertionError("public route attempted authentication")
+            msg = "public route attempted authentication"
+            raise AssertionError(msg)
 
     monkeypatch.setattr(auth_module, "_decoder", lambda issuer, audience: Decoder())
     app = create_app(

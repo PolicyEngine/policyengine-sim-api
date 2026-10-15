@@ -44,9 +44,8 @@ def permission_enforcement() -> None:
         or "0"
     )
     if value not in {"0", "1"}:
-        raise RuntimeError(
-            "SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS must be 0 or 1."
-        )
+        msg = "SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS must be 0 or 1."
+        raise RuntimeError(msg)
     if value == "0":
         pytest.skip("The target environment logs missing permissions only.")
 
