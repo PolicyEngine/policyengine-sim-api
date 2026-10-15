@@ -33,6 +33,11 @@ def base_url() -> str:
 
 @pytest.fixture(scope="session")
 def permission_enforcement() -> None:
+    """Skip the test unless the target environment enforces permissions.
+
+    Raise RuntimeError if SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS is set
+    to anything other than 0 or 1.
+    """
     value = (
         os.environ.get("SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS", "").strip()
         or "0"
@@ -115,6 +120,7 @@ def test_enforced_permissions_reject_token_without_route_permission(
     base_url: str,
     access_token: str,
 ) -> None:
+    """Check a valid token without stage12:operate gets 403 on a Stage 12 route."""
     response = httpx.get(
         f"{base_url}{PERMISSION_PROBE_PATH}",
         headers={"Authorization": f"Bearer {access_token}"},

@@ -119,7 +119,6 @@ def reset_decoder_cache() -> None:
 
 def is_client_credentials(identity: CallerIdentity) -> bool:
     """Return whether the token was issued to a machine client."""
-
     return "client-credentials" in identity.grant_types or (
         identity.subject is not None and identity.subject.endswith("@clients")
     )
@@ -134,7 +133,6 @@ def granted_permissions(identity: CallerIdentity) -> frozenset[str]:
     API scopes a user's application requested into a user token's ``scope``,
     so there it proves nothing.
     """
-
     scopes = (
         identity.scope.split()
         if identity.scope and is_client_credentials(identity)
@@ -157,6 +155,12 @@ class CallerAuthorizer:
         enforce: bool,
         runtime: ObservabilityRuntime,
     ) -> None:
+        """Authorize the callers that ``authenticate`` identifies.
+
+        With ``enforce`` a caller that lacks a route's permission is rejected.
+        Either way, ``runtime`` receives a ``simulation_entry_permission_missing``
+        event for that caller.
+        """
         self.authenticate = authenticate
         self.enforce = enforce
         self.runtime = runtime
@@ -179,6 +183,11 @@ class CallerAuthorizer:
         identity: CallerIdentity | None,
         permission: CallerPermission,
     ) -> CallerIdentity | None:
+        """Return ``identity`` when it may call a route that needs ``permission``.
+
+        A caller without the permission is recorded, then rejected with a 403
+        HTTPException when enforcement is on and allowed when it is off.
+        """
         # No identity means caller authentication is disabled, which settings
         # validation permits only outside production. There are no claims to
         # check, so the request proceeds.

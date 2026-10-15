@@ -412,7 +412,6 @@ def test_cloud_run_deployment_does_not_interpolate_github_values_in_shell():
 
 def _cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
     """Return a complete deployment environment backed by a fake gcloud."""
-
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
