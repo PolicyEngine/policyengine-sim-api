@@ -9,7 +9,7 @@ from policyengine_simulation_contract.job_progress import JobProgressRecord
 JOB_PROGRESS_DICT_NAME = "simulation-api-job-progress"
 
 
-def _job_progress_store():
+def _job_progress_store() -> modal.Dict:
     return modal.Dict.from_name(JOB_PROGRESS_DICT_NAME, create_if_missing=True)
 
 

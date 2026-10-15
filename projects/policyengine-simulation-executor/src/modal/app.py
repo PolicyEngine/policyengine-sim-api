@@ -41,6 +41,7 @@ import modal
 
 if TYPE_CHECKING:
     from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_executor.job_progress import JobProgressReporter
 
 
 def _version_from_env_or_local_bundle_package(env_var: str, package: str) -> str:
@@ -262,7 +263,7 @@ def _set_modal_call_attributes(runtime: "ObservabilityRuntime") -> None:
         pass
 
 
-def _job_progress_reporter():
+def _job_progress_reporter() -> "JobProgressReporter":
     """A stage reporter for this call, keyed by its public ``job_id``.
 
     The gateway's ``job_id`` is the spawned call's ``object_id``, which is
@@ -293,7 +294,9 @@ def _job_progress_reporter():
     )
 
 
-def _record_stage_durations(runtime, progress) -> None:
+def _record_stage_durations(
+    runtime: "ObservabilityRuntime", progress: "JobProgressReporter"
+) -> None:
     """Attach the job's stage durations to its operation telemetry.
 
     Main-path traces cannot split the baseline from the reform calculation:

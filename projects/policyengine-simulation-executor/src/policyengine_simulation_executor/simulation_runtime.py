@@ -50,6 +50,10 @@ if TYPE_CHECKING:
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_observability.telemetry import TelemetryEnvelope
 
+    from policyengine_simulation_executor.stage_reporting_simulation import (
+        StageReportingSimulation,
+    )
+
 logger = logging.getLogger(__name__)
 
 os.environ.setdefault("POLICYENGINE_SKIP_COUNTRY_IMPORTS", "1")
@@ -754,7 +758,7 @@ def _build_simulation(
 
 
 def _report_calculation_start(
-    simulation, progress: JobProgressReporter, stage: JobStage
+    simulation: StageReportingSimulation, progress: JobProgressReporter, stage: JobStage
 ) -> None:
     simulation.on_first_ensure(lambda: progress.enter(stage))
 

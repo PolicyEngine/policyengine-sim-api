@@ -110,7 +110,7 @@ class StoredJobProgressReporter:
         write: ProgressWriter,
         read: ProgressReader | None = None,
         clock: Callable[[], datetime] = _utc_now,
-    ):
+    ) -> None:
         self.job_id = job_id
         self._write = write
         self._read = read
