@@ -1251,7 +1251,9 @@ def test_run_simulation_impl_core_passes_detected_uk_boundary_to_builder(monkeyp
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
-        lambda *_args, **_kwargs: SimpleNamespace(on_first_ensure=lambda callback: None),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            on_first_ensure=lambda _callback: None
+        ),
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime.SimulationOutputBuilder",
