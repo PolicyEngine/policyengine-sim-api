@@ -782,7 +782,7 @@ def _job_progress_payload(
         try:
             with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_PROGRESS_READ)):
                 record = get_job_progress(job_id)
-        except Exception as exc:  # noqa: BLE001 - stage reporting is optional
+        except Exception as exc:  # noqa: BLE001  # stage reporting is optional
             logger.warning(
                 "Job progress unavailable for %s: %s", job_id, type(exc).__name__
             )

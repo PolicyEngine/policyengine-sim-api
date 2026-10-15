@@ -285,7 +285,7 @@ def _job_progress_reporter() -> "JobProgressReporter":
 
     try:
         job_id = modal.current_function_call_id()
-    except Exception:  # noqa: BLE001 - stage reporting is non-fatal
+    except Exception:  # noqa: BLE001  # stage reporting is non-fatal
         job_id = None
     if not job_id:
         return NULL_JOB_PROGRESS
@@ -314,7 +314,7 @@ def _record_stage_durations(
                 for stage, seconds in durations.items()
             },
         )
-    except Exception:  # noqa: BLE001 - telemetry is non-fatal
+    except Exception:  # noqa: BLE001  # telemetry is non-fatal
         pass
 
 
