@@ -433,9 +433,9 @@ def test_poll_for_completion_records_running_and_complete_bodies(
     monkeypatch.setattr(
         get_job_status_jobs_job_id_get,
         "sync_detailed",
-        lambda *, job_id, client: next(response_iterator),
+        lambda *, job_id, client: next(response_iterator),  # noqa: ARG005  # keyword-only, as poll_for_completion passes them
     )
-    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
     poll_for_completion(
         cast("Client", object()),

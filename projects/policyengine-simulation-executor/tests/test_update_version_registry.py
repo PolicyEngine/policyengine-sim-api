@@ -165,10 +165,8 @@ def test_bundle_manifest_records_policyengine_6_spm_capability(
     }
 
 
-def test_bundle_manifest_declares_job_progress_capability(
-    fake_bundle_metadata,
-    monkeypatch,
-):
+@pytest.mark.usefixtures("fake_bundle_metadata")
+def test_bundle_manifest_declares_job_progress_capability(monkeypatch):
     from policyengine_simulation_contract.job_progress import (
         JOB_PROGRESS_CAPABILITY_VERSION,
     )

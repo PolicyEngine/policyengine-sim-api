@@ -311,7 +311,7 @@ def _record_stage_durations(
     durations = progress.stage_durations()
     if not durations:
         return
-    try:
+    try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
         runtime.set_context(
             job_attempts=progress.attempts(),
             **{

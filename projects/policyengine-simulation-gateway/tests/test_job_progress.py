@@ -228,7 +228,7 @@ class TestStageReportingFailuresAreHarmless:
         job_id = _submit(client)
         stage_reporting_worker["func"].last_call.running = True
 
-        def failing_read(job_id):
+        def failing_read(_job_id):
             msg = "modal unavailable"
             raise ConnectionError(msg)
 

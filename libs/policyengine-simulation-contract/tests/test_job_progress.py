@@ -354,5 +354,6 @@ class TestJobProgressState:
         stored = mock_modal["dicts"][JOB_PROGRESS_DICT_NAME]["fc-job-123"]
         assert stored["stage"] == "reform"
 
-    def test__missing_record_is_none(self, mock_modal):
+    @pytest.mark.usefixtures("mock_modal")
+    def test__missing_record_is_none(self):
         assert get_job_progress("fc-unknown") is None
