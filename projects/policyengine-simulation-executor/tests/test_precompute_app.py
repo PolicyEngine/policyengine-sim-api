@@ -12,9 +12,8 @@ import importlib
 import sys
 
 import pytest
-from pydantic import ValidationError
-
 from fixtures.fake_modal import install_fake_modal
+from pydantic import ValidationError
 
 _WORKER_FUNCTIONS = (
     "plan_artifacts",

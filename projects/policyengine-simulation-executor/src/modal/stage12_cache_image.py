@@ -6,9 +6,9 @@ from __future__ import annotations
 def fetch_stage12_cache(bucket: str, manifest: dict | None, *, client=None) -> None:
     """Download and verify every manifest-listed cache file into the image."""
 
-    from hashlib import sha256
     import json
     import os
+    from hashlib import sha256
     from pathlib import Path
 
     if not bucket or not manifest:

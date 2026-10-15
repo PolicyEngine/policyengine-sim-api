@@ -13,18 +13,20 @@ import logging
 import os
 import tempfile
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from importlib import import_module
-from typing import Any, Iterator
+from typing import Any
 
 from policyengine_observability import ObservabilityRuntime
-
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     Stage,
 )
+from policyengine_simulation_observability.telemetry import split_internal_payload
+
 from policyengine_simulation_executor.release_bundle import (
     get_country_release_bundle,
     resolve_bundle_dataset_name,
@@ -32,7 +34,6 @@ from policyengine_simulation_executor.release_bundle import (
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
 )
-from policyengine_simulation_observability.telemetry import split_internal_payload
 
 logger = logging.getLogger(__name__)
 
@@ -689,7 +690,6 @@ def _build_simulation(
         ArtifactBaselineSimulation,
         deterministic_baseline_id,
     )
-
     from policyengine_simulation_executor.spm import normalize_runtime_spm
 
     selection = normalize_runtime_spm(params)

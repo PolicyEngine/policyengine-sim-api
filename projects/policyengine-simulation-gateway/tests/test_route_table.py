@@ -5,7 +5,6 @@ dependencies; this pins it against drifting from the deployed router.
 """
 
 from fastapi.routing import APIRoute
-
 from policyengine_simulation_gateway.generate_openapi import create_openapi_app
 from policyengine_simulation_gateway.testing import create_gateway_app
 

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-import modal
 from policyengine_observability import ObservabilityRuntime
-
+from policyengine_simulation_observability.stages import BUDGET_WINDOW_STAGES, Stage
 from src.modal.budget_window_context import build_batch_context
 from src.modal.budget_window_scheduler import BudgetWindowBatchRunner
-from policyengine_simulation_observability.stages import BUDGET_WINDOW_STAGES, Stage
+
+import modal
 
 
 def run_budget_window_batch_impl(

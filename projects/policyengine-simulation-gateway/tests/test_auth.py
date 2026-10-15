@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
-from fastapi.testclient import TestClient
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from policyengine_simulation_gateway.testing import create_gateway_app
+import pytest
+from fastapi.testclient import TestClient
 from policyengine_simulation_gateway import auth as auth_module
-
+from policyengine_simulation_gateway.testing import create_gateway_app
 
 GATED_REQUESTS = [
     (
@@ -185,8 +184,8 @@ def test__given_repeated_requests__then_decoder_not_reinstantiated(monkeypatch):
     decoder. We spy on ``JWTDecoder.__init__`` and assert it runs at most
     once across many requests."""
 
-    from policyengine_simulation_gateway.testing import create_gateway_app
     from policyengine_fastapi.auth import jwt_decoder as jwt_decoder_module
+    from policyengine_simulation_gateway.testing import create_gateway_app
 
     monkeypatch.delenv(auth_module.GATEWAY_AUTH_DISABLED_ENV, raising=False)
     monkeypatch.setenv(auth_module.GATEWAY_AUTH_REQUIRED_ENV, "1")

@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 from policyengine.bundle import get_current_bundle
-
 from policyengine_simulation_executor.stage12_bundle import (
     Stage12BundleError,
     assert_expected_bundle_values,

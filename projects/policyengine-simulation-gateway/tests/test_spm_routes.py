@@ -3,9 +3,7 @@
 from copy import deepcopy
 
 import pytest
-
 from fixtures.gateway_endpoints import TEST_ROUTING_STATE
-
 
 CAPABILITY = {
     "contract_version": "canonical-spm-v1",

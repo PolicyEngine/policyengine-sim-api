@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
-import logging
 from typing import Any
 from uuid import UUID
 
 import pandas as pd
 from policyengine_observability import ObservabilityRuntime
+from policyengine_simulation_contract.spm import SPMProvenance
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
@@ -24,7 +25,6 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12InvocationContext,
     stage12_output_plan_sha256,
 )
-from policyengine_simulation_contract.spm import SPMProvenance
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
@@ -77,6 +77,7 @@ def build_stage12_simulation(
     """Construct a Stage 12 simulation without selecting v1 cache code."""
 
     from policyengine.core import Simulation
+
     from policyengine_simulation_executor.spm import normalize_runtime_spm
 
     selection = normalize_runtime_spm(params)

@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import pandas as pd
 from policyengine.core import Simulation
-
 from policyengine_simulation_contract.stage12_bundle import (
     ResolvedStage12Bundle,
     Stage12BundleManifest,

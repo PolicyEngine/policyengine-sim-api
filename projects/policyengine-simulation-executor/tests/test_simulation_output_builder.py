@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 import json
-from contextlib import AbstractContextManager
 from collections import Counter
+from contextlib import AbstractContextManager
 from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-
-from fixtures.spm_doubles import (
-    installed_spm_selection,
-    spm_capable_simulation,
-)
 from fixtures.macro_output import (
     CURRENT_SINGLE_YEAR_MACRO_KEYS,
     CURRENT_SINGLE_YEAR_MACRO_RESULT,
+)
+from fixtures.spm_doubles import (
+    installed_spm_selection,
+    spm_capable_simulation,
 )
 from fixtures.test_simulation_output_builder import (
     BASELINE_POVERTY_BY_AGE,
@@ -29,41 +28,26 @@ from fixtures.test_simulation_output_builder import (
     FakeModelOutput,
     fake_analysis,
 )
-from policyengine_simulation_executor.release_bundle import BUNDLE_RECEIPT_FILENAME
-from policyengine_simulation_executor.release_bundle import get_country_release_bundle
+from policyengine_simulation_contract.uk_geography import (
+    UKLocalAuthorityBoundaryVersion,
+    UKLocalAuthorityMetadata,
+)
 from policyengine_simulation_executor.release_bundle import (
+    BUNDLE_RECEIPT_FILENAME,
+    get_country_release_bundle,
     resolve_runtime_bundle_dataset_uri,
 )
-from policyengine_simulation_observability.stages import Stage
-from policyengine_simulation_executor.simulation_runtime import (
-    DatasetSelection,
-    RegionResolution,
-)
-from policyengine_simulation_executor.simulation_runtime import (
-    _load_dataset as _load_selected_dataset,
-)
-from policyengine_simulation_executor.simulation_runtime import _nondefault_data_folder
-from policyengine_simulation_executor.simulation_runtime import _normalise_policy
-from policyengine_simulation_executor.simulation_runtime import (
-    _resolve_dataset_reference,
-    _resolve_dataset_selection,
-)
-from policyengine_simulation_executor.simulation_runtime import _resolve_region
-from policyengine_simulation_executor.simulation_runtime import (
-    _run_simulation_impl_core,
-)
-from policyengine_simulation_executor.simulation_runtime import run_simulation_impl
 from policyengine_simulation_executor.simulation_macro_output import (
     AgePovertyOutput,
     BaselineReformValue,
     BudgetaryImpact,
     BudgetaryOutput,
+    CongressionalDistrictImpactOutput,
     ConstituencyImpactRecord,
     DecileOutput,
     DetailedBudgetOutput,
-    CongressionalDistrictImpactOutput,
-    GeographicImpactOutput,
     GenderPovertyOutput,
+    GeographicImpactOutput,
     InequalityOutput,
     IntraDecileOutput,
     LocalAuthorityImpactRecord,
@@ -72,17 +56,28 @@ from policyengine_simulation_executor.simulation_macro_output import (
     PovertyOutput,
     SingleYearMacroOutput,
 )
+from policyengine_simulation_executor.simulation_output_builder import (
+    SimulationOutputBuilder,
+)
 from policyengine_simulation_executor.simulation_output_geographic import (
     build_congressional_district_impact,
     build_congressional_district_impact_output,
 )
-from policyengine_simulation_executor.simulation_output_builder import (
-    SimulationOutputBuilder,
+from policyengine_simulation_executor.simulation_runtime import (
+    DatasetSelection,
+    RegionResolution,
+    _nondefault_data_folder,
+    _normalise_policy,
+    _resolve_dataset_reference,
+    _resolve_dataset_selection,
+    _resolve_region,
+    _run_simulation_impl_core,
+    run_simulation_impl,
 )
-from policyengine_simulation_contract.uk_geography import (
-    UKLocalAuthorityBoundaryVersion,
-    UKLocalAuthorityMetadata,
+from policyengine_simulation_executor.simulation_runtime import (
+    _load_dataset as _load_selected_dataset,
 )
+from policyengine_simulation_observability.stages import Stage
 
 
 def _params_with_spm(params, selection):

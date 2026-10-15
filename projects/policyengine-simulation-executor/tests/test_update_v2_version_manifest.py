@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
-
 from policyengine_simulation_contract.stage12_manifest import V2WorkerValidation
 from src.modal.utils import update_v2_version_manifest as publisher
 

@@ -1,5 +1,4 @@
 import pytest
-
 from policyengine_simulation_observability.telemetry import (
     TelemetryEnvelope,
     normalize_observability_context,

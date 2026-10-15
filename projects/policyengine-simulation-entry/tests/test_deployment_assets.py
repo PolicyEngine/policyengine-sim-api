@@ -5,10 +5,10 @@ import os
 import re
 import subprocess
 import textwrap
-import tomllib
 from pathlib import Path
 
 import pytest
+import tomllib
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 GITIGNORE = REPOSITORY_ROOT / ".gitignore"

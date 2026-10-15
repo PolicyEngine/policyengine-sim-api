@@ -7,10 +7,10 @@ from hashlib import sha256
 
 import pandas as pd
 from policyengine_observability import ObservabilityRuntime
+from policyengine_simulation_contract.spm import SPMProvenance
 from policyengine_simulation_contract.stage12_execution import (
     PlannedSimulationExecutionInput,
 )
-from policyengine_simulation_contract.spm import SPMProvenance
 from policyengine_simulation_observability.stages import STAGE12_SEGMENT_STAGES
 
 from policyengine_simulation_executor.stage12_artifacts import (

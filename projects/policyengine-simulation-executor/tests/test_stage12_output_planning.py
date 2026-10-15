@@ -22,14 +22,13 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationRole,
     Stage12OutputPlan,
 )
-from pydantic import JsonValue
-from policyengine_simulation_observability.stages import Stage
-
 from policyengine_simulation_executor.stage12_runtime.output_planning import (
     apply_output_plan,
     resolve_report_output_plan,
     validate_output_frames,
 )
+from policyengine_simulation_observability.stages import Stage
+from pydantic import JsonValue
 
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
 

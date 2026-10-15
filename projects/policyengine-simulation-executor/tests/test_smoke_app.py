@@ -4,12 +4,11 @@ import importlib
 import sys
 
 import pytest
+from fixtures.fake_modal import install_fake_modal
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
-
-from fixtures.fake_modal import install_fake_modal
 
 
 @pytest.fixture
@@ -106,9 +105,11 @@ def test_uk_dataset_smoke_validates_installed_codes_against_packaged_resources(
     monkeypatch.setattr(
         smoke_module,
         "detect_uk_local_authority_metadata_from_hdf",
-        lambda path: observed.append(path)
-        or UKLocalAuthorityMetadata(
-            boundary_version=UKLocalAuthorityBoundaryVersion.LAD22
+        lambda path: (
+            observed.append(path)
+            or UKLocalAuthorityMetadata(
+                boundary_version=UKLocalAuthorityBoundaryVersion.LAD22
+            )
         ),
     )
 

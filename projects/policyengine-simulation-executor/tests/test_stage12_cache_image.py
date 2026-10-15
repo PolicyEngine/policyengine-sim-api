@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
 import json
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from src.modal.stage12_cache_image import fetch_stage12_cache
 
 

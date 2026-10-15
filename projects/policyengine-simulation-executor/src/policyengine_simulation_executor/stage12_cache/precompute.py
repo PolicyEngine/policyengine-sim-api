@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import time
-from typing import Callable
+from collections.abc import Callable
+from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 from policyengine_simulation_contract.stage12_execution import (

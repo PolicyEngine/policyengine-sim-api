@@ -10,7 +10,6 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
-
 from policyengine_simulation_executor import segmented_national_reduce as reduce_mod
 from policyengine_simulation_executor.segmented_national_reduce import (
     PrecomputedSimulation,

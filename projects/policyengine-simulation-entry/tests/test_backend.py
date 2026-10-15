@@ -4,15 +4,13 @@ import json
 
 import httpx
 import pytest
+from conftest import make_settings
 from policyengine_observability import REQUEST_ID_HEADER
-
 from policyengine_simulation_entry.backend import (
     BackendAuthenticationError,
     BackendUnavailable,
     OldGatewayBackend,
 )
-
-from conftest import make_settings
 
 
 @pytest.mark.asyncio

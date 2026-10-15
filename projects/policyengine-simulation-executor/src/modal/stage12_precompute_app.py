@@ -6,13 +6,13 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
-import modal
-
 from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
     HF_RUNTIME_ENV_NAME,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+
+import modal
 
 STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."

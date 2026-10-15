@@ -13,10 +13,9 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 from policyengine.core import Simulation
-from pydantic import PrivateAttr
-
 from policyengine_simulation_executor import artifact_keys as ak
 from policyengine_simulation_executor import baseline_artifacts as ba
+from pydantic import PrivateAttr
 
 
 def _region_group():
@@ -351,7 +350,6 @@ class TestBuildSimulationSelection:
     @pytest.fixture
     def wired(self, monkeypatch):
         from policyengine import core as policyengine_core
-
         from policyengine_simulation_executor import simulation_runtime as sr
 
         recorded = SimpleNamespace(
@@ -456,7 +454,6 @@ class TestBuildSimulationSelection:
 
 def test_bounded_reform_build_keeps_current_law_artifact_reuse(monkeypatch):
     from policyengine import core as policyengine_core
-
     from policyengine_simulation_executor import simulation_runtime as sr
     from policyengine_simulation_executor import spm as executor_spm
 

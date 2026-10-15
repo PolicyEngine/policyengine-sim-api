@@ -6,8 +6,8 @@ import importlib
 import io
 import json
 import logging
-import sys
 import re
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
@@ -20,6 +20,8 @@ from uuid import UUID, uuid4
 import pandas as pd
 import pytest
 from fixtures.fake_modal import install_fake_modal
+from fixtures.fake_object_store import InMemoryObjectStore
+from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_observability import (
     DeploymentIdentity,
     LoggingConfig,
@@ -30,6 +32,14 @@ from policyengine_observability import (
     configure,
 )
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
+from policyengine_simulation_contract.spm import (
+    SPMComparisonProvenance,
+    SPMInputError,
+    SPMRuntimeVersions,
+    SPMSelection,
+    build_spm_provenance,
+    validate_spm_calculation_provenance,
+)
 from policyengine_simulation_contract.stage12_execution import (
     AggregateReportArtifactPayload,
     ArtifactMediaType,
@@ -59,19 +69,10 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12OutputPlan,
     stage12_output_plan_sha256,
 )
-from policyengine_simulation_contract.spm import (
-    SPMComparisonProvenance,
-    SPMRuntimeVersions,
-    SPMSelection,
-    build_spm_provenance,
-    validate_spm_calculation_provenance,
-)
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
-from fixtures.fake_object_store import InMemoryObjectStore
-from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
     canonical_json_bytes,
@@ -101,16 +102,15 @@ from policyengine_simulation_executor.stage12_runtime.aggregation import (
 from policyengine_simulation_executor.stage12_runtime.comparison import (
     PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS,
 )
-from policyengine_simulation_executor.stage12_runtime.partition import (
-    US_REGION_GROUPS,
-)
 from policyengine_simulation_executor.stage12_runtime.dependencies import (
     runtime_store,
+)
+from policyengine_simulation_executor.stage12_runtime.partition import (
+    US_REGION_GROUPS,
 )
 from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata,
 )
-from policyengine_simulation_contract.spm import SPMInputError
 from policyengine_stage12_persistence import store as persistence_store_module
 from sqlalchemy.exc import OperationalError
 
@@ -1897,7 +1897,7 @@ def test_coordinator_observes_one_role_failure_while_the_peer_is_pending(
 
         def get(self, *, timeout=None):
             self.timeouts.append(timeout)
-            raise TimeoutError()
+            raise TimeoutError
 
         def cancel(self):
             self.cancel_count += 1

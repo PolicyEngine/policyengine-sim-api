@@ -7,8 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
-
+from policyengine_simulation_contract.stage12_execution import SimulationRole
 from policyengine_simulation_executor.stage12_runtime.partition import (
     US_REGION_GROUPS,
     stage12_region_groups,
@@ -17,8 +16,8 @@ from policyengine_simulation_executor.stage12_runtime.partition import (
 from policyengine_simulation_executor.stage12_runtime.segment_contracts import (
     Stage12SegmentInput,
 )
+from pydantic import ValidationError
 from test_stage12_runtime import _planned_simulation
-from policyengine_simulation_contract.stage12_execution import SimulationRole
 
 PROJECT = Path(__file__).resolve().parents[1]
 PACKAGE = PROJECT / "src" / "policyengine_simulation_executor"

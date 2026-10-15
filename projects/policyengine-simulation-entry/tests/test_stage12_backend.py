@@ -13,8 +13,6 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
     ComparisonRunLifecycleStatus,
 )
-from stage12_fixtures import eligible_payload, worker
-
 from policyengine_simulation_entry import stage12_backend as backend_module
 from policyengine_simulation_entry.stage12_backend import (
     ModalReportInvoker,
@@ -22,6 +20,7 @@ from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12DispatchFailed,
     TemporaryStage12UnsupportedRequest,
 )
+from stage12_fixtures import eligible_payload, worker
 
 OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000012"
 

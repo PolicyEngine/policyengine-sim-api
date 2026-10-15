@@ -10,7 +10,6 @@ import pandas as pd
 import pytest
 from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import SimulationRole
-
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
     Stage12Cancellation,

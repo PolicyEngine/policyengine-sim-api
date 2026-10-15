@@ -1,14 +1,12 @@
 import logging
 import os
-from opentelemetry.sdk.resources import Resource
 
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
-from opentelemetry import metrics
+from opentelemetry import metrics, trace
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from policyengine_fastapi.exit import exit
 
@@ -96,10 +94,10 @@ class GCPLoggingInstrumentor:
 
 
 def export_ot_to_gcp(resource: Resource):
-    from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
     from opentelemetry.exporter.cloud_monitoring import (
         CloudMonitoringMetricsExporter,
     )
+    from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 
     """
     configure opentelemetry to directly export to gcp cloudtrace/metrics

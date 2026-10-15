@@ -6,14 +6,12 @@ from types import SimpleNamespace
 
 import pandas as pd
 import pytest
-
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
 )
-
 from policyengine_simulation_executor.uk_local_authority_metadata import (
-    detect_uk_local_authority_metadata,
     detect_uk_local_authority_boundary_version,
+    detect_uk_local_authority_metadata,
     detect_uk_local_authority_metadata_from_hdf,
     load_uk_local_authority_resources,
     uk_area_regions_routed,

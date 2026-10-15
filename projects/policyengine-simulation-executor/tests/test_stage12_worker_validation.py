@@ -6,7 +6,6 @@ from hashlib import sha256
 from types import SimpleNamespace
 
 import pytest
-
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.stage12_worker_validation import (
     _run_non_serving_calculation,

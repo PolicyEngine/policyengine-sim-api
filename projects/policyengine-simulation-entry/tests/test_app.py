@@ -15,14 +15,6 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     SimulationRole,
 )
-from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
-from stage12_fixtures import (
-    EVALUATION_ID,
-    comparison_report,
-    comparison_simulation,
-    eligible_payload,
-)
-
 from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.backend import (
@@ -33,6 +25,13 @@ from policyengine_simulation_entry.backend import (
 from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12DispatchFailed,
     TemporaryStage12UnsupportedRequest,
+)
+from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
+from stage12_fixtures import (
+    EVALUATION_ID,
+    comparison_report,
+    comparison_simulation,
+    eligible_payload,
 )
 
 

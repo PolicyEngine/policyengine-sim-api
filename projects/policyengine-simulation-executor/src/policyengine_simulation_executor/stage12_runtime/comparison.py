@@ -6,14 +6,14 @@ import logging
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
-from policyengine_observability import ObservabilityRuntime
-from policyengine_simulation_observability.stages import Stage, StagePlan
 
+from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
     ResultComparisonStatus,
     Stage12InvocationContext,
 )
+from policyengine_simulation_observability.stages import Stage, StagePlan
 
 from policyengine_simulation_executor.stage12_artifacts import Stage12ArtifactStore
 from policyengine_simulation_executor.stage12_result_comparison import compare_results

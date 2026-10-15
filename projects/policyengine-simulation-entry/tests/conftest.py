@@ -5,7 +5,6 @@ from dataclasses import dataclass
 import pytest
 from fastapi.testclient import TestClient
 from policyengine_simulation_contract.json_types import JsonObject
-
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.backend import BackendResponse
 from policyengine_simulation_entry.config import Settings

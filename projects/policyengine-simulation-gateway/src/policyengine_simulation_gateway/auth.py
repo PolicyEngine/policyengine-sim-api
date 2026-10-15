@@ -33,9 +33,8 @@ import os
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-
-from policyengine_observability import ObservabilityRuntime
 from policyengine_fastapi.auth import JWTDecoder
+from policyengine_observability import ObservabilityRuntime
 
 logger = logging.getLogger(__name__)
 

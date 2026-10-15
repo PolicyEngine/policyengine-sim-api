@@ -5,8 +5,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ValidationError
-
 from policyengine_simulation_executor.stage12_cache import precompute
 from policyengine_simulation_executor.stage12_cache.models import (
     BaselinePlanEntry,
@@ -16,6 +14,7 @@ from policyengine_simulation_executor.stage12_cache.models import (
     PrecomputePlan,
 )
 from policyengine_simulation_executor.stage12_runtime.partition import US_REGION_GROUPS
+from pydantic import ValidationError
 
 
 def _bundle() -> CacheBundleIdentity:

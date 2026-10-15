@@ -4,7 +4,6 @@ import math
 from collections.abc import Mapping
 from http import HTTPStatus
 
-
 TRANSIENT_POLL_STATUS_CODES: frozenset[HTTPStatus] = frozenset(
     {
         HTTPStatus.BAD_GATEWAY,

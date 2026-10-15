@@ -15,6 +15,8 @@ from uuid import UUID
 
 import policyengine_simulation_contract.budget_window_state as state_module
 import pytest
+import src.modal.budget_window_batch as batch_module
+import src.modal.budget_window_scheduler as scheduler_module
 from fastapi.testclient import TestClient
 from policyengine_simulation_contract.budget_window_state import (
     BUDGET_WINDOW_JOB_DICT_NAME,
@@ -24,9 +26,6 @@ from policyengine_simulation_contract.spm import SPMInputError, SPMSelection
 from policyengine_simulation_gateway import endpoints
 from policyengine_simulation_gateway.testing import create_gateway_app
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
-
-import src.modal.budget_window_batch as batch_module
-import src.modal.budget_window_scheduler as scheduler_module
 
 SPM_SELECTION = SPMSelection(
     forecast_content_sha256="a" * 64,
@@ -167,7 +166,7 @@ class MockParentBatchCall:
             return self._result
         if self._polls == 0:
             self._polls += 1
-            raise TimeoutError()
+            raise TimeoutError
 
         previous = self.runtime.current_parent_call_id
         self.runtime.current_parent_call_id = self.object_id

@@ -1,5 +1,6 @@
 """Tests for policyengine.py release bundle helpers."""
 
+import json
 from copy import deepcopy
 from unittest.mock import MagicMock
 
@@ -346,21 +347,20 @@ def test_resolve_runtime_bundle_dataset_uri_prefers_installed_default_dataset(
     dataset_path.write_bytes(b"data")
     receipt_path = tmp_path / BUNDLE_RECEIPT_FILENAME
     receipt_path.write_text(
-        """
-        {
-          "bundle_version": "4.18.3",
-          "policyengine_version": "4.18.3",
-          "datasets": [
+        json.dumps(
             {
-              "country": "us",
-              "dataset": "%s",
-              "version": "%s",
-              "path": "%s"
+                "bundle_version": "4.18.3",
+                "policyengine_version": "4.18.3",
+                "datasets": [
+                    {
+                        "country": "us",
+                        "dataset": bundle.default_dataset,
+                        "version": bundle.data_version,
+                        "path": str(dataset_path),
+                    }
+                ],
             }
-          ]
-        }
-        """
-        % (bundle.default_dataset, bundle.data_version, str(dataset_path)),
+        ),
         encoding="utf-8",
     )
     monkeypatch.setenv("POLICYENGINE_BUNDLE_RECEIPT", str(receipt_path))
@@ -380,19 +380,18 @@ def test_resolve_runtime_bundle_dataset_uri_preserves_nondefault_override_with_r
     dataset_path.write_bytes(b"data")
     receipt_path = tmp_path / BUNDLE_RECEIPT_FILENAME
     receipt_path.write_text(
-        """
-        {
-          "datasets": [
+        json.dumps(
             {
-              "country": "us",
-              "dataset": "%s",
-              "version": "%s",
-              "path": "%s"
+                "datasets": [
+                    {
+                        "country": "us",
+                        "dataset": bundle.default_dataset,
+                        "version": bundle.data_version,
+                        "path": str(dataset_path),
+                    }
+                ]
             }
-          ]
-        }
-        """
-        % (bundle.default_dataset, bundle.data_version, str(dataset_path)),
+        ),
         encoding="utf-8",
     )
     monkeypatch.setenv("POLICYENGINE_BUNDLE_RECEIPT", str(receipt_path))

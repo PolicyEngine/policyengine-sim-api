@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 import modal
-
 from policyengine_simulation_contract.stage12_manifest import (
     V1_ROUTING_STATE_NAME,
     V2_VERSION_MANIFEST_NAME,

@@ -7,9 +7,8 @@ from datetime import date
 from typing import Any
 
 from policyengine_simulation_contract.spm import spm_error_detail
-from pydantic import BaseModel, ConfigDict
-
 from policyengine_simulation_observability.errors import make_correlation_id
+from pydantic import BaseModel, ConfigDict
 
 from .failure_causes import StageProgress, failure_summary
 

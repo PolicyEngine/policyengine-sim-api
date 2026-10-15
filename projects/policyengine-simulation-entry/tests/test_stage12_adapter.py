@@ -6,12 +6,11 @@ from uuid import UUID
 
 import pytest
 from policyengine_simulation_contract.stage12_execution import SimulationRole
-from stage12_fixtures import eligible_payload, worker
-
 from policyengine_simulation_entry.stage12_adapter import (
     ComparisonSkipReason,
     adapt_annual_comparison,
 )
+from stage12_fixtures import eligible_payload, worker
 
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
 

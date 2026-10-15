@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
 import logging
 import time
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import modal
@@ -17,9 +17,9 @@ from policyengine_simulation_observability.stages import (
     Stage,
 )
 
-from .partition import stage12_region_groups_for_model
 from .failure_recording import report_failure
 from .failures import Stage12Cancellation, Stage12ExecutionError
+from .partition import stage12_region_groups_for_model
 from .segmentation import build_segment_inputs, merge_segment_results
 from .simulation import SimulationCalculation
 

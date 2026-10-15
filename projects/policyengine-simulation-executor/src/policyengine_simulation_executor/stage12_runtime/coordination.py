@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
-import logging
-import time
 from typing import Any
 from uuid import uuid4
 
@@ -72,8 +72,8 @@ from .output_planning import (
     resolve_report_output_plan,
     validate_output_frames,
 )
-from .simulation import descriptor_from_record, simulation_input_sha256
 from .segmentation import should_segment_simulation
+from .simulation import descriptor_from_record, simulation_input_sha256
 
 SIMULATION_POLL_INITIAL_SECONDS = 0.25
 SIMULATION_POLL_MAX_SECONDS = 1.0

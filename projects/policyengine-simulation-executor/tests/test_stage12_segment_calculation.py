@@ -6,16 +6,15 @@ from hashlib import sha256
 
 import pandas as pd
 import pytest
-
-from policyengine_simulation_contract.stage12_execution import (
-    PlannedSimulationExecutionInput,
-    SimulationRole,
-)
 from policyengine_simulation_contract.spm import (
     SPMProvenance,
     SPMRuntimeVersions,
     SPMSelection,
     build_spm_provenance,
+)
+from policyengine_simulation_contract.stage12_execution import (
+    PlannedSimulationExecutionInput,
+    SimulationRole,
 )
 from policyengine_simulation_executor.stage12_artifacts import (
     serialize_simulation_frames,

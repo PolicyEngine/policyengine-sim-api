@@ -25,13 +25,11 @@ def install_identity_stubs(monkeypatch):
     to the installed capability resolver for tests that intentionally exercise
     the installed release.
     """
-    from policyengine.provenance import manifest as manifest_module
-
     # This module imports ``get_release_manifest`` by value while constructing
     # country models. Import it before replacing the manifest module's function
     # so full-suite ordering cannot bind this test's stub into production code.
     import policyengine.tax_benefit_models.common.model_version  # noqa: F401
-
+    from policyengine.provenance import manifest as manifest_module
     from policyengine_simulation_executor import release_bundle
 
     bundle = SimpleNamespace(

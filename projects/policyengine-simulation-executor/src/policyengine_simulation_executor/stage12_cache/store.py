@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from hashlib import sha256
 import json
 import os
+from collections.abc import Mapping
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +36,7 @@ def resolve_cache_bucket(explicit: str | None = None) -> str:
 
 def _default_client():
     from google.cloud import storage
+
     from policyengine_simulation_executor.simulation_runtime import (
         setup_gcp_credentials,
     )

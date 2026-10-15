@@ -22,8 +22,6 @@ from policyengine_simulation_contract.budget_window_state import (
 from policyengine_simulation_contract.spm import spm_error_detail
 from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_observability.stages import BUDGET_WINDOW_STAGES, Stage
-
-import modal
 from src.modal.budget_window_context import (
     BudgetWindowBatchContext,
     ChildSimulationHandle,
@@ -33,6 +31,8 @@ from src.modal.budget_window_results import (
     build_budget_window_result,
     extract_annual_impact,
 )
+
+import modal
 
 # Polling tuning. The runner busy-loops across child FunctionCall.get(timeout=0)
 # probes; when no child resolved we sleep before the next probe to stop the

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
-import json
 from typing import Any
 
 from policyengine_simulation_contract.stage12_bundle import (

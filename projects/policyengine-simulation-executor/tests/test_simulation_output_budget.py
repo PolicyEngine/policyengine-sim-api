@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import pandas as pd
 from microdf import MicroDataFrame
-
 from policyengine_simulation_executor.simulation_output_budget import (
     build_budgetary_impact,
 )

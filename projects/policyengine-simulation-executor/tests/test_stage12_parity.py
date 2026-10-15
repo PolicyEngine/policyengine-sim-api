@@ -3,7 +3,6 @@
 import numpy as np
 import pandas as pd
 import pytest
-
 from policyengine_simulation_executor.stage12_parity import (
     NumericalTolerance,
     ParityMismatch,
