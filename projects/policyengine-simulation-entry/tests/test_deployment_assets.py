@@ -548,7 +548,7 @@ def test_cloud_run_deployment_defaults_permission_enforcement_to_log_only(
             configured
         )
 
-    subprocess.run(
+    subprocess.run(  # noqa: S603  # runs the repository deploy script directly, as the workflow does
         [CLOUD_RUN_DEPLOY_SCRIPT],
         check=True,
         env=command_environment,
@@ -568,7 +568,7 @@ def test_cloud_run_deployment_rejects_invalid_permission_enforcement(
     command_environment = _cloud_run_deploy_environment(tmp_path)
     command_environment["SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"] = configured
 
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603  # runs the repository deploy script directly, as the workflow does
         [CLOUD_RUN_DEPLOY_SCRIPT],
         check=False,
         env=command_environment,
