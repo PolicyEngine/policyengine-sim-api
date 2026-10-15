@@ -135,7 +135,7 @@ def build_bundle_manifest_metadata(
     policyengine_version: str,
 ) -> BundleManifestMetadata:
     """Describe the installed release bundle as served by ``app_name``."""
-    from policyengine_simulation_contract.job_progress import (
+    from policyengine_simulation_contract.job_progress import (  # noqa: PLC0415  # the contract package loads only when bundle metadata is built
         JOB_PROGRESS_CAPABILITY_VERSION,
     )
     from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # the executor package loads only when bundle metadata is built

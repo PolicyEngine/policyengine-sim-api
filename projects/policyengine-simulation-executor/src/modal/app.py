@@ -15,6 +15,10 @@ from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
     HF_RUNTIME_ENV_NAME,
 )
+from policyengine_simulation_executor.job_progress import (
+    NULL_JOB_PROGRESS,
+    StoredJobProgressReporter,
+)
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_country_model_version,
     get_bundled_package_version,
@@ -279,13 +283,9 @@ def _job_progress_reporter() -> "JobProgressReporter":
     writes a record under its own call id. ``/budget-window-jobs`` does not
     read those records yet; the writes are a few small Dict puts per year.
     """
-    from policyengine_simulation_contract.job_progress_state import (
+    from policyengine_simulation_contract.job_progress_state import (  # noqa: PLC0415  # resolved per call so tests can patch job_progress_state
         get_job_progress,
         put_job_progress,
-    )
-    from policyengine_simulation_executor.job_progress import (
-        NULL_JOB_PROGRESS,
-        StoredJobProgressReporter,
     )
 
     try:

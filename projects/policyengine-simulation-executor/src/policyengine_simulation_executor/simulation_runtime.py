@@ -751,7 +751,7 @@ def _build_simulation(
     from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # resolved per call so tests can patch spm.normalize_runtime_spm
         normalize_runtime_spm,
     )
-    from policyengine_simulation_executor.stage_reporting_simulation import (
+    from policyengine_simulation_executor.stage_reporting_simulation import (  # noqa: PLC0415  # resolved per call so tests can patch stage_reporting_simulation
         StageReportingSimulation,
     )
 
