@@ -116,8 +116,8 @@ def test_valid_token_reaches_authenticated_old_gateway(
     assert response.headers["x-policyengine-simulation-backend"] == "old_gateway"
 
 
+@pytest.mark.usefixtures("permission_enforcement")
 def test_enforced_permissions_reject_token_without_route_permission(
-    permission_enforcement: None,
     base_url: str,
     access_token: str,
 ) -> None:

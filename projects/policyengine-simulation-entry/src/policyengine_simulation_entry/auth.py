@@ -175,9 +175,14 @@ class CallerAuthorizer:
         permission: CallerPermission,
     ) -> AuthorizationDependency:
         """Return a dependency that yields the caller holding ``permission``."""
+        # The dependency marker is read from a default built here. The Annotated
+        # form can't be used: this module postpones annotations, and FastAPI
+        # resolves them against the module's globals, which don't hold this
+        # authorizer's authenticate dependency.
+        authenticated_identity = Depends(self.authenticate)
 
         def authorized_caller(
-            identity: CallerIdentity | None = Depends(self.authenticate),
+            identity: CallerIdentity | None = authenticated_identity,
         ) -> CallerIdentity | None:
             return self.authorize(identity, permission)
 
@@ -214,7 +219,7 @@ class CallerAuthorizer:
         }
         if identity.authorized_party:
             attributes["client_id"] = identity.authorized_party
-        try:
+        try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
             self.runtime.event(
                 "simulation_entry_permission_missing",
                 severity="WARNING",
