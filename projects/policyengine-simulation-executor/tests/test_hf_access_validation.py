@@ -5,12 +5,11 @@ from __future__ import annotations
 from hashlib import sha256
 
 import pytest
-
 from policyengine_simulation_executor.hf_access_validation import (
     EXPECTED_HF_TOKEN_DISPLAY_NAME,
     HF_RUNTIME_ENV_NAME,
-    HFArtifactAccess,
     HFAccessTarget,
+    HFArtifactAccess,
     build_uk_bundle_access_plan,
     validate_configured_uk_private_hf_access,
     validate_uk_private_hf_access,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from src.modal.utils import validate_v2_worker_release as validation
 
 

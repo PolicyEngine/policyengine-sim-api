@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_SOURCE_ROOTS = (

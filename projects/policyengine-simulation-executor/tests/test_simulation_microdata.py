@@ -4,7 +4,6 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
-
 from policyengine_simulation_executor.simulation_microdata import (
     extract_output_microdata,
     rebuild_entity_frame,

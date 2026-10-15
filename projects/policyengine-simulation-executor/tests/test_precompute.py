@@ -13,8 +13,6 @@ from types import ModuleType, SimpleNamespace
 
 import pandas as pd
 import pytest
-from pydantic import ValidationError
-
 from fixtures.identity_stubs import install_identity_stubs
 from fixtures.wrapper_spm import wrapper_storage_id
 from policyengine_simulation_executor import precompute
@@ -26,6 +24,7 @@ from policyengine_simulation_executor.precompute_models import (
     DatasetPlanEntry,
     PrecomputePlan,
 )
+from pydantic import ValidationError
 
 
 def _receipt() -> BundleVersionIdentity:
@@ -354,7 +353,6 @@ class TestWriterReaderContract:
     @pytest.fixture
     def fake_regions(self, monkeypatch):
         from policyengine.core.scoping_strategy import RowFilterStrategy
-
         from policyengine_simulation_executor import simulation_runtime as sr
 
         def get_region(code):
@@ -409,7 +407,6 @@ class TestWriterReaderContract:
             dataset_logical_name,
             resolve_dataset_reference,
         )
-
         from policyengine_simulation_executor.artifact_keys import (
             collect_dataset_identity,
         )

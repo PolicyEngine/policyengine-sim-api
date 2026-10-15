@@ -1,6 +1,10 @@
 """Contract tests for simulation API response shapes."""
 
-from policyengine_simulation_gateway.generate_openapi import create_openapi_app
+from fixtures.macro_output import (
+    CURRENT_REQUIRED_BUDGET_KEYS,
+    CURRENT_SINGLE_YEAR_MACRO_KEYS,
+    CURRENT_SINGLE_YEAR_MACRO_RESULT,
+)
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowAnnualImpact,
     BudgetWindowResult,
@@ -10,12 +14,7 @@ from policyengine_simulation_contract.gateway_models import (
 from policyengine_simulation_executor.simulation_macro_output import (
     SingleYearMacroOutput,
 )
-
-from fixtures.macro_output import (
-    CURRENT_REQUIRED_BUDGET_KEYS,
-    CURRENT_SINGLE_YEAR_MACRO_KEYS,
-    CURRENT_SINGLE_YEAR_MACRO_RESULT,
-)
+from policyengine_simulation_gateway.generate_openapi import create_openapi_app
 
 
 def test_job_status_result_preserves_current_single_year_macro_dict_contract():

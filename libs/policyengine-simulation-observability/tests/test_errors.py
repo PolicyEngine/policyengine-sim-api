@@ -7,7 +7,6 @@ from unittest.mock import Mock
 
 from policyengine_simulation_observability import errors as errors_module
 
-
 CORRELATION_RE = re.compile(r"correlation_id=([0-9a-f]{32})")
 
 

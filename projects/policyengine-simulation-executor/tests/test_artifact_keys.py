@@ -12,7 +12,6 @@ churn (or, worse, a writer/reader mismatch).
 from types import SimpleNamespace
 
 import pytest
-
 from fixtures.identity_stubs import install_identity_stubs
 from fixtures.wrapper_spm import (
     wrapper_storage_id as _wrapper_storage_id,

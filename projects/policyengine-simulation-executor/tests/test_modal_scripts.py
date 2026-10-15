@@ -8,7 +8,6 @@ import os
 import subprocess
 
 import pytest
-
 from fixtures.test_modal_scripts import REPO_ROOT, SCRIPTS_DIR
 
 pytest_plugins = ("fixtures.test_modal_scripts",)

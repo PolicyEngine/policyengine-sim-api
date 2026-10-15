@@ -8,7 +8,6 @@ write failure propagates — a deploy that cannot record itself goes red.
 from datetime import datetime
 
 import pytest
-
 from policyengine_simulation_executor.precompute_models import DeployedMarker
 from src.modal.utils import record_deployment
 

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from contextlib import nullcontext
+from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
@@ -51,6 +50,12 @@ from .dependencies import (
     ModalChildInvoker,
     artifact_store,
     runtime_store,
+)
+from .failure_causes import (
+    StageProgress,
+    failure_summary,
+    record_failure_cause,
+    tracked_stage,
 )
 from .failure_recording import persist_failure_record, report_original_failure
 from .output_planning import (
@@ -195,10 +200,22 @@ def _mark_child_failed(
     *,
     error_code: str,
     error_summary: str,
-) -> None:
+) -> str | None:
+    """Mark an unfinished child failed and return the cause its record keeps.
+
+    A worker that failed has already persisted its own redacted cause before
+    Modal returned the worker's stable exception, so that cause is kept rather
+    than overwritten. A succeeded child is left unchanged and has no cause.
+    """
+
     latest = persistence.get_simulation(simulation_execution_id)
     if latest.status is ComparisonRunLifecycleStatus.SUCCEEDED:
-        return
+        return None
+    if (
+        latest.status is ComparisonRunLifecycleStatus.FAILED
+        and latest.error_summary is not None
+    ):
+        return latest.error_summary
     failed_at = datetime.now(UTC)
     persistence.replace_simulation(
         latest.model_copy(
@@ -211,6 +228,7 @@ def _mark_child_failed(
             }
         )
     )
+    return error_summary
 
 
 def coordinate_report(
@@ -250,12 +268,15 @@ def coordinate_report(
         if context.production_function_call_id is not None
         else STAGE12_CANONICAL_REPORT_STAGES
     )
-    claim_span = (
-        runtime.span(stage_plan.name(Stage.STAGE12_COORDINATOR_CLAIM))
-        if runtime is not None
-        else nullcontext()
+    progress = StageProgress()
+    stage_span = partial(
+        tracked_stage,
+        stage_plan=stage_plan,
+        progress=progress,
+        runtime=runtime,
     )
-    with claim_span:
+    stage_scope = partial(stage_span, operation=True)
+    with stage_span(Stage.STAGE12_COORDINATOR_CLAIM):
         parent, should_execute = _claim_parent(
             submitted=submitted_parent,
             coordinator_invocation_id=coordinator_invocation_id,
@@ -272,19 +293,10 @@ def coordinate_report(
     # A child failure is reported where it occurs and then propagates to the
     # report handler below, which must not report the same error twice.
     reported_child_failure: Exception | None = None
+    # A failed child records its own cause; the report keeps that cause
+    # rather than the generic exception Modal returns to the coordinator.
+    child_failure_summary: str | None = None
     try:
-
-        def stage_scope(
-            stage: Stage,
-            attributes: Mapping[str, object] | None = None,
-        ):
-            if runtime is None:
-                return nullcontext()
-            return runtime.operation(
-                stage_plan.name(stage),
-                attributes=attributes,
-            )
-
         with stage_scope(Stage.STAGE12_COORDINATOR_PREPARATION):
             context = context.model_copy(
                 update={
@@ -317,12 +329,7 @@ def coordinate_report(
                 ):
                     simulations.append(plan_simulation_input(simulation, output_plan))
             planned_simulations = tuple(simulations)
-        child_state_span = (
-            runtime.span(stage_plan.name(Stage.STAGE12_CHILD_STATE_CREATE))
-            if runtime is not None
-            else nullcontext()
-        )
-        with child_state_span:
+        with stage_span(Stage.STAGE12_CHILD_STATE_CREATE):
             children = {
                 simulation.role: persistence.create_or_resolve_simulation(
                     _child_record(
@@ -377,15 +384,10 @@ def coordinate_report(
                 )
             )
             try:
-                dispatch_span = (
-                    runtime.span(
-                        stage_plan.name(Stage.STAGE12_CHILD_DISPATCH),
-                        attributes={"simulation_role": simulation.role.value},
-                    )
-                    if runtime is not None
-                    else nullcontext()
-                )
-                with dispatch_span:
+                with stage_span(
+                    Stage.STAGE12_CHILD_DISPATCH,
+                    {"simulation_role": simulation.role.value},
+                ):
                     child_observability_context = (
                         runtime.capture_context() if runtime is not None else None
                     )
@@ -411,7 +413,7 @@ def coordinate_report(
                         persistence,
                         simulation.simulation_execution_id,
                         error_code="simulation_dispatch_failed",
-                        error_summary=type(error).__name__,
+                        error_summary=failure_summary(error, progress=progress),
                     ),
                     runtime=runtime,
                     failure_scope="child_dispatch",
@@ -427,15 +429,7 @@ def coordinate_report(
         # Every required call has been started before the coordinator waits.
         for role, call in calls.items():
             try:
-                wait_span = (
-                    runtime.span(
-                        stage_plan.name(Stage.STAGE12_CHILD_WAIT),
-                        attributes={"simulation_role": role},
-                    )
-                    if runtime is not None
-                    else nullcontext()
-                )
-                with wait_span:
+                with stage_span(Stage.STAGE12_CHILD_WAIT, {"simulation_role": role}):
                     descriptors[role] = SimulationArtifactDescriptor.model_validate(
                         call.get(timeout=SIMULATION_WAIT_TIMEOUT_SECONDS)
                     )
@@ -450,13 +444,13 @@ def coordinate_report(
                 simulation = next(
                     item for item in simulations if item.role.value == role
                 )
-                persist_failure_record(
+                child_failure_summary = persist_failure_record(
                     partial(
                         _mark_child_failed,
                         persistence,
                         simulation.simulation_execution_id,
                         error_code="simulation_invocation_failed",
-                        error_summary=type(error).__name__,
+                        error_summary=failure_summary(error, progress=progress),
                     ),
                     runtime=runtime,
                     failure_scope="child_wait",
@@ -465,12 +459,7 @@ def coordinate_report(
         baseline = descriptors["baseline"]
         reform = descriptors["reform"]
         validate_aligned_outputs(report, output_plan, baseline, reform)
-        artifact_read_span = (
-            runtime.span(stage_plan.name(Stage.STAGE12_ARTIFACT_READ))
-            if runtime is not None
-            else nullcontext()
-        )
-        with artifact_read_span:
+        with stage_span(Stage.STAGE12_ARTIFACT_READ):
             baseline_payload = artifact_storage.read(baseline.artifact.uri)
             reform_payload = artifact_storage.read(reform.artifact.uri)
         if sha256(baseline_payload).hexdigest() != baseline.artifact.content_sha256:
@@ -487,12 +476,7 @@ def coordinate_report(
         )
         validate_output_frames(baseline_frames, output_plan)
         validate_output_frames(reform_frames, output_plan)
-        aggregation_span = (
-            runtime.span(stage_plan.name(Stage.STAGE12_AGGREGATION))
-            if runtime is not None
-            else nullcontext()
-        )
-        with aggregation_span:
+        with stage_span(Stage.STAGE12_AGGREGATION):
             aggregate = aggregator(
                 report=report,
                 baseline_frames=baseline_frames,
@@ -501,12 +485,7 @@ def coordinate_report(
                 reform_descriptor=reform,
                 uk_local_authority_metadata=uk_local_authority_metadata,
             )
-        aggregate_write_span = (
-            runtime.span(stage_plan.name(Stage.STAGE12_AGGREGATE_ARTIFACT_WRITE))
-            if runtime is not None
-            else nullcontext()
-        )
-        with aggregate_write_span:
+        with stage_span(Stage.STAGE12_AGGREGATE_ARTIFACT_WRITE):
             aggregate_artifact = artifact_storage.write_aggregate(
                 prefix=context.artifact_prefix,
                 payload=aggregate,
@@ -543,8 +522,8 @@ def coordinate_report(
             stage_plan=stage_plan,
         )
         return descriptor.model_dump(mode="json")
-    # Persist any coordinator, child-call, aggregation, or artifact failure
-    # before returning a stable exception to Modal.
+    # Persist a redacted cause for any coordinator, child-call, aggregation, or
+    # artifact failure before returning a stable exception to Modal.
     except Exception as error:  # noqa: BLE001
         if error is not reported_child_failure:
             report_original_failure(
@@ -552,6 +531,10 @@ def coordinate_report(
                 runtime=runtime,
                 failure_scope="report_coordination",
             )
+        report_failure_summary = child_failure_summary or failure_summary(
+            error, progress=progress
+        )
+        record_failure_cause(runtime, error, report_failure_summary)
         failed_at = datetime.now(UTC)
         persist_failure_record(
             partial(
@@ -561,7 +544,7 @@ def coordinate_report(
                         "status": ComparisonRunLifecycleStatus.FAILED,
                         "aggregation_status": ComparisonRunAggregationStatus.FAILED,
                         "error_code": "report_coordination_failed",
-                        "error_summary": type(error).__name__,
+                        "error_summary": report_failure_summary,
                         "updated_at": failed_at,
                         "completed_at": failed_at,
                     }

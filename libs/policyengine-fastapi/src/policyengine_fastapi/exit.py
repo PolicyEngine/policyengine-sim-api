@@ -4,11 +4,9 @@ a middleware-style way to register lifecycle events so I'm writing this
 """
 
 import logging
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from functools import wraps
-from typing import Any, Callable, TypeVar, cast
-
-from fastapi import FastAPI
+from typing import Any, TypeVar
 
 log = logging.getLogger(__name__)
 

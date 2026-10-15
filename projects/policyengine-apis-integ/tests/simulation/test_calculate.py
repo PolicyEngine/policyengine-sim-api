@@ -12,7 +12,6 @@ from http import HTTPStatus
 from typing import Protocol, TypeGuard, cast
 
 import pytest
-
 from policyengine_api_simulation_client import AuthenticatedClient, Client
 from policyengine_api_simulation_client.api.default import (
     get_job_status_jobs_job_id_get,

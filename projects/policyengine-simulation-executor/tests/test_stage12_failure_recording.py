@@ -51,3 +51,18 @@ def test_unwritable_failure_record_is_logged_when_no_runtime_is_available(
         "Stage 12 failure record could not be persisted (report_coordination)"
     )
     assert record.exc_info[1] is persistence_error
+
+
+def test_written_failure_record_returns_what_the_write_returned() -> None:
+    worker_cause = "ValueError in stage12_calculation (baseline): country missing"
+
+    def keep_worker_cause() -> str:
+        return worker_cause
+
+    kept_cause = persist_failure_record(
+        keep_worker_cause,
+        runtime=None,
+        failure_scope="child_wait",
+    )
+
+    assert kept_cause == worker_cause

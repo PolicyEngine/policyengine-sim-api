@@ -1,9 +1,6 @@
 # pyright: reportAttributeAccessIssue=false, reportFunctionMemberAccess=false
 """Pre-merge smoke for static files inside the exact UK Stage 12 image."""
 
-import modal
-from src.modal.v2_app import uk_worker_image
-
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
 )
@@ -14,6 +11,9 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata_from_hdf,
     load_uk_local_authority_resources,
 )
+from src.modal.v2_app import uk_worker_image
+
+import modal
 
 app = modal.App("policyengine-stage12-v2-static-runtime-files-smoke")
 

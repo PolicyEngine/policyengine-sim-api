@@ -8,7 +8,6 @@ from policyengine.core.scoping_strategy import (
     RowFilterStrategy,
     WeightReplacementStrategy,
 )
-
 from policyengine_simulation_executor import simulation_runtime as sr
 from policyengine_simulation_executor.simulation_output_geographic import (
     _should_build_us_congressional_district_impact as gate,

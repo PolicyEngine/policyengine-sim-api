@@ -13,7 +13,6 @@ from policyengine.core.scoping_strategy import (
     RowFilterStrategy,
     WeightReplacementStrategy,
 )
-
 from policyengine_simulation_executor import simulation_output_geographic
 from policyengine_simulation_executor import simulation_runtime as sr
 

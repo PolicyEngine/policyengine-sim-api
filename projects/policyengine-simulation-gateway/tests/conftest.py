@@ -1,12 +1,10 @@
 """Root pytest configuration for gateway tests."""
 
-import importlib
 import sys
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-
 from policyengine_simulation_gateway.testing import create_gateway_app
 
 project_root = Path(__file__).parent.parent

@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 32 | 1 | 1 | 14 | 48 |
+| mechanical | 33 | 1 | 0 | 14 | 48 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 33 of 48 rules.
+**Blocking:** 34 of 48 rules.
 
 ## Gaps
 
@@ -35,7 +35,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 ### Advisory (checked but not blocking)
 
-- `sim.quality.ruff-lint`: Python code passes ruff check with the rules selected in ruff.toml (ruff's defaults, made explicit); CI does not run ruff check yet.
+- None.
 
 ### Unproven (no proof that the checker rejects a bad example)
 
@@ -249,7 +249,7 @@ flowchart LR
 | `sim.quality.every-project-tested` | Every project and library with unit tests runs them in the PR test matrix. | mechanical | doc-only | no | nothing | — | — |
 | `sim.quality.ruff-format-src` | Source code under projects/*/src and libs/*/src is formatted with ruff format. | mechanical | enforced | yes | ruff format | `pr.yml:lint` | — |
 | `sim.quality.ruff-format-tests` | Test code is formatted with ruff format too; CI currently checks only src directories. | mechanical | doc-only | no | nothing | — | — |
-| `sim.quality.ruff-lint` | Python code passes ruff check with the rules selected in ruff.toml (ruff's defaults, made explicit); CI does not run ruff check yet. | mechanical | advisory | no | ruff check (E4, E7, E9, F) | — | — |
+| `sim.quality.ruff-lint` | All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. | mechanical | enforced | yes | ruff check (E4, E7, E9, F, FLY, FURB, I, PIE, PYI, RET, RSE, UP, W) | `pr.yml:lint` | — |
 | `sim.quality.tests-pass` | Each project's unit tests pass in its own locked environment. | mechanical | enforced | yes | CI job `test` | `pr.yml:test` | — |
 
 ```mermaid
@@ -260,9 +260,8 @@ flowchart LR
   e_ruff_format["ruff format"]
   j_CI_pr_yml_lint["CI pr.yml:lint"]
   r_sim_quality_ruff_format_tests("sim.quality.ruff-format-tests (doc-only)")
-  r_sim_quality_ruff_lint("sim.quality.ruff-lint (advisory)")
-  e_ruff_check__E4__E7__E9__F_["ruff check (E4, E7, E9, F)"]
-  local_only>"not run in CI"]
+  r_sim_quality_ruff_lint("sim.quality.ruff-lint (enforced)")
+  e_ruff_check__E4__E7__E9__F__FLY__FURB__I__PIE__PYI__RET__RSE__UP__W_["ruff check (E4, E7, E9, F, FLY, FURB, I, PIE, PYI, RET, RSE, UP, W)"]
   r_sim_quality_tests_pass("sim.quality.tests-pass (enforced)")
   e_CI_job_test["CI job test"]
   j_CI_pr_yml_test["CI pr.yml:test"]
@@ -270,8 +269,8 @@ flowchart LR
   r_sim_quality_ruff_format_src --> e_ruff_format
   e_ruff_format --> j_CI_pr_yml_lint
   r_sim_quality_ruff_format_tests -.-> gap_unenforced
-  r_sim_quality_ruff_lint --> e_ruff_check__E4__E7__E9__F_
-  e_ruff_check__E4__E7__E9__F_ -.-> local_only
+  r_sim_quality_ruff_lint --> e_ruff_check__E4__E7__E9__F__FLY__FURB__I__PIE__PYI__RET__RSE__UP__W_
+  e_ruff_check__E4__E7__E9__F__FLY__FURB__I__PIE__PYI__RET__RSE__UP__W_ --> j_CI_pr_yml_lint
   r_sim_quality_tests_pass --> e_CI_job_test
   e_CI_job_test --> j_CI_pr_yml_test
 ```

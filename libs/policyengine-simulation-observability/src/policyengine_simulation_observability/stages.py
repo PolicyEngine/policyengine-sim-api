@@ -7,10 +7,10 @@ instead of distributing string literals across the gateway and workers.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Mapping
 
 
 class RunConfiguration(StrEnum):

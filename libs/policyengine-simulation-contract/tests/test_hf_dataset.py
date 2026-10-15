@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 import policyengine_simulation_contract.hf_dataset as hf_dataset
+import pytest
 from policyengine_simulation_contract.hf_dataset import (
     HuggingFaceDatasetReferenceError,
     parse_hf_dataset_uri,

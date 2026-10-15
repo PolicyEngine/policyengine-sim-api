@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from fastapi.responses import JSONResponse
-
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchStatusResponse,
 )

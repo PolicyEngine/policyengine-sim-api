@@ -4,10 +4,8 @@ from importlib import import_module
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-
 from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_executor.main import app
-
 
 PACKAGED_RUNTIME_MODULES = (
     "policyengine_simulation_executor.compat_models",

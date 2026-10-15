@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import pytest
 from conftest import make_settings
-
 from policyengine_simulation_entry.config import ConfigurationError
 
 

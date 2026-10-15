@@ -8,7 +8,6 @@ import json
 import os
 
 import pytest
-
 from native_spm_support import materialize_native_household
 
 SOURCE = os.environ.get("SPM_NATIVE_SMOKE_SOURCE")
@@ -118,11 +117,11 @@ def test_worker_baseline_reform_national_local_cache_and_receipts(
 def test_native_state_only_worker_requires_geography_and_explicit_national_works(
     native_dataset,
 ):
+    from policyengine_simulation_contract.spm import spm_error_detail
     from policyengine_simulation_executor.simulation_runtime import (
         DatasetSelection,
         _build_simulation,
     )
-    from policyengine_simulation_contract.spm import spm_error_detail
 
     native_dataset.data.household.drop(columns=["county_fips"], inplace=True)
     params = {
@@ -154,8 +153,8 @@ def test_native_state_only_worker_requires_geography_and_explicit_national_works
 
 
 def test_actual_provider_unknown_metro_is_a_typed_input_error():
-    from policyengine_simulation_executor.spm import normalize_runtime_spm
     from policyengine_simulation_contract.spm import SPMInputError
+    from policyengine_simulation_executor.spm import normalize_runtime_spm
 
     with pytest.raises(SPMInputError) as error:
         normalize_runtime_spm(
