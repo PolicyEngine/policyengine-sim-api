@@ -17,14 +17,20 @@ select = [
 
 [lint.flake8-type-checking]
 # Classes whose annotations Pydantic evaluates at runtime, so their imports must
-# stay at runtime. Ruff checks direct bases only, so every project model base
-# class that other models inherit from is listed.
+# stay at runtime. Ruff reads each base through the imports of the subclass's
+# own module and follows inheritance only through classes in that module, never
+# through a re-export, so a base is listed by the path its subclasses import it
+# from: the defining module for project bases, the public path for third-party
+# ones. See docs/engineering/skills/typing-only-imports.md; the
+# sim.quality.runtime-evaluated-models-resolve tests check every model.
 runtime-evaluated-base-classes = [
+    "policyengine.core.Simulation",
     "policyengine_fastapi.observability.contracts.CorrelatedRunFields",
     "policyengine_fastapi.observability.contracts.ObservabilityModel",
     "policyengine_simulation_contract.gateway_models.GatewayRequestBase",
     "policyengine_simulation_contract.macro_output.MacroOutputModel",
     "policyengine_simulation_contract.macro_output.MacroRootModel",
+    "policyengine_simulation_contract.macro_output.SingleYearMacroOutput",
     "policyengine_simulation_contract.stage12_bundle.StrictBundleModel",
     "policyengine_simulation_contract.stage12_execution.SimulationExecutionInput",
     "policyengine_simulation_contract.stage12_execution.StrictContractModel",
@@ -32,6 +38,7 @@ runtime-evaluated-base-classes = [
     "policyengine_simulation_executor.precompute_models._StrictModel",
     "pydantic.BaseModel",
     "pydantic.RootModel",
+    "pydantic_settings.BaseSettings",
 ]
 # FastAPI evaluates endpoint annotations when routes are registered.
 runtime-evaluated-decorators = [

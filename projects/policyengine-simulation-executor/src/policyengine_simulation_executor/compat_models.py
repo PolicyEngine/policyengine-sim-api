@@ -4,12 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_contract.spm import SPMSelection
 from pydantic import BaseModel, ConfigDict
-
-from policyengine_simulation_executor.simulation_macro_output import (
-    SingleYearMacroOutput,
-)
 
 
 class SimulationOptions(BaseModel):
