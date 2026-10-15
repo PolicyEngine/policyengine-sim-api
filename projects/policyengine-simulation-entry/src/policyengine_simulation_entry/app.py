@@ -61,7 +61,6 @@ from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.schemas import (
     BackendTelemetryAttributes,
     BackendTelemetryPayload,
-    CallerIdentity,
     RequestIdentifiers,
     TemporaryStage12ReportResponse,
     TemporaryStage12SubmissionResponse,
@@ -428,11 +427,11 @@ def create_app(
     @app.post(
         "/internal/stage12/reports",
         include_in_schema=False,
+        dependencies=[Depends(stage12_operator)],
     )
     async def submit_temporary_stage12_report(
         body: SimulationRequest,
         request: Request,
-        caller: CallerIdentity | None = Depends(stage12_operator),
     ) -> Response:
         if not runtime_settings.stage12_enabled:
             return JSONResponse(
@@ -507,11 +506,11 @@ def create_app(
     @app.get(
         "/internal/stage12/reports/{evaluation_id}",
         include_in_schema=False,
+        dependencies=[Depends(stage12_operator)],
     )
     async def get_temporary_stage12_report(
         evaluation_id: UUID,
         request: Request,
-        caller: CallerIdentity | None = Depends(stage12_operator),
     ) -> Response:
         comparison = runtime_comparison
         if comparison is None:
@@ -586,11 +585,11 @@ def create_app(
                 "model": SimulationErrorResponse,
             },
         },
+        dependencies=[Depends(simulation_submitter)],
     )
     async def submit_comparison(
         body: SimulationRequest,
         request: Request,
-        caller: CallerIdentity | None = Depends(simulation_submitter),
     ) -> Response:
         observability_id = start_workflow_observability(request)
         request_payload = _model_json(body)
@@ -655,11 +654,11 @@ def create_app(
                 "model": SimulationErrorResponse,
             },
         },
+        dependencies=[Depends(simulation_submitter)],
     )
     async def submit_budget_window(
         body: BudgetWindowBatchRequest,
         request: Request,
-        caller: CallerIdentity | None = Depends(simulation_submitter),
     ) -> Response:
         start_workflow_observability(request)
         return await forward(
@@ -694,12 +693,9 @@ def create_app(
             404: {"description": "Job not found"},
             500: {"description": "Job failed"},
         },
+        dependencies=[Depends(simulation_reader)],
     )
-    async def get_job(
-        job_id: str,
-        request: Request,
-        caller: CallerIdentity | None = Depends(simulation_reader),
-    ) -> Response:
+    async def get_job(job_id: str, request: Request) -> Response:
         return await forward(
             request,
             "GET",
@@ -729,11 +725,11 @@ def create_app(
             404: {"description": "Batch job not found"},
             500: {"description": "Batch failed"},
         },
+        dependencies=[Depends(simulation_reader)],
     )
     async def get_budget_window_job(
         batch_job_id: str,
         request: Request,
-        caller: CallerIdentity | None = Depends(simulation_reader),
     ) -> Response:
         return await forward(
             request,
