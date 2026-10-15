@@ -25,6 +25,10 @@ When adding, changing, or removing a rule, a guard test, a checker
 configuration, or a CI job that enforces one, read
 `docs/engineering/skills/rules-registry.md`.
 
+Before adding a Pydantic model or a class that other models inherit from, or
+moving an import under `if TYPE_CHECKING:`, read
+`docs/engineering/skills/typing-only-imports.md`.
+
 ## Development
 
 - Use Python 3.13 and `uv`.
@@ -140,6 +144,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 - `sim.quality.ruff-format-src`: Source code under projects/*/src and libs/*/src is formatted with ruff format. (blocking: ruff format)
 - `sim.quality.ruff-format-tests`: Test code is formatted with ruff format too; CI currently checks only src directories. (doc-only, not checked: follow it yourself)
 - `sim.quality.ruff-lint`: All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. (blocking: ruff check (E4, E7, E9, F, FLY, FURB, I, PIE, PYI, RET, RSE, TC, UP, W))
+- `sim.quality.runtime-evaluated-models-resolve`: Every Pydantic model is runtime-evaluated for ruff: one of its bases, read through the imports of the model's own module, is listed in ruff.toml's runtime-evaluated-base-classes or is a runtime-evaluated class in that same module; and every Pydantic model resolves its annotations once its package is imported. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py`, `projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py`)
 - `sim.quality.tests-pass`: Each project's unit tests pass in its own locked environment. (blocking: CI job `test`)
 
 ### CI workflows and scripts

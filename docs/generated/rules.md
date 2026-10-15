@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 33 | 1 | 0 | 14 | 48 |
+| mechanical | 34 | 1 | 0 | 14 | 49 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 34 of 48 rules.
+**Blocking:** 35 of 49 rules.
 
 ## Gaps
 
@@ -250,6 +250,7 @@ flowchart LR
 | `sim.quality.ruff-format-src` | Source code under projects/*/src and libs/*/src is formatted with ruff format. | mechanical | enforced | yes | ruff format | `pr.yml:lint` | — |
 | `sim.quality.ruff-format-tests` | Test code is formatted with ruff format too; CI currently checks only src directories. | mechanical | doc-only | no | nothing | — | — |
 | `sim.quality.ruff-lint` | All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. | mechanical | enforced | yes | ruff check (E4, E7, E9, F, FLY, FURB, I, PIE, PYI, RET, RSE, TC, UP, W) | `pr.yml:lint` | — |
+| `sim.quality.runtime-evaluated-models-resolve` | Every Pydantic model is runtime-evaluated for ruff: one of its bases, read through the imports of the model's own module, is listed in ruff.toml's runtime-evaluated-base-classes or is a runtime-evaluated class in that same module; and every Pydantic model resolves its annotations once its package is imported. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py`, `projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py` | `pr.yml:test` | yes |
 | `sim.quality.tests-pass` | Each project's unit tests pass in its own locked environment. | mechanical | enforced | yes | CI job `test` | `pr.yml:test` | — |
 
 ```mermaid
@@ -262,15 +263,19 @@ flowchart LR
   r_sim_quality_ruff_format_tests("sim.quality.ruff-format-tests (doc-only)")
   r_sim_quality_ruff_lint("sim.quality.ruff-lint (enforced)")
   e_ruff_check__E4__E7__E9__F__FLY__FURB__I__PIE__PYI__RET__RSE__TC__UP__W_["ruff check (E4, E7, E9, F, FLY, FURB, I, PIE, PYI, RET, RSE, TC, UP, W)"]
+  r_sim_quality_runtime_evaluated_models_resolve("sim.quality.runtime-evaluated-models-resolve (enforced)")
+  e_pytest_projects_policyengine_simulation_entry_tests_test_runtime_evaluated_annotations_py__projects_policyengine_simulation_executor_tests_test_runtime_evaluated_annotations_py["pytest projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py, projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py"]
+  j_CI_pr_yml_test["CI pr.yml:test"]
   r_sim_quality_tests_pass("sim.quality.tests-pass (enforced)")
   e_CI_job_test["CI job test"]
-  j_CI_pr_yml_test["CI pr.yml:test"]
   r_sim_quality_every_project_tested -.-> gap_unenforced
   r_sim_quality_ruff_format_src --> e_ruff_format
   e_ruff_format --> j_CI_pr_yml_lint
   r_sim_quality_ruff_format_tests -.-> gap_unenforced
   r_sim_quality_ruff_lint --> e_ruff_check__E4__E7__E9__F__FLY__FURB__I__PIE__PYI__RET__RSE__TC__UP__W_
   e_ruff_check__E4__E7__E9__F__FLY__FURB__I__PIE__PYI__RET__RSE__TC__UP__W_ --> j_CI_pr_yml_lint
+  r_sim_quality_runtime_evaluated_models_resolve --> e_pytest_projects_policyengine_simulation_entry_tests_test_runtime_evaluated_annotations_py__projects_policyengine_simulation_executor_tests_test_runtime_evaluated_annotations_py
+  e_pytest_projects_policyengine_simulation_entry_tests_test_runtime_evaluated_annotations_py__projects_policyengine_simulation_executor_tests_test_runtime_evaluated_annotations_py --> j_CI_pr_yml_test
   r_sim_quality_tests_pass --> e_CI_job_test
   e_CI_job_test --> j_CI_pr_yml_test
 ```

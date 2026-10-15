@@ -51,6 +51,7 @@ guard_test_globs = [
   "projects/*/tests/test_*schema_authority*.py",
   "projects/policyengine-simulation-entry/tests/test_deployment_assets.py",
   "projects/policyengine-simulation-gateway/tests/test_openapi_golden.py",
+  "projects/*/tests/test_runtime_evaluated_annotations.py",
 ]
 ignore_tests = [
   { node = "projects/policyengine-simulation-entry/tests/test_deployment_assets.py::test_the_expression_evaluator_follows_github_semantics", reason = "Checks the GitHub Actions expression evaluator that the workflow-condition tests use; it enforces no repository rule itself." },
@@ -765,6 +766,37 @@ status = "doc-only"
 autofix = false
 [rule.enforcer]
 kind = "none"
+
+[[rule]]
+id = "sim.quality.runtime-evaluated-models-resolve"
+category = "quality"
+statement = "Every Pydantic model is runtime-evaluated for ruff: one of its bases, read through the imports of the model's own module, is listed in ruff.toml's runtime-evaluated-base-classes or is a runtime-evaluated class in that same module; and every Pydantic model resolves its annotations once its package is imported."
+rationale = "docs/engineering/skills/typing-only-imports.md#how-ruff-decides-a-class-is-runtime-evaluated"
+scope = ["projects/*/src/**/*.py", "libs/*/src/**/*.py", "ruff.toml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+nodes = [
+  "projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py::test_every_model_is_runtime_evaluated_for_ruff",
+  "projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py::test_every_model_resolves_its_annotations",
+  "projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py::test_modal_entry_files_define_no_models",
+  "projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py::test_bases_resolve_as_ruff_resolves_them",
+  "projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py::test_same_module_base_in_a_package_is_named_after_its_file",
+  "projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py::test_every_model_is_runtime_evaluated_for_ruff",
+  "projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py::test_every_model_resolves_its_annotations",
+  "projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py::test_bases_resolve_as_ruff_resolves_them",
+  "projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py::test_same_module_base_in_a_package_is_named_after_its_file",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.quality.runtime-evaluated-models-resolve/bad_compat_models.py"
+good_fixture = "rules/fixtures/sim.quality.runtime-evaluated-models-resolve/good_compat_models.py"
+test = "projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py::test_rule_proof_runtime_evaluated_models_resolve"
 
 # --- CI workflows and scripts ----------------------------------------------
 
