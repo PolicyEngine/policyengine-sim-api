@@ -800,6 +800,13 @@ def test_complete_integration_suite_is_configured_for_beta_only():
     assert "run_full_integration:" in reusable_workflow
 
 
+def test_stage12_only_deployment_skips_existing_stack_integration_suite():
+    stage12_workflow = STAGE12_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    assert stage12_workflow.count("run_full_integration: false") == 2
+    assert "run_full_integration: true" not in stage12_workflow
+
+
 def test_main_deployment_automatically_deploys_stage12_in_both_environments():
     deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
     reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")

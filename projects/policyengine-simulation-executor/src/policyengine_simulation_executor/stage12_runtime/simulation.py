@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
 from typing import Any
+from uuid import UUID
 
 import pandas as pd
 from policyengine_observability import ObservabilityRuntime
@@ -26,6 +29,7 @@ from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetada
 from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
     Stage,
+    StagePlan,
 )
 
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -38,14 +42,17 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 )
 
 from .dependencies import ComparisonStore, artifact_store, runtime_store
-from .failure_causes import (
-    StageProgress,
-    failure_summary,
-    record_failure_cause,
-    tracked_stage,
+from .failure_causes import StageProgress, record_failure_cause, tracked_stage
+from .failure_recording import persist_failure_record, report_failure
+from .failures import (
+    Stage12Cancellation,
+    Stage12ExecutionError,
+    Stage12FailureDetail,
+    validate_policy_periods,
 )
-from .failure_recording import persist_failure_record, report_original_failure
 from .output_planning import apply_output_plan, validate_output_frames
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -53,6 +60,67 @@ class SimulationCalculation:
     frames: Mapping[str, pd.DataFrame]
     calculation_provenance: SPMProvenance | None = None
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
+    cache_outcome: str | None = None
+
+
+def build_stage12_simulation(
+    params: dict[str, Any],
+    *,
+    dataset: Any,
+    dataset_selection: Any,
+    country_module: Any,
+    policy: dict[str, Any] | None,
+    scoping_strategy: Any,
+    region_code: str | None,
+    execution: PlannedSimulationExecutionInput,
+):
+    """Construct a Stage 12 simulation without selecting v1 cache code."""
+
+    from policyengine.core import Simulation
+
+    from policyengine_simulation_executor.spm import normalize_runtime_spm
+
+    selection = normalize_runtime_spm(params)
+    from policyengine_simulation_executor.stage12_cache.runtime import (
+        Stage12CachedSimulation,
+        qualifying_cache_identity,
+    )
+
+    resolved = load_stage12_bundle()
+    identity = qualifying_cache_identity(
+        execution,
+        resolved=resolved,
+        dataset_is_default=dataset_selection.is_default,
+        scoping_strategy=scoping_strategy,
+        spm=selection,
+    )
+    simulation_type = Stage12CachedSimulation if identity is not None else Simulation
+    model = simulation_type(
+        **({"spm": selection} if selection is not None else {}),
+        **({"id": identity.simulation_id} if identity is not None else {}),
+        dataset=dataset,
+        tax_benefit_model_version=country_module.model,
+        policy=policy,
+        scoping_strategy=scoping_strategy,
+    )
+    if isinstance(model, Stage12CachedSimulation):
+        model.configure_stage12_cache(execution.output_plan)
+    del region_code
+    return model
+
+
+def simulation_runtime_params(
+    simulation: PlannedSimulationExecutionInput,
+) -> dict[str, Any]:
+    """Return the parameters a Stage 12 simulation is resolved and built from."""
+
+    return {
+        "country": simulation.geography.country,
+        "scope": "macro",
+        "time_period": str(simulation.year),
+        "region": simulation.geography.region,
+        **simulation.options,
+    }
 
 
 def simulation_input_sha256(simulation: SimulationExecutionInput) -> str:
@@ -116,6 +184,7 @@ def calculate_simulation_frames(
     simulation: PlannedSimulationExecutionInput,
     *,
     runtime: ObservabilityRuntime | None = None,
+    stage_plan: StagePlan = STAGE12_SIMULATION_STAGES,
     progress: StageProgress | None = None,
 ) -> SimulationCalculation:
     """Run one policy and return the coordinator-planned entity output tables."""
@@ -124,7 +193,7 @@ def calculate_simulation_frames(
         progress = StageProgress(role=simulation.role.value)
     stage_span = partial(
         tracked_stage,
-        stage_plan=STAGE12_SIMULATION_STAGES,
+        stage_plan=stage_plan,
         progress=progress,
         runtime=runtime,
     )
@@ -134,15 +203,8 @@ def calculate_simulation_frames(
         raise ValueError("population artifact differs from bundle dataset provenance")
     _require_installed_bundle(simulation)
     country = simulation.geography.country
-    params: dict[str, Any] = {
-        "country": country,
-        "scope": "macro",
-        "time_period": str(simulation.year),
-        "region": simulation.geography.region,
-        **simulation.options,
-    }
+    params = simulation_runtime_params(simulation)
     from policyengine_simulation_executor.simulation_runtime import (
-        _build_simulation,
         _country_module,
         _load_dataset,
         _normalise_policy,
@@ -186,17 +248,27 @@ def calculate_simulation_frames(
         with stage_span(Stage.POLICY_NORMALIZATION):
             policy = _normalise_policy(simulation.policy)
         with stage_span(Stage.SIMULATION_BUILD):
-            model = _build_simulation(
+            model = build_stage12_simulation(
                 params,
                 dataset=dataset,
                 dataset_selection=dataset_selection,
+                country_module=country_module,
                 policy=policy,
                 scoping_strategy=region.scoping_strategy,
                 region_code=region.code,
+                execution=simulation,
             )
         with stage_span(Stage.STAGE12_CALCULATION):
             apply_output_plan(model, simulation.output_plan)
-            model.ensure()
+            with (
+                stage_span(Stage.STAGE12_CACHE_LOOKUP)
+                if hasattr(model, "stage12_cache_outcome")
+                else nullcontext()
+            ):
+                model.ensure()
+        cache_outcome = getattr(model, "stage12_cache_outcome", None)
+        if runtime is not None and cache_outcome is not None:
+            runtime.set_context(stage12_cache_outcome=cache_outcome)
         output_data = getattr(getattr(model, "output_dataset", None), "data", None)
         entity_data = getattr(output_data, "entity_data", None)
         if not isinstance(entity_data, Mapping):
@@ -218,6 +290,7 @@ def calculate_simulation_frames(
             frames=frames,
             calculation_provenance=calculation_provenance,
             uk_local_authority_metadata=uk_local_authority_metadata,
+            cache_outcome=cache_outcome,
         )
 
 
@@ -267,6 +340,32 @@ def descriptor_from_record(
     )
 
 
+def _mark_running_simulation_failed(
+    persistence: ComparisonStore,
+    simulation_execution_id: UUID,
+    *,
+    detail: Stage12FailureDetail,
+    failed_at: datetime,
+) -> None:
+    """Record a failure only while the simulation is still running."""
+
+    latest = persistence.get_simulation(simulation_execution_id)
+    if latest.status is not ComparisonRunLifecycleStatus.RUNNING:
+        return
+    persistence.replace_simulation_if_status(
+        latest.model_copy(
+            update={
+                "status": ComparisonRunLifecycleStatus.FAILED,
+                "error_code": detail.error_code,
+                "error_summary": detail.error_summary,
+                "updated_at": failed_at,
+                "completed_at": failed_at,
+            }
+        ),
+        expected_status=ComparisonRunLifecycleStatus.RUNNING,
+    )
+
+
 def run_single_simulation(
     payload: object,
     context_payload: object,
@@ -278,6 +377,10 @@ def run_single_simulation(
         [PlannedSimulationExecutionInput],
         Mapping[str, pd.DataFrame] | SimulationCalculation,
     ] = calculate_simulation_frames,
+    segmented_calculator: Callable[
+        [PlannedSimulationExecutionInput, Callable[[], bool]], SimulationCalculation
+    ]
+    | None = None,
     runtime: ObservabilityRuntime | None = None,
 ) -> dict[str, Any]:
     simulation = PlannedSimulationExecutionInput.model_validate(payload)
@@ -288,6 +391,11 @@ def run_single_simulation(
     child = persistence.get_simulation(simulation.simulation_execution_id)
     if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
         return descriptor_from_record(child, simulation).model_dump(mode="json")
+    if child.status not in {
+        ComparisonRunLifecycleStatus.PENDING,
+        ComparisonRunLifecycleStatus.RUNNING,
+    }:
+        raise RuntimeError("Stage 12 simulation is no longer active")
     started = datetime.now(UTC)
     running = child.model_copy(
         update={
@@ -298,7 +406,25 @@ def run_single_simulation(
             "error_summary": None,
         }
     )
-    persistence.replace_simulation(running)
+    running, claimed = persistence.replace_simulation_if_status(
+        running,
+        expected_status=child.status,
+    )
+    if not claimed:
+        raise RuntimeError("Stage 12 simulation was cancelled")
+
+    def cancellation_requested() -> bool:
+        try:
+            latest = persistence.get_simulation(simulation.simulation_execution_id)
+        except Exception as error:  # noqa: BLE001
+            logger.warning(
+                "Stage 12 cancellation check failed for %s (%s)",
+                simulation.simulation_execution_id,
+                type(error).__name__,
+            )
+            return False
+        return latest.status is not ComparisonRunLifecycleStatus.RUNNING
+
     progress = StageProgress(role=simulation.role.value)
     stage_span = partial(
         tracked_stage,
@@ -307,12 +433,17 @@ def run_single_simulation(
         runtime=runtime,
     )
     try:
+        validate_policy_periods(simulation.policy)
         with stage_span(Stage.STAGE12_INPUT_WRITE):
             artifact_storage.write_input(
                 prefix=context.artifact_prefix,
                 simulation=simulation,
             )
-        if calculator is calculate_simulation_frames:
+        from .segmentation import should_segment_simulation
+
+        if segmented_calculator is not None and should_segment_simulation(simulation):
+            calculated = segmented_calculator(simulation, cancellation_requested)
+        elif calculator is calculate_simulation_frames:
             calculated = calculate_simulation_frames(
                 simulation,
                 runtime=runtime,
@@ -339,7 +470,7 @@ def run_single_simulation(
                 uk_local_authority_metadata=uk_local_authority_metadata,
             )
         completed = datetime.now(UTC)
-        persistence.replace_simulation(
+        _, replaced = persistence.replace_simulation_if_status(
             running.model_copy(
                 update={
                     "status": ComparisonRunLifecycleStatus.SUCCEEDED,
@@ -352,33 +483,43 @@ def run_single_simulation(
                     "updated_at": completed,
                     "completed_at": completed,
                 }
-            )
+            ),
+            expected_status=ComparisonRunLifecycleStatus.RUNNING,
         )
+        if not replaced:
+            raise Stage12Cancellation("Stage 12 simulation was cancelled")
         return descriptor.model_dump(mode="json")
+    except Stage12Cancellation:
+        raise RuntimeError("Stage 12 simulation was cancelled") from None
     # Persist a redacted cause for any country-package calculation failure
     # before returning a stable exception to Modal.
     except Exception as error:  # noqa: BLE001
-        report_original_failure(
-            error,
-            runtime=runtime,
-            failure_scope="simulation_execution",
-            attributes={"simulation_role": simulation.role.value},
-        )
-        execution_failure_summary = failure_summary(error, progress=progress)
-        record_failure_cause(runtime, error, execution_failure_summary)
+        if isinstance(error, Stage12ExecutionError):
+            # A segmented calculation reports its segment failure where it
+            # occurs, before raising this error.
+            detail = error.detail
+        else:
+            detail = report_failure(
+                error,
+                runtime=runtime,
+                failure_scope="simulation_execution",
+                default_code="simulation_execution_failed",
+                attributes={
+                    "simulation_role": simulation.role.value,
+                    "evaluation_id": str(simulation.evaluation_id),
+                    "simulation_execution_id": str(simulation.simulation_execution_id),
+                },
+                progress=progress,
+            )
+        record_failure_cause(runtime, error, detail.error_summary)
         failed_at = datetime.now(UTC)
         persist_failure_record(
             partial(
-                persistence.replace_simulation,
-                running.model_copy(
-                    update={
-                        "status": ComparisonRunLifecycleStatus.FAILED,
-                        "error_code": "simulation_execution_failed",
-                        "error_summary": execution_failure_summary,
-                        "updated_at": failed_at,
-                        "completed_at": failed_at,
-                    }
-                ),
+                _mark_running_simulation_failed,
+                persistence,
+                simulation.simulation_execution_id,
+                detail=detail,
+                failed_at=failed_at,
             ),
             runtime=runtime,
             failure_scope="simulation_execution",

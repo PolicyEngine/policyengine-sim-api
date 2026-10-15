@@ -17,11 +17,13 @@ from policyengine_simulation_observability.stages import Stage, StagePlan
 
 from policyengine_simulation_executor.stage12_artifacts import Stage12ArtifactStore
 from policyengine_simulation_executor.stage12_result_comparison import compare_results
+from policyengine_simulation_executor.stage12_timeouts import (
+    PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS,
+)
 
 from .dependencies import ChildInvoker, ComparisonStore
 from .failure_causes import failure_summary
 
-PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS = 900
 logger = logging.getLogger(__name__)
 
 

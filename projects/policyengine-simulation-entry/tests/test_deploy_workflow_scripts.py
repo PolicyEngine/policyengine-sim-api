@@ -293,6 +293,7 @@ def test_candidate_fails_when_the_tag_is_not_deployed(fakes, tmp_path):
 
 V2_APPLICATION_NAME = "stage12-v2-application-name.sh"
 VALIDATE_V2_WORKERS = "stage12-validate-v2-workers.sh"
+CACHE_MANIFEST_SHA256 = "a" * 64
 STAGE12_READY = "stage12-deployment-ready.sh"
 V2_APPLICATION_CODE = (
     "from policyengine_simulation_contract.stage12_manifest import "
@@ -320,9 +321,9 @@ def test_deploy_workflow_runs_the_stage12_worker_scripts():
         validation
     )
     assert (
-        f'run: ../../.github/scripts/{VALIDATE_V2_WORKERS} "${{{{ inputs.modal_environment }}}}"'
-        in validation
-    )
+        f'run: ../../.github/scripts/{VALIDATE_V2_WORKERS} "${{{{ inputs.modal_environment }}}}" '
+        '"${{ steps.stage12_cache.outputs.manifest_digest }}"\n'
+    ) in validation
 
     assert "application_name: ${{ steps.application.outputs.name }}" in workflow
     assert "validation_file: ${{ steps.validation.outputs.file }}" in workflow
@@ -367,7 +368,9 @@ def _validate_v2_workers(fakes: FakeCommands, tmp_path: Path, *args: str):
 def test_validate_v2_workers_records_the_validation_file(fakes, tmp_path):
     fakes.add("uv")
 
-    result, output, validation_file = _validate_v2_workers(fakes, tmp_path, "main")
+    result, output, validation_file = _validate_v2_workers(
+        fakes, tmp_path, "main", CACHE_MANIFEST_SHA256
+    )
 
     assert result.returncode == 0, result.stderr
     assert output == f"file={validation_file}\n"
@@ -380,6 +383,8 @@ def test_validate_v2_workers_records_the_validation_file(fakes, tmp_path):
             "src.modal.utils.validate_v2_worker_release",
             "--environment",
             "main",
+            "--cache-manifest-sha256",
+            CACHE_MANIFEST_SHA256,
             "--output",
             str(validation_file),
         ]
@@ -391,7 +396,9 @@ def test_validate_v2_workers_fails_without_writing_when_validation_fails(
 ):
     fakes.add("uv", "exit 1\n")
 
-    result, output, _ = _validate_v2_workers(fakes, tmp_path, "main")
+    result, output, _ = _validate_v2_workers(
+        fakes, tmp_path, "main", CACHE_MANIFEST_SHA256
+    )
 
     assert result.returncode == 1
     assert output == ""
@@ -404,6 +411,17 @@ def test_validate_v2_workers_requires_the_modal_environment(fakes, tmp_path):
 
     assert result.returncode != 0
     assert "Modal environment required" in result.stderr
+    assert output == ""
+    assert fakes.calls() == []
+
+
+def test_validate_v2_workers_requires_the_cache_manifest_digest(fakes, tmp_path):
+    fakes.add("uv")
+
+    result, output, _ = _validate_v2_workers(fakes, tmp_path, "main")
+
+    assert result.returncode != 0
+    assert "Stage 12 cache manifest digest required" in result.stderr
     assert output == ""
     assert fakes.calls() == []
 

@@ -224,6 +224,9 @@ class TestModalImageSmoke:
             REPO_ROOT / "projects/policyengine-simulation-executor/src/modal/v2_app.py",
             REPO_ROOT
             / "projects/policyengine-simulation-executor/src/modal/precompute_app.py",
+            REPO_ROOT
+            / "projects/policyengine-simulation-executor/src/modal"
+            / "stage12_precompute_app.py",
         )
         sources = "\n".join(path.read_text(encoding="utf-8") for path in paths)
 
@@ -752,6 +755,94 @@ class TestModalPrecompute:
             )
         ]
         assert "needs: prepare" in executor_job
+
+
+class TestStage12CachePrecompute:
+    """Tests for the independent Stage 12 cache deployment script."""
+
+    script = SCRIPTS_DIR / "stage12-cache-precompute.sh"
+
+    def _run_with_fake_uv(self, tmp_path, output: str, *args):
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        log_path = tmp_path / "uv-calls.log"
+        github_output = tmp_path / "github-output.txt"
+        uv_path = bin_dir / "uv"
+        uv_path.write_text(
+            '#!/bin/bash\nprintf \'%s\\n\' "$*" >> "$UV_FAKE_LOG"\nprintf \'%s\\n\' "$UV_FAKE_OUTPUT"\n',
+            encoding="utf-8",
+        )
+        uv_path.chmod(0o755)
+        env = {
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "UV_FAKE_LOG": str(log_path),
+            "UV_FAKE_OUTPUT": output,
+            "GITHUB_OUTPUT": str(github_output),
+            "STAGE12_CACHE_BUCKET": "policyengine-stage12-cache-staging",
+        }
+        result = subprocess.run(
+            ["bash", str(self.script), "staging", *args],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        calls = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
+        emitted = (
+            github_output.read_text(encoding="utf-8") if github_output.exists() else ""
+        )
+        return result, calls, emitted
+
+    def test_validates_syntax_and_exports_exact_manifest_digest(self, tmp_path):
+        syntax = subprocess.run(
+            ["bash", "-n", str(self.script)],
+            capture_output=True,
+            text=True,
+        )
+        assert syntax.returncode == 0, syntax.stderr
+        digest = "a" * 64
+
+        result, calls, emitted = self._run_with_fake_uv(
+            tmp_path,
+            f"progress\nSTAGE12_CACHE_MANIFEST_DIGEST={digest}",
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert (
+            "run modal run --env=staging src/modal/stage12_precompute_app.py" in calls
+        )
+        assert "--force" not in calls
+        assert emitted == f"manifest_digest={digest}\n"
+
+    def test_rejects_an_invalid_digest(self, tmp_path):
+        result, calls, emitted = self._run_with_fake_uv(
+            tmp_path,
+            "STAGE12_CACHE_MANIFEST_DIGEST=not-a-digest",
+        )
+
+        assert result.returncode != 0
+        assert calls.strip() == (
+            "run modal run --env=staging src/modal/stage12_precompute_app.py"
+        )
+        assert emitted == ""
+
+    def test_v1_force_recompute_never_reaches_the_immutable_cache(self):
+        """Stored Stage 12 cache files cannot be replaced, so nothing forces
+        a rebuild of them."""
+        reusable_workflow = (
+            REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
+        ).read_text(encoding="utf-8")
+        cache_step = next(
+            line
+            for line in reusable_workflow.splitlines()
+            if "stage12-cache-precompute.sh" in line
+        )
+
+        assert cache_step.strip() == (
+            "run: ../../.github/scripts/stage12-cache-precompute.sh "
+            '"${{ inputs.modal_environment }}"'
+        )
+        assert "--force" not in self.script.read_text(encoding="utf-8")
 
 
 class TestModalRecordDeployment:

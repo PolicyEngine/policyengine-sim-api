@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from policyengine_simulation_contract.stage12_bundle import (
@@ -13,14 +13,17 @@ from policyengine_simulation_contract.stage12_bundle import (
 )
 from policyengine_simulation_contract.stage12_manifest import (
     ACTIVE_MANIFEST_KEY,
+    PRE_CACHE_MANIFEST_KEY,
     V1_ROUTING_STATE_NAME,
     V2_VERSION_MANIFEST_NAME,
+    Stage12CacheRelease,
     V2CountryWorker,
     V2ManifestLoader,
     V2WorkerValidation,
     V2WorkerVersion,
     assert_separate_manifest_names,
     manifest_digest,
+    pre_cache_manifest_payload,
     publish_v2_manifest,
     v2_application_name,
     validate_manifest_has_no_credentials,
@@ -105,7 +108,7 @@ def _worker(version: str = "5.2.0") -> V2WorkerVersion:
             validated=True,
             application_name=application_name,
             bundle_manifest_sha256=resolved.bundle_manifest_sha256,
-            validated_at=datetime(2026, 9, 14, tzinfo=timezone.utc),
+            validated_at=datetime(2026, 9, 14, tzinfo=UTC),
             validation_invocation_id="validation-123",
             country_validation_invocation_ids={
                 "us": "validation-us-123",
@@ -120,14 +123,87 @@ def test_v2_application_name_cannot_collide_with_v1() -> None:
     assert not v2_application_name("5.2.0").startswith("policyengine-simulation-py")
 
 
-def test_publish_writes_one_complete_v2_document() -> None:
+def _cached_worker(version: str = "5.2.0") -> V2WorkerVersion:
+    worker = _worker(version)
+    cache = Stage12CacheRelease(
+        manifest_sha256="c" * 64,
+        partition_sha256="d" * 64,
+        years=(2026, 2027, 2025),
+    )
+    return worker.model_copy(
+        update={
+            "cache": cache,
+            "validation": worker.validation.model_copy(update={"cache": cache}),
+        }
+    )
+
+
+def test_publish_writes_one_complete_v2_document_per_key() -> None:
     store = FakeStore()
 
-    manifest = publish_v2_manifest(store=store, worker=_worker())
+    manifest = publish_v2_manifest(store=store, worker=_cached_worker())
 
-    assert store.writes == [(ACTIVE_MANIFEST_KEY, manifest.model_dump(mode="json"))]
+    assert store.writes == [
+        (ACTIVE_MANIFEST_KEY, manifest.model_dump(mode="json")),
+        (PRE_CACHE_MANIFEST_KEY, pre_cache_manifest_payload(manifest)),
+    ]
     assert manifest.default_version == "5.2.0"
     assert manifest.versions["5.2.0"].validation.validated is True
+    assert V2ManifestLoader(store).load().versions["5.2.0"].cache is not None
+
+
+def test_readers_released_before_the_cache_get_only_fields_they_accept() -> None:
+    store = FakeStore()
+    publish_v2_manifest(store=store, worker=_cached_worker())
+
+    # The fields of each model before Stage 12 cache releases. Those readers
+    # forbid any other field, so adding one here would stop them loading.
+    pre_cache = store.values[PRE_CACHE_MANIFEST_KEY]
+    assert set(pre_cache) == {
+        "default_version",
+        "generation",
+        "schema_version",
+        "versions",
+    }
+    worker = pre_cache["versions"]["5.2.0"]
+    assert set(worker) == {
+        "application_name",
+        "bundle",
+        "bundle_manifest_sha256",
+        "countries",
+        "report_coordinator_callable",
+        "validation",
+    }
+    assert set(worker["validation"]) == {
+        "application_name",
+        "bundle_manifest_sha256",
+        "country_validation_invocation_ids",
+        "validated",
+        "validated_at",
+        "validation_invocation_id",
+    }
+
+
+def test_first_publish_with_cache_keeps_versions_from_the_pre_cache_key() -> None:
+    earlier = _worker("5.1.0").model_dump(
+        mode="json", exclude={"cache": True, "validation": {"cache"}}
+    )
+    store = FakeStore(
+        {
+            PRE_CACHE_MANIFEST_KEY: {
+                "schema_version": 1,
+                "generation": "5.1.0:earlier",
+                "default_version": "5.1.0",
+                "versions": {"5.1.0": earlier},
+            }
+        }
+    )
+    assert V2ManifestLoader(store).load().default_version == "5.1.0"
+
+    manifest = publish_v2_manifest(store=store, worker=_cached_worker())
+
+    assert sorted(manifest.versions) == ["5.1.0", "5.2.0"]
+    assert V2ManifestLoader(store).load() == manifest
 
 
 def test_loader_retains_its_last_valid_v2_document() -> None:
@@ -175,6 +251,21 @@ def test_manifest_rejects_incomplete_or_unvalidated_worker() -> None:
     value = _worker().model_dump(mode="json")
     value.pop("report_coordinator_callable")
     with pytest.raises(ValueError):
+        V2WorkerVersion.model_validate(value)
+
+
+def test_cache_metadata_is_optional_for_old_workers_and_must_match_validation() -> None:
+    old = _worker()
+    assert old.cache is None
+
+    cache = Stage12CacheRelease(
+        manifest_sha256="c" * 64,
+        partition_sha256="d" * 64,
+        years=(2026, 2027, 2025),
+    )
+    value = old.model_dump(mode="json")
+    value["cache"] = cache.model_dump(mode="json")
+    with pytest.raises(ValueError, match="cache metadata differs"):
         V2WorkerVersion.model_validate(value)
 
     value = _worker().model_dump(mode="json")

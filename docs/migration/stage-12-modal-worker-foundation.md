@@ -19,10 +19,19 @@ simulation submission or polling contracts.
   simulations therefore resolve in Modal `main` without relabeling durable
   records as `main`.
 - One v2 report-coordinator invocation starts baseline and reform as distinct
-  single-simulation calls before awaiting either result.
-- Each country-specific single-simulation function and the report-coordinator
-  function has a Modal `max_containers` value of 10. This is a per-function
-  limit; the functions do not share one application-wide container quota.
+  single-simulation calls, then checks both calls with nonblocking result probes
+  on every polling pass.
+- An eligible US national single-simulation call starts 20 region-group
+  calculation calls and merges their typed Parquet results. Because baseline
+  and reform are separate and start before either is awaited, an eligible
+  report starts 40 region-group calculation calls. These are invocations;
+  Modal may reuse a warm container for more than one invocation.
+- Country-specific single-simulation functions and the report coordinator have
+  a Modal `max_containers` value of 10. The separate US region-group function
+  has a value of 300 so calculation work cannot wait behind the parent calls
+  that are collecting it. These are per-function limits, not one shared quota.
+- Stage 12 owns its partition, request and result models, orchestration, merge,
+  and cache implementation. It does not import the corresponding v1 modules.
 - The v2 functions write canonical private artifacts and use a shared
   SQLAlchemy Core package to persist temporary comparison state directly.
   They do not create production simulations, reports, report runs, or user
@@ -67,6 +76,10 @@ with the live API-owned schema.
   validation downloads that lookup file using the worker credential. Stage 12
   local-authority output uses packaged metadata and does not require access to
   `local_authorities_2021.csv`.
+- Stage 12 uses a dedicated environment-specific cache bucket named by
+  `STAGE12_CACHE_BUCKET`. Its object keys and manifest namespace are separate
+  from the v1 precompute store. The same restricted worker credential can
+  create, read, and delete objects in this cache bucket.
 - `STAGE12_DATABASE_URL` is delivered from the environment-specific Secret
   Manager resource named by `STAGE12_DATABASE_URL_SECRET_NAME`. It authenticates
   as the existing shared `policyengine_v2_runtime` account; Stage 12 does not
@@ -98,9 +111,10 @@ automation or infrastructure configuration:
 | Operation | Maintained owner |
 | --- | --- |
 | Build and deploy each versioned v2 Modal application | Simulation deployment workflow |
+| Build and verify the Stage 12 dataset and baseline cache | Simulation deployment workflow |
 | Create or update the separate v2 manifest storage object | V2 manifest publisher |
 | Configure the v2 manifest reader and `STAGE12_ENABLED` | Cloud Run deployment workflow |
-| Create the private artifact namespace and its retention policy | Infrastructure configuration |
+| Create the private report-artifact and cache buckets and their policies | Infrastructure configuration |
 | Ensure the existing API v2 runtime identity has comparison-row database access | API infrastructure configuration |
 | Deliver the existing shared runtime database secret to Cloud Run and Modal | Simulation deployment workflow |
 | Grant private-object access only to the Modal runtime | Infrastructure configuration |
@@ -160,9 +174,10 @@ Before deploying, the simulation workflow obtains the shared runtime URL from
 Secret Manager, verifies the expected `policyengine_v2_runtime` identity and
 permissions, inspects the complete temporary schema against the declared
 SQLAlchemy mappings, and runs a rolled-back insert/read/update/delete canary. It
-also verifies required Secret Manager access and performs a create/read/delete
-canary in the private artifact bucket. The storage canary is deleted in the
-normal path and by exit cleanup after a failure.
+also verifies required Secret Manager access and performs separate
+create/read/delete checks in the private report-artifact and cache buckets. The
+temporary objects are deleted in the normal path and by exit cleanup after a
+failure.
 
 The current Public API omits `data` for the certified default dataset. The v2
 adapter therefore resolves an absent `data` field to the exact default dataset
@@ -255,6 +270,136 @@ move to the front end, and Stage 14 or later work should remove these temporary
 executor resources when the authoritative v2 report architecture supersedes
 Stage 12.
 
+## US segmentation and baseline cache
+
+Segmentation applies by default when both simulation inputs describe a US
+national society-wide calculation and the shared output plan does not require
+cliff analysis or labor-supply responses. `segmented=false` selects the
+single-container calculation explicitly. UK calculations, subnational US
+calculations, cliff analysis, and labor-supply-response calculations also use
+the single-container path. `segmented=true` is accepted, but it does not
+override those numerical eligibility conditions.
+
+The Stage 12 coordinator still persists only two logical simulation records:
+one baseline and one reform. Each eligible logical simulation call performs
+the following work independently:
+
+```text
+logical baseline or reform simulation
+        |
+        +---- start 20 US region-group calculation calls
+        |
+        +---- collect and validate all 20 results
+        |
+        +---- concatenate entity rows and reject duplicate identifiers
+        |
+        +---- write one logical simulation artifact and update one record
+```
+
+Region-group calls do not write temporary database rows or private report
+artifacts. They return compressed, dtype-preserving data to their logical
+simulation parent. The parent validates the result role, partition index,
+region membership, content digest, entity schemas, column dtypes, and unique
+entity identifiers before merging. A missing or failed region-group call fails
+that logical simulation. The parent makes a best-effort cancellation request
+for every calculation call that it already started.
+
+The report coordinator observes baseline and reform together rather than
+blocking on one role first. On the first failure, it copies the failed
+simulation's `error_code` and safe `error_summary` to the report, records the
+unresolved peer as `failed` with `simulation_cancelled` and the summary
+"Cancelled after the baseline simulation failed." (or reform), and completes
+the report as failed without waiting for the peer calculation. An unsegmented
+peer is also cancelled through Modal. A segmented peer checks its persisted
+simulation status during bounded waits; after seeing the cancellation, it
+cancels all region-group calls it owns and exits. Modal does not cancel
+spawned calls recursively, so the coordinator cancels a segmented peer through
+Modal only if it could not write the cancellation record. Only a `running`
+record changes, so a simulation that already succeeded or failed keeps its
+outcome, and atomic status replacement prevents a late calculation result from
+replacing the cancellation record.
+
+Both simulations share one 3,900-second wait window, the longest simulation
+worker timeout. It opens when the coordinator starts, so the coordinator's own
+setup, including loading the country model and dispatching both simulations,
+comes out of that window and not out of the time it needs afterwards. When the
+window closes, the report fails with `simulation_wait_timeout`, and each
+unfinished simulation is cancelled in the same way. The coordinator's
+5,400-second Modal timeout is that window plus up to 900 seconds for the
+production-result wait plus 600 seconds to aggregate, write artifacts, and
+record the outcome.
+
+If the coordinator itself fails after starting a simulation, for example while
+recording a later dispatch or attaching a started call's invocation
+identifier, it cancels every started, unfinished simulation in the same way,
+with the summary "Cancelled after the coordinator failed.". The report keeps
+the coordinator's original failure.
+
+Errors while reading or updating simulation records never replace the failure
+that caused them. If the coordinator cannot read or update the failed
+simulation's own record, or record a peer's cancellation, it logs that error
+with the report and simulation identifiers and the error type, but not the
+error's message. The report still records the simulation's failure, the
+failed simulation is never recorded as cancelled, and its peers are still
+cancelled with the reason "Cancelled after the baseline simulation failed."
+(or reform).
+
+Typed input failures, including invalid policy periods and SPM selection
+errors, retain their code and bounded message through the segment, simulation,
+and report layers. Unexpected exceptions are logged with their complete stack
+trace and persisted as their redacted cause followed by the correlation ID,
+for example `OperationalError in stage12_child_state_create: ...
+(correlation_id=...)`. Redaction is described in the executor's
+`stage12_runtime.failure_causes` module; the cause is shortened, never the
+correlation ID, to fit the 512-character summary. The coordinator and
+simulation workers report each failure once, before any database write, and
+that report carries the same correlation ID.
+
+Before each v2 deployment, the independent Stage 12 precompute application
+builds three annual US dataset files and 60 current-law baseline files: one for
+each of 20 region groups in 2025, 2026, and 2027. Cache identities include the
+bundle manifest digest, package and data versions, source-data digest, year,
+region membership, scoping identity, output-plan digest, and the resolved SPM
+selection the worker builds the simulation with. A baseline file has the name
+.py's `Simulation.storage_id` gives the file it saves and loads: the identity's
+simulation ID followed by the SPM selection's digest. Objects are
+content-addressed and written with a create-only condition; an existing object
+must have the expected digest and size. A stored file is never replaced, so
+precompute computes only missing files and has no force option; the v1
+`force_recompute` input does not reach it. To replace a bad file, delete it and
+deploy again: the run recomputes it and repeats the determinism check.
+
+Before publishing, precompute loads one stored baseline from the cache and
+compares it with a fresh calculation. The check runs whenever a run computed
+baselines, and also whenever no earlier run recorded a pass for the planned
+baselines, so running again after a failed check repeats the check rather than
+skipping it. A pass is recorded in the cache bucket, and the manifest is
+published only when that record exists.
+
+Precompute publishes a canonical manifest containing all 63 files. The
+deployment passes that manifest's SHA-256 digest into the US image build. The
+image build downloads and verifies every listed file, then records the exact
+cache release in worker-validation metadata and the v2 version manifest. The UK
+and coordinator images do not contain these files. Deployment validation runs
+one real 2026 region-group baseline and requires it to load the precomputed
+file without recalculation.
+
+Readers released before cache releases reject fields they do not know, and
+the manifest is published before the Cloud Run revision that reads it is
+promoted. The publisher therefore writes the manifest under the
+`active-with-cache` key and the same manifest without cache releases under the
+`active` key, which those readers keep reading. Current readers read
+`active-with-cache`, falling back to `active` only before the first publish
+that writes both keys. Removing the `active` copy needs a later change, once
+no deployed or rollback revision reads it.
+
+Only an empty-policy baseline using the bundle's default dataset and an exact
+region-group scope can read a baseline cache file. Reform calculations always
+compute. Missing cache files fall back to calculation; a loaded file that does
+not satisfy the requested output plan is recalculated. Each region-group log
+records whether it loaded a complete file, recalculated an incomplete file, or
+computed because no file existed.
+
 ## Temporary direct runner endpoint
 
 > **Temporary Stage 12 interface:** The authenticated routes in this section
@@ -302,9 +447,9 @@ Modal report coordinator
         | atomically create or resolve the temporary parent row
         | stop if another invocation already owns the same logical run
         |
-        +------> baseline single-simulation call
+        +------> baseline logical simulation call ------> 20 region-group calls
         |
-        +------> reform single-simulation call
+        +------> reform logical simulation call --------> 20 region-group calls
         |
         +------> write aggregate artifact and durable state
 
@@ -336,10 +481,24 @@ curl -X POST "${SIMULATION_ENTRYPOINT_URL}/internal/stage12/reports" \
     "scope": "macro",
     "region": "us",
     "time_period": "2026",
+    "segmented": true,
     "baseline": {},
-    "reform": {}
+    "reform": {
+      "gov.irs.credits.ctc.amount.base[0].amount": {
+        "2026-01-01.2100-12-31": 3000
+      }
+    }
   }'
 ```
+
+Policy values may be scalars, ISO effective-date mappings, or frontend interval
+mappings in `YYYY-MM-DD.YYYY-MM-DD` form. A bare year such as `"2026"` is not
+a valid effective-period key.
+
+The `segmented` field is optional. Omitting it uses segmentation when the
+request meets the eligibility conditions above. `false` explicitly selects the
+single-container path. `true` requests segmentation but still falls back to
+the single-container path when the output requirements are not eligible.
 
 An accepted request returns `202` and `Retry-After: 1` without waiting for the
 calculations or for the coordinator's first database write:
@@ -362,6 +521,10 @@ While the report is pending or running, GET returns `202` and `Retry-After: 5`;
 completed, failed, incomplete, or skipped states return `200`. The response
 contains the complete temporary parent and child execution metadata, including
 private artifact references and digests, but never returns artifact contents.
+For a failed report, the parent record contains the originating safe failure;
+the failed simulation contains the same values, and a peer stopped because of
+that failure is `failed` with `simulation_cancelled`; its `error_summary`
+gives the reason.
 Cloud Run therefore requires no additional object-storage permission for this
 interface.
 
@@ -395,7 +558,7 @@ starting child simulations. Unsupported automatic inputs are logged with a
 bounded reason and are not persisted.
 
 The report coordinator starts baseline and reform as independent Modal calls,
-waits for them, and derives the Stage 12 aggregate. It then restores the
+observes both until they succeed, and derives the Stage 12 aggregate. It then restores the
 production Modal function call by the retained production job identifier and
 waits up to 15 minutes for that production call to finish. It compares both
 complete aggregate result objects exactly. The private
@@ -437,3 +600,9 @@ aggregate, and compares every aggregate field. Differences fail qualification
 with only a bounded code and field path; calculation values are not included in
 the diagnostic or receipt. Numerical tolerances default to zero and can be
 introduced only for explicit field paths through a reviewed JSON file.
+For an eligible US national input, the Stage 12 side of qualification executes
+and merges all 20 region groups separately for both baseline and reform. This
+checks the partition and merge numerically in addition to comparing the final
+entity tables and aggregate report with the existing combined executor. Inputs
+that are not eligible for segmentation continue through the single-container
+Stage 12 calculation.
