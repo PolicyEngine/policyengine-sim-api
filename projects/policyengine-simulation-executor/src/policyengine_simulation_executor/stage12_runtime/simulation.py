@@ -42,7 +42,12 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 
 from .cached_simulation import Stage12CachedSimulation, qualifying_cache_identity
 from .dependencies import ComparisonStore, artifact_store, runtime_store
-from .failure_causes import StageProgress, record_failure_cause, tracked_stage
+from .failure_causes import (
+    StageProgress,
+    StageTracking,
+    record_failure_cause,
+    tracked_stage,
+)
 from .failure_recording import persist_failure_record, report_failure
 from .failures import (
     Stage12CancellationError,
@@ -206,9 +211,7 @@ def calculate_simulation_frames(
         progress = StageProgress(role=simulation.role.value)
     stage_span = partial(
         tracked_stage,
-        stage_plan=stage_plan,
-        progress=progress,
-        runtime=runtime,
+        tracking=StageTracking(stage_plan, progress, runtime),
     )
     if simulation.population.kind != "dataset":
         msg = "Stage 12 society-wide worker requires a dataset population"
@@ -483,9 +486,7 @@ def run_single_simulation(
     progress = StageProgress(role=simulation.role.value)
     stage_span = partial(
         tracked_stage,
-        stage_plan=STAGE12_SIMULATION_STAGES,
-        progress=progress,
-        runtime=runtime,
+        tracking=StageTracking(STAGE12_SIMULATION_STAGES, progress, runtime),
     )
     try:
         validate_policy_periods(simulation.policy)
