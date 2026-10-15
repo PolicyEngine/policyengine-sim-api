@@ -314,7 +314,7 @@ def _record_stage_durations(
                 for stage, seconds in durations.items()
             },
         )
-    except Exception:  # noqa: BLE001  # telemetry is non-fatal
+    except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
         pass
 
 
