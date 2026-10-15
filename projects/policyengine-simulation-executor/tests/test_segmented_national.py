@@ -1,6 +1,7 @@
 """Unit tests for the segmented-national fan-out runner (C5/C6 + review fixes)."""
 
 import ast
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -428,6 +429,46 @@ def _calls_with_stuck_child(clock, respawned_call, **sibling_options):
     calls = _twenty_calls(**sibling_options)
     calls[STUCK_GROUP_INDEX] = _stuck_call(clock)
     return [*calls, respawned_call]
+
+
+class TestSegmentedNationalRunnerTiming:
+    def test__runner_defaults_to_the_deployed_poll_deadline_and_budget(self):
+        runner = sn.SegmentedNationalRunner(
+            dict(NATIONAL),
+            app_name="policyengine-simulation-py-test",
+            runtime=TEST_RUNTIME,
+            modal_module=FakeModal([]),
+        )
+
+        assert runner.poll_interval_initial_seconds == sn.POLL_INTERVAL_INITIAL_SECONDS
+        assert runner.poll_interval_max_seconds == sn.POLL_INTERVAL_MAX_SECONDS
+        assert runner.poll_interval_backoff_factor == sn.POLL_INTERVAL_BACKOFF_FACTOR
+        assert runner.child_deadline_seconds == sn.CHILD_DEADLINE_SECONDS
+        assert runner.parent_budget_seconds == (
+            sn.PARENT_FUNCTION_TIMEOUT_SECONDS - sn.PARENT_COMPLETION_MARGIN_SECONDS
+        )
+        assert runner.clock is time.monotonic
+        assert runner.budget_ends_at == (
+            runner.started_at + runner.parent_budget_seconds
+        )
+
+    def test__runner_takes_the_given_deadline_budget_and_clock(self):
+        clock = ManualClock()
+        clock.advance(50)
+        runner = _runner(
+            FakeModal([]),
+            child_deadline_seconds=600,
+            parent_budget_seconds=900,
+            clock=clock,
+        )
+
+        assert runner.poll_interval_initial_seconds == 0.001
+        assert runner.poll_interval_max_seconds == 0.002
+        assert runner.child_deadline_seconds == 600
+        assert runner.parent_budget_seconds == 900
+        assert runner.clock is clock
+        assert runner.started_at == 50
+        assert runner.budget_ends_at == 950
 
 
 class TestSegmentedNationalChildDeadline:
