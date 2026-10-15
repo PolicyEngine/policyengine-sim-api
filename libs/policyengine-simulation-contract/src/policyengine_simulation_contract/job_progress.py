@@ -71,7 +71,8 @@ class JobSegmentProgress(BaseModel):
     @model_validator(mode="after")
     def _completed_within_total(self) -> JobSegmentProgress:
         if self.completed > self.total:
-            raise ValueError("completed segments cannot exceed total segments")
+            msg = "completed segments cannot exceed total segments"
+            raise ValueError(msg)
         return self
 
 
