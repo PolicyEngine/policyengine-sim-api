@@ -114,6 +114,20 @@ class SegmentedRunTiming:
 
 DEFAULT_RUN_TIMING = SegmentedRunTiming()
 
+
+@dataclass(frozen=True)
+class SegmentedRunReporting:
+    """Where the runner reports a run.
+
+    ``runtime`` receives its telemetry, and ``progress`` the job's
+    client-visible stages: the segment count, each finished segment and the
+    outputs stage.
+    """
+
+    runtime: ObservabilityRuntime
+    progress: JobProgressReporter = NULL_JOB_PROGRESS
+
+
 # Parent-scoped keys never forwarded to children. (The shared payload
 # builder owns _telemetry: stripped, then re-attached when present.)
 # `region` is stripped because v1-style national parents carry
@@ -216,10 +230,9 @@ class SegmentedNationalRunner:
         params: dict[str, Any],
         *,
         app_name: str,
-        runtime: ObservabilityRuntime,
+        reporting: SegmentedRunReporting,
         modal_module: ModuleType | None = None,
         timing: SegmentedRunTiming = DEFAULT_RUN_TIMING,
-        progress: JobProgressReporter = NULL_JOB_PROGRESS,
     ) -> None:
         """Resolve the country's region groups and a lazy segment-worker handle.
 
@@ -227,8 +240,8 @@ class SegmentedNationalRunner:
         """
         self.params = params
         self.app_name = app_name
-        self.runtime = runtime
-        self.progress = progress
+        self.runtime = reporting.runtime
+        self.progress = reporting.progress
         self.modal = modal if modal_module is None else modal_module
         self.poll_interval_initial_seconds = timing.poll_backoff.initial_seconds
         self.poll_interval_max_seconds = timing.poll_backoff.maximum_seconds
@@ -610,8 +623,7 @@ def run_segmented_national_impl(
     return SegmentedNationalRunner(
         params,
         app_name=app_name,
-        runtime=runtime,
-        progress=progress,
+        reporting=SegmentedRunReporting(runtime, progress),
     ).run()
 
 
