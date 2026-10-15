@@ -228,7 +228,7 @@ def _runner(fake_modal, params=None, runtime=TEST_RUNTIME, **timing_options):
     return sn.SegmentedNationalRunner(
         params or dict(NATIONAL),
         app_name="policyengine-simulation-py-test",
-        runtime=runtime,
+        reporting=sn.SegmentedRunReporting(runtime),
         modal_module=fake_modal,
         timing=sn.SegmentedRunTiming(
             poll_backoff=PollBackoff(
@@ -444,7 +444,7 @@ class TestSegmentedNationalRunnerTiming:
         runner = sn.SegmentedNationalRunner(
             dict(NATIONAL),
             app_name="policyengine-simulation-py-test",
-            runtime=TEST_RUNTIME,
+            reporting=sn.SegmentedRunReporting(TEST_RUNTIME),
             modal_module=FakeModal([]),
         )
 
@@ -484,7 +484,7 @@ class TestSegmentedNationalRunnerReporting:
         runner = sn.SegmentedNationalRunner(
             dict(NATIONAL),
             app_name="policyengine-simulation-py-test",
-            runtime=TEST_RUNTIME,
+            reporting=sn.SegmentedRunReporting(TEST_RUNTIME),
             modal_module=FakeModal([]),
         )
 

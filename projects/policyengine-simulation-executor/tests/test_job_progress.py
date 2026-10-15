@@ -657,7 +657,7 @@ def _segmented_runner(calls, progress, monkeypatch):
     return sn.SegmentedNationalRunner(
         {"country": "us", "scope": "macro", "time_period": "2026"},
         app_name="policyengine-simulation-py-test",
-        runtime=NoOpObservabilityRuntime(),
+        reporting=sn.SegmentedRunReporting(NoOpObservabilityRuntime(), progress),
         modal_module=fake_modal,
         timing=sn.SegmentedRunTiming(
             poll_backoff=PollBackoff(
@@ -666,7 +666,6 @@ def _segmented_runner(calls, progress, monkeypatch):
                 factor=sn.POLL_INTERVAL_BACKOFF_FACTOR,
             ),
         ),
-        progress=progress,
     )
 
 
