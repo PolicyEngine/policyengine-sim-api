@@ -503,8 +503,7 @@ def test_weight_stripping_stays_in_the_designated_module() -> None:
         f"raw values read from a weighted frame in {WEIGHT_STRIPPING_MODULE.name} "
         "for something other than counting entities. Each such read is a recorded "
         f"exception in {WEIGHT_STRIPPING_BASELINE.name}, a list that may only "
-        "shrink; keep the weights instead:\n"
-        + _described(review.unrecorded_exceptions)
+        "shrink; keep the weights instead:\n" + _described(review.unrecorded_exceptions)
     )
     assert review.stale_exceptions == [], (
         "these exceptions no longer apply; remove them from "
