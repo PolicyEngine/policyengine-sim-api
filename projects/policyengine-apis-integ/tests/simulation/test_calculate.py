@@ -19,6 +19,7 @@ from policyengine_api_simulation_client.api.default import (
     submit_simulation_simulate_economy_comparison_post,
 )
 from policyengine_api_simulation_client.models import (
+    JobStage,
     JobStatusResponse,
     JobSubmitResponse,
     SimulationRequest,
@@ -37,7 +38,8 @@ _REQUIRED_DISTRICT_RESULT_KEYS = {
     "population",
 }
 _AT_LARGE_DISTRICT_IDS = {"AK-01", "DC-01", "DE-01", "ND-01", "SD-01", "VT-01", "WY-01"}
-_JOB_STAGES = {"queued", "loading_data", "baseline", "reform", "simulating", "outputs"}
+# From the generated client, so a stage added to the schema is accepted here.
+_JOB_STAGES = frozenset(stage.value for stage in JobStage)
 
 
 class _ObjectWithToDict(Protocol):

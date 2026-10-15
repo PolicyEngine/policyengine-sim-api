@@ -59,9 +59,10 @@ in 20 region segments, so it moves through `loading_data`, `simulating` and
 
 The `run_simulation` worker writes a stage record to the Modal Dict
 `simulation-api-job-progress`, keyed by `job_id`. If Modal runs the same call
-again after a preemption, the new attempt continues that record and keeps
+again after a preemption, the preempted attempt leaves its record running
+rather than finishing it, and the new attempt continues that record and keeps
 the reported stage until it reaches a stage at least as far along, so
-`progress` never moves backwards. Budget-window children are ordinary
+`progress` never moves backwards, however many times the call is preempted. Budget-window children are ordinary
 `run_simulation` calls and write their own records, which
 `/budget-window-jobs` does not read yet. The gateway reports
 `queued` for a job without a record only when the worker app's bundle

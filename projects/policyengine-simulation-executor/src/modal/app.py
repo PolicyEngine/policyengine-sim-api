@@ -368,11 +368,20 @@ def run_simulation(
                     runtime=runtime,
                     progress=progress,
                 )
+            except KeyboardInterrupt:
+                # Modal preempts with SIGINT and runs the call again; the
+                # record stays running for that attempt.
+                progress.interrupt()
+                raise
             finally:
                 # Close the last stage inside the operation, so its
                 # completion record carries every stage duration.
                 progress.finish()
                 _record_stage_durations(runtime, progress)
+    except KeyboardInterrupt:
+        # Preempted before the calculation started.
+        progress.interrupt()
+        raise
     finally:
         # A no-op unless the operation never started.
         progress.finish()

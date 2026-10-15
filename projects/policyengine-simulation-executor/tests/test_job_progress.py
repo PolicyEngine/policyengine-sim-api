@@ -87,6 +87,9 @@ class _RecordingReporter:
     def finish(self) -> None:
         self.calls.append(("finish",))
 
+    def interrupt(self) -> None:
+        self.calls.append(("interrupt",))
+
     def stage_durations(self) -> dict[JobStage, float]:
         return {}
 
@@ -348,7 +351,8 @@ class TestRestartedAttempt:
         assert writer.last.finished_at == T0 + timedelta(seconds=5)
 
     def test__a_finished_earlier_attempt_is_continued_too(self):
-        # A preempted attempt can run its ``finally`` block before it stops.
+        # An attempt stopped by something other than the SIGINT the worker
+        # handles (or an older worker) can leave a finished record behind.
         earlier = _earlier_attempt(finished_at=T0 - timedelta(seconds=1))
         reporter, writer, _ = _restarted_reporter(earlier)
 
@@ -357,6 +361,72 @@ class TestRestartedAttempt:
         assert writer.last.attempts == 2
         assert writer.last.finished_at is None
         assert writer.last.stage is JobStage.REFORM
+
+    def test__preemption_leaves_the_record_running_for_the_next_attempt(self):
+        reporter, writer, clock = _restarted_reporter(_earlier_attempt())
+
+        reporter.start()
+        clock.advance(5)
+        reporter.interrupt()
+        reporter.finish()
+
+        # start and interrupt write; finish writes nothing after interrupt.
+        assert len(writer.writes) == 2
+        assert writer.last.finished_at is None
+        # The earlier attempt's stage stays held for the next attempt.
+        assert writer.last.stage is JobStage.REFORM
+        assert writer.last.stage_started_at == T0 - timedelta(seconds=30)
+        # This attempt's time still counts.
+        assert writer.last.stage_durations[JobStage.LOADING_DATA] == 45.0
+        assert writer.last.attempts == 2
+
+    def test__repeated_preemptions_never_move_progress_backwards(self):
+        store: dict[str, JobProgressRecord] = {}
+        published: list[JobProgressRecord] = []
+
+        def write(job_id: str, record: JobProgressRecord) -> None:
+            store[job_id] = record
+            published.append(record)
+
+        def attempt() -> tuple[StoredJobProgressReporter, _Clock]:
+            clock = _Clock()
+            reporter = StoredJobProgressReporter(
+                "fc-job-1", write=write, read=store.get, clock=clock
+            )
+            reporter.start()
+            return reporter, clock
+
+        # Attempt 1 reaches the reform, then is preempted.
+        first, clock = attempt()
+        first.set_execution(JobExecution.MONOLITHIC)
+        first.enter(JobStage.BASELINE)
+        first.enter(JobStage.REFORM)
+        first.interrupt()
+        first.finish()
+        # Attempt 2 is preempted while still loading data.
+        second, clock = attempt()
+        clock.advance(5)
+        second.interrupt()
+        second.finish()
+        # Attempt 3 still starts from the reform.
+        attempt()
+
+        progress = [_running_progress(record) for record in published]
+        assert progress == sorted(progress)
+        assert store["fc-job-1"].stage is JobStage.REFORM
+        assert store["fc-job-1"].attempts == 3
+        assert all(record.finished_at is None for record in published)
+
+    def test__interrupt_after_finish_writes_nothing(self):
+        reporter, writer, _ = _reporter()
+        reporter.start()
+        reporter.finish()
+        writes = len(writer.writes)
+
+        reporter.interrupt()
+
+        assert len(writer.writes) == writes
+        assert writer.last.finished_at is not None
 
     def test__segmented_restart_is_held_until_simulating(self):
         earlier = _earlier_attempt(
@@ -792,6 +862,48 @@ class TestModalRunSimulation:
         [(index, attributes)] = _stage_attributes(events)
         assert "job_stage_seconds_baseline" in attributes
         assert index < events.index("operation_end")
+
+    def test__preempted_job_stays_running_for_the_next_attempt(
+        self, modal_app, monkeypatch
+    ):
+        def dispatch(params, *, app_name, runtime, progress):
+            progress.enter(JobStage.BASELINE)
+            raise KeyboardInterrupt
+
+        events, writes = self._wire(modal_app, monkeypatch, dispatch)
+
+        with pytest.raises(KeyboardInterrupt):
+            modal_app.run_simulation({"country": "us"})
+
+        assert writes[-1][1].stage is JobStage.BASELINE
+        assert writes[-1][1].finished_at is None
+        # The preempted attempt's durations still reach its operation.
+        [(index, attributes)] = _stage_attributes(events)
+        assert "job_stage_seconds_baseline" in attributes
+        assert index < events.index("operation_end")
+        assert events[-1] == "shutdown"
+
+    def test__preemption_before_the_calculation_stays_running(
+        self, modal_app, monkeypatch
+    ):
+        def dispatch(params, *, app_name, runtime, progress):
+            raise AssertionError("dispatch should not run")
+
+        _, writes = self._wire(
+            modal_app, monkeypatch, dispatch, earlier=_earlier_attempt()
+        )
+
+        def preempted(runtime):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(modal_app, "_set_modal_call_attributes", preempted)
+
+        with pytest.raises(KeyboardInterrupt):
+            modal_app.run_simulation({"country": "us"})
+
+        assert writes[-1][1].finished_at is None
+        assert writes[-1][1].stage is JobStage.REFORM
+        assert writes[-1][1].attempts == 2
 
     def test__store_failure_does_not_change_the_result(self, modal_app, monkeypatch):
         from policyengine_simulation_contract import job_progress_state

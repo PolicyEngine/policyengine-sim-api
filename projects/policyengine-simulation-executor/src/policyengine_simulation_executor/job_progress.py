@@ -48,6 +48,8 @@ class JobProgressReporter(Protocol):
 
     def finish(self) -> None: ...
 
+    def interrupt(self) -> None: ...
+
     def stage_durations(self) -> dict[JobStage, float]: ...
 
     def attempts(self) -> int: ...
@@ -74,6 +76,9 @@ class NullJobProgressReporter:
     def finish(self) -> None:
         pass
 
+    def interrupt(self) -> None:
+        pass
+
     def stage_durations(self) -> dict[JobStage, float]:
         return {}
 
@@ -92,7 +97,10 @@ class StoredJobProgressReporter:
     attempt wrote: ``started_at`` and the ended-stage durations carry over,
     ``attempts`` counts up, and the published stage stays at the earlier
     attempt's stage until this attempt reaches a stage that starts at least
-    as far along. ``progress`` therefore never moves backwards.
+    as far along. A preempted attempt calls ``interrupt()`` rather than
+    ``finish()``, so its record stays running and keeps any held stage for
+    the next attempt. ``progress`` therefore never moves backwards, however
+    many times the call is preempted.
     """
 
     def __init__(
@@ -113,6 +121,7 @@ class StoredJobProgressReporter:
         self._held: tuple[JobStage, datetime] | None = None
         self._read_failed = False
         self._write_failed = False
+        self._interrupted = False
 
     @property
     def record(self) -> JobProgressRecord | None:
@@ -190,11 +199,29 @@ class StoredJobProgressReporter:
         """Close the current stage. Runs after success and after failure."""
 
         record = self._record
-        if record is None or record.finished_at is not None:
+        if record is None or record.finished_at is not None or self._interrupted:
             return
         record.finished_at = self._close_stage(record)
         # A failed job reports the stage this attempt stopped in.
         self._held = None
+        self._publish()
+
+    def interrupt(self) -> None:
+        """Leave the record running for the call's next attempt.
+
+        Modal preempts a call with SIGINT, which a sync function receives as
+        ``KeyboardInterrupt``, and then runs the call again under the same
+        call id. The current stage's time still counts in the durations, but
+        the record does not finish and any held stage stays held, so the next
+        attempt continues from the furthest stage reached. ``finish()`` does
+        nothing afterwards.
+        """
+
+        record = self._record
+        if record is None or record.finished_at is not None or self._interrupted:
+            return
+        self._interrupted = True
+        self._close_stage(record)
         self._publish()
 
     def stage_durations(self) -> dict[JobStage, float]:
