@@ -10,11 +10,11 @@ from policyengine_simulation_contract.spm import (
     SPMProvenance,
     SPMRuntimeVersions,
     SPMSelection,
-    validate_spm_calculation_provenance,
     build_spm_comparison_provenance,
     build_spm_provenance,
     resolve_spm_selection,
     spm_error_detail,
+    validate_spm_calculation_provenance,
 )
 
 

@@ -1,6 +1,7 @@
-from .main import app
 import json
 from pathlib import Path
+
+from .main import app
 
 # Write OpenAPI spec directly to file
 output_path = Path(__file__).parent.parent.parent / "artifacts" / "openapi.json"

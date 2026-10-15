@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
-
 from policyengine_simulation_executor.stage12_result_comparison import compare_results
 
 RUN_ID = UUID("00000000-0000-0000-0000-000000000001")

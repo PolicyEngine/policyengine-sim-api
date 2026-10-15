@@ -689,8 +689,8 @@ class TestBudgetWindowBatchStatusResponse:
 
 def test_policyengine_bundle_dataset_sha256_is_optional_and_hex():
     import pytest
-    from pydantic import ValidationError
     from policyengine_simulation_contract.gateway_models import PolicyEngineBundle
+    from pydantic import ValidationError
 
     assert PolicyEngineBundle(model_version="2.126.8").dataset_sha256 is None
     assert (

@@ -1,8 +1,8 @@
-from typing import Any
+import logging
+
+import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-import jwt
-import logging
 
 # Based on the auth0 article: https://auth0.com/blog/build-and-secure-fastapi-server-with-auth0/
 
@@ -35,8 +35,7 @@ class JWTDecoder:
             if self.auto_error:
                 LOG.info("Invalid auth token: Throwing 4XX error")
                 raise err
-            else:
-                LOG.info("Ignoring invalid auth token")
+            LOG.info("Ignoring invalid auth token")
         return None
 
     def _validate(self, token: HTTPAuthorizationCredentials | None):

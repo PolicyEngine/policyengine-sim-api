@@ -5,11 +5,11 @@ from fastapi.responses import JSONResponse
 from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.spm import spm_error_detail
 
-from policyengine_simulation_executor.simulation_runtime import run_simulation_impl
 from policyengine_simulation_executor.compat_models import (
     EconomyComparison,
     SimulationOptions,
 )
+from policyengine_simulation_executor.simulation_runtime import run_simulation_impl
 
 logger = logging.getLogger(__file__)
 

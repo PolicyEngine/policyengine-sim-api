@@ -1,6 +1,7 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import APIRouter, FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
 from policyengine_fastapi.health import HealthRegistry, HealthStatus
 
 

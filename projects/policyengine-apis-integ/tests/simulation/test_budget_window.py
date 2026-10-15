@@ -10,7 +10,6 @@ shape expected by API consumers.
 from http import HTTPStatus
 
 import pytest
-
 from policyengine_api_simulation_client.models import (
     BudgetWindowBatchSubmitResponse,
     BudgetWindowResult,

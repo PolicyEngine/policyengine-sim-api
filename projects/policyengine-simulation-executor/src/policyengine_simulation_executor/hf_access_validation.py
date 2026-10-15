@@ -8,9 +8,9 @@ from hashlib import sha256
 from typing import Literal
 
 from huggingface_hub import get_hf_file_metadata, hf_hub_url
+from policyengine_simulation_contract.hf_dataset import parse_hf_dataset_uri
 from pydantic import BaseModel, ConfigDict, Field
 
-from policyengine_simulation_contract.hf_dataset import parse_hf_dataset_uri
 from policyengine_simulation_executor.release_bundle import (
     get_country_release_bundle,
 )

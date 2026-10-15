@@ -6,19 +6,20 @@ import logging
 from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
-from policyengine_observability import ObservabilityRuntime
-from policyengine_simulation_observability.stages import Stage, StagePlan
 
+from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
     ResultComparisonStatus,
     Stage12InvocationContext,
 )
+from policyengine_simulation_observability.stages import Stage, StagePlan
 
 from policyengine_simulation_executor.stage12_artifacts import Stage12ArtifactStore
 from policyengine_simulation_executor.stage12_result_comparison import compare_results
 
 from .dependencies import ChildInvoker, ComparisonStore
+from .failure_causes import failure_summary
 
 PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS = 900
 logger = logging.getLogger(__name__)
@@ -122,7 +123,7 @@ def compare_completed_report(
                             "comparison_schema_version": None,
                             "comparison_completed_at": failed_at,
                             "comparison_error_code": "result_comparison_failed",
-                            "comparison_error_summary": type(error).__name__,
+                            "comparison_error_summary": failure_summary(error),
                             "updated_at": failed_at,
                         }
                     )

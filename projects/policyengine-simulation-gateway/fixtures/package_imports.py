@@ -9,7 +9,6 @@ from dataclasses import dataclass
 
 import pytest
 
-
 GATEWAY_MODEL_MODULE = "policyengine_simulation_contract.gateway_models"
 GATEWAY_ENDPOINTS_MODULE = "policyengine_simulation_gateway.endpoints"
 GATEWAY_PACKAGE_MODULE = "policyengine_simulation_gateway"

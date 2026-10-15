@@ -20,7 +20,6 @@ from policyengine_simulation_contract.job_progress import (
     JobStage,
     job_progress_fields,
 )
-
 from policyengine_simulation_executor import simulation_runtime as sr
 from policyengine_simulation_executor.job_progress import (
     NULL_JOB_PROGRESS,
@@ -402,7 +401,6 @@ class TestRestartedAttempt:
 class TestStageReportingSimulation:
     def test__callback_runs_once_before_the_first_ensure(self, monkeypatch):
         from policyengine.core import Simulation
-
         from policyengine_simulation_executor.stage_reporting_simulation import (
             StageReportingSimulation,
         )
@@ -419,7 +417,6 @@ class TestStageReportingSimulation:
 
     def test__callback_is_cleared_before_the_calculation_runs(self, monkeypatch):
         from policyengine.core import Simulation
-
         from policyengine_simulation_executor.stage_reporting_simulation import (
             StageReportingSimulation,
         )

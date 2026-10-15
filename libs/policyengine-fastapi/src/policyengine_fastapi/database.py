@@ -1,5 +1,6 @@
-from pathlib import Path
-from typing import Any, Callable, Generator
+from collections.abc import Callable, Generator
+from typing import Any
+
 from sqlalchemy import Engine, StaticPool, create_engine
 from sqlmodel import Session
 

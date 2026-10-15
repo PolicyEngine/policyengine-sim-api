@@ -1,7 +1,6 @@
 """Partial public selections inherit pinned bundle defaults before validation."""
 
 import pytest
-
 from policyengine_simulation_contract.gateway_models import SimulationRequest
 from policyengine_simulation_contract.spm import (
     SPMInputError,

@@ -5,13 +5,12 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any
 
-from policyengine_simulation_contract.spm import validate_spm_result
-
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowAnnualImpact,
     BudgetWindowResult,
     BudgetWindowTotals,
 )
+from policyengine_simulation_contract.spm import validate_spm_result
 
 # The UK microsimulation has no state/province fiscal layer, so worker child
 # results for ``country="uk"`` never emit ``state_tax_revenue_impact``. The
@@ -25,7 +24,7 @@ REQUIRED_BUDGET_KEYS = (
 OPTIONAL_BUDGET_KEYS = ("state_tax_revenue_impact",)
 
 
-def _as_decimal(value: float | int) -> Decimal:
+def _as_decimal(value: float) -> Decimal:
     """Convert an annual impact float to Decimal without reintroducing
     binary-float quantisation noise. ``Decimal(str(...))`` is the canonical
     idiom because it serialises the float to its shortest round-trippable

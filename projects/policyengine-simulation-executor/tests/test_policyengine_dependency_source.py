@@ -63,10 +63,7 @@ def test_all_runtime_dependencies_use_policyengine_models_extra():
         for package in COMPONENT_PACKAGES:
             assert not any(
                 isinstance(dependency, str)
-                and (
-                    dependency.startswith(f"{package}==")
-                    or dependency.startswith(f"{package}[")
-                )
+                and (dependency.startswith((f"{package}==", f"{package}[")))
                 for dependency in dependencies
             )
 

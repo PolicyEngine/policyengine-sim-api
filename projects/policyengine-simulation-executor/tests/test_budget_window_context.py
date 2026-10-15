@@ -1,12 +1,12 @@
 """Tests for budget-window batch context helpers."""
 
-from src.modal.budget_window_context import (
-    build_batch_context,
-    build_child_simulation_request,
-)
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     PolicyEngineBundle,
+)
+from src.modal.budget_window_context import (
+    build_batch_context,
+    build_child_simulation_request,
 )
 
 

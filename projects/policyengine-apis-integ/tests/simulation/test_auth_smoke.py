@@ -7,7 +7,6 @@ import pytest
 
 from .conftest import settings
 
-
 pytestmark = pytest.mark.skipif(
     not settings.gateway_auth_required,
     reason="Gateway auth is not required for this deployment; skipping auth smoke.",
@@ -34,8 +33,7 @@ def test_gated_endpoint_rejects_missing_token() -> None:
 def test_gated_endpoint_accepts_valid_token() -> None:
     """A valid token must advance past auth and reach the job lookup."""
     assert settings.access_token, (
-        "simulation_integ_test_access_token must be set when gateway auth "
-        "is required"
+        "simulation_integ_test_access_token must be set when gateway auth is required"
     )
 
     response = httpx.get(

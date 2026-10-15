@@ -1,11 +1,12 @@
-from typing import Callable, Optional
-from pydantic import BaseModel, Field
+from collections.abc import Callable
+
+from pydantic import BaseModel
 
 
 class ProbeStatus(BaseModel):
     name: str
     healthy: bool
-    message: Optional[str] = None
+    message: str | None = None
 
 
 class SystemStatus(BaseModel):

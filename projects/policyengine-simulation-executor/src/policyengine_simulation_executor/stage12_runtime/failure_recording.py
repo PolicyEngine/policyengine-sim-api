@@ -33,22 +33,24 @@ def report_original_failure(
     )
 
 
-def persist_failure_record(
-    write_failure_record: Callable[[], object],
+def persist_failure_record[WriteResult](
+    write_failure_record: Callable[[], WriteResult],
     *,
     runtime: ObservabilityRuntime | None,
     failure_scope: str,
-) -> None:
+) -> WriteResult | None:
     """Attempt a failure write without letting its error replace the original.
 
-    The caller raises the same failure after this returns, whether or not the
+    Returns what the write returned, or ``None`` when the write failed. The
+    caller raises the same failure after this returns, whether or not the
     record was written: a child handler re-raises the original error, and the
     report and simulation handlers raise their stable ``RuntimeError``. The
-    original cause then remains visible only in telemetry.
+    original exception then remains visible only in telemetry; the record
+    holds its redacted summary.
     """
 
     try:
-        write_failure_record()
+        return write_failure_record()
     except Exception as persistence_error:  # noqa: BLE001
         _emit_error(
             "Stage 12 failure record could not be persisted",
@@ -56,6 +58,7 @@ def persist_failure_record(
             runtime=runtime,
             attributes={"stage12_failure_scope": failure_scope},
         )
+        return None
 
 
 def _emit_error(

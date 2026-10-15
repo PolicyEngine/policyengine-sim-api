@@ -367,15 +367,7 @@ class Stage12ComparisonBackend:
         )
         evaluation_id = uuid5(
             AUTOMATIC_REPORT_NAMESPACE,
-            "|".join(
-                (
-                    self._settings.environment,
-                    "economy",
-                    production_identity,
-                    version,
-                    manifest_sha256,
-                )
-            ),
+            f"{self._settings.environment}|economy|{production_identity}|{version}|{manifest_sha256}",
         )
         adapted = adapt_annual_comparison(
             request_payload,

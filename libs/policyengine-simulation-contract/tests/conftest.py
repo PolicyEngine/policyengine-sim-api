@@ -6,7 +6,6 @@ richer mock (fixtures/gateway/test_endpoints.py) for endpoint tests.
 """
 
 import pytest
-
 from policyengine_simulation_contract import budget_window_state, job_progress_state
 
 

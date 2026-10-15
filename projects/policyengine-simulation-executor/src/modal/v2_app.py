@@ -13,6 +13,15 @@ from pathlib import Path
 
 from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
+from policyengine_simulation_executor.hf_access_validation import (
+    HF_MODAL_SECRET_NAME,
+    HF_RUNTIME_ENV_NAME,
+)
+from policyengine_simulation_executor.stage12_bundle import (
+    assert_expected_bundle_values,
+    assertion_values,
+    load_stage12_bundle,
+)
 from policyengine_simulation_observability.observability import (
     init_process_observability,
     modal_image_environment,
@@ -26,19 +35,10 @@ from policyengine_simulation_observability.stages import (
 from policyengine_simulation_observability.telemetry import (
     normalize_observability_context,
 )
-
-import modal
-from policyengine_simulation_executor.hf_access_validation import (
-    HF_MODAL_SECRET_NAME,
-    HF_RUNTIME_ENV_NAME,
-)
-from policyengine_simulation_executor.stage12_bundle import (
-    assert_expected_bundle_values,
-    assertion_values,
-    load_stage12_bundle,
-)
 from src.modal.bundle_data import bundle_data_install_command
 from src.modal.static_runtime_files import add_static_runtime_files
+
+import modal
 
 STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."

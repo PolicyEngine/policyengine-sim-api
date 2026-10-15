@@ -6,13 +6,12 @@ from collections import deque
 
 import policyengine_simulation_contract.budget_window_state as state_module
 import pytest
+import src.modal.budget_window_batch as batch_module
+import src.modal.budget_window_scheduler as scheduler_module
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     PolicyEngineBundle,
 )
-
-import src.modal.budget_window_batch as batch_module
-import src.modal.budget_window_scheduler as scheduler_module
 from src.modal.budget_window_batch import run_budget_window_batch_impl
 
 
@@ -28,7 +27,7 @@ class SequencedCall:
         event = self._events[0]
         if isinstance(event, TimeoutError):
             self._events.popleft()
-            raise TimeoutError()
+            raise TimeoutError
 
         self._events.popleft()
         if isinstance(event, Exception):

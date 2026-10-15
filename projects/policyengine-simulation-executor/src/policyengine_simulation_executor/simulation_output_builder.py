@@ -9,17 +9,19 @@ from typing import Any
 from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
-
-from policyengine_simulation_executor import simulation_output_budget
-from policyengine_simulation_executor import simulation_output_cliff
-from policyengine_simulation_executor import simulation_output_distribution
-from policyengine_simulation_executor import simulation_output_geographic
-from policyengine_simulation_executor import simulation_output_inequality
-from policyengine_simulation_executor import simulation_output_labor
-from policyengine_simulation_executor import simulation_output_poverty
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     Stage,
+)
+
+from policyengine_simulation_executor import (
+    simulation_output_budget,
+    simulation_output_cliff,
+    simulation_output_distribution,
+    simulation_output_geographic,
+    simulation_output_inequality,
+    simulation_output_labor,
+    simulation_output_poverty,
 )
 from policyengine_simulation_executor.job_progress import (
     NULL_JOB_PROGRESS,

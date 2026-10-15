@@ -6,15 +6,13 @@ from unittest.mock import Mock
 
 import jwt
 import pytest
+from conftest import FakeBackend, make_settings
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.security import HTTPAuthorizationCredentials
 from fastapi.testclient import TestClient
-
 from policyengine_simulation_entry import auth as auth_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.schemas import CallerIdentity
-
-from conftest import FakeBackend, make_settings
 
 
 @pytest.fixture

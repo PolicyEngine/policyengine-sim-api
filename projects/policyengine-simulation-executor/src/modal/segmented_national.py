@@ -36,14 +36,6 @@ from policyengine_simulation_contract.spm import (
     combine_spm_results,
     spm_error_detail,
 )
-from policyengine_simulation_observability.errors import log_and_redact_exception
-from policyengine_simulation_observability.stages import (
-    SEGMENTED_NATIONAL_STAGES,
-    Stage,
-)
-from policyengine_simulation_observability.telemetry import split_internal_payload
-
-import modal
 from policyengine_simulation_executor.job_progress import (
     NULL_JOB_PROGRESS,
     JobProgressReporter,
@@ -54,7 +46,15 @@ from policyengine_simulation_executor.national_partition import (
 from policyengine_simulation_executor.segmented_national_reduce import (
     build_national_output,
 )
+from policyengine_simulation_observability.errors import log_and_redact_exception
+from policyengine_simulation_observability.stages import (
+    SEGMENTED_NATIONAL_STAGES,
+    Stage,
+)
+from policyengine_simulation_observability.telemetry import split_internal_payload
 from src.modal.fanout import build_child_payload, next_backoff
+
+import modal
 
 logger = logging.getLogger(__name__)
 

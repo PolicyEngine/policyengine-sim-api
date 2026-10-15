@@ -3,8 +3,6 @@
 from datetime import UTC, datetime
 
 import pytest
-from pydantic import ValidationError
-
 from policyengine_simulation_contract.gateway_models import JobStatusResponse
 from policyengine_simulation_contract.job_progress import (
     JOB_PROGRESS_CAPABILITY_VERSION,
@@ -24,6 +22,7 @@ from policyengine_simulation_contract.job_progress_state import (
     get_job_progress,
     put_job_progress,
 )
+from pydantic import ValidationError
 
 SUBMITTED = "2026-10-13T12:00:00+00:00"
 STARTED = datetime(2026, 10, 13, 12, 0, 30, tzinfo=UTC)

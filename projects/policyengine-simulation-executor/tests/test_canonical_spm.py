@@ -10,24 +10,23 @@ from unittest.mock import Mock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from policyengine_simulation_contract.gateway_models import (
-    SimulationRequest,
     BudgetWindowBatchRequest,
+    SimulationRequest,
 )
 from policyengine_simulation_contract.spm import (
     SPMCapability,
-    SPMSelection,
     SPMInputError,
-    resolve_spm_selection,
+    SPMSelection,
     combine_spm_results,
+    resolve_spm_selection,
 )
 from policyengine_simulation_executor import artifact_keys, simulation_runtime
 from policyengine_simulation_executor.simulation import create_router
 from policyengine_simulation_executor.spm import compact_spm_provenance
 from src.modal.budget_window_results import (
-    extract_annual_impact,
     build_budget_window_result,
+    extract_annual_impact,
 )
 from src.modal.fanout import build_child_payload
 
@@ -601,9 +600,11 @@ def test_fanout_and_budget_window_preserve_settings_and_receipts():
 
 
 def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
-    from policyengine_simulation_executor import baseline_artifacts
-    from policyengine_simulation_executor import stage_reporting_simulation
     import policyengine_simulation_executor.spm as spm
+    from policyengine_simulation_executor import (
+        baseline_artifacts,
+        stage_reporting_simulation,
+    )
 
     calls = []
     monkeypatch.setattr(spm, "normalize_runtime_spm", lambda params: SELECTION)
@@ -693,9 +694,9 @@ def test_gateway_poll_returns_structured_400(monkeypatch, code):
 
 
 def test_gateway_submission_uses_registry_capability_before_spawn(monkeypatch):
+    from policyengine_simulation_contract.gateway_models import PolicyEngineBundle
     from policyengine_simulation_gateway import endpoints
     from policyengine_simulation_gateway.testing import create_gateway_app
-    from policyengine_simulation_contract.gateway_models import PolicyEngineBundle
 
     route = SimpleNamespace(
         app_name="test-app",
@@ -720,7 +721,7 @@ def test_gateway_submission_uses_registry_capability_before_spawn(monkeypatch):
             )
         ),
     )
-    monkeypatch.setattr(endpoints, "_job_metadata_store", lambda: {})
+    monkeypatch.setattr(endpoints, "_job_metadata_store", dict)
     response = TestClient(create_gateway_app()).post(
         "/simulate/economy/comparison",
         json={"country": "us", "spm": {"geography_kind": "national"}},
@@ -774,10 +775,10 @@ def test_segmented_child_input_error_is_not_redacted_or_retried(monkeypatch):
 
 
 def test_budget_window_state_keeps_typed_failure_on_replay():
-    from policyengine_simulation_contract.gateway_models import BudgetWindowBatchState
     from policyengine_simulation_contract.budget_window_state import (
         build_batch_status_response,
     )
+    from policyengine_simulation_contract.gateway_models import BudgetWindowBatchState
     from policyengine_simulation_gateway.responses import batch_status_response
 
     state = BudgetWindowBatchState(
@@ -869,11 +870,11 @@ def test_optional_analysis_does_not_swallow_spm_input_errors(code):
     [({"as_of": None}, None), ({}, "2026-01-01")],
 )
 def test_as_of_presence_survives_budget_parent(date_fields, expected_as_of):
-    from policyengine_simulation_gateway.endpoints import (
-        _resolve_request_spm,
-        _build_budget_window_parent_payload,
-    )
     from policyengine_simulation_contract.gateway_models import PolicyEngineBundle
+    from policyengine_simulation_gateway.endpoints import (
+        _build_budget_window_parent_payload,
+        _resolve_request_spm,
+    )
 
     request = BudgetWindowBatchRequest(
         country="us",

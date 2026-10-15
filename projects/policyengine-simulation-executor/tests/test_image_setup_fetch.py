@@ -14,7 +14,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 import src.modal._image_setup as image_setup
 from policyengine_simulation_executor.precompute_models import ArtifactManifest
 from src.modal._image_setup import fetch_artifacts

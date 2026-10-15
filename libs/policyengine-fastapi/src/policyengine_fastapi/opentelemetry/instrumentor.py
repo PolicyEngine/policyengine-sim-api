@@ -1,7 +1,7 @@
 from fastapi import FastAPI
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from .middleware import Middleware
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 
 class FastAPIEnhancedInstrumenter:

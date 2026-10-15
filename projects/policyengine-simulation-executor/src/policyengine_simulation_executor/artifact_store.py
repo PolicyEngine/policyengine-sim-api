@@ -24,7 +24,7 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 
@@ -33,7 +33,7 @@ from policyengine_simulation_executor import artifact_keys
 ARTIFACT_BUCKET_ENV = "POLICYENGINE_ARTIFACT_BUCKET"
 
 
-def resolve_bucket_name(explicit: Optional[str] = None) -> str:
+def resolve_bucket_name(explicit: str | None = None) -> str:
     bucket = explicit or os.environ.get(ARTIFACT_BUCKET_ENV)
     if not bucket:
         raise RuntimeError(
@@ -56,7 +56,7 @@ def _default_client():
 
 
 class ArtifactStore:
-    def __init__(self, bucket_name: Optional[str] = None, *, client: Any = None):
+    def __init__(self, bucket_name: str | None = None, *, client: Any = None):
         self.bucket_name = resolve_bucket_name(bucket_name)
         self._client = client
 
@@ -137,7 +137,7 @@ class ArtifactStore:
             return False
         return True
 
-    def read_json(self, path: str) -> Optional[Mapping[str, Any]]:
+    def read_json(self, path: str) -> Mapping[str, Any] | None:
         try:
             payload = json.loads(self._blob(path).download_as_bytes())
         except NotFound:
@@ -152,7 +152,7 @@ class ArtifactStore:
         self._upload_json(artifact_keys.manifest_path(digest), payload, overwrite=False)
         return digest
 
-    def read_manifest(self, digest: str) -> Optional[Mapping[str, Any]]:
+    def read_manifest(self, digest: str) -> Mapping[str, Any] | None:
         return self.read_json(artifact_keys.manifest_path(digest))
 
     # --- Deployed-environment markers (last-writer-wins) ------------------
@@ -164,5 +164,5 @@ class ArtifactStore:
             artifact_keys.deployed_marker_path(environment), payload, overwrite=True
         )
 
-    def read_deployed_marker(self, environment: str) -> Optional[Mapping[str, Any]]:
+    def read_deployed_marker(self, environment: str) -> Mapping[str, Any] | None:
         return self.read_json(artifact_keys.deployed_marker_path(environment))

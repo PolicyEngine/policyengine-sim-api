@@ -3,8 +3,9 @@ Pydantic models for the Gateway API.
 """
 
 import json
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Literal
 
+from policyengine_simulation_observability.telemetry import TelemetryEnvelope
 from pydantic import (
     AwareDatetime,
     BaseModel,
@@ -19,15 +20,14 @@ from policyengine_simulation_contract.job_progress import (
     JobSegmentProgress,
     JobStage,
 )
+from policyengine_simulation_contract.json_types import JsonObject
+from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_contract.spm import (
-    SPMSelection,
     SPMCapability,
     SPMComparisonProvenance,
     SPMErrorDetail,
+    SPMSelection,
 )
-from policyengine_simulation_contract.json_types import JsonObject
-from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
-from policyengine_simulation_observability.telemetry import TelemetryEnvelope
 
 # Hard cap on request body size (bytes). SimulationOptions + telemetry + any
 # reform/baseline parameter tree should fit comfortably in ~256 KB. A hostile
@@ -105,24 +105,24 @@ class GatewayRequestBase(BaseModel):
     """
 
     country: str
-    spm: Optional[SPMSelection] = None
-    version: Optional[str] = None
-    policyengine_version: Optional[str] = None
+    spm: SPMSelection | None = None
+    version: str | None = None
+    policyengine_version: str | None = None
     telemetry: TelemetryEnvelope | None = None
 
     # Fields forwarded to SimulationOptions on the worker side.
-    scope: Optional[str] = None
-    time_period: Optional[str] = None
-    reform: Optional[PolicyParameterChanges] = None
-    baseline: Optional[PolicyParameterChanges] = None
-    region_group: Optional[list[str]] = None
-    title: Optional[str] = None
-    include_cliffs: Optional[bool] = None
-    model_version: Optional[str] = None
+    scope: str | None = None
+    time_period: str | None = None
+    reform: PolicyParameterChanges | None = None
+    baseline: PolicyParameterChanges | None = None
+    region_group: list[str] | None = None
+    title: str | None = None
+    include_cliffs: bool | None = None
+    model_version: str | None = None
     # National macro requests run segmented across region groups by default;
     # False forces a monolithic single-process run. Ignored for requests that
     # are not eligible for segmentation (regional, household-scope, UK).
-    segmented: Optional[bool] = None
+    segmented: bool | None = None
 
     model_config = ConfigDict(
         extra="forbid",
@@ -148,7 +148,7 @@ class GatewayRequestBase(BaseModel):
 class SimulationRequest(GatewayRequestBase):
     """Request model for simulation submission."""
 
-    region: Optional[str] = None
+    region: str | None = None
 
     @model_validator(mode="after")
     def region_xor_region_group(self) -> "SimulationRequest":
@@ -162,10 +162,10 @@ class PolicyEngineBundle(BaseModel):
     """Resolved runtime provenance returned by the gateway."""
 
     model_version: str
-    policyengine_version: Optional[str] = None
-    data_version: Optional[str] = None
-    dataset: Optional[str] = None
-    dataset_sha256: Optional[str] = Field(
+    policyengine_version: str | None = None
+    data_version: str | None = None
+    dataset: str | None = None
+    dataset_sha256: str | None = Field(
         default=None,
         pattern=r"^[0-9a-f]{64}$",
         description=(
@@ -175,7 +175,7 @@ class PolicyEngineBundle(BaseModel):
             "Absent for apps deployed before this field existed."
         ),
     )
-    spm: Optional[SPMCapability] = None
+    spm: SPMCapability | None = None
 
 
 class SimulationErrorResponse(BaseModel):
@@ -204,11 +204,11 @@ class JobStatusResponse(BaseModel):
     """Response model for job status polling."""
 
     status: Literal["running", "complete", "failed"]
-    result: Optional[SingleYearMacroOutput] = None
-    errors: Optional[list[SPMErrorDetail]] = None
-    error: Optional[str] = None
-    resolved_app_name: Optional[str] = None
-    policyengine_bundle: Optional[PolicyEngineBundle] = None
+    result: SingleYearMacroOutput | None = None
+    errors: list[SPMErrorDetail] | None = None
+    error: str | None = None
+    resolved_app_name: str | None = None
+    policyengine_bundle: PolicyEngineBundle | None = None
     # Stage reporting. Present only for jobs whose worker reports stages;
     # see policyengine_simulation_contract.job_progress.
     stage: JobStage | None = Field(
@@ -304,7 +304,7 @@ class BudgetWindowAnnualImpact(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    spm_provenance: Optional[SPMComparisonProvenance] = None
+    spm_provenance: SPMComparisonProvenance | None = None
     year: str
     taxRevenueImpact: float
     federalTaxRevenueImpact: float
@@ -347,8 +347,8 @@ class BatchChildJobStatus(BaseModel):
         "failed",
         "cancelled",
     ]
-    errors: Optional[list[SPMErrorDetail]] = None
-    error: Optional[str] = None
+    errors: list[SPMErrorDetail] | None = None
+    error: str | None = None
 
 
 class BudgetWindowBatchSubmitResponse(BaseModel):
@@ -367,17 +367,17 @@ class BudgetWindowBatchStatusResponse(BaseModel):
     """Response model for budget-window batch polling."""
 
     status: Literal["submitted", "running", "complete", "failed"]
-    progress: Optional[int] = None
+    progress: int | None = None
     completed_years: list[str] = Field(default_factory=list)
     running_years: list[str] = Field(default_factory=list)
     queued_years: list[str] = Field(default_factory=list)
     failed_years: list[str] = Field(default_factory=list)
     child_jobs: dict[str, BatchChildJobStatus] = Field(default_factory=dict)
-    result: Optional[BudgetWindowResult] = None
-    errors: Optional[list[SPMErrorDetail]] = None
-    error: Optional[str] = None
-    resolved_app_name: Optional[str] = None
-    policyengine_bundle: Optional[PolicyEngineBundle] = None
+    result: BudgetWindowResult | None = None
+    errors: list[SPMErrorDetail] | None = None
+    error: str | None = None
+    resolved_app_name: str | None = None
+    policyengine_bundle: PolicyEngineBundle | None = None
 
 
 class BudgetWindowBatchState(BaseModel):
@@ -404,12 +404,12 @@ class BudgetWindowBatchState(BaseModel):
     partial_annual_impacts: dict[str, BudgetWindowAnnualImpact] = Field(
         default_factory=dict
     )
-    result: Optional[BudgetWindowResult] = None
-    errors: Optional[list[SPMErrorDetail]] = None
-    error: Optional[str] = None
+    result: BudgetWindowResult | None = None
+    errors: list[SPMErrorDetail] | None = None
+    error: str | None = None
     created_at: str
     updated_at: str
-    observability_id: Optional[str] = None
+    observability_id: str | None = None
 
 
 class PingRequest(BaseModel):

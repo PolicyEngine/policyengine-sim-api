@@ -20,16 +20,16 @@ Usage:
 
 from pathlib import Path
 
-import modal
-from src.modal.app import build_runtime_simulation_image
-from src.modal.static_runtime_files import add_static_runtime_files
-
 from policyengine_simulation_executor.release_bundle import (
     resolve_local_bundle_dataset_path,
 )
 from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata_from_hdf,
 )
+from src.modal.app import build_runtime_simulation_image
+from src.modal.static_runtime_files import add_static_runtime_files
+
+import modal
 
 app = modal.App("policyengine-simulation-executor-smoke")
 
@@ -136,7 +136,6 @@ def smoke_import_executor() -> dict:
     # smoke exists to catch.
     import policyengine_simulation_contract
     import policyengine_simulation_observability
-
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: F401
         run_simulation_impl,
     )

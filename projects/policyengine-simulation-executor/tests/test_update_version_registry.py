@@ -170,7 +170,6 @@ def test_bundle_manifest_declares_job_progress_capability(
     from policyengine_simulation_contract.job_progress import (
         JOB_PROGRESS_CAPABILITY_VERSION,
     )
-
     from policyengine_simulation_executor import spm as executor_spm
 
     monkeypatch.setattr(executor_spm, "runtime_spm_capability", lambda: None)
