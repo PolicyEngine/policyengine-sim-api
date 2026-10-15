@@ -5,6 +5,7 @@ These tests run against the staging Modal deployment and verify
 that economy-wide simulations complete successfully.
 """
 
+import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -37,6 +38,7 @@ _REQUIRED_DISTRICT_RESULT_KEYS = {
     "population",
 }
 _AT_LARGE_DISTRICT_IDS = {"AK-01", "DC-01", "DE-01", "ND-01", "SD-01", "VT-01", "WY-01"}
+_JOB_STAGES = {"queued", "loading_data", "baseline", "reform", "simulating", "outputs"}
 
 
 class _ObjectWithToDict(Protocol):
@@ -71,6 +73,7 @@ def poll_for_completion(
     job_id: str,
     max_wait_seconds: float,
     poll_interval: float,
+    bodies: list[Mapping] | None = None,
 ) -> JobStatusResponse:
     """
     Poll for job completion.
@@ -80,6 +83,7 @@ def poll_for_completion(
         job_id: The job ID to poll
         max_wait_seconds: Maximum time to wait for completion
         poll_interval: Time between polls in seconds
+        bodies: When given, receives every running and complete status body
 
     Returns:
         The final JobStatusResponse
@@ -94,6 +98,12 @@ def poll_for_completion(
         response = get_job_status_jobs_job_id_get.sync_detailed(
             job_id=job_id, client=client
         )
+
+        if bodies is not None and response.status_code in {
+            HTTPStatus.OK,
+            HTTPStatus.ACCEPTED,
+        }:
+            bodies.append(json.loads(response.content))
 
         if response.status_code == HTTPStatus.OK:
             assert isinstance(response.parsed, JobStatusResponse)
@@ -121,6 +131,42 @@ def poll_for_completion(
         raise AssertionError(f"Unexpected status code: {response.status_code}")
 
     raise TimeoutError(f"Job {job_id} did not complete within {max_wait_seconds}s")
+
+
+def assert_job_progress_reported(bodies: list[Mapping]) -> None:
+    """Verify the stage fields of ``GET /jobs/{job_id}`` (policyengine-sim-api#781).
+
+    A gateway with stage reporting adds ``submitted_at`` to every new job. A
+    Stage 12-only deployment runs these tests against the existing gateway,
+    which may predate stage reporting; then there is nothing to verify.
+    """
+    assert bodies, "No status body was recorded"
+    final = bodies[-1]
+    if "submitted_at" not in final:
+        return
+
+    progress_seen: list[int] = []
+    for body in bodies[:-1]:
+        assert body["status"] == "running", f"Unexpected status body: {body}"
+        assert body.get("stage") in _JOB_STAGES, f"Missing or unknown stage: {body}"
+        progress = body["progress"]
+        assert 0 <= progress <= body["progress_max"] <= 99, (
+            f"Running progress out of range: {body}"
+        )
+        progress_seen.append(progress)
+    assert progress_seen == sorted(progress_seen), (
+        f"Progress moved backwards: {progress_seen}"
+    )
+
+    assert final["status"] == "complete"
+    assert final.get("progress") == 100, f"Complete job without progress 100: {final}"
+    assert "stage" not in final
+    assert "progress_max" not in final
+    for key in ("started_at", "finished_at"):
+        assert key in final, f"Complete job without {key}: {final}"
+    assert final.get("stage_durations"), (
+        f"Complete job without stage durations: {final}"
+    )
 
 
 def submit_simulation_request(
@@ -338,6 +384,115 @@ def test_poll_for_completion_honors_retry_after_header(
     assert sleep_seconds == [10.0]
 
 
+def _running_body(stage: str, progress: int, progress_max: int) -> dict:
+    return {
+        "status": "running",
+        "result": None,
+        "error": None,
+        "submitted_at": "2026-10-15T12:00:00Z",
+        "stage": stage,
+        "progress": progress,
+        "progress_max": progress_max,
+    }
+
+
+_COMPLETE_BODY = {
+    "status": "complete",
+    "result": {},
+    "submitted_at": "2026-10-15T12:00:00Z",
+    "started_at": "2026-10-15T12:00:10Z",
+    "finished_at": "2026-10-15T12:02:00Z",
+    "progress": 100,
+    "stage_durations": {"loading_data": 12.5, "baseline": 20.0, "reform": 60.0},
+}
+
+
+def test_poll_for_completion_records_running_and_complete_bodies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    running = _running_body("reform", 67, 96)
+    bodies: list[Mapping] = []
+    response_iterator = iter(
+        [
+            _StubJobStatusHttpResponse(
+                status_code=HTTPStatus.ACCEPTED,
+                content=json.dumps(running).encode(),
+            ),
+            _StubJobStatusHttpResponse(
+                status_code=HTTPStatus.OK,
+                parsed=JobStatusResponse.from_dict(
+                    {"status": "complete", "result": {}}
+                ),
+                content=json.dumps(_COMPLETE_BODY).encode(),
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        get_job_status_jobs_job_id_get,
+        "sync_detailed",
+        lambda *, job_id, client: next(response_iterator),
+    )
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+
+    poll_for_completion(
+        cast(Client, object()),
+        "fc-test",
+        max_wait_seconds=1.0,
+        poll_interval=0.25,
+        bodies=bodies,
+    )
+
+    assert bodies == [running, _COMPLETE_BODY]
+
+
+def test_job_progress_check_accepts_a_reporting_job() -> None:
+    assert_job_progress_reported(
+        [
+            _running_body("queued", 0, 24),
+            _running_body("loading_data", 25, 54),
+            _running_body("reform", 67, 96),
+            _COMPLETE_BODY,
+        ]
+    )
+
+
+def test_job_progress_check_rejects_progress_that_moves_backwards() -> None:
+    with pytest.raises(AssertionError, match="backwards"):
+        assert_job_progress_reported(
+            [
+                _running_body("reform", 67, 96),
+                _running_body("loading_data", 25, 54),
+                _COMPLETE_BODY,
+            ]
+        )
+
+
+def test_job_progress_check_rejects_a_complete_job_without_progress() -> None:
+    complete = {
+        key: value for key, value in _COMPLETE_BODY.items() if key != "progress"
+    }
+
+    with pytest.raises(AssertionError, match="progress 100"):
+        assert_job_progress_reported([complete])
+
+
+def test_job_progress_check_rejects_a_running_job_without_a_stage() -> None:
+    running = _running_body("reform", 67, 96)
+    del running["stage"]
+
+    with pytest.raises(AssertionError, match="stage"):
+        assert_job_progress_reported([running, _COMPLETE_BODY])
+
+
+def test_job_progress_check_skips_a_gateway_without_stage_reporting() -> None:
+    assert_job_progress_reported(
+        [
+            {"status": "running", "result": None, "error": None},
+            {"status": "complete", "result": {}},
+        ]
+    )
+
+
 @pytest.mark.beta_only
 def test_calculate_default_model(
     client: Client | AuthenticatedClient,
@@ -367,7 +522,13 @@ def test_calculate_default_model(
     job_id = submit_response.job_id
 
     # When - poll for completion
-    result = poll_for_completion(client, job_id, max_wait_seconds, poll_interval)
+    bodies: list[Mapping] = []
+    result = poll_for_completion(
+        client, job_id, max_wait_seconds, poll_interval, bodies=bodies
+    )
+
+    # Then - the job reported its stages while running
+    assert_job_progress_reported(bodies)
 
     # Then - verify result structure
     assert result.status == "complete"
@@ -415,7 +576,13 @@ def test_calculate_us_state_region_model(
     job_id = submit_response.job_id
 
     # When - poll for completion
-    result = poll_for_completion(client, job_id, max_wait_seconds, poll_interval)
+    bodies: list[Mapping] = []
+    result = poll_for_completion(
+        client, job_id, max_wait_seconds, poll_interval, bodies=bodies
+    )
+
+    # Then - the job reported its stages while running
+    assert_job_progress_reported(bodies)
 
     # Then - verify result structure
     assert result.status == "complete"
@@ -465,7 +632,13 @@ def test_calculate_specific_model(
     job_id = submit_response.job_id
 
     # When - poll for completion
-    result = poll_for_completion(client, job_id, max_wait_seconds, poll_interval)
+    bodies: list[Mapping] = []
+    result = poll_for_completion(
+        client, job_id, max_wait_seconds, poll_interval, bodies=bodies
+    )
+
+    # Then - the job reported its stages while running
+    assert_job_progress_reported(bodies)
 
     # Then - verify result structure
     assert result.status == "complete"
@@ -511,7 +684,13 @@ def test_calculate_uk_model(
     job_id = submit_response.job_id
 
     # When - poll for completion
-    result = poll_for_completion(client, job_id, max_wait_seconds, poll_interval)
+    bodies: list[Mapping] = []
+    result = poll_for_completion(
+        client, job_id, max_wait_seconds, poll_interval, bodies=bodies
+    )
+
+    # Then - the job reported its stages while running
+    assert_job_progress_reported(bodies)
 
     # Then - verify result structure
     assert result.status == "complete"
