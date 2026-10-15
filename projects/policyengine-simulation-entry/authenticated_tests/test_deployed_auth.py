@@ -106,7 +106,7 @@ def test_enforced_permissions_reject_token_without_route_permission(
     permission_enforcement: None,
     base_url: str,
     access_token: str,
-):
+) -> None:
     response = httpx.get(
         f"{base_url}{PERMISSION_PROBE_PATH}",
         headers={"Authorization": f"Bearer {access_token}"},

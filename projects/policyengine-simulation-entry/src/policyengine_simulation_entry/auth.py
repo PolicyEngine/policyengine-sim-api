@@ -145,7 +145,7 @@ class CallerAuthorizer:
         authenticate: AuthenticationDependency,
         enforce: bool,
         runtime: ObservabilityRuntime,
-    ):
+    ) -> None:
         self.authenticate = authenticate
         self.enforce = enforce
         self.runtime = runtime
