@@ -36,6 +36,7 @@ runtime-evaluated-base-classes = [
     "policyengine_simulation_contract.stage12_execution.StrictContractModel",
     "policyengine_simulation_contract.stage12_manifest.StrictManifestModel",
     "policyengine_simulation_executor.precompute_models._StrictModel",
+    "policyengine_simulation_executor.stage_reporting_simulation.StageReportingSimulation",
     "pydantic.BaseModel",
     "pydantic.RootModel",
     "pydantic_settings.BaseSettings",
