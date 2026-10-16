@@ -34,8 +34,8 @@ def _run_bash(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run bash on a repository deployment script, with text output."""
-    return subprocess.run(  # noqa: S603  # runs repository scripts with test-built arguments
-        ["bash", *arguments],  # noqa: S607  # bash from PATH, as the workflows run these scripts
+    return subprocess.run(
+        ["bash", *arguments],
         check=check,
         capture_output=capture_output,
         text=True,

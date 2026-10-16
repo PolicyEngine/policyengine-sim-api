@@ -30,13 +30,13 @@ def main() -> int:
     for name, check in GUARDS:
         violations = check()
         if not violations:
-            print(f"{name}: passed")  # noqa: T201  # command-line guard runner: stdout is its report
+            print(f"{name}: passed")
             continue
 
         failed = True
-        print(f"{name}: failed")  # noqa: T201  # command-line guard runner: stdout is its report
+        print(f"{name}: failed")
         for violation in violations:
-            print(f"  - {violation}")  # noqa: T201  # command-line guard runner: stdout is its report
+            print(f"  - {violation}")
 
     return 1 if failed else 0
 

@@ -20,7 +20,7 @@ def main() -> None:
         json.dumps(create_app().openapi(), indent=2) + "\n",
         encoding="utf-8",
     )
-    print(f"OpenAPI spec written to {output}")  # noqa: T201  # command-line script: reports where it wrote the spec
+    print(f"OpenAPI spec written to {output}")
 
 
 if __name__ == "__main__":

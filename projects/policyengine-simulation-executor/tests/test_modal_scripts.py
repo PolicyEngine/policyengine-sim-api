@@ -13,7 +13,7 @@ from fixtures.test_modal_scripts import REPO_ROOT, SCRIPTS_DIR
 
 pytest_plugins = ("fixtures.test_modal_scripts",)
 
-FAKE_HF_TOKEN = "hf_test"  # noqa: S105  # fake token; the scripts under test run stubbed commands
+FAKE_HF_TOKEN = "hf_test"
 
 
 def _run_bash(
@@ -22,8 +22,8 @@ def _run_bash(
     cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run bash on a repository script, capturing text output; a failure is returned."""
-    return subprocess.run(  # noqa: S603  # runs repository scripts with test-built arguments
-        ["bash", *arguments],  # noqa: S607  # bash from PATH, as the workflows run these scripts
+    return subprocess.run(
+        ["bash", *arguments],
         capture_output=True,
         text=True,
         env=env,

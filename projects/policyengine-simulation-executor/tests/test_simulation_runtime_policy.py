@@ -27,7 +27,7 @@ def _naive_policy_date(year: int, month: int, day: int) -> datetime:
     policyengine.py parses policy period keys with ``strptime`` and no zone, so
     its ``ParameterValue`` dates are naive; an aware value never compares equal.
     """
-    return datetime(year, month, day)  # noqa: DTZ001  # naive like the dates under test
+    return datetime(year, month, day)
 
 
 @pytest.fixture(scope="module")
@@ -69,7 +69,7 @@ def test_uk_interval_policy_preserves_inclusive_stop_date(uk, stop):
     assert value.parameter.tax_benefit_model_version is uk.model
     assert value.parameter.data_type is float
     assert value.start_date == _naive_policy_date(2027, 4, 6)
-    assert value.end_date == datetime.strptime(stop, "%Y-%m-%d")  # noqa: DTZ007  # policyengine.py's ParameterValue dates are naive
+    assert value.end_date == datetime.strptime(stop, "%Y-%m-%d")
     assert value.value == 0.21
     assert reform_dict_from_parameter_values(policy.parameter_values) == raw
 

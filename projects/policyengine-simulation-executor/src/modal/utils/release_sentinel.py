@@ -184,14 +184,14 @@ def _http(
     timeout: float = 60,
 ) -> tuple[int, Mapping[str, str], Any]:
     data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(url, data=data, method=method)  # noqa: S310  # the deployed entrypoint or the test auth issuer, from the workflow
+    request = urllib.request.Request(url, data=data, method=method)
     request.add_header("Accept", "application/json")
     if data is not None:
         request.add_header("Content-Type", "application/json")
     if token:
         request.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310  # the request built above
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             status, headers, raw = response.status, response.headers, response.read()
     except urllib.error.HTTPError as error:
         status, headers, raw = error.code, error.headers, error.read()
@@ -325,7 +325,7 @@ def check_deployment(
 
 def _report(line: str, *, error: bool = False) -> None:
     """Print one line of the command's report, to stderr for a failure."""
-    print(line, file=sys.stderr if error else sys.stdout)  # noqa: T201  # command-line script: stdout and stderr are its report
+    print(line, file=sys.stderr if error else sys.stdout)
 
 
 def main(argv: list[str] | None = None) -> int:

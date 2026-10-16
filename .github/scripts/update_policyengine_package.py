@@ -34,7 +34,7 @@ def _json_from_stdin() -> object:
 
 def _write_result(result: object) -> None:
     """Print one result line for update-policyengine-package.sh to capture."""
-    print(result)  # noqa: T201  # command-line script: the shell script reads stdout
+    print(result)
 
 
 def _requirement_name(requirement: str) -> str:

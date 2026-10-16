@@ -13,7 +13,7 @@ from policyengine_simulation_contract.hf_dataset import (
     with_hf_revision,
 )
 
-RUNTIME_TOKEN = "runtime-token"  # noqa: S105  # fake token; the Hub fetch is stubbed
+RUNTIME_TOKEN = "runtime-token"
 
 
 class _FakeResponse:

@@ -81,7 +81,7 @@ def main() -> None:
         worker=worker,
         force_default=args.force_default,
     )
-    print(  # noqa: T201  # command-line script: the manifest JSON on stdout is its output
+    print(
         json.dumps(
             manifest.model_dump(mode="json"),
             sort_keys=True,

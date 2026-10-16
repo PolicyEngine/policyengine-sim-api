@@ -1087,7 +1087,7 @@ def restore_routing_state(
 
 def _report(line: str = "") -> None:
     """Print one line of the command's progress report."""
-    print(line)  # noqa: T201  # command-line script: stdout is its progress report
+    print(line)
 
 
 def main() -> None:

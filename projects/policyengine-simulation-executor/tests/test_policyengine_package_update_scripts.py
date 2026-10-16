@@ -23,8 +23,8 @@ pytest_plugins = ("fixtures.test_policyengine_package_update_scripts",)
 
 
 def test_update_policyengine_package_script_has_valid_bash_syntax() -> None:
-    result = subprocess.run(  # noqa: S603  # checks the syntax of a repository script
-        ["bash", "-n", str(SCRIPT)],  # noqa: S607  # bash from PATH, as the workflow runs the script
+    result = subprocess.run(
+        ["bash", "-n", str(SCRIPT)],
         capture_output=True,
         text=True,
         check=False,
@@ -41,7 +41,7 @@ def test_update_policyengine_package_uses_a_separate_python_helper() -> None:
     assert "python3 -c" not in source
     assert "python -c" not in source
     assert "<<'PY'" not in source
-    result = subprocess.run(  # noqa: S603  # runs the repository helper script with this interpreter
+    result = subprocess.run(
         [sys.executable, str(helper), "--help"],
         capture_output=True,
         text=True,
@@ -411,7 +411,7 @@ def _run_helper(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run one command of the repository's Python update helper."""
-    return subprocess.run(  # noqa: S603  # runs the repository helper script with this interpreter
+    return subprocess.run(
         [sys.executable, str(HELPER), command],
         input=input_text,
         capture_output=True,

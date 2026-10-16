@@ -16,8 +16,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 def _run_modal_smoke(app_path: str) -> subprocess.CompletedProcess[str]:
     """Run one smoke app with ``modal run`` in the ``MODAL_SMOKE_ENV`` environment."""
     env_name = os.environ.get("MODAL_SMOKE_ENV", "staging")
-    return subprocess.run(  # noqa: S603  # runs a repository smoke app through uv and Modal
-        ["uv", "run", "modal", "run", f"--env={env_name}", app_path],  # noqa: S607  # uv from PATH, as CI runs it
+    return subprocess.run(
+        ["uv", "run", "modal", "run", f"--env={env_name}", app_path],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,

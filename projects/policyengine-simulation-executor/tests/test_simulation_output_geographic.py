@@ -14,7 +14,7 @@ from policyengine_simulation_contract.uk_geography import (
 )
 from policyengine_simulation_executor import simulation_output_geographic
 
-CONSTITUENCY_CSV_PATH = "/tmp/constituencies_2024.csv"  # noqa: S108  # a path string the fakes pass along; nothing opens it
+CONSTITUENCY_CSV_PATH = "/tmp/constituencies_2024.csv"
 
 
 def _complete_constituency_record() -> dict[str, object]:

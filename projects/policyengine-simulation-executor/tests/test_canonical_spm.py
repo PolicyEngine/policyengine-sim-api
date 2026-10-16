@@ -516,7 +516,7 @@ class TestResolutionIsNotRepeatedWork:
 )
 def test_actual_http_formula_error_contract(monkeypatch, code, observability_runtime):
     error = SPMInputError(code, "Explicit input is required")
-    assert pickle.loads(pickle.dumps(error)).to_dict() == error.to_dict()  # noqa: S301  # round-trips an object the test built
+    assert pickle.loads(pickle.dumps(error)).to_dict() == error.to_dict()
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation.run_simulation_impl",
         Mock(side_effect=error),
@@ -834,7 +834,7 @@ def test_country_error_is_transportable_without_country_package(
         simulation_runtime.run_simulation_impl(
             {"country": "us"}, runtime=observability_runtime
         )
-    transported = pickle.loads(pickle.dumps(caught.value))  # noqa: S301  # round-trips an object the test raised
+    transported = pickle.loads(pickle.dumps(caught.value))
     assert transported.to_dict() == {"code": code, "message": "Observed input required"}
 
 

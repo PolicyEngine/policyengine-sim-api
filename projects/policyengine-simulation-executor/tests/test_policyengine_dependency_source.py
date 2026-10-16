@@ -100,7 +100,7 @@ def _run_python_snippet(
     code: str, env: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
     """Run ``code`` in a fresh interpreter from the project root, capturing text output."""
-    return subprocess.run(  # noqa: S603  # runs a test-owned snippet with this interpreter
+    return subprocess.run(
         [sys.executable, "-c", code],
         cwd=REPO_ROOT,
         env=env,

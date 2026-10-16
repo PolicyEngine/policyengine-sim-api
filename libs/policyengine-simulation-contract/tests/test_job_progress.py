@@ -341,7 +341,7 @@ class TestJobProgressModels:
 
     def test__record_requires_timezone_aware_times(self):
         with pytest.raises(ValidationError):
-            _record(started_at=datetime(2026, 10, 13, 12, 0, 30))  # noqa: DTZ001  # the naive time the record must reject
+            _record(started_at=datetime(2026, 10, 13, 12, 0, 30))
 
 
 class TestJobProgressState:

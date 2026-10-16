@@ -80,7 +80,7 @@ from policyengine_simulation_executor.simulation_runtime import (
 )
 from policyengine_simulation_observability.stages import Stage
 
-CONSTITUENCY_CSV_PATH = "/tmp/constituencies_2024.csv"  # noqa: S108  # a path string the fakes pass along; nothing opens it
+CONSTITUENCY_CSV_PATH = "/tmp/constituencies_2024.csv"
 
 
 def _params_with_spm(params, selection):

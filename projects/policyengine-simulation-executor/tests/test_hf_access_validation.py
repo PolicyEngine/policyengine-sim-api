@@ -54,7 +54,7 @@ def test_bundle_access_plan_covers_both_private_repositories() -> None:
 
 
 def test_validation_returns_only_safe_identity_and_artifact_metadata() -> None:
-    token = "private-test-token"  # noqa: S105  # fake token; the loaders are stubbed
+    token = "private-test-token"
     target = _target()
 
     result = validate_uk_private_hf_access(

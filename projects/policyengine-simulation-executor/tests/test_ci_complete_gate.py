@@ -104,8 +104,8 @@ def test_rule_proof_gate_check() -> None:
 
 
 def _run_gate_script(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603  # runs the repository gate script with test-built arguments
-        ["bash", GATE_SCRIPT],  # noqa: S607  # bash from PATH, as the workflow runs the script
+    return subprocess.run(
+        ["bash", GATE_SCRIPT],
         cwd=REPO,
         env=env,
         text=True,

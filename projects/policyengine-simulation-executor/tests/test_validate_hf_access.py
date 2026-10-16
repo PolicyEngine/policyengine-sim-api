@@ -12,9 +12,9 @@ from src.modal.utils import validate_hf_access
 
 def _audit() -> HFCredentialAudit:
     return HFCredentialAudit(
-        token_fingerprint="abc123def456",  # noqa: S106  # a fake hash prefix, not a token
+        token_fingerprint="abc123def456",
         account="policyengine-runtime-data-reader",
-        token_display_name="pe-uk-private-hf-read-token",  # noqa: S106  # a display name, not a token
+        token_display_name="pe-uk-private-hf-read-token",
         artifacts=(),
     )
 

@@ -15,8 +15,8 @@ def _run_bash(
     *arguments: str, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
     """Run bash on a repository script, capturing text output; a failure is returned."""
-    return subprocess.run(  # noqa: S603  # runs repository scripts with test-built arguments
-        ["bash", *arguments],  # noqa: S607  # bash from PATH, as the workflows run these scripts
+    return subprocess.run(
+        ["bash", *arguments],
         capture_output=True,
         text=True,
         env=env,

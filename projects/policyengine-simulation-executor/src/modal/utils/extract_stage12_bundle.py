@@ -66,10 +66,10 @@ def main() -> None:
         + "\n"
     )
     if args.output is None:
-        print(rendered, end="")  # noqa: T201  # command-line script: stdout is its output
+        print(rendered, end="")
     else:
         args.output.write_text(rendered, encoding="utf-8")
-        print(f"bundle_manifest_sha256={resolved.bundle_manifest_sha256}")  # noqa: T201  # command-line script: stdout is its output
+        print(f"bundle_manifest_sha256={resolved.bundle_manifest_sha256}")
 
 
 if __name__ == "__main__":

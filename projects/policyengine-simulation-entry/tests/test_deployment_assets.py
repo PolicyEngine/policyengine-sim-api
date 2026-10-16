@@ -66,8 +66,8 @@ def _run_bash(
     cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run bash on a repository deployment script, with text output."""
-    return subprocess.run(  # noqa: S603  # runs repository scripts with test-built arguments
-        ["bash", *arguments],  # noqa: S607  # bash from PATH, as the workflows run these scripts
+    return subprocess.run(
+        ["bash", *arguments],
         check=check,
         capture_output=capture_output,
         text=True,
@@ -495,7 +495,7 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
     arguments_capture = Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"])
     env_capture = Path(command_environment["GCLOUD_ENV_FILE_CAPTURE"])
 
-    subprocess.run(  # noqa: S603  # runs the repository deploy script directly, as the workflow does
+    subprocess.run(
         [CLOUD_RUN_DEPLOY_SCRIPT],
         check=True,
         env=command_environment,
@@ -548,7 +548,7 @@ def test_cloud_run_deployment_defaults_permission_enforcement_to_log_only(
             configured
         )
 
-    subprocess.run(  # noqa: S603  # runs the repository deploy script directly, as the workflow does
+    subprocess.run(
         [CLOUD_RUN_DEPLOY_SCRIPT],
         check=True,
         env=command_environment,
@@ -568,7 +568,7 @@ def test_cloud_run_deployment_rejects_invalid_permission_enforcement(
     command_environment = _cloud_run_deploy_environment(tmp_path)
     command_environment["SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"] = configured
 
-    result = subprocess.run(  # noqa: S603  # runs the repository deploy script directly, as the workflow does
+    result = subprocess.run(
         [CLOUD_RUN_DEPLOY_SCRIPT],
         check=False,
         env=command_environment,

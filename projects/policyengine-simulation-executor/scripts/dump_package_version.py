@@ -34,5 +34,5 @@ version = get_package_version_from_lock(sys.argv[2], sys.argv[1])
 if version is None:
     sys.exit(1)
 
-print(version)  # noqa: T201  # command-line script: the version on stdout is its output
+print(version)
 sys.exit(0)
