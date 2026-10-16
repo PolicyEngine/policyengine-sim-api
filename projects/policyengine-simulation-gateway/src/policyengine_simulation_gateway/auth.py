@@ -27,6 +27,7 @@ if auth is required but issuer/audience are missing.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import logging
 import os
@@ -181,7 +182,8 @@ def enforce_production_auth_guard(runtime: ObservabilityRuntime) -> None:
         "roll back immediately."
     )
     logger.critical(banner)
-    try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
+    # Pragma: no cover - observability must never block startup.
+    with contextlib.suppress(Exception):
         runtime.event(
             "gateway_auth_disabled_bypass_active",
             severity="CRITICAL",
@@ -190,8 +192,6 @@ def enforce_production_auth_guard(runtime: ObservabilityRuntime) -> None:
                 "ack_value_present": True,
             },
         )
-    except Exception:  # noqa: BLE001, S110  # pragma: no cover - observability must never block startup
-        pass
 
 
 def enforce_auth_configured_guard() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Callable
 from functools import lru_cache
@@ -219,11 +220,10 @@ class CallerAuthorizer:
         }
         if identity.authorized_party:
             attributes["client_id"] = identity.authorized_party
-        try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
+        # Telemetry is non-fatal.
+        with contextlib.suppress(Exception):
             self.runtime.event(
                 "simulation_entry_permission_missing",
                 severity="WARNING",
                 attributes=attributes,
             )
-        except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
-            pass

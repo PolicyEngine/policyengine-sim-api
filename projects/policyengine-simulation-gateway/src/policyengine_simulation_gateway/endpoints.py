@@ -1,5 +1,6 @@
 """FastAPI endpoints for the Gateway API."""
 
+import contextlib
 import logging
 import re
 from dataclasses import dataclass
@@ -724,10 +725,9 @@ def _bind_observability_id(
     observability_id = normalize_observability_id(value)
     http_request.state.observability_id = observability_id
     if observability_id is not None:
-        try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
+        # Telemetry is non-fatal.
+        with contextlib.suppress(Exception):
             runtime.set_context(observability_id=observability_id)
-        except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
-            pass
     return observability_id
 
 

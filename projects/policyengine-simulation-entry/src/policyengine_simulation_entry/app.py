@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -205,10 +206,9 @@ def create_app(
         observability_id = normalize_observability_id(value)
         request.state.observability_id = observability_id
         if observability_id is not None:
-            try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
+            # Telemetry is non-fatal.
+            with contextlib.suppress(Exception):
                 runtime.set_context(observability_id=observability_id)
-            except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
-                pass
         return observability_id
 
     def start_workflow_observability(request: Request) -> str:
@@ -235,7 +235,8 @@ def create_app(
         current = normalize_observability_id(request.state.observability_id)
         downstream = backend_observability_id(headers)
         if current is not None and downstream is not None and current != downstream:
-            try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
+            # Telemetry is non-fatal.
+            with contextlib.suppress(Exception):
                 runtime.event(
                     "simulation_entry_observability_id_mismatch",
                     attributes={
@@ -243,8 +244,6 @@ def create_app(
                         "reason": "downstream_identifier_differed",
                     },
                 )
-            except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
-                pass
             return current
         return bind_observability_id(request, current or downstream)
 
@@ -321,10 +320,9 @@ def create_app(
         backend_started = time.monotonic()
         route = _route_template(request)
         event_identifiers: RequestIdentifiers = identifiers or {}
-        try:  # noqa: SIM105  # try/except keeps the swallow's reason on its except line
+        # Telemetry is non-fatal.
+        with contextlib.suppress(Exception):
             runtime.set_context(backend="old_gateway", **event_identifiers)
-        except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
-            pass
         try:
             result = await runtime_backend.request(
                 method,
