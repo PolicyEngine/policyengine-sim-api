@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     AggregateReportArtifactDescriptor,
     ComparisonReportRecord,
@@ -64,6 +62,11 @@ from .output_planning import (
     validate_output_frames,
 )
 from .simulation import descriptor_from_record, simulation_input_sha256
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from policyengine_observability import ObservabilityRuntime
 
 SIMULATION_WAIT_TIMEOUT_SECONDS = 3_000
 

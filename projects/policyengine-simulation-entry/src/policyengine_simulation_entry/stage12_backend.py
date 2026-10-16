@@ -6,11 +6,10 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import modal
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
     ComparisonRunAggregationStatus,
@@ -34,8 +33,12 @@ from policyengine_simulation_observability.stages import (
 )
 from policyengine_stage12_persistence import Stage12PersistenceStore
 
-from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.stage12_adapter import adapt_annual_comparison
+
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
+
+    from policyengine_simulation_entry.config import Settings
 
 logger = logging.getLogger(__name__)
 AUTOMATIC_REPORT_NAMESPACE = uuid5(

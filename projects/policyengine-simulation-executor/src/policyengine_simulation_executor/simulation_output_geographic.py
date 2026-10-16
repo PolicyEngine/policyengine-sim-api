@@ -10,7 +10,6 @@ import pandas as pd
 from policyengine.data.uk_geography_assets import (
     CONSTITUENCY_ASSET_SPEC,
 )
-from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
 from policyengine_simulation_executor.simulation_macro_output import (
     CongressionalDistrictImpactOutput,
@@ -26,6 +25,7 @@ from policyengine_simulation_executor.simulation_output_common import (
 
 if TYPE_CHECKING:
     from policyengine.data.uk_geography_assets import UKGeographyAssetSpec
+    from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
 
 def _required_uk_geography_lookup_csv_path(spec: UKGeographyAssetSpec) -> str:

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from fixtures.test_modal_scripts import REPO_ROOT, SCRIPTS_DIR
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 SCRIPT = SCRIPTS_DIR / "update-policyengine-package.sh"
 

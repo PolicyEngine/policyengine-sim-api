@@ -5,8 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 from hashlib import sha256
-from typing import TypeGuard
-from uuid import UUID
+from typing import TYPE_CHECKING, TypeGuard
 
 from policyengine_simulation_contract.stage12_execution import (
     ResultComparisonArtifactPayload,
@@ -15,6 +14,9 @@ from policyengine_simulation_contract.stage12_execution import (
 from pydantic import JsonValue, TypeAdapter
 
 from policyengine_simulation_executor.stage12_artifacts import canonical_json_bytes
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 type ResultObject = dict[str, JsonValue]
 _result_adapter = TypeAdapter(ResultObject)

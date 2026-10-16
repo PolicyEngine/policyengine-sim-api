@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, Request
+from typing import TYPE_CHECKING
+
 from policyengine_simulation_observability.identifiers import (
     OBSERVABILITY_ID_HEADER,
     normalize_observability_id,
 )
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI, Request
 
 
 def install_observability_id_middleware(app: FastAPI) -> None:

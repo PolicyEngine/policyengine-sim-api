@@ -20,3 +20,6 @@ Current skills:
   isolation.
 - `rules-registry.md`: how rules are registered in `rules/registry.toml`,
   enforced, proven, and rendered into `docs/generated/rules.md`.
+- `typing-only-imports.md`: which imports ruff moves under `TYPE_CHECKING`, how
+  it decides a Pydantic model is runtime-evaluated, and how to list model bases
+  so models keep the imports their annotations need.

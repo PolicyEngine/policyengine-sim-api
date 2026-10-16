@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
 from contextlib import suppress
+from typing import TYPE_CHECKING
 
-from policyengine_observability import ObservabilityRuntime
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+    from policyengine_observability import ObservabilityRuntime
 
 logger = logging.getLogger(__name__)
 

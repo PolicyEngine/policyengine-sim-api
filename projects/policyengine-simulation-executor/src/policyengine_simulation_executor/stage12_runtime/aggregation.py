@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import pandas as pd
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
     SimulationArtifactDescriptor,
     Stage12OutputPlan,
     stage12_output_plan_sha256,
 )
-from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
-from pydantic import JsonValue
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    import pandas as pd
+    from policyengine_simulation_contract.stage12_bundle import CountryId
+    from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
+    from pydantic import JsonValue
 
 
 def validate_uk_local_authority_metadata(

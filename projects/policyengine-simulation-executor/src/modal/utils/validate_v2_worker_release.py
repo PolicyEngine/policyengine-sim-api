@@ -6,17 +6,19 @@ import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import modal
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_manifest import (
     ManifestText,
     V2WorkerValidation,
     v2_application_name,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.stage12_bundle import CountryId
 
 
 def _spawn_validation(

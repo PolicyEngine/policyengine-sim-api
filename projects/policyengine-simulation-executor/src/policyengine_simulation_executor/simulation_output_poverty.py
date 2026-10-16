@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_executor.simulation_macro_output import (
     AgePovertyOutput,
@@ -21,6 +20,9 @@ from policyengine_simulation_executor.simulation_output_common import (
     _poverty_module_function,
     _try_compute_output,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping
 
 US_POVERTY_TYPES = {
     "spm": "poverty",

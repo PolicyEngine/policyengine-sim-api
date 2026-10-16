@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
-from datetime import datetime
 from hashlib import sha256
 from io import BytesIO
-from typing import Any
-from uuid import UUID
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import pyarrow as pa
@@ -28,6 +25,11 @@ from policyengine_simulation_contract.stage12_execution import (
 from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
 from policyengine_simulation_executor.artifact_store import ArtifactStore
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from datetime import datetime
+    from uuid import UUID
 
 SIMULATION_MEDIA_TYPE = ArtifactMediaType.PARQUET.value
 REPORT_MEDIA_TYPE = ArtifactMediaType.JSON.value

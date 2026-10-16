@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.job_progress import JobStage
-from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     Stage,
@@ -44,6 +42,10 @@ from policyengine_simulation_executor.simulation_macro_output import (
     PovertyOutput,
     SingleYearMacroOutput,
 )
+
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
 
 @dataclass

@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import datetime
 from enum import StrEnum
-from typing import Any, Protocol
-from uuid import UUID
+from typing import TYPE_CHECKING, Any, Protocol
 
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportPersistenceResult,
@@ -42,6 +39,11 @@ from policyengine_stage12_persistence.validators import (
     require_successful_report_replay,
     require_successful_simulation_replay,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+    from datetime import datetime
+    from uuid import UUID
 
 REPORT_IDENTITY_COLUMNS = (
     "environment",

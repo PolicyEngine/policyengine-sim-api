@@ -3,9 +3,8 @@ from __future__ import annotations
 import os
 from dataclasses import replace
 from importlib.metadata import PackageNotFoundError, version
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from fastapi import FastAPI
 from policyengine_observability import (
     DeploymentIdentity,
     GoogleCloudLogDestination,
@@ -20,6 +19,9 @@ from policyengine_observability import (
     instrument_fastapi,
     process_instance_id,
 )
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 Platform = Literal["google_cloud_run", "modal", "local", "other"]
 

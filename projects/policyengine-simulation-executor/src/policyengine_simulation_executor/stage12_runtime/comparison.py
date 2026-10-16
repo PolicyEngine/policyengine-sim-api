@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 from contextlib import nullcontext
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
     ResultComparisonStatus,
@@ -15,11 +14,16 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from policyengine_simulation_observability.stages import Stage, StagePlan
 
-from policyengine_simulation_executor.stage12_artifacts import Stage12ArtifactStore
 from policyengine_simulation_executor.stage12_result_comparison import compare_results
 
-from .dependencies import ChildInvoker, ComparisonStore
 from .failure_causes import failure_summary
+
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
+
+    from policyengine_simulation_executor.stage12_artifacts import Stage12ArtifactStore
+
+    from .dependencies import ChildInvoker, ComparisonStore
 
 PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS = 900
 logger = logging.getLogger(__name__)

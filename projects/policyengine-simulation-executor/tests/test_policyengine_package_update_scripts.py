@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from fixtures.test_policyengine_package_update_scripts import (
@@ -15,6 +15,9 @@ from fixtures.test_policyengine_package_update_scripts import (
     run_updater,
     updater_env,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytest_plugins = ("fixtures.test_policyengine_package_update_scripts",)
 

@@ -24,9 +24,10 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from policyengine_observability import ObservabilityRuntime
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
 
 logger = logging.getLogger(__name__)
 

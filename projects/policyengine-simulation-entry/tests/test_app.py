@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from typing import TYPE_CHECKING
 from unittest.mock import Mock
 from uuid import UUID
 
@@ -10,7 +11,6 @@ import pytest
 from conftest import FakeBackend, make_settings
 from fastapi import HTTPException
 from policyengine_observability import REQUEST_ID_HEADER
-from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     SimulationRole,
@@ -33,6 +33,9 @@ from stage12_fixtures import (
     comparison_simulation,
     eligible_payload,
 )
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.json_types import JsonObject
 
 
 def response(

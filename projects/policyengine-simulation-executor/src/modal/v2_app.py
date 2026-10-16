@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
@@ -39,6 +39,9 @@ from src.modal.bundle_data import bundle_data_install_command
 from src.modal.static_runtime_files import add_static_runtime_files
 
 import modal
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.stage12_bundle import CountryId
 
 STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."

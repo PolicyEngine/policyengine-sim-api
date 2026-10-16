@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -17,7 +18,6 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import ENUM, UUID, insert
-from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from policyengine_stage12_persistence.tables import (
@@ -30,6 +30,9 @@ from policyengine_stage12_persistence.tables import (
     comparison_reports,
     comparison_simulations,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Connection, Engine
 
 REQUIRED_TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE")
 FORBIDDEN_TABLE_PRIVILEGES = ("TRUNCATE", "REFERENCES", "TRIGGER")

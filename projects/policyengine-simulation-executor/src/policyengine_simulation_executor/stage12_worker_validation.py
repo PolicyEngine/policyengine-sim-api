@@ -7,14 +7,15 @@ from collections.abc import Callable, Mapping
 from hashlib import sha256
 from importlib import import_module
 from pathlib import Path
-from typing import Any
-
-from policyengine_simulation_contract.stage12_bundle import CountryId
+from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_executor.release_bundle import (
     resolve_local_bundle_dataset_path,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.stage12_bundle import CountryId
 
 REQUIRED_SECRET_ALTERNATIVES = (
     ("HUGGING_FACE_TOKEN",),

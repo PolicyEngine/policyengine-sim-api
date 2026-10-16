@@ -13,11 +13,9 @@ record would be indistinguishable from a job that has not started.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from datetime import datetime
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import (
     AwareDatetime,
@@ -28,6 +26,10 @@ from pydantic import (
     ValidationError,
     model_validator,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from datetime import datetime
 
 JOB_PROGRESS_CAPABILITY_KEY = "job_progress"
 JOB_PROGRESS_CAPABILITY_VERSION = 1

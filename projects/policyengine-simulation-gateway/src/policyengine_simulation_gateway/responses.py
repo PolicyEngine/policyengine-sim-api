@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from fastapi.responses import JSONResponse
-from policyengine_simulation_contract.gateway_models import (
-    BudgetWindowBatchStatusResponse,
-)
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.gateway_models import (
+        BudgetWindowBatchStatusResponse,
+    )
 
 
 class ServerErrorResponse(JSONResponse):

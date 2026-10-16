@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.budget_window_state import (
     build_batch_status_response,
     create_initial_batch_state,
@@ -33,6 +32,9 @@ from src.modal.budget_window_results import (
 )
 
 import modal
+
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
 
 # Polling tuning. The runner busy-loops across child FunctionCall.get(timeout=0)
 # probes; when no child resolved we sleep before the next probe to stop the
