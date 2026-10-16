@@ -130,7 +130,7 @@ def setup_gcp_credentials(
                 for k, v in os.environ.items()
                 if "GOOGLE" in k or "GCP" in k or "CREDENTIAL" in k
             }
-            logger.info(f"GCP-related env vars: {list(gcp_vars.keys())}")
+            logger.info("GCP-related env vars: %s", list(gcp_vars.keys()))
 
             if previous:
                 logger.info("GOOGLE_APPLICATION_CREDENTIALS already set")
@@ -158,7 +158,7 @@ def setup_gcp_credentials(
                     creds_file.write(normalized)
                     creds_file.flush()
                     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_file.name
-                    logger.info(f"GCP credentials written to {creds_file.name}")
+                    logger.info("GCP credentials written to %s", creds_file.name)
 
         yield
     finally:
@@ -222,7 +222,7 @@ def _parse_policy_period_dates(text: str) -> tuple[datetime, datetime | None]:
         raise ValueError
     # The wrapper has always parsed dates with strptime, which also takes
     # unpadded months and days ("2027-4-6"); accept what it accepted.
-    dates = [datetime.strptime(part, "%Y-%m-%d") for part in parts]
+    dates = [datetime.strptime(part, "%Y-%m-%d") for part in parts]  # noqa: DTZ007  # naive like policyengine.py's own period parsing; its ParameterValue dates are naive
     start = dates[0]
     stop = dates[1] if len(dates) == 2 else None
     if stop is not None and stop < start:
@@ -647,13 +647,13 @@ def resolve_data_folder() -> str:
     this folder for ``ensure_datasets``/``Simulation.ensure()`` to find, so
     any divergence from ``_load_dataset``'s resolution strands them.
     """
-    return os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")
+    return os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")  # noqa: S108  # fixed data directory inside the Modal container
 
 
 def _nondefault_data_folder(country: str, name: str, uri: str) -> str:
     """Separate managed datasets even if their source filenames have the same stem."""
     identity = hashlib.sha256(f"{country}:{name}:{uri}".encode()).hexdigest()
-    return f"/tmp/policyengine-alternate-data/{identity}"
+    return f"/tmp/policyengine-alternate-data/{identity}"  # noqa: S108  # fixed data directory inside the Modal container
 
 
 def _resolve_dataset_selection(

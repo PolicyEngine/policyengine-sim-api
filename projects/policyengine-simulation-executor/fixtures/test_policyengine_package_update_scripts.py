@@ -250,8 +250,8 @@ def updater_env(fake_bin: Path, **extra: str) -> dict[str, str]:
 
 def run_updater(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     """Run the updater from the repo root; a non-zero exit is returned, not raised."""
-    return subprocess.run(
-        ["bash", str(SCRIPT), *args],
+    return subprocess.run(  # noqa: S603  # runs the repository updater script with test-built arguments
+        ["bash", str(SCRIPT), *args],  # noqa: S607  # bash from PATH, as the workflow runs the script
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,

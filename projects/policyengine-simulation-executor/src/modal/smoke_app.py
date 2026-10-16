@@ -169,5 +169,5 @@ def smoke_import_executor() -> dict:
 def main() -> None:
     """Run the image smoke remotely and print its report."""
     report = smoke_import_executor.remote()
-    print(report)
-    print("executor image smoke OK")
+    print(report)  # noqa: T201  # Modal local entrypoint: runs locally, and stdout is the smoke's report
+    print("executor image smoke OK")  # noqa: T201  # Modal local entrypoint: runs locally, and stdout is the smoke's report

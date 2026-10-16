@@ -323,6 +323,11 @@ def check_deployment(
     return problems
 
 
+def _report(line: str, *, error: bool = False) -> None:
+    """Print one line of the command's report, to stderr for a failure."""
+    print(line, file=sys.stderr if error else sys.stdout)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the ``expected`` or ``check`` command and return its exit status."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -340,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
         with open(args.output, "w") as handle:
             json.dump(expected, handle, indent=2, sort_keys=True)
         for case in expected["cases"]:
-            print(f"{case['case_id']} ({case['seconds']}s): {case['values']}")
+            _report(f"{case['case_id']} ({case['seconds']}s): {case['values']}")
         return 0
 
     with open(args.expected) as handle:
@@ -352,13 +357,11 @@ def main(argv: list[str] | None = None) -> int:
         timeout_seconds=args.timeout_seconds,
     )
     if problems:
-        print(
-            "The deployed API does not reproduce the bundle's numbers:", file=sys.stderr
-        )
+        _report("The deployed API does not reproduce the bundle's numbers:", error=True)
         for problem in problems:
-            print(f"  {problem}", file=sys.stderr)
+            _report(f"  {problem}", error=True)
         return 1
-    print(
+    _report(
         f"{args.base_url} reproduces {len(expected['cases'])} sentinel case(s) for "
         f"policyengine {expected['policyengine_version']}, UK dataset "
         f"{expected['uk']['dataset_sha256']}"

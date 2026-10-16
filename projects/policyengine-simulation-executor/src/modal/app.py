@@ -259,7 +259,7 @@ def _configure_modal_observability(
 def _set_modal_call_attributes(runtime: "ObservabilityRuntime") -> None:
     try:
         runtime.set_context(function_call_id=modal.current_function_call_id())
-    except Exception:  # noqa: BLE001  # telemetry is non-fatal: a failed attribute must never fail the Modal call
+    except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal: a failed attribute must never fail the Modal call
         pass
 
 
@@ -314,7 +314,7 @@ def _record_stage_durations(
                 for stage, seconds in durations.items()
             },
         )
-    except Exception:  # noqa: BLE001  # telemetry is non-fatal
+    except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
         pass
 
 

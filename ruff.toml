@@ -19,15 +19,41 @@ select = [
     "D",
     # Group 5: exceptions and messages.
     "BLE", "EM", "TRY",
+    # Group 6: security, logging and debugging leftovers.
+    "DTZ", "ERA", "EXE", "FIX", "G", "LOG", "S", "T20", "TD",
 ]
 # Mutually exclusive pydocstyle pairs: keep D211 (no blank line before a class
 # docstring) and D212 (summary on the first line).
 ignore = ["D203", "D213"]
 
 [lint.per-file-ignores]
+# File-level exceptions are allowed only for tests, CI/CD scripts and
+# command-line scripts; the rules guard rejects any other pattern. See
+# docs/engineering/skills/rules-registry.md#file-level-exceptions.
+#
 # Tests may use pytest's bare assert, and need no docstrings, annotations or
-# named constants for magic numbers. Every other rule applies to tests.
-"**/tests/**" = ["ANN", "D1", "PLR2004", "S101"]
+# named constants for magic numbers. They also run repository scripts and use
+# fake credentials, temporary paths, naive datetimes, pickle and exec on
+# purpose. Every other rule applies to tests.
+"**/tests/**" = [
+    "ANN", "D1", "DTZ001", "DTZ007", "PLR2004",
+    "S101", "S102", "S105", "S106", "S108", "S301", "S603", "S607",
+]
+# The deployed-service test suite (pytest, run against a live candidate) gets
+# the same test exemptions.
+"**/authenticated_tests/**" = [
+    "ANN", "D1", "DTZ001", "DTZ007", "PLR2004",
+    "S101", "S102", "S105", "S106", "S108", "S301", "S603", "S607",
+]
+# CI/CD scripts report on stdout.
+".github/**" = ["T201"]
+# Command-line scripts report on stdout, run other programs and use today's
+# date.
+"**/scripts/**" = ["DTZ011", "S603", "S607", "T201"]
+# Programs under src: the Modal deployment utilities, and the OpenAPI and
+# Stage 12 infrastructure commands. They report on stdout, and the release
+# sentinel opens URLs from its arguments.
+"projects/*/src/{modal/utils/*,policyengine_simulation_entry/generate_openapi,policyengine_simulation_entry/stage12_infrastructure,policyengine_simulation_gateway/generate_openapi}.py" = ["S310", "T201"]
 
 [lint.flake8-type-checking]
 # Classes whose annotations Pydantic evaluates at runtime, so their imports must

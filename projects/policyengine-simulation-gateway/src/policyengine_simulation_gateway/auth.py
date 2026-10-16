@@ -186,7 +186,7 @@ def enforce_production_auth_guard(runtime: ObservabilityRuntime) -> None:
                 "ack_value_present": True,
             },
         )
-    except Exception:  # noqa: BLE001  # pragma: no cover - observability must never block startup
+    except Exception:  # noqa: BLE001, S110  # pragma: no cover - observability must never block startup
         pass
 
 
@@ -264,8 +264,8 @@ def require_auth(
 
     try:
         decoder = _get_decoder()
-    except RuntimeError as exc:
-        logger.error("Gateway auth misconfigured: %s", exc, exc_info=True)
+    except RuntimeError:
+        logger.exception("Gateway auth misconfigured")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Gateway authentication is not configured.",

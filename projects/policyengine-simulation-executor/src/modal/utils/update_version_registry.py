@@ -1085,6 +1085,11 @@ def restore_routing_state(
     return next_state
 
 
+def _report(line: str = "") -> None:
+    """Print one line of the command's progress report."""
+    print(line)
+
+
 def main() -> None:
     """Publish a deployed app's routes, or seed the state from legacy Dicts."""
     parser = argparse.ArgumentParser(
@@ -1240,17 +1245,17 @@ def main() -> None:
         return snapshot.get(ROUTING_STATE_ACTIVE_KEY)
 
     if args.print_latest:
-        print(read_latest_policyengine_version(environment=args.environment) or "")
+        _report(read_latest_policyengine_version(environment=args.environment) or "")
         return
 
     if args.print_identity:
         for key, value in latest_release_identity(active_state()).items():
-            print(f"{key}={value}")
+            _report(f"{key}={value}")
         return
 
     if args.print_pending_plan:
         store = _routing_store(args.environment, create_if_missing=False)
-        print(json.dumps(_unfinished_publication(store), indent=2, sort_keys=True))
+        _report(json.dumps(_unfinished_publication(store), indent=2, sort_keys=True))
         return
 
     writes_routing = (
@@ -1279,10 +1284,10 @@ def main() -> None:
         store = _routing_store(args.environment, create_if_missing=False)
         pending = _unfinished_publication(store)
         if pending is None:
-            print("No pending routing publication; routing is unchanged.")
+            _report("No pending routing publication; routing is unchanged.")
         else:
-            print("Pending routing publication:")
-            print(
+            _report("Pending routing publication:")
+            _report(
                 json.dumps(store.get(ROUTING_PUBLICATION_KEY), indent=2, sort_keys=True)
             )
         outcome = finalize_routing_publication(
@@ -1292,10 +1297,10 @@ def main() -> None:
             publication_run=args.publication_run,
         )
         if outcome == "foreign-publication":
-            print(
+            _report(
                 "Pending routing publication belongs to another run or environment; routing is unchanged."
             )
-        print(f"Routing publication finalization: {outcome}")
+        _report(f"Routing publication finalization: {outcome}")
         if args.github_output:
             with open(args.github_output, "a") as handle:
                 handle.write(f"outcome={outcome}\n")
@@ -1306,7 +1311,7 @@ def main() -> None:
             plan = json.load(handle)
         operation = record_routing_plan if args.record_plan else complete_routing_plan
         operation(environment=args.environment, plan=plan)
-        print(
+        _report(
             f"Routing publication {plan['publication_id']}: "
             f"{'pending' if args.record_plan else 'completed'}"
         )
@@ -1319,7 +1324,7 @@ def main() -> None:
             environment=args.environment,
             plan=plan,
         )
-        print(
+        _report(
             f"Published policyengine {plan['policyengine_version']} routing "
             f"({plan['after_sha256']}) in Modal environment {args.environment}"
         )
@@ -1334,7 +1339,7 @@ def main() -> None:
             environment=args.environment,
             plans=plans,
         )
-        print(
+        _report(
             f"Routing for policyengine {plans[-1]['policyengine_version']}: "
             f"{outcome} in Modal environment {args.environment}"
         )
@@ -1346,28 +1351,28 @@ def main() -> None:
             policyengine_version=args.restore_latest,
             expected_latest=args.expected_latest,
         )
-        print(f"Restored routing state in Modal environment: {args.environment}")
-        print(f"  latest.policyengine: {state['latest']['policyengine']}")
-        print(f"  latest.us: {state['latest']['us']}")
-        print(f"  latest.uk: {state['latest']['uk']}")
+        _report(f"Restored routing state in Modal environment: {args.environment}")
+        _report(f"  latest.policyengine: {state['latest']['policyengine']}")
+        _report(f"  latest.us: {state['latest']['us']}")
+        _report(f"  latest.uk: {state['latest']['uk']}")
         return
     if args.expected_latest:
         parser.error("--expected-latest needs --restore-latest")
 
     if args.seed_active_from_legacy:
-        print(
+        _report(
             "Seeding active routing state from legacy Modal dicts in "
             f"environment: {args.environment}"
         )
         state = seed_active_routing_state_from_legacy(environment=args.environment)
-        print()
-        print(f"  {ROUTING_STATE_DICT_NAME}[{ROUTING_STATE_ACTIVE_KEY}]: updated")
-        print(f"  policyengine routes: {len(state['routes']['policyengine'])}")
-        print(f"  US routes: {len(state['routes']['us'])}")
-        print(f"  UK routes: {len(state['routes']['uk'])}")
-        print(f"  bundle manifests: {len(state['bundles'])}")
-        print()
-        print("Legacy routing state seed completed successfully.")
+        _report()
+        _report(f"  {ROUTING_STATE_DICT_NAME}[{ROUTING_STATE_ACTIVE_KEY}]: updated")
+        _report(f"  policyengine routes: {len(state['routes']['policyengine'])}")
+        _report(f"  US routes: {len(state['routes']['us'])}")
+        _report(f"  UK routes: {len(state['routes']['uk'])}")
+        _report(f"  bundle manifests: {len(state['bundles'])}")
+        _report()
+        _report("Legacy routing state seed completed successfully.")
         return
 
     required_args = {
@@ -1393,17 +1398,17 @@ def main() -> None:
         if args.plan_out:
             with open(args.plan_out, "w") as handle:
                 json.dump(plan, handle, indent=2, sort_keys=True)
-        print(f"before_sha256={plan['before_sha256']}")
-        print(f"after_sha256={plan['after_sha256']}")
-        print(f"advances_latest={'true' if plan['advances_latest'] else 'false'}")
+        _report(f"before_sha256={plan['before_sha256']}")
+        _report(f"after_sha256={plan['after_sha256']}")
+        _report(f"advances_latest={'true' if plan['advances_latest'] else 'false'}")
         return
 
-    print(f"Publishing routing state in Modal environment: {args.environment}")
-    print(f"  App name: {args.app_name}")
-    print(f"  policyengine.py version: {args.policyengine_version}")
-    print(f"  US version: {args.us_version}")
-    print(f"  UK version: {args.uk_version}")
-    print()
+    _report(f"Publishing routing state in Modal environment: {args.environment}")
+    _report(f"  App name: {args.app_name}")
+    _report(f"  policyengine.py version: {args.policyengine_version}")
+    _report(f"  US version: {args.us_version}")
+    _report(f"  UK version: {args.uk_version}")
+    _report()
 
     state = publish_routing_state(
         environment=args.environment,
@@ -1413,13 +1418,13 @@ def main() -> None:
         uk_version=args.uk_version,
         force_latest=args.force_latest,
     )
-    print()
-    print(f"  {ROUTING_STATE_DICT_NAME}[{ROUTING_STATE_ACTIVE_KEY}]: updated")
-    print(f"  latest.policyengine: {state['latest']['policyengine']}")
-    print(f"  latest.us: {state['latest']['us']}")
-    print(f"  latest.uk: {state['latest']['uk']}")
-    print()
-    print("Routing state published successfully.")
+    _report()
+    _report(f"  {ROUTING_STATE_DICT_NAME}[{ROUTING_STATE_ACTIVE_KEY}]: updated")
+    _report(f"  latest.policyengine: {state['latest']['policyengine']}")
+    _report(f"  latest.us: {state['latest']['us']}")
+    _report(f"  latest.uk: {state['latest']['uk']}")
+    _report()
+    _report("Routing state published successfully.")
 
 
 if __name__ == "__main__":

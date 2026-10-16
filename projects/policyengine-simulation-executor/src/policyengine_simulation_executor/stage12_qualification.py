@@ -241,11 +241,11 @@ def qualify_report_parity(
             run_simulation_impl,
         )
 
-        local_runtime = _local_qualification_runtime()
+        qualification_runtime = _local_qualification_runtime()
+        local_runtime = qualification_runtime
 
         def run_existing(request: dict[str, Any]) -> Mapping[str, Any]:
-            assert local_runtime is not None
-            return run_simulation_impl(request, runtime=local_runtime)
+            return run_simulation_impl(request, runtime=qualification_runtime)
 
         existing_runner = run_existing
     if single_simulation_runner is None:

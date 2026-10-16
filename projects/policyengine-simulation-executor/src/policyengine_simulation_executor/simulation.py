@@ -13,7 +13,7 @@ from policyengine_simulation_executor.compat_models import (
 )
 from policyengine_simulation_executor.simulation_runtime import run_simulation_impl
 
-logger = logging.getLogger(__file__)
+logger = logging.getLogger(__name__)
 
 
 def create_router(runtime: ObservabilityRuntime) -> APIRouter:

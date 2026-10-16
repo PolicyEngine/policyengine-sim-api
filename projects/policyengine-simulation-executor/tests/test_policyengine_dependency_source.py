@@ -96,6 +96,19 @@ def _modal_import_env() -> dict[str, str]:
     return env
 
 
+def _run_python_snippet(
+    code: str, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    """Run ``code`` in a fresh interpreter from the project root, capturing text output."""
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_modal_app_remote_import_uses_image_version_env():
     code = """
 import json
@@ -124,13 +137,7 @@ print(json.dumps({
 """
     env = _modal_import_env()
     env.update(VERSION_ENV)
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    result = _run_python_snippet(code, env)
 
     assert result.returncode == 0, result.stderr
     output = result.stdout.strip()
@@ -147,13 +154,7 @@ modal.is_local = lambda: False
 
 import src.modal.app
 """
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=REPO_ROOT,
-        env=_modal_import_env(),
-        capture_output=True,
-        text=True,
-    )
+    result = _run_python_snippet(code, _modal_import_env())
 
     assert result.returncode != 0
     assert "POLICYENGINE_VERSION must be set" in result.stderr
