@@ -116,7 +116,8 @@ class ClientCredentialsTokenProvider:
             ):
                 await self._fetch()
             if self._token is None:  # pragma: no cover
-                raise BackendAuthenticationError("Auth0 returned no token.")
+                msg = "Auth0 returned no token."
+                raise BackendAuthenticationError(msg)
             return self._token
 
     def invalidate(self) -> None:
@@ -142,9 +143,8 @@ class ClientCredentialsTokenProvider:
         except BackendAuthenticationError:
             raise
         except (httpx.HTTPError, TypeError, ValueError, ValidationError) as exc:
-            raise BackendAuthenticationError(
-                "Unable to obtain old-gateway credentials."
-            ) from exc
+            msg = "Unable to obtain old-gateway credentials."
+            raise BackendAuthenticationError(msg) from exc
 
 
 class OldGatewayBackend:
@@ -195,7 +195,8 @@ class OldGatewayBackend:
 
     def _runtime(self) -> tuple[httpx.AsyncClient, ClientCredentialsTokenProvider]:
         if self.client is None or self.token_provider is None:
-            raise BackendUnavailable("Old-gateway backend is not started.")
+            msg = "Old-gateway backend is not started."
+            raise BackendUnavailable(msg)
         return self.client, self.token_provider
 
     async def ready(self) -> bool:
@@ -246,11 +247,14 @@ class OldGatewayBackend:
                 if connection_retries_remaining:
                     connection_retries_remaining -= 1
                     continue
-                raise BackendUnavailable("Old gateway is unavailable.") from exc
+                msg = "Old gateway is unavailable."
+                raise BackendUnavailable(msg) from exc
             except httpx.TimeoutException as exc:
-                raise BackendTimeout("Old gateway timed out.") from exc
+                msg = "Old gateway timed out."
+                raise BackendTimeout(msg) from exc
             except httpx.RequestError as exc:
-                raise BackendUnavailable("Old gateway is unavailable.") from exc
+                msg = "Old gateway is unavailable."
+                raise BackendUnavailable(msg) from exc
 
             if response.status_code in {401, 403}:
                 if auth_refreshes_remaining:
@@ -260,9 +264,8 @@ class OldGatewayBackend:
                     # 403 before endpoint processing. One credential-refresh
                     # replay is therefore safe for POST as well as GET.
                     continue
-                raise BackendAuthenticationError(
-                    "Old gateway rejected refreshed service credentials."
-                )
+                msg = "Old gateway rejected refreshed service credentials."
+                raise BackendAuthenticationError(msg)
 
             return BackendResponse(
                 status_code=response.status_code,

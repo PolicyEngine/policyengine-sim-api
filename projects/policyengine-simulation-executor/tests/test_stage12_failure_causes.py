@@ -55,17 +55,17 @@ class RecordingRuntime:
 
 
 def _raised(error: Exception) -> Exception:
-    try:
+    with pytest.raises(type(error)) as caught:
         raise error
-    except Exception as caught:  # noqa: BLE001
-        return caught
+    return caught.value
 
 
 def test_summary_names_type_stage_role_and_message() -> None:
     progress = StageProgress(role="reform")
+    msg = "Variable 'country' not found in household data"
 
     with pytest.raises(ValueError) as caught, progress.stage("stage12_calculation"):
-        raise ValueError("Variable 'country' not found in household data")
+        raise ValueError(msg)
 
     assert failure_summary(caught.value, progress=progress) == (
         "ValueError in stage12_calculation (reform): "
@@ -427,7 +427,8 @@ def test_summary_is_bounded_to_the_persisted_column_length() -> None:
 def test_unprintable_errors_still_produce_a_summary() -> None:
     class UnprintableError(Exception):
         def __str__(self) -> str:
-            raise RuntimeError("cannot render")
+            msg = "cannot render"
+            raise RuntimeError(msg)
 
     assert failure_summary(UnprintableError()) == "UnprintableError"
 
@@ -450,7 +451,8 @@ def test_recorded_cause_is_redacted_and_keeps_the_original_stack() -> None:
 def test_recording_failures_never_escape() -> None:
     class FailingRuntime:
         def record_exception(self, *_args, **_kwargs) -> None:
-            raise RuntimeError("exporter unavailable")
+            msg = "exporter unavailable"
+            raise RuntimeError(msg)
 
     record_failure_cause(FailingRuntime(), ValueError("cause"), "ValueError: cause")
     record_failure_cause(None, ValueError("cause"), "ValueError: cause")
@@ -458,6 +460,7 @@ def test_recording_failures_never_escape() -> None:
 
 def _progress_in(stage_name: str) -> StageProgress:
     progress = StageProgress()
+    msg = "stage failed"
     with pytest.raises(RuntimeError), progress.stage(stage_name):
-        raise RuntimeError("stage failed")
+        raise RuntimeError(msg)
     return progress

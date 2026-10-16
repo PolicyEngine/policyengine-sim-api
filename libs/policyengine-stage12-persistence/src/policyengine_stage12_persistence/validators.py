@@ -109,9 +109,8 @@ def _require_equal_fields(
 ) -> None:
     for field_name in fields:
         if getattr(existing, field_name) != getattr(candidate, field_name):
-            raise ValueError(
-                f"comparison-run field {field_name} is immutable for an existing identity"
-            )
+            msg = f"comparison-run field {field_name} is immutable for an existing identity"
+            raise ValueError(msg)
 
 
 def require_report_identity(
@@ -158,7 +157,8 @@ def require_simulation_parent_matches(
     Versions, the Modal application, creation time and retention must all match.
     """
     if child.evaluation_id != parent.evaluation_id:
-        raise ValueError("comparison child names a different parent evaluation_id")
+        msg = "comparison child names a different parent evaluation_id"
+        raise ValueError(msg)
     for field_name in (
         "contract_version",
         "worker_version",
@@ -168,7 +168,8 @@ def require_simulation_parent_matches(
         "retention_expires_at",
     ):
         if getattr(child, field_name) != getattr(parent, field_name):
-            raise ValueError(f"comparison child {field_name} does not match its parent")
+            msg = f"comparison child {field_name} does not match its parent"
+            raise ValueError(msg)
 
 
 def require_successful_report_replay(
@@ -316,10 +317,11 @@ def require_lifecycle_transition(
     Repeating the current status is allowed; SUCCEEDED and SKIPPED are terminal.
     """
     if candidate not in ALLOWED_LIFECYCLE_TRANSITIONS[current]:
-        raise ValueError(
+        msg = (
             "comparison-run lifecycle cannot move "
             f"from {current.value} to {candidate.value}"
         )
+        raise ValueError(msg)
 
 
 def require_aggregation_transition(
@@ -332,10 +334,11 @@ def require_aggregation_transition(
     return to RUNNING for a retry.
     """
     if candidate not in ALLOWED_AGGREGATION_TRANSITIONS[current]:
-        raise ValueError(
+        msg = (
             "comparison-run aggregation cannot move "
             f"from {current.value} to {candidate.value}"
         )
+        raise ValueError(msg)
 
 
 def require_result_comparison_transition(
@@ -347,6 +350,5 @@ def require_result_comparison_transition(
     NOT_REQUESTED never changes, and MATCHED, DIFFERENT and FAILED are terminal.
     """
     if candidate not in ALLOWED_RESULT_COMPARISON_TRANSITIONS[current]:
-        raise ValueError(
-            f"result comparison cannot move from {current.value} to {candidate.value}"
-        )
+        msg = f"result comparison cannot move from {current.value} to {candidate.value}"
+        raise ValueError(msg)

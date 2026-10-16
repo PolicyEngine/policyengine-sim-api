@@ -208,19 +208,25 @@ def _parse_year(params: dict[str, Any]) -> int:
 def _parse_policy_period(period_key: object) -> tuple[datetime, datetime | None]:
     """Parse effective dates or inclusive ``start.stop`` policy periods."""
     text = str(period_key)
-    parts = text.split(".")
     try:
-        if len(parts) not in {1, 2}:
-            raise ValueError
-        # The wrapper has always parsed dates with strptime, which also takes
-        # unpadded months and days ("2027-4-6"); accept what it accepted.
-        dates = [datetime.strptime(part, "%Y-%m-%d") for part in parts]
-        start = dates[0]
-        stop = dates[1] if len(dates) == 2 else None
-        if stop is not None and stop < start:
-            raise ValueError
+        return _parse_policy_period_dates(text)
     except ValueError:
-        raise ValueError(f"Invalid policy period key: {text!r}") from None
+        msg = f"Invalid policy period key: {text!r}"
+        raise ValueError(msg) from None
+
+
+def _parse_policy_period_dates(text: str) -> tuple[datetime, datetime | None]:
+    """Parse a date or a ``start.stop`` range; raise a bare ``ValueError`` if invalid."""
+    parts = text.split(".")
+    if len(parts) not in {1, 2}:
+        raise ValueError
+    # The wrapper has always parsed dates with strptime, which also takes
+    # unpadded months and days ("2027-4-6"); accept what it accepted.
+    dates = [datetime.strptime(part, "%Y-%m-%d") for part in parts]
+    start = dates[0]
+    stop = dates[1] if len(dates) == 2 else None
+    if stop is not None and stop < start:
+        raise ValueError
     return start, stop
 
 
@@ -421,9 +427,8 @@ def _require_certified_uk_weight_matrix(
 
     selected = manifest.datasets.get(dataset_selection.name)
     if selected is None:
-        raise ValueError(
-            f"UK dataset {dataset_selection.name!r} is not in the certified bundle"
-        )
+        msg = f"UK dataset {dataset_selection.name!r} is not in the certified bundle"
+        raise ValueError(msg)
     certified_name = next(
         (
             name
@@ -433,12 +438,13 @@ def _require_certified_uk_weight_matrix(
         None,
     )
     if certified_name is None:
-        raise ValueError(
+        msg = (
             f"UK region {region!r} reweights households with {matrix_name}, but the "
             f"certified bundle has no {matrix_name} from the release of "
             f"{dataset_selection.name!r}; a matrix from another release does not "
             "line up with its households."
         )
+        raise ValueError(msg)
     certified = materialize_dataset(
         "uk", certified_name, data_dir=default_download_dir()
     )
@@ -453,32 +459,36 @@ def _require_certified_uk_weight_matrix(
     simulation_output_geographic._required_uk_geography_lookup_csv_path(spec)
     paths = resolve_uk_geography_asset_paths(spec, download_missing_assets=False)
     if Path(paths.weight_matrix_path).resolve() != Path(certified.path).resolve():
-        raise ValueError(
+        msg = (
             f"UK region {region!r} would read {paths.weight_matrix_path}, not the "
             f"{matrix_name} certified with {dataset_selection.name!r} "
             f"({certified.path})."
         )
+        raise ValueError(msg)
     year = str(dataset.year)
     with h5py.File(paths.weight_matrix_path, "r") as matrix:
         if year not in matrix:
             covered = ", ".join(sorted(matrix))
-            raise ValueError(
+            msg = (
                 f"UK region {region!r} reweights households with {matrix_name}, "
                 f"which has no weights for {year} (it covers {covered})."
             )
+            raise ValueError(msg)
         weights = matrix[year]
         if not isinstance(weights, h5py.Dataset):
-            raise TypeError(f"{matrix_name} entry {year} is not a weight matrix")
+            msg = f"{matrix_name} entry {year} is not a weight matrix"
+            raise TypeError(msg)
         matrix_households = weights.shape[-1]
     households = len(pd.DataFrame(dataset.data.entity_data["household"]))
     if households != matrix_households:
-        raise ValueError(
+        msg = (
             f"UK region {region!r} reweights households with {matrix_name}, "
             f"which was built for {matrix_households} households; the selected "
             f"UK dataset has {households}. Constituency and local-authority "
             "runs on this dataset need a local-area dataset that carries "
             "constituency and local-authority codes."
         )
+        raise ValueError(msg)
 
 
 def _region_parent_dataset_reference(
@@ -491,7 +501,8 @@ def _region_parent_dataset_reference(
 
     while isinstance(parent_code, str) and parent_code:
         if parent_code in visited:
-            raise ValueError(f"Region hierarchy cycle at {parent_code}")
+            msg = f"Region hierarchy cycle at {parent_code}"
+            raise ValueError(msg)
         visited.add(parent_code)
 
         parent_region = country_module.model.get_region(parent_code)
@@ -516,10 +527,11 @@ def _reject_unscoped_us_place_region(region_code: str, region: Region) -> None:
         return
     if getattr(region, "scoping_strategy", None) is not None:
         return
-    raise ValueError(
+    msg = (
         "US place regions are not yet supported for runtime simulation because "
         "policyengine.py does not expose place-level dataset scoping."
     )
+    raise ValueError(msg)
 
 
 def _resolve_region(
@@ -543,7 +555,8 @@ def _resolve_region(
     if region is None and country == "uk":
         region = _build_uk_weight_replacement_region(region_code)
     if region is None:
-        raise ValueError(f"Unsupported {country.upper()} region: {region_code}")
+        msg = f"Unsupported {country.upper()} region: {region_code}"
+        raise ValueError(msg)
     if country == "us":
         _reject_unscoped_us_place_region(region_code, region)
 
@@ -592,20 +605,23 @@ def _resolve_region_group(
         for code in (params.get("region_group") or [])
     ]
     if not codes:
-        raise ValueError("region_group must contain at least one region code")
+        msg = "region_group must contain at least one region code"
+        raise ValueError(msg)
 
     members = []
     for code in codes:
         region = country_module.model.get_region(code)
         if region is None:
-            raise ValueError(f"Unsupported {country.upper()} region in group: {code}")
+            msg = f"Unsupported {country.upper()} region in group: {code}"
+            raise ValueError(msg)
         scoping_strategy = getattr(region, "scoping_strategy", None)
         if not isinstance(scoping_strategy, RowFilterStrategy):
-            raise ValueError(
+            msg = (
                 f"Region group member '{code}' is not a row-filter region "
                 f"(got {type(scoping_strategy).__name__}); region groups must "
                 "preserve national weights."
             )
+            raise ValueError(msg)  # noqa: TRY004  # an unsupported region in the request; run_simulation_impl handles ValueError specially
         members.append(scoping_strategy)
 
     return RegionResolution(
@@ -618,7 +634,8 @@ def _resolve_region_group(
 def _country_module(country: str) -> ModuleType:
     country = country.lower()
     if country not in {"us", "uk"}:
-        raise ValueError(f"Unsupported country: {country}")
+        msg = f"Unsupported country: {country}"
+        raise ValueError(msg)
 
     return import_module(f"policyengine.tax_benefit_models.{country}")
 
@@ -646,7 +663,8 @@ def _resolve_dataset_selection(
 ) -> DatasetSelection:
     """Resolve the bundle's regional or default dataset to a managed name."""
     if "data" in params or "data_version" in params:
-        raise ValueError("Dataset overrides are not supported")
+        msg = "Dataset overrides are not supported"
+        raise ValueError(msg)
     country = params.get("country", "us").lower()
     bundle = get_country_release_bundle(country)
     if region_resolution is not None and region_resolution.dataset_reference:
@@ -666,10 +684,11 @@ def _resolve_dataset_selection(
             validate_hf=False,
         ):
             return DatasetSelection(name, uri, name == bundle.default_dataset)
-    raise ValueError(
+    msg = (
         f"Unsupported dataset {dataset_reference!r} for country {country!r}; "
         "choose a name in the certified release manifest"
     )
+    raise ValueError(msg)
 
 
 def _load_dataset(

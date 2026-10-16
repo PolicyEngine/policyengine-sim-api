@@ -227,7 +227,7 @@ def failure_summary(
         heading = f"{error_type}{_location(progress)}"
         message = redact_failure_message(_failure_message(error))
         return _bounded(f"{heading}: {message}" if message else heading)
-    except Exception:  # noqa: BLE001 - a summary must never mask the failure
+    except Exception:  # noqa: BLE001  # a summary must never mask the failure
         return _bounded(error_type)
 
 
@@ -242,7 +242,7 @@ def record_failure_cause(
     try:
         cause = Stage12FailureCause(summary).with_traceback(error.__traceback__)
         runtime.record_exception(cause, handled=True)
-    except Exception:  # noqa: BLE001 - telemetry must not change the outcome
+    except Exception:  # noqa: BLE001  # telemetry must not change the outcome
         logger.warning("stage12_failure_cause_not_recorded")
 
 

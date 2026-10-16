@@ -48,12 +48,13 @@ def fetch_artifacts(
     logger = logging.getLogger(__name__)
 
     if not manifest:
-        raise RuntimeError(
+        msg = (
             "No artifact manifest was resolved on the deploying machine. "
             "Set POLICYENGINE_MANIFEST_DIGEST (from the precompute run's "
             "MANIFEST_DIGEST= output line) and POLICYENGINE_ARTIFACT_BUCKET, "
             "with GCP credentials available, then redeploy."
         )
+        raise RuntimeError(msg)
 
     # Freshness gate: refuse to bake artifacts computed for a different
     # version-set than the one this image installs.
@@ -66,12 +67,13 @@ def fetch_artifacts(
     for env_var, manifest_value in expected_env.items():
         image_value = os.environ.get(env_var)
         if image_value != manifest_value:
-            raise RuntimeError(
+            msg = (
                 f"Stale artifact manifest: the image has "
                 f"{env_var}={image_value!r} but the manifest was computed "
                 f"for {manifest_value!r}. Re-run the precompute for the "
                 "current version-set."
             )
+            raise RuntimeError(msg)
 
     installed_data_version = None
     receipt_path = os.environ.get("POLICYENGINE_BUNDLE_RECEIPT")
@@ -92,12 +94,13 @@ def fetch_artifacts(
             country,
         )
     elif installed_data_version != receipt["data_version"]:
-        raise RuntimeError(
+        msg = (
             f"Stale artifact manifest: installed {country} data version is "
             f"{installed_data_version!r} but the manifest was computed for "
             f"{receipt['data_version']!r}. Re-run the precompute for the "
             "current version-set."
         )
+        raise RuntimeError(msg)
 
     if client is None:
         creds_kwargs = {}
@@ -166,7 +169,8 @@ def fetch_artifacts(
         if not (data_folder / artifact["filename"]).exists()
     ]
     if absent:
-        raise RuntimeError(f"Artifact fetch did not produce expected files: {absent}")
+        msg = f"Artifact fetch did not produce expected files: {absent}"
+        raise RuntimeError(msg)
 
 
 def snapshot_models() -> None:

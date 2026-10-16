@@ -131,15 +131,19 @@ def _validate_matching_input(
         if field == "spm" and expected_value is None and actual_value is None:
             continue
         if actual_value != expected_value:
-            raise ParityMismatch("normalized_input_mismatch", field)
+            error_code = "normalized_input_mismatch"
+            raise ParityMismatch(error_code, field)
     if existing_request.get("data") not in accepted_dataset_values:
-        raise ParityMismatch("dataset_provenance_mismatch", "data")
+        error_code = "dataset_provenance_mismatch"
+        raise ParityMismatch(error_code, "data")
     population = baseline.population
     if population.kind != "dataset":
-        raise ParityMismatch("population_kind_mismatch", "population.kind")
+        error_code = "population_kind_mismatch"
+        raise ParityMismatch(error_code, "population.kind")
     if population.artifact.uri != bundle.dataset.uri:
+        error_code = "dataset_provenance_mismatch"
         raise ParityMismatch(
-            "dataset_provenance_mismatch",
+            error_code,
             "population.artifact.uri",
         )
 
@@ -150,23 +154,27 @@ def _existing_frames(
     side: Literal["baseline", "reform"],
 ) -> dict[str, pd.DataFrame]:
     if not isinstance(microdata, Mapping):
-        raise ParityMismatch("missing_existing_microdata", "report._microdata")
+        error_code = "missing_existing_microdata"
+        raise ParityMismatch(error_code, "report._microdata")
     raw_side = microdata.get(side)
     raw_dtypes = microdata.get("dtypes")
     side_dtypes = raw_dtypes.get(side) if isinstance(raw_dtypes, Mapping) else None
     if not isinstance(raw_side, Mapping) or not isinstance(side_dtypes, Mapping):
-        raise ParityMismatch("invalid_existing_microdata", f"report._microdata.{side}")
+        error_code = "invalid_existing_microdata"
+        raise ParityMismatch(error_code, f"report._microdata.{side}")
     frames: dict[str, pd.DataFrame] = {}
     for entity, columns in raw_side.items():
         entity_dtypes = side_dtypes.get(entity)
         if not isinstance(entity, str) or not isinstance(columns, dict):
+            error_code = "invalid_existing_microdata"
             raise ParityMismatch(
-                "invalid_existing_microdata",
+                error_code,
                 f"report._microdata.{side}",
             )
         if not isinstance(entity_dtypes, dict):
+            error_code = "invalid_existing_dtypes"
             raise ParityMismatch(
-                "invalid_existing_dtypes",
+                error_code,
                 f"report._microdata.dtypes.{side}.{entity}",
             )
         frames[entity] = rebuild_entity_frame(columns, entity_dtypes)
@@ -266,13 +274,15 @@ def qualify_report_parity(
 
     bundle = report.baseline.bundle
     if existing_result.get("model_version") != bundle.country_package_version:
+        error_code = "country_package_provenance_mismatch"
         raise ParityMismatch(
-            "country_package_provenance_mismatch",
+            error_code,
             "report.model_version",
         )
     if existing_result.get("data_version") != bundle.dataset.artifact_revision:
+        error_code = "dataset_provenance_mismatch"
         raise ParityMismatch(
-            "dataset_provenance_mismatch",
+            error_code,
             "report.data_version",
         )
 
@@ -310,7 +320,8 @@ def qualify_report_parity(
     )
     v2_result = v2_report.get("result")
     if not isinstance(v2_result, Mapping):
-        raise ParityMismatch("invalid_v2_aggregate", "report.result")
+        error_code = "invalid_v2_aggregate"
+        raise ParityMismatch(error_code, "report.result")
     compare_aggregate_reports(
         existing_result,
         v2_result,

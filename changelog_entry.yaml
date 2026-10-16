@@ -4,6 +4,7 @@
       - Made CLAUDE.md and the Copilot instructions thin pointers to AGENTS.md, required workflow logic longer than one line to live in tested and shellchecked scripts, and registered the tracking-issue rule
       - Added a rules registry (rules/registry.toml) with a standard-library tool that validates it, checks every rule is enforced where it claims, and renders docs/generated/rules.md and the Rules block in AGENTS.md
     changed:
+      - Enabled ruff's exception rules (TRY, EM, BLE); exception messages are built before the raise, raises inside try blocks moved into helpers, and every deliberate catch-all or traceback-free error log carries a reasoned suppression; message text is unchanged, and error types change only in an operator script's two type checks
       - Enabled ruff's docstring rules (D) and documented every module, class and function outside tests; published contract models and routes now carry these descriptions in their JSON schema and OpenAPI, with no structural schema change
       - Enabled ruff's annotation rules (ANN) and annotated every function outside tests; test files are exempt from ANN, missing docstrings, magic numbers and bare-assert rules
       - Enabled ruff's typing-only import rules (TC) and moved annotation-only imports under TYPE_CHECKING, keeping runtime imports for Pydantic models and FastAPI endpoints

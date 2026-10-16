@@ -56,7 +56,7 @@ def _get_project_id_from_metadata() -> str | None:
     req.add_header("Metadata-Flavor", "Google")
     try:
         return request.urlopen(req).read().decode()
-    except Exception as err:
+    except Exception as err:  # noqa: BLE001  # best-effort probe: any failure falls back to GOOGLE_CLOUD_PROJECT
         log.info(
             f"Unable to get the google project id from a local metadata service: {err}"
         )

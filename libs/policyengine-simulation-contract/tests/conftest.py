@@ -37,7 +37,8 @@ def mock_modal(monkeypatch):
             if create_if_missing and name not in mock_dicts:
                 mock_dicts[name] = {}
             if name not in mock_dicts:
-                raise KeyError(f"Mock dict not configured for: {name}")
+                msg = f"Mock dict not configured for: {name}"
+                raise KeyError(msg)
             return MockDict(mock_dicts[name])
 
     class MockModal:

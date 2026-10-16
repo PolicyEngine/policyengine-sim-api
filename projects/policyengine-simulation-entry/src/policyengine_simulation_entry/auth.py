@@ -215,5 +215,5 @@ class CallerAuthorizer:
                 severity="WARNING",
                 attributes=attributes,
             )
-        except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+        except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
             pass

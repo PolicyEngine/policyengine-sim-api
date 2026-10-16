@@ -16,20 +16,19 @@ from .errors import Stage12BundleError
 def require_mapping(value: object, path: str) -> Mapping[str, object]:
     """Return ``value`` as a string-keyed mapping, or raise naming ``path``."""
     if not isinstance(value, Mapping):
-        raise Stage12BundleError(f"PolicyEngine.py bundle field {path} is missing")
+        msg = f"PolicyEngine.py bundle field {path} is missing"
+        raise Stage12BundleError(msg)
     return {str(key): item for key, item in value.items()}
 
 
 def require_text(value: object, path: str) -> str:
     """Return ``value`` if a non-empty string without outer whitespace, else raise."""
     if not isinstance(value, str) or not value.strip():
-        raise Stage12BundleError(
-            f"PolicyEngine.py bundle field {path} must be a non-empty string"
-        )
+        msg = f"PolicyEngine.py bundle field {path} must be a non-empty string"
+        raise Stage12BundleError(msg)
     if value != value.strip():
-        raise Stage12BundleError(
-            f"PolicyEngine.py bundle field {path} must not contain outer whitespace"
-        )
+        msg = f"PolicyEngine.py bundle field {path} must not contain outer whitespace"
+        raise Stage12BundleError(msg)
     return value
 
 
@@ -53,14 +52,12 @@ def require_exact_package(
         f"packages.{package_name}.install_requirement",
     )
     if name != package_name:
-        raise Stage12BundleError(
-            f"PolicyEngine.py bundle package key {package_name!r} does not match its name"
-        )
+        msg = f"PolicyEngine.py bundle package key {package_name!r} does not match its name"
+        raise Stage12BundleError(msg)
     expected_requirement = f"{name}=={version}"
     if requirement != expected_requirement:
-        raise Stage12BundleError(
-            f"PolicyEngine.py bundle package {name!r} is not exactly pinned"
-        )
+        msg = f"PolicyEngine.py bundle package {name!r} is not exactly pinned"
+        raise Stage12BundleError(msg)
     return version, requirement
 
 
@@ -92,9 +89,10 @@ def normalize_country_bundle(
         require_text(release.get("country_id"), f"data_releases.{country}.country_id")
         != country
     ):
-        raise Stage12BundleError(
+        msg = (
             f"PolicyEngine.py bundle data release for {country!r} names another country"
         )
+        raise Stage12BundleError(msg)
     if (
         require_text(
             release.get("policyengine_version"),
@@ -102,9 +100,8 @@ def normalize_country_bundle(
         )
         != policyengine_version
     ):
-        raise Stage12BundleError(
-            f"PolicyEngine.py bundle data release for {country!r} names another PolicyEngine.py version"
-        )
+        msg = f"PolicyEngine.py bundle data release for {country!r} names another PolicyEngine.py version"
+        raise Stage12BundleError(msg)
 
     release_model = require_mapping(
         release.get("model_package"),
@@ -122,9 +119,8 @@ def normalize_country_bundle(
         )
         != country_package_version
     ):
-        raise Stage12BundleError(
-            f"PolicyEngine.py bundle country package metadata is inconsistent for {country!r}"
-        )
+        msg = f"PolicyEngine.py bundle country package metadata is inconsistent for {country!r}"
+        raise Stage12BundleError(msg)
 
     data_package = require_mapping(
         release.get("data_package"),
@@ -202,13 +198,11 @@ def normalize_country_bundle(
     datasets_by_identity = {dataset.identity: dataset for dataset in datasets}
     selected_dataset = datasets_by_identity.get(default_dataset)
     if selected_dataset is None:
-        raise Stage12BundleError(
-            f"PolicyEngine.py bundle default dataset is absent for {country!r}"
-        )
+        msg = f"PolicyEngine.py bundle default dataset is absent for {country!r}"
+        raise Stage12BundleError(msg)
     if selected_dataset.uri != default_dataset_uri:
-        raise Stage12BundleError(
-            f"PolicyEngine.py bundle default dataset URI is inconsistent for {country!r}"
-        )
+        msg = f"PolicyEngine.py bundle default dataset URI is inconsistent for {country!r}"
+        raise Stage12BundleError(msg)
 
     certified = require_mapping(
         release.get("certified_data_artifact"),
@@ -233,9 +227,10 @@ def normalize_country_bundle(
         "data_package.version": certified_package.get("version"),
     }
     if actual_certified_values != certified_values:
-        raise Stage12BundleError(
+        msg = (
             f"PolicyEngine.py bundle certified artifact is inconsistent for {country!r}"
         )
+        raise Stage12BundleError(msg)
 
     return Stage12CountryBundle(
         country=country,

@@ -82,24 +82,32 @@ class V2WorkerVersion(StrictManifestModel):
         each with a validation invocation.
         """
         if not self.application_name.startswith(V2_APPLICATION_PREFIX):
-            raise ValueError("v2 application uses an invalid name prefix")
+            msg = "v2 application uses an invalid name prefix"
+            raise ValueError(msg)
         if self.application_name.startswith(V1_APPLICATION_PREFIX):
-            raise ValueError("v2 application name collides with the v1 prefix")
+            msg = "v2 application name collides with the v1 prefix"
+            raise ValueError(msg)
         expected_name = v2_application_name(self.bundle.policyengine_version)
         if self.application_name != expected_name:
-            raise ValueError("v2 application name does not match its bundle version")
+            msg = "v2 application name does not match its bundle version"
+            raise ValueError(msg)
         if self.validation.application_name != self.application_name:
-            raise ValueError("worker validation names another application")
+            msg = "worker validation names another application"
+            raise ValueError(msg)
         if self.validation.bundle_manifest_sha256 != self.bundle_manifest_sha256:
-            raise ValueError("worker validation names another bundle digest")
+            msg = "worker validation names another bundle digest"
+            raise ValueError(msg)
         countries = tuple(worker.country for worker in self.countries)
         bundle_countries = tuple(country.country for country in self.bundle.countries)
         if len(countries) != len(set(countries)):
-            raise ValueError("v2 worker countries must be unique")
+            msg = "v2 worker countries must be unique"
+            raise ValueError(msg)
         if countries != bundle_countries:
-            raise ValueError("v2 worker countries do not match the normalized bundle")
+            msg = "v2 worker countries do not match the normalized bundle"
+            raise ValueError(msg)
         if set(self.validation.country_validation_invocation_ids) != set(countries):
-            raise ValueError("worker validation does not cover every country")
+            msg = "worker validation does not cover every country"
+            raise ValueError(msg)
         return self
 
 
@@ -119,12 +127,15 @@ class V2VersionManifest(StrictManifestModel):
     def validate_versions(self) -> V2VersionManifest:
         """Check the default has an entry and each key is its bundle's version."""
         if not self.versions:
-            raise ValueError("v2 manifest must contain a worker version")
+            msg = "v2 manifest must contain a worker version"
+            raise ValueError(msg)
         if self.default_version not in self.versions:
-            raise ValueError("v2 default version has no worker entry")
+            msg = "v2 default version has no worker entry"
+            raise ValueError(msg)
         for version, worker in self.versions.items():
             if version != worker.bundle.policyengine_version:
-                raise ValueError("v2 manifest version key does not match its bundle")
+                msg = "v2 manifest version key does not match its bundle"
+                raise ValueError(msg)
         return self
 
 
@@ -149,12 +160,14 @@ def v2_application_name(policyengine_version: str) -> str:
     if not policyengine_version or not re.fullmatch(
         r"[A-Za-z0-9][A-Za-z0-9._+-]*", policyengine_version
     ):
-        raise ValueError("PolicyEngine.py version cannot form a Modal application name")
+        msg = "PolicyEngine.py version cannot form a Modal application name"
+        raise ValueError(msg)
     name = V2_APPLICATION_PREFIX + policyengine_version.replace(".", "-").replace(
         "+", "-"
     )
     if len(name) > 64:
-        raise ValueError("v2 Modal application name exceeds 64 characters")
+        msg = "v2 Modal application name exceeds 64 characters"
+        raise ValueError(msg)
     return name
 
 
@@ -255,7 +268,8 @@ class V2ManifestLoader:
             manifest = V2VersionManifest.model_validate(value)
         except (TypeError, ValueError):
             if self._last_valid is None:
-                raise ValueError("no valid v2 version manifest is available") from None
+                msg = "no valid v2 version manifest is available"
+                raise ValueError(msg) from None
             return self._last_valid
         self._last_valid = manifest
         return manifest
@@ -270,9 +284,8 @@ class V2ManifestLoader:
         try:
             worker = manifest.versions[selected]
         except KeyError:
-            raise ValueError(
-                f"v2 worker version {selected!r} is not available"
-            ) from None
+            msg = f"v2 worker version {selected!r} is not available"
+            raise ValueError(msg) from None
         return selected, worker, manifest_digest(manifest)
 
 
@@ -282,9 +295,11 @@ def assert_separate_manifest_names(*, v1_name: str, v2_name: str) -> None:
     This keeps a v2 manifest publish from overwriting the v1 routing state.
     """
     if not v1_name or not v2_name:
-        raise ValueError("v1 and v2 manifest names must be non-empty")
+        msg = "v1 and v2 manifest names must be non-empty"
+        raise ValueError(msg)
     if v1_name == v2_name:
-        raise ValueError("v1 and v2 manifests must use different storage names")
+        msg = "v1 and v2 manifests must use different storage names"
+        raise ValueError(msg)
 
 
 def validate_manifest_has_no_credentials(value: Mapping[str, object]) -> None:

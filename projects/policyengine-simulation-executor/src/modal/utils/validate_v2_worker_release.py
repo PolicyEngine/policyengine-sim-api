@@ -36,7 +36,8 @@ def _spawn_validation(
     result = call.get(timeout=1_000)
     invocation_id = getattr(call, "object_id", None)
     if not isinstance(invocation_id, str) or not invocation_id:
-        raise RuntimeError(f"{function_name} returned no Modal invocation identifier")
+        msg = f"{function_name} returned no Modal invocation identifier"
+        raise RuntimeError(msg)
     return result, invocation_id
 
 
@@ -57,7 +58,8 @@ def validate_release(*, environment: str) -> V2WorkerValidation:
             environment=environment,
         )
         if not isinstance(result, dict) or result.get("validated") is not True:
-            raise RuntimeError(f"{function_name} did not report successful validation")
+            msg = f"{function_name} did not report successful validation"
+            raise RuntimeError(msg)
         expected = {
             "country": country_bundle.country,
             "policyengine_version": resolved.bundle.policyengine_version,
@@ -74,9 +76,8 @@ def validate_release(*, environment: str) -> V2WorkerValidation:
             if result.get(key) != expected_value
         }
         if mismatches:
-            raise RuntimeError(
-                f"{function_name} reported bundle values that differ from deployment"
-            )
+            msg = f"{function_name} reported bundle values that differ from deployment"
+            raise RuntimeError(msg)
         invocation_ids[country_bundle.country] = invocation_id
     return V2WorkerValidation(
         validated=True,

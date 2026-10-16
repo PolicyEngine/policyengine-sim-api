@@ -133,7 +133,8 @@ def test_errors_other_than_a_refused_connection_are_not_retried() -> None:
 
     def fail_with_invalid_connection_options() -> None:
         attempts.append(1)
-        raise ValueError("invalid connection option")
+        msg = "invalid connection option"
+        raise ValueError(msg)
 
     with pytest.raises(ValueError, match="invalid connection option"):
         open_connection_with_retry(
@@ -173,7 +174,8 @@ def test_retries_stop_when_the_budget_is_spent() -> None:
 def test_retry_telemetry_failure_does_not_stop_the_retry() -> None:
     class FailingRuntime:
         def log(self, *_args, **_kwargs):
-            raise RuntimeError("telemetry exporter unavailable")
+            msg = "telemetry exporter unavailable"
+            raise RuntimeError(msg)
 
     clock = ManualClock()
     opened_connection = OpenedConnection()

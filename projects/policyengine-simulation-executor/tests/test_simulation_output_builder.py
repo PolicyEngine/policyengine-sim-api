@@ -122,7 +122,8 @@ class _FakeSimulation:
         self.output_dataset = _FakeOutputDataset(household)
 
     def ensure(self):
-        raise AssertionError("test data is already materialized")
+        msg = "test data is already materialized"
+        raise AssertionError(msg)
 
 
 class _TrackedSpan(AbstractContextManager):
@@ -299,7 +300,8 @@ def _stub_policyengine_output_calls(monkeypatch, baseline, reform) -> None:
                     if simulation is baseline
                     else REFORM_POVERTY_BY_RACE
                 )
-            raise AssertionError(f"Unexpected poverty output: {name}")
+            msg = f"Unexpected poverty output: {name}"
+            raise AssertionError(msg)
 
         return compute
 
@@ -1740,7 +1742,8 @@ def test_builder_budgetary_impact_propagates_required_calculation_errors(monkeyp
     baseline, reform = _macro_baseline_reform()
 
     def fail_change_output_variable(*args, **kwargs):
-        raise RuntimeError("household_tax missing")
+        msg = "household_tax missing"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_budget._change_output_variable",

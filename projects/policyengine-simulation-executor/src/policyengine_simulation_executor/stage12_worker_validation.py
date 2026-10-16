@@ -49,9 +49,11 @@ def _check_dataset_access(path: str, expected_sha256: str) -> None:
         while chunk := stream.read(1024 * 1024):
             digest.update(chunk)
     if dataset_path.stat().st_size == 0:
-        raise RuntimeError("Stage 12 installed dataset artifact is empty")
+        msg = "Stage 12 installed dataset artifact is empty"
+        raise RuntimeError(msg)
     if digest.hexdigest() != expected_sha256:
-        raise RuntimeError("Stage 12 installed dataset artifact digest differs")
+        msg = "Stage 12 installed dataset artifact digest differs"
+        raise RuntimeError(msg)
 
 
 def _run_non_serving_calculation(country: CountryId) -> None:
@@ -65,7 +67,8 @@ def _run_non_serving_calculation(country: CountryId) -> None:
     )
     household = getattr(result, "household", None)
     if not isinstance(household, Mapping) or "household_net_income" not in household:
-        raise RuntimeError("Stage 12 validation calculation returned no net income")
+        msg = "Stage 12 validation calculation returned no net income"
+        raise RuntimeError(msg)
 
 
 def _check_uk_local_authority_resources() -> None:
@@ -119,23 +122,20 @@ def validate_country_worker(
     import_module("policyengine_simulation_executor.stage12_runtime")
     resolved = load_stage12_bundle()
     if resolved.bundle_manifest_sha256 != expected_bundle_manifest_sha256:
-        raise RuntimeError(
-            "installed PolicyEngine.py bundle digest differs from deployment input"
-        )
+        msg = "installed PolicyEngine.py bundle digest differs from deployment input"
+        raise RuntimeError(msg)
     try:
         country_bundle = next(
             item for item in resolved.bundle.countries if item.country == country
         )
     except StopIteration:
-        raise RuntimeError(
-            f"installed PolicyEngine.py bundle does not support {country!r}"
-        ) from None
+        msg = f"installed PolicyEngine.py bundle does not support {country!r}"
+        raise RuntimeError(msg) from None
     import_module(f"policyengine.tax_benefit_models.{country}")
     installed_dataset_path = dataset_path_resolver(country)
     if installed_dataset_path is None:
-        raise RuntimeError(
-            f"installed certified dataset is unavailable for {country!r}"
-        )
+        msg = f"installed certified dataset is unavailable for {country!r}"
+        raise RuntimeError(msg)
     selected_dataset = next(
         dataset
         for dataset in country_bundle.datasets

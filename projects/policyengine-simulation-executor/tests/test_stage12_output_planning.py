@@ -190,7 +190,8 @@ def test_unrelated_policy_does_not_activate_labor_supply_outputs() -> None:
 
 def test_planning_is_deterministic_and_never_ensures_a_simulation(monkeypatch) -> None:
     def reject_ensure(_simulation):
-        raise AssertionError("output planning must not execute a simulation")
+        msg = "output planning must not execute a simulation"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(Simulation, "ensure", reject_ensure)
 

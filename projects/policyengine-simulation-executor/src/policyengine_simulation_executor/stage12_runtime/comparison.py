@@ -109,7 +109,7 @@ def compare_completed_report(
         )
     # Result retrieval, validation, artifact storage, and persistence are all
     # deliberately isolated from the successful Stage 12 calculation.
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001  # comparison failures are recorded, never allowed to fail the Stage 12 calculation
         failed_at = datetime.now(UTC)
         try:
             latest = store.get_report(parent.evaluation_id)
@@ -139,7 +139,7 @@ def compare_completed_report(
                     "production_job_id": production_job_id,
                 },
             )
-        logger.error(
+        logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
             "stage12_result_comparison_failed",
             extra={
                 "evaluation_id": str(parent.evaluation_id),

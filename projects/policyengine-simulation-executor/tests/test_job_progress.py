@@ -236,7 +236,8 @@ class TestStoredJobProgressReporter:
 
         def failing_write(job_id, record):
             calls.append(record.stage)
-            raise ConnectionError("modal unavailable")
+            msg = "modal unavailable"
+            raise ConnectionError(msg)
 
         reporter = StoredJobProgressReporter("fc-job-1", write=failing_write)
 
@@ -453,7 +454,8 @@ class TestRestartedAttempt:
 
     def test__unreadable_earlier_record_starts_fresh(self, caplog):
         def failing_read(job_id):
-            raise ConnectionError("modal unavailable")
+            msg = "modal unavailable"
+            raise ConnectionError(msg)
 
         writer = _RecordingWriter()
         reporter = StoredJobProgressReporter(
@@ -547,7 +549,8 @@ class TestSimulationOutputBuilderStage:
         progress = _RecordingReporter()
 
         def analysis(baseline, reform, include_cliff_impacts):
-            raise RuntimeError("model failed")
+            msg = "model failed"
+            raise RuntimeError(msg)
 
         builder = self._builder(analysis, progress)
 
@@ -850,7 +853,8 @@ class TestModalRunSimulation:
     def test__failed_job_still_records_where_it_stopped(self, modal_app, monkeypatch):
         def dispatch(params, *, app_name, runtime, progress):
             progress.enter(JobStage.BASELINE)
-            raise RuntimeError("model failed")
+            msg = "model failed"
+            raise RuntimeError(msg)
 
         events, writes = self._wire(modal_app, monkeypatch, dispatch)
 
@@ -887,7 +891,8 @@ class TestModalRunSimulation:
         self, modal_app, monkeypatch
     ):
         def dispatch(params, *, app_name, runtime, progress):
-            raise AssertionError("dispatch should not run")
+            msg = "dispatch should not run"
+            raise AssertionError(msg)
 
         _, writes = self._wire(
             modal_app, monkeypatch, dispatch, earlier=_earlier_attempt()
@@ -915,7 +920,8 @@ class TestModalRunSimulation:
         self._wire(modal_app, monkeypatch, dispatch)
 
         def failing_write(job_id, record):
-            raise ConnectionError("modal unavailable")
+            msg = "modal unavailable"
+            raise ConnectionError(msg)
 
         monkeypatch.setattr(job_progress_state, "put_job_progress", failing_write)
 
@@ -923,7 +929,8 @@ class TestModalRunSimulation:
 
     def test__no_call_id_means_no_reporting(self, modal_app, monkeypatch):
         def missing_call_id():
-            raise RuntimeError("not inside a Modal function call")
+            msg = "not inside a Modal function call"
+            raise RuntimeError(msg)
 
         monkeypatch.setattr(
             modal_app.modal, "current_function_call_id", missing_call_id, raising=False

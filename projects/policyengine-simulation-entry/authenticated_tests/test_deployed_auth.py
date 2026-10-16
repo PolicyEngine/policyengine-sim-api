@@ -21,7 +21,8 @@ PERMISSION_PROBE_PATH = "/internal/stage12/reports/00000000-0000-0000-0000-00000
 def _required(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
-        raise RuntimeError(f"{name} is required for authenticated deployment tests.")
+        msg = f"{name} is required for authenticated deployment tests."
+        raise RuntimeError(msg)
     return value
 
 
@@ -43,9 +44,8 @@ def permission_enforcement() -> None:
         or "0"
     )
     if value not in {"0", "1"}:
-        raise RuntimeError(
-            "SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS must be 0 or 1."
-        )
+        msg = "SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS must be 0 or 1."
+        raise RuntimeError(msg)
     if value == "0":
         pytest.skip("The target environment logs missing permissions only.")
 
@@ -70,7 +70,8 @@ def access_token() -> str:
     response.raise_for_status()
     token = response.json().get("access_token")
     if not isinstance(token, str) or not token:
-        raise RuntimeError("Auth0 response omitted access_token.")
+        msg = "Auth0 response omitted access_token."
+        raise RuntimeError(msg)
     return token
 
 

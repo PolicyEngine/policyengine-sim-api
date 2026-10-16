@@ -20,7 +20,8 @@ def split_dataset_revision(dataset_uri: str) -> tuple[str, str | None]:
         return dataset_uri, None
     dataset_without_revision, revision = dataset_uri.rsplit("@", maxsplit=1)
     if not dataset_without_revision or not revision:
-        raise ValueError(f"Invalid dataset revision reference: {dataset_uri}")
+        msg = f"Invalid dataset revision reference: {dataset_uri}"
+        raise ValueError(msg)
     return dataset_without_revision, revision
 
 
@@ -39,11 +40,12 @@ def select_dataset_revision(
         and requested_data_version is not None
         and requested_revision != requested_data_version
     ):
-        raise ValueError(
+        msg = (
             "Conflicting dataset revisions: "
             f"data requests {requested_revision!r} but data_version is "
             f"{requested_data_version!r}"
         )
+        raise ValueError(msg)
     return requested_revision or requested_data_version
 
 

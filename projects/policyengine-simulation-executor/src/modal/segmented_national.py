@@ -223,7 +223,8 @@ class SegmentedNationalRunner:
         self.country = str(params.get("country") or "us").lower()
         groups = national_region_groups(self.country)
         if not groups:
-            raise ValueError(f"No national partition for country {self.country!r}")
+            msg = f"No national partition for country {self.country!r}"
+            raise ValueError(msg)
         self.groups = groups
         # Lazy handle, no RPC until first spawn (budget-window precedent).
         self.child_func = self.modal.Function.from_name(app_name, SEGMENT_FUNCTION_NAME)
@@ -376,10 +377,11 @@ class SegmentedNationalRunner:
                         if child.attempt > 1
                         else ""
                     )
-                    raise RuntimeError(
+                    msg = (
                         "Segmented national child failed for group "
                         f"{child.group_label}{retry_note}: {redacted}"
-                    ) from None
+                    )
+                    raise RuntimeError(msg) from None
                 pending.discard(index)
                 poll_errors.pop(index, None)
                 progress_made = True
@@ -441,10 +443,11 @@ class SegmentedNationalRunner:
                 },
             )
             self._cancel_all(children)
-            raise RuntimeError(
+            msg = (
                 "Segmented national child timed out for group "
                 f"{overdue.group_label}: {reason}"
-            ) from None
+            )
+            raise RuntimeError(msg) from None
 
         self._cancel_call(overdue.call)
         self.superseded_children.append(overdue)
@@ -510,17 +513,18 @@ class SegmentedNationalRunner:
             },
         )
         self._cancel_all(children)
-        raise RuntimeError(
+        msg = (
             "Segmented national run exceeded its "
             f"{self.parent_budget_seconds:.0f}s budget with groups still "
             f"running: {outstanding_groups}"
         )
+        raise RuntimeError(msg)
 
     @staticmethod
     def _cancel_call(call: modal.FunctionCall) -> None:
         try:
             call.cancel()
-        except Exception:
+        except Exception:  # noqa: BLE001  # best-effort cleanup: a failed cancel must not mask the failure being raised, and superseded calls are cancelled again later
             pass
 
     def _cancel_superseded_children(self) -> None:

@@ -43,7 +43,8 @@ def test_setup_gcp_credentials_cleans_up_on_exception(
     with pytest.raises(RuntimeError):
         with setup_gcp_credentials(observability_runtime):
             captured_path.append(os.environ["GOOGLE_APPLICATION_CREDENTIALS"])
-            raise RuntimeError("boom")
+            msg = "boom"
+            raise RuntimeError(msg)
 
     assert captured_path
     assert not os.path.exists(captured_path[0])

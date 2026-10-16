@@ -48,7 +48,8 @@ def extract_annual_impact(
     receipt = validate_spm_result(child_result, spm, expected_year=simulation_year)
     budget = child_result.get("budget", {})
     if not isinstance(budget, dict):
-        raise ValueError("Malformed budget-window child result: missing budget object")
+        msg = "Malformed budget-window child result: missing budget object"
+        raise ValueError(msg)  # noqa: TRY004  # a malformed child result is a data error, like the missing-figure ValueError below; log_and_redact_exception records the type name
 
     missing_keys = [
         key
@@ -57,9 +58,8 @@ def extract_annual_impact(
     ]
     if missing_keys:
         missing = ", ".join(f"budget.{key}" for key in missing_keys)
-        raise ValueError(
-            f"Malformed budget-window child result: missing numeric {missing}"
-        )
+        msg = f"Malformed budget-window child result: missing numeric {missing}"
+        raise ValueError(msg)
 
     tax_revenue_impact = budget["tax_revenue_impact"]
     # UK worker results omit the state fiscal layer entirely; coerce to 0.0

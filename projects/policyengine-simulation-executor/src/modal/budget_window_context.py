@@ -64,18 +64,22 @@ def build_batch_context(
     request = BudgetWindowBatchRequest.model_validate(params)
     metadata = params.get("_metadata")
     if not isinstance(metadata, dict):
-        raise ValueError("Missing internal batch metadata")
+        msg = "Missing internal batch metadata"
+        raise ValueError(msg)  # noqa: TRY004  # documented ValueError for malformed batch metadata, raised across the run_budget_window_batch Modal boundary
 
     resolved_app_name = metadata.get("resolved_app_name")
     resolved_version = metadata.get("resolved_version")
     bundle_payload = metadata.get("policyengine_bundle")
 
     if not isinstance(resolved_app_name, str) or not resolved_app_name:
-        raise ValueError("Missing resolved_app_name in batch metadata")
+        msg = "Missing resolved_app_name in batch metadata"
+        raise ValueError(msg)
     if not isinstance(resolved_version, str) or not resolved_version:
-        raise ValueError("Missing resolved_version in batch metadata")
+        msg = "Missing resolved_version in batch metadata"
+        raise ValueError(msg)
     if not isinstance(bundle_payload, dict):
-        raise ValueError("Missing policyengine_bundle in batch metadata")
+        msg = "Missing policyengine_bundle in batch metadata"
+        raise ValueError(msg)  # noqa: TRY004  # documented ValueError for malformed batch metadata, raised across the run_budget_window_batch Modal boundary
 
     return BudgetWindowBatchContext(
         batch_job_id=batch_job_id,

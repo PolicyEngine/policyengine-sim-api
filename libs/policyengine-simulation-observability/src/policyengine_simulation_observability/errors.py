@@ -77,7 +77,7 @@ def log_and_redact_exception(
             extra=payload,
         )
     except Exception:  # pragma: no cover - context key clashed with LogRecord
-        logger.error(
+        logger.exception(
             "Gateway %s failed (correlation_id=%s)",
             scope,
             correlation_id,
@@ -91,7 +91,7 @@ def log_and_redact_exception(
             "gateway_error_redacted",
             attributes=payload,
         )
-    except Exception:  # pragma: no cover - defensive, never raise from logger
+    except Exception:  # noqa: BLE001  # pragma: no cover - defensive, never raise from logger
         pass
 
     return f"{GENERIC_JOB_FAILURE_MESSAGE} (correlation_id={correlation_id})"

@@ -284,7 +284,8 @@ def budget_window_semi_integration_client(
         @staticmethod
         def current_function_call_id():
             if runtime.current_parent_call_id is None:
-                raise RuntimeError("No active parent batch call")
+                msg = "No active parent batch call"
+                raise RuntimeError(msg)
             return runtime.current_parent_call_id
 
     monkeypatch.setattr(endpoints, "modal", MockModal)

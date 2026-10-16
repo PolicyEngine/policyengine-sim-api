@@ -60,9 +60,8 @@ def parse_hf_dataset_uri(dataset_uri: str) -> HFDatasetReference | None:
     )
     parts = path_with_repo.split("/", maxsplit=2)
     if len(parts) != 3 or not all(parts):
-        raise HuggingFaceDatasetReferenceError(
-            f"Invalid Hugging Face dataset URI: {dataset_uri!r}"
-        )
+        msg = f"Invalid Hugging Face dataset URI: {dataset_uri!r}"
+        raise HuggingFaceDatasetReferenceError(msg)
     return HFDatasetReference(
         repo_id=f"{parts[0]}/{parts[1]}",
         path=parts[2],
@@ -90,15 +89,17 @@ def _fetch_hf_dataset_revision(
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         detail = exc.reason or f"HTTP {exc.code}"
-        raise HuggingFaceDatasetReferenceError(
+        msg = (
             f"Hugging Face dataset revision {repo_id}@{revision} was not found: "
             f"{detail}"
-        ) from exc
+        )
+        raise HuggingFaceDatasetReferenceError(msg) from exc
     except (OSError, URLError, json.JSONDecodeError) as exc:
-        raise HuggingFaceDatasetReferenceError(
+        msg = (
             f"Unable to validate Hugging Face dataset revision "
             f"{repo_id}@{revision}: {exc}"
-        ) from exc
+        )
+        raise HuggingFaceDatasetReferenceError(msg) from exc
 
 
 def _siblings_contain_path(payload: dict[str, Any], path: str) -> bool | None:
@@ -127,10 +128,11 @@ def validate_hf_dataset_uri(dataset_uri: str) -> str:
     payload = _fetch_hf_dataset_revision(parsed.repo_id, parsed.revision, _hf_token())
     contains_path = _siblings_contain_path(payload, parsed.path)
     if contains_path is False:
-        raise HuggingFaceDatasetReferenceError(
+        msg = (
             f"Hugging Face dataset revision {parsed.repo_id}@{parsed.revision} "
             f"does not contain artifact {parsed.path!r}"
         )
+        raise HuggingFaceDatasetReferenceError(msg)
     return dataset_uri
 
 

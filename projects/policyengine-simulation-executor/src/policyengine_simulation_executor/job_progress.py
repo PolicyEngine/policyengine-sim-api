@@ -280,7 +280,7 @@ class StoredJobProgressReporter:
             return None
         try:
             return self._read(self.job_id)
-        except Exception as exc:  # noqa: BLE001 - stage reporting is non-fatal
+        except Exception as exc:  # noqa: BLE001  # stage reporting is non-fatal
             if not self._read_failed:
                 logger.warning(
                     "Could not read job progress for %s: %s",
@@ -317,7 +317,7 @@ class StoredJobProgressReporter:
             return
         try:
             self._write(self.job_id, self._published(self._record))
-        except Exception as exc:  # noqa: BLE001 - stage reporting is non-fatal
+        except Exception as exc:  # noqa: BLE001  # stage reporting is non-fatal
             if not self._write_failed:
                 logger.warning(
                     "Could not record job progress for %s: %s",

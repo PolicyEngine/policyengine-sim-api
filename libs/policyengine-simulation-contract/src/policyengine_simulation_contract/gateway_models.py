@@ -83,10 +83,11 @@ def _enforce_max_payload_size(value: object) -> object:
         # only guards against well-formed hostile payloads.
         return value
     if encoded_length > MAX_GATEWAY_REQUEST_BYTES:
-        raise ValueError(
+        msg = (
             f"Request body is too large ({encoded_length} bytes); the gateway "
             f"accepts at most {MAX_GATEWAY_REQUEST_BYTES} bytes."
         )
+        raise ValueError(msg)
     return value
 
 
@@ -160,7 +161,8 @@ class SimulationRequest(GatewayRequestBase):
     def region_xor_region_group(self) -> "SimulationRequest":
         """Reject a request that sets both ``region`` and ``region_group``."""
         if self.region is not None and self.region_group is not None:
-            raise ValueError("Provide `region` or `region_group`, not both.")
+            msg = "Provide `region` or `region_group`, not both."
+            raise ValueError(msg)
         return self
 
 
@@ -290,7 +292,8 @@ class BudgetWindowBatchRequest(GatewayRequestBase):
         try:
             return str(int(value))
         except (TypeError, ValueError) as exc:
-            raise ValueError("start_year must be an integer year") from exc
+            msg = "start_year must be an integer year"
+            raise ValueError(msg) from exc
 
     @model_validator(mode="after")
     def validate_end_year(self) -> "BudgetWindowBatchRequest":
@@ -300,17 +303,18 @@ class BudgetWindowBatchRequest(GatewayRequestBase):
         impacts; those requests belong on the single-year endpoint.
         """
         if self.region_group is not None:
-            raise ValueError("Provide `region` or `region_group`, not both.")
+            msg = "Provide `region` or `region_group`, not both."
+            raise ValueError(msg)
         end_year = int(self.start_year) + self.window_size - 1
         if end_year > self.MAX_END_YEAR:
-            raise ValueError(
-                f"budget-window end_year must be {self.MAX_END_YEAR} or earlier"
-            )
+            msg = f"budget-window end_year must be {self.MAX_END_YEAR} or earlier"
+            raise ValueError(msg)
         if self.include_cliffs is True:
-            raise ValueError(
+            msg = (
                 "budget-window cliff impacts are not supported; use the single-year "
                 "simulation endpoint with include_cliffs=true"
             )
+            raise ValueError(msg)
         return self
 
 

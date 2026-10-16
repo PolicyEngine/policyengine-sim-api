@@ -44,7 +44,8 @@ class ObservabilityContext(BaseModel):
             return None
         normalized = normalize_observability_id(value)
         if normalized is None:
-            raise ValueError("observability_id must be a UUID")
+            msg = "observability_id must be a UUID"
+            raise ValueError(msg)
         return normalized
 
 

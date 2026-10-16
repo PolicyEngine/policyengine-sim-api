@@ -43,15 +43,19 @@ def validate_uk_local_authority_metadata(
             )
 
             if region_code is None or uk_area_codes_required(region_code):
-                raise ValueError("UK simulation artifact metadata is missing")
+                msg = "UK simulation artifact metadata is missing"
+                raise ValueError(msg)
             return None
         if baseline is None or reform is None:
-            raise ValueError("UK simulation artifact metadata is missing on one side")
+            msg = "UK simulation artifact metadata is missing on one side"
+            raise ValueError(msg)
         if baseline != reform:
-            raise ValueError("UK simulation artifact boundary versions do not match")
+            msg = "UK simulation artifact boundary versions do not match"
+            raise ValueError(msg)
         return baseline
     if baseline is not None or reform is not None:
-        raise ValueError("non-UK simulation artifacts contain UK authority metadata")
+        msg = "non-UK simulation artifacts contain UK authority metadata"
+        raise ValueError(msg)
     return None
 
 
@@ -67,24 +71,30 @@ def validate_aligned_outputs(
     output plan and row identities all line up.
     """
     if baseline.role.value != "baseline" or reform.role.value != "reform":
-        raise ValueError("simulation artifacts have incorrect report roles")
+        msg = "simulation artifacts have incorrect report roles"
+        raise ValueError(msg)
     if (
         baseline.evaluation_id != report.evaluation_id
         or reform.evaluation_id != report.evaluation_id
     ):
-        raise ValueError("simulation artifacts name another comparison run")
+        msg = "simulation artifacts name another comparison run"
+        raise ValueError(msg)
     if baseline.bundle != reform.bundle or baseline.bundle != report.baseline.bundle:
-        raise ValueError("simulation artifacts have incompatible bundle provenance")
+        msg = "simulation artifacts have incompatible bundle provenance"
+        raise ValueError(msg)
     if baseline.output_schema_version != reform.output_schema_version:
-        raise ValueError("simulation artifacts use incompatible output schemas")
+        msg = "simulation artifacts use incompatible output schemas"
+        raise ValueError(msg)
     expected_plan_sha256 = stage12_output_plan_sha256(output_plan)
     if (
         baseline.output_plan_sha256 != expected_plan_sha256
         or reform.output_plan_sha256 != expected_plan_sha256
     ):
-        raise ValueError("simulation artifacts do not satisfy the report output plan")
+        msg = "simulation artifacts do not satisfy the report output plan"
+        raise ValueError(msg)
     if baseline.row_identity != reform.row_identity:
-        raise ValueError("simulation artifacts have incompatible stable row identities")
+        msg = "simulation artifacts have incompatible stable row identities"
+        raise ValueError(msg)
 
 
 def _dataset_from_frames(
@@ -244,10 +254,12 @@ def build_spm_result(
     baseline_provenance = baseline_descriptor.calculation_provenance
     reform_provenance = reform_descriptor.calculation_provenance
     if baseline_provenance is None or reform_provenance is None:
-        raise ValueError("SPM calculation provenance is missing")
+        msg = "SPM calculation provenance is missing"
+        raise ValueError(msg)
     for receipt in (baseline_provenance, reform_provenance):
         if str(report.baseline.year) not in receipt.years:
-            raise ValueError("SPM calculation provenance does not cover report year")
+            msg = "SPM calculation provenance does not cover report year"
+            raise ValueError(msg)
     comparison = build_spm_comparison_provenance(
         baseline_receipts=[baseline_provenance],
         reform_receipts=[reform_provenance],

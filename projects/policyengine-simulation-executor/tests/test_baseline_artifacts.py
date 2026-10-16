@@ -139,7 +139,8 @@ class TestDeterministicBaselineId:
 
     def test_identity_collection_failure_degrades_to_random_id(self, monkeypatch):
         def boom(*args, **kwargs):
-            raise RuntimeError("manifest unavailable")
+            msg = "manifest unavailable"
+            raise RuntimeError(msg)
 
         monkeypatch.setattr(ak, "collect_baseline_identity", boom)
         assert (
@@ -181,9 +182,11 @@ class FakeModelVersion:
     def load(self, simulation):
         self.calls.append("load")
         if self.load_result == "absent":
-            raise FileNotFoundError("no artifact")
+            msg = "no artifact"
+            raise FileNotFoundError(msg)
         if self.load_result == "broken":
-            raise OSError("corrupt h5")
+            msg = "corrupt h5"
+            raise OSError(msg)
         frames = (
             _complete_frames()
             if self.load_result == "complete"
@@ -526,7 +529,8 @@ class TestIdentityErrorContract:
 
     def test_qualifying_identity_propagates_collection_errors(self, monkeypatch):
         def boom(*args, **kwargs):
-            raise RuntimeError("receipt unreadable")
+            msg = "receipt unreadable"
+            raise RuntimeError(msg)
 
         monkeypatch.setattr(ak, "collect_baseline_identity", boom)
         with pytest.raises(RuntimeError, match="receipt unreadable"):
@@ -534,7 +538,8 @@ class TestIdentityErrorContract:
 
     def test_deterministic_id_swallows_collection_errors(self, monkeypatch):
         def boom(*args, **kwargs):
-            raise RuntimeError("receipt unreadable")
+            msg = "receipt unreadable"
+            raise RuntimeError(msg)
 
         monkeypatch.setattr(ak, "collect_baseline_identity", boom)
         assert ba.deterministic_baseline_id(**self._kwargs()) is None
@@ -809,7 +814,7 @@ class SPMWrapperSimulation(Simulation):
             return
         try:
             self.tax_benefit_model_version.load(self)
-        except Exception:
+        except Exception:  # noqa: BLE001  # mirrors .py's Simulation.ensure(), which runs and saves after any load failure
             self.run()
             self.save()
         # The wrapper files a snapshot, not the live object, so re-pointing

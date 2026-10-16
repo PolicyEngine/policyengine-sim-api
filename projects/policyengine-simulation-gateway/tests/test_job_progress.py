@@ -229,7 +229,8 @@ class TestStageReportingFailuresAreHarmless:
         stage_reporting_worker["func"].last_call.running = True
 
         def failing_read(job_id):
-            raise ConnectionError("modal unavailable")
+            msg = "modal unavailable"
+            raise ConnectionError(msg)
 
         monkeypatch.setattr(endpoints, "get_job_progress", failing_read)
 

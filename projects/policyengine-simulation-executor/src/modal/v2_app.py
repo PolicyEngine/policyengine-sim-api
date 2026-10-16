@@ -73,7 +73,8 @@ assert_expected_bundle_values(
     _external_assertions(dict(os.environ)),
 )
 if os.environ.get("MODAL_APP_NAME") not in {None, "", APP_NAME}:
-    raise RuntimeError("MODAL_APP_NAME does not match the bundle-derived v2 name")
+    msg = "MODAL_APP_NAME does not match the bundle-derived v2 name"
+    raise RuntimeError(msg)
 
 
 app = modal.App(APP_NAME)
@@ -311,7 +312,8 @@ def coordinate_report(
 
     coordinator_invocation_id = modal.current_function_call_id()
     if coordinator_invocation_id is None:
-        raise RuntimeError("Modal coordinator invocation identifier is unavailable")
+        msg = "Modal coordinator invocation identifier is unavailable"
+        raise RuntimeError(msg)
     runtime = init_process_observability(
         service_name="policyengine-stage12-coordinator",
         service_role="stage12_report_coordinator",

@@ -49,7 +49,8 @@ def create_openapi_app() -> FastAPI:
         Routes to the appropriate simulation app based on country and version.
         Returns immediately with a job_id for polling.
         """
-        raise NotImplementedError("Stub for OpenAPI generation")
+        msg = "Stub for OpenAPI generation"
+        raise NotImplementedError(msg)
 
     @app.post(
         "/simulate/economy/budget-window",
@@ -66,7 +67,8 @@ def create_openapi_app() -> FastAPI:
 
         Returns immediately with a parent batch job ID for polling.
         """
-        raise NotImplementedError("Stub for OpenAPI generation")
+        msg = "Stub for OpenAPI generation"
+        raise NotImplementedError(msg)
 
     @app.get(
         "/jobs/{job_id}",
@@ -88,7 +90,8 @@ def create_openapi_app() -> FastAPI:
             - 500 with status="failed" and error on failure
 
         """
-        raise NotImplementedError("Stub for OpenAPI generation")
+        msg = "Stub for OpenAPI generation"
+        raise NotImplementedError(msg)
 
     @app.get(
         "/budget-window-jobs/{batch_job_id}",
@@ -107,17 +110,20 @@ def create_openapi_app() -> FastAPI:
         batch_job_id: str,
     ) -> BudgetWindowBatchStatusResponse:
         """Poll for budget-window batch status."""
-        raise NotImplementedError("Stub for OpenAPI generation")
+        msg = "Stub for OpenAPI generation"
+        raise NotImplementedError(msg)
 
     @app.get("/versions", response_model=VersionsResponse)
     async def list_versions() -> VersionsResponse:
         """List all available routing versions."""
-        raise NotImplementedError("Stub for OpenAPI generation")
+        msg = "Stub for OpenAPI generation"
+        raise NotImplementedError(msg)
 
     @app.get("/versions/{kind}", response_model=VersionMap)
     async def get_country_versions(kind: str) -> VersionMap:
         """Get available versions for policyengine, US, or UK routing."""
-        raise NotImplementedError("Stub for OpenAPI generation")
+        msg = "Stub for OpenAPI generation"
+        raise NotImplementedError(msg)
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
@@ -127,7 +133,8 @@ def create_openapi_app() -> FastAPI:
     @app.post("/ping", response_model=PingResponse)
     async def ping(request: PingRequest) -> PingResponse:
         """Verify the API is able to receive and process requests."""
-        raise NotImplementedError("Stub for OpenAPI generation")
+        msg = "Stub for OpenAPI generation"
+        raise NotImplementedError(msg)
 
     return app
 

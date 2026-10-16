@@ -44,7 +44,8 @@ class FakeStore:
     def get_report(self, evaluation_id):
         self.events.append(("get_report", evaluation_id))
         if self.current is None or self.current.evaluation_id != evaluation_id:
-            raise LookupError("missing report")
+            msg = "missing report"
+            raise LookupError(msg)
         return self.current
 
     def list_simulations(self, evaluation_id):

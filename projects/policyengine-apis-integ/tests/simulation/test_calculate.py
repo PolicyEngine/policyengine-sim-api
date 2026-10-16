@@ -113,7 +113,8 @@ def poll_for_completion(
             return response.parsed
 
         if response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR:
-            raise AssertionError(f"Job failed: {response.content}")
+            msg = f"Job failed: {response.content}"
+            raise AssertionError(msg)
 
         delay_seconds = poll_retry_delay_seconds(
             response.status_code,
@@ -128,9 +129,11 @@ def poll_for_completion(
             continue
 
         # Unexpected status code
-        raise AssertionError(f"Unexpected status code: {response.status_code}")
+        msg = f"Unexpected status code: {response.status_code}"
+        raise AssertionError(msg)
 
-    raise TimeoutError(f"Job {job_id} did not complete within {max_wait_seconds}s")
+    msg = f"Job {job_id} did not complete within {max_wait_seconds}s"
+    raise TimeoutError(msg)
 
 
 def assert_job_progress_reported(bodies: list[Mapping]) -> None:

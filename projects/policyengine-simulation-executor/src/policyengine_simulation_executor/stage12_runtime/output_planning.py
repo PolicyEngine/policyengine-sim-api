@@ -93,7 +93,8 @@ def _planning_simulation(
 def _include_cliff_impacts(report: ReportExecutionInput) -> bool:
     value = report.baseline.options.get("include_cliffs", False)
     if not isinstance(value, bool):
-        raise TypeError("include_cliffs must be a boolean")
+        msg = "include_cliffs must be a boolean"
+        raise TypeError(msg)
     return value
 
 
@@ -243,9 +244,8 @@ def apply_output_plan(
     }
     missing = {entity: variables for entity, variables in missing.items() if variables}
     if missing:
-        raise ValueError(
-            f"configured simulation does not satisfy output plan: {missing}"
-        )
+        msg = f"configured simulation does not satisfy output plan: {missing}"
+        raise ValueError(msg)
 
 
 def validate_output_frames(
@@ -257,9 +257,8 @@ def validate_output_frames(
         entity.entity for entity in output_plan.entities if entity.entity not in frames
     ]
     if missing_entities:
-        raise ValueError(
-            f"simulation output is missing planned entities: {missing_entities}"
-        )
+        msg = f"simulation output is missing planned entities: {missing_entities}"
+        raise ValueError(msg)
     missing_columns = {
         entity.entity: sorted(
             set(entity.materialized_variables) - set(frames[entity.entity].columns)
@@ -270,6 +269,5 @@ def validate_output_frames(
         entity: columns for entity, columns in missing_columns.items() if columns
     }
     if missing_columns:
-        raise ValueError(
-            f"simulation output is missing planned columns: {missing_columns}"
-        )
+        msg = f"simulation output is missing planned columns: {missing_columns}"
+        raise ValueError(msg)
