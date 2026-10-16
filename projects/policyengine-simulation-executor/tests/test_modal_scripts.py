@@ -14,7 +14,7 @@ pytest_plugins = ("fixtures.test_modal_scripts",)
 
 
 class TestModalExtractVersions:
-    """Tests for modal-extract-versions.sh"""
+    """Tests for modal-extract-versions.sh."""
 
     script = SCRIPTS_DIR / "modal-extract-versions.sh"
 
@@ -91,7 +91,7 @@ class TestModalExtractVersions:
 
 
 class TestModalHealthCheck:
-    """Tests for modal-health-check.sh"""
+    """Tests for modal-health-check.sh."""
 
     script = SCRIPTS_DIR / "modal-health-check.sh"
 
@@ -258,7 +258,7 @@ class TestModalImageSmoke:
 
 
 class TestSimulationDeploymentSummary:
-    """Tests for simulation-deployment-summary.sh"""
+    """Tests for simulation-deployment-summary.sh."""
 
     script = SCRIPTS_DIR / "simulation-deployment-summary.sh"
 
@@ -335,7 +335,7 @@ class TestSimulationDeploymentSummary:
 
 
 class TestModalSyncSecrets:
-    """Tests for modal-sync-secrets.sh"""
+    """Tests for modal-sync-secrets.sh."""
 
     script = SCRIPTS_DIR / "modal-sync-secrets.sh"
 
@@ -513,7 +513,7 @@ class TestModalSyncSecrets:
 
 
 class TestModalPrecompute:
-    """Tests for modal-precompute.sh"""
+    """Tests for modal-precompute.sh."""
 
     script = SCRIPTS_DIR / "modal-precompute.sh"
 
@@ -707,8 +707,10 @@ class TestModalPrecompute:
         )
 
     def test_deploy_workflow_threads_manifest_and_store_credentials_to_deploy(self):
-        """The deploy step resolves the manifest from GCS on the runner,
-        so it needs the digest, the store bucket, and GCP credentials."""
+        """The deploy step gets the digest, the store bucket, and GCP credentials.
+
+        It resolves the manifest from GCS on the runner, so it needs all three.
+        """
         reusable_workflow = (
             REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
@@ -755,7 +757,7 @@ class TestModalPrecompute:
 
 
 class TestModalRecordDeployment:
-    """Tests for modal-record-deployment.sh"""
+    """Tests for modal-record-deployment.sh."""
 
     script = SCRIPTS_DIR / "modal-record-deployment.sh"
 
@@ -867,7 +869,7 @@ class TestModalRecordDeployment:
 
 
 class TestModalGetUrl:
-    """Tests for modal-get-url.sh"""
+    """Tests for modal-get-url.sh."""
 
     script = SCRIPTS_DIR / "modal-get-url.sh"
 
@@ -895,7 +897,7 @@ class TestModalGetUrl:
 
 
 class TestModalSetupEnvironments:
-    """Tests for modal-setup-environments.sh"""
+    """Tests for modal-setup-environments.sh."""
 
     script = SCRIPTS_DIR / "modal-setup-environments.sh"
 
@@ -914,7 +916,7 @@ class TestModalSetupEnvironments:
 
 
 class TestSimulationRunIntegTests:
-    """Tests for simulation-run-integ-tests.sh"""
+    """Tests for simulation-run-integ-tests.sh."""
 
     script = SCRIPTS_DIR / "simulation-run-integ-tests.sh"
 

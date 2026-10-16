@@ -1,5 +1,4 @@
-"""
-PolicyEngine Simulation - Versioned Modal App
+"""PolicyEngine Simulation versioned Modal app.
 
 This app contains the heavy simulation workload with snapshotted models.
 Each deployment creates a versioned app (e.g., policyengine-simulation-py4-10-0).
@@ -96,8 +95,7 @@ VERSION_ENV = {
 
 
 def get_app_name(policyengine_version: str) -> str:
-    """
-    Generate versioned app name from the policyengine.py package version.
+    """Generate versioned app name from the policyengine.py package version.
 
     Replaces dots with dashes for URL safety.
     Example: 4.10.0 -> policyengine-simulation-py4-10-0
@@ -172,8 +170,7 @@ _ARTIFACT_BUCKET, _DEPLOY_MANIFEST = _deploy_time_artifact_inputs()
 
 
 def build_runtime_simulation_image() -> modal.Image:
-    """Image layers up to the version env — everything except the artifact
-    fetch and model snapshot.
+    """Build the image layers up to the version env (no artifact fetch or snapshot).
 
     Shared by the deployed app and the image smoke app
     (src/modal/smoke_app.py): all must construct these layers through
@@ -264,7 +261,7 @@ def _set_modal_call_attributes(runtime: "ObservabilityRuntime") -> None:
 
 
 def _job_progress_reporter() -> "JobProgressReporter":
-    """A stage reporter for this call, keyed by its public ``job_id``.
+    """Return a stage reporter for this call, keyed by its public ``job_id``.
 
     The gateway's ``job_id`` is the spawned call's ``object_id``, which is
     this call's ``current_function_call_id()``. Without one there is nothing
@@ -332,8 +329,7 @@ def run_simulation(
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    """
-    Execute economic simulation.
+    """Execute economic simulation.
 
     Imports the snapshotted implementation at runtime.
     Emits redacted operation data through the shared observability runtime.

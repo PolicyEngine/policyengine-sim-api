@@ -57,7 +57,6 @@ def _write_matrix(path: Path, households: int) -> None:
 
 def _assets(monkeypatch, tmp_path, *, households: int = 3, certified_dir=None):
     """Search UK geography assets in tmp_path and stub the certified download."""
-
     monkeypatch.setenv("POLICYENGINE_UK_GEOGRAPHY_DATA_DIR", str(tmp_path))
     calls: list = []
 

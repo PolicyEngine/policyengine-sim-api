@@ -129,6 +129,7 @@ class StageProgress:
     """
 
     def __init__(self, *, role: str | None = None) -> None:
+        """Start with no stage entered, attributing stages to ``role`` by default."""
         self.process_role = role
         self.stage_name: str | None = None
         self.stage_role: str | None = role
@@ -136,6 +137,11 @@ class StageProgress:
 
     @contextmanager
     def stage(self, stage_name: str, *, role: str | None = None) -> Iterator[None]:
+        """Record ``stage_name`` as the current stage while the block runs.
+
+        The stage is marked finished only when the block exits without an
+        exception; ``role`` defaults to the process role.
+        """
         stage_role = role if role is not None else self.process_role
         self.stage_name = stage_name
         self.stage_role = stage_role
@@ -162,7 +168,6 @@ def tracked_stage(
     ``operation`` is true, and ``progress`` records the stage so that a
     failure names it. A ``simulation_role`` attribute sets the stage's role.
     """
-
     stage_name = stage_plan.name(stage)
     scope: AbstractContextManager[object]
     if runtime is None:
@@ -186,7 +191,6 @@ def redact_failure_message(message: str) -> str:
     returned. The word that limit cuts is dropped, because part of a secret
     may no longer match its pattern.
     """
-
     truncated = len(message) > MAX_REDACTED_MESSAGE_LENGTH
     redacted = (
         _before_last_word(message[:MAX_REDACTED_MESSAGE_LENGTH])
@@ -218,7 +222,6 @@ def failure_summary(
     progress: StageProgress | None = None,
 ) -> str:
     """Return a redacted ``<type> in <stage> (<role>): <message>`` summary."""
-
     error_type = type(error).__name__
     try:
         heading = f"{error_type}{_location(progress)}"
@@ -234,7 +237,6 @@ def record_failure_cause(
     summary: str,
 ) -> None:
     """Attach the redacted cause, with the original stack, to the operation."""
-
     if runtime is None:
         return
     try:

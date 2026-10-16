@@ -41,6 +41,11 @@ def _spawn_validation(
 
 
 def validate_release(*, environment: str) -> V2WorkerValidation:
+    """Invoke each deployed country validation function and return the release record.
+
+    Raises RuntimeError when a function does not report success, returns no
+    invocation id, or reports bundle values that differ from the local bundle.
+    """
     resolved = load_stage12_bundle()
     application_name = v2_application_name(resolved.bundle.policyengine_version)
     invocation_ids: dict[CountryId, ManifestText] = {}
@@ -84,6 +89,7 @@ def validate_release(*, environment: str) -> V2WorkerValidation:
 
 
 def main() -> None:
+    """Write the release validation record to ``--output`` and print its id."""
     parser = argparse.ArgumentParser(
         description="Validate the deployed Stage 12 v2 worker release",
     )

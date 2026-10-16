@@ -1,5 +1,4 @@
-"""
-Integration tests for Modal-based simulation calculations.
+"""Integration tests for Modal-based simulation calculations.
 
 These tests run against the staging Modal deployment and verify
 that economy-wide simulations complete successfully.
@@ -76,8 +75,7 @@ def poll_for_completion(
     poll_interval: float,
     bodies: list[Mapping] | None = None,
 ) -> JobStatusResponse:
-    """
-    Poll for job completion.
+    """Poll for job completion.
 
     Args:
         client: The API client
@@ -92,6 +90,7 @@ def poll_for_completion(
     Raises:
         TimeoutError: If job doesn't complete within max_wait_seconds
         AssertionError: If job fails
+
     """
     deadline = time.monotonic() + max_wait_seconds
 
@@ -500,7 +499,8 @@ def test_calculate_default_model(
     max_wait_seconds: float,
     poll_interval: float,
 ):
-    """
+    """A simulation on the default model version returns economic impact data.
+
     Given a simulation request with default model version
     When the simulation is submitted and polled to completion
     Then the result contains expected economic impact data.
@@ -550,7 +550,8 @@ def test_calculate_us_state_region_model(
     max_wait_seconds: float,
     poll_interval: float,
 ):
-    """
+    """A US state-region simulation finds its dataset in the bundled manifest.
+
     Given a US state-region simulation request
     When the simulation is submitted and polled to completion
     Then the worker can load the region dataset from its bundled manifest.
@@ -604,7 +605,8 @@ def test_calculate_specific_model(
     max_wait_seconds: float,
     poll_interval: float,
 ):
-    """
+    """A simulation pinned to a specific US model version returns impact data.
+
     Given a simulation request with a specific model version
     When the simulation is submitted and polled to completion
     Then the result contains expected economic impact data.
@@ -660,7 +662,8 @@ def test_calculate_uk_model(
     max_wait_seconds: float,
     poll_interval: float,
 ):
-    """
+    """A UK simulation returns economic impact data.
+
     Given a UK simulation request
     When the simulation is submitted and polled to completion
     Then the result contains expected economic impact data.

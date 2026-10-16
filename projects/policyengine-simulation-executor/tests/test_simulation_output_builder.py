@@ -634,8 +634,11 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
 
 
 def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
-    """The hit/incomplete/miss attribute is the rollout metric for the
-    artifact pipeline; losing the export would blind that measurement."""
+    """run_simulation_impl must export the baseline artifact outcome attribute.
+
+    The hit/incomplete/miss attribute is the rollout metric for the artifact
+    pipeline; losing the export would blind that measurement.
+    """
     dataset = object()
     country_module = SimpleNamespace(model=SimpleNamespace(version="1.715.2"))
     selection = installed_spm_selection()

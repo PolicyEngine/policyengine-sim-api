@@ -36,6 +36,7 @@ class GatewayImportModuleNames:
 
 @pytest.fixture()
 def gateway_import_module_names() -> GatewayImportModuleNames:
+    """Return the module names the import-boundary tests assert on."""
     return GatewayImportModuleNames()
 
 

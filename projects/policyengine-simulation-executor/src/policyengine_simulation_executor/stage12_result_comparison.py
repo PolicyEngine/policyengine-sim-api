@@ -40,7 +40,6 @@ def _pointer_token(value: str) -> str:
 
 def _leaf_values(value: JsonValue, path: str = "") -> dict[str, JsonValue]:
     """Flatten JSON containers to scalar leaves using JSON Pointer paths."""
-
     if isinstance(value, dict):
         if not value:
             return {path: value}
@@ -105,7 +104,6 @@ def compare_results(
     compared_at: datetime | None = None,
 ) -> ResultComparisonArtifactPayload:
     """Return exact digests and scalar differences outside the numeric tolerance."""
-
     production = _result_adapter.validate_python(production_result)
     stage12 = _result_adapter.validate_python(stage12_result)
     production_bytes = canonical_json_bytes(production)

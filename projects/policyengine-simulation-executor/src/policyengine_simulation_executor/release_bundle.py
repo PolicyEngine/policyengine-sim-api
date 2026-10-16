@@ -36,6 +36,13 @@ BUNDLE_RECEIPT_FILENAME = ".policyengine-bundle-receipt.json"
 
 @dataclass(frozen=True)
 class CountryReleaseBundle:
+    """Package versions and dataset locations one country's installed bundle pins.
+
+    ``dataset_uris`` maps dataset names to versioned URIs and
+    ``dataset_repo_types`` maps them to their Hugging Face repository type
+    (``"model"`` or ``"dataset"``).
+    """
+
     country: str
     policyengine_version: str
     model_package_name: str
@@ -55,12 +62,11 @@ _SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}")
 
 
 def _sha256_or_none(value: object) -> str | None:
-    """A SHA-256 as 64 lowercase hex digits, or ``None`` when malformed.
+    """Return a SHA-256 as 64 lowercase hex digits, or ``None`` when malformed.
 
     Only hexadecimal digits count: ``int(value, 16)`` would also accept a
     sign, underscores or surrounding whitespace.
     """
-
     if isinstance(value, str) and _SHA256_HEX.fullmatch(value):
         return value.lower()
     return None
@@ -72,12 +78,11 @@ def _default_dataset_sha256(
     data_release: Mapping,
     manifest: CountryReleaseManifest,
 ) -> str | None:
-    """The certified SHA-256 of the default dataset, from the bundle.
+    """Return the certified SHA-256 of the default dataset, from the bundle.
 
     The certified data artifact's hash counts only when that artifact is the
     default dataset; otherwise the default dataset's own artifact pin is used.
     """
-
     certified = _mapping(data_release.get("certified_data_artifact"))
     if certified.get("dataset") == default_dataset:
         digest = _sha256_or_none(certified.get("sha256"))
@@ -255,7 +260,6 @@ def _bundle_country_metadata(
 
 def get_bundled_package_version(package: str) -> str:
     """Return a runtime package version from policyengine.py's bundle manifest."""
-
     bundle = _current_policyengine_bundle()
     if not isinstance(bundle, Mapping):
         raise TypeError("PolicyEngine.py bundle metadata is unavailable")
@@ -284,7 +288,6 @@ def _derive_data_package_version(
     manifest_data_package_version: str,
 ) -> str:
     """Return the data package version certified by policyengine.py."""
-
     version = bundled_data_package.get("version") or manifest_data_package_version
     if not isinstance(version, str) or not version.strip():
         raise ValueError("PolicyEngine.py bundle has no data package version")
@@ -294,7 +297,6 @@ def _derive_data_package_version(
 @lru_cache
 def get_country_release_bundle(country: str) -> CountryReleaseBundle:
     """Return package and dataset versions from policyengine.py metadata."""
-
     country = _normalise_country(country)
     from policyengine.provenance.manifest import get_release_manifest
 
@@ -387,6 +389,7 @@ def get_country_release_bundle(country: str) -> CountryReleaseBundle:
 
 
 def get_bundled_country_model_version(country: str) -> str:
+    """Return the country model package version the installed bundle pins."""
     return get_country_release_bundle(country).model_version
 
 
@@ -400,6 +403,13 @@ def _split_requested_revision(requested_data: str) -> tuple[str, str | None]:
 
 
 def resolve_bundle_dataset_name(country: str, requested_data: str | None) -> str:
+    """Resolve a requested dataset to a bundle dataset name or a full URI.
+
+    None selects the bundle's default dataset and a full URI passes through.
+    ``name@revision`` becomes the bundle URI for ``name`` re-pinned to that
+    Hugging Face revision without checking the revision exists; it raises
+    ``ValueError`` when the bundle has no dataset called ``name``.
+    """
     bundle = get_country_release_bundle(country)
     if requested_data is None:
         return bundle.default_dataset
@@ -420,6 +430,7 @@ def resolve_bundle_dataset_name(country: str, requested_data: str | None) -> str
 
 
 def resolve_bundle_dataset_uri(country: str, requested_data: str | None) -> str:
+    """Return the URI for a requested dataset; names the bundle lacks pass through."""
     bundle = get_country_release_bundle(country)
     dataset_name = resolve_bundle_dataset_name(country, requested_data)
     if "://" in dataset_name:
@@ -436,6 +447,11 @@ def _receipt_path() -> Path:
 
 
 def get_installed_bundle_receipt() -> Mapping | None:
+    """Return the image's bundle receipt, or None when it is absent or unreadable.
+
+    The receipt is read from ``POLICYENGINE_BUNDLE_RECEIPT`` if set, else from
+    the data folder, on every call.
+    """
     path = _receipt_path()
     if not path.exists():
         return None
@@ -485,7 +501,6 @@ def resolve_local_bundle_dataset_path(
     requested_data_version: str | None = None,
 ) -> str | None:
     """Return a local certified dataset path when the request uses the default."""
-
     country = _normalise_country(country)
     if not _is_default_bundle_dataset(country, requested_data, requested_data_version):
         return None
@@ -511,7 +526,6 @@ def resolve_runtime_bundle_dataset_uri(
     prefer_local: bool = True,
 ) -> str:
     """Resolve a request dataset to the reference the worker should load."""
-
     if prefer_local:
         local_path = resolve_local_bundle_dataset_path(
             country,

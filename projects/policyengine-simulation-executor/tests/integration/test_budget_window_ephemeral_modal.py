@@ -44,5 +44,4 @@ def test_budget_window_submission_reaches_complete(
     intentionally empty so the integration bucket exists as a real
     directory with a valid Python test module.
     """
-
     assert modal_integration_environment.startswith("http")

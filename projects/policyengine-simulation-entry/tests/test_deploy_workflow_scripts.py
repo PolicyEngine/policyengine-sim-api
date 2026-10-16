@@ -30,7 +30,7 @@ def fakes(tmp_path: Path) -> FakeCommands:
 
 
 def _step(workflow: str, name: str) -> str:
-    """The text of one workflow step, from its ``- name:`` to the next step."""
+    """Return one workflow step's text, from its ``- name:`` to the next step."""
     match = re.search(
         rf"^(?P<indent> +)- name: {re.escape(name)}\n(?P<body>.*?)(?=^(?P=indent)- |^  \S|\Z)",
         workflow,

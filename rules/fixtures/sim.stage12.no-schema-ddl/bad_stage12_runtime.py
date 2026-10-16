@@ -11,4 +11,5 @@ if TYPE_CHECKING:
 
 
 def ensure_comparison_table(connection: Connection) -> None:
+    """Make the reports table from runtime code, the DDL the rule must catch."""
     connection.execute(text("CREATE TABLE stage12_evaluation_reports (id uuid)"))

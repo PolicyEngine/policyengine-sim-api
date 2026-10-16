@@ -38,7 +38,9 @@ class OutputVariableModel(Protocol):
     def resolve_entity_variables(
         self,
         simulation: Simulation,
-    ) -> dict[str, list[str]]: ...
+    ) -> dict[str, list[str]]:
+        """Return the output variables each entity must carry for ``simulation``."""
+        ...
 
 
 StageScope = Callable[
@@ -76,7 +78,6 @@ def _planning_simulation(
     intentionally bypassed. This object must never call ``ensure`` or access a
     dataset.
     """
-
     return Simulation.model_construct(
         id=f"stage12-output-plan-{simulation.role.value}",
         policy=dict(simulation.policy),
@@ -102,7 +103,6 @@ def _required_dataset_variables(
     aggregates: tuple[ReportAggregate, ...],
 ) -> dict[str, tuple[str, ...]]:
     """Return input-dataset columns copied into the materialized output."""
-
     if country == "uk" and ReportAggregate.GEOGRAPHIC in aggregates:
         return UK_GEOGRAPHIC_DATASET_VARIABLES
     return {}
@@ -142,7 +142,6 @@ def resolve_report_output_plan(
     stage_scope: StageScope = _unmonitored_stage_scope,
 ) -> Stage12OutputPlan:
     """Resolve one country-owned output schema for both report simulations."""
-
     country = report.baseline.geography.country
     stage_attributes = {"country": country}
     with stage_scope(Stage.STAGE12_COUNTRY_MODEL_LOAD, stage_attributes):
@@ -207,7 +206,6 @@ def plan_simulation_input(
     output_plan: Stage12OutputPlan,
 ) -> PlannedSimulationExecutionInput:
     """Attach a coordinator-resolved schema to one child input."""
-
     return PlannedSimulationExecutionInput.model_validate(
         {
             **simulation.model_dump(mode="json"),
@@ -221,7 +219,6 @@ def apply_output_plan(
     output_plan: Stage12OutputPlan,
 ) -> None:
     """Install required extra variables before a live simulation is ensured."""
-
     extras = {
         entity: list(variables)
         for entity, variables in (simulation.extra_variables or {}).items()
@@ -256,7 +253,6 @@ def validate_output_frames(
     output_plan: Stage12OutputPlan,
 ) -> None:
     """Require every planned entity and column in materialized output frames."""
-
     missing_entities = [
         entity.entity for entity in output_plan.entities if entity.entity not in frames
     ]

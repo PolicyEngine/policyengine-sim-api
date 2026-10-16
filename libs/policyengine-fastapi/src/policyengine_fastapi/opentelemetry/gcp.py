@@ -1,3 +1,5 @@
+"""Google Cloud exporters for OpenTelemetry, and JSON logs shaped for Cloud Logging."""
+
 import logging
 import os
 
@@ -23,11 +25,15 @@ log = logging.getLogger(__name__)
 
 
 class AddGcpProjectToTraceFilter(logging.Filter):
+    """Logging filter that qualifies trace IDs as ``projects/<project>/traces/<id>``."""
+
     def __init__(self, project: str) -> None:
+        """Remember the GCP project used to qualify trace IDs."""
         super().__init__()
         self.project = project
 
     def filter(self, record: logging.LogRecord) -> bool | logging.LogRecord:
+        """Qualify the record's ``otelTraceID``, if set, then apply the base filter."""
         if not hasattr(record, "otelTraceID"):
             return super().filter(record)
         record.otelTraceID = f"projects/{self.project}/traces/{record.otelTraceID}"  # type: ignore
@@ -58,15 +64,26 @@ def _get_project_id_from_metadata() -> str | None:
 
 
 class GCPLoggingInstrumentor:
+    """Logging setup that emits JSON logs in the shape Google Cloud Logging expects.
+
+    Configures the standard OpenTelemetry logging instrumentor and renames level,
+    timestamp and the trace and span IDs to the Cloud Logging fields, so log
+    lines link to their traces.
+    """
+
     def __init__(self, project_id: str | None = None) -> None:
+        """Use ``project_id``, else look the project up.
+
+        The lookup asks the GCE metadata server, then ``GOOGLE_CLOUD_PROJECT``.
+        """
         self.project_id = project_id or _get_project_id()
 
-    """
-    Configures the standard opentelemetry logging instrumentor to generate
-    json logs as per gcp expectations.
-    """
-
     def instrument(self) -> None:
+        """Send JSON logs to stderr and add OpenTelemetry trace IDs to log records.
+
+        Uses ``logging.basicConfig``, so the handler is not installed if the root
+        logger already has handlers.
+        """
         from opentelemetry.instrumentation.logging import LoggingInstrumentor
         from pythonjsonlogger.json import JsonFormatter
 
@@ -94,15 +111,16 @@ class GCPLoggingInstrumentor:
 
 
 def export_ot_to_gcp(resource: Resource) -> None:
+    """Export traces and metrics straight to Cloud Trace and Cloud Monitoring.
+
+    Meant for code running in Google Cloud. Installs global tracer and meter
+    providers for ``resource`` and registers an ``exit`` callback that flushes
+    both at shutdown.
+    """
     from opentelemetry.exporter.cloud_monitoring import (
         CloudMonitoringMetricsExporter,
     )
     from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
-
-    """
-    configure opentelemetry to directly export to gcp cloudtrace/metrics
-    useful when running in the google cloud
-    """
 
     traceProvider = TracerProvider(resource=resource)
     processor = BatchSpanProcessor(CloudTraceSpanExporter())

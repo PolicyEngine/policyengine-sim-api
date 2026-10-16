@@ -16,10 +16,16 @@ class ServerErrorResponse(JSONResponse):
     """Shared 500 JSON response."""
 
     def __init__(self, content: dict) -> None:
+        """Serialize ``content`` as the body of a 500 response."""
         super().__init__(status_code=500, content=content)
 
 
 def batch_status_payload(response: BudgetWindowBatchStatusResponse) -> dict:
+    """Return the batch status as JSON, omitting null ``errors`` fields.
+
+    ``errors`` is dropped at the top level and on each child job when it is
+    None, and ``policyengine_bundle`` omits its unset fields.
+    """
     payload = response.model_dump(mode="json")
     if payload.get("errors") is None:
         payload.pop("errors", None)
@@ -39,6 +45,11 @@ def batch_status_response(
     *,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    """Return the batch status with the HTTP code the polling contract uses.
+
+    Submitted or running batches get 202, complete ones 200, and failed ones
+    400 when they carry structured caller errors, else 500.
+    """
     payload = batch_status_payload(response)
     if response.status in {"submitted", "running"}:
         return JSONResponse(status_code=202, content=payload, headers=headers)
@@ -56,6 +67,7 @@ def running_job_response(
     *,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    """Return a 202 running-job body, merged with the job's public metadata."""
     return JSONResponse(
         status_code=202,
         content={
@@ -75,6 +87,12 @@ def failed_job_response(
     errors: list[dict] | None = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
+    """Return a failed-job body: 400 with structured ``errors``, otherwise 500.
+
+    Pass structured errors only for caller-correctable failures such as an
+    invalid SPM selection. ``error`` reaches the caller verbatim, so redact
+    exception text first.
+    """
     return JSONResponse(
         status_code=400 if errors else 500,
         content={

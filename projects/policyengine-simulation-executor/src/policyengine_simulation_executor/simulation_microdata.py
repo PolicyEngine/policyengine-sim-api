@@ -29,11 +29,11 @@ logger = logging.getLogger(__name__)
 def extract_output_microdata(
     baseline: Simulation, reform: Simulation
 ) -> dict[str, Any]:
-    """Columnar dump of each simulation's computed ``output_dataset.data`` per
-    entity, for baseline and reform, plus per-column source dtypes.
+    """Dump each simulation's computed output columns per entity, with source dtypes.
 
-    The entity tables come from the model's own ``YearData.entity_data``
-    property, so there is no hardcoded per-country entity list to drift.
+    Covers ``output_dataset.data`` for both baseline and reform. The entity
+    tables come from the model's own ``YearData.entity_data`` property, so
+    there is no hardcoded per-country entity list to drift.
     ``output_dataset.data`` is already populated (the output builder ran), so
     this only reads arrays — no model recompute. All columns (including the
     ``*_id`` link columns) are emitted so the coordinator's ``map_to_entity``
@@ -63,11 +63,12 @@ def extract_output_microdata(
 def rebuild_entity_frame(
     columns: dict[str, list], dtypes: dict[str, str] | None
 ) -> pd.DataFrame:
-    """Rebuild one transported entity table, casting each column back to its
-    source dtype (float32 stays float32 — see module docstring). A missing
-    or uncastable dtype falls back to pandas' inferred dtype rather than
-    failing the reduce, but LOUDLY: that fallback breaks the bit-exactness
-    guarantee (float64 widening, ~1e-7 aggregate drift).
+    """Rebuild one transported entity table with each column cast to its source dtype.
+
+    Float32 stays float32 (see module docstring). A missing or uncastable
+    dtype falls back to pandas' inferred dtype rather than failing the
+    reduce, but LOUDLY: that fallback breaks the bit-exactness guarantee
+    (float64 widening, ~1e-7 aggregate drift).
     """
     df = pd.DataFrame(columns)
     if dtypes is None:

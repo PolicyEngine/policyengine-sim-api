@@ -1,3 +1,5 @@
+"""FastAPI router for the economy-comparison endpoint."""
+
 import logging
 
 from fastapi import APIRouter
@@ -15,6 +17,10 @@ logger = logging.getLogger(__file__)
 
 
 def create_router(runtime: ObservabilityRuntime) -> APIRouter:
+    """Build the router whose comparison endpoint runs simulations through ``runtime``.
+
+    SPM selection errors become a 400 failure payload; other ``ValueError``s propagate.
+    """
     router = APIRouter()
 
     @router.post("/simulate/economy/comparison", response_model=EconomyComparison)

@@ -36,6 +36,7 @@ GENERIC_JOB_FAILURE_MESSAGE = "Simulation failed"
 
 
 def make_correlation_id() -> str:
+    """Return a random 32-character hex ID tying a redacted error to its log line."""
     return uuid.uuid4().hex
 
 
@@ -46,15 +47,16 @@ def log_and_redact_exception(
     scope: str,
     context: dict[str, Any] | None = None,
 ) -> str:
-    """Record ``exc`` with full context server-side and return a redacted
-    caller-safe message paired with a correlation id.
+    """Record ``exc`` server-side and return a redacted message with a correlation id.
+
+    The full exception and ``context`` always reach the standard library logger
+    and, best effort, ``runtime``; a failure in ``runtime`` is swallowed.
 
     The public return string has the shape ``"Simulation failed
     (correlation_id=<hex>)"`` so clients can paste it into support tickets
     without needing to parse JSON. The same correlation id is attached to
     the server-side log line so operators can jump between the two.
     """
-
     correlation_id = make_correlation_id()
     payload = {
         "correlation_id": correlation_id,

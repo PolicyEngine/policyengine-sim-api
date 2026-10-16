@@ -105,7 +105,6 @@ def _routing_commands(script: str):
     Importing the library or using shell wrappers needs a deliberate extension
     here, rather than silently escaping discovery or the ordering proof.
     """
-
     script = re.sub(r"\\\n\s*", " ", script)
     script = "\n".join(
         line for line in script.splitlines() if not line.lstrip().startswith("#")
@@ -205,7 +204,6 @@ def _routing_commands(script: str):
 
 def _command_options(arguments: tuple[str, ...]) -> set[str]:
     """Parse option positions; an option-looking value is not a CLI mode."""
-
     options = set()
     index = 0
     while index < len(arguments):

@@ -111,7 +111,6 @@ def validate_country_worker(
     ),
 ) -> dict[str, Any]:
     """Validate imports, installed bundle, secrets, data, and calculation."""
-
     runtime_environment = environment if environment is not None else os.environ
     _require_secret_environment(runtime_environment)
     # Import the same typed persistence package and coordinator modules loaded

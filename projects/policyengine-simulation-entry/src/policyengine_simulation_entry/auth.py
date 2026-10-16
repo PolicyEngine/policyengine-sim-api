@@ -34,6 +34,7 @@ class JWTDecoder:
     """Validate Auth0 RS256 access tokens without database-layer dependencies."""
 
     def __init__(self, issuer: str, audience: str) -> None:
+        """Bind the issuer and audience and point a JWKS client at the issuer."""
         self.issuer = issuer
         self.audience = audience
         self.jwks_client = jwt.PyJWKClient(f"{issuer}.well-known/jwks.json")
@@ -43,6 +44,11 @@ class JWTDecoder:
         token: HTTPAuthorizationCredentials | None,
         runtime: ObservabilityRuntime,
     ) -> CallerIdentity:
+        """Return the caller identity from a verified token.
+
+        Raise HTTP 403 for a missing or invalid token, recording the rejection
+        reason as an observability event.
+        """
         if token is None:
             runtime.event(
                 "simulation_entry_auth_rejected",
@@ -85,6 +91,7 @@ class CallerAuthenticator:
     """FastAPI dependency that preserves the gateway's JWT contract."""
 
     def __init__(self, settings: Settings, runtime: ObservabilityRuntime) -> None:
+        """Keep the settings and runtime used to verify each request."""
         self.settings = settings
         self.runtime = runtime
 
@@ -92,6 +99,11 @@ class CallerAuthenticator:
         self,
         token: HTTPAuthorizationCredentials | None = Depends(_bearer),
     ) -> CallerIdentity | None:
+        """Return the verified caller, or None when auth is not required.
+
+        Decoders are cached per issuer and audience, so the JWKS client is
+        reused across requests.
+        """
         if not self.settings.auth_required:
             return None
         return _decoder(
@@ -102,13 +114,11 @@ class CallerAuthenticator:
 
 def reset_decoder_cache() -> None:
     """Clear the decoder cache for tests and credential rotations."""
-
     _decoder.cache_clear()
 
 
 def is_client_credentials(identity: CallerIdentity) -> bool:
     """Return whether the token was issued to a machine client."""
-
     return "client-credentials" in identity.grant_types or (
         identity.subject is not None and identity.subject.endswith("@clients")
     )
@@ -123,7 +133,6 @@ def granted_permissions(identity: CallerIdentity) -> frozenset[str]:
     API scopes a user's application requested into a user token's ``scope``,
     so there it proves nothing.
     """
-
     scopes = (
         identity.scope.split()
         if identity.scope and is_client_credentials(identity)
@@ -146,6 +155,12 @@ class CallerAuthorizer:
         enforce: bool,
         runtime: ObservabilityRuntime,
     ) -> None:
+        """Authorize the callers that ``authenticate`` identifies.
+
+        With ``enforce`` a caller that lacks a route's permission is rejected.
+        Either way, ``runtime`` receives a ``simulation_entry_permission_missing``
+        event for that caller.
+        """
         self.authenticate = authenticate
         self.enforce = enforce
         self.runtime = runtime
@@ -168,6 +183,11 @@ class CallerAuthorizer:
         identity: CallerIdentity | None,
         permission: CallerPermission,
     ) -> CallerIdentity | None:
+        """Return ``identity`` when it may call a route that needs ``permission``.
+
+        A caller without the permission is recorded, then rejected with a 403
+        HTTPException when enforcement is on and allowed when it is off.
+        """
         # No identity means caller authentication is disabled, which settings
         # validation permits only outside production. There are no claims to
         # check, so the request proceeds.

@@ -40,7 +40,6 @@ def stub_hf_revision_validation(monkeypatch):
 @pytest.fixture
 def policyengine_uk_data_release(monkeypatch):
     """Expose the UK package-data release introduced by policyengine.py 5.0.4."""
-
     bundle = deepcopy(get_current_bundle())
     bundle["bundle_version"] = "5.0.4"
     bundle["policyengine_version"] = "5.0.4"

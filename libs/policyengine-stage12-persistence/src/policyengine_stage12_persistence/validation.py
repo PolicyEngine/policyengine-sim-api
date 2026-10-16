@@ -365,7 +365,6 @@ def validate_runtime_database(
     environment: str,
 ) -> None:
     """Inspect the live schema and roll back a complete typed DML canary."""
-
     if environment not in {"staging", "production"}:
         raise Stage12RuntimeAccessError("environment must be staging or production")
     try:

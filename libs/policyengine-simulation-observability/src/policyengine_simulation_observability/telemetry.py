@@ -24,6 +24,8 @@ NONCANONICAL_CONTEXT_FIELDS = frozenset(
 
 
 class ObservabilityContext(BaseModel):
+    """Trace and correlation context transported separately from the payload."""
+
     traceparent: str | None = None
     tracestate: str | None = None
     captured_at: datetime
@@ -37,6 +39,7 @@ class ObservabilityContext(BaseModel):
     @field_validator("observability_id")
     @classmethod
     def validate_observability_id(cls, value: str | None) -> str | None:
+        """Return the ID as a canonical UUID; raise ValueError if it is not one."""
         if value is None:
             return None
         normalized = normalize_observability_id(value)
@@ -66,7 +69,6 @@ class TelemetryEnvelope(BaseModel):
         This keeps the receiver compatible with the deployed API during the
         rollout. The HTTP header remains the only source of observability_id.
         """
-
         if not isinstance(value, dict):
             return value
         normalized = dict(value)
@@ -86,7 +88,6 @@ def normalize_observability_context(
     context: object,
 ) -> dict[str, str] | None:
     """Validate context transported separately from an application payload."""
-
     if not isinstance(context, dict):
         return None
     try:
@@ -102,6 +103,12 @@ def normalize_observability_context(
 def split_internal_payload(
     params: dict[str, Any],
 ) -> tuple[dict[str, Any], TelemetryEnvelope | None, dict[str, Any] | None]:
+    """Split worker params into simulation params, telemetry envelope and metadata.
+
+    The reserved ``_telemetry`` and ``_metadata`` keys are removed from a copy of
+    ``params``. An invalid envelope becomes None rather than failing the run, and
+    non-dict metadata is dropped.
+    """
     simulation_params = dict(params)
     raw_telemetry = simulation_params.pop("_telemetry", None)
     raw_metadata = simulation_params.pop("_metadata", None)

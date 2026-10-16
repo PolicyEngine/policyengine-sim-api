@@ -285,7 +285,6 @@ def verify_dispatch() -> None:
     promotable is refused. ``dispatch_verified`` is true only when at least
     one field was compared. Prints digests for the PR body.
     """
-
     raw = os.environ.get("RELEASE_PAYLOAD", "").strip()
     payload = json.loads(raw) if raw and raw != "null" else {}
     installed = {}
@@ -379,6 +378,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Run one subcommand for update-policyengine-package.sh.
+
+    Results go to stdout for the shell script to capture; a failed check exits
+    non-zero through ``SystemExit`` with the reason as its message.
+    """
     args = _parser().parse_args()
     if args.command == "current-version":
         print(current_version(args.pyproject, args.package))

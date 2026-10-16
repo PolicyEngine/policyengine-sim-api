@@ -9,6 +9,7 @@ from policyengine_simulation_executor.simulation_output_common import _output_mo
 
 
 def build_labor_supply_response(analysis: object) -> LaborSupplyResponseOutput | None:
+    """Return the analysis's labor supply response, or None if it computed none."""
     labor_supply_response = getattr(analysis, "labor_supply_response", None)
     if isinstance(labor_supply_response, LaborSupplyResponseOutput):
         return labor_supply_response

@@ -201,10 +201,12 @@ def test_state_transition_helpers_track_failed_child():
 
 
 def test_mark_child_completed_handles_missing_child_jobs_entry(caplog):
-    """Regression test for #454: ``mark_child_completed`` crashed with a
-    ``KeyError`` when transitions were invoked without a preceding
-    ``mark_child_started`` call. The guard should synthesise a sentinel and
-    log a warning instead of aborting the batch."""
+    """Complete a child that was never started without raising (regression #454).
+
+    ``mark_child_completed`` crashed with a ``KeyError`` when transitions were
+    invoked without a preceding ``mark_child_started`` call. The guard should
+    synthesise a sentinel and log a warning instead of aborting the batch.
+    """
     request = BudgetWindowBatchRequest(
         country="us",
         region="us",

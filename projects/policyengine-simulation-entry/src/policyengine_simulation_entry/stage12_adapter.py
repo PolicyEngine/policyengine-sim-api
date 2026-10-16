@@ -29,6 +29,12 @@ if TYPE_CHECKING:
 
 
 class ComparisonSkipReason(StrEnum):
+    """Why a request gets no Stage 12 comparison run.
+
+    The value is reported as the skip event's ``reason`` attribute and in the
+    422 body of the temporary direct-submission route.
+    """
+
     UNSUPPORTED_FLOW = "unsupported_flow"
     UNSUPPORTED_SCOPE = "unsupported_scope"
     UNSUPPORTED_BUDGET_WINDOW = "unsupported_budget_window"
@@ -41,11 +47,14 @@ class ComparisonSkipReason(StrEnum):
 
 @dataclass(frozen=True)
 class AdaptedComparisonRun:
+    """Adapter outcome: exactly one of ``report`` and ``skip_reason`` is set."""
+
     report: ReportExecutionInput | None
     skip_reason: ComparisonSkipReason | None
 
     @property
     def eligible(self) -> bool:
+        """Whether the request was adapted into a report rather than skipped."""
         return self.report is not None
 
 
@@ -92,7 +101,6 @@ def adapt_annual_comparison(
     worker: V2WorkerVersion,
 ) -> AdaptedComparisonRun:
     """Convert only the reviewed production request shape without guessing."""
-
     if any(
         value is not None
         for key, value in payload.items()

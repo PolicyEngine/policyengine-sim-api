@@ -28,6 +28,11 @@ class HuggingFaceDatasetReferenceError(ValueError):
 
 @dataclass(frozen=True)
 class HFDatasetReference:
+    """An ``hf://`` dataset URI split into Hub repo, in-repo path and revision.
+
+    ``revision`` is None when the URI carries no ``@revision`` pin.
+    """
+
     repo_id: str
     path: str
     revision: str | None
@@ -44,7 +49,6 @@ def parse_hf_dataset_uri(dataset_uri: str) -> HFDatasetReference | None:
     Hub API needs ``org/repo`` and ``revision`` separately, while path
     validation needs the artifact path within the repo.
     """
-
     if not dataset_uri.startswith("hf://"):
         return None
 
@@ -116,7 +120,6 @@ def _siblings_contain_path(payload: dict[str, Any], path: str) -> bool | None:
 
 def validate_hf_dataset_uri(dataset_uri: str) -> str:
     """Validate an explicit ``hf://`` dataset URI if it pins a revision."""
-
     parsed = parse_hf_dataset_uri(dataset_uri)
     if parsed is None or parsed.revision is None:
         return dataset_uri
@@ -133,7 +136,6 @@ def validate_hf_dataset_uri(dataset_uri: str) -> str:
 
 def with_hf_revision(dataset_uri: str, revision: str) -> str:
     """Return ``dataset_uri`` pinned to ``revision`` and validate it on the Hub."""
-
     if not dataset_uri.startswith("hf://"):
         return dataset_uri
     without_revision = dataset_uri.rsplit("@", maxsplit=1)[0]

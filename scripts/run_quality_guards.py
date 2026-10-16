@@ -22,6 +22,10 @@ GUARDS: tuple[Guard, ...] = (
 
 
 def main() -> int:
+    """Run every guard, print its violations, and return 1 if any guard failed.
+
+    All guards run even after one fails, so a single run reports every problem.
+    """
     failed = False
     for name, check in GUARDS:
         violations = check()

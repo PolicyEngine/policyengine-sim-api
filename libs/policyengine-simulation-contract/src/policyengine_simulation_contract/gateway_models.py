@@ -1,6 +1,4 @@
-"""
-Pydantic models for the Gateway API.
-"""
+"""Pydantic models for the Gateway API."""
 
 import json
 from typing import ClassVar, Literal
@@ -64,7 +62,6 @@ def _strip_internal_passthrough_fields(value: object) -> object:
     ``extra="forbid"`` keeps catching unknown caller fields without breaking
     internal round-trips.
     """
-
     if not isinstance(value, dict):
         return value
     if not INTERNAL_PASSTHROUGH_FIELDS.intersection(value):
@@ -132,16 +129,25 @@ class GatewayRequestBase(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def move_internal_telemetry_alias(cls, value: object) -> object:
+        """Accept the internal ``_telemetry`` key as ``telemetry`` before validation.
+
+        ``telemetry`` wins when a payload carries both keys.
+        """
         return _move_internal_telemetry_alias(value)
 
     @model_validator(mode="before")
     @classmethod
     def strip_internal_passthrough_fields(cls, value: object) -> object:
+        """Drop ``_metadata`` and ``_runtime_bundle`` before ``extra="forbid"`` runs."""
         return _strip_internal_passthrough_fields(value)
 
     @model_validator(mode="before")
     @classmethod
     def enforce_max_payload_size(cls, value: object) -> object:
+        """Reject payloads whose JSON exceeds ``MAX_GATEWAY_REQUEST_BYTES``.
+
+        Runs before field parsing so oversized bodies never reach Pydantic.
+        """
         return _enforce_max_payload_size(value)
 
 
@@ -152,7 +158,7 @@ class SimulationRequest(GatewayRequestBase):
 
     @model_validator(mode="after")
     def region_xor_region_group(self) -> "SimulationRequest":
-        """A request scopes to a single region OR a region group, never both."""
+        """Reject a request that sets both ``region`` and ``region_group``."""
         if self.region is not None and self.region_group is not None:
             raise ValueError("Provide `region` or `region_group`, not both.")
         return self
@@ -277,6 +283,10 @@ class BudgetWindowBatchRequest(GatewayRequestBase):
     @field_validator("start_year")
     @classmethod
     def validate_start_year(cls, value: str) -> str:
+        """Normalise ``start_year`` to a canonical integer string.
+
+        For example ``"02026"`` becomes ``"2026"``; non-integers are rejected.
+        """
         try:
             return str(int(value))
         except (TypeError, ValueError) as exc:
@@ -284,6 +294,11 @@ class BudgetWindowBatchRequest(GatewayRequestBase):
 
     @model_validator(mode="after")
     def validate_end_year(self) -> "BudgetWindowBatchRequest":
+        """Reject windows past ``MAX_END_YEAR``, region groups and cliff requests.
+
+        Budget windows run against a single ``region`` and do not compute cliff
+        impacts; those requests belong on the single-year endpoint.
+        """
         if self.region_group is not None:
             raise ValueError("Provide `region` or `region_group`, not both.")
         end_year = int(self.start_year) + self.window_size - 1

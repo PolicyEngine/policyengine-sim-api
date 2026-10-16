@@ -205,7 +205,6 @@ def test_operator_recovery_prints_the_journal_then_restores_without_artifacts():
 
 def test_rollback_verifies_the_whole_restored_identity():
     """#743/#744: the smoke's identity is all or nothing, so pass all of it."""
-
     verify = _rollback_steps()[
         _step_index(_rollback_steps(), "cloud-run-simulation-entry-smoke.sh")
     ]
@@ -253,7 +252,6 @@ def _fake_gh(
     inventory: dict[int, list[dict]] | None = None,
 ) -> None:
     """Return API JSON and execute the workflow's real --jq filter with jq."""
-
     payloads = {}
     for attempt in range(1, attempts + 1):
         jobs = [_inventory_job() for _ in range(kept.get(attempt, 0))]
@@ -326,7 +324,6 @@ def _run_restore(
 
 def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
     """#744 review: a later attempt must not hide an earlier publication."""
-
     attempts = [1, 10, 2, 9]
     result = _run_restore(
         tmp_path, 10, {attempt: 1 for attempt in attempts}, present=attempts
@@ -343,7 +340,6 @@ def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
 
 def test_rollback_refuses_when_an_attempts_plan_is_missing(tmp_path):
     """#744 review: attempt 1 published but its plan is gone; attempt 2's is not."""
-
     result = _run_restore(tmp_path, 2, {1: 1, 2: 1}, present=[2])
     assert result.returncode == 1
     assert "Attempt 1 of run 1 kept a prod routing plan that cannot be found" in (
@@ -381,7 +377,6 @@ def test_inventory_jq_selects_only_successfully_kept_target_plans(
     tmp_path, ignored_job
 ):
     """The workflow's job/step/conclusion jq selectors all run, not a stub."""
-
     result = _run_restore(
         tmp_path,
         2,

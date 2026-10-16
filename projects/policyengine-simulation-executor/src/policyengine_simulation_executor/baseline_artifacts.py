@@ -113,11 +113,13 @@ def deterministic_baseline_id(
     scoping_strategy: ScopingStrategy | None,
     year: int,
 ) -> str | None:
-    """The runtime wrapper: id for a qualifying baseline, else None.
+    """Return the deterministic simulation id for a qualifying baseline, else None.
 
+    This is the runtime reader's wrapper around ``qualifying_baseline_identity``.
     Unlike the writer, the read path must never fail a request over
     identity collection (a manifest/receipt hiccup) — it degrades to a
-    random id, meaning no artifact reuse for that request.
+    random id, meaning no artifact reuse for that request. SPM selection
+    errors still propagate, since they mean the request itself is invalid.
     """
     try:
         identity = qualifying_baseline_identity(
@@ -156,6 +158,7 @@ class ArtifactBaselineSimulation(StageReportingSimulation):
         return self._artifact_outcome
 
     def run(self) -> None:
+        """Run the model, noting that this process computed the output itself."""
         self._computed_this_process = True
         super().run()
 
@@ -174,6 +177,13 @@ class ArtifactBaselineSimulation(StageReportingSimulation):
             self._artifact_outcome = outcome
 
     def ensure(self) -> None:
+        """Load or compute the output, recomputing when a loaded artifact is incomplete.
+
+        A load counts only if it has every requested output column and, under
+        an SPM selection, a valid receipt for the dataset year; otherwise the
+        model runs, the result is saved and the in-process cache entry is
+        replaced. Records the hit/miss/incomplete outcome on first call.
+        """
         # The wrapper restores selection metadata on load/cache hits. Keep the
         # request's selection so an invalid cached entry cannot replace it.
         selection = getattr(self, "spm_config", None)

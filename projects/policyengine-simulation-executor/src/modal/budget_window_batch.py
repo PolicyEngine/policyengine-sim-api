@@ -19,6 +19,11 @@ def run_budget_window_batch_impl(
     *,
     runtime: ObservabilityRuntime,
 ) -> dict[str, Any]:
+    """Run a budget-window batch to completion and return its final status payload.
+
+    Must run inside a Modal call: the current function call id becomes the
+    batch job id that child jobs and stored batch state are keyed by.
+    """
     from policyengine_simulation_executor.spm import normalize_runtime_spm
 
     selection = normalize_runtime_spm(params)

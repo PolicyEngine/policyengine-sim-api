@@ -1,5 +1,4 @@
-"""
-Unit tests for gateway endpoints.
+"""Unit tests for gateway endpoints.
 
 Tests verify the endpoint correctly resolves app names and routes
 simulation requests.
@@ -71,11 +70,7 @@ class TestGetAppName:
         assert app_name == "policyengine-simulation-py4-10-0"
 
     def test__given_us_country_no_version__then_returns_latest_app(self, mock_modal):
-        """
-        Given country='us' and no version specified
-        When get_app_name is called
-        Then returns the app name for the 'latest' version.
-        """
+        """Given 'us' and no version, when resolving, then use the 'latest' app."""
         from policyengine_simulation_gateway.endpoints import get_app_name
 
         # When
@@ -88,11 +83,7 @@ class TestGetAppName:
     def test__given_us_country_with_version__then_returns_specified_app(
         self, mock_modal
     ):
-        """
-        Given country='us' and a specific version
-        When get_app_name is called
-        Then returns the app name for that version.
-        """
+        """Given 'us' and a version, when resolving, then use that version's app."""
         from policyengine_simulation_gateway.endpoints import get_app_name
 
         # When
@@ -103,11 +94,7 @@ class TestGetAppName:
         assert app_name == "policyengine-simulation-py3-9-0"
 
     def test__given_uk_country__then_uses_uk_version_dict(self, mock_modal):
-        """
-        Given country='uk'
-        When get_app_name is called
-        Then uses the UK version dictionary.
-        """
+        """Given country='uk', when resolving, then use the UK version dictionary."""
         from policyengine_simulation_gateway.endpoints import get_app_name
 
         # When
@@ -118,11 +105,7 @@ class TestGetAppName:
         assert app_name == "policyengine-simulation-py4-10-0"
 
     def test__given_invalid_country__then_raises_value_error(self):
-        """
-        Given an invalid country code
-        When get_app_name is called
-        Then raises ValueError.
-        """
+        """Given an invalid country code, when resolving, then raise ValueError."""
         from policyengine_simulation_gateway.endpoints import get_app_name
 
         # When / Then
@@ -130,11 +113,7 @@ class TestGetAppName:
             get_app_name("invalid", None)
 
     def test__given_unknown_version__then_raises_value_error(self, mock_modal):
-        """
-        Given a version not in the registry
-        When get_app_name is called
-        Then raises ValueError.
-        """
+        """Given an unregistered version, when resolving, then raise ValueError."""
         from policyengine_simulation_gateway.endpoints import get_app_name
 
         # When / Then
@@ -200,11 +179,7 @@ class TestSubmitSimulationEndpoint:
     def test__given_data_value__then_rejects_before_spawning(
         self, mock_modal, client: TestClient
     ):
-        """
-        Given a request with a data value
-        When the simulation is submitted
-        Then request validation rejects it with HTTP 422.
-        """
+        """Given a data value, when submitting, then validation rejects it with 422."""
         # Given
         mock_modal["dicts"]["simulation-api-us-versions"] = {
             "latest": "1.500.0",
@@ -229,11 +204,7 @@ class TestSubmitSimulationEndpoint:
     def test__given_no_data_value__then_routes_to_run_simulation(
         self, mock_modal, client: TestClient
     ):
-        """
-        Given a request with no data field
-        When the simulation is submitted
-        Then routes to regular run_simulation function.
-        """
+        """Given no data field, when submitting, then route to run_simulation."""
         # Given
         mock_modal["dicts"]["simulation-api-us-versions"] = {
             "latest": "1.500.0",
@@ -261,11 +232,7 @@ class TestSubmitSimulationEndpoint:
     def test__given_submission__then_returns_job_id_and_poll_url(
         self, mock_modal, client: TestClient
     ):
-        """
-        Given a simulation submission
-        When the request completes
-        Then returns job_id and poll_url for async polling.
-        """
+        """Given a submission, when it completes, then return job_id and poll_url."""
         # Given
         mock_modal["dicts"]["simulation-api-us-versions"] = {
             "latest": "1.500.0",
@@ -381,7 +348,8 @@ class TestSubmitSimulationEndpoint:
     def test__given_submission_header__then_propagates_observability_id(
         self, mock_modal, client: TestClient
     ):
-        """
+        """Propagate the diagnostic identifier header to Modal and the response.
+
         Given a simulation submission with the diagnostic identifier header
         When the request completes
         Then the Modal context and response header preserve the identifier.
@@ -421,7 +389,8 @@ class TestSubmitSimulationEndpoint:
     def test__given_submission_without_data__then_returns_default_bundle_metadata(
         self, mock_modal, client: TestClient
     ):
-        """
+        """Report the resolved app and default dataset provenance on submission.
+
         Given a simulation submission without a dataset override
         When the request completes
         Then the response exposes the resolved app and submitted dataset provenance.
@@ -864,11 +833,7 @@ class TestSubmitSimulationEndpoint:
     def test__given_submitted_job__then_job_status_includes_bundle_metadata(
         self, mock_modal, client: TestClient
     ):
-        """
-        Given a submitted simulation job
-        When polling job status
-        Then the resolved bundle metadata is returned with the status response.
-        """
+        """Given a submitted job, when polling, then return its bundle metadata."""
         # Given
         mock_modal["dicts"]["simulation-api-us-versions"] = {
             "latest": "1.500.0",
@@ -933,7 +898,8 @@ class TestSubmitSimulationEndpoint:
     def test__given_unknown_job_id__then_polling_returns_404(
         self, mock_modal, client: TestClient, monkeypatch
     ):
-        """
+        """Return 404 for a job ID the gateway never issued, without asking Modal.
+
         Given a job id that the gateway never issued
         When polling job status
         Then the gateway returns 404 before asking Modal for a call result.
@@ -962,7 +928,8 @@ class TestSubmitSimulationEndpoint:
     def test__given_lazy_modal_call_without_metadata__then_polling_returns_404(
         self, mock_modal, client: TestClient
     ):
-        """
+        """Return 404 for a job ID with no gateway metadata, even if Modal has one.
+
         Given Modal can construct a FunctionCall handle for an arbitrary id
         When the gateway has no metadata for that id
         Then the gateway still treats it as not found.
@@ -1139,7 +1106,6 @@ class TestVersionEndpoints:
         self, mock_modal, client: TestClient, malformed
     ):
         """#743 round-2 review: a digest with a trailing newline gave a 500."""
-
         state = deepcopy(TEST_ROUTING_STATE)
         state["bundles"]["4.10.0"]["uk"] = {
             **state["bundles"]["4.10.0"]["uk"],
@@ -1400,7 +1366,8 @@ class TestBudgetWindowBatchEndpoints:
     def test__given_parent_lookup_failure__then_degraded_poll_is_not_an_error(
         self, mock_modal, client: TestClient, monkeypatch
     ):
-        """
+        """Serve the seed state when the parent lookup fails, without an error.
+
         Given a submitted batch whose parent FunctionCall lookup fails
         When polling batch status
         Then the gateway serves the seed state (202) and records a degradation
@@ -1729,12 +1696,14 @@ class TestBudgetWindowBatchEndpoints:
     def test__given_parent_call_raises__then_failure_persists_across_polls(
         self, mock_modal, client: TestClient
     ):
-        """Regression test for #448: when the parent Modal FunctionCall raises
+        """Persist a parent-call failure so the failed state survives re-polling.
+
+        Regression test for #448: when the parent Modal FunctionCall raises
         on .get() the first poll flipped seed state to failed in-memory only.
         Subsequent polls re-read the unmodified seed and flipped back to
         "submitted". Verify the mutation is persisted so the terminal state
-        survives a second poll."""
-
+        survives a second poll.
+        """
         mock_modal["dicts"]["simulation-api-us-versions"] = {
             "latest": "1.500.0",
             "1.500.0": "policyengine-simulation-py4-10-0",

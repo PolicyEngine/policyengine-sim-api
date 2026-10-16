@@ -21,6 +21,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    """Check the runtime database credential from the command line.
+
+    Exit with the error message if the role, environment or schema does not
+    match what the Stage 12 runtime expects.
+    """
     args = _parser().parse_args()
     database_url = args.database_url_file.read_text(encoding="utf-8").strip()
     try:

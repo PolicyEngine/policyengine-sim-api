@@ -53,6 +53,7 @@ _worker_secrets = [gcp_secret, hf_secret]
     secrets=_worker_secrets,
 )
 def plan_artifacts(bucket: str) -> dict:
+    """Return the dumped ``PrecomputePlan``: expected artifacts and store presence."""
     from policyengine_simulation_executor.precompute import plan_artifacts_impl
 
     return plan_artifacts_impl(bucket).model_dump()
@@ -66,6 +67,11 @@ def plan_artifacts(bucket: str) -> dict:
     secrets=_worker_secrets,
 )
 def build_dataset(bucket: str, expected: dict) -> dict:
+    """Build and upload one single-year US dataset (wave 1).
+
+    Raises if the dataset identity resolved in this container differs from the
+    planned one, so planner/worker drift cannot upload under the wrong key.
+    """
     from policyengine_simulation_executor.precompute import build_dataset_impl
     from policyengine_simulation_executor.precompute_models import DatasetPlanEntry
 
@@ -82,6 +88,7 @@ def build_dataset(bucket: str, expected: dict) -> dict:
     secrets=_worker_secrets,
 )
 def compute_baseline(bucket: str, expected: dict) -> dict:
+    """Compute and upload one cohort's national baseline output (wave 2)."""
     from policyengine_simulation_executor.precompute import compute_baseline_impl
     from policyengine_simulation_executor.precompute_models import BaselinePlanEntry
 
@@ -98,6 +105,7 @@ def compute_baseline(bucket: str, expected: dict) -> dict:
     secrets=_worker_secrets,
 )
 def verify_determinism(bucket: str, expected: dict) -> dict:
+    """Recompute one stored cohort baseline afresh and report columns that differ."""
     from policyengine_simulation_executor.precompute import verify_determinism_impl
     from policyengine_simulation_executor.precompute_models import BaselinePlanEntry
 
@@ -114,6 +122,7 @@ def verify_determinism(bucket: str, expected: dict) -> dict:
     secrets=_worker_secrets,
 )
 def publish_manifest(bucket: str, plan: dict) -> str:
+    """Write the deploy manifest for ``plan`` to the store and return its digest."""
     from policyengine_simulation_executor.precompute import publish_manifest_impl
     from policyengine_simulation_executor.precompute_models import PrecomputePlan
 
@@ -122,6 +131,7 @@ def publish_manifest(bucket: str, plan: dict) -> str:
 
 @app.local_entrypoint()
 def main(force: bool = False) -> None:
+    """Fill the store for the installed bundle; ``--force`` recomputes stored ones."""
     from policyengine_simulation_executor.artifact_store import resolve_bucket_name
     from policyengine_simulation_executor.precompute import run_precompute
 

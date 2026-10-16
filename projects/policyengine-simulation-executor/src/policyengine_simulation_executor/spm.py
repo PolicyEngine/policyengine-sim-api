@@ -33,7 +33,10 @@ def _forecast(expected_sha256: str | None) -> SPMForecast:
 
 @lru_cache(maxsize=1)
 def runtime_spm_capability() -> SPMCapability | None:
-    """The installed image's certified SPM capability, or None.
+    """Return the installed image's certified SPM capability.
+
+    None means the bundle configures no SPM measurement; a configured but
+    unusable installation raises ``SPMInputError`` instead.
 
     Memoized for the life of the process because every input is a property
     of the installed image -- the bundle configuration, the wrapper's model
@@ -223,7 +226,6 @@ def compact_spm_provenance(
     reads only the scalar identity fields, executed-year keys, and explicit
     package versions that belong on the simulation API wire contract.
     """
-
     if not isinstance(country_receipt, Mapping):
         raise TypeError("SPM calculation receipt must be an object")
     resolved = SPMSelection.model_validate(selection)
@@ -260,7 +262,6 @@ def simulation_spm_calculation_provenance(
     selection: object,
 ) -> SPMProvenance:
     """Read and compact one simulation's resolved SPM receipt."""
-
     resolved = SPMSelection.model_validate(selection)
     if getattr(simulation, "spm_config", None) != resolved.model_dump(mode="json"):
         raise SPMInputError(
@@ -292,6 +293,12 @@ def simulation_spm_result(
     *,
     expected_year: int | None = None,
 ) -> dict[str, object]:
+    """Return the ``spm_provenance`` result fields for a baseline/reform pair.
+
+    Empty when no SPM selection applies. Raises ``SPMInputError`` if either
+    simulation ignored the selection, has no valid receipt, or (when
+    ``expected_year`` is given) the receipts do not cover that year.
+    """
     if selection is None:
         return {}
     baseline_provenance = simulation_spm_calculation_provenance(baseline, selection)

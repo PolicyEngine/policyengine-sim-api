@@ -87,7 +87,6 @@ def normalize_stage12_bundle(
     supported_countries: Sequence[CountryId] = SUPPORTED_COUNTRIES,
 ) -> Stage12BundleManifest:
     """Normalize only values certified by the packaged `.py` bundle."""
-
     try:
         return _normalize_stage12_bundle(
             raw_bundle,
@@ -100,6 +99,7 @@ def normalize_stage12_bundle(
 
 
 def bundle_digest(bundle: Stage12BundleManifest) -> str:
+    """Return the sha256 of the manifest's canonical (key-sorted, compact) JSON."""
     payload = json.dumps(
         bundle.model_dump(mode="json"),
         sort_keys=True,
@@ -111,6 +111,10 @@ def bundle_digest(bundle: Stage12BundleManifest) -> str:
 
 
 def resolve_stage12_bundle(raw_bundle: object) -> ResolvedStage12Bundle:
+    """Normalize a raw bundle and pair it with its manifest digest.
+
+    Raises ``Stage12BundleError`` when the bundle is incomplete or inconsistent.
+    """
     bundle = normalize_stage12_bundle(raw_bundle)
     return ResolvedStage12Bundle(
         bundle=bundle,
@@ -120,7 +124,6 @@ def resolve_stage12_bundle(raw_bundle: object) -> ResolvedStage12Bundle:
 
 def load_stage12_bundle() -> ResolvedStage12Bundle:
     """Read the installed PolicyEngine.py release's packaged bundle."""
-
     from policyengine.bundle import get_current_bundle
 
     return resolve_stage12_bundle(get_current_bundle())

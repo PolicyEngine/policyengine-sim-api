@@ -1,5 +1,4 @@
-"""
-PolicyEngine Simulation Gateway - Modal App Definition
+"""Modal app definition for the PolicyEngine Simulation Gateway.
 
 A lightweight, stable gateway that routes simulation requests to versioned
 simulation apps. This app rarely changes and provides a stable URL for consumers.
@@ -44,9 +43,11 @@ _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() e
 
 
 def build_gateway_image() -> modal.Image:
-    """The gateway image, shared with the smoke app (smoke_app.py) so
-    both construct identical layer definitions and share Modal's
-    content-addressed cache."""
+    """Build the gateway's Modal image.
+
+    The smoke app (smoke_app.py) builds its image here too, so both construct
+    identical layer definitions and share Modal's content-addressed cache.
+    """
     return (
         modal.Image.debian_slim(python_version="3.13")
         .uv_sync(
@@ -71,8 +72,7 @@ gateway_image = build_gateway_image()
 @app.function(image=gateway_image, secrets=[gateway_auth_secret])
 @modal.asgi_app()
 def web_app() -> FastAPI:
-    """
-    FastAPI gateway for simulation job submission and polling.
+    """FastAPI gateway for simulation job submission and polling.
 
     Provides stable endpoints:
       POST /simulate/economy/comparison - Submit a simulation job

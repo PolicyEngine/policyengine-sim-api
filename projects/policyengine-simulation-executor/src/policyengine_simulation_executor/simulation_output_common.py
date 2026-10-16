@@ -58,7 +58,7 @@ def _entity_data(simulation: Simulation, entity: str) -> pd.DataFrame:
 
 
 def _count_output_entities(simulation: Simulation, entity: str, weight: str) -> float:
-    """The weighted number of entities: the plain sum of their weights.
+    """Return the weighted number of entities: the plain sum of their weights.
 
     Output frames are microdf ``MicroDataFrame``s weighted by the entity's
     weight, so a column's ``.sum()`` is already a weighted sum. Summing the

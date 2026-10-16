@@ -217,7 +217,6 @@ def test_a_recovered_branch_gets_no_pr_without_verification(
     message: str,
 ) -> None:
     """#743 round-2 review: branch recovery may not bypass validation."""
-
     gh_log = tmp_path / "gh.log"
     install_fake_git(
         fake_bin,
@@ -470,7 +469,6 @@ def test_verify_dispatch_rejects_another_bundle() -> None:
 
 def test_verify_dispatch_compares_the_certificate_when_installed_reports_one() -> None:
     """#743 round-2 review: removing the certificate comparison must fail a test."""
-
     import os
 
     installed = INSTALLED.replace(
@@ -495,7 +493,6 @@ def test_verify_dispatch_compares_the_certificate_when_installed_reports_one() -
 
 def test_verify_dispatch_fails_closed_when_the_installed_bundle_cannot_answer() -> None:
     """Review M3: a named dataset digest needs an installed one to compare."""
-
     import os
 
     installed = INSTALLED.replace("uk_dataset_sha256=" + "a" * 64, "uk_dataset_sha256=")
@@ -585,7 +582,6 @@ def test_bundle_versions_matches_policyengine_release_identity() -> None:
     certified_data_artifact.sha256, packages.policyengine-core.version), so a
     real dispatch for the locked wrapper verifies.
     """
-
     import json
     import os
 
@@ -631,7 +627,6 @@ def test_bundle_versions_reports_the_receipt_certificate_digest(tmp_path) -> Non
     the digest it computes from the UK record must reach the output unchanged,
     and a dispatch naming another certificate must then be refused.
     """
-
     import json
     import os
 

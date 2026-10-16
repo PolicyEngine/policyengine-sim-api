@@ -42,7 +42,6 @@ class CallerIdentity(BaseModel):
         other shape is ignored rather than rejecting an otherwise valid token,
         because the claim only widens what ``scope`` may grant.
         """
-
         if isinstance(claim, str):
             return (claim,)
         if isinstance(claim, list):

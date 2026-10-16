@@ -199,7 +199,6 @@ class RetryingConnectionOpener:
 
 def _sqlalchemy_commit_failure(monkeypatch) -> OperationalError:
     """Return the error SQLAlchemy raises when a COMMIT's reply is lost."""
-
     engine = create_engine("sqlite://")
 
     def commit_then_lose_the_reply(dbapi_connection):

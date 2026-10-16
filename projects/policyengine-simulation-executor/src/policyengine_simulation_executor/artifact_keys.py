@@ -136,7 +136,7 @@ def baseline_key(
 
 
 def baseline_simulation_id(baseline_digest: str) -> str:
-    """The deterministic ``Simulation.id`` for a baseline artifact.
+    """Return the deterministic ``Simulation.id`` for a baseline artifact.
 
     The id doubles as the artifact filename stem (``{id}.h5`` beside the
     dataset — the path ``Simulation.ensure()`` already loads from), so it
@@ -160,16 +160,19 @@ def baseline_simulation_id(baseline_digest: str) -> str:
 
 
 def dataset_artifact_filename(stem: str, year: int) -> str:
+    """Return the single-year dataset basename the runtime's existence check expects."""
     return f"{stem}_year_{year}.h5"
 
 
 def baseline_artifact_filename(simulation_id: str) -> str:
+    """Return the ``{id}.h5`` basename ``Simulation.ensure()`` loads a baseline from."""
     return f"{simulation_id}.h5"
 
 
 def dataset_artifact_path(
     country: str, dataset_digest: str, stem: str, year: int
 ) -> str:
+    """Return the store key ``datasets/<country>/<digest>/<stem>_year_<year>.h5``."""
     return (
         f"datasets/{country.lower()}/{dataset_digest}/"
         f"{dataset_artifact_filename(stem, year)}"
@@ -179,6 +182,7 @@ def dataset_artifact_path(
 def baseline_artifact_path(
     country: str, baseline_digest: str, simulation_id: str
 ) -> str:
+    """Return the store key ``baselines/<country>/<digest>/<id>.h5``."""
     return (
         f"baselines/{country.lower()}/{baseline_digest}/"
         f"{baseline_artifact_filename(simulation_id)}"
@@ -186,10 +190,12 @@ def baseline_artifact_path(
 
 
 def manifest_path(manifest_digest: str) -> str:
+    """Return the store key of a deploy manifest, addressed by its own digest."""
     return f"manifests/{manifest_digest}.json"
 
 
 def deployed_marker_path(environment: str) -> str:
+    """Return the key of the marker naming the manifest deployed to ``environment``."""
     return f"deployed/{environment}.json"
 
 
@@ -214,6 +220,7 @@ class DatasetArtifactIdentity:
 
     @property
     def digest(self) -> str:
+        """Content key over every input that can change this dataset's bytes."""
         return dataset_key(
             country=self.country,
             spm=self.spm,
@@ -229,10 +236,12 @@ class DatasetArtifactIdentity:
 
     @property
     def filename(self) -> str:
+        """Basename the runtime resolves under ``POLICYENGINE_DATA_FOLDER``."""
         return dataset_artifact_filename(self.stem, self.year)
 
     @property
     def store_path(self) -> str:
+        """Store key of this dataset artifact."""
         return dataset_artifact_path(self.country, self.digest, self.stem, self.year)
 
 
@@ -248,6 +257,7 @@ class BaselineArtifactIdentity:
 
     @property
     def digest(self) -> str:
+        """Content key; nests the dataset digest, so a dataset change rotates it."""
         return baseline_key(
             country=self.country,
             region=self.region,
@@ -260,16 +270,23 @@ class BaselineArtifactIdentity:
 
     @property
     def simulation_id(self) -> str:
+        """``Simulation.id`` the runtime assigns to this baseline."""
         return baseline_simulation_id(self.digest)
 
     @property
     def storage_id(self) -> str:
+        """Artifact filename stem: the simulation id, plus the SPM digest when set.
+
+        The suffix keeps SPM and non-SPM baselines that share a simulation id
+        from overwriting each other.
+        """
         if self.spm is None:
             return self.simulation_id
         return f"{self.simulation_id}-spm-{canonical_digest(self.spm)}"
 
     @property
     def store_path(self) -> str:
+        """Store key of this baseline artifact, named by ``storage_id``."""
         return baseline_artifact_path(self.country, self.digest, self.storage_id)
 
 
@@ -350,6 +367,11 @@ def collect_baseline_identity(
     scope_key: str | None,
     spm: dict | None = None,
 ) -> BaselineArtifactIdentity:
+    """Return the identity of this bundle's baseline for one region and year.
+
+    ``spm`` is normalized against the installed image's capability first, so
+    a request that omits it still keys to the image's default SPM selection.
+    """
     from policyengine_simulation_executor.spm import normalize_runtime_spm
 
     selection = normalize_runtime_spm(

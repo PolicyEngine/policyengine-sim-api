@@ -27,7 +27,6 @@ def report_original_failure(
     session pooler has no free connections. Telemetry therefore receives the
     original cause first, so it survives a failed or hung database write.
     """
-
     _emit_error(
         "Stage 12 execution failed",
         error=error,
@@ -51,7 +50,6 @@ def persist_failure_record[WriteResult](
     original exception then remains visible only in telemetry; the record
     holds its redacted summary.
     """
-
     try:
         return write_failure_record()
     except Exception as persistence_error:  # noqa: BLE001

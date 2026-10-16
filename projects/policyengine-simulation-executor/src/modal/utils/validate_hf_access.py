@@ -10,11 +10,11 @@ from policyengine_simulation_executor.hf_access_validation import (
 
 def validate_local_access() -> HFCredentialAudit:
     """Validate the credential supplied directly to the CI process."""
-
     return validate_configured_uk_private_hf_access()
 
 
 def main() -> None:
+    """Validate the CI credential and print its audit record as JSON."""
     print(validate_local_access().model_dump_json())
 
 

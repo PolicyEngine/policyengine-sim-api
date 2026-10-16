@@ -5,7 +5,8 @@ nothing in this file talks to a real Modal control plane: we monkey-patch
 the ``modal`` module with in-memory fakes and run the scheduler against
 those fakes. Renamed to reflect the actual scope (#457). Real Modal
 integration tests live under ``tests/integration/`` and are skipped by
-default."""
+default.
+"""
 
 from __future__ import annotations
 
@@ -38,7 +39,7 @@ SPM_SELECTION = SPMSelection(
 
 
 def spm_child_result(runtime, simulation_year, *, receipt_year):
-    """A child result carrying a canonical SPM receipt for ``receipt_year``."""
+    """Return a child result carrying a canonical SPM receipt for ``receipt_year``."""
     receipt = {
         "schema_version": "canonical-spm-provenance-v2",
         "forecast_id": "test-only",

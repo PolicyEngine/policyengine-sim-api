@@ -59,12 +59,16 @@ class HFAccessTokenIdentity(BaseModel):
 
 
 class HFAuthIdentity(BaseModel):
+    """The ``auth`` block of a whoami-v2 response: the token that made the call."""
+
     model_config = ConfigDict(extra="ignore", frozen=True, populate_by_name=True)
 
     access_token: HFAccessTokenIdentity = Field(alias="accessToken")
 
 
 class HFWhoAmIIdentity(BaseModel):
+    """The whoami-v2 fields the audit reads: account name and calling token."""
+
     model_config = ConfigDict(extra="ignore", frozen=True)
 
     name: str
@@ -72,6 +76,8 @@ class HFWhoAmIIdentity(BaseModel):
 
 
 class HFArtifactAccess(BaseModel):
+    """Proof that the token can read one target: its resolved file metadata."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     target: HFAccessTarget
@@ -97,7 +103,6 @@ MetadataLoader = Callable[[HFAccessTarget, str], HFArtifactAccess]
 
 def build_uk_bundle_access_plan() -> tuple[HFAccessTarget, ...]:
     """Derive private Hugging Face artifacts from the installed .py bundle."""
-
     bundle = get_country_release_bundle("uk")
     targets: dict[tuple[str, str, str, str], HFAccessTarget] = {}
     for dataset_name, dataset_uri in bundle.dataset_uris.items():
@@ -163,7 +168,6 @@ def validate_uk_private_hf_access(
     metadata_loader: MetadataLoader = _load_metadata,
 ) -> HFCredentialAudit:
     """Validate identity, read-only permissions, and every planned artifact."""
-
     token = environment.get(HF_RUNTIME_ENV_NAME)
     if not token:
         raise RuntimeError(f"{HF_RUNTIME_ENV_NAME} is required")
@@ -201,5 +205,4 @@ def validate_uk_private_hf_access(
 
 def validate_configured_uk_private_hf_access() -> HFCredentialAudit:
     """Validate the configured token against every artifact in the UK bundle."""
-
     return validate_uk_private_hf_access(build_uk_bundle_access_plan())

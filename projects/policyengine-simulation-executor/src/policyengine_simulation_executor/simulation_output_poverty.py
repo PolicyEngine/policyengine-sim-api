@@ -115,6 +115,12 @@ def _race_poverty_output(values: dict[str, dict[str, float]]) -> RacePovertyOutp
 def build_poverty_outputs(
     country: str, baseline: Simulation, reform: Simulation, analysis: object
 ) -> PovertyModuleOutputs:
+    """Compute poverty rates with age, gender and (US only) race breakdowns.
+
+    "Poverty" and "deep poverty" mean SPM and deep SPM poverty in the US, and
+    relative and absolute poverty before housing costs in the UK. A breakdown
+    whose calculation fails is logged and reported as zero rates.
+    """
     prefix = "us" if country == "us" else "uk"
     baseline_poverty_by_age = _try_compute_output(
         "baseline poverty by age",
@@ -181,6 +187,10 @@ def build_poverty_output(
     baseline_by_age: object,
     reform_by_age: object,
 ) -> PovertyOutput:
+    """Merge overall and by-age rates into child, adult, senior and all blocks.
+
+    Rates the inputs do not report are 0.0.
+    """
     if isinstance(baseline, PovertyOutput):
         return baseline
     result = {
@@ -213,6 +223,7 @@ def build_poverty_by_gender_output(
     baseline_by_gender: object,
     reform_by_gender: object,
 ) -> PovertyByGenderOutput:
+    """Split poverty and deep poverty rates by gender; unreported rates are 0.0."""
     if isinstance(baseline_by_gender, PovertyByGenderOutput):
         return baseline_by_gender
     result = {
@@ -237,6 +248,10 @@ def build_poverty_by_race_output(
     baseline_by_race: object,
     reform_by_race: object,
 ) -> PovertyByRaceOutput:
+    """Split US SPM poverty rates by race; there is no deep poverty breakdown.
+
+    Rates the inputs do not report are 0.0.
+    """
     if isinstance(baseline_by_race, PovertyByRaceOutput):
         return baseline_by_race
     result = {

@@ -135,7 +135,6 @@ _DATETIME = TypeAdapter(AwareDatetime)
 
 def supported_job_progress_capability(value: object) -> int | None:
     """Return the declared capability version when this gateway reads it."""
-
     if isinstance(value, bool) or not isinstance(value, int):
         return None
     if value != JOB_PROGRESS_CAPABILITY_VERSION:
@@ -157,12 +156,11 @@ def _parse_datetime(value: object) -> datetime | None:
 
 
 def stage_progress_floor(execution: JobExecution | None, stage: JobStage) -> int:
-    """The progress percent at which ``stage`` starts on ``execution``.
+    """Return the progress percent at which ``stage`` starts on ``execution``.
 
     Before the worker chooses its path, use the lowest floor that any path
     gives the stage, so progress never moves backwards once the path is known.
     """
-
     floors = STAGE_PROGRESS_FLOOR.get(execution) if execution is not None else None
     if floors is not None and stage in floors:
         return floors[stage]
@@ -173,13 +171,12 @@ def stage_progress_floor(execution: JobExecution | None, stage: JobStage) -> int
 
 
 def stage_progress_max(execution: JobExecution | None, stage: JobStage) -> int:
-    """The highest progress percent a job reaches before its next stage.
+    """Return the highest progress percent a job reaches before its next stage.
 
     This is one below the next stage's floor, or ``RUNNING_PROGRESS_CAP`` for
     the last stage. Before the worker chooses its path, use the highest value
     that any path gives the stage, so a client estimate is not held back.
     """
-
     paths = [STAGE_PROGRESS_FLOOR[execution]] if execution is not None else []
     if not any(stage in floors for floors in paths):
         paths = list(STAGE_PROGRESS_FLOOR.values())
@@ -213,7 +210,6 @@ def job_progress_fields(
     capability and the gateway read its record (or found none) without an
     error. Then a running job without a record is ``queued``.
     """
-
     fields: dict[str, Any] = {
         "submitted_at": _json_datetime(_parse_datetime(submitted_at))
     }

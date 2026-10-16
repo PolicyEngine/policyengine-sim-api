@@ -412,7 +412,6 @@ def test_cloud_run_deployment_does_not_interpolate_github_values_in_shell():
 
 def _cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
     """Return a complete deployment environment backed by a fake gcloud."""
-
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
@@ -1209,7 +1208,6 @@ def test_finalizer_always_resolves_a_publication_with_the_release_gate_outcome(
 @pytest.mark.parametrize("job", ["integration", "promote_entrypoint"])
 def test_a_failing_sentinel_fails_its_step(tmp_path, job):
     """#744 review: `|| true` on the sentinel command must not pass a failure."""
-
     step = _sentinel_check_step(_workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)[job])
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -1239,7 +1237,6 @@ def test_a_failing_sentinel_fails_its_step(tmp_path, job):
 
 def test_stage12_only_promotion_runs_whatever_the_skipped_stack_jobs():
     """#743 review: the explicit status function must stay active."""
-
     promote = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["promote_entrypoint"]
     context = {
         "inputs": {"promote_entrypoint": True, "deploy_existing_stack": False},
@@ -1262,7 +1259,6 @@ def test_stage12_only_promotion_runs_whatever_the_skipped_stack_jobs():
 
 def test_smoke_rejects_a_latest_wrapper_that_lags_alone(tmp_path: Path):
     """#743 review: the wrapper's latest is checked, not only the model's."""
-
     import copy
 
     versions = copy.deepcopy(VERSIONS_BODY)
@@ -1278,7 +1274,6 @@ def test_smoke_rejects_a_latest_wrapper_that_lags_alone(tmp_path: Path):
 
 def _run_routing_step_with_a_failing_command(tmp_path, step, failed_command, **env):
     """Run the real body with Actions' shell and a failing CLI seam."""
-
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "uv").write_text(
@@ -1955,7 +1950,6 @@ def test_smoke_accepts_an_unrecorded_digest_only_when_none_is_served(
     tmp_path: Path,
 ):
     """A release published before digests were recorded serves none."""
-
     import copy
 
     versions = copy.deepcopy(VERSIONS_BODY)
@@ -1973,7 +1967,6 @@ def test_smoke_accepts_an_unrecorded_digest_only_when_none_is_served(
 
 def test_smoke_rejects_worker_routes_to_an_old_app(tmp_path: Path):
     """#743 round-2 review: the version and its model route to the new app."""
-
     import copy
 
     versions = copy.deepcopy(VERSIONS_BODY)
@@ -2001,7 +1994,6 @@ def test_smoke_rejects_worker_routes_to_an_old_app(tmp_path: Path):
 @pytest.mark.parametrize("how", ["unset", "empty"])
 def test_smoke_refuses_an_incomplete_identity(tmp_path: Path, missing, how):
     """#743 round-2 review: an absent expectation never weakens the gate."""
-
     expected = dict(IDENTITY)
     if how == "unset":
         del expected[missing]
@@ -2038,7 +2030,6 @@ def test_smoke_refuses_malformed_expectations(tmp_path: Path, name, value):
 
 def test_smoke_rejects_a_bundle_recorded_for_another_wrapper(tmp_path: Path):
     """#743 round-2 review: the bundle must be the expected version's own."""
-
     import copy
 
     versions = copy.deepcopy(VERSIONS_BODY)
@@ -2058,7 +2049,6 @@ def _workflow_jobs(path: Path) -> dict:
 
 def test_deploy_gates_pass_the_release_identity_to_the_smoke():
     """Review M2: the active workflow (not comments) wires the whole identity."""
-
     jobs = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)
     assert (
         jobs["prepare"]["outputs"]["uk_dataset_sha256"]

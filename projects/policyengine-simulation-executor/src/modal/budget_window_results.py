@@ -25,11 +25,11 @@ OPTIONAL_BUDGET_KEYS = ("state_tax_revenue_impact",)
 
 
 def _as_decimal(value: float) -> Decimal:
-    """Convert an annual impact float to Decimal without reintroducing
-    binary-float quantisation noise. ``Decimal(str(...))`` is the canonical
-    idiom because it serialises the float to its shortest round-trippable
-    decimal form before parsing."""
+    """Convert an annual impact float to Decimal without binary-float noise.
 
+    ``Decimal(str(...))`` is the canonical idiom because it serialises the
+    float to its shortest round-trippable decimal form before parsing.
+    """
     return Decimal(str(value))
 
 
@@ -39,6 +39,12 @@ def extract_annual_impact(
     child_result: dict[str, Any],
     spm: object = None,
 ) -> BudgetWindowAnnualImpact:
+    """Extract one year's budget impact from a child simulation result.
+
+    Raises when the result's SPM receipt does not match ``spm`` for
+    ``simulation_year``, or a required budget figure is missing or
+    non-numeric. A missing state tax revenue impact (UK results) counts as 0.
+    """
     receipt = validate_spm_result(child_result, spm, expected_year=simulation_year)
     budget = child_result.get("budget", {})
     if not isinstance(budget, dict):
@@ -88,7 +94,6 @@ def sum_annual_impacts(
     bit-exact accounting should request the individual per-year impacts and
     sum them in their preferred numeric type.
     """
-
     totals: dict[str, Decimal] = {
         "taxRevenueImpact": Decimal(0),
         "federalTaxRevenueImpact": Decimal(0),
@@ -119,6 +124,7 @@ def build_budget_window_result(
     window_size: int,
     annual_impacts: list[BudgetWindowAnnualImpact],
 ) -> BudgetWindowResult:
+    """Assemble the window result, with exact Decimal-summed totals."""
     return BudgetWindowResult(
         startYear=start_year,
         endYear=str(int(start_year) + window_size - 1),

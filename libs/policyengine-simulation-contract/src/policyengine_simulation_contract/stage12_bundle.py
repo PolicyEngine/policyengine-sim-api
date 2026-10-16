@@ -13,10 +13,17 @@ SUPPORTED_COUNTRIES: tuple[CountryId, ...] = ("us", "uk")
 
 
 class StrictBundleModel(BaseModel):
+    """Base for normalized bundle models; unknown fields are rejected."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class Stage12Dataset(StrictBundleModel):
+    """A dataset available in a country bundle.
+
+    Gives its identity, URI, artifact revision, SHA-256 and repository type.
+    """
+
     identity: NonEmptyText
     uri: NonEmptyText
     artifact_revision: NonEmptyText
@@ -25,6 +32,8 @@ class Stage12Dataset(StrictBundleModel):
 
 
 class Stage12CountryBundle(StrictBundleModel):
+    """One country's pinned model package, data release and datasets within a bundle."""
+
     country: CountryId
     country_package_name: NonEmptyText
     country_package_version: NonEmptyText
@@ -52,5 +61,7 @@ class Stage12BundleManifest(StrictBundleModel):
 
 
 class ResolvedStage12Bundle(StrictBundleModel):
+    """A normalized bundle manifest together with its SHA-256 digest."""
+
     bundle: Stage12BundleManifest
     bundle_manifest_sha256: Sha256Digest

@@ -131,6 +131,12 @@ def resolve_test_dataset_uri(
     dataset: str | None,
     data_version: str | None = None,
 ) -> str | None:
+    """Return the dataset URI the gateway should report for this test request.
+
+    Mirrors the gateway's resolution against ``TEST_APP_RELEASE_BUNDLE``:
+    aliases and bundle dataset names map to pinned URIs, and an explicit
+    revision or ``data_version`` overrides the bundle default.
+    """
     country_bundle = TEST_APP_RELEASE_BUNDLE[country]
     if dataset is None:
         return _runtime_dataset_uri(
@@ -162,23 +168,29 @@ class MockDict:
     """Mock for Modal.Dict to simulate version registry."""
 
     def __init__(self, data: dict) -> None:
+        """Wrap ``data`` without copying, so writes reach the test's dict."""
         self._data = data
 
     def __getitem__(self, key: str) -> object:
+        """Return the stored value; raise KeyError like a Modal Dict."""
         if key not in self._data:
             raise KeyError(key)
         return self._data[key]
 
     def __setitem__(self, key: str, value: object) -> None:
+        """Store a value in the wrapped dict."""
         self._data[key] = value
 
     def get(self, key: str, default: object = None) -> object:
+        """Return the stored value, or ``default`` when the key is absent."""
         return self._data.get(key, default)
 
     def keys(self) -> KeysView[str]:
+        """Return a live view of the stored keys."""
         return self._data.keys()
 
     def items(self) -> ItemsView[str, object]:
+        """Return a live view of the stored items."""
         return self._data.items()
 
     @classmethod
@@ -194,6 +206,10 @@ class MockFunctionCall:
     from_id_errors = {}
 
     def __init__(self, object_id: str = "mock-job-id-123") -> None:
+        """Register a complete call whose result is a valid zeroed macro output.
+
+        Tests set ``running`` or ``error`` afterwards to change what get returns.
+        """
         self.object_id = object_id
         value = BaselineReformValue(baseline=0.0, reform=0.0)
         age_poverty = AgePovertyOutput(
@@ -244,6 +260,7 @@ class MockFunctionCall:
         self.__class__.registry[object_id] = self
 
     def get(self, timeout: int = 0) -> object:
+        """Return the result; raise TimeoutError while running, or the set error."""
         if self.running:
             raise TimeoutError
         if self.error is not None:
@@ -252,6 +269,10 @@ class MockFunctionCall:
 
     @classmethod
     def from_id(cls, object_id: str) -> "MockFunctionCall":
+        """Return a registered call, raising any error staged for that ID.
+
+        Raise KeyError for an unknown ID.
+        """
         if object_id in cls.from_id_errors:
             raise cls.from_id_errors[object_id]
         if object_id not in cls.registry:
@@ -263,6 +284,7 @@ class MockFunction:
     """Mock for Modal Function."""
 
     def __init__(self) -> None:
+        """Start with no recorded spawns or lookups."""
         self.last_payload = None
         self.last_observability_context = None
         self.last_from_name_call = None
@@ -270,9 +292,11 @@ class MockFunction:
         self.calls = []
 
     def bind(self, app_name: str, func_name: str) -> "BoundMockFunction":
+        """Return a handle for one app function that records into this mock."""
         return BoundMockFunction(self, app_name, func_name)
 
     def call_for(self, object_id: str) -> MockFunctionCall:
+        """Register a completed call under ``object_id`` and make it the last call."""
         call = MockFunctionCall(object_id=object_id)
         self.last_call = call
         return call
@@ -282,6 +306,7 @@ class BoundMockFunction:
     """Function handle returned by Modal.Function.from_name."""
 
     def __init__(self, recorder: MockFunction, app_name: str, func_name: str) -> None:
+        """Bind the app and function names that spawns will be recorded under."""
         self.recorder = recorder
         self.app_name = app_name
         self.func_name = func_name
@@ -292,6 +317,11 @@ class BoundMockFunction:
         *,
         observability_context: dict | None = None,
     ) -> MockFunctionCall:
+        """Record the spawn and return a call with a fixed ID.
+
+        A ``run_budget_window_batch`` spawn gets the batch ID and stays running;
+        any other spawn completes immediately.
+        """
         self.recorder.last_payload = payload
         self.recorder.last_observability_context = observability_context
         is_batch = self.func_name == "run_budget_window_batch"
@@ -312,11 +342,13 @@ class BoundMockFunction:
 
 
 class MockModalException:
+    """Stand-in for ``modal.exception`` with the error types the gateway catches."""
+
     class NotFoundError(Exception):
-        pass
+        """Raised for a function call Modal has never heard of."""
 
     class OutputExpiredError(Exception):
-        pass
+        """Raised for a function call whose result Modal no longer keeps."""
 
 
 @pytest.fixture

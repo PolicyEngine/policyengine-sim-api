@@ -97,6 +97,11 @@ def _country_bundle(country: CountryId) -> Stage12CountryBundle:
 
 
 def build_v2_image(countries: tuple[CountryId, ...]) -> modal.Image:
+    """Build a Stage 12 image with the bundle's certified data for ``countries``.
+
+    The bundle manifest digest and per-country bundle values are baked into
+    the image environment, which worker validation checks at run time.
+    """
     country_values = {
         country: _country_bundle(country).model_dump(mode="json")
         for country in countries
@@ -167,6 +172,7 @@ def _validate(country: CountryId) -> dict:
     secrets=worker_secrets,
 )
 def validate_worker_us() -> dict:
+    """Validate the US worker image without serving and return its bundle values."""
     return _validate("us")
 
 
@@ -179,6 +185,7 @@ def validate_worker_us() -> dict:
     secrets=worker_secrets,
 )
 def validate_worker_uk() -> dict:
+    """Validate the UK worker image without serving and return its bundle values."""
     return _validate("uk")
 
 
@@ -197,6 +204,7 @@ def run_single_simulation_us(
     *,
     observability_context: dict | None = None,
 ) -> dict:
+    """Calculate one planned US simulation and return its artifact descriptor."""
     from policyengine_simulation_executor.stage12_runtime import (
         run_single_simulation,
     )
@@ -242,6 +250,7 @@ def run_single_simulation_uk(
     *,
     observability_context: dict | None = None,
 ) -> dict:
+    """Calculate one planned UK simulation and return its artifact descriptor."""
     from policyengine_simulation_executor.stage12_runtime import (
         run_single_simulation,
     )
@@ -290,6 +299,12 @@ def coordinate_report(
     *,
     observability_context: dict | None = None,
 ) -> dict:
+    """Run one Stage 12 report: fan out both simulations, aggregate, and persist.
+
+    A ``production_function_call_id`` in ``context`` marks a shadow run whose
+    result is compared with that production job's. A report another
+    invocation already claimed returns a ``deduplicated`` marker instead.
+    """
     from policyengine_simulation_executor.stage12_runtime import (
         coordinate_report as run_report_coordinator,
     )

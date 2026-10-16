@@ -8,20 +8,28 @@ import pandas as pd
 
 
 class FakeCollection:
+    """Stand-in for a v4 output collection: only its ``dataframe`` is read."""
+
     def __init__(self, records: list[dict[str, object]]) -> None:
+        """Expose ``records`` as the collection's ``dataframe``."""
         self.dataframe = pd.DataFrame(records)
 
 
 class FakeModelOutput:
+    """Stand-in for a v4 Pydantic output that the adapter dumps to JSON."""
+
     def __init__(self, payload: dict[str, object]) -> None:
+        """Hold the payload ``model_dump`` returns."""
         self.payload = payload
 
     def model_dump(self, *, mode: str) -> dict[str, object]:
+        """Return the payload; fails unless the adapter asks for JSON mode."""
         assert mode == "json"
         return self.payload
 
 
 def fake_analysis() -> SimpleNamespace:
+    """Return a small v4 ``economic_impact_analysis`` result with fixed known values."""
     return SimpleNamespace(
         program_statistics=FakeCollection(
             [

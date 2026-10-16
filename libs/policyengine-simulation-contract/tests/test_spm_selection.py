@@ -123,8 +123,11 @@ def test_pinned_pre_canonical_wrapper_is_historical_without_a_stated_model(
     ],
 )
 def test_unpinned_or_contradicted_wrapper_is_not_historical(wrapper, model):
-    """A stated model version that contradicts the pin, and any wrapper
-    outside the pinned pre-canonical set, still fail closed."""
+    """Fail closed for wrappers that are not provably pre-canonical.
+
+    A stated model version that contradicts the pin, and any wrapper outside
+    the pinned pre-canonical set, still fail closed.
+    """
     with pytest.raises(SPMInputError) as error:
         resolve_spm_selection(
             "us",

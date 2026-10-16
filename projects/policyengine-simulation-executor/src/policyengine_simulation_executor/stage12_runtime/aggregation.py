@@ -36,7 +36,6 @@ def validate_uk_local_authority_metadata(
     the report's region is national or nation-level and the bundle routes
     both constituency and local-authority regions to another dataset.
     """
-
     if country == "uk":
         if baseline is None and reform is None:
             from policyengine_simulation_executor.uk_local_authority_metadata import (
@@ -62,6 +61,11 @@ def validate_aligned_outputs(
     baseline: SimulationArtifactDescriptor,
     reform: SimulationArtifactDescriptor,
 ) -> None:
+    """Check that two simulation artifacts can be aggregated as this report's pair.
+
+    Raises ``ValueError`` unless the roles, evaluation, bundle, output schema,
+    output plan and row identities all line up.
+    """
     if baseline.role.value != "baseline" or reform.role.value != "reform":
         raise ValueError("simulation artifacts have incorrect report roles")
     if (
@@ -135,6 +139,11 @@ def build_aggregate_report(
     reform_descriptor: SimulationArtifactDescriptor,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> dict[str, Any]:
+    """Build the aggregate report payload from retained baseline and reform frames.
+
+    Runs the standard macro output builder over stand-in simulations that load
+    the stored frames, so no model is recomputed.
+    """
     from policyengine_simulation_executor.segmented_national_reduce import (
         PrecomputedSimulation,
     )
@@ -220,6 +229,11 @@ def build_spm_result(
     baseline_descriptor: SimulationArtifactDescriptor,
     reform_descriptor: SimulationArtifactDescriptor,
 ) -> dict[str, Any]:
+    """Return the ``spm_provenance`` fields for the report; empty without SPM.
+
+    Raises ``ValueError`` when either artifact lacks an SPM receipt covering the
+    report year.
+    """
     requested_spm = report.baseline.options.get("spm")
     if requested_spm is None:
         return {}

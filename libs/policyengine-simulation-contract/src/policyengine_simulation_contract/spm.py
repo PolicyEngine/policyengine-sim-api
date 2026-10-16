@@ -78,6 +78,7 @@ class SPMSelection(BaseModel):
     @field_validator("as_of")
     @classmethod
     def validate_as_of(cls, value: str | None) -> str | None:
+        """Require ``as_of`` to be a canonical ``YYYY-MM-DD`` date when given."""
         if value is not None:
             if date.fromisoformat(value).isoformat() != value:
                 raise ValueError("as_of must be an ISO calendar date (YYYY-MM-DD)")
@@ -85,6 +86,11 @@ class SPMSelection(BaseModel):
 
     @model_validator(mode="after")
     def validate_location(self) -> Self:
+        """Require ``geography_id`` for metro selections and forbid it otherwise.
+
+        Only checked once both geography fields are explicitly set, because an
+        omitted option inherits the bundle default.
+        """
         # Request options inherit bundle defaults. Validate coupled options
         # once both are explicit (including after defaults are resolved).
         if not {"geography_kind", "geography_id"} <= self.model_fields_set:
@@ -114,7 +120,6 @@ class SPMResolvedConfiguration(BaseModel):
         self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
     ):
         """Keep required nullable fields in completed response bodies."""
-
         dumped = handler(self)
         if info.exclude_none:
             for name in ("geography_id", "as_of"):
@@ -129,12 +134,14 @@ class SPMResolvedConfiguration(BaseModel):
     @field_validator("as_of")
     @classmethod
     def validate_as_of(cls, value: str | None) -> str | None:
+        """Require ``as_of`` to be a canonical ``YYYY-MM-DD`` date when given."""
         if value is not None and date.fromisoformat(value).isoformat() != value:
             raise ValueError("as_of must be an ISO calendar date (YYYY-MM-DD)")
         return value
 
     @model_validator(mode="after")
     def validate_location(self) -> "SPMResolvedConfiguration":
+        """Require ``geography_id`` for metro selections and forbid it otherwise."""
         if self.geography_kind == "metro":
             if self.geography_id is None or not self.geography_id.strip():
                 raise ValueError("An SPM area selection requires geography_id")
@@ -164,7 +171,6 @@ class SPMProvenance(BaseModel):
         self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
     ):
         """Keep required nullable configuration fields in response bodies."""
-
         dumped = handler(self)
         if info.exclude_none:
             for name in ("geography_id", "as_of"):
@@ -179,6 +185,7 @@ class SPMProvenance(BaseModel):
     @field_validator("years")
     @classmethod
     def validate_years(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Require four-digit years, sorted ascending with no duplicates."""
         if any(re.fullmatch(r"[0-9]{4}", year) is None for year in value):
             raise ValueError("SPM provenance years must use four-digit years")
         if value != tuple(sorted(set(value))):
@@ -187,6 +194,7 @@ class SPMProvenance(BaseModel):
 
     @model_validator(mode="after")
     def validate_provenance_location(self) -> "SPMProvenance":
+        """Require ``geography_id`` for metro receipts and forbid it otherwise."""
         if self.geography_kind == "metro":
             if self.geography_id is None or not self.geography_id.strip():
                 raise ValueError("An SPM area receipt requires geography_id")
@@ -228,7 +236,6 @@ def _resolved_spm_configuration(
     selection: SPMSelection,
 ) -> SPMResolvedConfiguration:
     """Convert a resolved request selection to the completed-result contract."""
-
     _require_complete_selection(selection)
     assert selection.forecast_content_sha256 is not None
     assert selection.scenario is not None
@@ -246,7 +253,6 @@ def _resolved_spm_configuration_from_provenance(
     receipt: SPMProvenance,
 ) -> SPMResolvedConfiguration:
     """Derive internal configuration from a receipt without a sibling object."""
-
     return SPMResolvedConfiguration(
         forecast_content_sha256=receipt.forecast_sha256,
         scenario=receipt.scenario,
@@ -266,7 +272,6 @@ def build_spm_provenance(
     runtime_versions: SPMRuntimeVersions,
 ) -> SPMProvenance:
     """Build one compact receipt from resolved calculation inputs."""
-
     _require_complete_selection(selection)
     assert selection.forecast_content_sha256 is not None
     assert selection.scenario is not None
@@ -294,7 +299,6 @@ def validate_spm_calculation_provenance(
     receipt: SPMProvenance,
 ) -> SPMProvenance:
     """Validate and return the sole compact receipt for a calculation."""
-
     resolved = _resolved_spm_configuration(config)
     receipt_configuration = _resolved_spm_configuration_from_provenance(receipt)
     for field_name in SPMResolvedConfiguration.model_fields:
@@ -320,6 +324,13 @@ SPM_ERROR_CODES = frozenset(
 
 
 class SPMErrorDetail(BaseModel):
+    """A typed SPM input error.
+
+    ``code`` is one of a fixed set of stable values, such as
+    ``SPM_GEOGRAPHY_REQUIRED``, that clients can branch on; ``message`` explains
+    the problem to a person.
+    """
+
     code: str
     message: str
 
@@ -328,14 +339,17 @@ class SPMInputError(ValueError):
     """Transportable error shared by the control plane and worker."""
 
     def __init__(self, code: str, message: str) -> None:
+        """Keep the public error ``code`` and its human-readable ``message``."""
         self.code = code
         self.message = message
         super().__init__(code, message)
 
     def __str__(self) -> str:
+        """Return the message alone, without the error code."""
         return self.message
 
     def to_dict(self) -> dict[str, str]:
+        """Return the ``{"code", "message"}`` wire form of this error."""
         return {"code": self.code, "message": self.message}
 
 
@@ -353,12 +367,23 @@ def spm_error_detail(exc: BaseException) -> SPMErrorDetail | None:
 
 
 class SPMCapability(BaseModel):
+    """Canonical SPM support offered by a simulation version.
+
+    ``defaults`` is the pinned SPM selection, including the forecast artifact
+    hash and scenario, that applies to any option a request leaves out.
+    """
+
     model_config = ConfigDict(extra="forbid")
     contract_version: Literal["canonical-spm-v1"] = SPM_CONTRACT_VERSION
     defaults: SPMSelection
 
     @model_validator(mode="after")
     def pinned_defaults(self) -> Self:
+        """Require pinned defaults and mark every default field as explicitly set.
+
+        Rebuilding ``defaults`` from all fields makes serialisation include each
+        default, since ``SPMSelection`` serialises only the fields that were set.
+        """
         if not self.defaults.forecast_content_sha256 or not self.defaults.scenario:
             raise ValueError(
                 "Certified SPM defaults must pin artifact hash and scenario"
@@ -389,6 +414,7 @@ class SPMComparisonProvenance(BaseModel):
 
     @model_validator(mode="after")
     def validate_compatible_receipts(self) -> "SPMComparisonProvenance":
+        """Reject comparisons whose baseline and reform receipts differ."""
         if self.baseline.receipt != self.reform.receipt:
             raise ValueError("baseline and reform SPM receipts differ")
         return self
@@ -412,7 +438,6 @@ def build_spm_comparison_provenance(
     reform_receipts: Sequence[SPMProvenance],
 ) -> SPMComparisonProvenance:
     """Collapse identical child receipts into one receipt per policy side."""
-
     baseline = _collapse_spm_receipts("baseline", baseline_receipts)
     reform = _collapse_spm_receipts("reform", reform_receipts)
     if baseline.receipt != reform.receipt:
@@ -552,6 +577,12 @@ def combine_spm_results(
     *,
     expected_year: int | str | None = None,
 ) -> dict:
+    """Merge per-segment SPM receipts into one ``spm_provenance`` result entry.
+
+    Every segment is validated against ``selection``. Returns an empty dict
+    when no SPM selection was requested; raises SPMInputError when any
+    segment lacks a receipt or the receipts disagree.
+    """
     receipts = [
         validate_spm_result(result, selection, expected_year=expected_year)
         for result in results

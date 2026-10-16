@@ -25,9 +25,11 @@ def build_marker(
     manifest_digest: str,
     env: Mapping[str, str],
 ) -> DeployedMarker:
-    """Pure marker assembly: the deploy identity that referenced this
-    manifest. Missing env vars become empty fields, never errors — the
-    marker write itself is the part that must not fail silently."""
+    """Assemble the marker for the deploy that referenced this manifest, without I/O.
+
+    Missing env vars become empty fields, never errors — the marker write
+    itself is the part that must not fail silently.
+    """
     server = env.get("GITHUB_SERVER_URL", "")
     repository = env.get("GITHUB_REPOSITORY", "")
     run_id = env.get("GITHUB_RUN_ID", "")
@@ -52,6 +54,7 @@ def build_marker(
 
 
 def main() -> None:
+    """Write this deploy's ``deployed/<environment>.json`` marker to the store."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--environment", required=True)
     parser.add_argument("--manifest-digest", required=True)

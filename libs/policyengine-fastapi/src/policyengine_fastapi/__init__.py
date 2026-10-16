@@ -1,6 +1,4 @@
-"""
-Re-usable elements that support FastAPI and SQLModel indipendent of this specific app.
-"""
+"""Reusable FastAPI and SQLModel building blocks that are independent of any one app."""
 
 from .observability import (
     ObservabilityConfig as ObservabilityConfig,

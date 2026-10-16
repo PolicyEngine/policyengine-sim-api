@@ -12,10 +12,13 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class NumericalTolerance:
+    """Absolute and relative slack for one numeric field; the default is exact."""
+
     absolute: float = 0.0
     relative: float = 0.0
 
     def __post_init__(self) -> None:
+        """Reject negative tolerances with ``ValueError``."""
         if self.absolute < 0 or self.relative < 0:
             raise ValueError("numerical tolerances must be non-negative")
 
@@ -24,6 +27,7 @@ class ParityMismatch(ValueError):
     """A bounded diagnostic containing a code and schema path, never values."""
 
     def __init__(self, code: str, path: str) -> None:
+        """Record the mismatch code and its path, truncated to 255 characters."""
         self.code = code
         self.path = path[:255]
         super().__init__(f"{code} at {self.path}")
@@ -32,6 +36,10 @@ class ParityMismatch(ValueError):
 def canonicalize_simulation_frames(
     frames: Mapping[str, pd.DataFrame],
 ) -> dict[str, pd.DataFrame]:
+    """Sort each entity's rows by ``<entity>_id`` and its columns by name.
+
+    Raises ``ParityMismatch`` if an entity lacks that id column or repeats an id.
+    """
     canonical = {}
     for entity in sorted(frames):
         identifier = f"{entity}_id"
@@ -54,6 +62,12 @@ def compare_simulation_frames(
     *,
     tolerances: Mapping[str, NumericalTolerance] | None = None,
 ) -> None:
+    """Raise ``ParityMismatch`` at the first difference between two simulation outputs.
+
+    Entities, columns, row ids and dtypes must match exactly. Numeric columns
+    compare within the tolerance keyed by ``entity.column`` (exact by default,
+    NaN equal to NaN); other columns must be equal.
+    """
     expected = canonicalize_simulation_frames(incumbent)
     actual = canonicalize_simulation_frames(candidate)
     if expected.keys() != actual.keys():
@@ -94,6 +108,12 @@ def compare_aggregate_reports(
     *,
     tolerances: Mapping[str, NumericalTolerance] | None = None,
 ) -> None:
+    """Raise ``ParityMismatch`` at the first difference between two aggregate reports.
+
+    Mappings and lists must match in shape. Numbers (not booleans) compare
+    within the tolerance keyed by their path, such as ``budget.total`` or
+    ``deciles[3]``; any other value must be equal and of the same type.
+    """
     allowed = tolerances or {}
 
     def compare(expected: object, actual: object, path: str) -> None:

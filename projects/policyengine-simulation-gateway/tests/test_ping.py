@@ -7,11 +7,7 @@ class TestPingEndpoint:
     """Tests for POST /ping endpoint."""
 
     def test_ping_increments_value(self, client: TestClient):
-        """
-        Given a ping request with a value
-        When the ping endpoint is called
-        Then the response contains the incremented value.
-        """
+        """Given a value, when pinging, then the response has the value plus one."""
         # Given
         request_body = {"value": 10}
 
@@ -23,11 +19,7 @@ class TestPingEndpoint:
         assert response.json() == {"incremented": 11}
 
     def test_ping_handles_zero(self, client: TestClient):
-        """
-        Given a ping request with value zero
-        When the ping endpoint is called
-        Then the response contains 1.
-        """
+        """Given value zero, when pinging, then the response contains 1."""
         # Given
         request_body = {"value": 0}
 
@@ -39,11 +31,7 @@ class TestPingEndpoint:
         assert response.json() == {"incremented": 1}
 
     def test_ping_handles_negative_value(self, client: TestClient):
-        """
-        Given a ping request with a negative value
-        When the ping endpoint is called
-        Then the response contains the incremented (less negative) value.
-        """
+        """Given a negative value, when pinging, then return it incremented."""
         # Given
         request_body = {"value": -5}
 
@@ -55,11 +43,7 @@ class TestPingEndpoint:
         assert response.json() == {"incremented": -4}
 
     def test_ping_rejects_missing_value(self, client: TestClient):
-        """
-        Given a ping request without a value field
-        When the ping endpoint is called
-        Then a 422 validation error is returned.
-        """
+        """Given no value field, when pinging, then return a 422 validation error."""
         # Given
         request_body = {}
 
@@ -70,11 +54,7 @@ class TestPingEndpoint:
         assert response.status_code == 422
 
     def test_ping_rejects_non_integer_value(self, client: TestClient):
-        """
-        Given a ping request with a non-integer value
-        When the ping endpoint is called
-        Then a 422 validation error is returned.
-        """
+        """Given a non-integer value, when pinging, then return a 422 error."""
         # Given
         request_body = {"value": "not_an_integer"}
 
