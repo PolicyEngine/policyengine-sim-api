@@ -446,7 +446,7 @@ def validate_routing_plan(plan: object) -> dict:
     return plan
 
 
-def _routing_store(environment: str, *, create_if_missing: bool):
+def _routing_store(environment: str, *, create_if_missing: bool) -> "modal.Dict | None":
     try:
         return modal.Dict.from_name(
             ROUTING_STATE_DICT_NAME,
@@ -508,7 +508,7 @@ def _require_serialized_routing_workflow() -> None:
     )
 
 
-def _unfinished_publication(store) -> dict | None:
+def _unfinished_publication(store: "modal.Dict | None") -> dict | None:
     record = store.get(ROUTING_PUBLICATION_KEY) if store is not None else None
     if record is None:
         return None
@@ -524,7 +524,9 @@ def _unfinished_publication(store) -> dict | None:
     return record["plan"] if record["status"] == "pending" else None
 
 
-def _require_finished_publication(store, *, allowed_plans: Iterable[dict] = ()) -> None:
+def _require_finished_publication(
+    store: "modal.Dict | None", *, allowed_plans: Iterable[dict] = ()
+) -> None:
     pending = _unfinished_publication(store)
     if pending is not None and not any(pending == plan for plan in allowed_plans):
         raise RoutingConflict(
@@ -535,7 +537,7 @@ def _require_finished_publication(store, *, allowed_plans: Iterable[dict] = ()) 
         )
 
 
-def _write_publication_record(store, *, plan: dict, status: str) -> None:
+def _write_publication_record(store: "modal.Dict", *, plan: dict, status: str) -> None:
     record = {"status": status, "plan": _json_copy(plan)}
     store[ROUTING_PUBLICATION_KEY] = record
     if store.get(ROUTING_PUBLICATION_KEY) != record:
@@ -1035,7 +1037,7 @@ def restore_routing_state(
     return next_state
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
@@ -1182,7 +1184,7 @@ def main():
     )
     args = parser.parse_args()
 
-    def active_state():
+    def active_state() -> object:
         snapshot = _modal_dict_snapshot(
             name=ROUTING_STATE_DICT_NAME, environment=args.environment
         )

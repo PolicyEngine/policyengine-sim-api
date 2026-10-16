@@ -41,7 +41,10 @@ from src.modal.static_runtime_files import add_static_runtime_files
 import modal
 
 if TYPE_CHECKING:
-    from policyengine_simulation_contract.stage12_bundle import CountryId
+    from policyengine_simulation_contract.stage12_bundle import (
+        CountryId,
+        Stage12CountryBundle,
+    )
 
 STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
@@ -87,7 +90,7 @@ worker_secrets = [
 ]
 
 
-def _country_bundle(country: CountryId):
+def _country_bundle(country: CountryId) -> Stage12CountryBundle:
     return next(
         item for item in RESOLVED_BUNDLE.bundle.countries if item.country == country
     )

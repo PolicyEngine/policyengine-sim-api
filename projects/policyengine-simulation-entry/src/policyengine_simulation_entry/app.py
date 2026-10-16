@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Request
@@ -70,6 +70,11 @@ from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12DispatchFailed,
     TemporaryStage12UnsupportedRequest,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from starlette.middleware.base import RequestResponseEndpoint
 
 logger = logging.getLogger(__name__)
 BACKEND_RESPONSE_HEADER = {
@@ -156,7 +161,7 @@ def create_app(
     runtime_settings = settings or Settings.from_env()
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         runtime_settings.validate()
         await runtime_backend.start()
         try:
@@ -249,7 +254,9 @@ def create_app(
         )
 
     @app.middleware("http")
-    async def request_context(request: Request, call_next):
+    async def request_context(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         headers = MutableHeaders(scope=request.scope)
         request_id = headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())
         incoming_observability_id = normalize_observability_id(

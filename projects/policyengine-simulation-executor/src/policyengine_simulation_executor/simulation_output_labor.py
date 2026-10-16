@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from policyengine_simulation_executor.simulation_macro_output import (
     LaborSupplyResponseOutput,
 )
 from policyengine_simulation_executor.simulation_output_common import _output_model_dump
 
 
-def build_labor_supply_response(analysis: Any) -> LaborSupplyResponseOutput | None:
+def build_labor_supply_response(analysis: object) -> LaborSupplyResponseOutput | None:
     labor_supply_response = getattr(analysis, "labor_supply_response", None)
     if isinstance(labor_supply_response, LaborSupplyResponseOutput):
         return labor_supply_response

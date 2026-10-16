@@ -25,11 +25,11 @@ BUDGET_WINDOW_JOB_DICT_NAME = "simulation-api-budget-window-jobs"
 BUDGET_WINDOW_JOB_SEED_DICT_NAME = "simulation-api-budget-window-job-seeds"
 
 
-def _budget_window_job_store():
+def _budget_window_job_store() -> modal.Dict:
     return modal.Dict.from_name(BUDGET_WINDOW_JOB_DICT_NAME, create_if_missing=True)
 
 
-def _budget_window_job_seed_store():
+def _budget_window_job_seed_store() -> modal.Dict:
     return modal.Dict.from_name(
         BUDGET_WINDOW_JOB_SEED_DICT_NAME, create_if_missing=True
     )

@@ -33,7 +33,7 @@ type AuthorizationDependency = Callable[..., CallerIdentity | None]
 class JWTDecoder:
     """Validate Auth0 RS256 access tokens without database-layer dependencies."""
 
-    def __init__(self, issuer: str, audience: str):
+    def __init__(self, issuer: str, audience: str) -> None:
         self.issuer = issuer
         self.audience = audience
         self.jwks_client = jwt.PyJWKClient(f"{issuer}.well-known/jwks.json")
@@ -84,7 +84,7 @@ def _decoder(issuer: str, audience: str) -> JWTDecoder:
 class CallerAuthenticator:
     """FastAPI dependency that preserves the gateway's JWT contract."""
 
-    def __init__(self, settings: Settings, runtime: ObservabilityRuntime):
+    def __init__(self, settings: Settings, runtime: ObservabilityRuntime) -> None:
         self.settings = settings
         self.runtime = runtime
 
@@ -145,7 +145,7 @@ class CallerAuthorizer:
         authenticate: AuthenticationDependency,
         enforce: bool,
         runtime: ObservabilityRuntime,
-    ):
+    ) -> None:
         self.authenticate = authenticate
         self.enforce = enforce
         self.runtime = runtime

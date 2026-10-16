@@ -121,7 +121,7 @@ def publish_manifest(bucket: str, plan: dict) -> str:
 
 
 @app.local_entrypoint()
-def main(force: bool = False):
+def main(force: bool = False) -> None:
     from policyengine_simulation_executor.artifact_store import resolve_bucket_name
     from policyengine_simulation_executor.precompute import run_precompute
 

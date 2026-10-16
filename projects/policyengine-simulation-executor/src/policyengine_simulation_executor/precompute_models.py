@@ -162,6 +162,6 @@ class DeterminismVerdict(_StrictModel):
 class RemoteFunction(Protocol):
     """The slice of a Modal function handle the orchestration uses."""
 
-    def remote(self, *args: Any) -> Any: ...
+    def remote(self, *args: Any) -> Any: ...  # noqa: ANN401  # mirrors modal.Function.remote; payloads and results vary per function
 
-    def spawn(self, *args: Any) -> Any: ...
+    def spawn(self, *args: Any) -> Any: ...  # noqa: ANN401  # mirrors modal.Function.spawn; payloads vary and the returned FunctionCall is untyped here

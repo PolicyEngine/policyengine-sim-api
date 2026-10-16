@@ -28,7 +28,7 @@ def _mapping(value: object) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
-def _json_from_stdin() -> Any:
+def _json_from_stdin() -> object:
     return json.load(sys.stdin)
 
 

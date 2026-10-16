@@ -1,9 +1,15 @@
 """Small simulation doubles for executor tests that are not model tests."""
 
+from __future__ import annotations
+
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
-def installed_spm_selection():
+def installed_spm_selection() -> dict[str, object] | None:
     """Return the installed US bundle's default SPM selection, if any."""
     from policyengine_simulation_executor.spm import runtime_spm_capability
 
@@ -11,7 +17,9 @@ def installed_spm_selection():
     return None if capability is None else capability.defaults.model_dump()
 
 
-def spm_receipt(selection, year="2026"):
+def spm_receipt(
+    selection: Mapping[str, object], year: int | str = "2026"
+) -> dict[str, object]:
     """Build the smallest calculation record accepted by ``SPMProvenance``."""
     return {
         "forecast_id": "test-only",
@@ -31,7 +39,11 @@ def spm_receipt(selection, year="2026"):
     }
 
 
-def spm_capable_simulation(selection, year="2026", **attributes):
+def spm_capable_simulation(
+    selection: Mapping[str, object] | None,
+    year: int | str = "2026",
+    **attributes: object,
+) -> SimpleNamespace:
     """Return a stand-in for a simulation that measured ``selection``."""
     attributes.setdefault("on_first_ensure", lambda callback: None)
     if selection is None:

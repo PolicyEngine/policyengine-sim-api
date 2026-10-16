@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING
 
 from policyengine_simulation_executor.simulation_macro_output import (
     DecileOutput,
@@ -14,6 +14,9 @@ from policyengine_simulation_executor.simulation_output_common import (
     _try_compute_output,
 )
 
+if TYPE_CHECKING:
+    from policyengine.core import Simulation
+
 INTRA_DECILE_COLUMNS = {
     "Lose more than 5%": "lose_more_than_5pct",
     "Lose less than 5%": "lose_less_than_5pct",
@@ -23,11 +26,11 @@ INTRA_DECILE_COLUMNS = {
 }
 
 
-def build_decile(analysis: Any) -> DecileOutput:
+def build_decile(analysis: object) -> DecileOutput:
     return build_decile_output(getattr(analysis, "decile_impacts", None))
 
 
-def build_decile_output(collection: Any) -> DecileOutput:
+def build_decile_output(collection: object) -> DecileOutput:
     if isinstance(collection, DecileOutput):
         return collection
     average: dict[str, float] = {}
@@ -45,7 +48,9 @@ def build_decile_output(collection: Any) -> DecileOutput:
     return DecileOutput(average=average, relative=relative)
 
 
-def build_intra_decile_output(baseline, reform) -> IntraDecileOutput:
+def build_intra_decile_output(
+    baseline: Simulation, reform: Simulation
+) -> IntraDecileOutput:
     from policyengine.outputs.intra_decile_impact import (
         compute_intra_decile_impacts,
     )
@@ -61,21 +66,23 @@ def build_intra_decile_output(baseline, reform) -> IntraDecileOutput:
     return build_intra_decile_output_from_collection(collection)
 
 
-def build_wealth_decile(country: str, wealth_decile: Any) -> DecileOutput | None:
+def build_wealth_decile(country: str, wealth_decile: object) -> DecileOutput | None:
     if country != "uk":
         return None
     return build_decile_output(wealth_decile)
 
 
 def build_intra_wealth_decile(
-    country: str, intra_wealth_decile: Any
+    country: str, intra_wealth_decile: object
 ) -> IntraDecileOutput | None:
     if country != "uk":
         return None
     return build_intra_decile_output_from_collection(intra_wealth_decile)
 
 
-def build_intra_decile_output_from_collection(collection: Any) -> IntraDecileOutput:
+def build_intra_decile_output_from_collection(
+    collection: object,
+) -> IntraDecileOutput:
     if isinstance(collection, IntraDecileOutput):
         return collection
     deciles: dict[str, list[float]] = {label: [] for label in INTRA_DECILE_COLUMNS}

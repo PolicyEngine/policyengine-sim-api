@@ -7,8 +7,23 @@ The artifact fetch additionally runs BEFORE add_local_python_source,
 so policyengine_simulation_executor is not importable there at all.
 """
 
+# Annotation-only imports sit behind a local TYPE_CHECKING flag (not
+# typing.TYPE_CHECKING) because this module must have no module-level
+# imports; the annotations that use them are therefore quoted.
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from typing import Any
 
-def fetch_artifacts(bucket: str, manifest, *, client=None):
+    from google.cloud import storage
+
+
+def fetch_artifacts(
+    bucket: str,
+    manifest: "Mapping[str, Any] | None",
+    *,
+    client: "storage.Client | None" = None,
+) -> None:
     """Download every manifest-listed artifact into the image data folder.
 
     Runs as an image-build layer between ``.env(VERSION_ENV)`` and
@@ -155,7 +170,7 @@ def fetch_artifacts(bucket: str, manifest, *, client=None):
         raise RuntimeError(f"Artifact fetch did not produce expected files: {absent}")
 
 
-def snapshot_models():
+def snapshot_models() -> None:
     """Pre-load models at image build time for fast cold starts."""
     import logging
 

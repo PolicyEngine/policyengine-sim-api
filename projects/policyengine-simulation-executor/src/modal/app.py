@@ -9,6 +9,7 @@ The gateway app (policyengine-simulation-gateway) routes requests to these versi
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
@@ -37,6 +38,10 @@ from src.modal.logging_redaction import redact_params_for_logging
 from src.modal.static_runtime_files import add_static_runtime_files
 
 import modal
+
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_executor.job_progress import JobProgressReporter
 
 
 def _version_from_env_or_local_bundle_package(env_var: str, package: str) -> str:
@@ -241,7 +246,7 @@ simulation_image = add_static_runtime_files(
 def _configure_modal_observability(
     *,
     service_role: str,
-):
+) -> "ObservabilityRuntime":
     return init_process_observability(
         service_name=APP_NAME,
         platform="modal",
@@ -251,14 +256,14 @@ def _configure_modal_observability(
     )
 
 
-def _set_modal_call_attributes(runtime) -> None:
+def _set_modal_call_attributes(runtime: "ObservabilityRuntime") -> None:
     try:
         runtime.set_context(function_call_id=modal.current_function_call_id())
     except Exception:
         pass
 
 
-def _job_progress_reporter():
+def _job_progress_reporter() -> "JobProgressReporter":
     """A stage reporter for this call, keyed by its public ``job_id``.
 
     The gateway's ``job_id`` is the spawned call's ``object_id``, which is
@@ -289,7 +294,9 @@ def _job_progress_reporter():
     )
 
 
-def _record_stage_durations(runtime, progress) -> None:
+def _record_stage_durations(
+    runtime: "ObservabilityRuntime", progress: "JobProgressReporter"
+) -> None:
     """Attach the job's stage durations to its operation telemetry.
 
     Main-path traces cannot split the baseline from the reform calculation:

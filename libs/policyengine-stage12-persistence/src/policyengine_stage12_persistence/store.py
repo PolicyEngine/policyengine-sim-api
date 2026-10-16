@@ -45,6 +45,8 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
+    from sqlalchemy import ColumnElement, RowMapping, Table
+
 REPORT_IDENTITY_COLUMNS = (
     "environment",
     "calculation_flow",
@@ -155,7 +157,7 @@ def open_connection_once(
     return connect()
 
 
-def _database_value(value: Any) -> Any:
+def _database_value(value: object) -> object:
     if isinstance(value, StrEnum):
         return value.value
     if isinstance(value, tuple):
@@ -168,15 +170,17 @@ def _record_values(record: object) -> dict[str, Any]:
     return {name: _database_value(value) for name, value in dumped.items()}
 
 
-def _report(row: Any) -> ComparisonReportRecord:
+def _report(row: RowMapping) -> ComparisonReportRecord:
     return ComparisonReportRecord.model_validate(dict(row))
 
 
-def _simulation(row: Any) -> ComparisonSimulationRecord:
+def _simulation(row: RowMapping) -> ComparisonSimulationRecord:
     return ComparisonSimulationRecord.model_validate(dict(row))
 
 
-def _identity_predicates(table: Any, values: dict[str, Any], columns: tuple[str, ...]):
+def _identity_predicates(
+    table: Table, values: dict[str, Any], columns: tuple[str, ...]
+) -> tuple[ColumnElement[bool], ...]:
     return tuple(table.c[name] == values[name] for name in columns)
 
 

@@ -24,7 +24,7 @@ HealthProbe = Callable[[], ProbeStatus]
 
 
 class HealthSystemReporter:
-    def __init__(self, name: str, probes: dict[str, HealthProbe]):
+    def __init__(self, name: str, probes: dict[str, HealthProbe]) -> None:
         self.name = name
         self.probes = probes
 
@@ -45,10 +45,10 @@ class HealthRegistry:
 
     systems: dict[str, HealthSystemReporter]
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.systems = {}
 
-    def register(self, reporter: HealthSystemReporter):
+    def register(self, reporter: HealthSystemReporter) -> None:
         self.systems[reporter.name] = reporter
 
     def report(self) -> HealthStatus:

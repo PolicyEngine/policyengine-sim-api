@@ -10,14 +10,17 @@ from policyengine_simulation_observability.identifiers import (
 )
 
 if TYPE_CHECKING:
-    from fastapi import FastAPI, Request
+    from fastapi import FastAPI, Request, Response
+    from starlette.middleware.base import RequestResponseEndpoint
 
 
 def install_observability_id_middleware(app: FastAPI) -> None:
     """Store an incoming identifier candidate without creating a workflow."""
 
     @app.middleware("http")
-    async def observability_id_transport(request: Request, call_next):
+    async def observability_id_transport(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         request.state.incoming_observability_id = normalize_observability_id(
             request.headers.get(OBSERVABILITY_ID_HEADER)
         )

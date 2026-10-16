@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Literal, TypedDict
 from uuid import UUID
 
 from policyengine_simulation_contract.stage12_execution import (
@@ -35,7 +35,7 @@ class CallerIdentity(BaseModel):
 
     @field_validator("grant_types", mode="before")
     @classmethod
-    def _grant_types_from_claim(cls, claim: Any) -> tuple[str, ...]:
+    def _grant_types_from_claim(cls, claim: object) -> tuple[str, ...]:
         """Read ``gty`` as a string or a list of strings.
 
         Auth0 may issue it as a list (for example a refresh-token grant). Any

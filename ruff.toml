@@ -13,7 +13,14 @@ select = [
     "FLY", "FURB", "I", "PIE", "PYI", "RET", "RSE", "UP", "W",
     # Group 2: typing-only imports.
     "TC",
+    # Group 3: annotations.
+    "ANN",
 ]
+
+[lint.per-file-ignores]
+# Tests may use pytest's bare assert, and need no docstrings, annotations or
+# named constants for magic numbers. Every other rule applies to tests.
+"**/tests/**" = ["ANN", "D1", "PLR2004", "S101"]
 
 [lint.flake8-type-checking]
 # Classes whose annotations Pydantic evaluates at runtime, so their imports must

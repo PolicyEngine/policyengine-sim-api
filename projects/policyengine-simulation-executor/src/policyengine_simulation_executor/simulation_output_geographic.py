@@ -24,6 +24,7 @@ from policyengine_simulation_executor.simulation_output_common import (
 )
 
 if TYPE_CHECKING:
+    from policyengine.core import Simulation
     from policyengine.data.uk_geography_assets import UKGeographyAssetSpec
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
@@ -89,7 +90,7 @@ def _policyengine_us_district_metadata() -> tuple[dict[int, str], frozenset[str]
     )
 
 
-def build_geographic_impact_output(value: Any) -> GeographicImpactOutput | None:
+def build_geographic_impact_output(value: object) -> GeographicImpactOutput | None:
     if isinstance(value, GeographicImpactOutput):
         return value
     records = _output_model_dump(value)
@@ -105,7 +106,7 @@ def build_geographic_impact_output(value: Any) -> GeographicImpactOutput | None:
 
 
 def build_congressional_district_impact_output(
-    value: Any,
+    value: object,
 ) -> CongressionalDistrictImpactOutput | None:
     if isinstance(value, CongressionalDistrictImpactOutput):
         return value
@@ -187,7 +188,11 @@ def _should_build_us_congressional_district_impact(region_code: str | None) -> b
 
 
 def build_congressional_district_impact(
-    country: str, baseline, reform, *, region_code: str | None = None
+    country: str,
+    baseline: Simulation,
+    reform: Simulation,
+    *,
+    region_code: str | None = None,
 ) -> CongressionalDistrictImpactOutput | None:
     if country != "us":
         return None
@@ -207,7 +212,7 @@ def build_congressional_district_impact(
     return _try_compute_output("congressional district impacts", compute_and_format)
 
 
-def _output_household(simulation) -> pd.DataFrame:
+def _output_household(simulation: Simulation) -> pd.DataFrame:
     return pd.DataFrame(simulation.output_dataset.data.household)
 
 
@@ -230,7 +235,7 @@ def _require_uk_area_column(
 
 
 def build_uk_constituency_impact(
-    country: str, baseline, reform
+    country: str, baseline: Simulation, reform: Simulation
 ) -> GeographicImpactOutput | None:
     if country != "uk":
         return None
@@ -256,8 +261,8 @@ def build_uk_constituency_impact(
 
 def build_uk_local_authority_impact(
     country: str,
-    baseline,
-    reform,
+    baseline: Simulation,
+    reform: Simulation,
     *,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> GeographicImpactOutput | None:

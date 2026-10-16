@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 from time import time
-from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.routing import APIRoute
 from opentelemetry import metrics
+from starlette.middleware.base import RequestResponseEndpoint
 from starlette.routing import Match
 
 
@@ -16,7 +16,7 @@ class Route:
 
 
 class Middleware:
-    def __init__(self, app: FastAPI):
+    def __init__(self, app: FastAPI) -> None:
         self.app = app
         self.meter = metrics.get_meter("policyengine")
 
@@ -32,7 +32,9 @@ class Middleware:
             latency=self.meter.create_histogram(f"{name}_latency"),
         )
 
-    async def __call__(self, request: Request, call_next) -> Any:
+    async def __call__(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         route: Route | None = None
         for r in self.routes:
             if r.route.matches(request.scope)[0] != Match.NONE:

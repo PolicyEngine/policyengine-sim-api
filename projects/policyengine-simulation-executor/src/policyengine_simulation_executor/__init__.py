@@ -9,7 +9,7 @@ to easily be run in whatever cloud provider container or desktop or test environ
 """
 
 
-def initialize(app: FastAPI, runtime: ObservabilityRuntime):
+def initialize(app: FastAPI, runtime: ObservabilityRuntime) -> None:
     """
     attach all routes to the app and configure them to use the provided SQLModel engine
     and jwt settings.

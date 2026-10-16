@@ -24,14 +24,14 @@ def create_router(health_registry: HealthRegistry) -> APIRouter:
         return PingResponse(incremented=request.value + 1)
 
     @router.get("/ping/started", response_model=str)
-    async def started():
+    async def started() -> str:
         """
         Verify the api is running.
         """
         return "alive"
 
     @router.get("/ping/alive", response_model=HealthStatus)
-    async def alive():
+    async def alive() -> JSONResponse:
         """
         Check if the service is healthy. This will always return
         data, but will return a 503 response code if the service is
@@ -46,5 +46,5 @@ def create_router(health_registry: HealthRegistry) -> APIRouter:
     return router
 
 
-def include_all_routers(api: FastAPI, health_registry: HealthRegistry):
+def include_all_routers(api: FastAPI, health_registry: HealthRegistry) -> None:
     api.include_router(create_router(health_registry))

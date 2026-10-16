@@ -6,6 +6,8 @@ load the requested country module without triggering cross-country imports.
 No Modal dependencies here.
 """
 
+from __future__ import annotations
+
 import contextlib
 import hashlib
 import json
@@ -13,13 +15,11 @@ import logging
 import os
 import tempfile
 import time
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from importlib import import_module
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_observability.stages import (
@@ -39,6 +39,20 @@ from policyengine_simulation_executor.release_bundle import (
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from types import ModuleType
+
+    from policyengine.core import Dataset, Policy, Region, Simulation
+    from policyengine.core.scoping_strategy import ScopingStrategy
+    from policyengine.provenance.manifest import ArtifactPathReference
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_observability.telemetry import TelemetryEnvelope
+
+    from policyengine_simulation_executor.stage_reporting_simulation import (
+        StageReportingSimulation,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +202,7 @@ def _parse_year(params: dict[str, Any]) -> int:
     return int(value)
 
 
-def _parse_policy_period(period_key: Any) -> tuple[datetime, datetime | None]:
+def _parse_policy_period(period_key: object) -> tuple[datetime, datetime | None]:
     """Parse effective dates or inclusive ``start.stop`` policy periods."""
     text = str(period_key)
     parts = text.split(".")
@@ -207,7 +221,7 @@ def _parse_policy_period(period_key: Any) -> tuple[datetime, datetime | None]:
     return start, stop
 
 
-def _normalise_period_key(period_key: Any) -> str:
+def _normalise_period_key(period_key: object) -> str:
     """Validate policy period keys without discarding their stop dates."""
     text = str(period_key)
     _parse_policy_period(text)
@@ -230,7 +244,9 @@ def _normalise_policy(policy: dict[str, Any] | None) -> dict[str, Any] | None:
     return normalised
 
 
-def _compile_interval_policy(policy, *, country_module, year: int):
+def _compile_interval_policy(
+    policy: dict[str, Any] | None, *, country_module: ModuleType, year: int
+) -> dict[str, Any] | Policy | None:
     """Use public wrapper values for intervals its dict compiler cannot parse."""
     if not policy or not any(
         isinstance(value, dict) and any("." in str(key) for key in value)
@@ -266,7 +282,9 @@ def _compile_interval_policy(policy, *, country_module, year: int):
     return Policy(name="Reform", parameter_values=parameter_values)
 
 
-def _runtime_policy(policy, *, country_module, year: int):
+def _runtime_policy(
+    policy: dict[str, Any] | None, *, country_module: ModuleType, year: int
+) -> dict[str, Any] | Policy | None:
     """A request's policy as the wrapper must receive it.
 
     Normalises the period keys, then compiles a policy with interval keys
@@ -282,7 +300,7 @@ def _resolve_dataset_reference(country: str) -> str:
     return resolve_bundle_dataset_name(country, None)
 
 
-def _normalise_region_code(country: str, region: Any) -> str:
+def _normalise_region_code(country: str, region: object) -> str:
     if region is None or str(region).strip() == "":
         return country
 
@@ -311,7 +329,7 @@ def _normalise_region_code(country: str, region: Any) -> str:
     return f"{prefix}/{value}"
 
 
-def _build_uk_weight_replacement_region(region_code: str):
+def _build_uk_weight_replacement_region(region_code: str) -> Region | None:
     if "/" not in region_code:
         return None
 
@@ -351,7 +369,9 @@ def _build_uk_weight_replacement_region(region_code: str):
 
 
 def _require_certified_uk_weight_matrix(
-    scoping_strategy, dataset, dataset_selection
+    scoping_strategy: ScopingStrategy | None,
+    dataset: Dataset,
+    dataset_selection: DatasetSelection,
 ) -> None:
     """Bind a weight-matrix region to the release of the dataset it reweights.
 
@@ -391,7 +411,7 @@ def _require_certified_uk_weight_matrix(
     manifest = get_release_manifest("uk")
     package = manifest.data_package
 
-    def release(reference) -> tuple[str, str]:
+    def release(reference: ArtifactPathReference) -> tuple[str, str]:
         return (
             reference.repo_id or package.repo_id,
             reference.revision or package.release_manifest_revision or package.version,
@@ -460,9 +480,9 @@ def _require_certified_uk_weight_matrix(
 
 
 def _region_parent_dataset_reference(
-    country_module,
+    country_module: ModuleType,
     country: str,
-    region,
+    region: Region,
 ) -> str:
     parent_code = getattr(region, "parent_code", None)
     visited: set[str] = set()
@@ -487,7 +507,7 @@ def _region_parent_dataset_reference(
     return _resolve_dataset_reference(country)
 
 
-def _reject_unscoped_us_place_region(region_code: str, region) -> None:
+def _reject_unscoped_us_place_region(region_code: str, region: Region) -> None:
     if not region_code.startswith("place/"):
         return
     if getattr(region, "dataset_path", None) is not None:
@@ -502,7 +522,7 @@ def _reject_unscoped_us_place_region(region_code: str, region) -> None:
 
 def _resolve_region(
     *,
-    country_module,
+    country_module: ModuleType,
     country: str,
     params: dict[str, Any],
 ) -> RegionResolution:
@@ -550,7 +570,7 @@ def _resolve_region(
 
 def _resolve_region_group(
     *,
-    country_module,
+    country_module: ModuleType,
     country: str,
     params: dict[str, Any],
 ) -> RegionResolution:
@@ -594,7 +614,7 @@ def _resolve_region_group(
     )
 
 
-def _country_module(country: str):
+def _country_module(country: str) -> ModuleType:
     country = country.lower()
     if country not in {"us", "uk"}:
         raise ValueError(f"Unsupported country: {country}")
@@ -655,8 +675,8 @@ def _load_dataset(
     params: dict[str, Any],
     *,
     selection: DatasetSelection,
-    country_module=None,
-):
+    country_module: ModuleType | None = None,
+) -> Dataset:
     country = params.get("country", "us").lower()
     year = _parse_year(params)
     country_module = country_module or _country_module(country)
@@ -684,12 +704,12 @@ def _load_dataset(
 def _build_simulation(
     params: dict[str, Any],
     *,
-    dataset,
+    dataset: Dataset,
     dataset_selection: DatasetSelection,
     policy: dict[str, Any] | None,
-    scoping_strategy=None,
+    scoping_strategy: ScopingStrategy | None = None,
     region_code: str | None = None,
-):
+) -> Simulation:
     from policyengine_simulation_executor.baseline_artifacts import (
         ArtifactBaselineSimulation,
         deterministic_baseline_id,
@@ -701,7 +721,7 @@ def _build_simulation(
 
     selection = normalize_runtime_spm(params)
     params = {**params, **({"spm": selection} if selection is not None else {})}
-    spm_kwargs = {"spm": selection} if selection is not None else {}
+    spm_kwargs: dict[str, Any] = {"spm": selection} if selection is not None else {}
     country = params.get("country", "us")
     country_module = _country_module(country)
     policy = _compile_interval_policy(
@@ -738,7 +758,7 @@ def _build_simulation(
 
 
 def _report_calculation_start(
-    simulation, progress: JobProgressReporter, stage: JobStage
+    simulation: StageReportingSimulation, progress: JobProgressReporter, stage: JobStage
 ) -> None:
     simulation.on_first_ensure(lambda: progress.enter(stage))
 
@@ -880,7 +900,7 @@ def _set_runtime_attributes(
     *,
     runtime: ObservabilityRuntime,
     simulation_params: dict[str, Any],
-    telemetry,
+    telemetry: TelemetryEnvelope | None,
     metadata: dict[str, Any],
     country: str,
 ) -> None:

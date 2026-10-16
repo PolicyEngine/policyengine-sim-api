@@ -15,10 +15,16 @@ stub has no capability so fixed identifier tests remain tied to their
 synthetic inputs instead of whichever PolicyEngine release is installed.
 """
 
+from __future__ import annotations
+
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pytest
 
 
-def install_identity_stubs(monkeypatch):
+def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     """Stub the identity seams with the canonical synthetic version-set.
 
     Returns mutable bundle, receipt, and SPM-capability state, plus a handle

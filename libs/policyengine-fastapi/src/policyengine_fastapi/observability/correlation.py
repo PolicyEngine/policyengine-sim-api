@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
-from typing import Any
 from uuid import uuid4
 
 
@@ -10,7 +9,7 @@ def generate_observability_id() -> str:
     return str(uuid4())
 
 
-def stable_config_hash(payload: Any) -> str:
+def stable_config_hash(payload: object) -> str:
     serialised = json.dumps(
         payload,
         sort_keys=True,

@@ -186,7 +186,7 @@ def publish_v2_manifest(
 class V2ManifestLoader:
     """Load v2 state while retaining only this loader's last valid v2 copy."""
 
-    def __init__(self, store: V2ManifestStore):
+    def __init__(self, store: V2ManifestStore) -> None:
         self._store = store
         self._last_valid: V2VersionManifest | None = None
 

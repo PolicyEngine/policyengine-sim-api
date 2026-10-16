@@ -8,13 +8,19 @@ The gateway looks up the appropriate versioned app from the version dicts
 and spawns jobs on those apps.
 """
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import modal
 from policyengine_simulation_observability.observability import (
     modal_image_environment,
 )
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 # Stable app name - this should rarely change
 app = modal.App("policyengine-simulation-gateway")
@@ -64,7 +70,7 @@ gateway_image = build_gateway_image()
 
 @app.function(image=gateway_image, secrets=[gateway_auth_secret])
 @modal.asgi_app()
-def web_app():
+def web_app() -> FastAPI:
     """
     FastAPI gateway for simulation job submission and polling.
 

@@ -15,7 +15,7 @@ class AppSettings(BaseSettings):
 
     @field_validator("environment", mode="before")
     @classmethod
-    def strip_environment(cls, v):
+    def strip_environment(cls, v: object) -> object:
         if isinstance(v, str):
             return v.strip()
         return v
@@ -33,5 +33,5 @@ class AppSettings(BaseSettings):
 
 
 @lru_cache
-def get_settings():
+def get_settings() -> AppSettings:
     return AppSettings()

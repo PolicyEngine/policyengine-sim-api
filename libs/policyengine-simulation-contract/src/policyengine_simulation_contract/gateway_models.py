@@ -46,7 +46,7 @@ class PolicyParameterChanges(RootModel[JsonObject]):
     """Policy parameter names mapped to their dated values."""
 
 
-def _move_internal_telemetry_alias(value):
+def _move_internal_telemetry_alias(value: object) -> object:
     if not isinstance(value, dict):
         return value
     if "_telemetry" in value and "telemetry" not in value:
@@ -55,7 +55,7 @@ def _move_internal_telemetry_alias(value):
     return value
 
 
-def _strip_internal_passthrough_fields(value):
+def _strip_internal_passthrough_fields(value: object) -> object:
     """Drop internal-only fields the gateway adds to payloads in flight.
 
     Parent batch entrypoints attach ``_metadata`` describing resolved routing,
@@ -76,7 +76,7 @@ def _strip_internal_passthrough_fields(value):
     }
 
 
-def _enforce_max_payload_size(value):
+def _enforce_max_payload_size(value: object) -> object:
     if not isinstance(value, dict):
         return value
     try:
@@ -131,17 +131,17 @@ class GatewayRequestBase(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def move_internal_telemetry_alias(cls, value):
+    def move_internal_telemetry_alias(cls, value: object) -> object:
         return _move_internal_telemetry_alias(value)
 
     @model_validator(mode="before")
     @classmethod
-    def strip_internal_passthrough_fields(cls, value):
+    def strip_internal_passthrough_fields(cls, value: object) -> object:
         return _strip_internal_passthrough_fields(value)
 
     @model_validator(mode="before")
     @classmethod
-    def enforce_max_payload_size(cls, value):
+    def enforce_max_payload_size(cls, value: object) -> object:
         return _enforce_max_payload_size(value)
 
 

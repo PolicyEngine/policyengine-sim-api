@@ -19,7 +19,7 @@ from policyengine_fastapi.exit import exit
 # Configure opentelemetry
 # 1. to include python logs and
 # 2. export to console (for demo purposes)
-def export_ot_to_console(resource: Resource):
+def export_ot_to_console(resource: Resource) -> None:
     """
     configure opentelemetry to dump messages to console for debugging on desktop
     """
@@ -33,6 +33,6 @@ def export_ot_to_console(resource: Resource):
     metrics.set_meter_provider(meterProvider)
 
     @exit()
-    def flush_ot():
+    def flush_ot() -> None:
         traceProvider.force_flush()
         meterProvider.force_flush()

@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_executor.artifact_keys import (
     BaselineArtifactIdentity,
@@ -56,6 +56,13 @@ from policyengine_simulation_executor.precompute_models import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
+    from types import ModuleType
+
+    from policyengine.core import Simulation
+
+    from policyengine_simulation_executor.artifact_store import ArtifactStore
+    from policyengine_simulation_executor.simulation_runtime import RegionResolution
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +92,9 @@ def cohort_params(year: int, group: list[str]) -> dict:
     }
 
 
-def _cohort_resolution(year: int, group: list[str]):
+def _cohort_resolution(
+    year: int, group: list[str]
+) -> tuple[dict[str, Any], ModuleType, RegionResolution]:
     """Cohort request params, country module, and region resolution.
 
     The planner's identity (``cohort_identity``) and the worker's
@@ -277,7 +286,9 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
     )
 
 
-def _prepare_cohort_baseline(bucket: str, expected: BaselinePlanEntry):
+def _prepare_cohort_baseline(
+    bucket: str, expected: BaselinePlanEntry
+) -> tuple[ArtifactStore, Path, Simulation]:
     """Shared by compute and verify: dataset download + simulation build."""
     from pathlib import Path
 

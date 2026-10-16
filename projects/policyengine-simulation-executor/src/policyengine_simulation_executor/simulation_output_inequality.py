@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from policyengine_simulation_executor.simulation_macro_output import (
     BaselineReformValue,
     InequalityOutput,
@@ -11,7 +9,7 @@ from policyengine_simulation_executor.simulation_macro_output import (
 from policyengine_simulation_executor.simulation_output_common import _number
 
 
-def build_inequality(analysis: Any) -> InequalityOutput:
+def build_inequality(analysis: object) -> InequalityOutput:
     baseline = getattr(analysis, "baseline_inequality", None)
     reform = getattr(analysis, "reform_inequality", None)
     if isinstance(baseline, InequalityOutput):

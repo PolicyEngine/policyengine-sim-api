@@ -13,15 +13,22 @@ with ``rebuild_entity_frame`` restores the source dtypes so the reduce is
 bit-exact against a direct run.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from policyengine.core import Simulation
 
 logger = logging.getLogger(__name__)
 
 
-def extract_output_microdata(baseline, reform) -> dict[str, Any]:
+def extract_output_microdata(
+    baseline: Simulation, reform: Simulation
+) -> dict[str, Any]:
     """Columnar dump of each simulation's computed ``output_dataset.data`` per
     entity, for baseline and reform, plus per-column source dtypes.
 
@@ -34,7 +41,7 @@ def extract_output_microdata(baseline, reform) -> dict[str, Any]:
     """
 
     def dump(
-        simulation,
+        simulation: Simulation,
     ) -> tuple[dict[str, dict[str, list]], dict[str, dict[str, str]]]:
         columns: dict[str, dict[str, list]] = {}
         dtypes: dict[str, dict[str, str]] = {}

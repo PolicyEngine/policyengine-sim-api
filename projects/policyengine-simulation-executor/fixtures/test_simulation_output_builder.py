@@ -8,20 +8,20 @@ import pandas as pd
 
 
 class FakeCollection:
-    def __init__(self, records):
+    def __init__(self, records: list[dict[str, object]]) -> None:
         self.dataframe = pd.DataFrame(records)
 
 
 class FakeModelOutput:
-    def __init__(self, payload):
+    def __init__(self, payload: dict[str, object]) -> None:
         self.payload = payload
 
-    def model_dump(self, *, mode):
+    def model_dump(self, *, mode: str) -> dict[str, object]:
         assert mode == "json"
         return self.payload
 
 
-def fake_analysis():
+def fake_analysis() -> SimpleNamespace:
     return SimpleNamespace(
         program_statistics=FakeCollection(
             [

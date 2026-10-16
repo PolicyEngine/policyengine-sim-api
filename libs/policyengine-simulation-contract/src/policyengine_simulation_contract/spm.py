@@ -1,9 +1,9 @@
 """Dependency-light public models for US SPM selection and calculation receipts."""
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -17,8 +17,10 @@ from pydantic import (
     model_validator,
 )
 
+from policyengine_simulation_contract.json_types import JsonObject
 
-def _selection_schema(schema):
+
+def _selection_schema(schema: dict[str, Any]) -> None:
     # An omitted option inherits the selected bundle's default. Advertising
     # Python attribute defaults here makes generated clients send an explicit
     # county selection even when their caller omitted geography entirely.
@@ -45,7 +47,7 @@ class SPMSelection(BaseModel):
     as_of: str | None = None
 
     @model_serializer(mode="wrap")
-    def serialize_selection(
+    def serialize_selection(  # noqa: ANN201  # a return annotation would become the serialization JSON schema
         self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
     ):
         """Preserve explicitly selected options through ordinary and nested JSON.
@@ -75,14 +77,14 @@ class SPMSelection(BaseModel):
 
     @field_validator("as_of")
     @classmethod
-    def validate_as_of(cls, value):
+    def validate_as_of(cls, value: str | None) -> str | None:
         if value is not None:
             if date.fromisoformat(value).isoformat() != value:
                 raise ValueError("as_of must be an ISO calendar date (YYYY-MM-DD)")
         return value
 
     @model_validator(mode="after")
-    def validate_location(self):
+    def validate_location(self) -> Self:
         # Request options inherit bundle defaults. Validate coupled options
         # once both are explicit (including after defaults are resolved).
         if not {"geography_kind", "geography_id"} <= self.model_fields_set:
@@ -108,7 +110,7 @@ class SPMResolvedConfiguration(BaseModel):
     as_of: str | None
 
     @model_serializer(mode="wrap")
-    def serialize_resolved_configuration(
+    def serialize_resolved_configuration(  # noqa: ANN201  # a return annotation would become the serialization JSON schema
         self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
     ):
         """Keep required nullable fields in completed response bodies."""
@@ -158,7 +160,7 @@ class SPMProvenance(BaseModel):
     runtime_versions: "SPMRuntimeVersions"
 
     @model_serializer(mode="wrap")
-    def serialize_provenance(
+    def serialize_provenance(  # noqa: ANN201  # a return annotation would become the serialization JSON schema
         self, handler: SerializerFunctionWrapHandler, info: SerializationInfo
     ):
         """Keep required nullable configuration fields in response bodies."""
@@ -325,15 +327,15 @@ class SPMErrorDetail(BaseModel):
 class SPMInputError(ValueError):
     """Transportable error shared by the control plane and worker."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str) -> None:
         self.code = code
         self.message = message
         super().__init__(code, message)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.message
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, str]:
         return {"code": self.code, "message": self.message}
 
 
@@ -356,7 +358,7 @@ class SPMCapability(BaseModel):
     defaults: SPMSelection
 
     @model_validator(mode="after")
-    def pinned_defaults(self):
+    def pinned_defaults(self) -> Self:
         if not self.defaults.forecast_content_sha256 or not self.defaults.scenario:
             raise ValueError(
                 "Certified SPM defaults must pin artifact hash and scenario"
@@ -423,14 +425,14 @@ def build_spm_comparison_provenance(
 
 
 def resolve_spm_selection(
-    country,
-    selection,
+    country: str,
+    selection: SPMSelection | Mapping[str, object] | None,
     *,
-    capability,
-    policyengine_version,
-    model_version,
-    route_provenance=None,
-):
+    capability: SPMCapability | Mapping[str, object] | None,
+    policyengine_version: str | None,
+    model_version: str | None,
+    route_provenance: str | None = None,
+) -> JsonObject | None:
     """Resolve only certified metadata; unrecognized future bundles fail closed."""
     if country.lower() != "us":
         if selection is not None:
@@ -500,8 +502,8 @@ def resolve_spm_selection(
 
 
 def validate_spm_result(
-    result: dict, selection: Any, *, expected_year: int | str | None = None
-):
+    result: dict, selection: object, *, expected_year: int | str | None = None
+) -> SPMComparisonProvenance | None:
     """Do not accept incomplete or mixed-method child/cached output."""
     if "spm_config" in result:
         raise SPMInputError(

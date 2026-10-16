@@ -34,7 +34,12 @@ from src.modal.budget_window_results import (
 import modal
 
 if TYPE_CHECKING:
+    from types import ModuleType
+
     from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.gateway_models import (
+        BudgetWindowBatchState,
+    )
 
 # Polling tuning. The runner busy-loops across child FunctionCall.get(timeout=0)
 # probes; when no child resolved we sleep before the next probe to stop the
@@ -54,7 +59,7 @@ POLL_INTERVAL_SECONDS = POLL_INTERVAL_INITIAL_SECONDS
 
 
 def serialize_batch_status(
-    state,
+    state: BudgetWindowBatchState,
     *,
     runtime: ObservabilityRuntime,
 ) -> dict[str, Any]:
@@ -68,7 +73,7 @@ def load_or_create_batch_state(
     context: BudgetWindowBatchContext,
     *,
     runtime: ObservabilityRuntime,
-):
+) -> BudgetWindowBatchState:
     with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)):
         state = get_batch_job_seed(context.batch_job_id)
     if state is None:
@@ -92,11 +97,11 @@ class BudgetWindowBatchRunner:
         context: BudgetWindowBatchContext,
         *,
         runtime: ObservabilityRuntime,
-        modal_module=None,
+        modal_module: ModuleType | None = None,
         poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
         poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
         poll_interval_backoff_factor: float = POLL_INTERVAL_BACKOFF_FACTOR,
-    ):
+    ) -> None:
         self.context = context
         self.runtime = runtime
         self.modal = modal if modal_module is None else modal_module

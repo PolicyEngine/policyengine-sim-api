@@ -30,7 +30,7 @@ def create_session_dep(engine: Engine) -> SessionGeneratorFactory:
     routers.
     """
 
-    def session_dep():
+    def session_dep() -> Generator[Session]:
         with Session(engine) as session:
             yield session
 

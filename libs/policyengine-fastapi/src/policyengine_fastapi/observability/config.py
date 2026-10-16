@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Self
 
 from .stages import TracerCaptureMode
 
@@ -44,5 +45,5 @@ class ObservabilityConfig:
     slow_run_threshold_seconds: float = 30.0
 
     @classmethod
-    def disabled(cls, service_name: str = "policyengine-observability"):
+    def disabled(cls, service_name: str = "policyengine-observability") -> Self:
         return cls(enabled=False, service_name=service_name)

@@ -24,11 +24,14 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from policyengine_simulation_executor import artifact_keys
+
+if TYPE_CHECKING:
+    from google.cloud import storage
 
 ARTIFACT_BUCKET_ENV = "POLICYENGINE_ARTIFACT_BUCKET"
 
@@ -42,7 +45,7 @@ def resolve_bucket_name(explicit: str | None = None) -> str:
     return bucket
 
 
-def _default_client():
+def _default_client() -> storage.Client:
     from google.cloud import storage
 
     from policyengine_simulation_executor.simulation_runtime import (
@@ -56,17 +59,19 @@ def _default_client():
 
 
 class ArtifactStore:
-    def __init__(self, bucket_name: str | None = None, *, client: Any = None):
+    def __init__(
+        self, bucket_name: str | None = None, *, client: storage.Client | None = None
+    ) -> None:
         self.bucket_name = resolve_bucket_name(bucket_name)
         self._client = client
 
     @property
-    def client(self) -> Any:
+    def client(self) -> storage.Client:
         if self._client is None:
             self._client = _default_client()
         return self._client
 
-    def _blob(self, path: str):
+    def _blob(self, path: str) -> storage.Blob:
         return self.client.bucket(self.bucket_name).blob(path)
 
     def exists(self, path: str) -> bool:
@@ -123,7 +128,9 @@ class ArtifactStore:
             raise
         partial.replace(destination)
 
-    def _upload_json(self, path: str, payload: Mapping[str, Any], *, overwrite: bool):
+    def _upload_json(
+        self, path: str, payload: Mapping[str, Any], *, overwrite: bool
+    ) -> bool:
         data = json.dumps(payload, sort_keys=True, indent=2)
         blob = self._blob(path)
         if overwrite:

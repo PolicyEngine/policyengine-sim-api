@@ -37,7 +37,7 @@ def extract_annual_impact(
     *,
     simulation_year: str,
     child_result: dict[str, Any],
-    spm: Any = None,
+    spm: object = None,
 ) -> BudgetWindowAnnualImpact:
     receipt = validate_spm_result(child_result, spm, expected_year=simulation_year)
     budget = child_result.get("budget", {})

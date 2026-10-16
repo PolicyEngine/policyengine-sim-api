@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
 
 from policyengine_simulation_executor.simulation_macro_output import (
     CliffImpactInSimulation,
@@ -12,7 +11,7 @@ from policyengine_simulation_executor.simulation_macro_output import (
 from policyengine_simulation_executor.simulation_output_common import _output_model_dump
 
 
-def build_cliff_impact(analysis: Any) -> CliffImpactOutput | None:
+def build_cliff_impact(analysis: object) -> CliffImpactOutput | None:
     cliff_impact = getattr(analysis, "cliff_impact", None)
     if isinstance(cliff_impact, CliffImpactOutput):
         return cliff_impact

@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     import pandas as pd
+    from policyengine.tax_benefit_models.uk.datasets import PolicyEngineUKDataset
+    from policyengine.tax_benefit_models.us.datasets import PolicyEngineUSDataset
     from policyengine_simulation_contract.stage12_bundle import CountryId
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
     from pydantic import JsonValue
@@ -86,7 +88,7 @@ def _dataset_from_frames(
     *,
     country: CountryId,
     year: int,
-):
+) -> PolicyEngineUSDataset | PolicyEngineUKDataset:
     from microdf import MicroDataFrame
 
     fields = {}
@@ -159,7 +161,10 @@ def build_aggregate_report(
         ),
     }
 
-    def stand_in(dataset, policy: dict[str, JsonValue]):
+    def stand_in(
+        dataset: PolicyEngineUSDataset | PolicyEngineUKDataset,
+        policy: dict[str, JsonValue],
+    ) -> PrecomputedSimulation:
         simulation = PrecomputedSimulation(
             dataset=dataset,
             tax_benefit_model_version=country_module.model,

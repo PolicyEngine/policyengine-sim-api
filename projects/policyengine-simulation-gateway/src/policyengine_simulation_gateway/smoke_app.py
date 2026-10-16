@@ -62,7 +62,7 @@ def smoke_import_gateway() -> dict:
 
 
 @app.local_entrypoint()
-def main():
+def main() -> None:
     report = smoke_import_gateway.remote()
     print(report)
     assert report["modules_imported"] > 0
