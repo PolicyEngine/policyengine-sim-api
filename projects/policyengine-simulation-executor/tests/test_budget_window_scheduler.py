@@ -140,7 +140,7 @@ class MockChildCall:
         self.error = error
         self.runtime.child_started(object_id)
 
-    def get(self, timeout: int = 0):  # noqa: ARG002  # mirrors modal.FunctionCall.get, which callers pass timeout= by keyword
+    def get(self, timeout: int = 0):
         self.runtime.child_finished(self.object_id)
         if self.error is not None:
             raise self.error
@@ -162,7 +162,7 @@ class MockParentBatchCall:
         self._polls = 0
         self._result = None
 
-    def get(self, timeout: int = 0):  # noqa: ARG002  # mirrors modal.FunctionCall.get, which callers pass timeout= by keyword
+    def get(self, timeout: int = 0):
         if self._result is not None:
             return self._result
         if self._polls == 0:

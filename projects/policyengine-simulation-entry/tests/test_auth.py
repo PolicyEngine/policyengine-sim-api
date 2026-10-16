@@ -55,7 +55,7 @@ def _use_static_signing_key(monkeypatch, public_key) -> None:
 
 def test_missing_token_preserves_403_contract(monkeypatch):
     class Decoder:
-        def __call__(self, token, runtime):  # noqa: ARG002  # stands in for JWTDecoder.__call__
+        def __call__(self, token, runtime):
             from fastapi import HTTPException
 
             raise HTTPException(status_code=403)
@@ -71,7 +71,7 @@ def test_missing_token_preserves_403_contract(monkeypatch):
 
 def test_public_routes_do_not_require_token(monkeypatch):
     class Decoder:
-        def __call__(self, token, runtime):  # noqa: ARG002  # stands in for JWTDecoder.__call__
+        def __call__(self, token, runtime):
             msg = "public route attempted authentication"
             raise AssertionError(msg)
 
@@ -563,7 +563,7 @@ def test_disabled_authentication_allows_enforced_routes(
     authorized_status,
 ):
     class Decoder:
-        def __call__(self, token, runtime):  # noqa: ARG002  # stands in for JWTDecoder.__call__
+        def __call__(self, token, runtime):
             msg = "disabled authentication decoded a token"
             raise AssertionError(msg)
 
@@ -588,7 +588,7 @@ def test_disabled_authentication_allows_enforced_routes(
 
 def test_public_routes_stay_public_when_permissions_are_enforced(monkeypatch):
     class Decoder:
-        def __call__(self, token, runtime):  # noqa: ARG002  # stands in for JWTDecoder.__call__
+        def __call__(self, token, runtime):
             msg = "public route attempted authentication"
             raise AssertionError(msg)
 

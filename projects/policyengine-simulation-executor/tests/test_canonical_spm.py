@@ -276,7 +276,7 @@ def test_sync_compatibility_endpoint_preserves_explicit_null(
 
     captured = []
 
-    def capture(params, *, runtime):  # noqa: ARG001  # keyword-only, as the route passes it
+    def capture(params, *, runtime):
         captured.append(params)
         error_code = "SPM_GEOGRAPHY_REQUIRED"
         raise SPMInputError(error_code, "intentional test stop")

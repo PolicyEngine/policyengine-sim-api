@@ -765,7 +765,7 @@ class TestComputeBaselineImpl:
         monkeypatch.setattr(
             sr,
             "_load_dataset",
-            lambda _params, country_module, selection: "dataset",  # noqa: ARG005  # the runtime passes country_module= and selection= by keyword
+            lambda _params, country_module, selection: "dataset",
         )
         monkeypatch.setattr(
             sr, "_build_simulation", lambda _params, **_kwargs: state.baseline

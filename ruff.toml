@@ -54,19 +54,20 @@ ignore = ["D203", "D213"]
 # live in directories that aren't packages, and import inside a test (often
 # after patching the environment). They also run repository scripts and use
 # fake credentials, temporary paths, naive datetimes, pickle and exec on
-# purpose, and may import the lazily loaded packages at module level. Every
-# other rule applies to tests.
+# purpose, may import the lazily loaded packages at module level, and may
+# leave arguments unused in fakes and stubs that mirror a real signature.
+# Every other rule applies to tests.
 "**/tests/**" = [
-    "ANN", "D1", "DTZ001", "DTZ007", "INP001", "PLC0415", "PLR2004",
-    "S101", "S102", "S105", "S106", "S108", "S301", "S603", "S607", "SLF001",
-    "TID253",
+    "ANN", "ARG001", "ARG002", "ARG005", "D1", "DTZ001", "DTZ007", "INP001",
+    "PLC0415", "PLR2004", "S101", "S102", "S105", "S106", "S108", "S301",
+    "S603", "S607", "SLF001", "TID253",
 ]
 # The deployed-service test suite (pytest, run against a live candidate) gets
 # the same test exemptions.
 "**/authenticated_tests/**" = [
-    "ANN", "D1", "DTZ001", "DTZ007", "INP001", "PLC0415", "PLR2004",
-    "S101", "S102", "S105", "S106", "S108", "S301", "S603", "S607", "SLF001",
-    "TID253",
+    "ANN", "ARG001", "ARG002", "ARG005", "D1", "DTZ001", "DTZ007", "INP001",
+    "PLC0415", "PLR2004", "S101", "S102", "S105", "S106", "S108", "S301",
+    "S603", "S607", "SLF001", "TID253",
 ]
 # CI/CD scripts report on stdout.
 ".github/**" = ["T201"]
