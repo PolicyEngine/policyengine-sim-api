@@ -53,7 +53,7 @@ def serialized_workflow(monkeypatch):
 
 
 @pytest.fixture
-def patched_modal(monkeypatch, serialized_workflow):  # noqa: ARG001  # requested for its side effect; usefixtures has no effect on fixtures
+def patched_modal(monkeypatch, serialized_workflow):
     stores: dict[str, FakeDict] = {}
 
     class _Dict:

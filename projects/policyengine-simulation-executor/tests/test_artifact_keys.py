@@ -251,7 +251,7 @@ class TestWrapperStorageIdAgreement:
     """
 
     @pytest.fixture
-    def identity(self, stub_identity_sources):  # noqa: ARG002  # requested for its side effect; usefixtures has no effect on fixtures
+    def identity(self, stub_identity_sources):
         """Build the identity directly from an already-resolved selection.
 
         ``collect_baseline_identity`` resolves the selection through the

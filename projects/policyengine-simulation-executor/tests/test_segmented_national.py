@@ -163,7 +163,7 @@ class FakeCall:
         self.cancel_attempts = 0
         self.poll_count = 0
 
-    def get(self, timeout):  # noqa: ARG002  # mirrors modal.FunctionCall.get, which callers pass timeout= by keyword
+    def get(self, timeout):
         self.poll_count += 1
         if self.before_each_poll is not None:
             self.before_each_poll()
@@ -245,7 +245,7 @@ class TestSegmentedNationalRunner:
         monkeypatch.setattr(
             runner,
             "_reduce",
-            lambda results, country_module: {"ok": results},  # noqa: ARG005  # run() passes country_module= by keyword
+            lambda results, country_module: {"ok": results},
         )
 
         result = runner.run()
@@ -275,7 +275,7 @@ class TestSegmentedNationalRunner:
             FakeCall({"child": i}, polls_until_ready=(19 - i) % 3) for i in range(20)
         ]
         runner = _runner(FakeModal(calls))
-        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)  # noqa: ARG005  # run() passes country_module= by keyword
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
         assert runner.run() == [{"child": i} for i in range(20)]
 
     @pytest.mark.usefixtures("bare_country")
@@ -283,7 +283,7 @@ class TestSegmentedNationalRunner:
         calls = _twenty_calls(polls_until_ready=5)
         calls[7] = FakeCall(None, error=ValueError("boom"))
         runner = _runner(FakeModal(calls))
-        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)  # noqa: ARG005  # run() passes country_module= by keyword
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
 
         with pytest.raises(RuntimeError, match="Segmented national child failed"):
             runner.run()
@@ -295,7 +295,7 @@ class TestSegmentedNationalRunner:
         calls = _twenty_calls()
         calls[3] = FakeCall({"child": 3}, errors_once=1)
         runner = _runner(FakeModal(calls))
-        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)  # noqa: ARG005  # run() passes country_module= by keyword
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
         assert runner.run() == [{"child": i} for i in range(20)]
 
     @pytest.mark.usefixtures("bare_country")
@@ -303,7 +303,7 @@ class TestSegmentedNationalRunner:
         calls = _twenty_calls(polls_until_ready=100)
         fake = FakeModal(calls, fail_spawn_at=15)
         runner = _runner(fake)
-        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)  # noqa: ARG005  # run() passes country_module= by keyword
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
 
         with pytest.raises(ConnectionError):
             runner.run()
@@ -329,7 +329,7 @@ class TestSegmentedNationalRunner:
 
         fake = FakeModal([FakeCall({"child": i}) for i in range(20)])
         runner = _runner(fake)
-        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)  # noqa: ARG005  # run() passes country_module= by keyword
+        monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
         runner.run()
 
         assert runner.groups[-1][-1] == "state/pr"
@@ -433,7 +433,7 @@ class TestSegmentedNationalChildDeadline:
         calls = _calls_with_stuck_child(clock, respawned_call)
         fake = FakeModal(calls)
         runner = _runner(fake, clock=clock)
-        runner._reduce = lambda results, country_module: results  # noqa: ARG005  # run() passes country_module= by keyword
+        runner._reduce = lambda results, country_module: results
 
         results = runner.run()
 
@@ -519,7 +519,7 @@ class TestSegmentedNationalChildDeadline:
         calls[STUCK_GROUP_INDEX] = late_original
         calls.append(FakeCall({"child": "respawned"}, polls_until_ready=2))
         runner = _runner(FakeModal(calls), clock=clock)
-        runner._reduce = lambda results, country_module: results  # noqa: ARG005  # run() passes country_module= by keyword
+        runner._reduce = lambda results, country_module: results
 
         results = runner.run()
 
@@ -559,7 +559,7 @@ class TestSegmentedNationalChildDeadline:
         superseded_original = calls[STUCK_GROUP_INDEX]
         superseded_original.cancel_failures = 1
         runner = _runner(FakeModal(calls), clock=clock)
-        runner._reduce = lambda results, country_module: results  # noqa: ARG005  # run() passes country_module= by keyword
+        runner._reduce = lambda results, country_module: results
 
         results = runner.run()
 
@@ -639,7 +639,7 @@ class TestSegmentedNationalChildDeadline:
         runtime = RecordingRuntime()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
         runner = _runner(FakeModal(calls), runtime=runtime, clock=clock)
-        runner._reduce = lambda results, country_module: results  # noqa: ARG005  # run() passes country_module= by keyword
+        runner._reduce = lambda results, country_module: results
 
         runner.run()
 
@@ -748,7 +748,7 @@ class TestDispatchRunSimulation:
     def test__eligible_national_takes_the_segmented_path(self, monkeypatch):
         calls = {}
 
-        def fake_segmented(params, *, app_name, runtime, progress):  # noqa: ARG001  # keyword-only, as dispatch_run_simulation passes them
+        def fake_segmented(params, *, app_name, runtime, progress):
             calls["segmented"] = (params, app_name)
             return {"segmented": True}
 
@@ -924,7 +924,7 @@ class TestDispatchResolvesSPM:
         )
         seen = {}
 
-        def fake_segmented(params, *, app_name, runtime, progress):  # noqa: ARG001  # keyword-only, as dispatch_run_simulation passes them
+        def fake_segmented(params, *, app_name, runtime, progress):
             seen["params"] = params
             return {"segmented": True}
 

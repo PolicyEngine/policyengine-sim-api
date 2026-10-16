@@ -215,7 +215,7 @@ def _simulation_output_builder(
         _baseline_simulation,
         _reform_simulation,
         *,
-        include_cliff_impacts=False,  # noqa: ARG001  # keyword-only, as SimulationOutputBuilder passes it
+        include_cliff_impacts=False,
     ):
         return analysis
 
@@ -523,7 +523,7 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
         params,
         *,
         dataset,
-        dataset_selection,  # noqa: ARG001  # keyword-only, as the runtime passes it
+        dataset_selection,
         policy,
         scoping_strategy=None,
         region_code=None,
@@ -557,7 +557,7 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
-        lambda _params, country_module, selection: dataset,  # noqa: ARG005  # the runtime passes country_module= and selection= by keyword
+        lambda _params, country_module, selection: dataset,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
@@ -656,11 +656,11 @@ def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
     def fake_build_simulation(
         _params,
         *,
-        dataset,  # noqa: ARG001  # keyword-only, as the runtime passes it
-        dataset_selection,  # noqa: ARG001  # keyword-only, as the runtime passes it
-        policy,  # noqa: ARG001  # keyword-only, as the runtime passes it
-        scoping_strategy=None,  # noqa: ARG001  # keyword-only, as the runtime passes it
-        region_code=None,  # noqa: ARG001  # keyword-only, as the runtime passes it
+        dataset,
+        dataset_selection,
+        policy,
+        scoping_strategy=None,
+        region_code=None,
     ):
         build_count[0] += 1
         return simulations["baseline"] if build_count[0] == 1 else simulations["reform"]
@@ -694,7 +694,7 @@ def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
-        lambda _params, country_module, selection: dataset,  # noqa: ARG005  # the runtime passes country_module= and selection= by keyword
+        lambda _params, country_module, selection: dataset,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
@@ -1065,10 +1065,10 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
         params,
         *,
         dataset,
-        dataset_selection,  # noqa: ARG001  # keyword-only, as the runtime passes it
+        dataset_selection,
         policy,
         scoping_strategy=None,
-        region_code=None,  # noqa: ARG001  # keyword-only, as the runtime passes it
+        region_code=None,
     ):
         build_calls.append((params, dataset, policy, scoping_strategy))
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
@@ -1090,7 +1090,7 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
-        lambda _params, country_module, selection: dataset,  # noqa: ARG005  # the runtime passes country_module= and selection= by keyword
+        lambda _params, country_module, selection: dataset,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
@@ -1162,14 +1162,14 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
         dataset_selection,
         policy,
         scoping_strategy=None,
-        region_code=None,  # noqa: ARG001  # keyword-only, as the runtime passes it
+        region_code=None,
     ):
         build_calls.append(
             (params, dataset, policy, scoping_strategy, dataset_selection)
         )
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
 
-    def fake_load_dataset(_params, *, country_module, selection):  # noqa: ARG001  # keyword-only, as the runtime passes it
+    def fake_load_dataset(_params, *, country_module, selection):
         load_selections.append(selection)
         return dataset
 
@@ -1247,7 +1247,7 @@ def test_run_simulation_impl_core_passes_detected_uk_boundary_to_builder(monkeyp
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
-        lambda _params, country_module, selection: dataset,  # noqa: ARG005  # the runtime passes country_module= and selection= by keyword
+        lambda _params, country_module, selection: dataset,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
@@ -1661,7 +1661,7 @@ def test_builder_data_version_prefers_resolved_revision_then_dataset_metadata():
         _baseline_simulation,
         _reform_simulation,
         *,
-        include_cliff_impacts=False,  # noqa: ARG001  # keyword-only, as SimulationOutputBuilder passes it
+        include_cliff_impacts=False,
     ):
         return fake_analysis()
 

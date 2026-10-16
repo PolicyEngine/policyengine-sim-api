@@ -534,7 +534,7 @@ class TestSimulationOutputBuilderStage:
         progress = _RecordingReporter()
         calls = []
 
-        def analysis(_baseline, _reform, *, include_cliff_impacts):  # noqa: ARG001  # keyword-only, as SimulationOutputBuilder passes it
+        def analysis(_baseline, _reform, *, include_cliff_impacts):
             calls.append(list(progress.calls))
             return "analysis"
 
@@ -548,7 +548,7 @@ class TestSimulationOutputBuilderStage:
     def test__failed_analysis_does_not_enter_outputs(self):
         progress = _RecordingReporter()
 
-        def analysis(_baseline, _reform, *, include_cliff_impacts):  # noqa: ARG001  # keyword-only, as SimulationOutputBuilder passes it
+        def analysis(_baseline, _reform, *, include_cliff_impacts):
             msg = "model failed"
             raise RuntimeError(msg)
 
@@ -598,7 +598,7 @@ def test_runtime_reports_baseline_then_reform_when_each_calculation_starts(
     monkeypatch.setattr(
         sr,
         "_load_dataset",
-        lambda _params, *, country_module, selection: object(),  # noqa: ARG005  # keyword-only, as the runtime passes them
+        lambda _params, *, country_module, selection: object(),
     )
     monkeypatch.setattr(
         sr, "_build_simulation", lambda *_args, **_kwargs: next(simulations)
@@ -625,7 +625,7 @@ class _FakeCall:
         self.error = error
         self.cancelled = False
 
-    def get(self, timeout):  # noqa: ARG002  # mirrors modal.FunctionCall.get, which callers pass timeout= by keyword
+    def get(self, timeout):
         if self.error is not None:
             raise self.error
         if self.polls_until_ready > 0:
@@ -649,7 +649,7 @@ def _segmented_runner(calls, progress, monkeypatch):
     fake_modal = SimpleNamespace(
         Function=SimpleNamespace(
             from_name=lambda _app_name, _function_name: SimpleNamespace(
-                spawn=lambda _payload, *, observability_context=None: next(remaining)  # noqa: ARG005  # mirrors modal.Function.spawn, which callers pass observability_context= by keyword
+                spawn=lambda _payload, *, observability_context=None: next(remaining)
             )
         )
     )
@@ -673,7 +673,7 @@ class TestSegmentedNationalStages:
         monkeypatch.setattr(
             runner,
             "_reduce",
-            lambda _results, country_module: reduce_saw.append(list(progress.calls)),  # noqa: ARG005  # run() passes country_module= by keyword
+            lambda _results, country_module: reduce_saw.append(list(progress.calls)),
         )
 
         runner.run()
@@ -698,7 +698,7 @@ class TestSegmentedNationalStages:
         progress = _RecordingReporter()
         seen = {}
 
-        def fake_impl(_params, *, runtime, progress):  # noqa: ARG001  # keyword-only, as dispatch_run_simulation passes it
+        def fake_impl(_params, *, runtime, progress):
             seen["progress"] = progress
             return {"ok": True}
 
@@ -718,7 +718,7 @@ class TestSegmentedNationalStages:
         progress = _RecordingReporter()
         seen = {}
 
-        def fake_segmented(_params, *, app_name, runtime, progress):  # noqa: ARG001  # keyword-only, as dispatch_run_simulation passes them
+        def fake_segmented(_params, *, app_name, runtime, progress):
             seen["progress"] = progress
             return {"ok": True}
 
@@ -806,13 +806,13 @@ class TestModalRunSimulation:
         monkeypatch.setattr(
             app,
             "_configure_modal_observability",
-            lambda *, service_role: _RecordingRuntime(events),  # noqa: ARG005  # keyword-only, as run_simulation passes it
+            lambda *, service_role: _RecordingRuntime(events),
         )
         monkeypatch.setattr(sn, "dispatch_run_simulation", dispatch)
         return events, writes
 
     def test__records_stages_for_the_spawned_job(self, modal_app, monkeypatch):
-        def dispatch(_params, *, app_name, runtime, progress):  # noqa: ARG001  # keyword-only, as run_simulation passes them
+        def dispatch(_params, *, app_name, runtime, progress):
             progress.enter(JobStage.REFORM)
             return {"ok": True}
 
@@ -839,7 +839,7 @@ class TestModalRunSimulation:
         assert events[-1] == "shutdown"
 
     def test__rerun_of_the_same_call_continues_its_record(self, modal_app, monkeypatch):
-        def dispatch(_params, *, app_name, runtime, progress):  # noqa: ARG001  # keyword-only, as run_simulation passes them
+        def dispatch(_params, *, app_name, runtime, progress):
             progress.set_execution(JobExecution.MONOLITHIC)
             return {"ok": True}
 
@@ -855,7 +855,7 @@ class TestModalRunSimulation:
         assert attributes["job_attempts"] == 2
 
     def test__failed_job_still_records_where_it_stopped(self, modal_app, monkeypatch):
-        def dispatch(_params, *, app_name, runtime, progress):  # noqa: ARG001  # keyword-only, as run_simulation passes them
+        def dispatch(_params, *, app_name, runtime, progress):
             progress.enter(JobStage.BASELINE)
             msg = "model failed"
             raise RuntimeError(msg)
@@ -874,7 +874,7 @@ class TestModalRunSimulation:
     def test__preempted_job_stays_running_for_the_next_attempt(
         self, modal_app, monkeypatch
     ):
-        def dispatch(_params, *, app_name, runtime, progress):  # noqa: ARG001  # keyword-only, as run_simulation passes them
+        def dispatch(_params, *, app_name, runtime, progress):
             progress.enter(JobStage.BASELINE)
             raise KeyboardInterrupt
 
@@ -894,7 +894,7 @@ class TestModalRunSimulation:
     def test__preemption_before_the_calculation_stays_running(
         self, modal_app, monkeypatch
     ):
-        def dispatch(_params, *, app_name, runtime, progress):  # noqa: ARG001  # keyword-only, as run_simulation passes them
+        def dispatch(_params, *, app_name, runtime, progress):
             msg = "dispatch should not run"
             raise AssertionError(msg)
 
@@ -917,7 +917,7 @@ class TestModalRunSimulation:
     def test__store_failure_does_not_change_the_result(self, modal_app, monkeypatch):
         from policyengine_simulation_contract import job_progress_state
 
-        def dispatch(_params, *, app_name, runtime, progress):  # noqa: ARG001  # keyword-only, as run_simulation passes them
+        def dispatch(_params, *, app_name, runtime, progress):
             progress.enter(JobStage.OUTPUTS)
             return {"ok": True}
 

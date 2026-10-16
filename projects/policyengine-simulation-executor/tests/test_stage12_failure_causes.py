@@ -50,7 +50,7 @@ class RecordingRuntime:
     def __init__(self) -> None:
         self.recorded_errors: list[tuple[Exception, bool]] = []
 
-    def record_exception(self, error, *, handled, status_code=None) -> None:  # noqa: ARG002  # mirrors ObservabilityRuntime.record_exception, which callers pass status_code= by keyword
+    def record_exception(self, error, *, handled, status_code=None) -> None:
         self.recorded_errors.append((error, handled))
 
 

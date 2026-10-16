@@ -176,7 +176,7 @@ class FakeModelVersion:
         self.load_result = load_result
         self.calls = []
 
-    def resolve_entity_variables(self, simulation):  # noqa: ARG002  # duck-types MicrosimulationModelVersion.resolve_entity_variables
+    def resolve_entity_variables(self, simulation):
         return {"person": ["age", "income"]}
 
     def load(self, simulation):
@@ -198,7 +198,7 @@ class FakeModelVersion:
         self.calls.append("run")
         simulation.output_dataset = _output(_complete_frames())
 
-    def save(self, simulation):  # noqa: ARG002  # duck-types MicrosimulationModelVersion.save
+    def save(self, simulation):
         self.calls.append("save")
 
 
@@ -599,7 +599,7 @@ class DiskModelVersion:
         self._dataset_class = PolicyEngineUSDataset
         self.run_calls = 0
 
-    def resolve_entity_variables(self, simulation):  # noqa: ARG002  # duck-types MicrosimulationModelVersion.resolve_entity_variables
+    def resolve_entity_variables(self, simulation):
         return {
             "person": ["age", "employment_income"],
             "household": ["household_net_income"],
