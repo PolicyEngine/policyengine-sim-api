@@ -24,10 +24,10 @@ from policyengine_simulation_contract.spm import (
     SPMProvenance,
 )
 from policyengine_simulation_contract.uk_geography import (
-    UKLocalAuthorityBoundaryVersion as UKLocalAuthorityBoundaryVersion,
+    UKLocalAuthorityBoundaryVersion as UKLocalAuthorityBoundaryVersion,  # noqa: PLC0414  # explicit re-export: callers import it from stage12_execution
 )
 from policyengine_simulation_contract.uk_geography import (
-    UKLocalAuthorityMetadata as UKLocalAuthorityMetadata,
+    UKLocalAuthorityMetadata as UKLocalAuthorityMetadata,  # noqa: PLC0414  # explicit re-export: callers import it from stage12_execution
 )
 
 ContractText = Annotated[str, Field(min_length=1, max_length=255)]

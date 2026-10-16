@@ -1938,7 +1938,7 @@ def test_coordinator_builds_its_store_with_the_coordinator_runtime(
     assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
 
 
-def test_coordinator_does_not_deduplicate_against_its_own_claim_after_a_lost_commit() -> (
+def test_coordinator_does_not_deduplicate_against_its_own_claim_after_a_lost_commit() -> (  # noqa: E501  # the test name spells out the lost-commit scenario
     None
 ):
     # SQLAlchemy raises a failed COMMIT without a statement, like a refused

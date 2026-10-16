@@ -1,4 +1,4 @@
-"""Tests for GCP credentials setup in ``policyengine_simulation_executor.simulation_runtime``."""
+"""Tests for GCP credentials setup in the executor's ``simulation_runtime``."""
 
 from __future__ import annotations
 

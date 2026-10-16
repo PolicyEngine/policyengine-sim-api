@@ -24,7 +24,7 @@ class NumericalTolerance:
             raise ValueError(msg)
 
 
-class ParityMismatch(ValueError):
+class ParityMismatchError(ValueError):
     """A bounded diagnostic containing a code and schema path, never values."""
 
     def __init__(self, code: str, path: str) -> None:
@@ -39,7 +39,7 @@ def canonicalize_simulation_frames(
 ) -> dict[str, pd.DataFrame]:
     """Sort each entity's rows by ``<entity>_id`` and its columns by name.
 
-    Raises ``ParityMismatch`` if an entity lacks that id column or repeats an id.
+    Raises ``ParityMismatchError`` if an entity lacks that id column or repeats an id.
     """
     canonical = {}
     for entity in sorted(frames):
@@ -47,10 +47,10 @@ def canonicalize_simulation_frames(
         frame = pd.DataFrame(frames[entity]).copy()
         if identifier not in frame.columns:
             error_code = "missing_row_identity"
-            raise ParityMismatch(error_code, entity)
+            raise ParityMismatchError(error_code, entity)
         if frame[identifier].duplicated().any():
             error_code = "duplicate_row_identity"
-            raise ParityMismatch(error_code, entity)
+            raise ParityMismatchError(error_code, entity)
         canonical[entity] = (
             frame.sort_values(identifier, kind="stable")
             .reset_index(drop=True)
@@ -65,7 +65,7 @@ def compare_simulation_frames(
     *,
     tolerances: Mapping[str, NumericalTolerance] | None = None,
 ) -> None:
-    """Raise ``ParityMismatch`` at the first difference between two simulation outputs.
+    """Raise ``ParityMismatchError`` at the first difference of two simulation outputs.
 
     Entities, columns, row ids and dtypes must match exactly. Numeric columns
     compare within the tolerance keyed by ``entity.column`` (exact by default,
@@ -75,27 +75,27 @@ def compare_simulation_frames(
     actual = canonicalize_simulation_frames(candidate)
     if expected.keys() != actual.keys():
         error_code = "entity_membership_mismatch"
-        raise ParityMismatch(error_code, "simulation")
+        raise ParityMismatchError(error_code, "simulation")
     allowed = tolerances or {}
     for entity, expected_frame in expected.items():
         actual_frame = actual[entity]
         if tuple(expected_frame.columns) != tuple(actual_frame.columns):
             error_code = "column_membership_mismatch"
-            raise ParityMismatch(error_code, entity)
+            raise ParityMismatchError(error_code, entity)
         if len(expected_frame) != len(actual_frame):
             error_code = "row_membership_mismatch"
-            raise ParityMismatch(error_code, entity)
+            raise ParityMismatchError(error_code, entity)
         identifier = f"{entity}_id"
         if not expected_frame[identifier].equals(actual_frame[identifier]):
             error_code = "row_identity_mismatch"
-            raise ParityMismatch(error_code, entity)
+            raise ParityMismatchError(error_code, entity)
         for column in expected_frame.columns:
             path = f"{entity}.{column}"
             expected_values = expected_frame[column]
             actual_values = actual_frame[column]
             if str(expected_values.dtype) != str(actual_values.dtype):
                 error_code = "dtype_mismatch"
-                raise ParityMismatch(error_code, path)
+                raise ParityMismatchError(error_code, path)
             if pd.api.types.is_numeric_dtype(expected_values.dtype):
                 tolerance = allowed.get(path, NumericalTolerance())
                 if not np.allclose(
@@ -106,10 +106,10 @@ def compare_simulation_frames(
                     equal_nan=True,
                 ):
                     error_code = "numeric_value_mismatch"
-                    raise ParityMismatch(error_code, path)
+                    raise ParityMismatchError(error_code, path)
             elif not expected_values.equals(actual_values):
                 error_code = "value_mismatch"
-                raise ParityMismatch(error_code, path)
+                raise ParityMismatchError(error_code, path)
 
 
 def compare_aggregate_reports(
@@ -118,7 +118,7 @@ def compare_aggregate_reports(
     *,
     tolerances: Mapping[str, NumericalTolerance] | None = None,
 ) -> None:
-    """Raise ``ParityMismatch`` at the first difference between two aggregate reports.
+    """Raise ``ParityMismatchError`` at the first difference of two aggregate reports.
 
     Mappings and lists must match in shape. Numbers (not booleans) compare
     within the tolerance keyed by their path, such as ``budget.total`` or
@@ -130,7 +130,7 @@ def compare_aggregate_reports(
         if isinstance(expected, Mapping):
             if not isinstance(actual, Mapping) or expected.keys() != actual.keys():
                 error_code = "field_membership_mismatch"
-                raise ParityMismatch(error_code, path or "report")
+                raise ParityMismatchError(error_code, path or "report")
             for key in sorted(expected):
                 compare(expected[key], actual[key], f"{path}.{key}".lstrip("."))
             return
@@ -141,10 +141,10 @@ def compare_aggregate_reports(
                 actual, (str, bytes, bytearray)
             ):
                 error_code = "value_type_mismatch"
-                raise ParityMismatch(error_code, path)
+                raise ParityMismatchError(error_code, path)
             if len(expected) != len(actual):
                 error_code = "list_length_mismatch"
-                raise ParityMismatch(error_code, path)
+                raise ParityMismatchError(error_code, path)
             for index, value in enumerate(expected):
                 compare(value, actual[index], f"{path}[{index}]")
             return
@@ -162,13 +162,13 @@ def compare_aggregate_reports(
                 abs_tol=tolerance.absolute,
             ):
                 error_code = "numeric_value_mismatch"
-                raise ParityMismatch(error_code, path)
+                raise ParityMismatchError(error_code, path)
             return
         if type(expected) is not type(actual):
             error_code = "value_type_mismatch"
-            raise ParityMismatch(error_code, path)
+            raise ParityMismatchError(error_code, path)
         if expected != actual:
             error_code = "value_mismatch"
-            raise ParityMismatch(error_code, path)
+            raise ParityMismatchError(error_code, path)
 
     compare(incumbent, candidate, "")

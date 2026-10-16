@@ -96,8 +96,9 @@ def _poll_budget_window_batch(
     last_status_code: HTTPStatus | None = None
     last_content = b""
 
+    status_endpoint = get_budget_window_job_status_budget_window_jobs_batch_job_id_get
     while time.monotonic() < deadline:
-        response = get_budget_window_job_status_budget_window_jobs_batch_job_id_get.sync_detailed(
+        response = status_endpoint.sync_detailed(
             batch_job_id=batch_job_id, client=client
         )
         last_status_code = response.status_code
@@ -177,9 +178,10 @@ def decode_response_content():
 @pytest.fixture()
 def submit_budget_window_batch(client: Client | AuthenticatedClient):
     """Submit a budget-window batch through the generated client."""
+    submit_endpoint = submit_budget_window_batch_simulate_economy_budget_window_post
 
     def submit(request: BudgetWindowBatchRequest):
-        return submit_budget_window_batch_simulate_economy_budget_window_post.sync_detailed(
+        return submit_endpoint.sync_detailed(
             client=client,
             body=request,
         )

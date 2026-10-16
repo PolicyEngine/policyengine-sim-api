@@ -194,7 +194,10 @@ def load_uk_local_authority_resources() -> UKLocalAuthorityResources:
     lad23 = _load_coordinates("coordinates_lad23.csv")
     supported_codes = lad22.keys() | lad23.keys()
     if names.keys() != supported_codes:
-        msg = "UK local-authority names must exactly cover the supported boundary versions"
+        msg = (
+            "UK local-authority names must exactly cover the supported "
+            "boundary versions"
+        )
         raise ValueError(msg)
     if lad22.keys() - lad23.keys() != _LAD22_ONLY_CODES:
         msg = "LAD22 distinguishing codes do not match its coordinate file"
@@ -293,7 +296,9 @@ def uk_area_regions_routed() -> bool:
     region types have one may the UK default, a national file, carry no area
     codes: their runs and breakdowns then belong to that local-area dataset.
     """
-    from policyengine.provenance.manifest import get_release_manifest
+    from policyengine.provenance.manifest import (
+        get_release_manifest,
+    )
 
     region_datasets = get_release_manifest("uk").region_datasets
     return all(region_type in region_datasets for region_type in UK_AREA_REGION_TYPES)

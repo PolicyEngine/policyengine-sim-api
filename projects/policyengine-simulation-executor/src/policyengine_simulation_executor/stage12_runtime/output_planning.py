@@ -58,10 +58,14 @@ def _unmonitored_stage_scope(
 
 def _country_model(country: CountryId) -> OutputVariableModel:
     if country == "us":
-        from policyengine.tax_benefit_models import us
+        from policyengine.tax_benefit_models import (
+            us,
+        )
 
         return us.model
-    from policyengine.tax_benefit_models import uk
+    from policyengine.tax_benefit_models import (
+        uk,
+    )
 
     return uk.model
 

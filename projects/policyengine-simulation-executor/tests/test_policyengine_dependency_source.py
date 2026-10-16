@@ -99,7 +99,7 @@ def _modal_import_env() -> dict[str, str]:
 def _run_python_snippet(
     code: str, env: dict[str, str]
 ) -> subprocess.CompletedProcess[str]:
-    """Run ``code`` in a fresh interpreter from the project root, capturing text output."""
+    """Run ``code`` in a fresh interpreter from the project root; capture its text."""
     return subprocess.run(
         [sys.executable, "-c", code],
         cwd=REPO_ROOT,

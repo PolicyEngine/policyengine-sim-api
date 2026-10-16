@@ -24,7 +24,9 @@ def run_budget_window_batch_impl(
     Must run inside a Modal call: the current function call id becomes the
     batch job id that child jobs and stored batch state are keyed by.
     """
-    from policyengine_simulation_executor.spm import normalize_runtime_spm
+    from policyengine_simulation_executor.spm import (
+        normalize_runtime_spm,
+    )
 
     selection = normalize_runtime_spm(params)
     if selection is not None:

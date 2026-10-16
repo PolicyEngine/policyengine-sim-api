@@ -88,7 +88,7 @@ type PreparedReport = tuple[
 ]
 
 
-class TemporaryStage12UnsupportedRequest(ValueError):
+class TemporaryStage12UnsupportedRequestError(ValueError):
     """A temporary direct request cannot be normalized by the reviewed adapter."""
 
     def __init__(self, reason: str) -> None:
@@ -97,7 +97,7 @@ class TemporaryStage12UnsupportedRequest(ValueError):
         self.reason = reason
 
 
-class TemporaryStage12DispatchFailed(RuntimeError):
+class TemporaryStage12DispatchFailed(RuntimeError):  # noqa: N818  # app logs its name as error_type in stage12_comparison_dispatch_failed
     """Modal did not acknowledge a Stage 12 coordinator submission."""
 
     def __init__(self, report: ComparisonReportRecord) -> None:
@@ -371,7 +371,9 @@ class Stage12ComparisonBackend:
             )
         )
         if report is None:
-            raise TemporaryStage12UnsupportedRequest(skip_reason or "unsupported_input")
+            raise TemporaryStage12UnsupportedRequestError(
+                skip_reason or "unsupported_input"
+            )
         parent = self._parent_record(
             evaluation_id=evaluation_id,
             request_id=request_id,

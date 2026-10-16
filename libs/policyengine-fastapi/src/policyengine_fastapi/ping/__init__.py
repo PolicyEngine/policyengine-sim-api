@@ -28,7 +28,7 @@ def create_router(health_registry: HealthRegistry) -> APIRouter:
         """Verify the API can receive and process unauthenticated requests."""
         return PingResponse(incremented=request.value + 1)
 
-    @router.get("/ping/started", response_model=str)
+    @router.get("/ping/started")
     async def started() -> str:
         """Verify the api is running."""
         return "alive"

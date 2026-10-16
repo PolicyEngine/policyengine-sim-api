@@ -54,7 +54,9 @@ _worker_secrets = [gcp_secret, hf_secret]
 )
 def plan_artifacts(bucket: str) -> dict:
     """Return the dumped ``PrecomputePlan``: expected artifacts and store presence."""
-    from policyengine_simulation_executor.precompute import plan_artifacts_impl
+    from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        plan_artifacts_impl,
+    )
 
     return plan_artifacts_impl(bucket).model_dump()
 
@@ -72,8 +74,12 @@ def build_dataset(bucket: str, expected: dict) -> dict:
     Raises if the dataset identity resolved in this container differs from the
     planned one, so planner/worker drift cannot upload under the wrong key.
     """
-    from policyengine_simulation_executor.precompute import build_dataset_impl
-    from policyengine_simulation_executor.precompute_models import DatasetPlanEntry
+    from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        build_dataset_impl,
+    )
+    from policyengine_simulation_executor.precompute_models import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        DatasetPlanEntry,
+    )
 
     return build_dataset_impl(
         bucket, DatasetPlanEntry.model_validate(expected)
@@ -89,8 +95,12 @@ def build_dataset(bucket: str, expected: dict) -> dict:
 )
 def compute_baseline(bucket: str, expected: dict) -> dict:
     """Compute and upload one cohort's national baseline output (wave 2)."""
-    from policyengine_simulation_executor.precompute import compute_baseline_impl
-    from policyengine_simulation_executor.precompute_models import BaselinePlanEntry
+    from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        compute_baseline_impl,
+    )
+    from policyengine_simulation_executor.precompute_models import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        BaselinePlanEntry,
+    )
 
     return compute_baseline_impl(
         bucket, BaselinePlanEntry.model_validate(expected)
@@ -106,8 +116,12 @@ def compute_baseline(bucket: str, expected: dict) -> dict:
 )
 def verify_determinism(bucket: str, expected: dict) -> dict:
     """Recompute one stored cohort baseline afresh and report columns that differ."""
-    from policyengine_simulation_executor.precompute import verify_determinism_impl
-    from policyengine_simulation_executor.precompute_models import BaselinePlanEntry
+    from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        verify_determinism_impl,
+    )
+    from policyengine_simulation_executor.precompute_models import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        BaselinePlanEntry,
+    )
 
     return verify_determinism_impl(
         bucket, BaselinePlanEntry.model_validate(expected)
@@ -123,8 +137,12 @@ def verify_determinism(bucket: str, expected: dict) -> dict:
 )
 def publish_manifest(bucket: str, plan: dict) -> str:
     """Write the deploy manifest for ``plan`` to the store and return its digest."""
-    from policyengine_simulation_executor.precompute import publish_manifest_impl
-    from policyengine_simulation_executor.precompute_models import PrecomputePlan
+    from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        publish_manifest_impl,
+    )
+    from policyengine_simulation_executor.precompute_models import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        PrecomputePlan,
+    )
 
     return publish_manifest_impl(bucket, PrecomputePlan.model_validate(plan))
 
@@ -132,8 +150,12 @@ def publish_manifest(bucket: str, plan: dict) -> str:
 @app.local_entrypoint()
 def main(force: bool = False) -> None:
     """Fill the store for the installed bundle; ``--force`` recomputes stored ones."""
-    from policyengine_simulation_executor.artifact_store import resolve_bucket_name
-    from policyengine_simulation_executor.precompute import run_precompute
+    from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # local entrypoint: loaded only when the precompute runs
+        resolve_bucket_name,
+    )
+    from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # local entrypoint: loaded only when the precompute runs
+        run_precompute,
+    )
 
     run_precompute(
         resolve_bucket_name(),

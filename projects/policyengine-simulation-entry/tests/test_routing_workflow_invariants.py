@@ -15,7 +15,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIRECTORY = REPOSITORY_ROOT / ".github" / "workflows"
 REGISTRY_MODULE = (
     REPOSITORY_ROOT
-    / "projects/policyengine-simulation-executor/src/modal/utils/update_version_registry.py"
+    / "projects/policyengine-simulation-executor/src/modal/utils"
+    / "update_version_registry.py"
 )
 REGISTRY_COMMAND = "src.modal.utils.update_version_registry"
 REGISTRY_INVOCATION = re.compile(
@@ -359,7 +360,8 @@ def _writer_environment(workflow: dict, job: dict, step: dict, inputs: dict):
             and "|" in _shell_tokens(line)
         ):
             assert len(REGISTRY_INVOCATION.findall(line)) <= 1, (
-                "Routing pipeline commands can execute in parallel; use foreground sequential commands"
+                "Routing pipeline commands can execute in parallel; "
+                "use foreground sequential commands"
             )
     for arguments in commands:
         values = []
@@ -370,7 +372,8 @@ def _writer_environment(workflow: dict, job: dict, step: dict, inputs: dict):
             elif argument.startswith("--environment="):
                 values.append(argument.partition("=")[2])
         assert values == ["${MODAL_ENVIRONMENT}"], (
-            "Routing writes must explicitly use the proven MODAL_ENVIRONMENT exactly once"
+            "Routing writes must explicitly use the proven MODAL_ENVIRONMENT "
+            "exactly once"
         )
     return _resolve_environment(environment["MODAL_ENVIRONMENT"], inputs)
 
@@ -453,8 +456,9 @@ def test_stage12_callers_propagate_distinct_modal_routing_environments():
         ("--complete-plan plan.json", True),
         (
             (
-                "--finalize-publication --publication-run 744 --release-environment prod "
-                "--gates-passed true --github-output github-output.txt"
+                "--finalize-publication --publication-run 744 "
+                "--release-environment prod --gates-passed true "
+                "--github-output github-output.txt"
             ),
             True,
         ),
@@ -658,8 +662,14 @@ def test_routing_pipeline_cannot_make_writers_parallel():
         f"{{ uv run python -m {REGISTRY_COMMAND} --apply-plan plan.json; }}",
         f'uv run python -c "import {REGISTRY_COMMAND}"',
         f"uv run python -m {REGISTRY_COMMAND} --dry-run $flags",
-        f"uv run python -m {REGISTRY_COMMAND} --environment $MODAL_ENVIRONMENT --apply-plan plan.json",
-        f"uv run python -m {REGISTRY_COMMAND} --environment '${{MODAL_ENVIRONMENT}}' --apply-plan plan.json",
+        (
+            f"uv run python -m {REGISTRY_COMMAND} --environment $MODAL_ENVIRONMENT "
+            "--apply-plan plan.json"
+        ),
+        (
+            f"uv run python -m {REGISTRY_COMMAND} --environment "
+            "'${MODAL_ENVIRONMENT}' --apply-plan plan.json"
+        ),
     ],
 )
 def test_routing_discovery_rejects_unsupported_shell_forms(script):

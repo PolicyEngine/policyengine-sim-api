@@ -3,7 +3,8 @@
 This app contains the heavy simulation workload with snapshotted models.
 Each deployment creates a versioned app (e.g., policyengine-simulation-py4-10-0).
 
-The gateway app (policyengine-simulation-gateway) routes requests to these versioned apps.
+The gateway app (policyengine-simulation-gateway) routes requests to these
+versioned apps.
 """
 
 import os
@@ -13,6 +14,10 @@ from typing import TYPE_CHECKING
 from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
     HF_RUNTIME_ENV_NAME,
+)
+from policyengine_simulation_executor.job_progress import (
+    NULL_JOB_PROGRESS,
+    StoredJobProgressReporter,
 )
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_country_model_version,
@@ -152,8 +157,12 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
     bucket = os.environ.get("POLICYENGINE_ARTIFACT_BUCKET", "")
     if not digest:
         return bucket, None
-    from policyengine_simulation_executor.artifact_store import ArtifactStore
-    from policyengine_simulation_executor.precompute_models import ArtifactManifest
+    from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # deploy-time manifest check only; the app import stays light for the precompute and smoke apps
+        ArtifactStore,
+    )
+    from policyengine_simulation_executor.precompute_models import (  # noqa: PLC0415  # deploy-time manifest check only; the app import stays light for the precompute and smoke apps
+        ArtifactManifest,
+    )
 
     store = ArtifactStore(bucket or None)
     payload = store.read_manifest(digest)
@@ -274,13 +283,9 @@ def _job_progress_reporter() -> "JobProgressReporter":
     writes a record under its own call id. ``/budget-window-jobs`` does not
     read those records yet; the writes are a few small Dict puts per year.
     """
-    from policyengine_simulation_contract.job_progress_state import (
+    from policyengine_simulation_contract.job_progress_state import (  # noqa: PLC0415  # resolved per call so tests can patch job_progress_state
         get_job_progress,
         put_job_progress,
-    )
-    from policyengine_simulation_executor.job_progress import (
-        NULL_JOB_PROGRESS,
-        StoredJobProgressReporter,
     )
 
     try:
@@ -361,7 +366,9 @@ def run_simulation(
             remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
-            from src.modal.segmented_national import dispatch_run_simulation
+            from src.modal.segmented_national import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+                dispatch_run_simulation,
+            )
 
             try:
                 # Plain national macro requests fan out across region groups
@@ -431,7 +438,7 @@ def run_simulation_segment(
             remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
-            from policyengine_simulation_executor.simulation_runtime import (
+            from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
                 run_simulation_impl,
             )
 
@@ -471,7 +478,9 @@ def run_budget_window_batch(
             remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
-            from src.modal.budget_window_batch import run_budget_window_batch_impl
+            from src.modal.budget_window_batch import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+                run_budget_window_batch_impl,
+            )
 
             return run_budget_window_batch_impl(params, runtime=runtime)
     finally:

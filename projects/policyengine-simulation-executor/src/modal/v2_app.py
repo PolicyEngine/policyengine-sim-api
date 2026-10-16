@@ -154,7 +154,7 @@ coordinator_image = build_v2_image(("us", "uk"))
 
 
 def _validate(country: CountryId) -> dict:
-    from policyengine_simulation_executor.stage12_worker_validation import (
+    from policyengine_simulation_executor.stage12_worker_validation import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         validate_country_worker,
     )
 
@@ -206,7 +206,7 @@ def run_single_simulation_us(
     observability_context: dict | None = None,
 ) -> dict:
     """Calculate one planned US simulation and return its artifact descriptor."""
-    from policyengine_simulation_executor.stage12_runtime import (
+    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         run_single_simulation,
     )
 
@@ -252,7 +252,7 @@ def run_single_simulation_uk(
     observability_context: dict | None = None,
 ) -> dict:
     """Calculate one planned UK simulation and return its artifact descriptor."""
-    from policyengine_simulation_executor.stage12_runtime import (
+    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         run_single_simulation,
     )
 
@@ -306,7 +306,7 @@ def coordinate_report(
     result is compared with that production job's. A report another
     invocation already claimed returns a ``deduplicated`` marker instead.
     """
-    from policyengine_simulation_executor.stage12_runtime import (
+    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         coordinate_report as run_report_coordinator,
     )
 

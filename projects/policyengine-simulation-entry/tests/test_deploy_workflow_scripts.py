@@ -32,7 +32,8 @@ def fakes(tmp_path: Path) -> FakeCommands:
 def _step(workflow: str, name: str) -> str:
     """Return one workflow step's text, from its ``- name:`` to the next step."""
     match = re.search(
-        rf"^(?P<indent> +)- name: {re.escape(name)}\n(?P<body>.*?)(?=^(?P=indent)- |^  \S|\Z)",
+        rf"^(?P<indent> +)- name: {re.escape(name)}\n"
+        r"(?P<body>.*?)(?=^(?P=indent)- |^  \S|\Z)",
         workflow,
         flags=re.MULTILINE | re.DOTALL,
     )
@@ -323,8 +324,8 @@ def test_deploy_workflow_runs_the_stage12_worker_scripts():
         validation
     )
     assert (
-        f'run: ../../.github/scripts/{VALIDATE_V2_WORKERS} "${{{{ inputs.modal_environment }}}}"'
-        in validation
+        f"run: ../../.github/scripts/{VALIDATE_V2_WORKERS} "
+        '"${{ inputs.modal_environment }}"' in validation
     )
 
     assert "application_name: ${{ steps.application.outputs.name }}" in workflow

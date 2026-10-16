@@ -180,7 +180,7 @@ def tracked_stage(
         yield
 
 
-class Stage12FailureCause(Exception):
+class Stage12FailureCause(Exception):  # noqa: N818  # telemetry records its name as the error type of every recorded Stage 12 failure cause
     """A redacted stand-in for a failure, safe to export to telemetry."""
 
 

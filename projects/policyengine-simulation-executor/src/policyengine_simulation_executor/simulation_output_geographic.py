@@ -31,11 +31,11 @@ if TYPE_CHECKING:
 
 def _required_uk_geography_lookup_csv_path(spec: UKGeographyAssetSpec) -> str:
     """Resolve one required lookup under the runtime GCP identity."""
-    from policyengine.outputs.uk_geography_impact import (
+    from policyengine.outputs.uk_geography_impact import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine's lookup resolver
         resolve_uk_geography_lookup_csv_path,
     )
 
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # import cycle: simulation_runtime imports this module through its output builder
         setup_gcp_credentials,
     )
 
@@ -82,7 +82,10 @@ def _complete_uk_geography_output(
 
 @lru_cache(maxsize=1)
 def _policyengine_us_district_metadata() -> tuple[dict[int, str], frozenset[str]]:
-    from policyengine.countries.us.data import AT_LARGE_STATES, US_STATE_FIPS
+    from policyengine.countries.us.data import (
+        AT_LARGE_STATES,
+        US_STATE_FIPS,
+    )
 
     return (
         {
@@ -219,7 +222,7 @@ def build_congressional_district_impact(
     if not _should_build_us_congressional_district_impact(region_code):
         return None
 
-    from policyengine.outputs.congressional_district_impact import (
+    from policyengine.outputs.congressional_district_impact import (  # noqa: PLC0415  # bound per call, like this module's patched policyengine.outputs import above
         compute_us_congressional_district_impacts,
     )
 
@@ -305,11 +308,11 @@ def build_uk_local_authority_impact(
         msg = "UK local-authority boundary metadata is required"
         raise ValueError(msg)
 
-    from policyengine.outputs.uk_geography_impact import (
+    from policyengine.outputs.uk_geography_impact import (  # noqa: PLC0415  # bound per call, like this module's patched policyengine.outputs import above
         compute_longwise_uk_geography_impacts,
     )
 
-    from policyengine_simulation_executor.uk_local_authority_metadata import (
+    from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module loads only for UK local-authority output
         load_uk_local_authority_resources,
     )
 

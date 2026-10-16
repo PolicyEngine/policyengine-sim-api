@@ -107,7 +107,8 @@ def test_database_url_credentials_are_redacted_from_the_summary() -> None:
 
 def test_connection_string_password_assignment_is_redacted() -> None:
     error = RuntimeError(
-        f"invalid dsn: host=pooler.example.com user=postgres password={DATABASE_PASSWORD}"
+        "invalid dsn: host=pooler.example.com user=postgres "
+        f"password={DATABASE_PASSWORD}"
     )
 
     summary = failure_summary(error)
@@ -138,7 +139,10 @@ def test_secret_environment_values_are_redacted(monkeypatch) -> None:
     [
         ("Authorization: Bearer abc.def-ghi", "abc.def-ghi"),
         (
-            "download https://storage.example.com/data.h5?X-Goog-Signature=signed123 failed",
+            (
+                "download https://storage.example.com/data.h5"
+                "?X-Goog-Signature=signed123 failed"
+            ),
             "signed123",
         ),
         ("token rejected: hf_abcdefghijklmnopqrstuvwxyz0123", "hf_abcdefghij"),
@@ -335,7 +339,8 @@ def test_database_errors_report_the_driver_cause_without_parameters() -> None:
         (
             (
                 'null value in column "status" violates not-null constraint\n'
-                "DETAIL:  Failing row contains (stored-identifier, stored\nvalue, null)."
+                "DETAIL:  Failing row contains "
+                "(stored-identifier, stored\nvalue, null)."
             ),
             (
                 'null value in column "status" violates not-null constraint '

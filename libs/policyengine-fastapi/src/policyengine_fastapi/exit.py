@@ -47,4 +47,4 @@ class AppExit:
         self._exit()
 
 
-exit = AppExit()
+exit = AppExit()  # noqa: A001  # public name: projects import policyengine_fastapi.exit.exit

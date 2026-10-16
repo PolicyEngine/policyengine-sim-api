@@ -52,8 +52,8 @@ from policyengine_simulation_entry.auth import (
 )
 from policyengine_simulation_entry.backend import (
     BackendResponse,
-    BackendTimeout,
-    BackendUnavailable,
+    BackendTimeoutError,
+    BackendUnavailableError,
     OldGatewayBackend,
     SimulationBackend,
 )
@@ -61,14 +61,14 @@ from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.schemas import (
     BackendTelemetryAttributes,
     BackendTelemetryPayload,
-    CallerIdentity,
     RequestIdentifiers,
     TemporaryStage12ReportResponse,
     TemporaryStage12SubmissionResponse,
 )
 from policyengine_simulation_entry.stage12_backend import (
+    Stage12ComparisonBackend,
     TemporaryStage12DispatchFailed,
-    TemporaryStage12UnsupportedRequest,
+    TemporaryStage12UnsupportedRequestError,
 )
 
 if TYPE_CHECKING:
@@ -260,10 +260,6 @@ def create_app(
     stage12_operator = authorizer.require_permission("stage12:operate")
     runtime_comparison = comparison_backend
     if runtime_comparison is None and runtime_settings.stage12_resources_configured:
-        from policyengine_simulation_entry.stage12_backend import (
-            Stage12ComparisonBackend,
-        )
-
         runtime_comparison = Stage12ComparisonBackend.from_settings(
             runtime_settings,
             runtime=runtime,
@@ -379,7 +375,7 @@ def create_app(
                 response.headers[OBSERVABILITY_ID_HEADER] = observability_id
             elif OBSERVABILITY_ID_HEADER in response.headers:
                 del response.headers[OBSERVABILITY_ID_HEADER]
-        except BackendTimeout:
+        except BackendTimeoutError:
             runtime.event(
                 "simulation_entry_backend_timeout",
                 attributes={
@@ -396,7 +392,7 @@ def create_app(
                     **BACKEND_RESPONSE_HEADER,
                 },
             )
-        except BackendUnavailable:
+        except BackendUnavailableError:
             runtime.event(
                 "simulation_entry_backend_unavailable",
                 attributes={
@@ -431,11 +427,11 @@ def create_app(
     @app.post(
         "/internal/stage12/reports",
         include_in_schema=False,
+        dependencies=[Depends(stage12_operator)],
     )
     async def submit_temporary_stage12_report(
         body: SimulationRequest,
         request: Request,
-        caller: CallerIdentity | None = Depends(stage12_operator),
     ) -> Response:
         if not runtime_settings.stage12_enabled:
             return JSONResponse(
@@ -466,7 +462,7 @@ def create_app(
                 content={"detail": "Stage 12 submission acknowledgement timed out."},
                 headers={"Retry-After": "10"},
             )
-        except TemporaryStage12UnsupportedRequest as error:
+        except TemporaryStage12UnsupportedRequestError as error:
             return JSONResponse(
                 status_code=422,
                 content={
@@ -510,11 +506,11 @@ def create_app(
     @app.get(
         "/internal/stage12/reports/{evaluation_id}",
         include_in_schema=False,
+        dependencies=[Depends(stage12_operator)],
     )
     async def get_temporary_stage12_report(
         evaluation_id: UUID,
         request: Request,
-        caller: CallerIdentity | None = Depends(stage12_operator),
     ) -> Response:
         comparison = runtime_comparison
         if comparison is None:
@@ -589,11 +585,11 @@ def create_app(
                 "model": SimulationErrorResponse,
             },
         },
+        dependencies=[Depends(simulation_submitter)],
     )
     async def submit_comparison(
         body: SimulationRequest,
         request: Request,
-        caller: CallerIdentity | None = Depends(simulation_submitter),
     ) -> Response:
         observability_id = start_workflow_observability(request)
         request_payload = _model_json(body)
@@ -658,11 +654,11 @@ def create_app(
                 "model": SimulationErrorResponse,
             },
         },
+        dependencies=[Depends(simulation_submitter)],
     )
     async def submit_budget_window(
         body: BudgetWindowBatchRequest,
         request: Request,
-        caller: CallerIdentity | None = Depends(simulation_submitter),
     ) -> Response:
         start_workflow_observability(request)
         return await forward(
@@ -697,12 +693,9 @@ def create_app(
             404: {"description": "Job not found"},
             500: {"description": "Job failed"},
         },
+        dependencies=[Depends(simulation_reader)],
     )
-    async def get_job(
-        job_id: str,
-        request: Request,
-        caller: CallerIdentity | None = Depends(simulation_reader),
-    ) -> Response:
+    async def get_job(job_id: str, request: Request) -> Response:
         return await forward(
             request,
             "GET",
@@ -732,11 +725,11 @@ def create_app(
             404: {"description": "Batch job not found"},
             500: {"description": "Batch failed"},
         },
+        dependencies=[Depends(simulation_reader)],
     )
     async def get_budget_window_job(
         batch_job_id: str,
         request: Request,
-        caller: CallerIdentity | None = Depends(simulation_reader),
     ) -> Response:
         return await forward(
             request,

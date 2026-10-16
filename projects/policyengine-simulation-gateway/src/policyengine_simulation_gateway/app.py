@@ -80,23 +80,29 @@ def web_app() -> FastAPI:
       GET /versions - List available versions
       GET /health - Health check
     """
-    from fastapi import FastAPI
-    from policyengine_simulation_observability.observability import (
+    from fastapi import (  # noqa: PLC0415  # Modal function body: the gateway app is built in its container, not at deploy time
+        FastAPI,
+    )
+    from policyengine_simulation_observability.observability import (  # noqa: PLC0415  # Modal function body: the gateway app is built in its container, not at deploy time
         init_simulation_observability,
     )
 
-    from policyengine_simulation_gateway.auth import (
+    from policyengine_simulation_gateway.auth import (  # noqa: PLC0415  # Modal function body: the gateway app is built in its container, not at deploy time
         enforce_auth_configured_guard,
         enforce_production_auth_guard,
     )
-    from policyengine_simulation_gateway.correlation import (
+    from policyengine_simulation_gateway.correlation import (  # noqa: PLC0415  # Modal function body: the gateway app is built in its container, not at deploy time
         install_observability_id_middleware,
     )
-    from policyengine_simulation_gateway.endpoints import router
+    from policyengine_simulation_gateway.endpoints import (  # noqa: PLC0415  # Modal function body: the gateway app is built in its container, not at deploy time
+        router,
+    )
 
     api = FastAPI(
         title="PolicyEngine Simulation Gateway",
-        description="Submit and poll simulation jobs. Routes to versioned simulation apps.",
+        description=(
+            "Submit and poll simulation jobs. Routes to versioned simulation apps."
+        ),
         version="1.0.0",
     )
     runtime = init_simulation_observability(

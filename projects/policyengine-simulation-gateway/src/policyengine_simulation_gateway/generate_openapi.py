@@ -37,7 +37,6 @@ def create_openapi_app() -> FastAPI:
 
     @app.post(
         "/simulate/economy/comparison",
-        response_model=JobSubmitResponse,
         responses={
             200: {"description": "Job submitted successfully"},
             400: {"description": "Invalid request (unknown country/version)"},
@@ -54,7 +53,6 @@ def create_openapi_app() -> FastAPI:
 
     @app.post(
         "/simulate/economy/budget-window",
-        response_model=BudgetWindowBatchSubmitResponse,
         responses={
             200: {"description": "Budget-window batch submitted successfully"},
             400: {"description": "Invalid request (unknown country/version/year)"},
@@ -72,7 +70,6 @@ def create_openapi_app() -> FastAPI:
 
     @app.get(
         "/jobs/{job_id}",
-        response_model=JobStatusResponse,
         responses={
             200: {"description": "Job complete", "model": JobStatusResponse},
             202: {"description": "Job still running"},
@@ -95,7 +92,6 @@ def create_openapi_app() -> FastAPI:
 
     @app.get(
         "/budget-window-jobs/{batch_job_id}",
-        response_model=BudgetWindowBatchStatusResponse,
         responses={
             200: {
                 "description": "Batch complete",
@@ -113,24 +109,24 @@ def create_openapi_app() -> FastAPI:
         msg = "Stub for OpenAPI generation"
         raise NotImplementedError(msg)
 
-    @app.get("/versions", response_model=VersionsResponse)
+    @app.get("/versions")
     async def list_versions() -> VersionsResponse:
         """List all available routing versions."""
         msg = "Stub for OpenAPI generation"
         raise NotImplementedError(msg)
 
-    @app.get("/versions/{kind}", response_model=VersionMap)
+    @app.get("/versions/{kind}")
     async def get_country_versions(kind: str) -> VersionMap:
         """Get available versions for policyengine, US, or UK routing."""
         msg = "Stub for OpenAPI generation"
         raise NotImplementedError(msg)
 
-    @app.get("/health", response_model=HealthResponse)
+    @app.get("/health")
     async def health() -> HealthResponse:
         """Health check endpoint."""
         return HealthResponse()
 
-    @app.post("/ping", response_model=PingResponse)
+    @app.post("/ping")
     async def ping(request: PingRequest) -> PingResponse:
         """Verify the API is able to receive and process requests."""
         msg = "Stub for OpenAPI generation"

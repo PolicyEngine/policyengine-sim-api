@@ -1,4 +1,7 @@
-"""Proof fixture: a Stage 12 runtime that creates its own table. The rule must reject it."""
+"""Proof fixture: a Stage 12 runtime that creates its own table.
+
+The rule must reject it.
+"""
 
 from __future__ import annotations
 

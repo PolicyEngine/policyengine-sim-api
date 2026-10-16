@@ -153,7 +153,7 @@ def _write_fake_smoke_curl(tmp_path: Path, revisions: list[str]) -> tuple[Path, 
                 exit 2
                 ;;
             esac
-            """),
+            """),  # noqa: E501  # the fake curl writes its HTTP header block with one printf
         encoding="utf-8",
     )
     fake_curl.chmod(0o755)
@@ -705,16 +705,17 @@ def test_full_stack_promotion_order_is_explicit():
         "update_routing",
     } <= promote_needs
     assert (
-        'cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"'
-        in reusable_workflow
+        'cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" '
+        '"${PREVIOUS_REVISION}"' in reusable_workflow
     )
     assert (
-        'cloud-run-simulation-entry-smoke.sh "${CUSTOM_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"'
-        in reusable_workflow
+        'cloud-run-simulation-entry-smoke.sh "${CUSTOM_URL}" "${TARGET_REVISION}" '
+        '"${PREVIOUS_REVISION}"' in reusable_workflow
     )
     assert (
-        'cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.deploy_entrypoint.outputs.revision }}"'
-        in reusable_workflow
+        "cloud-run-simulation-entry-smoke.sh "
+        '"${{ needs.deploy_entrypoint.outputs.candidate_url }}" '
+        '"${{ needs.deploy_entrypoint.outputs.revision }}"' in reusable_workflow
     )
     assert "failure() && steps.promote.outcome == 'success'" in reusable_workflow
     assert "needs: beta" in deploy_workflow
@@ -1425,8 +1426,8 @@ def test_each_publication_is_named_by_its_run_attempt_and_environment():
         if step.get("name") == "Plan the routing change"
     )
     assert (
-        '--publication-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RELEASE_ENVIRONMENT}"'
-        in plan["run"]
+        '--publication-id "${GITHUB_RUN_ID}-'
+        '${GITHUB_RUN_ATTEMPT}-${RELEASE_ENVIRONMENT}"' in plan["run"]
     )
     assert plan["env"]["RELEASE_ENVIRONMENT"] == "${{ inputs.release_environment }}"
 
@@ -1686,7 +1687,7 @@ def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
                 exit 2
                 ;;
             esac
-            """),
+            """),  # noqa: E501  # the fake gcloud prints each JSON response on one line, as gcloud does
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -1705,8 +1706,12 @@ def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
         capture_output=True,
         env={
             **base_env,
-            "SIMULATION_ENTRYPOINT_TARGET_REVISION": "policyengine-simulation-entry-00002-new",
-            "SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION": "policyengine-simulation-entry-00001-old",
+            "SIMULATION_ENTRYPOINT_TARGET_REVISION": (
+                "policyengine-simulation-entry-00002-new"
+            ),
+            "SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION": (
+                "policyengine-simulation-entry-00001-old"
+            ),
         },
     )
     assert (
@@ -1720,8 +1725,12 @@ def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
         capture_output=True,
         env={
             **base_env,
-            "SIMULATION_ENTRYPOINT_TARGET_REVISION": "policyengine-simulation-entry-00001-old",
-            "SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION": "policyengine-simulation-entry-00002-new",
+            "SIMULATION_ENTRYPOINT_TARGET_REVISION": (
+                "policyengine-simulation-entry-00001-old"
+            ),
+            "SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION": (
+                "policyengine-simulation-entry-00002-new"
+            ),
         },
     )
     assert (
@@ -1743,7 +1752,7 @@ def test_traffic_change_refuses_an_intervening_promotion(tmp_path):
             set -euo pipefail
             active="$(cat "${FAKE_GCLOUD_STATE}")"
             printf '{"status":{"traffic":[{"revisionName":"%s","percent":100}]}}\\n' "${active}"
-            """),
+            """),  # noqa: E501  # the fake gcloud prints its JSON response on one line, as gcloud does
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -1758,8 +1767,12 @@ def test_traffic_change_refuses_an_intervening_promotion(tmp_path):
             "FAKE_GCLOUD_STATE": str(state_file),
             "SIMULATION_ENTRYPOINT_GCP_PROJECT_ID": "simulation-entry-test",
             "SIMULATION_ENTRYPOINT_SERVICE": "policyengine-simulation-entry",
-            "SIMULATION_ENTRYPOINT_TARGET_REVISION": "policyengine-simulation-entry-00002-new",
-            "SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION": "policyengine-simulation-entry-00001-old",
+            "SIMULATION_ENTRYPOINT_TARGET_REVISION": (
+                "policyengine-simulation-entry-00002-new"
+            ),
+            "SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION": (
+                "policyengine-simulation-entry-00001-old"
+            ),
         },
     )
 
@@ -2070,7 +2083,9 @@ def test_deploy_gates_pass_the_release_identity_to_the_smoke():
         if "cloud-run-simulation-entry-smoke.sh" in step.get("run", "")
     )
     expected = {
-        "EXPECTED_IDENTITY": "${{ inputs.deploy_existing_stack && 'required' || 'none' }}",
+        "EXPECTED_IDENTITY": (
+            "${{ inputs.deploy_existing_stack && 'required' || 'none' }}"
+        ),
         "EXPECTED_APP_NAME": (
             "${{ inputs.deploy_existing_stack && "
             "needs.deploy_executor.outputs.app_name || '' }}"
@@ -2080,7 +2095,8 @@ def test_deploy_gates_pass_the_release_identity_to_the_smoke():
             "needs.prepare.outputs.policyengine_version || '' }}"
         ),
         "EXPECTED_UK_MODEL_VERSION": (
-            "${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_version || '' }}"
+            "${{ inputs.deploy_existing_stack && "
+            "needs.prepare.outputs.uk_version || '' }}"
         ),
         "EXPECTED_UK_DATASET_SHA256": (
             "${{ inputs.deploy_existing_stack && "

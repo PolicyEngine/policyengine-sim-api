@@ -454,7 +454,10 @@ class Stage12PersistenceStore:
                 .one_or_none()
             )
             if existing is None:
-                msg = "comparison simulation conflict did not resolve to an existing identity"
+                msg = (
+                    "comparison simulation conflict did not resolve to an "
+                    "existing identity"
+                )
                 raise ValueError(msg)
             resolved = _simulation(existing)
             require_simulation_conflict_matches(resolved, record)

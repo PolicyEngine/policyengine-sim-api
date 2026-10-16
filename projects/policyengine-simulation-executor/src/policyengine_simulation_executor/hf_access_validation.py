@@ -138,7 +138,9 @@ def build_uk_bundle_access_plan() -> tuple[HFAccessTarget, ...]:
 
 
 def _load_whoami(token: str) -> Mapping[str, object]:
-    from huggingface_hub import HfApi
+    from huggingface_hub import (  # noqa: PLC0415  # huggingface_hub stays out of this module's import-time imports
+        HfApi,
+    )
 
     return HfApi().whoami(token=token)
 

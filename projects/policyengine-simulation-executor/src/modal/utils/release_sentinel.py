@@ -80,7 +80,9 @@ class SentinelError(RuntimeError):
 
 def worker_payload(request: Mapping[str, Any]) -> dict[str, Any]:
     """Build the payload the gateway forwards to the worker for ``request``."""
-    from policyengine_simulation_contract.gateway_models import SimulationRequest
+    from policyengine_simulation_contract.gateway_models import (  # noqa: PLC0415  # the contract models load only when a payload is built
+        SimulationRequest,
+    )
 
     return SimulationRequest.model_validate(dict(request)).model_dump(
         exclude={"version", "policyengine_version", "telemetry"},
@@ -114,7 +116,7 @@ def agree(expected: float, actual: float) -> bool:
 
 
 def _bundle_identity() -> dict[str, Any]:
-    from policyengine_simulation_executor.release_bundle import (
+    from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # resolved at call time, as the tests' module patches rely on
         get_country_release_bundle,
     )
 
@@ -130,10 +132,10 @@ def _bundle_identity() -> dict[str, Any]:
 
 
 def _local_runner() -> Callable[[dict[str, Any]], Mapping[str, Any]]:
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # loads the policyengine runtime only for the expected command; the tests patch it
         run_simulation_impl,
     )
-    from policyengine_simulation_executor.stage12_qualification import (
+    from policyengine_simulation_executor.stage12_qualification import (  # noqa: PLC0415  # loads the policyengine runtime only for the expected command; the tests patch it
         _local_qualification_runtime,
     )
 
@@ -278,7 +280,8 @@ def check_deployment(
         ):
             if served.get(field) != wanted:
                 problems.append(
-                    f"{label}: served {field} {served.get(field)!r}, expected {wanted!r}"
+                    f"{label}: served {field} {served.get(field)!r}, "
+                    f"expected {wanted!r}"
                 )
         deadline = clock() + timeout_seconds
         result = None

@@ -39,10 +39,12 @@ def fetch_artifacts(
     ``client`` is a test seam; real builds construct a storage client from
     the layer's GCP secret (or ambient ADC for local drill runs).
     """
-    import json
-    import logging
-    import os
-    from pathlib import Path
+    import json  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+    import logging  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+    import os  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+    from pathlib import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+        Path,
+    )
 
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
@@ -118,7 +120,9 @@ def fetch_artifacts(
                     raise
             info = json.loads(parsed) if isinstance(parsed, str) else parsed
 
-            from google.oauth2 import service_account
+            from google.oauth2 import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+                service_account,
+            )
 
             # Credentials built in memory, never written to disk: this
             # layer's container filesystem is committed into the image,
@@ -130,7 +134,9 @@ def fetch_artifacts(
                 "project": info.get("project_id"),
             }
         # No blob: ambient ADC (the local fault-drill path).
-        from google.cloud import storage
+        from google.cloud import (
+            storage,
+        )
 
         client = storage.Client(**creds_kwargs)
 
@@ -175,18 +181,22 @@ def fetch_artifacts(
 
 def snapshot_models() -> None:
     """Pre-load models at image build time for fast cold starts."""
-    import logging
+    import logging  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
 
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
     logger.info("Pre-loading US tax-benefit system...")
-    from policyengine_us import CountryTaxBenefitSystem as USSystem
+    from policyengine_us import (
+        CountryTaxBenefitSystem as USSystem,
+    )
 
     USSystem()
 
     logger.info("Pre-loading UK tax-benefit system...")
-    from policyengine_uk import CountryTaxBenefitSystem as UKSystem
+    from policyengine_uk import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+        CountryTaxBenefitSystem as UKSystem,
+    )
 
     UKSystem()
 

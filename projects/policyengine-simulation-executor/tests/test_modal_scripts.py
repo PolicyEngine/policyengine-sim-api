@@ -78,8 +78,8 @@ class TestModalExtractVersions:
 
         assert "policyengine_core_version" in workflow
         assert (
-            "POLICYENGINE_CORE_VERSION: ${{ needs.prepare.outputs.policyengine_core_version }}"
-            in workflow
+            "POLICYENGINE_CORE_VERSION: "
+            "${{ needs.prepare.outputs.policyengine_core_version }}" in workflow
         )
 
     def test_deploy_workflow_threads_force_latest_to_routing_publisher(self):

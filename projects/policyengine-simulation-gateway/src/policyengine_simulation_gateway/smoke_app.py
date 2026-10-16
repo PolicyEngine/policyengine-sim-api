@@ -26,14 +26,14 @@ def smoke_import_gateway() -> dict:
 
     Return the number of modules imported and the app's ``METHOD path`` routes.
     """
-    import importlib
-    import os
-    import pkgutil
+    import importlib  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
+    import os  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
+    import pkgutil  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
 
-    import policyengine_simulation_contract
-    import policyengine_simulation_observability
+    import policyengine_simulation_contract  # noqa: PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
+    import policyengine_simulation_observability  # noqa: PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
 
-    import policyengine_simulation_gateway
+    import policyengine_simulation_gateway  # noqa: PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
 
     imported = []
     for package in (
@@ -52,7 +52,9 @@ def smoke_import_gateway() -> dict:
     # import surface is exercised without real JWT material.
     os.environ.setdefault("GATEWAY_AUTH_ISSUER", "https://smoke.invalid/")
     os.environ.setdefault("GATEWAY_AUTH_AUDIENCE", "smoke")
-    from policyengine_simulation_gateway.testing import create_gateway_app
+    from policyengine_simulation_gateway.testing import (  # noqa: PLC0415  # smoke check: imported after the auth environment is staged
+        create_gateway_app,
+    )
 
     asgi_app = create_gateway_app()
     return {

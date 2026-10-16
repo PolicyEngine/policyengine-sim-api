@@ -1,7 +1,7 @@
 from unittest.mock import Mock, call
 
 import pytest
-from policyengine_fastapi.exit import exit
+from policyengine_fastapi.exit import exit as app_exit
 
 
 @pytest.mark.asyncio
@@ -13,9 +13,9 @@ async def test_lifecycle_executes_callbacks__when_app_ends():
     parent.app = app
     parent.callback = callback
 
-    exit()(callback)
+    app_exit()(callback)
 
-    async with exit.lifespan():
+    async with app_exit.lifespan():
         app()
 
     parent.assert_has_calls([call.app(), call.callback()])

@@ -35,12 +35,14 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 from policyengine_simulation_executor.stage12_parity import (
     NumericalTolerance,
-    ParityMismatch,
+    ParityMismatchError,
     compare_aggregate_reports,
     compare_simulation_frames,
 )
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
+    build_aggregate_report,
+    calculate_simulation_frames,
     simulation_input_sha256,
 )
 from policyengine_simulation_executor.stage12_runtime.aggregation import (
@@ -132,17 +134,17 @@ def _validate_matching_input(
             continue
         if actual_value != expected_value:
             error_code = "normalized_input_mismatch"
-            raise ParityMismatch(error_code, field)
+            raise ParityMismatchError(error_code, field)
     if existing_request.get("data") not in accepted_dataset_values:
         error_code = "dataset_provenance_mismatch"
-        raise ParityMismatch(error_code, "data")
+        raise ParityMismatchError(error_code, "data")
     population = baseline.population
     if population.kind != "dataset":
         error_code = "population_kind_mismatch"
-        raise ParityMismatch(error_code, "population.kind")
+        raise ParityMismatchError(error_code, "population.kind")
     if population.artifact.uri != bundle.dataset.uri:
         error_code = "dataset_provenance_mismatch"
-        raise ParityMismatch(
+        raise ParityMismatchError(
             error_code,
             "population.artifact.uri",
         )
@@ -155,25 +157,25 @@ def _existing_frames(
 ) -> dict[str, pd.DataFrame]:
     if not isinstance(microdata, Mapping):
         error_code = "missing_existing_microdata"
-        raise ParityMismatch(error_code, "report._microdata")
+        raise ParityMismatchError(error_code, "report._microdata")
     raw_side = microdata.get(side)
     raw_dtypes = microdata.get("dtypes")
     side_dtypes = raw_dtypes.get(side) if isinstance(raw_dtypes, Mapping) else None
     if not isinstance(raw_side, Mapping) or not isinstance(side_dtypes, Mapping):
         error_code = "invalid_existing_microdata"
-        raise ParityMismatch(error_code, f"report._microdata.{side}")
+        raise ParityMismatchError(error_code, f"report._microdata.{side}")
     frames: dict[str, pd.DataFrame] = {}
     for entity, columns in raw_side.items():
         entity_dtypes = side_dtypes.get(entity)
         if not isinstance(entity, str) or not isinstance(columns, dict):
             error_code = "invalid_existing_microdata"
-            raise ParityMismatch(
+            raise ParityMismatchError(
                 error_code,
                 f"report._microdata.{side}",
             )
         if not isinstance(entity_dtypes, dict):
             error_code = "invalid_existing_dtypes"
-            raise ParityMismatch(
+            raise ParityMismatchError(
                 error_code,
                 f"report._microdata.dtypes.{side}.{entity}",
             )
@@ -237,7 +239,7 @@ def qualify_report_parity(
 
     local_runtime: ObservabilityRuntime | None = None
     if existing_runner is None:
-        from policyengine_simulation_executor.simulation_runtime import (
+        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # default runner, bound only when none is injected
             run_simulation_impl,
         )
 
@@ -249,16 +251,8 @@ def qualify_report_parity(
 
         existing_runner = run_existing
     if single_simulation_runner is None:
-        from policyengine_simulation_executor.stage12_runtime import (
-            calculate_simulation_frames,
-        )
-
         single_simulation_runner = calculate_simulation_frames
     if aggregate_builder is None:
-        from policyengine_simulation_executor.stage12_runtime import (
-            build_aggregate_report,
-        )
-
         aggregate_builder = build_aggregate_report
 
     request_with_microdata = dict(existing_request)
@@ -275,13 +269,13 @@ def qualify_report_parity(
     bundle = report.baseline.bundle
     if existing_result.get("model_version") != bundle.country_package_version:
         error_code = "country_package_provenance_mismatch"
-        raise ParityMismatch(
+        raise ParityMismatchError(
             error_code,
             "report.model_version",
         )
     if existing_result.get("data_version") != bundle.dataset.artifact_revision:
         error_code = "dataset_provenance_mismatch"
-        raise ParityMismatch(
+        raise ParityMismatchError(
             error_code,
             "report.data_version",
         )
@@ -321,7 +315,7 @@ def qualify_report_parity(
     v2_result = v2_report.get("result")
     if not isinstance(v2_result, Mapping):
         error_code = "invalid_v2_aggregate"
-        raise ParityMismatch(error_code, "report.result")
+        raise ParityMismatchError(error_code, "report.result")
     compare_aggregate_reports(
         existing_result,
         v2_result,

@@ -8,6 +8,8 @@ from collections.abc import Callable, Mapping
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
+from policyengine_simulation_contract.spm import spm_error_detail
+
 if TYPE_CHECKING:
     import pandas as pd
     from _typeshed import ConvertibleToFloat
@@ -76,7 +78,10 @@ def _sum_output_variable(simulation: Simulation, variable: str, entity: str) -> 
     if variable in data.columns:
         return float(data[variable].sum())
 
-    from policyengine.outputs import Aggregate, AggregateType
+    from policyengine.outputs import (  # noqa: PLC0415  # policyengine stays out of this module's import-time imports
+        Aggregate,
+        AggregateType,
+    )
 
     output = Aggregate(
         simulation=simulation,
@@ -96,7 +101,10 @@ def _change_output_variable(
     if variable in baseline_data.columns and variable in reform_data.columns:
         return float((reform_data[variable] - baseline_data[variable]).sum())
 
-    from policyengine.outputs import ChangeAggregate, ChangeAggregateType
+    from policyengine.outputs import (  # noqa: PLC0415  # policyengine stays out of this module's import-time imports
+        ChangeAggregate,
+        ChangeAggregateType,
+    )
 
     output = ChangeAggregate(
         baseline_simulation=baseline,
@@ -124,8 +132,6 @@ def _try_compute_output[**P, T](
     try:
         return fn(*args, **kwargs)
     except Exception as exc:
-        from policyengine_simulation_contract.spm import spm_error_detail
-
         if spm_error_detail(exc) is not None:
             raise
         logger.warning("Unable to calculate %s", label, exc_info=True)

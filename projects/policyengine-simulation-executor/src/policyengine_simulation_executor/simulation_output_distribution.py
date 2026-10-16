@@ -61,7 +61,7 @@ def build_intra_decile_output(
     A calculation failure is logged and yields empty deciles with zero overall
     shares rather than failing the request; SPM selection errors propagate.
     """
-    from policyengine.outputs.intra_decile_impact import (
+    from policyengine.outputs.intra_decile_impact import (  # noqa: PLC0415  # policyengine stays out of this module's import-time imports
         compute_intra_decile_impacts,
     )
 

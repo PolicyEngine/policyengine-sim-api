@@ -68,7 +68,9 @@ def normalized_compatibility_paths(spec: OpenAPIDocument) -> OpenAPIPathMap:
                 operation.pop("security", None)
     for path, description in {
         "/simulate/economy/comparison": "Invalid request (unknown country/version)",
-        "/simulate/economy/budget-window": "Invalid request (unknown country/version/year)",
+        "/simulate/economy/budget-window": (
+            "Invalid request (unknown country/version/year)"
+        ),
     }.items():
         paths[path]["post"]["responses"]["400"] = {"description": description}
     for path in ("/jobs/{job_id}", "/budget-window-jobs/{batch_job_id}"):
