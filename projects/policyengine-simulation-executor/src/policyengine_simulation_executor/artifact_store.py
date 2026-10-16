@@ -49,7 +49,7 @@ def resolve_bucket_name(explicit: str | None = None) -> str:
 
 
 def _default_client() -> storage.Client:
-    from google.cloud import (  # noqa: PLC0415  # google-cloud-storage loads only when a default client is built
+    from google.cloud import (
         storage,
     )
 

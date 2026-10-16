@@ -58,12 +58,12 @@ def _unmonitored_stage_scope(
 
 def _country_model(country: CountryId) -> OutputVariableModel:
     if country == "us":
-        from policyengine.tax_benefit_models import (  # noqa: PLC0415  # policyengine's US model loads only for a US simulation
+        from policyengine.tax_benefit_models import (
             us,
         )
 
         return us.model
-    from policyengine.tax_benefit_models import (  # noqa: PLC0415  # policyengine's UK model loads only for a UK simulation
+    from policyengine.tax_benefit_models import (
         uk,
     )
 
@@ -133,7 +133,7 @@ def _configure_country_outputs(
     if include_cliff_impacts:
         configure_cliff_impact_variables(baseline, reform)
     if country == "us":
-        from policyengine.tax_benefit_models.us.analysis import (  # noqa: PLC0415  # policyengine's US model loads only for a US simulation
+        from policyengine.tax_benefit_models.us.analysis import (
             configure_budgetary_impact_variables,
         )
 

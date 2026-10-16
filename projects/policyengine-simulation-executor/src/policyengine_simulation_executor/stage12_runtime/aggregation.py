@@ -117,7 +117,7 @@ def _dataset_from_frames(
             else MicroDataFrame(frame)
         )
     if country == "us":
-        from policyengine.tax_benefit_models.us.datasets import (  # noqa: PLC0415  # policyengine's US model loads only for a US report
+        from policyengine.tax_benefit_models.us.datasets import (
             PolicyEngineUSDataset,
             USYearData,
         )
@@ -129,7 +129,7 @@ def _dataset_from_frames(
             name="stage12-comparison",
             description="Retained Stage 12 output",
         )
-    from policyengine.tax_benefit_models.uk.datasets import (  # noqa: PLC0415  # policyengine's UK model loads only for a UK report
+    from policyengine.tax_benefit_models.uk.datasets import (
         PolicyEngineUKDataset,
         UKYearData,
     )

@@ -1,4 +1,4 @@
-"""Print policyengine.py bundle versions for deployment scripts."""  # noqa: INP001  # a script run as python -m src.modal.utils.extract_bundle_versions; utils is not a regular package
+"""Print policyengine.py bundle versions for deployment scripts."""
 
 from __future__ import annotations
 

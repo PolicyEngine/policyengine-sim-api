@@ -34,8 +34,8 @@ def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     # This module imports ``get_release_manifest`` by value while constructing
     # country models. Import it before replacing the manifest module's function
     # so full-suite ordering cannot bind this test's stub into production code.
-    import policyengine.tax_benefit_models.common.model_version  # noqa: F401, PLC0415  # must load before the manifest stubs are installed (see above)
-    from policyengine.provenance import (  # noqa: PLC0415  # patch target, imported after model_version above
+    import policyengine.tax_benefit_models.common.model_version  # noqa: F401  # must load before the manifest stubs are installed (see above)
+    from policyengine.provenance import (
         manifest as manifest_module,
     )
     from policyengine_simulation_executor import (  # noqa: PLC0415  # patch target, imported when the stubs are installed
@@ -88,7 +88,7 @@ def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         ),
     )
 
-    from policyengine_simulation_executor import (  # noqa: PLC0415  # patch target, imported when the stubs are installed
+    from policyengine_simulation_executor import (
         spm as executor_spm,
     )
 

@@ -19,7 +19,7 @@ Usage::
     python -m src.modal.utils.release_sentinel expected --output sentinel.json
     python -m src.modal.utils.release_sentinel check --base-url URL \
         --expected sentinel.json
-"""  # noqa: INP001  # a script run as python -m src.modal.utils.release_sentinel; utils is not a regular package
+"""
 
 from __future__ import annotations
 

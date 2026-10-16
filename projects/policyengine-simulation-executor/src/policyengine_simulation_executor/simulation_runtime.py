@@ -267,7 +267,7 @@ def _compile_interval_policy(
     from policyengine.core.parameter import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
         Parameter,
     )
-    from policyengine.tax_benefit_models.common.reform import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
+    from policyengine.tax_benefit_models.common.reform import (
         compile_reform,
     )
 
@@ -410,17 +410,17 @@ def _require_certified_uk_weight_matrix(
     if not isinstance(scoping_strategy, WeightReplacementStrategy):
         return
 
-    import h5py  # noqa: PLC0415  # h5py loads only for the UK weight-matrix check
+    import h5py
     import pandas as pd  # noqa: PLC0415  # UK weight-matrix check: kept with its lazily loaded data dependencies
     from policyengine.data.uk_geography_assets import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
         UKGeographyAssetSpec,
         default_download_dir,
         resolve_uk_geography_asset_paths,
     )
-    from policyengine.provenance.dataset_materialization import (  # noqa: PLC0415  # resolved per call so tests can patch materialize_dataset
+    from policyengine.provenance.dataset_materialization import (
         materialize_dataset,
     )
-    from policyengine.provenance.manifest import (  # noqa: PLC0415  # resolved per call so tests can patch the release manifest
+    from policyengine.provenance.manifest import (
         get_release_manifest,
     )
 
@@ -744,11 +744,11 @@ def _build_simulation(
     scoping_strategy: ScopingStrategy | None = None,
     region_code: str | None = None,
 ) -> Simulation:
-    from policyengine_simulation_executor.baseline_artifacts import (  # noqa: PLC0415  # resolved per call so tests can patch baseline_artifacts
+    from policyengine_simulation_executor.baseline_artifacts import (
         ArtifactBaselineSimulation,
         deterministic_baseline_id,
     )
-    from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # resolved per call so tests can patch spm.normalize_runtime_spm
+    from policyengine_simulation_executor.spm import (
         normalize_runtime_spm,
     )
     from policyengine_simulation_executor.stage_reporting_simulation import (  # noqa: PLC0415  # resolved per call so tests can patch stage_reporting_simulation
@@ -808,7 +808,7 @@ def _run_simulation_impl_core(
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
         simulation_params, telemetry, metadata = split_internal_payload(params)
     metadata = metadata or {}
-    from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # resolved per call so tests can patch spm.normalize_runtime_spm
+    from policyengine_simulation_executor.spm import (
         normalize_runtime_spm,
         simulation_spm_result,
     )

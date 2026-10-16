@@ -222,7 +222,7 @@ def calculate_simulation_frames(
         selection = getattr(model, "spm_config", None)
         calculation_provenance = None
         if selection is not None:
-            from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # executor spm loads only for an SPM selection
+            from policyengine_simulation_executor.spm import (
                 simulation_spm_calculation_provenance,
             )
 

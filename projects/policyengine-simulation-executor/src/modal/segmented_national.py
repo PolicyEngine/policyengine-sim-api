@@ -600,7 +600,7 @@ def dispatch_run_simulation(
     Segmented national fan-out serves eligible requests (see
     ``should_run_segmented_national``); everything else runs monolithically.
     """
-    from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # resolved per call so tests can patch spm.normalize_runtime_spm
+    from policyengine_simulation_executor.spm import (
         normalize_runtime_spm,
     )
 

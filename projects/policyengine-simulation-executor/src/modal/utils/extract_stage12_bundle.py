@@ -1,4 +1,4 @@
-"""Export the strict Stage 12 worker bundle selected by PolicyEngine.py."""  # noqa: INP001  # a script run as python -m src.modal.utils.extract_stage12_bundle; utils is not a regular package
+"""Export the strict Stage 12 worker bundle selected by PolicyEngine.py."""
 
 from __future__ import annotations
 

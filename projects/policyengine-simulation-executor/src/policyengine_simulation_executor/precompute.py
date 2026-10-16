@@ -120,7 +120,7 @@ def _cohort_resolution(
 
 def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
     """Identity via the executor's own resolution path (writer==reader)."""
-    from policyengine_simulation_executor.baseline_artifacts import (  # noqa: PLC0415  # resolved per call so tests can patch baseline_artifacts
+    from policyengine_simulation_executor.baseline_artifacts import (
         qualifying_baseline_identity,
     )
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
@@ -353,7 +353,7 @@ def _prepare_cohort_baseline(
     # The extras economic_impact_analysis applies unconditionally before
     # ensure(); the artifact must carry them or every request would fail
     # the column guard and recompute.
-    from policyengine.tax_benefit_models.us.analysis import (  # noqa: PLC0415  # policyengine's US model loads only for a US cohort baseline
+    from policyengine.tax_benefit_models.us.analysis import (
         configure_budgetary_impact_variables,
     )
 
@@ -365,7 +365,7 @@ def compute_baseline_impl(
     bucket: str, expected: BaselinePlanEntry
 ) -> BaselineComputeResult:
     """Wave 2: compute one cohort baseline and upload its output."""
-    from policyengine_simulation_executor.baseline_artifacts import (  # noqa: PLC0415  # resolved per call so tests can patch baseline_artifacts.ArtifactBaselineSimulation
+    from policyengine_simulation_executor.baseline_artifacts import (
         ArtifactBaselineSimulation,
     )
 
@@ -415,7 +415,7 @@ def verify_determinism_impl(
         Simulation,
     )
 
-    from policyengine_simulation_executor.baseline_artifacts import (  # noqa: PLC0415  # baseline_artifacts is not loaded at import; loaded per call
+    from policyengine_simulation_executor.baseline_artifacts import (
         OUTCOME_HIT,
     )
 

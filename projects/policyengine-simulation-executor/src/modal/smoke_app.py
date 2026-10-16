@@ -119,7 +119,7 @@ def smoke_import_executor() -> dict:
         Path,
     )
 
-    from policyengine.bundle import (  # noqa: PLC0415  # smoke check: inspects the bundle installed in the Modal image
+    from policyengine.bundle import (
         inspect_bundle_status,
     )
 

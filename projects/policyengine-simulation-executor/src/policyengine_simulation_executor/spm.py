@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 @lru_cache(maxsize=4)
 def _forecast(expected_sha256: str | None) -> SPMForecast:
-    from spm_calculator import (  # noqa: PLC0415  # spm_calculator loads only when a forecast is needed
+    from spm_calculator import (
         load_forecast,
     )
 
@@ -53,7 +53,7 @@ def runtime_spm_capability() -> SPMCapability | None:
     already succeeded. Tests that stub the installed environment must call
     :func:`reset_spm_runtime_caches` (the executor suite does, automatically).
     """
-    from policyengine.bundle import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine.bundle.get_current_bundle
+    from policyengine.bundle import (
         get_current_bundle,
     )
     from policyengine.core import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine.core.Simulation
@@ -92,7 +92,7 @@ def _certified_us_spm_capability(configured: object) -> SPMCapability:
     Raises ``ImportError``, ``ValueError``, ``TypeError`` or ``OSError`` when the
     US model, the configuration or the pinned forecast cannot support them.
     """
-    from policyengine_us import (  # noqa: PLC0415  # the US model loads only to certify the SPM capability
+    from policyengine_us import (
         Microsimulation,
     )
 
@@ -130,7 +130,7 @@ def _prevalidate_selection(
     an exception -- so a rejected selection is rejected again, with the same
     typed error, every time it is asked for.
     """
-    from spm_calculator.policyengine_adapter import (  # noqa: PLC0415  # spm_calculator loads only when a selection is prevalidated
+    from spm_calculator.policyengine_adapter import (
         PolicyEngineSPMProvider,
     )
 

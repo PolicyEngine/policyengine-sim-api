@@ -1,4 +1,4 @@
-"""Publish a validated worker to the separate Stage 12 v2 manifest."""  # noqa: INP001  # a script run as python -m src.modal.utils.update_v2_version_manifest; utils is not a regular package
+"""Publish a validated worker to the separate Stage 12 v2 manifest."""
 
 from __future__ import annotations
 

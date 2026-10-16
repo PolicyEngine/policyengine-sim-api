@@ -192,7 +192,7 @@ class ArtifactBaselineSimulation(StageReportingSimulation):
             self._record_outcome(OUTCOME_MISS)
             return
 
-        from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # executor spm is not loaded at import; loaded per call
+        from policyengine_simulation_executor.spm import (
             simulation_spm_result,
         )
 

@@ -296,7 +296,7 @@ def uk_area_regions_routed() -> bool:
     region types have one may the UK default, a national file, carry no area
     codes: their runs and breakdowns then belong to that local-area dataset.
     """
-    from policyengine.provenance.manifest import (  # noqa: PLC0415  # resolved per call so tests can patch the release manifest
+    from policyengine.provenance.manifest import (
         get_release_manifest,
     )
 

@@ -99,7 +99,7 @@ def _us_dataset_from_frames(
     Weights need no special handling: they ride as ``<entity>_weight``
     columns and ``MicroDataFrame(df, weights=...)`` re-derives them.
     """
-    from policyengine.tax_benefit_models.us.datasets import (  # noqa: PLC0415  # policyengine's US model loads only when frames are rebuilt
+    from policyengine.tax_benefit_models.us.datasets import (
         PolicyEngineUSDataset,
         USYearData,
     )

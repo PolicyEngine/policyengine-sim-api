@@ -145,7 +145,7 @@ def _artifact_hf_uri(
     data_package: DataPackageVersion,
     reference: object,
 ) -> tuple[str | None, str | None]:
-    from policyengine.provenance.manifest import (  # noqa: PLC0415  # policyengine stays out of this module's import-time imports
+    from policyengine.provenance.manifest import (
         build_hf_uri,
     )
 
@@ -190,7 +190,7 @@ def _dataset_uris_from_release(
     data_release: Mapping,
     fallback_data_package: DataPackageVersion,
 ) -> tuple[dict[str, str], dict[str, str]]:
-    from policyengine.provenance.manifest import (  # noqa: PLC0415  # policyengine stays out of this module's import-time imports
+    from policyengine.provenance.manifest import (
         build_hf_uri,
     )
 
@@ -231,7 +231,7 @@ def _dataset_uris_from_release(
 
 def _current_policyengine_bundle() -> Mapping | None:
     try:
-        from policyengine.bundle import (  # noqa: PLC0415  # inside the fallback guard: a failing policyengine.bundle import returns None
+        from policyengine.bundle import (
             get_current_bundle,
         )
 
@@ -306,7 +306,7 @@ def _derive_data_package_version(
 def get_country_release_bundle(country: str) -> CountryReleaseBundle:
     """Return package and dataset versions from policyengine.py metadata."""
     country = _normalise_country(country)
-    from policyengine.provenance.manifest import (  # noqa: PLC0415  # resolved per call so tests can patch the release manifest
+    from policyengine.provenance.manifest import (
         get_release_manifest,
     )
 

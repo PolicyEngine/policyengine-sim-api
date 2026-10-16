@@ -4,7 +4,7 @@ Routing writes are serialized by the repository-wide GitHub Actions concurrency
 group ``simulation-deploy-main`` (with ``cancel-in-progress: false``). Library
 writers and the CLI permit writes only from its deployment and rollback
 workflows; read-only and plan modes remain available locally.
-"""  # noqa: INP001  # a script run as python -m src.modal.utils.update_version_registry; utils is not a regular package
+"""
 
 import argparse
 import hashlib
@@ -138,7 +138,7 @@ def build_bundle_manifest_metadata(
     from policyengine_simulation_contract.job_progress import (  # noqa: PLC0415  # the contract package loads only when bundle metadata is built
         JOB_PROGRESS_CAPABILITY_VERSION,
     )
-    from policyengine_simulation_executor.spm import (  # noqa: PLC0415  # the executor package loads only when bundle metadata is built
+    from policyengine_simulation_executor.spm import (
         runtime_spm_capability,
     )
 

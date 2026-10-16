@@ -1,4 +1,4 @@
-"""Invoke and verify every deployed Stage 12 country validation function."""  # noqa: INP001  # a script run as python -m src.modal.utils.validate_v2_worker_release; utils is not a regular package
+"""Invoke and verify every deployed Stage 12 country validation function."""
 
 from __future__ import annotations
 

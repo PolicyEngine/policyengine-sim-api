@@ -201,7 +201,7 @@ def latest_version(package: str) -> None:
 
 def bundle_versions() -> None:
     """Print the package and data versions selected by PolicyEngine.py."""
-    from policyengine.bundle import (  # noqa: PLC0415  # only bundle-versions runs under uv with policyengine installed; the other commands use the runner's python3
+    from policyengine.bundle import (
         get_current_bundle,
     )
 
@@ -249,7 +249,7 @@ def bundle_versions() -> None:
     def certificate_sha256(country: str) -> str:
         # Receipt-v1 certificate digest; older wrappers lack the helper.
         try:
-            from policyengine.provenance.receipt import (  # noqa: PLC0415  # older policyengine wrappers lack the receipt helper, so the ImportError is handled here
+            from policyengine.provenance.receipt import (
                 certificate_sha256 as digest,
             )
         except ImportError:

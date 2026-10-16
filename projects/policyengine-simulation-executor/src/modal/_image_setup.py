@@ -134,7 +134,7 @@ def fetch_artifacts(
                 "project": info.get("project_id"),
             }
         # No blob: ambient ADC (the local fault-drill path).
-        from google.cloud import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+        from google.cloud import (
             storage,
         )
 
@@ -187,7 +187,7 @@ def snapshot_models() -> None:
     logger = logging.getLogger(__name__)
 
     logger.info("Pre-loading US tax-benefit system...")
-    from policyengine_us import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+    from policyengine_us import (
         CountryTaxBenefitSystem as USSystem,
     )
 

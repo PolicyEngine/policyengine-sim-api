@@ -93,10 +93,10 @@ class GCPLoggingInstrumentor:
         Uses ``logging.basicConfig``, so the handler is not installed if the root
         logger already has handlers.
         """
-        from opentelemetry.instrumentation.logging import (  # noqa: PLC0415  # the logging instrumentation loads only when GCP logging is set up
+        from opentelemetry.instrumentation.logging import (
             LoggingInstrumentor,
         )
-        from pythonjsonlogger.json import (  # noqa: PLC0415  # the JSON formatter loads only when GCP logging is set up
+        from pythonjsonlogger.json import (
             JsonFormatter,
         )
 
@@ -131,10 +131,10 @@ def export_ot_to_gcp(resource: Resource) -> None:
     providers for ``resource`` and registers an ``exit`` callback that flushes
     both at shutdown.
     """
-    from opentelemetry.exporter.cloud_monitoring import (  # noqa: PLC0415  # the Google Cloud exporters load only when GCP export is set up
+    from opentelemetry.exporter.cloud_monitoring import (
         CloudMonitoringMetricsExporter,
     )
-    from opentelemetry.exporter.cloud_trace import (  # noqa: PLC0415  # the Google Cloud exporters load only when GCP export is set up
+    from opentelemetry.exporter.cloud_trace import (
         CloudTraceSpanExporter,
     )
 

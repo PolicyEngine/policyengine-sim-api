@@ -82,7 +82,7 @@ def _complete_uk_geography_output(
 
 @lru_cache(maxsize=1)
 def _policyengine_us_district_metadata() -> tuple[dict[int, str], frozenset[str]]:
-    from policyengine.countries.us.data import (  # noqa: PLC0415  # policyengine's US data loads only for US district output
+    from policyengine.countries.us.data import (
         AT_LARGE_STATES,
         US_STATE_FIPS,
     )
