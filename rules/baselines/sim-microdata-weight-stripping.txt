@@ -1,0 +1,13 @@
+# Tolerated existing violations. This list may only shrink.
+#
+# Rule sim.microdata.weight-stripping-confined. Each entry is
+# <module>::<function>::<expression>: a read of raw values from a weighted
+# frame in simulation_output_common.py for something other than counting
+# entities. Reads anywhere else fail outright.
+#
+# The UK local-authority breakdown hands policyengine's longwise geography
+# impact a plain DataFrame of the household frame, which weights by its
+# household_weight column itself. It goes once the breakdown hands
+# policyengine the simulations, as the constituency and US congressional
+# district breakdowns already do.
+projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_output_common.py::_unweighted_household_frame::pd.DataFrame(simulation.output_dataset.data.household)

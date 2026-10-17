@@ -8,7 +8,6 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-import pandas as pd
 import pytest
 from fixtures.macro_output import (
     CURRENT_SINGLE_YEAR_MACRO_KEYS,
@@ -29,6 +28,7 @@ from fixtures.test_simulation_output_builder import (
     FakeModelOutput,
     fake_analysis,
 )
+from fixtures.weighted_frames import weighted_entity_frame
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
@@ -175,25 +175,33 @@ def _with_observability_timings(callback):
 
 
 def _macro_baseline_reform():
+    """Build households whose weighted totals are the golden macro result's budget.
+
+    With weights 0.5 and 1.5, the weighted totals are a tax change of 100, a
+    benefit change of 30, a state tax change of 20, 2 households and a baseline
+    net income of 1000. Unweighted sums of the same rows would give 120, 40, 24
+    and 1200, and summing the weights through the weighted frame (#767) would
+    give 2.5 households, so the golden result only matches a correct build.
+    """
     baseline = _FakeSimulation(
-        pd.DataFrame(
+        weighted_entity_frame(
             {
-                "household_weight": [1.0, 1.0],
-                "household_net_income": [400.0, 600.0],
-                "household_tax": [50.0, 50.0],
+                "household_weight": [0.5, 1.5],
+                "household_net_income": [800.0, 400.0],
+                "household_tax": [60.0, 40.0],
                 "household_benefits": [20.0, 30.0],
                 "household_state_income_tax": [5.0, 5.0],
             }
         )
     )
     reform = _FakeSimulation(
-        pd.DataFrame(
+        weighted_entity_frame(
             {
-                "household_weight": [1.0, 1.0],
-                "household_net_income": [410.0, 620.0],
-                "household_tax": [100.0, 100.0],
-                "household_benefits": [35.0, 45.0],
-                "household_state_income_tax": [15.0, 15.0],
+                "household_weight": [0.5, 1.5],
+                "household_net_income": [810.0, 420.0],
+                "household_tax": [140.0, 80.0],
+                "household_benefits": [50.0, 40.0],
+                "household_state_income_tax": [21.0, 13.0],
             }
         )
     )
@@ -1228,7 +1236,9 @@ def test_run_simulation_impl_core_passes_detected_uk_boundary_to_builder(monkeyp
     dataset = SimpleNamespace(
         data=SimpleNamespace(
             entity_data={
-                "household": pd.DataFrame({"la_code_oa": ["E06000001", "E07000026"]})
+                "household": weighted_entity_frame(
+                    {"la_code_oa": ["E06000001", "E07000026"]}
+                )
             }
         )
     )
@@ -1699,7 +1709,7 @@ def test_builder_data_version_prefers_resolved_revision_then_dataset_metadata():
 
 def test_builder_budgetary_impact_uses_materialized_columns_and_uk_state_tax_zero():
     baseline = _FakeSimulation(
-        pd.DataFrame(
+        weighted_entity_frame(
             {
                 "household_weight": [1.0, 2.0],
                 "household_net_income": [100.0, 200.0],
@@ -1710,7 +1720,7 @@ def test_builder_budgetary_impact_uses_materialized_columns_and_uk_state_tax_zer
         )
     )
     reform = _FakeSimulation(
-        pd.DataFrame(
+        weighted_entity_frame(
             {
                 "household_weight": [1.0, 2.0],
                 "household_net_income": [120.0, 210.0],
@@ -1728,14 +1738,19 @@ def test_builder_budgetary_impact_uses_materialized_columns_and_uk_state_tax_zer
         "uk", baseline, reform
     )._build_budgetary_impact()
 
+    # Changes are weighted sums, weight * (reform - baseline), over the
+    # weights 1 and 2; the household count is a plain sum of the weights.
+    tax_revenue_impact = 1.0 * (25.0 - 20.0) + 2.0 * (50.0 - 40.0)
+    state_tax_revenue_impact = 1.0 * (4.0 - 2.0) + 2.0 * (6.0 - 3.0)
+    benefit_spending_impact = 1.0 * (4.0 - 5.0) + 2.0 * (8.0 - 10.0)
     assert isinstance(us_budget, BudgetaryImpact)
     assert us_budget.model_dump(mode="json") == {
-        "tax_revenue_impact": 15.0,
-        "state_tax_revenue_impact": 5.0,
-        "benefit_spending_impact": -3.0,
-        "budgetary_impact": 18.0,
-        "households": 3.0,
-        "baseline_net_income": 300.0,
+        "tax_revenue_impact": tax_revenue_impact,
+        "state_tax_revenue_impact": state_tax_revenue_impact,
+        "benefit_spending_impact": benefit_spending_impact,
+        "budgetary_impact": tax_revenue_impact - benefit_spending_impact,
+        "households": 1.0 + 2.0,
+        "baseline_net_income": 1.0 * 100.0 + 2.0 * 200.0,
     }
     assert uk_budget.state_tax_revenue_impact == 0.0
 
@@ -1758,7 +1773,7 @@ def test_builder_budgetary_impact_propagates_required_calculation_errors(monkeyp
 
 def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
     def coded_simulation() -> SimpleNamespace:
-        household = pd.DataFrame({"constituency_code_oa": ["E14001063"]})
+        household = weighted_entity_frame({"constituency_code_oa": ["E14001063"]})
         return SimpleNamespace(
             output_dataset=SimpleNamespace(data=SimpleNamespace(household=household))
         )
