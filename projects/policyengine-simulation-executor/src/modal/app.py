@@ -7,6 +7,7 @@ The gateway app (policyengine-simulation-gateway) routes requests to these
 versioned apps.
 """
 
+import contextlib
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -266,10 +267,9 @@ def _configure_modal_observability(
 
 
 def _set_modal_call_attributes(runtime: "ObservabilityRuntime") -> None:
-    try:
+    # Telemetry is non-fatal: a failed attribute must never fail the Modal call.
+    with contextlib.suppress(Exception):
         runtime.set_context(function_call_id=modal.current_function_call_id())
-    except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal: a failed attribute must never fail the Modal call
-        pass
 
 
 def _job_progress_reporter() -> "JobProgressReporter":
@@ -311,7 +311,8 @@ def _record_stage_durations(
     durations = progress.stage_durations()
     if not durations:
         return
-    try:
+    # Telemetry is non-fatal.
+    with contextlib.suppress(Exception):
         runtime.set_context(
             job_attempts=progress.attempts(),
             **{
@@ -319,8 +320,6 @@ def _record_stage_durations(
                 for stage, seconds in durations.items()
             },
         )
-    except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
-        pass
 
 
 @app.function(

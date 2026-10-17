@@ -1,6 +1,8 @@
 import importlib
 import sys
 
+import pytest
+
 
 def test_gateway_models_import_does_not_import_fastapi_endpoints(
     import_gateway_models,
@@ -12,8 +14,8 @@ def test_gateway_models_import_does_not_import_fastapi_endpoints(
     assert gateway_import_module_names.fastapi not in sys.modules
 
 
+@pytest.mark.usefixtures("isolated_gateway_model_import_modules")
 def test_gateway_endpoints_import_does_not_import_policyengine_bundle(
-    isolated_gateway_model_import_modules,
     gateway_import_module_names,
 ):
     release_bundle_module = sys.modules.pop(

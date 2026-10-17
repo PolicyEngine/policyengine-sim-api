@@ -102,7 +102,7 @@ def build_intra_decile_output_from_collection(
     if isinstance(collection, IntraDecileOutput):
         return collection
     deciles: dict[str, list[float]] = {label: [] for label in INTRA_DECILE_COLUMNS}
-    all_values: dict[str, float] = {label: 0.0 for label in INTRA_DECILE_COLUMNS}
+    all_values: dict[str, float] = dict.fromkeys(INTRA_DECILE_COLUMNS, 0.0)
     rows = [
         row
         for row in sorted(

@@ -34,13 +34,13 @@ class GatewayImportModuleNames:
     fastapi: str = FASTAPI_MODULE
 
 
-@pytest.fixture()
+@pytest.fixture
 def gateway_import_module_names() -> GatewayImportModuleNames:
     """Return the module names the import-boundary tests assert on."""
     return GatewayImportModuleNames()
 
 
-@pytest.fixture()
+@pytest.fixture
 def isolated_gateway_model_import_modules() -> Iterator[None]:
     """Temporarily clear modules that would mask import side effects."""
     previous_modules = {
@@ -62,9 +62,9 @@ def isolated_gateway_model_import_modules() -> Iterator[None]:
         )
 
 
-@pytest.fixture()
+@pytest.fixture
 def import_gateway_models(
-    isolated_gateway_model_import_modules: None,
+    isolated_gateway_model_import_modules: None,  # noqa: ARG001  # requested for its side effect; usefixtures has no effect on fixtures
 ) -> Callable[[], ModuleType]:
     """Import gateway models from a clean module state."""
 

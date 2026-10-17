@@ -51,16 +51,16 @@ class TestDeterministicBaselineId:
         monkeypatch.setattr(ak, "collect_baseline_identity", fake_collect)
         return calls
 
-    def _id(self, collected, **overrides):
-        kwargs = dict(
-            params={"scope": "macro"},
-            country="us",
-            dataset_is_default=True,
-            policy=None,
-            region_code="us",
-            scoping_strategy=None,
-            year=2026,
-        )
+    def _id(self, _collected, **overrides):
+        kwargs = {
+            "params": {"scope": "macro"},
+            "country": "us",
+            "dataset_is_default": True,
+            "policy": None,
+            "region_code": "us",
+            "scoping_strategy": None,
+            "year": 2026,
+        }
         kwargs.update(overrides)
         return ba.deterministic_baseline_id(kwargs.pop("params"), **kwargs)
 
@@ -138,7 +138,7 @@ class TestDeterministicBaselineId:
         )
 
     def test_identity_collection_failure_degrades_to_random_id(self, monkeypatch):
-        def boom(*args, **kwargs):
+        def boom(*_args, **_kwargs):
             msg = "manifest unavailable"
             raise RuntimeError(msg)
 
@@ -226,28 +226,32 @@ def _make_sim(model_version, sim_id="bl1-test"):
 
 
 class TestArtifactBaselineSimulation:
-    def test_complete_load_is_a_hit(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_complete_load_is_a_hit(self):
         model = FakeModelVersion(load_result="complete")
         sim = _make_sim(model)
         sim.ensure()
         assert sim.artifact_outcome == ba.OUTCOME_HIT
         assert model.calls == ["load"]
 
-    def test_absent_artifact_is_a_miss_that_computes(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_absent_artifact_is_a_miss_that_computes(self):
         model = FakeModelVersion(load_result="absent")
         sim = _make_sim(model)
         sim.ensure()
         assert sim.artifact_outcome == ba.OUTCOME_MISS
         assert model.calls == ["load", "run", "save"]
 
-    def test_broken_load_degrades_to_miss(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_broken_load_degrades_to_miss(self):
         model = FakeModelVersion(load_result="broken")
         sim = _make_sim(model)
         sim.ensure()
         assert sim.artifact_outcome == ba.OUTCOME_MISS
         assert model.calls == ["load", "run", "save"]
 
-    def test_incomplete_load_recomputes(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_incomplete_load_recomputes(self):
         model = FakeModelVersion(load_result="incomplete")
         sim = _make_sim(model)
         sim.ensure()
@@ -256,7 +260,8 @@ class TestArtifactBaselineSimulation:
         # The guard's recompute produced the full column set.
         assert "income" in sim.output_dataset.data.entity_data["person"].columns
 
-    def test_recompute_replaces_cache_entry(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_recompute_replaces_cache_entry(self):
         model = FakeModelVersion(load_result="incomplete")
         first = _make_sim(model)
         first.ensure()
@@ -317,7 +322,8 @@ class TestArtifactBaselineSimulation:
         assert later.artifact_outcome == ba.OUTCOME_HIT
         assert later_model.calls == []
 
-    def test_loaded_output_without_data_recomputes(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_loaded_output_without_data_recomputes(self):
         model = FakeModelVersion()
         model.load = lambda simulation: setattr(  # type: ignore[method-assign]
             simulation, "output_dataset", SimpleNamespace(data=None)
@@ -326,7 +332,8 @@ class TestArtifactBaselineSimulation:
         sim.ensure()
         assert sim.artifact_outcome == ba.OUTCOME_INCOMPLETE
 
-    def test_second_ensure_keeps_a_genuine_miss(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_second_ensure_keeps_a_genuine_miss(self):
         """Every request ensures the baseline twice (analysis + deciles).
 
         The second call self-hits the in-process cache with a complete
@@ -342,7 +349,8 @@ class TestArtifactBaselineSimulation:
         # The second ensure() was a pure cache hit: no extra model work.
         assert model.calls == ["load", "run", "save"]
 
-    def test_second_ensure_keeps_an_incomplete_outcome(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_second_ensure_keeps_an_incomplete_outcome(self):
         model = FakeModelVersion(load_result="incomplete")
         sim = _make_sim(model)
         sim.ensure()
@@ -393,7 +401,7 @@ class TestBuildSimulationSelection:
         monkeypatch.setattr(
             sr,
             "_country_module",
-            lambda country: SimpleNamespace(model=SimpleNamespace(id="us-model")),
+            lambda _country: SimpleNamespace(model=SimpleNamespace(id="us-model")),
         )
 
         def fake_deterministic_id(params, **kwargs):
@@ -488,7 +496,7 @@ def test_bounded_reform_build_keeps_current_law_artifact_reuse(monkeypatch):
     monkeypatch.setattr(ak, "collect_baseline_identity", collect_identity)
     kwargs = {
         "dataset": "dataset",
-        "dataset_selection": sr.DatasetSelection("default", "default", True),
+        "dataset_selection": sr.DatasetSelection("default", "default", is_default=True),
         "region_code": "uk",
     }
     params = {"country": "uk", "scope": "macro", "time_period": 2027}
@@ -517,18 +525,18 @@ class TestIdentityErrorContract:
     """The stated split: the writer path fails loud, the reader degrades."""
 
     def _kwargs(self):
-        return dict(
-            params={"scope": "macro"},
-            country="us",
-            dataset_is_default=True,
-            policy=None,
-            region_code="us",
-            scoping_strategy=None,
-            year=2026,
-        )
+        return {
+            "params": {"scope": "macro"},
+            "country": "us",
+            "dataset_is_default": True,
+            "policy": None,
+            "region_code": "us",
+            "scoping_strategy": None,
+            "year": 2026,
+        }
 
     def test_qualifying_identity_propagates_collection_errors(self, monkeypatch):
-        def boom(*args, **kwargs):
+        def boom(*_args, **_kwargs):
             msg = "receipt unreadable"
             raise RuntimeError(msg)
 
@@ -537,7 +545,7 @@ class TestIdentityErrorContract:
             ba.qualifying_baseline_identity(**self._kwargs())
 
     def test_deterministic_id_swallows_collection_errors(self, monkeypatch):
-        def boom(*args, **kwargs):
+        def boom(*_args, **_kwargs):
             msg = "receipt unreadable"
             raise RuntimeError(msg)
 
@@ -658,7 +666,8 @@ class TestArtifactDiskRoundTrip:
     triggers the recompute-and-overwrite path.
     """
 
-    def test_missing_artifact_is_a_clean_miss_that_saves(self, fresh_cache, tmp_path):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_missing_artifact_is_a_clean_miss_that_saves(self, tmp_path):
         model = DiskModelVersion()
         sim = _make_disk_sim(model, tmp_path, "bl1-roundtrip-miss")
         sim.ensure()
@@ -666,7 +675,8 @@ class TestArtifactDiskRoundTrip:
         assert model.run_calls == 1
         assert (tmp_path / "bl1-roundtrip-miss.h5").exists()
 
-    def test_saved_artifact_loads_as_hit_with_weights(self, fresh_cache, tmp_path):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_saved_artifact_loads_as_hit_with_weights(self, tmp_path):
         model = DiskModelVersion()
         model._dataset_class(
             name="artifact",
@@ -684,9 +694,8 @@ class TestArtifactDiskRoundTrip:
         assert list(person["age"]) == [30.0, 40.0]
         assert "person_weight" in person.columns
 
-    def test_incomplete_disk_artifact_recomputes_and_overwrites(
-        self, fresh_cache, tmp_path
-    ):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_incomplete_disk_artifact_recomputes_and_overwrites(self, tmp_path):
         model = DiskModelVersion()
         model._dataset_class(
             name="artifact",
@@ -886,7 +895,8 @@ class TestEnsureValidatesSPMReceipts:
     wrapper receipts have the shape the decisions are made on.
     """
 
-    def test_matching_receipt_loads_as_a_hit(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_matching_receipt_loads_as_a_hit(self):
         model = SPMModelVersion(
             stored_config=deepcopy(SPM_SELECTION), stored_receipt=_spm_receipt()
         )
@@ -895,7 +905,8 @@ class TestEnsureValidatesSPMReceipts:
         assert sim.artifact_outcome == ba.OUTCOME_HIT
         assert model.calls == ["load"]
 
-    def test_artifact_built_under_another_selection_recomputes(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_artifact_built_under_another_selection_recomputes(self):
         other = {**SPM_SELECTION, "scenario": "zero_real"}
         model = SPMModelVersion(stored_config=other, stored_receipt=_spm_receipt(other))
         sim = _make_spm_sim(model)
@@ -907,7 +918,8 @@ class TestEnsureValidatesSPMReceipts:
         assert model.spm_at_run == [SPM_SELECTION]
         assert sim.spm_config == SPM_SELECTION
 
-    def test_artifact_without_a_receipt_recomputes(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_artifact_without_a_receipt_recomputes(self):
         model = SPMModelVersion(
             stored_config=deepcopy(SPM_SELECTION), stored_receipt=None
         )
@@ -916,7 +928,8 @@ class TestEnsureValidatesSPMReceipts:
         assert sim.artifact_outcome == ba.OUTCOME_INCOMPLETE
         assert model.calls == ["load", "run", "save"]
 
-    def test_malformed_receipt_recomputes(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_malformed_receipt_recomputes(self):
         malformed = _spm_receipt()
         del malformed["runtime_versions"]
         model = SPMModelVersion(
@@ -927,7 +940,8 @@ class TestEnsureValidatesSPMReceipts:
         assert sim.artifact_outcome == ba.OUTCOME_INCOMPLETE
         assert model.calls == ["load", "run", "save"]
 
-    def test_receipt_from_another_forecast_recomputes(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_receipt_from_another_forecast_recomputes(self):
         stale = _spm_receipt()
         stale["forecast_sha256"] = "b" * 64
         model = SPMModelVersion(
@@ -938,7 +952,8 @@ class TestEnsureValidatesSPMReceipts:
         assert sim.artifact_outcome == ba.OUTCOME_INCOMPLETE
         assert model.calls == ["load", "run", "save"]
 
-    def test_receipt_for_another_year_recomputes(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_receipt_for_another_year_recomputes(self):
         model = SPMModelVersion(
             stored_config=deepcopy(SPM_SELECTION),
             stored_receipt=_spm_receipt(year="2024"),
@@ -1008,7 +1023,8 @@ class TestEnsureValidatesSPMReceipts:
         assert later.artifact_outcome == ba.OUTCOME_HIT
         assert later_model.calls == []
 
-    def test_missing_columns_are_decided_before_the_receipt(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_missing_columns_are_decided_before_the_receipt(self):
         """A tax-only artifact can legitimately carry no usable receipt.
 
         Columns are checked first so the outcome is attributed to the gap
@@ -1024,7 +1040,8 @@ class TestEnsureValidatesSPMReceipts:
         assert sim.artifact_outcome == ba.OUTCOME_INCOMPLETE
         assert sim._provenance_reads == []
 
-    def test_a_request_without_a_selection_never_validates_receipts(self, fresh_cache):
+    @pytest.mark.usefixtures("fresh_cache")
+    def test_a_request_without_a_selection_never_validates_receipts(self):
         """Without a selection, a complete artifact is a hit even with no receipt.
 
         This is the legacy path: the wrapper surface exists but holds no

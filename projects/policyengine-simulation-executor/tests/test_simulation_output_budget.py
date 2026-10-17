@@ -43,7 +43,7 @@ def test_households_counts_each_weight_once_on_weighted_frames():
 
     # Households weighted 1 and 2 are 3 households, not 1² + 2² = 5.
     assert budget.households == 3.0
-    # The other totals stay weighted sums, Σ weight × value.
+    # The other totals stay weighted sums, Σ weight * value.
     assert budget.baseline_net_income == 500.0
     assert budget.tax_revenue_impact == 25.0
     assert budget.state_tax_revenue_impact == 8.0

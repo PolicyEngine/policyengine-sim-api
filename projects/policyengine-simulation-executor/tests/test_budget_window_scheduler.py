@@ -227,11 +227,11 @@ def budget_window_semi_integration_client(
         def __init__(self):
             self.context: dict = {}
 
-        def span(self, *args, **kwargs):
+        def span(self, *_args, **_kwargs):
             return nullcontext()
 
         @contextmanager
-        def operation(self, *args, remote_context=None, **kwargs):
+        def operation(self, *_args, remote_context=None, **_kwargs):
             previous = self.context
             self.context = dict(remote_context or {})
             try:
@@ -245,10 +245,10 @@ def budget_window_semi_integration_client(
         def set_context(self, **attributes):
             self.context.update(attributes)
 
-        def event(self, *args, **kwargs):
+        def event(self, *_args, **_kwargs):
             return None
 
-        def record_exception(self, *args, **kwargs):
+        def record_exception(self, *_args, **_kwargs):
             return None
 
     runtime.observability = PropagatingRuntime()
@@ -259,7 +259,7 @@ def budget_window_semi_integration_client(
 
     class MockModalDict:
         @staticmethod
-        def from_name(name: str, create_if_missing: bool = False):
+        def from_name(name: str, *, create_if_missing: bool = False):
             if create_if_missing and name not in runtime.dicts:
                 runtime.dicts[name] = {}
             if name not in runtime.dicts:

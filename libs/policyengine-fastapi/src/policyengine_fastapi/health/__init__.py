@@ -41,7 +41,7 @@ class HealthSystemReporter:
 
     def report(self) -> SystemStatus:
         """Run every probe; the system is healthy only if all of its probes are."""
-        detail = [self.probes[key]() for key in self.probes.keys()]
+        detail = [self.probes[key]() for key in self.probes]
         first_unhealthy = next((d for d in detail if d.healthy is not True), None)
         return SystemStatus(
             name=self.name, healthy=first_unhealthy is None, detail=detail
@@ -67,7 +67,7 @@ class HealthRegistry:
 
     def report(self) -> HealthStatus:
         """Report every system; the service is healthy only if all systems are."""
-        system_status = [self.systems[key].report() for key in self.systems.keys()]
+        system_status = [self.systems[key].report() for key in self.systems]
         first_unhealthy = next(
             (s for s in system_status if s.healthy is not True), None
         )

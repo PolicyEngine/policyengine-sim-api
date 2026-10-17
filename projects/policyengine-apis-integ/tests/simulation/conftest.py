@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
-@pytest.fixture()
+@pytest.fixture
 def client() -> Client | AuthenticatedClient:
     """Create HTTP client for simulation API."""
     timeout = httpx.Timeout(timeout=settings.timeout_in_millis / 1000)
@@ -54,25 +54,25 @@ def client() -> Client | AuthenticatedClient:
     return Client(base_url=settings.base_url, timeout=timeout)
 
 
-@pytest.fixture()
+@pytest.fixture
 def us_model_version() -> str:
     """Return the US model version for testing specific version scenarios."""
     return settings.us_model_version
 
 
-@pytest.fixture()
+@pytest.fixture
 def uk_model_version() -> str:
     """Return the UK model version for testing specific version scenarios."""
     return settings.uk_model_version
 
 
-@pytest.fixture()
+@pytest.fixture
 def poll_interval() -> float:
     """Return poll interval in seconds."""
     return settings.poll_interval_seconds
 
 
-@pytest.fixture()
+@pytest.fixture
 def max_wait_seconds() -> float:
     """Return max wait time in seconds."""
     return settings.timeout_in_millis / 1000
@@ -146,13 +146,13 @@ def _poll_budget_window_batch(
     raise TimeoutError(msg)
 
 
-@pytest.fixture()
+@pytest.fixture
 def budget_window_years() -> list[str]:
     """Return the annual rows expected from the staging budget-window smoke run."""
     return list(BUDGET_WINDOW_YEARS)
 
 
-@pytest.fixture()
+@pytest.fixture
 def budget_window_request(us_model_version: str) -> BudgetWindowBatchRequest:
     """Build the standard staging budget-window smoke request."""
     return BudgetWindowBatchRequest.from_dict(
@@ -169,13 +169,13 @@ def budget_window_request(us_model_version: str) -> BudgetWindowBatchRequest:
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def decode_response_content():
     """Return a compact formatter for non-OK HTTP response payloads."""
     return _decode_response_content
 
 
-@pytest.fixture()
+@pytest.fixture
 def submit_budget_window_batch(client: Client | AuthenticatedClient):
     """Submit a budget-window batch through the generated client."""
     submit_endpoint = submit_budget_window_batch_simulate_economy_budget_window_post
@@ -189,7 +189,7 @@ def submit_budget_window_batch(client: Client | AuthenticatedClient):
     return submit
 
 
-@pytest.fixture()
+@pytest.fixture
 def poll_budget_window_batch(
     client: Client | AuthenticatedClient,
     max_wait_seconds: float,

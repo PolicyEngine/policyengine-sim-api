@@ -21,6 +21,7 @@ def _run_modal_smoke(app_path: str) -> subprocess.CompletedProcess[str]:
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
+        check=False,
         timeout=2400,
     )
 

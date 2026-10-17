@@ -18,34 +18,34 @@ from fixtures.wrapper_spm import (
 )
 from policyengine_simulation_executor import artifact_keys as ak
 
-_DATASET_KWARGS = dict(
-    country="us",
-    dataset="populace_cps",
-    year=2026,
-    data_version="1.2.3",
-    data_artifact_revision="rev-abc",
-    source_sha256="feedbead" * 8,
-    data_build_fingerprint="fp-123",
-    model_version="9.9.9",
-    policyengine_version="4.22.0",
-)
+_DATASET_KWARGS = {
+    "country": "us",
+    "dataset": "populace_cps",
+    "year": 2026,
+    "data_version": "1.2.3",
+    "data_artifact_revision": "rev-abc",
+    "source_sha256": "feedbead" * 8,
+    "data_build_fingerprint": "fp-123",
+    "model_version": "9.9.9",
+    "policyengine_version": "4.22.0",
+}
 
 _DATASET_GOLDEN = "183ffe49d74669b653fb408b0b7298128ba7c6e990f4479487712a5d79553be3"
 _DATASET_NO_SHA_GOLDEN = (
     "25dded8192092f477e4502dae07709e72b6e579f372a9f8346b5eabce07d91b6"
 )
 
-_BASELINE_KWARGS = dict(
-    country="us",
-    region="national",
-    scope_key="region_group:row_filter:state_code=CA|row_filter:state_code=WV",
-    dataset_digest=_DATASET_GOLDEN,
-    model_version="9.9.9",
-    policyengine_version="4.22.0",
+_BASELINE_KWARGS = {
+    "country": "us",
+    "region": "national",
+    "scope_key": "region_group:row_filter:state_code=CA|row_filter:state_code=WV",
+    "dataset_digest": _DATASET_GOLDEN,
+    "model_version": "9.9.9",
+    "policyengine_version": "4.22.0",
     # Explicit (== the default) so the perturbation matrix proves the
     # policy field participates in the digest.
-    policy=ak.CURRENT_LAW_POLICY,
-)
+    "policy": ak.CURRENT_LAW_POLICY,
+}
 
 _BASELINE_GOLDEN = "f9cac05d94509895eb48ea33ea5f72d40eb9b954989df05ca6506009d8dedae2"
 
@@ -134,7 +134,8 @@ def stub_identity_sources(monkeypatch):
 
 
 class TestIdentityCollection:
-    def test_collected_identity_matches_golden(self, stub_identity_sources):
+    @pytest.mark.usefixtures("stub_identity_sources")
+    def test_collected_identity_matches_golden(self):
         identity = ak.collect_dataset_identity("us", 2026)
         assert identity.digest == _DATASET_GOLDEN
         assert identity.filename == "populace_cps_year_2026.h5"
@@ -166,7 +167,8 @@ class TestIdentityCollection:
         }
         assert ak.collect_dataset_identity("us", 2026).digest == _DATASET_GOLDEN
 
-    def test_baseline_identity_composes(self, stub_identity_sources):
+    @pytest.mark.usefixtures("stub_identity_sources")
+    def test_baseline_identity_composes(self):
         identity = ak.collect_baseline_identity(
             "us",
             2026,
@@ -194,12 +196,12 @@ class TestIdentityCollection:
                 return {"year": year, "scenario": scenario, "as_of": as_of}
 
         monkeypatch.setattr(
-            executor_spm, "_forecast", lambda expected_sha256: _StubForecast()
+            executor_spm, "_forecast", lambda _expected_sha256: _StubForecast()
         )
         monkeypatch.setattr(
             executor_spm,
             "_prevalidate_selection",
-            lambda selection_json, start_year, window_size: None,
+            lambda _selection_json, _start_year, _window_size: None,
         )
 
         capability = stub_identity_sources.installed_spm_capability()

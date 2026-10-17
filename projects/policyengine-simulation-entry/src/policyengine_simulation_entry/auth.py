@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Callable
 from functools import lru_cache
@@ -19,6 +20,11 @@ if TYPE_CHECKING:
     from policyengine_simulation_entry.config import Settings
 
 _bearer = HTTPBearer(auto_error=False)
+# CallerAuthenticator's dependency marker, shared as a module-level default.
+# The Annotated form can't be used: this module postpones annotations, and
+# FastAPI resolves them against the callable's __globals__, which a callable
+# instance doesn't have.
+_bearer_credentials = Depends(_bearer)
 logger = logging.getLogger(__name__)
 
 type CallerPermission = Literal[
@@ -97,7 +103,7 @@ class CallerAuthenticator:
 
     def __call__(
         self,
-        token: HTTPAuthorizationCredentials | None = Depends(_bearer),
+        token: HTTPAuthorizationCredentials | None = _bearer_credentials,
     ) -> CallerIdentity | None:
         """Return the verified caller, or None when auth is not required.
 
@@ -170,9 +176,14 @@ class CallerAuthorizer:
         permission: CallerPermission,
     ) -> AuthorizationDependency:
         """Return a dependency that yields the caller holding ``permission``."""
+        # The dependency marker is read from a default built here. The Annotated
+        # form can't be used: this module postpones annotations, and FastAPI
+        # resolves them against the module's globals, which don't hold this
+        # authorizer's authenticate dependency.
+        authenticated_identity = Depends(self.authenticate)
 
         def authorized_caller(
-            identity: CallerIdentity | None = Depends(self.authenticate),
+            identity: CallerIdentity | None = authenticated_identity,
         ) -> CallerIdentity | None:
             return self.authorize(identity, permission)
 
@@ -209,11 +220,10 @@ class CallerAuthorizer:
         }
         if identity.authorized_party:
             attributes["client_id"] = identity.authorized_party
-        try:
+        # Telemetry is non-fatal.
+        with contextlib.suppress(Exception):
             self.runtime.event(
                 "simulation_entry_permission_missing",
                 severity="WARNING",
                 attributes=attributes,
             )
-        except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
-            pass

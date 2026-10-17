@@ -47,7 +47,7 @@ def spm_capable_simulation(
     **attributes: object,
 ) -> SimpleNamespace:
     """Return a stand-in for a simulation that measured ``selection``."""
-    attributes.setdefault("on_first_ensure", lambda callback: None)
+    attributes.setdefault("on_first_ensure", lambda _callback: None)
     if selection is None:
         return SimpleNamespace(**attributes)
     return SimpleNamespace(

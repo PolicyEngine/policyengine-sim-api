@@ -166,7 +166,7 @@ def test_modal_image_fetches_artifacts_between_env_and_local_source(monkeypatch)
     manifest = _fake_manifest()
 
     class FakeStore:
-        def __init__(self, bucket_name=None, **kwargs):
+        def __init__(self, bucket_name=None, **_kwargs):
             self.bucket_name = bucket_name
 
         def read_manifest(self, digest):

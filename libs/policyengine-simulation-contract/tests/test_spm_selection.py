@@ -56,7 +56,7 @@ def test_explicit_national_discards_default_metro_area():
 
 
 @pytest.mark.parametrize(
-    "provenance,wrapper,model,accepted",
+    ("provenance", "wrapper", "model", "accepted"),
     [
         ("legacy-country-dict", None, "1.500.0", True),
         ("legacy-country-route", None, "1.715.2", True),
@@ -72,12 +72,12 @@ def test_explicit_national_discards_default_metro_area():
 def test_legacy_allowance_requires_route_provenance_and_historical_model(
     provenance, wrapper, model, accepted
 ):
-    kwargs = dict(
-        capability=None,
-        policyengine_version=wrapper,
-        model_version=model,
-        route_provenance=provenance,
-    )
+    kwargs = {
+        "capability": None,
+        "policyengine_version": wrapper,
+        "model_version": model,
+        "route_provenance": provenance,
+    }
     if accepted:
         assert resolve_spm_selection("us", None, **kwargs) is None
     else:
@@ -114,7 +114,7 @@ def test_pinned_pre_canonical_wrapper_is_historical_without_a_stated_model(
 
 
 @pytest.mark.parametrize(
-    "wrapper,model",
+    ("wrapper", "model"),
     [
         ("5.2.0", "1.824.7"),
         ("5.3.0", "1.824.7"),

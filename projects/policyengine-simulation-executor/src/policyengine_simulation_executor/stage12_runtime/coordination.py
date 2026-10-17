@@ -467,7 +467,7 @@ def coordinate_report(
                     descriptors[role] = SimulationArtifactDescriptor.model_validate(
                         call.get(timeout=SIMULATION_WAIT_TIMEOUT_SECONDS)
                     )
-            except Exception as error:
+            except Exception as error:  # noqa: PERF203  # per child: the failing child is marked failed before the error is re-raised
                 report_original_failure(
                     error,
                     runtime=runtime,

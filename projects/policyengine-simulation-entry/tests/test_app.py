@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 from unittest.mock import Mock
 from uuid import UUID
 
@@ -876,6 +876,7 @@ def test_request_validation_matches_shared_contract(client):
 )
 def test_backend_failures_are_sanitized(error, expected_status, expected_detail):
     class FailingBackend(FakeBackend):
+        @override
         async def request(self, *args, **kwargs):
             raise error
 
@@ -903,6 +904,7 @@ def test_backend_failures_are_sanitized(error, expected_status, expected_detail)
 
 def test_unexpected_failure_preserves_correlation_headers_and_request_log(caplog):
     class FailingBackend(FakeBackend):
+        @override
         async def request(self, *args, **kwargs):
             msg = "unexpected backend failure"
             raise RuntimeError(msg)
@@ -957,7 +959,7 @@ def test_upstream_error_status_and_body_are_preserved(client, backend, status_co
 
 
 @pytest.mark.parametrize(
-    "path,extra",
+    ("path", "extra"),
     [
         ("/simulate/economy/comparison", {}),
         (

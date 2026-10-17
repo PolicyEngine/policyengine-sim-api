@@ -130,7 +130,7 @@ def test_expected_defaults_to_the_installed_package_and_uk_bundle_identity(monke
         SimpleNamespace(get_country_release_bundle=country_bundle),
     )
 
-    expected = sentinel.compute_expected(runner=lambda payload: RESULT)
+    expected = sentinel.compute_expected(runner=lambda _payload: RESULT)
 
     assert distributions == ["policyengine"]
     assert countries == ["uk"]
@@ -145,7 +145,7 @@ def test_expected_defaults_to_the_installed_package_and_uk_bundle_identity(monke
 def test_expected_needs_the_bundle_dataset_digest():
     identity = {**IDENTITY, "uk": {**IDENTITY["uk"], "dataset_sha256": None}}
     with pytest.raises(sentinel.SentinelError, match="dataset SHA-256"):
-        sentinel.compute_expected(runner=lambda payload: RESULT, identity=identity)
+        sentinel.compute_expected(runner=lambda _payload: RESULT, identity=identity)
 
 
 class FakeAPI:
@@ -167,7 +167,7 @@ class FakeAPI:
         self.job_status = job_status
         self.calls = []
 
-    def __call__(self, method, url, *, token=None, body=None, timeout=60):
+    def __call__(self, method, url, *, token=None, body=None):
         self.calls.append((method, url, token, body))
         if method == "POST":
             return 200, {}, {"job_id": "fc-1", "policyengine_bundle": self.bundle}
@@ -332,11 +332,12 @@ def test_a_job_that_never_finishes_fails():
 
 
 def test_a_rejected_submit_fails():
-    def api(method, url, **kwargs):
+    def api(_method, _url, **_kwargs):
         return 400, {}, {"detail": "unknown policyengine_version"}
 
     problems, _ = _check(api)
-    assert problems and "submit returned HTTP 400" in problems[0]
+    assert problems
+    assert "submit returned HTTP 400" in problems[0]
 
 
 def test_an_expected_file_of_another_schema_is_refused():
@@ -352,9 +353,11 @@ def test_an_expected_file_of_another_schema_is_refused():
 def test_agreement_admits_only_reordering_error(value, factor):
     tolerance = max(sentinel.ABS_TOL, sentinel.REL_TOL * abs(value))
     near = value + factor * tolerance * 0.5
-    assert sentinel.agree(value, near) and sentinel.agree(near, value)
+    assert sentinel.agree(value, near)
+    assert sentinel.agree(near, value)
     far = value + 3 * tolerance
-    assert not sentinel.agree(value, far) and not sentinel.agree(far, value)
+    assert not sentinel.agree(value, far)
+    assert not sentinel.agree(far, value)
 
 
 def test_access_token_follows_the_auth_configuration(monkeypatch):
@@ -365,12 +368,12 @@ def test_access_token_follows_the_auth_configuration(monkeypatch):
         sentinel.access_token({"SIMULATION_TEST_AUTH_ISSUER": "https://issuer"})
     seen = {}
 
-    def http(method, url, *, body=None, **kwargs):
+    def http(method, url, *, body=None, **_kwargs):
         seen.update(method=method, url=url, body=body)
         return 200, {}, {"access_token": "minted"}
 
     monkeypatch.setattr(sentinel, "_http", http)
-    environ = {name: "x" for name in sentinel._AUTH_VARS}
+    environ = dict.fromkeys(sentinel._AUTH_VARS, "x")
     environ["SIMULATION_TEST_AUTH_ISSUER"] = "https://issuer/"
     assert sentinel.access_token(environ) == "minted"
     assert seen["url"] == "https://issuer/oauth/token"

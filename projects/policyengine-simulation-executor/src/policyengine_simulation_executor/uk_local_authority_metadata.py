@@ -375,7 +375,7 @@ def detect_uk_local_authority_metadata_from_hdf(
     """Validate an installed UK HDF dataset against the packaged metadata."""
     observed_codes: set[object] = set()
     with pd.HDFStore(dataset_path, mode="r") as store:
-        if "/household" not in store.keys():
+        if "/household" not in store.keys():  # noqa: SIM118  # an HDFStore, not a dict: keys() lists only pandas tables, while `in` matches any HDF node
             msg = "UK dataset contains no household table"
             raise ValueError(msg)
         try:

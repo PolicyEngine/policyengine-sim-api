@@ -10,6 +10,7 @@ from contextlib import contextmanager, nullcontext
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Lock
+from typing import ClassVar, override
 from uuid import UUID, uuid4
 
 import pandas as pd
@@ -517,7 +518,7 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
 
     class Model:
         spm_config = None
-        extra_variables = {}
+        extra_variables: ClassVar[dict[str, list[str]]] = {}
         tax_benefit_model_version = ModelVersion()
         output_dataset = type(
             "OutputDataset",
@@ -533,17 +534,17 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
     monkeypatch.setattr(
         simulation_runtime,
         "setup_gcp_credentials",
-        lambda: nullcontext(),
+        nullcontext,
     )
     monkeypatch.setattr(
         simulation_runtime,
         "_country_module",
-        lambda country: country_module,
+        lambda _country: country_module,
     )
     monkeypatch.setattr(
         simulation_runtime,
         "_resolve_region",
-        lambda **kwargs: region,
+        lambda **_kwargs: region,
     )
 
     def resolve_dataset(params, *, region_resolution):
@@ -551,12 +552,12 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
         received["region"] = region_resolution
         return selection
 
-    def load_dataset(params, *, selection, country_module):
+    def load_dataset(_params, *, selection, country_module):
         received["load_selection"] = selection
         received["load_country_module"] = country_module
         return dataset
 
-    def build_simulation(params, *, dataset, dataset_selection, **kwargs):
+    def build_simulation(_params, *, dataset, dataset_selection, **_kwargs):
         received["build_dataset"] = dataset
         received["build_selection"] = dataset_selection
         return Model()
@@ -639,7 +640,7 @@ def test_country_metadata_alignment_rejects_missing_or_mismatched_uk_values() ->
     ],
 )
 def test_uk_artifacts_without_metadata_need_a_routed_national_request(
-    monkeypatch, region_code: str | None, routed: bool, accepted: bool
+    monkeypatch, region_code: str | None, *, routed: bool, accepted: bool
 ) -> None:
     monkeypatch.setattr(
         "policyengine_simulation_executor.uk_local_authority_metadata."
@@ -1716,6 +1717,7 @@ def test_coordinator_rejects_artifacts_that_do_not_satisfy_the_shared_plan(
 
 def test_coordinator_records_failure_when_child_persistence_fails() -> None:
     class FailingChildStore(FakeStore):
+        @override
         def create_or_resolve_simulation(self, record):
             msg = "database rejected the child record"
             raise RuntimeError(msg)

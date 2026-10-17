@@ -4,6 +4,7 @@ Exits 1, printing nothing, when the lock file or package is missing.
 """
 
 import sys
+from pathlib import Path
 
 import tomllib
 
@@ -17,7 +18,7 @@ def get_package_version_from_lock(
     ``[[package]]`` name/version layout read here.
     """
     try:
-        with open(lock_file_path, "rb") as f:
+        with Path(lock_file_path).open("rb") as f:
             lock_data = tomllib.load(f)
     except FileNotFoundError:
         return None

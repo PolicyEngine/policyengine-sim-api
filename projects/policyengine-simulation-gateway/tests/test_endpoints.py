@@ -49,9 +49,8 @@ def expected_bundle(
 class TestGetAppName:
     """Tests for the get_app_name helper function."""
 
-    def test__given_no_version__then_prefers_latest_policyengine_bundle(
-        self, mock_modal
-    ):
+    @pytest.mark.usefixtures("mock_modal")
+    def test__given_no_version__then_prefers_latest_policyengine_bundle(self):
         from policyengine_simulation_gateway.endpoints import get_app_name
 
         app_name, resolved_version = get_app_name("us", None)
@@ -59,8 +58,9 @@ class TestGetAppName:
         assert resolved_version == "4.10.0"
         assert app_name == "policyengine-simulation-py4-10-0"
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_legacy_version_matching_policyengine_bundle__then_routes_by_bundle(
-        self, mock_modal
+        self,
     ):
         from policyengine_simulation_gateway.endpoints import get_app_name
 
@@ -69,7 +69,8 @@ class TestGetAppName:
         assert resolved_version == "4.10.0"
         assert app_name == "policyengine-simulation-py4-10-0"
 
-    def test__given_us_country_no_version__then_returns_latest_app(self, mock_modal):
+    @pytest.mark.usefixtures("mock_modal")
+    def test__given_us_country_no_version__then_returns_latest_app(self):
         """Given 'us' and no version, when resolving, then use the 'latest' app."""
         from policyengine_simulation_gateway.endpoints import get_app_name
 
@@ -80,9 +81,8 @@ class TestGetAppName:
         assert resolved_version == "4.10.0"
         assert app_name == "policyengine-simulation-py4-10-0"
 
-    def test__given_us_country_with_version__then_returns_specified_app(
-        self, mock_modal
-    ):
+    @pytest.mark.usefixtures("mock_modal")
+    def test__given_us_country_with_version__then_returns_specified_app(self):
         """Given 'us' and a version, when resolving, then use that version's app."""
         from policyengine_simulation_gateway.endpoints import get_app_name
 
@@ -93,7 +93,8 @@ class TestGetAppName:
         assert resolved_version == "1.459.0"
         assert app_name == "policyengine-simulation-py3-9-0"
 
-    def test__given_uk_country__then_uses_uk_version_dict(self, mock_modal):
+    @pytest.mark.usefixtures("mock_modal")
+    def test__given_uk_country__then_uses_uk_version_dict(self):
         """Given country='uk', when resolving, then use the UK version dictionary."""
         from policyengine_simulation_gateway.endpoints import get_app_name
 
@@ -112,7 +113,8 @@ class TestGetAppName:
         with pytest.raises(ValueError, match="Unknown country"):
             get_app_name("invalid", None)
 
-    def test__given_unknown_version__then_raises_value_error(self, mock_modal):
+    @pytest.mark.usefixtures("mock_modal")
+    def test__given_unknown_version__then_raises_value_error(self):
         """Given an unregistered version, when resolving, then raise ValueError."""
         from policyengine_simulation_gateway.endpoints import get_app_name
 
@@ -163,7 +165,8 @@ class TestGetAppName:
         assert resolved_version == "1.715.2"
         assert app_name == "policyengine-simulation-us1-715-2-uk2-88-20"
 
-    def test__given_policyengine_version_field__then_routes_by_bundle(self, mock_modal):
+    @pytest.mark.usefixtures("mock_modal")
+    def test__given_policyengine_version_field__then_routes_by_bundle(self):
         from policyengine_simulation_gateway.endpoints import resolve_route
 
         route = resolve_route("us", None, "4.10.0")
@@ -897,8 +900,9 @@ class TestSubmitSimulationEndpoint:
         assert "observability_id" not in response.json()
         assert response.headers[OBSERVABILITY_ID_HEADER] == OBSERVABILITY_ID
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_unknown_job_id__then_polling_returns_404(
-        self, mock_modal, client: TestClient, monkeypatch
+        self, client: TestClient, monkeypatch
     ):
         """Return 404 for a job ID the gateway never issued, without asking Modal.
 
@@ -1137,8 +1141,9 @@ class TestVersionEndpoints:
         assert bundle["dataset_sha256"] == "b" * 64
         assert bundle["dataset"].startswith("hf://")
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_active_state__then_lists_policyengine_and_country_routes(
-        self, mock_modal, client: TestClient
+        self, client: TestClient
     ):
         response = client.get("/versions")
 
@@ -1149,16 +1154,18 @@ class TestVersionEndpoints:
         assert data["us"]["latest"] == "1.500.0"
         assert data["uk"]["latest"] == "2.66.0"
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_active_state__then_policyengine_versions_endpoint_works(
-        self, mock_modal, client: TestClient
+        self, client: TestClient
     ):
         response = client.get("/versions/policyengine")
 
         assert response.status_code == 200
         assert response.json()["latest"] == "4.10.0"
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_unknown_version_kind__then_records_handled_404(
-        self, mock_modal, client: TestClient, monkeypatch
+        self, client: TestClient, monkeypatch
     ):
         recorded_errors = []
         monkeypatch.setattr(
@@ -1341,8 +1348,9 @@ class TestBudgetWindowBatchEndpoints:
             "policyengine_bundle": expected_bundle("us", "1.500.0"),
         }
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_unknown_budget_window_job__then_records_handled_404(
-        self, mock_modal, client: TestClient, monkeypatch
+        self, client: TestClient, monkeypatch
     ):
         recorded_errors = []
         monkeypatch.setattr(
@@ -1500,8 +1508,9 @@ class TestBudgetWindowBatchEndpoints:
         }
         assert response.headers[OBSERVABILITY_ID_HEADER] == OBSERVABILITY_ID
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_batch_state__then_poll_returns_completed_response(
-        self, mock_modal, client: TestClient
+        self, client: TestClient
     ):
         from policyengine_simulation_contract.budget_window_state import (
             put_batch_job_state,
@@ -1580,8 +1589,9 @@ class TestBudgetWindowBatchEndpoints:
         assert "observability_id" not in response.json()
         assert response.headers[OBSERVABILITY_ID_HEADER] == OBSERVABILITY_ID
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_non_integer_start_year__then_budget_window_submit_returns_422(
-        self, mock_modal, client: TestClient
+        self, client: TestClient
     ):
         response = client.post(
             "/simulate/economy/budget-window",
@@ -1601,8 +1611,9 @@ class TestBudgetWindowBatchEndpoints:
             == "Value error, start_year must be an integer year"
         )
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_end_year_past_2099__then_budget_window_submit_returns_422(
-        self, mock_modal, client: TestClient
+        self, client: TestClient
     ):
         response = client.post(
             "/simulate/economy/budget-window",
@@ -1622,8 +1633,9 @@ class TestBudgetWindowBatchEndpoints:
             == "Value error, budget-window end_year must be 2099 or earlier"
         )
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_window_size_above_max__then_budget_window_submit_returns_422(
-        self, mock_modal, client: TestClient
+        self, client: TestClient
     ):
         response = client.post(
             "/simulate/economy/budget-window",
@@ -1640,8 +1652,9 @@ class TestBudgetWindowBatchEndpoints:
         assert response.status_code == 422
         assert response.json()["detail"][0]["loc"] == ["body", "window_size"]
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_missing_region__then_budget_window_submit_returns_422(
-        self, mock_modal, client: TestClient
+        self, client: TestClient
     ):
         response = client.post(
             "/simulate/economy/budget-window",
@@ -1657,8 +1670,9 @@ class TestBudgetWindowBatchEndpoints:
         assert response.status_code == 422
         assert response.json()["detail"][0]["loc"] == ["body", "region"]
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_non_general_target__then_budget_window_submit_returns_422(
-        self, mock_modal, client: TestClient
+        self, client: TestClient
     ):
         response = client.post(
             "/simulate/economy/budget-window",
@@ -1676,8 +1690,9 @@ class TestBudgetWindowBatchEndpoints:
         assert response.status_code == 422
         assert response.json()["detail"][0]["loc"] == ["body", "target"]
 
+    @pytest.mark.usefixtures("mock_modal")
     def test__given_max_parallel_above_active_limit__then_submit_returns_422(
-        self, mock_modal, client: TestClient
+        self, client: TestClient
     ):
         response = client.post(
             "/simulate/economy/budget-window",

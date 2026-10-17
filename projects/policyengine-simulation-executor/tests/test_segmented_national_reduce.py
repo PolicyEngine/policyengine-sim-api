@@ -69,7 +69,7 @@ class TestConcatenateMicrodata:
 
 class TestPrecomputedSimulation:
     def test__ensure_never_computes(self, monkeypatch):
-        def boom(self):
+        def boom(_simulation):
             msg = "RECOMPUTE ATTEMPTED"
             raise AssertionError(msg)
 

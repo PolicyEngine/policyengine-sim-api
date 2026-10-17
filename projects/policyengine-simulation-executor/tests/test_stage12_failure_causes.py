@@ -64,7 +64,10 @@ def test_summary_names_type_stage_role_and_message() -> None:
     progress = StageProgress(role="reform")
     msg = "Variable 'country' not found in household data"
 
-    with pytest.raises(ValueError) as caught, progress.stage("stage12_calculation"):
+    with (
+        pytest.raises(ValueError, match=msg) as caught,
+        progress.stage("stage12_calculation"),
+    ):
         raise ValueError(msg)
 
     assert failure_summary(caught.value, progress=progress) == (
