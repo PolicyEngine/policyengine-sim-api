@@ -49,7 +49,7 @@ def _touch(state: BudgetWindowBatchState) -> BudgetWindowBatchState:
     return state
 
 
-def create_initial_batch_state(
+def create_initial_batch_state(  # noqa: PLR0913  # public contract API: the gateway and the executor's batch scheduler call it with these keywords
     *,
     batch_job_id: str,
     request: BudgetWindowBatchRequest,

@@ -175,7 +175,7 @@ def test_modal_image_fetches_artifacts_between_env_and_local_source(monkeypatch)
 
     # The app imports ArtifactStore lazily inside the digest-set branch,
     # so patching the module attribute is enough — no GCS involved.
-    import policyengine_simulation_executor.artifact_store as artifact_store
+    from policyengine_simulation_executor import artifact_store
 
     monkeypatch.setattr(artifact_store, "ArtifactStore", FakeStore)
     sys.modules.pop("src.modal.app", None)

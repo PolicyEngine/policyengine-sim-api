@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
+from http import HTTPStatus
 from typing import TYPE_CHECKING, Protocol
 
 import httpx
@@ -205,7 +206,7 @@ class OldGatewayBackend:
             response = await self.request("GET", "/health")
         except (BackendUnavailableError, BackendTimeoutError):
             return False
-        return response.status_code == 200
+        return response.status_code == HTTPStatus.OK
 
     async def request(
         self,

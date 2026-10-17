@@ -12,6 +12,7 @@ import pandas as pd
 import pytest
 from policyengine_simulation_executor import segmented_national_reduce as reduce_mod
 from policyengine_simulation_executor.segmented_national_reduce import (
+    NationalReduceInputs,
     PrecomputedSimulation,
     _us_dataset_from_frames,
     build_national_output,
@@ -129,10 +130,12 @@ class TestBuildNationalOutputWiring:
         country_module = SimpleNamespace(model=object())
         result = build_national_output(
             [_child([1], [10]), _child([2], [20])],
-            country="us",
-            simulation_params={"country": "us", "scope": "macro"},
-            country_module=country_module,
-            year=2026,
+            NationalReduceInputs(
+                country="us",
+                simulation_params={"country": "us", "scope": "macro"},
+                country_module=country_module,
+                year=2026,
+            ),
         )
 
         assert result == {"budget": {"budgetary_impact": -42.0}}
@@ -152,11 +155,77 @@ class TestBuildNationalOutputWiring:
         with pytest.raises(ValueError, match="US only"):
             build_national_output(
                 [_child([1], [10])],
-                country="uk",
-                simulation_params={},
-                country_module=SimpleNamespace(model=object()),
-                year=2026,
+                NationalReduceInputs(
+                    country="uk",
+                    simulation_params={},
+                    country_module=SimpleNamespace(model=object()),
+                    year=2026,
+                ),
             )
+
+    @pytest.mark.parametrize(
+        ("resolved_data_version", "runtime"),
+        [(None, None), ("data-1", "runtime-sentinel")],
+    )
+    def test__passes_every_builder_input(
+        self, monkeypatch, resolved_data_version, runtime
+    ):
+        captured = {}
+
+        class FakeBuilder:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def serialize(self):
+                return {"budget": {}}
+
+        monkeypatch.setattr(reduce_mod, "SimulationOutputBuilder", FakeBuilder)
+        monkeypatch.setattr(
+            reduce_mod,
+            "PrecomputedSimulation",
+            lambda **kwargs: SimpleNamespace(output_dataset=None, **kwargs),
+        )
+        monkeypatch.setattr(
+            reduce_mod,
+            "_us_dataset_from_frames",
+            lambda frames, *, year: SimpleNamespace(frames=frames, year=year),
+        )
+        country_module = SimpleNamespace(model=object())
+        simulation_params = {"country": "us", "scope": "macro"}
+
+        build_national_output(
+            [_child([1], [10]), _child([2], [20])],
+            NationalReduceInputs(
+                country="us",
+                simulation_params=simulation_params,
+                country_module=country_module,
+                year=2027,
+                resolved_data_version=resolved_data_version,
+            ),
+            runtime=runtime,
+        )
+
+        assert list(captured) == [
+            "country",
+            "simulation_params",
+            "country_module",
+            "dataset",
+            "baseline",
+            "reform",
+            "resolved_data_version",
+            "resolved_region_code",
+            "runtime",
+        ]
+        assert captured["country"] == "us"
+        assert captured["simulation_params"] is simulation_params
+        assert captured["country_module"] is country_module
+        assert captured["dataset"].year == 2027
+        assert captured["baseline"].dataset is captured["dataset"]
+        assert captured["reform"].dataset.year == 2027
+        assert captured["reform"].dataset is not captured["dataset"]
+        assert captured["resolved_data_version"] == resolved_data_version
+        assert captured["resolved_region_code"] == "us"
+        assert captured["runtime"] == runtime
 
     def test__propagates_child_versions_over_builder_fallbacks(self, monkeypatch):
         # The rebuilt dataset has no artifact metadata, so the builder's
@@ -190,10 +259,12 @@ class TestBuildNationalOutputWiring:
         ]
         result = build_national_output(
             children,
-            country="us",
-            simulation_params={"country": "us", "scope": "macro"},
-            country_module=SimpleNamespace(model=object()),
-            year=2026,
+            NationalReduceInputs(
+                country="us",
+                simulation_params={"country": "us", "scope": "macro"},
+                country_module=SimpleNamespace(model=object()),
+                year=2026,
+            ),
         )
         assert result["model_version"] == "1.764.6"
         assert result["data_version"] == "buildm-x"

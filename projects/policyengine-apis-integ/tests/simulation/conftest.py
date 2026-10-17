@@ -1,5 +1,6 @@
 import json
 import time
+from dataclasses import dataclass
 from http import HTTPStatus
 
 import httpx
@@ -166,6 +167,29 @@ def budget_window_request(us_model_version: str) -> BudgetWindowBatchRequest:
             "window_size": len(BUDGET_WINDOW_YEARS),
             "max_parallel": BUDGET_WINDOW_MAX_PARALLEL,
         }
+    )
+
+
+@dataclass(frozen=True)
+class BudgetWindowSmokeCase:
+    """The staging budget-window smoke request and what its result must show."""
+
+    request: BudgetWindowBatchRequest
+    years: list[str]
+    model_version: str
+
+
+@pytest.fixture
+def budget_window_smoke_case(
+    budget_window_request: BudgetWindowBatchRequest,
+    budget_window_years: list[str],
+    us_model_version: str,
+) -> BudgetWindowSmokeCase:
+    """Group the smoke request with its expected years and model version."""
+    return BudgetWindowSmokeCase(
+        request=budget_window_request,
+        years=budget_window_years,
+        model_version=us_model_version,
     )
 
 

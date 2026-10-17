@@ -138,3 +138,157 @@ def test_adapter_returns_bounded_skip_reason(update, reason) -> None:
 
     assert result.report is None
     assert result.skip_reason is reason
+
+
+def _expected_simulation(role: str, execution_id: str, policy: dict) -> dict:
+    dataset_uri = "hf://policyengine/data/populace_us_2024.h5@populace_us_2024-revision"
+    return {
+        "contract_version": 1,
+        "evaluation_id": str(EVALUATION_ID),
+        "simulation_execution_id": execution_id,
+        "role": role,
+        "policy": policy,
+        "population": {
+            "kind": "dataset",
+            "artifact": {
+                "uri": dataset_uri,
+                "media_type": "application/x-hdf5",
+                "content_sha256": "a" * 64,
+                "size_bytes": None,
+            },
+        },
+        "year": 2026,
+        "geography": {
+            "country": "us",
+            "region": "us",
+            "filter_field": None,
+            "filter_value": None,
+            "filter_strategy": None,
+        },
+        "options": {"spm": {"geography_kind": "national"}, "include_cliffs": True},
+        "bundle": {
+            "policyengine_version": "5.2.0",
+            "country_package_name": "policyengine-us",
+            "country_package_version": "1.764.6",
+            "dataset": {
+                "identity": "populace_us_2024",
+                "uri": dataset_uri,
+                "artifact_revision": "populace_us_2024-revision",
+                "data_package_name": "populace-data",
+                "data_package_version": "0.1.0",
+            },
+            "bundle_manifest_sha256": "b" * 64,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        "default",
+        "populace_us_2024",
+        "hf://policyengine/data/populace_us_2024.h5@populace_us_2024-revision",
+        "populace_us_2024@populace_us_2024-revision",
+    ],
+)
+def test_adapter_builds_the_complete_report_input(data) -> None:
+    payload = {
+        **eligible_payload(),
+        "include_cliffs": True,
+        "spm": {"geography_kind": "national"},
+        "data": data,
+    }
+
+    result = adapt_annual_comparison(
+        payload,
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert result.skip_reason is None
+    assert result.report is not None
+    assert result.report.model_dump(mode="json") == {
+        "contract_version": 1,
+        "evaluation_id": str(EVALUATION_ID),
+        "baseline": _expected_simulation(
+            "baseline", "20eaf597-1c15-549e-a96e-3661052c3f31", {}
+        ),
+        "reform": _expected_simulation(
+            "reform",
+            "5a17bbb2-20a6-5789-a508-9d26900587e4",
+            {"gov.irs.credits.ctc.amount.base[0].amount": {"2026": 3000}},
+        ),
+        "requested_aggregates": [
+            "budget",
+            "poverty",
+            "inequality",
+            "distributional",
+            "winners_and_losers",
+            "geographic",
+            "program_statistics",
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("update", "reason"),
+    [
+        ({"region_group": None}, None),
+        ({"spm": None, "include_cliffs": None, "segmented": False}, None),
+        ({"scope": None}, ComparisonSkipReason.UNSUPPORTED_SCOPE),
+        ({"baseline": None}, ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE),
+        ({"reform": []}, ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE),
+        ({"time_period": 2026}, ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE),
+        ({"time_period": "20a6"}, ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE),
+        ({"time_period": "02026"}, ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE),
+        ({"region": ""}, ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE),
+        ({"country": None}, ComparisonSkipReason.UNSUPPORTED_COUNTRY),
+        (
+            {"region_group": ["state/ca"], "scope": "household"},
+            ComparisonSkipReason.UNSUPPORTED_OPTIONS,
+        ),
+        (
+            {"scope": "household", "include_cliffs": "true"},
+            ComparisonSkipReason.UNSUPPORTED_SCOPE,
+        ),
+        (
+            {"include_cliffs": "true", "segmented": True},
+            ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE,
+        ),
+        (
+            {"segmented": True, "country": "ca"},
+            ComparisonSkipReason.UNSUPPORTED_OPTIONS,
+        ),
+        (
+            {"country": "ca", "policyengine_version": "another"},
+            ComparisonSkipReason.UNSUPPORTED_COUNTRY,
+        ),
+        (
+            {"policyengine_version": "another", "baseline": None},
+            ComparisonSkipReason.MISSING_BUNDLE_PROVENANCE,
+        ),
+        (
+            {"version": "another", "time_period": "2026-01"},
+            ComparisonSkipReason.MISSING_BUNDLE_PROVENANCE,
+        ),
+        (
+            {"baseline": None, "time_period": "2026-01"},
+            ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE,
+        ),
+        (
+            {"region": None, "data": "another"},
+            ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE,
+        ),
+    ],
+)
+def test_adapter_checks_eligibility_in_order(update, reason) -> None:
+    payload = {**eligible_payload(), **update}
+
+    result = adapt_annual_comparison(
+        payload,
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert result.skip_reason is reason
+    assert result.eligible is (reason is None)

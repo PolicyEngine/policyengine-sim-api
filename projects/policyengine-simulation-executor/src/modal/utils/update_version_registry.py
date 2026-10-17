@@ -11,8 +11,9 @@ import hashlib
 import json
 import os
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
@@ -227,8 +228,19 @@ def validate_routing_state(
         raise ValueError(msg)
 
     required_manifests = set(required_policyengine_manifests)
+    _validate_latest_routes(
+        state,
+        require_policyengine=bool(
+            state["routes"]["policyengine"] or required_manifests
+        ),
+    )
+    _validate_bundle_manifests(state, required_manifests)
+
+
+def _validate_latest_routes(state: RoutingState, *, require_policyengine: bool) -> None:
+    """Require each US, UK and (when required) policyengine latest to be routed."""
     required_latest_routes = ["us", "uk"]
-    if state["routes"]["policyengine"] or required_manifests:
+    if require_policyengine:
         required_latest_routes.append("policyengine")
 
     for route_name in required_latest_routes:
@@ -240,6 +252,14 @@ def validate_routing_state(
             msg = f"Routing state latest.{route_name}={latest!r} has no route"
             raise ValueError(msg)
 
+
+def _validate_bundle_manifests(
+    state: RoutingState, required_manifests: set[str]
+) -> None:
+    """Require each stored manifest to match its policyengine route.
+
+    A route may lack a manifest unless its version is in ``required_manifests``.
+    """
     for policyengine_version, app_name in state["routes"]["policyengine"].items():
         manifest = state["bundles"].get(policyengine_version)
         if not isinstance(manifest, dict):
@@ -278,13 +298,20 @@ def _assert_version_matches_manifest(
         raise ValueError(msg)
 
 
+@dataclass(frozen=True)
+class DeployedAppVersions:
+    """A deployed simulation app and the package versions it serves."""
+
+    app_name: str
+    policyengine_version: str
+    us_version: str
+    uk_version: str
+
+
 def build_next_routing_state(
     *,
     current_state: object,
-    app_name: str,
-    policyengine_version: str,
-    us_version: str,
-    uk_version: str,
+    deployed: DeployedAppVersions,
     force_latest: bool = False,
 ) -> RoutingState:
     """Return ``current_state`` with routes and the bundle manifest for a new app added.
@@ -293,6 +320,10 @@ def build_next_routing_state(
     ``force_latest`` (an intentional rollback). Raises ValueError when the US
     or UK version differs from the installed bundle's model version.
     """
+    app_name = deployed.app_name
+    policyengine_version = deployed.policyengine_version
+    us_version = deployed.us_version
+    uk_version = deployed.uk_version
     manifest = build_bundle_manifest_metadata(
         app_name=app_name,
         policyengine_version=policyengine_version,
@@ -425,10 +456,7 @@ def _json_copy(value: object) -> object:
 def plan_routing_publication(
     *,
     current_state: object,
-    app_name: str,
-    policyengine_version: str,
-    us_version: str,
-    uk_version: str,
+    deployed: DeployedAppVersions,
     force_latest: bool = False,
     publication_id: str | None = None,
 ) -> dict:
@@ -441,14 +469,13 @@ def plan_routing_publication(
     route to this release once the plan is applied.
     """
     publication_id = publication_id or uuid.uuid4().hex
+    app_name = deployed.app_name
+    policyengine_version = deployed.policyengine_version
     before = _json_copy(current_state) if current_state is not None else None
     after = _json_copy(
         build_next_routing_state(
             current_state=deepcopy(current_state),
-            app_name=app_name,
-            policyengine_version=policyengine_version,
-            us_version=us_version,
-            uk_version=uk_version,
+            deployed=deployed,
             force_latest=force_latest,
         )
     )
@@ -660,6 +687,18 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
             return "unchanged"
         msg = "there is no routing state to restore into"
         raise RoutingConflictError(msg)
+    outcome = _restore_live_plans(store, plans)
+    if pending is not None:
+        _write_publication_record(store, plan=pending, status="restored")
+    return outcome
+
+
+def _restore_live_plans(store: "modal.Dict", plans: list[dict]) -> str:
+    """Restore each live plan's starting state, newest attempt first.
+
+    Returns ``restored``, or ``unchanged`` when the live state is a starting
+    state no plan replaced; any other live state is a conflict.
+    """
     remaining = [
         plan for plan in plans if plan["before_sha256"] != plan["after_sha256"]
     ]
@@ -671,16 +710,7 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
             break
         plan = live[-1]
         remaining.remove(plan)
-        if plan["before"] is None:
-            store.pop(ROUTING_STATE_ACTIVE_KEY)
-        else:
-            store[ROUTING_STATE_ACTIVE_KEY] = plan["before"]
-        if (
-            routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
-            != plan["before_sha256"]
-        ):
-            msg = "the restored routing state reads back differently"
-            raise RoutingConflictError(msg)
+        _write_starting_state(store, plan)
         outcome = "restored"
     if outcome == "unchanged" and not any(
         plan["before_sha256"] == digest for plan in plans
@@ -690,15 +720,31 @@ def restore_routing_plans(*, environment: str, plans: list[dict]) -> str:
             "it published; another change was made, so nothing was restored"
         )
         raise RoutingConflictError(msg)
-    if pending is not None:
-        _write_publication_record(store, plan=pending, status="restored")
     return outcome
+
+
+def _write_starting_state(store: "modal.Dict", plan: dict) -> None:
+    """Put back the state ``plan`` replaced, and check that it reads back."""
+    if plan["before"] is None:
+        store.pop(ROUTING_STATE_ACTIVE_KEY)
+    else:
+        store[ROUTING_STATE_ACTIVE_KEY] = plan["before"]
+    if (
+        routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
+        != plan["before_sha256"]
+    ):
+        msg = "the restored routing state reads back differently"
+        raise RoutingConflictError(msg)
 
 
 def restore_routing_plan(*, environment: str, plan: dict) -> str:
     """Undo one plan: ``restored``, ``unchanged`` (never applied) or a conflict."""
     _require_serialized_routing_workflow()
     return restore_routing_plans(environment=environment, plans=[plan])
+
+
+# A workflow run's publication id is "<run id>-<run attempt>-<environment>".
+_RUN_PUBLICATION_ID_PARTS = 3
 
 
 def _publication_owned_by_release(
@@ -710,7 +756,7 @@ def _publication_owned_by_release(
 
     parts = str(plan.get("publication_id", "")).split("-")
     return (
-        len(parts) == 3
+        len(parts) == _RUN_PUBLICATION_ID_PARTS
         and parts[1].isdigit()
         and parts[2] == release_environment
         and parts[0] == publication_run
@@ -1030,10 +1076,7 @@ def seed_active_routing_state_from_legacy(*, environment: str) -> RoutingState:
 def publish_routing_state(
     *,
     environment: str,
-    app_name: str,
-    policyengine_version: str,
-    us_version: str,
-    uk_version: str,
+    deployed: DeployedAppVersions,
     force_latest: bool = False,
 ) -> RoutingState:
     """Add a deployed app to the active routing state and store it in one write."""
@@ -1046,10 +1089,7 @@ def publish_routing_state(
     _require_finished_publication(store)
     next_state = build_next_routing_state(
         current_state=store.get(ROUTING_STATE_ACTIVE_KEY),
-        app_name=app_name,
-        policyengine_version=policyengine_version,
-        us_version=us_version,
-        uk_version=uk_version,
+        deployed=deployed,
         force_latest=force_latest,
     )
     store[ROUTING_STATE_ACTIVE_KEY] = next_state
@@ -1093,8 +1133,8 @@ def _report(line: str = "") -> None:
     print(line)
 
 
-def main() -> None:
-    """Publish a deployed app's routes, or seed the state from legacy Dicts."""
+def _parser() -> argparse.ArgumentParser:
+    """Describe the routing publisher's modes and their options."""
     parser = argparse.ArgumentParser(
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
@@ -1241,29 +1281,40 @@ def main() -> None:
         metavar="POLICYENGINE_VERSION",
         help="With --restore-latest: refuse unless latest is still this version.",
     )
-    args = parser.parse_args()
+    return parser
 
-    def active_state() -> object:
-        snapshot = _modal_dict_snapshot(
-            name=ROUTING_STATE_DICT_NAME, environment=args.environment
-        )
-        return snapshot.get(ROUTING_STATE_ACTIVE_KEY)
 
+class _UsageError(Exception):
+    """A command-line mistake, reported as an argparse usage error."""
+
+
+def _active_state(environment: str) -> object:
+    snapshot = _modal_dict_snapshot(
+        name=ROUTING_STATE_DICT_NAME, environment=environment
+    )
+    return snapshot.get(ROUTING_STATE_ACTIVE_KEY)
+
+
+def _print_requested_view(args: argparse.Namespace) -> bool:
+    """Print the requested read-only view, if any; return whether one was printed."""
     if args.print_latest:
         _report(read_latest_policyengine_version(environment=args.environment) or "")
-        return
-
-    if args.print_identity:
-        for key, value in latest_release_identity(active_state()).items():
+    elif args.print_identity:
+        for key, value in latest_release_identity(
+            _active_state(args.environment)
+        ).items():
             _report(f"{key}={value}")
-        return
-
-    if args.print_pending_plan:
+    elif args.print_pending_plan:
         store = _routing_store(args.environment, create_if_missing=False)
         _report(json.dumps(_unfinished_publication(store), indent=2, sort_keys=True))
-        return
+    else:
+        return False
+    return True
 
-    writes_routing = (
+
+def _writes_routing(args: argparse.Namespace) -> bool:
+    """Whether the requested mode can write routing; only planning modes cannot."""
+    return bool(
         args.apply_plan
         or args.record_plan
         or args.complete_plan
@@ -1273,115 +1324,125 @@ def main() -> None:
         or args.seed_active_from_legacy
         or not (args.plan_out or args.dry_run)
     )
-    if writes_routing:
-        try:
-            _require_serialized_routing_workflow()
-        except RuntimeError as exc:
-            parser.error(str(exc))
 
-    if args.finalize_publication:
-        if args.release_environment is None or args.gates_passed is None:
-            parser.error(
-                "--finalize-publication requires --release-environment and "
-                "--gates-passed"
-            )
-        if args.publication_run is None and args.gates_passed != "false":
-            parser.error("operator recovery requires --gates-passed false")
-        store = _routing_store(args.environment, create_if_missing=False)
-        pending = _unfinished_publication(store)
-        if pending is None:
-            _report("No pending routing publication; routing is unchanged.")
-        else:
-            _report("Pending routing publication:")
-            _report(
-                json.dumps(store.get(ROUTING_PUBLICATION_KEY), indent=2, sort_keys=True)
-            )
-        outcome = finalize_routing_publication(
-            environment=args.environment,
-            release_environment=args.release_environment,
-            gates_passed=args.gates_passed == "true",
-            publication_run=args.publication_run,
-        )
-        if outcome == "foreign-publication":
-            _report(
-                "Pending routing publication belongs to another run or "
-                "environment; routing is unchanged."
-            )
-        _report(f"Routing publication finalization: {outcome}")
-        if args.github_output:
-            with Path(args.github_output).open("a") as handle:
-                handle.write(f"outcome={outcome}\n")
+
+def _require_writes_allowed(args: argparse.Namespace) -> None:
+    """Refuse a writing mode outside the workflows that serialize routing writes."""
+    if not _writes_routing(args):
         return
+    try:
+        _require_serialized_routing_workflow()
+    except RuntimeError as exc:
+        raise _UsageError(str(exc)) from exc
 
-    if args.record_plan or args.complete_plan:
-        with Path(args.record_plan or args.complete_plan).open() as handle:
-            plan = json.load(handle)
-        operation = record_routing_plan if args.record_plan else complete_routing_plan
-        operation(environment=args.environment, plan=plan)
+
+def _read_plan(path: str) -> dict:
+    with Path(path).open() as handle:
+        return json.load(handle)
+
+
+def _finalize_command(args: argparse.Namespace) -> None:
+    if args.release_environment is None or args.gates_passed is None:
+        msg = "--finalize-publication requires --release-environment and --gates-passed"
+        raise _UsageError(msg)
+    if args.publication_run is None and args.gates_passed != "false":
+        msg = "operator recovery requires --gates-passed false"
+        raise _UsageError(msg)
+    store = _routing_store(args.environment, create_if_missing=False)
+    pending = _unfinished_publication(store)
+    if pending is None:
+        _report("No pending routing publication; routing is unchanged.")
+    else:
+        _report("Pending routing publication:")
         _report(
-            f"Routing publication {plan['publication_id']}: "
-            f"{'pending' if args.record_plan else 'completed'}"
+            json.dumps(store.get(ROUTING_PUBLICATION_KEY), indent=2, sort_keys=True)
         )
-        return
-
-    if args.apply_plan:
-        with Path(args.apply_plan).open() as handle:
-            plan = json.load(handle)
-        apply_routing_plan(
-            environment=args.environment,
-            plan=plan,
-        )
+    outcome = finalize_routing_publication(
+        environment=args.environment,
+        release_environment=args.release_environment,
+        gates_passed=args.gates_passed == "true",
+        publication_run=args.publication_run,
+    )
+    if outcome == "foreign-publication":
         _report(
-            f"Published policyengine {plan['policyengine_version']} routing "
-            f"({plan['after_sha256']}) in Modal environment {args.environment}"
+            "Pending routing publication belongs to another run or "
+            "environment; routing is unchanged."
         )
-        return
+    _report(f"Routing publication finalization: {outcome}")
+    if args.github_output:
+        with Path(args.github_output).open("a") as handle:
+            handle.write(f"outcome={outcome}\n")
 
-    if args.restore_plan:
-        plans = []
-        for path in args.restore_plan:
-            with Path(path).open() as handle:
-                plans.append(json.load(handle))
-        outcome = restore_routing_plans(
-            environment=args.environment,
-            plans=plans,
-        )
-        _report(
-            f"Routing for policyengine {plans[-1]['policyengine_version']}: "
-            f"{outcome} in Modal environment {args.environment}"
-        )
-        return
 
-    if args.restore_latest:
-        state = restore_routing_state(
-            environment=args.environment,
-            policyengine_version=args.restore_latest,
-            expected_latest=args.expected_latest,
-        )
-        _report(f"Restored routing state in Modal environment: {args.environment}")
-        _report(f"  latest.policyengine: {state['latest']['policyengine']}")
-        _report(f"  latest.us: {state['latest']['us']}")
-        _report(f"  latest.uk: {state['latest']['uk']}")
-        return
-    if args.expected_latest:
-        parser.error("--expected-latest needs --restore-latest")
+def _journal_command(args: argparse.Namespace) -> None:
+    plan = _read_plan(args.record_plan or args.complete_plan)
+    operation = record_routing_plan if args.record_plan else complete_routing_plan
+    operation(environment=args.environment, plan=plan)
+    _report(
+        f"Routing publication {plan['publication_id']}: "
+        f"{'pending' if args.record_plan else 'completed'}"
+    )
 
-    if args.seed_active_from_legacy:
-        _report(
-            "Seeding active routing state from legacy Modal dicts in "
-            f"environment: {args.environment}"
-        )
-        state = seed_active_routing_state_from_legacy(environment=args.environment)
-        _report()
-        _report(f"  {ROUTING_STATE_DICT_NAME}[{ROUTING_STATE_ACTIVE_KEY}]: updated")
-        _report(f"  policyengine routes: {len(state['routes']['policyengine'])}")
-        _report(f"  US routes: {len(state['routes']['us'])}")
-        _report(f"  UK routes: {len(state['routes']['uk'])}")
-        _report(f"  bundle manifests: {len(state['bundles'])}")
-        _report()
-        _report("Legacy routing state seed completed successfully.")
-        return
 
+def _apply_plan_command(args: argparse.Namespace) -> None:
+    plan = _read_plan(args.apply_plan)
+    apply_routing_plan(
+        environment=args.environment,
+        plan=plan,
+    )
+    _report(
+        f"Published policyengine {plan['policyengine_version']} routing "
+        f"({plan['after_sha256']}) in Modal environment {args.environment}"
+    )
+
+
+def _restore_plans_command(args: argparse.Namespace) -> None:
+    plans = [_read_plan(path) for path in args.restore_plan]
+    outcome = restore_routing_plans(
+        environment=args.environment,
+        plans=plans,
+    )
+    _report(
+        f"Routing for policyengine {plans[-1]['policyengine_version']}: "
+        f"{outcome} in Modal environment {args.environment}"
+    )
+
+
+def _restore_latest_command(args: argparse.Namespace) -> None:
+    state = restore_routing_state(
+        environment=args.environment,
+        policyengine_version=args.restore_latest,
+        expected_latest=args.expected_latest,
+    )
+    _report(f"Restored routing state in Modal environment: {args.environment}")
+    _report(f"  latest.policyengine: {state['latest']['policyengine']}")
+    _report(f"  latest.us: {state['latest']['us']}")
+    _report(f"  latest.uk: {state['latest']['uk']}")
+
+
+def _expected_latest_without_restore(_args: argparse.Namespace) -> None:
+    msg = "--expected-latest needs --restore-latest"
+    raise _UsageError(msg)
+
+
+def _seed_command(args: argparse.Namespace) -> None:
+    _report(
+        "Seeding active routing state from legacy Modal dicts in "
+        f"environment: {args.environment}"
+    )
+    state = seed_active_routing_state_from_legacy(environment=args.environment)
+    _report()
+    _report(f"  {ROUTING_STATE_DICT_NAME}[{ROUTING_STATE_ACTIVE_KEY}]: updated")
+    _report(f"  policyengine routes: {len(state['routes']['policyengine'])}")
+    _report(f"  US routes: {len(state['routes']['us'])}")
+    _report(f"  UK routes: {len(state['routes']['uk'])}")
+    _report(f"  bundle manifests: {len(state['bundles'])}")
+    _report()
+    _report("Legacy routing state seed completed successfully.")
+
+
+def _deployed_app(args: argparse.Namespace) -> DeployedAppVersions:
+    """Read the deployed app's versions, which publishing and planning require."""
     required_args = {
         "--app-name": args.app_name,
         "--policyengine-version": args.policyengine_version,
@@ -1390,24 +1451,35 @@ def main() -> None:
     }
     missing_args = [name for name, value in required_args.items() if not value]
     if missing_args:
-        parser.error(f"the following arguments are required: {', '.join(missing_args)}")
+        msg = f"the following arguments are required: {', '.join(missing_args)}"
+        raise _UsageError(msg)
+    return DeployedAppVersions(
+        app_name=args.app_name,
+        policyengine_version=args.policyengine_version,
+        us_version=args.us_version,
+        uk_version=args.uk_version,
+    )
 
+
+def _plan_command(args: argparse.Namespace, deployed: DeployedAppVersions) -> None:
+    plan = plan_routing_publication(
+        current_state=_active_state(args.environment),
+        deployed=deployed,
+        force_latest=args.force_latest,
+        publication_id=args.publication_id,
+    )
+    if args.plan_out:
+        with Path(args.plan_out).open("w") as handle:
+            json.dump(plan, handle, indent=2, sort_keys=True)
+    _report(f"before_sha256={plan['before_sha256']}")
+    _report(f"after_sha256={plan['after_sha256']}")
+    _report(f"advances_latest={'true' if plan['advances_latest'] else 'false'}")
+
+
+def _publish_command(args: argparse.Namespace) -> None:
+    deployed = _deployed_app(args)
     if args.plan_out or args.dry_run:
-        plan = plan_routing_publication(
-            current_state=active_state(),
-            app_name=args.app_name,
-            policyengine_version=args.policyengine_version,
-            us_version=args.us_version,
-            uk_version=args.uk_version,
-            force_latest=args.force_latest,
-            publication_id=args.publication_id,
-        )
-        if args.plan_out:
-            with Path(args.plan_out).open("w") as handle:
-                json.dump(plan, handle, indent=2, sort_keys=True)
-        _report(f"before_sha256={plan['before_sha256']}")
-        _report(f"after_sha256={plan['after_sha256']}")
-        _report(f"advances_latest={'true' if plan['advances_latest'] else 'false'}")
+        _plan_command(args, deployed)
         return
 
     _report(f"Publishing routing state in Modal environment: {args.environment}")
@@ -1419,10 +1491,7 @@ def main() -> None:
 
     state = publish_routing_state(
         environment=args.environment,
-        app_name=args.app_name,
-        policyengine_version=args.policyengine_version,
-        us_version=args.us_version,
-        uk_version=args.uk_version,
+        deployed=deployed,
         force_latest=args.force_latest,
     )
     _report()
@@ -1432,6 +1501,37 @@ def main() -> None:
     _report(f"  latest.uk: {state['latest']['uk']}")
     _report()
     _report("Routing state published successfully.")
+
+
+def _requested_command(
+    args: argparse.Namespace,
+) -> Callable[[argparse.Namespace], None]:
+    """Return the first requested writing mode's command, or publishing."""
+    commands = (
+        (args.finalize_publication, _finalize_command),
+        (args.record_plan or args.complete_plan, _journal_command),
+        (args.apply_plan, _apply_plan_command),
+        (args.restore_plan, _restore_plans_command),
+        (args.restore_latest, _restore_latest_command),
+        (args.expected_latest, _expected_latest_without_restore),
+        (args.seed_active_from_legacy, _seed_command),
+    )
+    return next(
+        (command for requested, command in commands if requested), _publish_command
+    )
+
+
+def main() -> None:
+    """Publish a deployed app's routes, or seed the state from legacy Dicts."""
+    parser = _parser()
+    args = parser.parse_args()
+    if _print_requested_view(args):
+        return
+    try:
+        _require_writes_allowed(args)
+        _requested_command(args)(args)
+    except _UsageError as error:
+        parser.error(str(error))
 
 
 if __name__ == "__main__":

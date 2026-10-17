@@ -494,7 +494,21 @@ def _certified_spm_selection(
     return SPMSelection.model_validate(values).model_dump(mode="json")
 
 
-def resolve_spm_selection(
+# A release version this module compares numerically is major.minor.patch.
+_RELEASE_VERSION_PART_COUNT = 3
+
+
+def _numeric_release_version(version: str | None) -> tuple[int, ...] | None:
+    """Return ``major.minor.patch`` as integers, or None for any other shape."""
+    parts = str(version or "").split(".")
+    if len(parts) != _RELEASE_VERSION_PART_COUNT or not all(
+        re.fullmatch(r"[0-9]+", part) for part in parts
+    ):
+        return None
+    return tuple(map(int, parts))
+
+
+def resolve_spm_selection(  # noqa: PLR0913  # public contract API: the gateway and executor call it with these keywords
     country: str,
     selection: SPMSelection | Mapping[str, object] | None,
     *,
@@ -514,12 +528,8 @@ def resolve_spm_selection(
     if capability is None:
         # Existing versioned worker bundles predate canonical SPM. This does
         # not certify a future bundle or change the routing registry default.
-        version_parts = str(policyengine_version or "").split(".")
-        historical = (
-            len(version_parts) == 3
-            and all(re.fullmatch(r"[0-9]+", p) for p in version_parts)
-            and tuple(map(int, version_parts)) < (5, 2, 0)
-        )
+        wrapper_version = _numeric_release_version(policyengine_version)
+        historical = wrapper_version is not None and wrapper_version < (5, 2, 0)
         # The last two pre-canonical wrappers pin US 1.764.6. A route the
         # registry carries no manifest for states no model version at all,
         # and states nothing that contradicts the wrapper pin; a route that
@@ -533,13 +543,12 @@ def resolve_spm_selection(
         # shape, not from the registry's rewritable generation marker -- and
         # a pre-canonical US model; absence of capability alone proves
         # nothing.
-        model_parts = str(model_version or "").split(".")
+        model_release = _numeric_release_version(model_version)
         historical = historical or (
             policyengine_version is None
             and route_provenance in {"legacy-country-dict", "legacy-country-route"}
-            and len(model_parts) == 3
-            and all(re.fullmatch(r"[0-9]+", p) for p in model_parts)
-            and tuple(map(int, model_parts)) <= (1, 764, 6)
+            and model_release is not None
+            and model_release <= (1, 764, 6)
         )
         if selection is None and historical:
             return None

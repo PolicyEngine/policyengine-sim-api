@@ -20,6 +20,8 @@ from urllib.request import Request, urlopen
 
 HF_ENDPOINT = os.environ.get("HF_ENDPOINT", "https://huggingface.co").rstrip("/")
 HF_REQUEST_TIMEOUT_SECONDS = 30
+# An hf:// URI names the organization, the repo and the in-repo path.
+_URI_ORG_REPO_PATH_PART_COUNT = 3
 
 
 class HuggingFaceDatasetReferenceError(ValueError):
@@ -59,7 +61,7 @@ def parse_hf_dataset_uri(dataset_uri: str) -> HFDatasetReference | None:
         else (without_scheme, None)
     )
     parts = path_with_repo.split("/", maxsplit=2)
-    if len(parts) != 3 or not all(parts):
+    if len(parts) != _URI_ORG_REPO_PATH_PART_COUNT or not all(parts):
         msg = f"Invalid Hugging Face dataset URI: {dataset_uri!r}"
         raise HuggingFaceDatasetReferenceError(msg)
     return HFDatasetReference(

@@ -6,6 +6,7 @@ import logging
 import random
 import time
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import OperationalError
@@ -27,14 +28,24 @@ MAXIMUM_RETRY_DELAY_SECONDS = 15.0
 RETRY_DELAY_GROWTH_FACTOR = 2.0
 
 
+@dataclass(frozen=True)
+class RetryTiming:
+    """The clock, sleep and jitter a connection retry uses; tests replace them.
+
+    ``choose_delay`` picks a delay between its lower and upper bound.
+    """
+
+    sleep: Callable[[float], None] = time.sleep
+    monotonic: Callable[[], float] = time.monotonic
+    choose_delay: Callable[[float, float], float] = random.uniform
+
+
 def open_connection_with_retry(
     connect: Callable[[], Connection],
     *,
     operation_name: str,
     runtime: ObservabilityRuntime | None = None,
-    sleep: Callable[[float], None] = time.sleep,
-    monotonic: Callable[[], float] = time.monotonic,
-    choose_delay: Callable[[float, float], float] = random.uniform,
+    timing: RetryTiming | None = None,
 ) -> Connection:
     """Open a Stage 12 database connection, retrying while it is refused.
 
@@ -46,18 +57,21 @@ def open_connection_with_retry(
     Errors other than ``OperationalError`` propagate immediately, and retries
     stop once the retry budget is spent.
     """
-    started = monotonic()
+    timing = timing or RetryTiming()
+    started = timing.monotonic()
     attempt = 1
     delay_ceiling = INITIAL_RETRY_DELAY_SECONDS
     while True:
         try:
             return connect()
         except OperationalError as error:  # noqa: PERF203  # each refused attempt is caught so the loop can retry it
-            remaining_budget = CONNECTION_RETRY_BUDGET_SECONDS - (monotonic() - started)
+            remaining_budget = CONNECTION_RETRY_BUDGET_SECONDS - (
+                timing.monotonic() - started
+            )
             if remaining_budget <= 0:
                 raise
             delay = min(
-                choose_delay(delay_ceiling / 2, delay_ceiling), remaining_budget
+                timing.choose_delay(delay_ceiling / 2, delay_ceiling), remaining_budget
             )
             _report_connection_retry(
                 runtime,
@@ -66,7 +80,7 @@ def open_connection_with_retry(
                 delay_seconds=delay,
                 error=error,
             )
-            sleep(delay)
+            timing.sleep(delay)
             attempt += 1
             delay_ceiling = min(
                 delay_ceiling * RETRY_DELAY_GROWTH_FACTOR,

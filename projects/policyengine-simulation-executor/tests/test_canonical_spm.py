@@ -272,7 +272,7 @@ def test_result_transport_rejects_legacy_sibling_config():
 def test_sync_compatibility_endpoint_preserves_explicit_null(
     monkeypatch, observability_runtime
 ):
-    import policyengine_simulation_executor.simulation as simulation
+    from policyengine_simulation_executor import simulation
 
     captured = []
 
@@ -350,7 +350,7 @@ class TestResolutionIsNotRepeatedWork:
     @staticmethod
     def _stub_provider(monkeypatch, capability=CAPABILITY):
         """Count the two pieces of work a resolution repeats."""
-        import policyengine_simulation_executor.spm as spm
+        from policyengine_simulation_executor import spm
 
         year_metadata = Mock(return_value={})
         constructions = Mock(
@@ -484,7 +484,7 @@ class TestResolutionIsNotRepeatedWork:
 
     def test_the_installed_capability_is_read_once(self, monkeypatch):
         import policyengine.bundle
-        import policyengine_simulation_executor.spm as spm
+        from policyengine_simulation_executor import spm
 
         reads = Mock(return_value={"measurements": {}})
         monkeypatch.setattr(policyengine.bundle, "get_current_bundle", reads)
@@ -498,7 +498,7 @@ class TestResolutionIsNotRepeatedWork:
 
     def test_an_unavailable_capability_is_rederived_every_time(self, monkeypatch):
         import policyengine.bundle
-        import policyengine_simulation_executor.spm as spm
+        from policyengine_simulation_executor import spm
 
         reads = Mock(side_effect=ValueError("bundle configuration unavailable"))
         monkeypatch.setattr(policyengine.bundle, "get_current_bundle", reads)
@@ -560,8 +560,10 @@ def test_each_setting_rotates_artifact_identity(key, value):
     }
     changed = {**SELECTION, key: value}
     assert artifact_keys.baseline_key(
-        **common, spm=SELECTION
-    ) != artifact_keys.baseline_key(**common, spm=changed)
+        artifact_keys.BaselineKeyInputs(**common, spm=SELECTION)
+    ) != artifact_keys.baseline_key(
+        artifact_keys.BaselineKeyInputs(**common, spm=changed)
+    )
     ds = {
         "country": "us",
         "dataset": "test",
@@ -573,9 +575,9 @@ def test_each_setting_rotates_artifact_identity(key, value):
         "model_version": "test",
         "policyengine_version": "test",
     }
-    assert artifact_keys.dataset_key(**ds, spm=SELECTION) != artifact_keys.dataset_key(
-        **ds, spm=changed
-    )
+    assert artifact_keys.dataset_key(
+        artifact_keys.DatasetKeyInputs(**ds, spm=SELECTION)
+    ) != artifact_keys.dataset_key(artifact_keys.DatasetKeyInputs(**ds, spm=changed))
 
 
 def test_fanout_and_budget_window_preserve_settings_and_receipts():
@@ -607,9 +609,9 @@ def test_fanout_and_budget_window_preserve_settings_and_receipts():
 
 
 def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
-    import policyengine_simulation_executor.spm as spm
     from policyengine_simulation_executor import (
         baseline_artifacts,
+        spm,
         stage_reporting_simulation,
     )
 
@@ -621,7 +623,7 @@ def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
     monkeypatch.setattr(
         baseline_artifacts,
         "deterministic_baseline_id",
-        lambda *_args, **kwargs: "baseline-id" if kwargs["policy"] is None else None,
+        lambda request: "baseline-id" if request.policy is None else None,
     )
     monkeypatch.setattr(
         baseline_artifacts, "ArtifactBaselineSimulation", lambda **k: calls.append(k)
@@ -639,7 +641,7 @@ def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
                 "tiny", "tiny", is_default=True
             ),
             policy=policy,
-            region_code="us",
+            region=simulation_runtime.RegionResolution(code="us"),
         )
     assert len(calls) == 2
     assert all(call["spm"] == SELECTION for call in calls)
@@ -656,13 +658,15 @@ def test_identity_errors_do_not_degrade_to_an_unidentified_baseline(monkeypatch)
     )
     with pytest.raises(SPMInputError):
         baseline_artifacts.deterministic_baseline_id(
-            {},
-            country="us",
-            dataset_is_default=True,
-            policy=None,
-            region_code="us",
-            scoping_strategy=None,
-            year=2026,
+            baseline_artifacts.BaselineIdentityRequest(
+                {},
+                country="us",
+                dataset_is_default=True,
+                policy=None,
+                region_code="us",
+                scoping_strategy=None,
+                year=2026,
+            )
         )
 
 
@@ -934,10 +938,12 @@ def test_versions_http_retains_capability_contract_version(monkeypatch):
     )
     state = registry.build_next_routing_state(
         current_state=None,
-        app_name="test-app",
-        policyengine_version="9.9.9",
-        us_version="test-us",
-        uk_version="test-uk",
+        deployed=registry.DeployedAppVersions(
+            app_name="test-app",
+            policyengine_version="9.9.9",
+            us_version="test-us",
+            uk_version="test-uk",
+        ),
     )
     monkeypatch.setattr(endpoints, "_active_routing_state", lambda: state)
     response = TestClient(create_gateway_app()).get("/versions")

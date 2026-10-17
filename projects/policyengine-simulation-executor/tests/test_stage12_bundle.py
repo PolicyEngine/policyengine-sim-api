@@ -120,3 +120,13 @@ def test_stage12_extractor_does_not_inspect_installed_distribution_versions() ->
     )
     assert "importlib.metadata" not in text
     assert "pkg_resources" not in text
+
+
+@pytest.mark.parametrize("schema_version", [None, 1, 3, "2"])
+def test_only_bundle_schema_version_2_is_supported(schema_version) -> None:
+    bundle = {**_bundle(), "schema_version": schema_version}
+
+    with pytest.raises(
+        Stage12BundleError, match=r"^PolicyEngine\.py bundle schema_version must be 2$"
+    ):
+        normalize_stage12_bundle(bundle)

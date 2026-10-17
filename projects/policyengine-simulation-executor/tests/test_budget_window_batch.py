@@ -13,6 +13,7 @@ from policyengine_simulation_contract.gateway_models import (
     PolicyEngineBundle,
 )
 from src.modal.budget_window_batch import run_budget_window_batch_impl
+from src.modal.fanout import PollBackoff
 
 
 class SequencedCall:
@@ -88,25 +89,26 @@ class MockRunSimulationFunction:
         return call
 
 
+class MockDict:
+    def __init__(self, data: dict):
+        self._data = data
+
+    def __getitem__(self, key: str):
+        return self._data[key]
+
+    def __setitem__(self, key: str, value):
+        self._data[key] = value
+
+    def get(self, key: str, default=None):
+        return self._data.get(key, default)
+
+
 @pytest.fixture
 def mock_batch_modal(monkeypatch):
     dicts: dict[str, dict] = {}
     call_registry: dict[str, SequencedCall] = {}
     functions: dict[tuple[str, str], object] = {}
     parent_call_id = "parent-123"
-
-    class MockDict:
-        def __init__(self, data: dict):
-            self._data = data
-
-        def __getitem__(self, key: str):
-            return self._data[key]
-
-        def __setitem__(self, key: str, value):
-            self._data[key] = value
-
-        def get(self, key: str, default=None):
-            return self._data.get(key, default)
 
     class MockModalDict:
         @staticmethod
@@ -349,9 +351,7 @@ def test_scheduler_sleep_exponentially_backs_off_then_resets_on_progress(
             raw_params=payload,
         ),
         runtime=observability_runtime,
-        poll_interval_seconds=0.5,
-        poll_interval_max_seconds=4.0,
-        poll_interval_backoff_factor=2.0,
+        poll_backoff=PollBackoff(initial_seconds=0.5, maximum_seconds=4.0, factor=2.0),
     )
 
     runner.run()
@@ -414,9 +414,7 @@ def test_scheduler_publishes_bounded_poll_aggregates(
             raw_params=payload,
         ),
         runtime=observability_runtime,
-        poll_interval_seconds=0.5,
-        poll_interval_max_seconds=4.0,
-        poll_interval_backoff_factor=2.0,
+        poll_backoff=PollBackoff(initial_seconds=0.5, maximum_seconds=4.0, factor=2.0),
     )
 
     runner.run()

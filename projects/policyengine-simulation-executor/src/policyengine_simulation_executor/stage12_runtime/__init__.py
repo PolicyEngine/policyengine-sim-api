@@ -1,9 +1,18 @@
 """Independent Stage 12 simulation execution and report coordination."""
 
-from .aggregation import build_aggregate_report, build_spm_result
-from .coordination import coordinate_report
+from .aggregation import (
+    RetainedSimulationOutput,
+    build_aggregate_report,
+    build_spm_result,
+)
+from .coordination import (
+    CoordinatorDependencies,
+    CoordinatorInvocation,
+    coordinate_report,
+)
 from .simulation import (
     SimulationCalculation,
+    SimulationWorkerDependencies,
     calculate_simulation_frames,
     run_single_simulation,
     simulation_input_sha256,
@@ -14,7 +23,11 @@ from .simulation import (
 _build_spm_result = build_spm_result
 
 __all__ = [
+    "CoordinatorDependencies",
+    "CoordinatorInvocation",
+    "RetainedSimulationOutput",
     "SimulationCalculation",
+    "SimulationWorkerDependencies",
     "build_aggregate_report",
     "calculate_simulation_frames",
     "coordinate_report",

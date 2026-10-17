@@ -30,6 +30,7 @@ import logging
 import os
 import re
 from contextlib import AbstractContextManager, contextmanager, nullcontext
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -152,23 +153,35 @@ class StageProgress:
             self.stage_finished = True
 
 
+@dataclass(frozen=True)
+class StageTracking:
+    """How one process names, records and times its Stage 12 stages.
+
+    ``stage_plan`` names each stage, ``progress`` records the last one so that
+    a failure names it, and ``runtime``, when set, times it.
+    """
+
+    stage_plan: StagePlan
+    progress: StageProgress
+    runtime: ObservabilityRuntime | None
+
+
 @contextmanager
 def tracked_stage(
     stage: Stage,
     attributes: Mapping[str, object] | None = None,
     *,
-    stage_plan: StagePlan,
-    progress: StageProgress,
-    runtime: ObservabilityRuntime | None,
+    tracking: StageTracking,
     operation: bool = False,
 ) -> Iterator[None]:
     """Run a block as one Stage 12 stage for telemetry and failure causes.
 
     The block runs inside the stage's span, or its operation when
-    ``operation`` is true, and ``progress`` records the stage so that a
-    failure names it. A ``simulation_role`` attribute sets the stage's role.
+    ``operation`` is true, and ``tracking.progress`` records the stage so that
+    a failure names it. A ``simulation_role`` attribute sets the stage's role.
     """
-    stage_name = stage_plan.name(stage)
+    stage_name = tracking.stage_plan.name(stage)
+    runtime = tracking.runtime
     scope: AbstractContextManager[object]
     if runtime is None:
         scope = nullcontext()
@@ -176,7 +189,10 @@ def tracked_stage(
         scope = runtime.operation(stage_name, attributes=attributes)
     else:
         scope = runtime.span(stage_name, attributes=attributes)
-    with progress.stage(stage_name, role=_simulation_role(attributes)), scope:
+    with (
+        tracking.progress.stage(stage_name, role=_simulation_role(attributes)),
+        scope,
+    ):
         yield
 
 
@@ -296,8 +312,9 @@ def _without_url_query(url_match: re.Match[str]) -> str:
 
 
 def _before_last_word(text: str) -> str:
+    # rsplit with maxsplit=1 returns at most two parts.
     words = text.rsplit(maxsplit=1)
-    return words[0] if len(words) == 2 else ""
+    return words[0] if len(words) > 1 else ""
 
 
 def _secret_environment_values() -> tuple[str, ...]:

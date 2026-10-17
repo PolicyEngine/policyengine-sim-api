@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
@@ -72,21 +73,33 @@ def write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
+@dataclass(frozen=True)
+class FakeGitState:
+    """What the fake ``git`` reports about the update branch and working tree.
+
+    ``remote_branch_exists`` and ``diff_has_changes`` set the ``ls-remote``
+    and ``diff`` exit codes, and ``show`` prints the update branch's pyproject
+    pinning ``branch_pin``.
+    """
+
+    remote_branch_exists: bool = False
+    diff_has_changes: bool = False
+    branch_pin: str = "4.1.0"
+
+
 def install_fake_git(
     fake_bin: Path,
     *,
     root: Path,
     log: Path,
-    remote_branch_exists: bool = False,
-    diff_has_changes: bool = False,
-    branch_pin: str = "4.1.0",
+    state: FakeGitState | None = None,
 ) -> None:
     """Install a fake ``git`` that appends each call to ``log``.
 
-    ``remote_branch_exists`` and ``diff_has_changes`` set the ``ls-remote``
-    and ``diff`` exit codes, and ``show`` prints the update branch's pyproject
-    pinning ``branch_pin``; every other command succeeds silently.
+    It answers ``ls-remote``, ``diff`` and ``show`` as ``state`` says; every
+    other command succeeds silently.
     """
+    state = state or FakeGitState()
     write_executable(
         fake_bin / "git",
         f"""#!/usr/bin/env bash
@@ -99,21 +112,21 @@ if [[ "$1" == "rev-parse" && "$2" == "--show-toplevel" ]]; then
 fi
 
 if [[ "$1" == "ls-remote" ]]; then
-  if [[ "{int(remote_branch_exists)}" == "1" ]]; then
+  if [[ "{int(state.remote_branch_exists)}" == "1" ]]; then
     exit 0
   fi
   exit 2
 fi
 
 if [[ "$1" == "diff" ]]; then
-  if [[ "{int(diff_has_changes)}" == "1" ]]; then
+  if [[ "{int(state.diff_has_changes)}" == "1" ]]; then
     exit 1
   fi
   exit 0
 fi
 
 if [[ "$1" == "show" ]]; then
-  printf '[project]\ndependencies = ["policyengine[models]=={branch_pin}"]\n'
+  printf '[project]\ndependencies = ["policyengine[models]=={state.branch_pin}"]\n'
   exit 0
 fi
 
@@ -191,22 +204,30 @@ exit 0
     )
 
 
+@dataclass(frozen=True)
+class BundledVersions:
+    """Package versions and UK dataset digest the fake ``uv`` reports for 4.1.0."""
+
+    policyengine_version: str = "4.1.0"
+    core_version: str = "999.999.999"
+    spm_version: str = "1.0.0"
+    us_version: str = "1.1.0"
+    uk_version: str = "2.1.0"
+    uk_dataset_sha256: str = "a" * 64
+
+
 def install_fake_uv(
     fake_bin: Path,
     *,
     log: Path,
-    bundled_core_version: str = "999.999.999",
-    bundled_us_version: str = "1.1.0",
-    bundled_uk_version: str = "2.1.0",
-    bundled_policyengine_version: str = "4.1.0",
-    bundled_spm_version: str = "1.0.0",
-    bundled_uk_dataset_sha256: str = "a" * 64,
+    bundled: BundledVersions | None = None,
 ) -> None:
     """Install a fake ``uv`` that appends each call to ``log``.
 
     Only the updater's isolated ``bundle-versions`` query for policyengine
-    4.1.0 prints anything: the ``bundled_*`` versions as ``key=value`` lines.
+    4.1.0 prints anything: the ``bundled`` versions as ``key=value`` lines.
     """
+    bundled = bundled or BundledVersions()
     write_executable(
         fake_bin / "uv",
         f"""#!/usr/bin/env bash
@@ -216,16 +237,16 @@ printf 'uv %s\\n' "$*" >> "{log}"
 if [[ "$1" == "run" \
   && "$*" == *"--isolated --no-project --with policyengine==4.1.0"* \
   && "$*" == *"update_policyengine_package.py bundle-versions"* ]]; then
-  echo "policyengine_version={bundled_policyengine_version}"
-  echo "policyengine_core_version={bundled_core_version}"
-  echo "spm_calculator_version={bundled_spm_version}"
-  echo "us_version={bundled_us_version}"
+  echo "policyengine_version={bundled.policyengine_version}"
+  echo "policyengine_core_version={bundled.core_version}"
+  echo "spm_calculator_version={bundled.spm_version}"
+  echo "us_version={bundled.us_version}"
   echo "us_data_version=1.10.0"
-  echo "uk_version={bundled_uk_version}"
+  echo "uk_version={bundled.uk_version}"
   echo "uk_data_version=1.20.0"
   echo "uk_data_package_version=1.20.0"
   echo "us_dataset_sha256="
-  echo "uk_dataset_sha256={bundled_uk_dataset_sha256}"
+  echo "uk_dataset_sha256={bundled.uk_dataset_sha256}"
   echo "uk_certificate_sha256="
   exit 0
 fi

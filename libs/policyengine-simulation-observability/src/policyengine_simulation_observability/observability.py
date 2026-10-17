@@ -120,7 +120,7 @@ def build_runtime(
     return configure(config)
 
 
-def init_simulation_observability(
+def init_simulation_observability(  # noqa: PLR0913  # public observability API: the entry, gateway and executor apps pass these keyword-only identity arguments
     app: FastAPI,
     *,
     service_name: str,

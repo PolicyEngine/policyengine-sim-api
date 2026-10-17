@@ -78,38 +78,59 @@ def compare_simulation_frames(
         raise ParityMismatchError(error_code, "simulation")
     allowed = tolerances or {}
     for entity, expected_frame in expected.items():
-        actual_frame = actual[entity]
-        if tuple(expected_frame.columns) != tuple(actual_frame.columns):
-            error_code = "column_membership_mismatch"
-            raise ParityMismatchError(error_code, entity)
-        if len(expected_frame) != len(actual_frame):
-            error_code = "row_membership_mismatch"
-            raise ParityMismatchError(error_code, entity)
-        identifier = f"{entity}_id"
-        if not expected_frame[identifier].equals(actual_frame[identifier]):
-            error_code = "row_identity_mismatch"
-            raise ParityMismatchError(error_code, entity)
-        for column in expected_frame.columns:
-            path = f"{entity}.{column}"
-            expected_values = expected_frame[column]
-            actual_values = actual_frame[column]
-            if str(expected_values.dtype) != str(actual_values.dtype):
-                error_code = "dtype_mismatch"
-                raise ParityMismatchError(error_code, path)
-            if pd.api.types.is_numeric_dtype(expected_values.dtype):
-                tolerance = allowed.get(path, NumericalTolerance())
-                if not np.allclose(
-                    expected_values.to_numpy(),
-                    actual_values.to_numpy(),
-                    rtol=tolerance.relative,
-                    atol=tolerance.absolute,
-                    equal_nan=True,
-                ):
-                    error_code = "numeric_value_mismatch"
-                    raise ParityMismatchError(error_code, path)
-            elif not expected_values.equals(actual_values):
-                error_code = "value_mismatch"
-                raise ParityMismatchError(error_code, path)
+        _compare_entity_frames(entity, expected_frame, actual[entity], allowed)
+
+
+def _compare_entity_frames(
+    entity: str,
+    expected_frame: pd.DataFrame,
+    actual_frame: pd.DataFrame,
+    tolerances: Mapping[str, NumericalTolerance],
+) -> None:
+    """Check one canonical entity's columns, row ids and then each column's values."""
+    if tuple(expected_frame.columns) != tuple(actual_frame.columns):
+        error_code = "column_membership_mismatch"
+        raise ParityMismatchError(error_code, entity)
+    if len(expected_frame) != len(actual_frame):
+        error_code = "row_membership_mismatch"
+        raise ParityMismatchError(error_code, entity)
+    identifier = f"{entity}_id"
+    if not expected_frame[identifier].equals(actual_frame[identifier]):
+        error_code = "row_identity_mismatch"
+        raise ParityMismatchError(error_code, entity)
+    for column in expected_frame.columns:
+        path = f"{entity}.{column}"
+        _compare_column(
+            path,
+            expected_frame[column],
+            actual_frame[column],
+            tolerances.get(path, NumericalTolerance()),
+        )
+
+
+def _compare_column(
+    path: str,
+    expected_values: pd.Series,
+    actual_values: pd.Series,
+    tolerance: NumericalTolerance,
+) -> None:
+    """Require one dtype, then values within ``tolerance`` (numeric) or equal."""
+    if str(expected_values.dtype) != str(actual_values.dtype):
+        error_code = "dtype_mismatch"
+        raise ParityMismatchError(error_code, path)
+    if pd.api.types.is_numeric_dtype(expected_values.dtype):
+        if not np.allclose(
+            expected_values.to_numpy(),
+            actual_values.to_numpy(),
+            rtol=tolerance.relative,
+            atol=tolerance.absolute,
+            equal_nan=True,
+        ):
+            error_code = "numeric_value_mismatch"
+            raise ParityMismatchError(error_code, path)
+    elif not expected_values.equals(actual_values):
+        error_code = "value_mismatch"
+        raise ParityMismatchError(error_code, path)
 
 
 def compare_aggregate_reports(
@@ -124,51 +145,90 @@ def compare_aggregate_reports(
     within the tolerance keyed by their path, such as ``budget.total`` or
     ``deciles[3]``; any other value must be equal and of the same type.
     """
-    allowed = tolerances or {}
+    _compare_report_values(incumbent, candidate, "", tolerances or {})
 
-    def compare(expected: object, actual: object, path: str) -> None:
-        if isinstance(expected, Mapping):
-            if not isinstance(actual, Mapping) or expected.keys() != actual.keys():
-                error_code = "field_membership_mismatch"
-                raise ParityMismatchError(error_code, path or "report")
-            for key in sorted(expected):
-                compare(expected[key], actual[key], f"{path}.{key}".lstrip("."))
-            return
-        if isinstance(expected, Sequence) and not isinstance(
-            expected, (str, bytes, bytearray)
-        ):
-            if not isinstance(actual, Sequence) or isinstance(
-                actual, (str, bytes, bytearray)
-            ):
-                error_code = "value_type_mismatch"
-                raise ParityMismatchError(error_code, path)
-            if len(expected) != len(actual):
-                error_code = "list_length_mismatch"
-                raise ParityMismatchError(error_code, path)
-            for index, value in enumerate(expected):
-                compare(value, actual[index], f"{path}[{index}]")
-            return
-        if (
-            isinstance(expected, (int, float))
-            and not isinstance(expected, bool)
-            and isinstance(actual, (int, float))
-            and not isinstance(actual, bool)
-        ):
-            tolerance = allowed.get(path, NumericalTolerance())
-            if not math.isclose(
-                float(expected),
-                float(actual),
-                rel_tol=tolerance.relative,
-                abs_tol=tolerance.absolute,
-            ):
-                error_code = "numeric_value_mismatch"
-                raise ParityMismatchError(error_code, path)
-            return
-        if type(expected) is not type(actual):
-            error_code = "value_type_mismatch"
-            raise ParityMismatchError(error_code, path)
-        if expected != actual:
-            error_code = "value_mismatch"
-            raise ParityMismatchError(error_code, path)
 
-    compare(incumbent, candidate, "")
+def _is_report_list(value: object) -> bool:
+    """Whether a report value is a list-like sequence rather than text or bytes."""
+    return isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes, bytearray)
+    )
+
+
+def _is_report_number(value: object) -> bool:
+    """Whether a report value is an int or float; booleans are not numbers here."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _compare_report_values(
+    expected: object,
+    actual: object,
+    path: str,
+    tolerances: Mapping[str, NumericalTolerance],
+) -> None:
+    """Compare two report values at ``path`` by the shape of the expected value."""
+    if isinstance(expected, Mapping):
+        _compare_report_mappings(expected, actual, path, tolerances)
+    elif _is_report_list(expected):
+        _compare_report_lists(expected, actual, path, tolerances)
+    else:
+        _compare_report_scalars(expected, actual, path, tolerances)
+
+
+def _compare_report_mappings(
+    expected: Mapping,
+    actual: object,
+    path: str,
+    tolerances: Mapping[str, NumericalTolerance],
+) -> None:
+    """Require the same keys, then compare each field in sorted key order."""
+    if not isinstance(actual, Mapping) or expected.keys() != actual.keys():
+        error_code = "field_membership_mismatch"
+        raise ParityMismatchError(error_code, path or "report")
+    for key in sorted(expected):
+        _compare_report_values(
+            expected[key], actual[key], f"{path}.{key}".lstrip("."), tolerances
+        )
+
+
+def _compare_report_lists(
+    expected: Sequence,
+    actual: object,
+    path: str,
+    tolerances: Mapping[str, NumericalTolerance],
+) -> None:
+    """Require a list of the same length, then compare each item in order."""
+    if not _is_report_list(actual):
+        error_code = "value_type_mismatch"
+        raise ParityMismatchError(error_code, path)
+    if len(expected) != len(actual):
+        error_code = "list_length_mismatch"
+        raise ParityMismatchError(error_code, path)
+    for index, value in enumerate(expected):
+        _compare_report_values(value, actual[index], f"{path}[{index}]", tolerances)
+
+
+def _compare_report_scalars(
+    expected: object,
+    actual: object,
+    path: str,
+    tolerances: Mapping[str, NumericalTolerance],
+) -> None:
+    """Compare numbers within the path's tolerance; other values must be equal."""
+    if _is_report_number(expected) and _is_report_number(actual):
+        tolerance = tolerances.get(path, NumericalTolerance())
+        if not math.isclose(
+            float(expected),
+            float(actual),
+            rel_tol=tolerance.relative,
+            abs_tol=tolerance.absolute,
+        ):
+            error_code = "numeric_value_mismatch"
+            raise ParityMismatchError(error_code, path)
+        return
+    if type(expected) is not type(actual):
+        error_code = "value_type_mismatch"
+        raise ParityMismatchError(error_code, path)
+    if expected != actual:
+        error_code = "value_mismatch"
+        raise ParityMismatchError(error_code, path)

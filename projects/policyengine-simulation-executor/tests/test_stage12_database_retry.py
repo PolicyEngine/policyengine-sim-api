@@ -7,6 +7,7 @@ import logging
 import pytest
 from policyengine_simulation_executor.stage12_runtime import database_retry
 from policyengine_simulation_executor.stage12_runtime.database_retry import (
+    RetryTiming,
     open_connection_with_retry,
 )
 from sqlalchemy.exc import OperationalError
@@ -73,9 +74,11 @@ def test_refused_connections_are_retried_with_growing_bounded_delays() -> None:
         connect_after_two_refusals,
         operation_name="create_or_resolve_simulation",
         runtime=runtime,
-        sleep=clock.sleep,
-        monotonic=clock.monotonic,
-        choose_delay=_upper_bound_delay,
+        timing=RetryTiming(
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            choose_delay=_upper_bound_delay,
+        ),
     )
 
     assert result is opened_connection
@@ -118,9 +121,11 @@ def test_jittered_delay_stays_between_half_and_all_of_the_ceiling() -> None:
     open_connection_with_retry(
         connect_on_third_attempt,
         operation_name="get_simulation",
-        sleep=clock.sleep,
-        monotonic=clock.monotonic,
-        choose_delay=lowest_delay,
+        timing=RetryTiming(
+            sleep=clock.sleep,
+            monotonic=clock.monotonic,
+            choose_delay=lowest_delay,
+        ),
     )
 
     assert requested_ranges == [(0.5, 1.0), (1.0, 2.0)]
@@ -140,8 +145,10 @@ def test_errors_other_than_a_refused_connection_are_not_retried() -> None:
         open_connection_with_retry(
             fail_with_invalid_connection_options,
             operation_name="get_report",
-            sleep=clock.sleep,
-            monotonic=clock.monotonic,
+            timing=RetryTiming(
+                sleep=clock.sleep,
+                monotonic=clock.monotonic,
+            ),
         )
 
     assert attempts == [1]
@@ -160,9 +167,11 @@ def test_retries_stop_when_the_budget_is_spent() -> None:
         open_connection_with_retry(
             never_connect,
             operation_name="create_or_resolve_report",
-            sleep=clock.sleep,
-            monotonic=clock.monotonic,
-            choose_delay=_upper_bound_delay,
+            timing=RetryTiming(
+                sleep=clock.sleep,
+                monotonic=clock.monotonic,
+                choose_delay=_upper_bound_delay,
+            ),
         )
 
     budget = database_retry.CONNECTION_RETRY_BUDGET_SECONDS
@@ -192,8 +201,10 @@ def test_retry_telemetry_failure_does_not_stop_the_retry() -> None:
             connect_on_second_attempt,
             operation_name="create_or_resolve_report",
             runtime=FailingRuntime(),
-            sleep=clock.sleep,
-            monotonic=clock.monotonic,
+            timing=RetryTiming(
+                sleep=clock.sleep,
+                monotonic=clock.monotonic,
+            ),
         )
         is opened_connection
     )
@@ -215,9 +226,11 @@ def test_retry_is_logged_when_no_observability_runtime_is_available(
         open_connection_with_retry(
             connect_on_second_attempt,
             operation_name="replace_simulation",
-            sleep=clock.sleep,
-            monotonic=clock.monotonic,
-            choose_delay=_upper_bound_delay,
+            timing=RetryTiming(
+                sleep=clock.sleep,
+                monotonic=clock.monotonic,
+                choose_delay=_upper_bound_delay,
+            ),
         )
 
     [record] = caplog.records
@@ -227,3 +240,46 @@ def test_retry_is_logged_when_no_observability_runtime_is_available(
         "retrying attempt 2 after 1.000 seconds"
     )
     assert isinstance(record.exc_info[1], OperationalError)
+
+
+def test_delays_double_up_to_the_maximum_until_the_budget_is_spent() -> None:
+    clock = ManualClock()
+
+    def never_connect() -> None:
+        raise _connection_limit_error()
+
+    with pytest.raises(OperationalError):
+        open_connection_with_retry(
+            never_connect,
+            operation_name="get_report",
+            timing=RetryTiming(
+                sleep=clock.sleep,
+                monotonic=clock.monotonic,
+                choose_delay=_upper_bound_delay,
+            ),
+        )
+
+    assert clock.sleeps == [1.0, 2.0, 4.0, 8.0, 15.0, 15.0, 15.0]
+
+
+def test_the_last_delay_is_cut_to_the_remaining_budget() -> None:
+    clock = ManualClock()
+    seconds_per_refused_attempt = 12.0
+
+    def slowly_refuse() -> None:
+        clock.now += seconds_per_refused_attempt
+        raise _connection_limit_error()
+
+    with pytest.raises(OperationalError):
+        open_connection_with_retry(
+            slowly_refuse,
+            operation_name="get_report",
+            timing=RetryTiming(
+                sleep=clock.sleep,
+                monotonic=clock.monotonic,
+                choose_delay=_upper_bound_delay,
+            ),
+        )
+
+    # 12 + 1 + 12 + 2 + 12 + 4 + 12 seconds leave 5 of the 60-second budget.
+    assert clock.sleeps == [1.0, 2.0, 4.0, 5.0]

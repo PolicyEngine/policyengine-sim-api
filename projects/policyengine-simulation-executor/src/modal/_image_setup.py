@@ -11,7 +11,8 @@ so policyengine_simulation_executor is not importable there at all.
 # imports; the annotations that use them are therefore quoted.
 TYPE_CHECKING = False
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
     from typing import Any
 
     from google.cloud import storage
@@ -39,7 +40,6 @@ def fetch_artifacts(
     ``client`` is a test seam; real builds construct a storage client from
     the layer's GCP secret (or ambient ADC for local drill runs).
     """
-    import json  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
     import logging  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
     import os  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
     from pathlib import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
@@ -47,7 +47,6 @@ def fetch_artifacts(
     )
 
     logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
 
     if not manifest:
         msg = (
@@ -58,8 +57,28 @@ def fetch_artifacts(
         )
         raise RuntimeError(msg)
 
-    # Freshness gate: refuse to bake artifacts computed for a different
-    # version-set than the one this image installs.
+    _require_manifest_matches_image(manifest)
+    if client is None:
+        client = _storage_client_from_environment()
+
+    data_folder = Path(
+        os.environ.get("POLICYENGINE_DATA_FOLDER", "/opt/policyengine/data")
+    )
+    data_folder.mkdir(parents=True, exist_ok=True)
+    _download_manifest_artifacts(
+        client.bucket(bucket), manifest["artifacts"], data_folder
+    )
+
+
+def _require_manifest_matches_image(manifest: "Mapping[str, Any]") -> None:
+    """Freshness gate: refuse artifacts computed for another version-set.
+
+    The image's policyengine and country model versions must equal the
+    manifest receipt's, and so must the installed data version when the
+    bundle receipt records one.
+    """
+    import os  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+
     country = str(manifest["country"])
     receipt = manifest["receipt"]
     expected_env = {
@@ -77,20 +96,12 @@ def fetch_artifacts(
             )
             raise RuntimeError(msg)
 
-    installed_data_version = None
-    receipt_path = os.environ.get("POLICYENGINE_BUNDLE_RECEIPT")
-    if receipt_path and Path(receipt_path).exists():
-        try:
-            installed = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            installed = None
-        if isinstance(installed, dict):
-            for dataset in installed.get("datasets", []):
-                if isinstance(dataset, dict) and dataset.get("country") == country:
-                    installed_data_version = dataset.get("version")
+    installed_data_version = _installed_data_version(country)
     if installed_data_version is None:
+        import logging  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+
         # Lenient by design: local drill runs have no bundle receipt file.
-        logger.warning(
+        logging.getLogger(__name__).warning(
             "No installed bundle receipt entry for %s; "
             "skipping the data-version freshness check",
             country,
@@ -104,49 +115,94 @@ def fetch_artifacts(
         )
         raise RuntimeError(msg)
 
-    if client is None:
-        creds_kwargs = {}
-        blob = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-        if blob:
-            # The secret payload is sometimes double-encoded (escaped
-            # interior quotes, with or without outer quotes) — same
-            # unwrap as the runtime's _normalize_credentials_blob.
-            try:
-                parsed = json.loads(blob)
-            except json.JSONDecodeError:
-                if blob.lstrip().startswith('"') or '\\"' in blob:
-                    parsed = json.loads(f'"{blob}"')
-                else:
-                    raise
-            info = json.loads(parsed) if isinstance(parsed, str) else parsed
 
-            from google.oauth2 import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-                service_account,
-            )
+def _installed_data_version(country: str) -> object:
+    """Return the bundle receipt's data version for ``country``, or None.
 
-            # Credentials built in memory, never written to disk: this
-            # layer's container filesystem is committed into the image,
-            # so a credentials file would ship inside it.
-            creds_kwargs = {
-                "credentials": service_account.Credentials.from_service_account_info(
-                    info
-                ),
-                "project": info.get("project_id"),
-            }
-        # No blob: ambient ADC (the local fault-drill path).
-        from google.cloud import (
-            storage,
-        )
-
-        client = storage.Client(**creds_kwargs)
-
-    data_folder = Path(
-        os.environ.get("POLICYENGINE_DATA_FOLDER", "/opt/policyengine/data")
+    None also covers a missing or unreadable receipt; the last matching
+    receipt entry wins.
+    """
+    import json  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+    import os  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+    from pathlib import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+        Path,
     )
-    data_folder.mkdir(parents=True, exist_ok=True)
-    bucket_handle = client.bucket(bucket)
-    artifacts = manifest["artifacts"]
 
+    receipt_path = os.environ.get("POLICYENGINE_BUNDLE_RECEIPT")
+    if not receipt_path or not Path(receipt_path).exists():
+        return None
+    try:
+        installed = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    installed_data_version = None
+    if isinstance(installed, dict):
+        for dataset in installed.get("datasets", []):
+            if isinstance(dataset, dict) and dataset.get("country") == country:
+                installed_data_version = dataset.get("version")
+    return installed_data_version
+
+
+def _storage_client_from_environment() -> "storage.Client":
+    """Build a storage client from the layer's GCP secret, else ambient ADC."""
+    import os  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+
+    creds_kwargs = {}
+    blob = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+    if blob:
+        creds_kwargs = _service_account_credentials(blob)
+    # No blob: ambient ADC (the local fault-drill path).
+    from google.cloud import (
+        storage,
+    )
+
+    return storage.Client(**creds_kwargs)
+
+
+def _service_account_credentials(blob: str) -> "dict[str, Any]":
+    """Return storage client arguments for the service account in ``blob``.
+
+    Credentials are built in memory, never written to disk: this layer's
+    container filesystem is committed into the image, so a credentials file
+    would ship inside it.
+    """
+    import json  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+
+    # The secret payload is sometimes double-encoded (escaped interior
+    # quotes, with or without outer quotes) — same unwrap as the runtime's
+    # _normalize_credentials_blob.
+    try:
+        parsed = json.loads(blob)
+    except json.JSONDecodeError:
+        if blob.lstrip().startswith('"') or '\\"' in blob:
+            parsed = json.loads(f'"{blob}"')
+        else:
+            raise
+    info = json.loads(parsed) if isinstance(parsed, str) else parsed
+
+    from google.oauth2 import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+        service_account,
+    )
+
+    return {
+        "credentials": service_account.Credentials.from_service_account_info(info),
+        "project": info.get("project_id"),
+    }
+
+
+def _download_manifest_artifacts(
+    bucket_handle: "storage.Bucket",
+    artifacts: "Sequence[Mapping[str, Any]]",
+    data_folder: "Path",
+) -> None:
+    """Download every artifact under its runtime filename, failing on any gap.
+
+    Every store object is checked before anything downloads, and every
+    expected file is checked after.
+    """
+    import logging  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+
+    logger = logging.getLogger(__name__)
     missing = [
         artifact["path"]
         for artifact in artifacts

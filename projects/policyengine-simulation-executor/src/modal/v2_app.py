@@ -207,6 +207,7 @@ def run_single_simulation_us(
 ) -> dict:
     """Calculate one planned US simulation and return its artifact descriptor."""
     from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        SimulationWorkerDependencies,
         run_single_simulation,
     )
 
@@ -230,7 +231,7 @@ def run_single_simulation_us(
                 payload,
                 context,
                 required_country="us",
-                runtime=runtime,
+                dependencies=SimulationWorkerDependencies(runtime=runtime),
             )
     finally:
         runtime.shutdown()
@@ -253,6 +254,7 @@ def run_single_simulation_uk(
 ) -> dict:
     """Calculate one planned UK simulation and return its artifact descriptor."""
     from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        SimulationWorkerDependencies,
         run_single_simulation,
     )
 
@@ -276,7 +278,7 @@ def run_single_simulation_uk(
                 payload,
                 context,
                 required_country="uk",
-                runtime=runtime,
+                dependencies=SimulationWorkerDependencies(runtime=runtime),
             )
     finally:
         runtime.shutdown()
@@ -306,6 +308,10 @@ def coordinate_report(
     result is compared with that production job's. A report another
     invocation already claimed returns a ``deduplicated`` marker instead.
     """
+    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        CoordinatorDependencies,
+        CoordinatorInvocation,
+    )
     from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         coordinate_report as run_report_coordinator,
     )
@@ -343,9 +349,11 @@ def coordinate_report(
                 payload,
                 context,
                 parent,
-                application_name=APP_NAME,
-                coordinator_invocation_id=coordinator_invocation_id,
-                runtime=runtime,
+                invocation=CoordinatorInvocation(
+                    application_name=APP_NAME,
+                    invocation_id=coordinator_invocation_id,
+                ),
+                dependencies=CoordinatorDependencies(runtime=runtime),
             )
     finally:
         runtime.shutdown()

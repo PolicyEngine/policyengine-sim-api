@@ -14,6 +14,8 @@ from policyengine_simulation_contract.stage12_manifest import (
 
 PRODUCTION_ENVIRONMENTS = frozenset({"main", "prod", "production"})
 MODAL_GATEWAY_HOST_SUFFIX = ".modal.run"
+# Stage 12 comparison artifacts and rows are kept for exactly this many days.
+REQUIRED_STAGE12_RETENTION_DAYS = 30
 
 
 class ConfigurationError(RuntimeError):
@@ -89,7 +91,7 @@ class Settings:
     stage12_v2_worker_version: str | None = None
     stage12_database_url: str = ""
     stage12_artifact_bucket: str = ""
-    stage12_retention_days: int = 30
+    stage12_retention_days: int = REQUIRED_STAGE12_RETENTION_DAYS
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -165,6 +167,12 @@ class Settings:
         startup rather than on its first request. Stage 12 resources must be
         configured all together or not at all.
         """
+        self._validate_caller_auth()
+        self._validate_old_gateway()
+        self._validate_stage12()
+
+    def _validate_caller_auth(self) -> None:
+        """Require caller authentication in production, with an HTTPS issuer."""
         if self.production and not self.auth_required:
             msg = "Caller authentication cannot be disabled in production."
             raise ConfigurationError(msg)
@@ -184,6 +192,8 @@ class Settings:
                 self.auth_issuer,
             )
 
+    def _validate_old_gateway(self) -> None:
+        """Require complete old-gateway credentials and the HTTPS Modal gateway."""
         required_backend = {
             "OLD_GATEWAY_URL": self.old_gateway_url,
             "OLD_GATEWAY_AUTH_ISSUER": self.old_gateway_auth_issuer,
@@ -218,6 +228,8 @@ class Settings:
             msg = "OLD_GATEWAY_URL must point to the existing Modal gateway."
             raise ConfigurationError(msg)
 
+    def _validate_stage12(self) -> None:
+        """Require separate manifest storage and all-or-nothing Stage 12 resources."""
         try:
             assert_separate_manifest_names(
                 v1_name=V1_ROUTING_STATE_NAME,
@@ -225,8 +237,11 @@ class Settings:
             )
         except ValueError as error:
             raise ConfigurationError(str(error)) from error
-        if self.stage12_retention_days != 30:
-            msg = "STAGE12_RETENTION_DAYS must be exactly 30."
+        if self.stage12_retention_days != REQUIRED_STAGE12_RETENTION_DAYS:
+            msg = (
+                "STAGE12_RETENTION_DAYS must be exactly "
+                f"{REQUIRED_STAGE12_RETENTION_DAYS}."
+            )
             raise ConfigurationError(msg)
         required_stage12 = {
             "STAGE12_V2_MANIFEST_ENVIRONMENT": self.stage12_v2_manifest_environment,

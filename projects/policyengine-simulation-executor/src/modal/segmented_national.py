@@ -43,6 +43,7 @@ from policyengine_simulation_executor.national_partition import (
     national_region_groups,
 )
 from policyengine_simulation_executor.segmented_national_reduce import (
+    NationalReduceInputs,
     build_national_output,
 )
 from policyengine_simulation_observability.errors import log_and_redact_exception
@@ -51,7 +52,7 @@ from policyengine_simulation_observability.stages import (
     Stage,
 )
 from policyengine_simulation_observability.telemetry import split_internal_payload
-from src.modal.fanout import build_child_payload, next_backoff
+from src.modal.fanout import PollBackoff, build_child_payload, next_backoff
 
 import modal
 
@@ -66,6 +67,14 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL_INITIAL_SECONDS = 0.5
 POLL_INTERVAL_MAX_SECONDS = 8.0
 POLL_INTERVAL_BACKOFF_FACTOR = 2.0
+DEFAULT_POLL_BACKOFF = PollBackoff(
+    initial_seconds=POLL_INTERVAL_INITIAL_SECONDS,
+    maximum_seconds=POLL_INTERVAL_MAX_SECONDS,
+    factor=POLL_INTERVAL_BACKOFF_FACTOR,
+)
+# A child's poll may fail this many times in a row before the job fails:
+# one transient poll-RPC blip is retried, a real child failure repeats.
+CONSECUTIVE_POLL_ERROR_LIMIT = 2
 
 # The dedicated children pool (see module docstring).
 SEGMENT_FUNCTION_NAME = "run_simulation_segment"
@@ -84,6 +93,40 @@ PARENT_COMPLETION_MARGIN_SECONDS = 300.0
 MINIMUM_RETRY_WINDOW_SECONDS = 300.0
 # The first dispatch plus one respawn after a missed deadline.
 MAX_CHILD_ATTEMPTS = 2
+
+
+@dataclass(frozen=True)
+class SegmentedRunTiming:
+    """How the runner spaces its polls and how long it waits for children.
+
+    ``child_deadline_seconds`` runs from each child's dispatch and
+    ``parent_budget_seconds`` from the runner's start, both read from
+    ``clock``.
+    """
+
+    poll_backoff: PollBackoff = DEFAULT_POLL_BACKOFF
+    child_deadline_seconds: float = CHILD_DEADLINE_SECONDS
+    parent_budget_seconds: float = (
+        PARENT_FUNCTION_TIMEOUT_SECONDS - PARENT_COMPLETION_MARGIN_SECONDS
+    )
+    clock: Callable[[], float] = time.monotonic
+
+
+DEFAULT_RUN_TIMING = SegmentedRunTiming()
+
+
+@dataclass(frozen=True)
+class SegmentedRunReporting:
+    """Where the runner reports a run.
+
+    ``runtime`` receives its telemetry, and ``progress`` the job's
+    client-visible stages: the segment count, each finished segment and the
+    outputs stage.
+    """
+
+    runtime: ObservabilityRuntime
+    progress: JobProgressReporter = NULL_JOB_PROGRESS
+
 
 # Parent-scoped keys never forwarded to children. (The shared payload
 # builder owns _telemetry: stripped, then re-attached when present.)
@@ -187,16 +230,9 @@ class SegmentedNationalRunner:
         params: dict[str, Any],
         *,
         app_name: str,
-        runtime: ObservabilityRuntime,
+        reporting: SegmentedRunReporting,
         modal_module: ModuleType | None = None,
-        poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
-        poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
-        child_deadline_seconds: float = CHILD_DEADLINE_SECONDS,
-        parent_budget_seconds: float = (
-            PARENT_FUNCTION_TIMEOUT_SECONDS - PARENT_COMPLETION_MARGIN_SECONDS
-        ),
-        clock: Callable[[], float] = time.monotonic,
-        progress: JobProgressReporter = NULL_JOB_PROGRESS,
+        timing: SegmentedRunTiming = DEFAULT_RUN_TIMING,
     ) -> None:
         """Resolve the country's region groups and a lazy segment-worker handle.
 
@@ -204,18 +240,19 @@ class SegmentedNationalRunner:
         """
         self.params = params
         self.app_name = app_name
-        self.runtime = runtime
-        self.progress = progress
+        self.runtime = reporting.runtime
+        self.progress = reporting.progress
         self.modal = modal if modal_module is None else modal_module
-        self.poll_interval_initial_seconds = poll_interval_seconds
-        self.poll_interval_max_seconds = poll_interval_max_seconds
-        self.child_deadline_seconds = child_deadline_seconds
-        self.parent_budget_seconds = parent_budget_seconds
-        self.clock = clock
+        self.poll_interval_initial_seconds = timing.poll_backoff.initial_seconds
+        self.poll_interval_max_seconds = timing.poll_backoff.maximum_seconds
+        self.poll_interval_backoff_factor = timing.poll_backoff.factor
+        self.child_deadline_seconds = timing.child_deadline_seconds
+        self.parent_budget_seconds = timing.parent_budget_seconds
+        self.clock = timing.clock
         # The parent's Modal timeout started before this runner existed; the
         # completion margin inside the default budget covers that gap.
-        self.started_at = clock()
-        self.budget_ends_at = self.started_at + parent_budget_seconds
+        self.started_at = self.clock()
+        self.budget_ends_at = self.started_at + self.parent_budget_seconds
         self.child_retry_count = 0
         # Overdue attempts replaced by a respawn. They are never polled
         # again, but every later cancel retries them: the first cancel can
@@ -355,7 +392,7 @@ class SegmentedNationalRunner:
                     # real child failure re-raises on the next probe too.
                     attempts = poll_errors.get(index, 0) + 1
                     poll_errors[index] = attempts
-                    if attempts < 2:
+                    if attempts < CONSECUTIVE_POLL_ERROR_LIMIT:
                         logger.warning(
                             "Poll error for group %s (attempt %d), retrying: %s",
                             child.group_label,
@@ -395,7 +432,7 @@ class SegmentedNationalRunner:
                 time.sleep(current_sleep)
                 current_sleep = next_backoff(
                     current_sleep,
-                    factor=POLL_INTERVAL_BACKOFF_FACTOR,
+                    factor=self.poll_interval_backoff_factor,
                     maximum=self.poll_interval_max_seconds,
                 )
             elif progress_made:
@@ -553,11 +590,13 @@ class SegmentedNationalRunner:
         ):
             output = build_national_output(
                 child_results,
-                country=self.country,
-                simulation_params=simulation_params,
-                country_module=country_module,
-                year=_parse_year(simulation_params),
-                resolved_data_version=None,
+                NationalReduceInputs(
+                    country=self.country,
+                    simulation_params=simulation_params,
+                    country_module=country_module,
+                    year=_parse_year(simulation_params),
+                    resolved_data_version=None,
+                ),
                 runtime=self.runtime,
             )
         output.update(
@@ -584,8 +623,7 @@ def run_segmented_national_impl(
     return SegmentedNationalRunner(
         params,
         app_name=app_name,
-        runtime=runtime,
-        progress=progress,
+        reporting=SegmentedRunReporting(runtime, progress),
     ).run()
 
 
