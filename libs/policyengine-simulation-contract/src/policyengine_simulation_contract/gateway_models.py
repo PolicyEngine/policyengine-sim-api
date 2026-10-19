@@ -121,6 +121,10 @@ class GatewayRequestBase(BaseModel):
     # False forces a monolithic single-process run. Ignored for requests that
     # are not eligible for segmentation (regional, household-scope, UK).
     segmented: bool | None = None
+    # Segmented US national runs add a per-state block under
+    # result.regions by default; False leaves every block out. Ignored by
+    # every other run.
+    include_regions: bool | None = None
 
     model_config = ConfigDict(
         extra="forbid",

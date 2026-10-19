@@ -604,6 +604,17 @@
             ],
             "title": "Segmented"
           },
+          "include_regions": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Regions"
+          },
           "region": {
             "type": "string",
             "title": "Region"
@@ -1918,6 +1929,151 @@
         "title": "RacePovertyOutput",
         "description": "Baseline and reform poverty rates by race and ethnicity (US only)."
       },
+      "RegionMacroOutput": {
+        "properties": {
+          "spm_provenance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SPMComparisonProvenance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "model_version": {
+            "type": "string",
+            "title": "Model Version"
+          },
+          "data_version": {
+            "type": "string",
+            "title": "Data Version"
+          },
+          "budget": {
+            "$ref": "#/components/schemas/BudgetaryImpact"
+          },
+          "detailed_budget": {
+            "$ref": "#/components/schemas/DetailedBudgetOutput"
+          },
+          "decile": {
+            "$ref": "#/components/schemas/DecileOutput"
+          },
+          "inequality": {
+            "$ref": "#/components/schemas/InequalityOutput"
+          },
+          "poverty": {
+            "$ref": "#/components/schemas/PovertyOutput"
+          },
+          "poverty_by_gender": {
+            "$ref": "#/components/schemas/PovertyByGenderOutput"
+          },
+          "poverty_by_race": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PovertyByRaceOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "intra_decile": {
+            "$ref": "#/components/schemas/IntraDecileOutput"
+          },
+          "wealth_decile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecileOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "intra_wealth_decile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntraDecileOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "labor_supply_response": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LaborSupplyResponseOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "constituency_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeographicImpactOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "local_authority_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeographicImpactOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "congressional_district_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CongressionalDistrictImpactOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cliff_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CliffImpactOutput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model_version",
+          "data_version",
+          "budget",
+          "detailed_budget",
+          "decile",
+          "inequality",
+          "poverty",
+          "poverty_by_gender",
+          "poverty_by_race",
+          "intra_decile",
+          "wealth_decile",
+          "intra_wealth_decile",
+          "labor_supply_response",
+          "constituency_impact",
+          "local_authority_impact",
+          "congressional_district_impact"
+        ],
+        "title": "RegionMacroOutput",
+        "description": "One region's block inside a national single-year macro result.\n\nIt has the same fields and units as the result of a separate run for that\nregion. Its ``spm_provenance`` is absent: the national result's receipt\ncovers every block."
+      },
       "SPMCapability": {
         "properties": {
           "contract_version": {
@@ -2343,6 +2499,17 @@
             ],
             "title": "Segmented"
           },
+          "include_regions": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Include Regions"
+          },
           "region": {
             "anyOf": [
               {
@@ -2483,6 +2650,21 @@
                 "type": "null"
               }
             ]
+          },
+          "regions": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/RegionMacroOutput"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regions",
+            "description": "Per-region results of a US national run, keyed by region code (for example `state/ca`). Each value has the same shape and units as the result of a separate run with that `region`, computed from the national run's own households. Present only for segmented US national runs, and only for regions whose own run filters the same dataset by row; a region whose block could not be built is left out. Set `include_regions` to false to leave out every block."
           }
         },
         "additionalProperties": false,

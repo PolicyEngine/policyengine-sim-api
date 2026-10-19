@@ -25,12 +25,20 @@ Two hazards this module exists to handle:
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from microdf import MicroDataFrame
 from policyengine.core import Simulation
+from policyengine_simulation_observability.stages import (
+    SEGMENTED_NATIONAL_STAGES,
+    Stage,
+)
 
+from policyengine_simulation_executor.national_region_outputs import (
+    build_region_outputs,
+)
 from policyengine_simulation_executor.simulation_microdata import (
     rebuild_entity_frame,
 )
@@ -39,8 +47,10 @@ from policyengine_simulation_executor.simulation_output_builder import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from types import ModuleType
 
+    from policyengine.core.scoping_strategy import RowFilterStrategy
     from policyengine.tax_benefit_models.us.datasets import PolicyEngineUSDataset
     from policyengine_observability import ObservabilityRuntime
 
@@ -130,12 +140,18 @@ def build_national_output(
     year: int,
     resolved_data_version: str | None = None,
     runtime: ObservabilityRuntime | None = None,
+    regions: Mapping[str, RowFilterStrategy] | None = None,
 ) -> dict[str, Any]:
     """Reduce the children's microdata into the full national macro output dict.
 
     Runs the existing ``SimulationOutputBuilder`` over stand-in simulations
     with ``resolved_region_code=country`` so the national congressional
     district table populates. No model recompute occurs.
+
+    ``regions`` maps region codes to their own row filters; each gets a
+    block under ``output["regions"]`` built from the same national
+    microdata (see ``national_region_outputs``). The key is absent when no
+    block was built.
     """
     if country.lower() != "us":
         msg = f"No segmented-national reduce for country {country!r} (US only)"
@@ -180,4 +196,30 @@ def build_national_output(
                 "Segmented national children disagree on %s: %s", key, values
             )
         output[key] = values[0]
+    if regions:
+        span = (
+            runtime.span(
+                SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_REGION_OUTPUTS)
+            )
+            if runtime is not None
+            else nullcontext()
+        )
+        with span:
+            region_outputs = build_region_outputs(
+                datasets,
+                regions=regions,
+                country=country,
+                simulation_params=simulation_params,
+                country_module=country_module,
+                year=year,
+                national_output=output,
+                stand_in=stand_in,
+            )
+        if runtime is not None:
+            runtime.set_context(
+                region_block_count=len(region_outputs),
+                region_block_omitted_count=len(regions) - len(region_outputs),
+            )
+        if region_outputs:
+            output["regions"] = region_outputs
     return output

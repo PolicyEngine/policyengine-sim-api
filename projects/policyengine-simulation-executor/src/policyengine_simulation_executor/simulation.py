@@ -23,7 +23,13 @@ def create_router(runtime: ObservabilityRuntime) -> APIRouter:
     """
     router = APIRouter()
 
-    @router.post("/simulate/economy/comparison", response_model=EconomyComparison)
+    # This surface always runs monolithically, so it never has per-state
+    # blocks; leaving the field out keeps its response keys unchanged.
+    @router.post(
+        "/simulate/economy/comparison",
+        response_model=EconomyComparison,
+        response_model_exclude={"regions"},
+    )
     async def simulate(
         parameters: SimulationOptions,
     ) -> EconomyComparison | JSONResponse:
