@@ -587,13 +587,29 @@ class ResultComparisonArtifactPayload(StrictContractModel):
         return self
 
 
+class ReportResultDelivery(StrEnum):
+    """How a report coordinator and its simulations deliver their outcome.
+
+    ``STAGE12_DATABASE``, the default, writes the report's and each
+    simulation's state to the Stage 12 tables in Postgres, and the coordinator
+    returns an aggregate artifact descriptor. ``RETURN_TO_CALLER`` writes no
+    database rows: the coordinator returns a ``ReportExecutionResult`` (see
+    ``report_execution``) or raises ``ReportExecutionError``.
+    """
+
+    STAGE12_DATABASE = "stage12_database"
+    RETURN_TO_CALLER = "return_to_caller"
+
+
 class Stage12InvocationContext(StrictContractModel):
     """Deployment and retention context for one comparison-run invocation.
 
     Records the originating request, the environments, the worker version and
     callable, the manifest digests and the artifact prefix. Automatic runs also
     name the production function call they are compared with. Artifacts are kept
-    for at most 30 days after ``created_at``.
+    for at most 30 days after ``created_at``. ``result_delivery`` selects how the
+    coordinator and its simulations deliver their outcome; a returned report
+    cannot be compared with a production job.
     """
 
     contract_version: Literal[1] = 1
@@ -615,11 +631,30 @@ class Stage12InvocationContext(StrictContractModel):
     production_function_call_id: ContractText | None = None
     created_at: datetime
     retention_expires_at: datetime
+    # Callers that omit it keep the Stage 12 behavior.
+    result_delivery: ReportResultDelivery = ReportResultDelivery.STAGE12_DATABASE
 
     @model_validator(mode="after")
     def validate_retention(self) -> Stage12InvocationContext:
         """Require aware timestamps and a retention window of at most 30 days."""
         _validate_retention(self.created_at, self.retention_expires_at)
+        return self
+
+    @model_validator(mode="after")
+    def validate_result_delivery(self) -> Stage12InvocationContext:
+        """Reject a production comparison for a report returned to its caller.
+
+        The comparison is recorded on the Stage 12 report row, which a
+        returned report never writes.
+        """
+        if (
+            self.result_delivery is ReportResultDelivery.RETURN_TO_CALLER
+            and self.production_function_call_id is not None
+        ):
+            msg = (
+                "a report returned to its caller cannot request a production comparison"
+            )
+            raise ValueError(msg)
         return self
 
 

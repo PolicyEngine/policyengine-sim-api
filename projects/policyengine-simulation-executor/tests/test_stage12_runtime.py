@@ -1574,6 +1574,42 @@ def test_duplicate_coordinator_submission_does_not_start_duplicate_children() ->
     assert duplicate_invoker.events == []
 
 
+class ContextRecordingInvoker(ConcurrentInvoker):
+    """Record the dispatch context each child simulation receives."""
+
+    def __init__(self, artifacts, **options):
+        super().__init__(artifacts, **options)
+        self.child_contexts = []
+
+    def spawn(self, *, context, **values):
+        self.child_contexts.append(context)
+        return super().spawn(**values)
+
+
+def test_stage12_children_receive_the_context_without_a_delivery_field() -> None:
+    artifacts = FakeArtifacts()
+    invoker = ContextRecordingInvoker(artifacts)
+
+    coordinate_report(
+        _report().model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        _parent().model_dump(mode="json"),
+        application_name=_context().modal_application,
+        coordinator_invocation_id="coordinator-1",
+        store=FakeStore(),
+        artifacts=artifacts,
+        invoker=invoker,
+        aggregator=lambda **_: _aggregate_payload(),
+    )
+
+    # Workers deployed before the field existed reject unknown fields.
+    expected_fields = set(_context().model_dump(mode="json")) - {"result_delivery"}
+    assert [set(context) for context in invoker.child_contexts] == [
+        expected_fields,
+        expected_fields,
+    ]
+
+
 def test_coordinator_measures_output_and_child_input_planning() -> None:
     store = FakeStore()
     artifacts = FakeArtifacts()

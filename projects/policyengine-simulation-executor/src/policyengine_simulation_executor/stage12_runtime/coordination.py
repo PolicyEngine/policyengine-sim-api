@@ -18,6 +18,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonSimulationRecord,
     PlannedSimulationExecutionInput,
     ReportExecutionInput,
+    ReportResultDelivery,
     ResultComparisonStatus,
     SimulationArtifactDescriptor,
     Stage12InvocationContext,
@@ -526,6 +527,19 @@ def _require_artifact_digest(
         raise ValueError(mismatch_message)
 
 
+def _child_context_payload(context: Stage12InvocationContext) -> dict[str, Any]:
+    """Return the dispatch context a child simulation receives.
+
+    A Stage 12 child receives the fields it received before
+    ``result_delivery`` existed, so a worker deployed without that field still
+    accepts the context. A returned report's child needs the field, so that
+    it writes no rows either.
+    """
+    if context.result_delivery is ReportResultDelivery.STAGE12_DATABASE:
+        return context.model_dump(mode="json", exclude={"result_delivery"})
+    return context.model_dump(mode="json")
+
+
 def coordinate_report(
     payload: object,
     context_payload: object,
@@ -713,7 +727,7 @@ def coordinate_report(
                         function_name=function_name,
                         environment=context.modal_environment,
                         simulation=simulation.model_dump(mode="json"),
-                        context=context.model_dump(mode="json"),
+                        context=_child_context_payload(context),
                         observability_context=child_observability_context,
                     )
             except Exception as error:  # noqa: BLE001  # any dispatch failure is recorded on the child and stops its started peers
