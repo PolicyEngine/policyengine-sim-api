@@ -46,6 +46,32 @@ rollback checks do not, because an older image may run against a newer schema.
 The ownership rules and roles are described in
 `libs/policyengine-simulation-persistence/README.md`.
 
+## Simulation job collection
+
+The job store's results are collected in the background by Cloud Tasks and a
+Cloud Scheduler sweep, never by the clients that poll. The deploy step passes
+the entrypoint:
+
+- `RECONCILIATION_QUEUE`, the full Cloud Tasks queue name, from the GitHub
+  environment variable of the same name;
+- `RECONCILIATION_INVOKER_SERVICE_ACCOUNT`, the service account whose OIDC
+  token Cloud Tasks attaches to each collection task, from the GitHub
+  environment variable of the same name;
+- `RECONCILIATION_TARGET_URL`, the stable service URL that the deploy job reads
+  from Cloud Run before deploying, so tasks never target a candidate revision;
+- `SIMULATION_MODAL_ENVIRONMENT`, the deployment's Modal environment.
+
+`POST /internal/simulation-jobs/{job_id}/collect` (called by Cloud Tasks) and
+`POST /internal/simulation-jobs/sweep` (called by Cloud Scheduler) accept only
+a Google-signed OIDC token whose audience is `RECONCILIATION_TARGET_URL` and
+whose email is the invoker service account. The Cloud Scheduler job must
+therefore use that service account and audience. The entrypoint's runtime
+service account needs permission to create tasks in the queue and to act as
+the invoker service account; the invoker needs permission to invoke the
+service. `GET /simulation-jobs/{job_reference}` reads a job by its UUID or
+Modal `fc-` call ID from the database only. None of these routes is in the
+OpenAPI document.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`

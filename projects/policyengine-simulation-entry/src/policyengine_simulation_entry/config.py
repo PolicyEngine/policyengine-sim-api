@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -14,6 +15,12 @@ from policyengine_simulation_contract.stage12_manifest import (
 
 PRODUCTION_ENVIRONMENTS = frozenset({"main", "prod", "production"})
 MODAL_GATEWAY_HOST_SUFFIX = ".modal.run"
+CLOUD_TASKS_QUEUE_PATTERN = re.compile(
+    r"projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/locations/[a-z0-9-]+/queues/[A-Za-z0-9-]{1,100}"
+)
+SERVICE_ACCOUNT_PATTERN = re.compile(
+    r"[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com"
+)
 
 
 class ConfigurationError(RuntimeError):
@@ -94,6 +101,14 @@ class Settings:
     # outside deployed environments; nothing on the old-gateway or Stage 12
     # paths reads it.
     simulation_database_url: str = ""
+    # Background collection of simulation job results. Cloud Tasks calls the
+    # collection route of RECONCILIATION_TARGET_URL with a Google OIDC token of
+    # RECONCILIATION_INVOKER_SERVICE_ACCOUNT; Cloud Scheduler calls the sweep
+    # route with the same identity.
+    reconciliation_queue: str = ""
+    reconciliation_invoker_service_account: str = ""
+    reconciliation_target_url: str = ""
+    simulation_modal_environment: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -145,6 +160,14 @@ class Settings:
             stage12_artifact_bucket=os.getenv("STAGE12_ARTIFACT_BUCKET", ""),
             stage12_retention_days=int(os.getenv("STAGE12_RETENTION_DAYS", "30")),
             simulation_database_url=os.getenv("SIMULATION_DATABASE_URL", ""),
+            reconciliation_queue=os.getenv("RECONCILIATION_QUEUE", ""),
+            reconciliation_invoker_service_account=os.getenv(
+                "RECONCILIATION_INVOKER_SERVICE_ACCOUNT", ""
+            ),
+            reconciliation_target_url=os.getenv("RECONCILIATION_TARGET_URL", "").rstrip(
+                "/"
+            ),
+            simulation_modal_environment=os.getenv("SIMULATION_MODAL_ENVIRONMENT", ""),
         )
 
     @property
@@ -161,6 +184,57 @@ class Settings:
                 self.stage12_database_url,
                 self.stage12_artifact_bucket,
             )
+        )
+
+    @property
+    def _simulation_job_settings(self) -> dict[str, str]:
+        return {
+            "SIMULATION_DATABASE_URL": self.simulation_database_url,
+            "RECONCILIATION_QUEUE": self.reconciliation_queue,
+            "RECONCILIATION_INVOKER_SERVICE_ACCOUNT": (
+                self.reconciliation_invoker_service_account
+            ),
+            "RECONCILIATION_TARGET_URL": self.reconciliation_target_url,
+            "SIMULATION_MODAL_ENVIRONMENT": self.simulation_modal_environment,
+        }
+
+    @property
+    def simulation_jobs_configured(self) -> bool:
+        """Whether the job store, its queue and its Modal environment are all set."""
+        return all(self._simulation_job_settings.values())
+
+    def _validate_simulation_jobs(self) -> None:
+        reconciliation = {
+            name: value
+            for name, value in self._simulation_job_settings.items()
+            if name != "SIMULATION_DATABASE_URL"
+        }
+        if not any(reconciliation.values()):
+            return
+        missing = [
+            name for name, value in self._simulation_job_settings.items() if not value
+        ]
+        if missing:
+            msg = f"Simulation jobs require: {', '.join(missing)}."
+            raise ConfigurationError(msg)
+        if not CLOUD_TASKS_QUEUE_PATTERN.fullmatch(self.reconciliation_queue):
+            msg = (
+                "RECONCILIATION_QUEUE must be a full Cloud Tasks queue name: "
+                "projects/<project>/locations/<location>/queues/<queue>."
+            )
+            raise ConfigurationError(msg)
+        if not SERVICE_ACCOUNT_PATTERN.fullmatch(
+            self.reconciliation_invoker_service_account
+        ):
+            msg = (
+                "RECONCILIATION_INVOKER_SERVICE_ACCOUNT must be a Google service "
+                "account email."
+            )
+            raise ConfigurationError(msg)
+        _validate_https_url(
+            "RECONCILIATION_TARGET_URL",
+            self.reconciliation_target_url,
+            allow_path=False,
         )
 
     def validate(self) -> None:
@@ -262,3 +336,4 @@ class Settings:
         ):
             msg = "SIMULATION_DATABASE_URL must use the canonical postgresql:// scheme."
             raise ConfigurationError(msg)
+        self._validate_simulation_jobs()

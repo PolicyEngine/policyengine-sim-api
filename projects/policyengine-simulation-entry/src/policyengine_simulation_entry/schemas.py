@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, TypedDict
 from uuid import UUID
 
+from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
     ComparisonRunLifecycleStatus,
@@ -140,3 +142,63 @@ class SimulationEntrypointReadinessResponse(BaseModel):
 
     status: Literal["ready", "not_ready"]
     simulation_database: SimulationDatabaseReadiness | None = None
+
+
+class SimulationJobError(BaseModel):
+    """Why a simulation job failed; never worker data."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: str
+    message: str | None
+
+
+class SimulationJobStatusResponse(BaseModel):
+    """One simulation job as the database records it.
+
+    ``result`` is present once the job succeeded. Reading a job never checks
+    or advances its Modal call.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    job_id: UUID
+    kind: str
+    status: Literal["pending", "dispatching", "running", "succeeded", "failed"]
+    policyengine_version: str
+    modal_call_id: str | None
+    created_at: datetime
+    dispatched_at: datetime | None
+    completed_at: datetime | None
+    error: SimulationJobError | None
+    result: JsonObject | None
+    result_sha256: str | None
+
+
+class SimulationJobCollectionResponse(BaseModel):
+    """What one Cloud Tasks collection request did."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal[
+        "unknown_job",
+        "not_running",
+        "still_running",
+        "succeeded",
+        "failed",
+        "already_finished",
+    ]
+    job_status: (
+        Literal["pending", "dispatching", "running", "succeeded", "failed"] | None
+    )
+    next_check_seconds: float | None
+
+
+class SimulationJobSweepResponse(BaseModel):
+    """What one Cloud Scheduler sweep did."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    abandoned: int
+    enqueued: int
+    enqueue_failures: int

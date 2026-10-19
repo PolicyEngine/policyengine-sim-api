@@ -39,6 +39,11 @@ Auth0 permission:
 | `GET /budget-window-jobs/{batch_job_id}` | `simulation:read` |
 | `POST /internal/stage12/reports` | `stage12:operate` |
 | `GET /internal/stage12/reports/{evaluation_id}` | `stage12:operate` |
+| `GET /simulation-jobs/{job_reference}` | `simulation:read` |
+
+`POST /internal/simulation-jobs/{job_id}/collect` and
+`POST /internal/simulation-jobs/sweep` do not use Auth0: they accept only the
+Google OIDC token Cloud Tasks and Cloud Scheduler send (see `DEPLOYMENT.md`).
 
 `GET /health`, `GET /ready`, `GET /versions`, `GET /versions/{kind}` and
 `POST /ping` stay public.

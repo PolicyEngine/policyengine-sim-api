@@ -97,45 +97,20 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Stage 12 persistence
 
-- `sim.stage12.deployment-scope`: Main-branch deploys roll out Stage 12 in both environments; a Stage 12-only deploy runs candidate tests and the requested promotion but never redeploys existing Modal resources or runs the existing stack's complete integration suite; the Stage 12 worker can request a Google OIDC token. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.stage12.deployment-uses-api-schema`: Stage 12 deployment uses the API-owned schema directly, and the Stage 12 runtime it deploys uses typed DML without raw SQL or schema changes. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.stage12.no-production-user-associations`: Stage 12 runtime modules never create production user associations (user_simulations or user_reports). (blocking: pytest `projects/policyengine-simulation-entry/tests/test_stage12_schema_authority.py`)
-- `sim.stage12.no-schema-ddl`: Simulation runtimes and the Stage 12 persistence library contain no schema DDL (CREATE, ALTER, DROP or TRUNCATE of tables, types, schemas or databases, or create_all); policyengine-api owns the schema. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_stage12_schema_authority.py`)
-- `sim.stage12.persistence-typed-dml-only`: The Stage 12 persistence library and runtime use typed SQLAlchemy Core DML only: no raw SQL text, driver-level SQL or schema operations. (blocking: pytest `libs/policyengine-stage12-persistence/tests/test_source_boundaries.py`)
-- `sim.stage12.production-lock-has-db-runtime`: The production lock file includes the direct Stage 12 database runtime dependencies. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
+- Checked: `sim.stage12.deployment-scope`, `sim.stage12.deployment-uses-api-schema`, `sim.stage12.no-production-user-associations`, `sim.stage12.no-schema-ddl`, `sim.stage12.persistence-typed-dml-only`, `sim.stage12.production-lock-has-db-runtime`
 
 ### Simulation persistence
 
-- `sim.persistence.executor-independent`: The Modal executor and gateway never declare, lock or import policyengine-simulation-persistence; only the Simulation Entrypoint and the migration job install it. (blocking: pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py`)
-- `sim.persistence.migrate-before-entrypoint`: Each deployment applies the simulation chain in its own job, the only one that receives SIMULATION_MIGRATION_DATABASE_URL, before the entrypoint candidate deploys; the entrypoint receives SIMULATION_DATABASE_URL as a pinned Secret Manager version; and the candidate smoke requires the database at the image's revision. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_simulation_database_deployment.py`)
-- `sim.persistence.migration-cycle`: On a fresh PostgreSQL, the simulation chain upgrades to its head, passes alembic check, downgrades to base and upgrades again, run by a non-superuser migrator, and the runtime role can read the revision but cannot change the schema. (blocking: pytest `libs/policyengine-simulation-persistence/tests/test_migration_cycle.py`)
-- `sim.persistence.no-modal-database-credentials`: No Modal secret, Modal deployment or Modal application receives SIMULATION_DATABASE_URL or SIMULATION_MIGRATION_DATABASE_URL; the Stage 12 comparison's own database secret is the only database credential Modal holds. (blocking: pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py`)
-- `sim.persistence.one-migration-chain`: The simulation schema changes only through the one Alembic chain at migrations/ (configured by migrations/alembic.ini, versioned in simulation.alembic_version); no other Alembic configuration, environment or revision directory exists, and runtime source code contains no schema DDL. (blocking: pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py`)
+- Checked: `sim.persistence.conditional-job-writes`, `sim.persistence.executor-independent`, `sim.persistence.internal-routes-google-oidc`, `sim.persistence.migrate-before-entrypoint`, `sim.persistence.migration-cycle`, `sim.persistence.no-modal-database-credentials`, `sim.persistence.one-migration-chain`, `sim.persistence.status-reads-never-advance-work`
 
 ### Deployment pipeline
 
-- `sim.deploy.container-context-minimal`: Container builds exclude local environments and unrelated projects, and the entrypoint container builds for the requested target platform. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.deploy.docker-images-build`: The simulation entry and executor Docker images build. (blocking: CI job `docker-build`)
-- `sim.deploy.gcloud-without-terraform`: Deployment uses the gcloud-based workflow, not Terraform. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
+- Checked: `sim.deploy.container-context-minimal`, `sim.deploy.docker-images-build`, `sim.deploy.gcloud-without-terraform`, `sim.deploy.modal-image-smoke`, `sim.deploy.numerical-sentinel-gate`, `sim.deploy.permission-enforcement-wired`, `sim.deploy.promotion-order-explicit`, `sim.deploy.release-identity-smoke`, `sim.deploy.revision-tags-valid`, `sim.deploy.routing-publication-journaled`, `sim.deploy.shell-scripts-valid`, `sim.deploy.smoke-tests-strict`, `sim.deploy.traffic-changes-exact`, `sim.deploy.workflow-shell-safety`
 - `sim.deploy.image-smoke-covers-every-image-lib`: The image smoke path filter includes every library mounted into a Modal image, so a change to any of them runs the smoke. (doc-only, not checked: follow it yourself)
-- `sim.deploy.modal-image-smoke`: App entrypoints import inside the real Modal images before merge, whenever a library baked into an image changes. (blocking: CI job `image-smoke`)
-- `sim.deploy.numerical-sentinel-gate`: An existing-stack deployment computes the numerical release sentinel from the exact bundle it installs, and the candidate and stable services must reproduce it; a failing sentinel check fails its step. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.deploy.permission-enforcement-wired`: Simulation Entrypoint permission enforcement defaults to log-only, rejects any value other than 0 or 1, and reaches the candidate revision and every deployed authentication run. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.deploy.promotion-order-explicit`: Full-stack promotion order is explicit, and the reusable deployment rejects unexpectedly skipped phases. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.deploy.release-identity-smoke`: Deploy gates pass the whole release identity to the entrypoint smoke, which requires every expectation, refuses malformed ones, and rejects a release whose routes, latest pointers, bundle, UK model or UK dataset differ from that identity. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.deploy.revision-tags-valid`: Cloud Run revision tags are valid on a workflow's first run and fit the existing service names. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.deploy.routing-publication-journaled`: Each routing publication is named by its run, attempt and environment and journaled before it is applied; an always-running finalizer resolves it from the journal with the release-gate outcome, a release reports success only after that finalizer completes, and routing jobs never tolerate a failed command. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.deploy.shell-scripts-valid`: Deployment shell scripts have valid shell syntax. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.deploy.smoke-tests-strict`: Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.deploy.traffic-changes-exact`: Traffic changes target an exact, validated revision, are reversible, and refuse to run over an intervening promotion. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.deploy.workflow-shell-safety`: Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, and pins secret versions. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
 
 ### API contracts and integration
 
-- `sim.contracts.clients-publish-deployed-commit`: Client publication checks out the commit that was actually deployed. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.contracts.full-integration-beta-only`: The complete integration suite runs against beta deployments only, never production. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
-- `sim.contracts.gateway-openapi-golden`: The gateway's OpenAPI spec matches the checked-in golden file; regenerate it deliberately when the API changes. (blocking: pytest `projects/policyengine-simulation-gateway/tests/test_openapi_golden.py`)
-- `sim.contracts.local-integration`: Generated-client integration tests pass against the locally built services. (blocking: CI job `test-integration`)
+- Checked: `sim.contracts.clients-publish-deployed-commit`, `sim.contracts.full-integration-beta-only`, `sim.contracts.gateway-openapi-golden`, `sim.contracts.local-integration`
 - `sim.contracts.regenerate-clients`: When public API schemas change, regenerate the clients and run the generated-client integration tests. (doc-only, not checked: follow it yourself)
 
 ### Observability
@@ -147,32 +122,20 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Code quality and tests
 
-- `sim.quality.ci-cd-scripts-ruff-exemptions`: CI/CD scripts under .github may print their output (T201); every other ruff rule applies to them. (blocking: ruff per-file ignore of T201 for `.github/**`)
-- `sim.quality.command-line-scripts-ruff-exemptions`: Command-line scripts under a scripts directory may print their output (T201), run other programs (S603, S607) and use today's date (DTZ011); every other ruff rule applies to them. (blocking: ruff per-file ignore of DTZ011, S603, S607, T201 for `**/scripts/**`)
-- `sim.quality.deployed-tests-ruff-exemptions`: The deployed-service test suite (projects/*/authenticated_tests, pytest run against a live candidate) gets the same ruff exemptions as unit tests (sim.quality.tests-ruff-exemptions); every other ruff rule applies to it. (blocking: ruff per-file ignore of ANN, D1, DTZ001, DTZ007, INP001, PLC0415, PLR2004, S101, S102, S105, S106, S108, S301, S603, S607, SLF001, TID253 for `**/authenticated_tests/**`)
+- Checked: `sim.quality.ci-cd-scripts-ruff-exemptions`, `sim.quality.command-line-scripts-ruff-exemptions`, `sim.quality.deployed-tests-ruff-exemptions`, `sim.quality.ruff-format-src`, `sim.quality.ruff-lint`, `sim.quality.runtime-evaluated-models-resolve`, `sim.quality.src-programs-ruff-exemptions`, `sim.quality.tests-pass`, `sim.quality.tests-ruff-exemptions`
 - `sim.quality.every-project-tested`: Every project and library with unit tests runs them in the PR test matrix. (doc-only, not checked: follow it yourself)
-- `sim.quality.ruff-format-src`: Source code under projects/*/src and libs/*/src is formatted with ruff format. (blocking: ruff format)
 - `sim.quality.ruff-format-tests`: Test code is formatted with ruff format too; CI currently checks only src directories. (doc-only, not checked: follow it yourself)
-- `sim.quality.ruff-lint`: All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. (blocking: ruff check (A, ANN, BLE, D, DTZ, E, E4, E7, E9, EM, ERA, EXE, F, FAST, FIX, FLY, FURB, G, I, INP, LOG, N, PIE, PLC, PYI, RET, RSE, S, SLF, T20, TC, TD, TID253, TRY, UP, W))
-- `sim.quality.runtime-evaluated-models-resolve`: Every Pydantic model is runtime-evaluated for ruff: one of its bases, read through the imports of the model's own module, is listed in ruff.toml's runtime-evaluated-base-classes or is a runtime-evaluated class in that same module; and every Pydantic model resolves its annotations once its package is imported. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py`, `projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py`)
-- `sim.quality.src-programs-ruff-exemptions`: Programs under src (the Modal deployment utilities, and the OpenAPI and Stage 12 infrastructure commands) may print their output (T201), open URLs from their arguments (S310) and, for the Modal utilities run with python -m, live in a directory that isn't a package (INP001); every other ruff rule applies to them. (blocking: ruff per-file ignore of INP001, S310, T201 for `projects/*/src/{modal/utils/*,policyengine_simulation_entry/generate_openapi,policyengine_simulation_entry/stage12_infrastructure,policyengine_simulation_gateway/generate_openapi}.py`)
-- `sim.quality.tests-pass`: Each project's unit tests pass in its own locked environment. (blocking: CI job `test`)
-- `sim.quality.tests-ruff-exemptions`: Test files may use pytest's bare assert, need no docstrings, annotations or named constants for magic numbers, and may reach into private members, live outside packages and import inside a test (S101, D1, ANN, PLR2004, SLF001, INP001, PLC0415). They may also run repository scripts (S603, S607) and use fake credentials (S105, S106), temporary paths (S108), naive datetimes (DTZ001, DTZ007), pickle (S301) and exec (S102), and may import the lazily loaded packages at module level (TID253). Every other ruff rule applies to tests. (blocking: ruff per-file ignore of ANN, D1, DTZ001, DTZ007, INP001, PLC0415, PLR2004, S101, S102, S105, S106, S108, S301, S603, S607, SLF001, TID253 for `**/tests/**`)
 
 ### CI workflows and scripts
 
-- `sim.ci.multiline-run-is-script`: A GitHub Actions run: block holds one line of code and no chained commands (&&, ||, ;); anything more lives in a tested script under .github/scripts/, called from a single-line step. (blocking: quality guard `ci-scripts`)
-- `sim.ci.shell-scripts-pass-shellcheck`: Every shell script under .github/scripts/ passes shellcheck. (blocking: quality guard `ci-scripts`)
-- `sim.ci.workflow-scripts-tested`: Every shell script a workflow calls is run by at least one test. (blocking: quality guard `ci-scripts`)
+- Checked: `sim.ci.multiline-run-is-script`, `sim.ci.shell-scripts-pass-shellcheck`, `sim.ci.workflow-scripts-tested`
 
 ### Process and repository hygiene
 
-- `sim.agents.adapters-point-to-agents-md`: CLAUDE.md and .github/copilot-instructions.md only point to AGENTS.md; skills and rules are listed in AGENTS.md alone. (blocking: quality guard `rules-registry`)
+- Checked: `sim.agents.adapters-point-to-agents-md`, `sim.process.rules-registry`, `sim.process.stacked-prs-full-ci-at-bottom`
 - `sim.process.agents-never-bypass`: Agents never bypass branch rules, even with admin credentials: no gh pr merge --admin and no bypass option; a blocked merge is reported to a human. (doc-only, not checked: follow it yourself)
 - `sim.process.pr-tracking-issue`: Every PR has a tracking issue in this repository, and the first line of its description is Fixes #ISSUE_NUMBER. (doc-only, not checked: follow it yourself)
 - `sim.process.rule-machinery-code-owned`: Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author. (doc-only, not checked: follow it yourself)
-- `sim.process.rules-registry`: Every rule is registered in rules/registry.toml, is enforced where it claims to be, and its rendered views are current. (blocking: quality guard `rules-registry`)
 - `sim.process.same-repo-draft-prs`: PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks. (doc-only, not checked: follow it yourself)
-- `sim.process.stacked-prs-full-ci-at-bottom`: In a stack of pull requests, only the lowest unmerged one runs the full PR workflow and the Modal image smoke. Every pr.yml job is needed by the CI complete gate, which fails on the pull requests above it and otherwise passes only when every job passed, so a stack merges bottom-up and nothing merges untested. (blocking: pytest `projects/policyengine-simulation-executor/tests/test_ci_complete_gate.py`)
 
 <!-- END GENERATED: rules -->

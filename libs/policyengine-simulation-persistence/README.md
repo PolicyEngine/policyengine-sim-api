@@ -30,6 +30,38 @@ The temporary Stage 12 comparison tables are not part of this schema: they are
 owned and migrated by the Public API, and `libs/policyengine-stage12-persistence`
 writes them with DML only.
 
+## The job store
+
+`simulation.jobs` has one row per calculation the Simulation Entrypoint sends
+to Modal: the submitter, a SHA-256 of the job kind, policyengine.py bundle
+version and request (`input_sha256`), the Modal application, function and
+call ID, the status, timings, the number of collection checks and any error.
+`simulation.job_results` holds the validated result of each succeeded job that
+is not a report.
+
+A job moves `pending` -> `dispatching` -> `running` -> `succeeded` or
+`failed`. Every transition in `jobs.py` is one conditional
+`UPDATE ... WHERE status = <expected>` (`sim.persistence.conditional-job-writes`):
+
+- **Submission** inserts with `ON CONFLICT DO NOTHING` on a unique index over
+  `input_sha256` that excludes failed jobs, so identical requests share one
+  job and a failed job never blocks a new attempt.
+- **Dispatch** happens only after the conditional `pending` -> `dispatching`
+  update succeeds, so one Modal call starts per job.
+- **Collection** writes a result (in the same transaction as the
+  `running` -> `succeeded` update) or a failure only while the job is
+  `running`. When two collectors race, PostgreSQL makes the second wait for the
+  first's row lock, re-check the condition and change nothing. No lease is
+  taken. `tests/test_job_store_concurrency.py` forces that interleaving and
+  races many threads.
+
+The Simulation Entrypoint collects results in the background: Cloud Tasks
+calls its collection route, which checks the Modal call without waiting and
+either stores the outcome or schedules the next check with backoff; a Cloud
+Scheduler sweep re-enqueues running jobs nobody has checked for five minutes
+and fails jobs whose dispatch stalled for ten. Status reads use only these
+tables (`sim.persistence.status-reads-never-advance-work`).
+
 ## Database roles
 
 | Role | Used by | Privileges |

@@ -78,6 +78,9 @@ required_variables=(
   OLD_GATEWAY_AUTH_CLIENT_ID_VALUE
   OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME
   SIMULATION_DATABASE_URL_SECRET_NAME
+  RECONCILIATION_QUEUE_VALUE
+  RECONCILIATION_INVOKER_SERVICE_ACCOUNT_VALUE
+  ENTRYPOINT_STABLE_URL
   OBSERVABILITY_SERVICE_NAMESPACE
   OBSERVABILITY_TRACE_PROJECT_ID
   OTEL_EXPORTER_OTLP_ENDPOINT
@@ -110,6 +113,15 @@ esac
   || fail "ENTRYPOINT_MAX_INSTANCES must be a non-negative integer"
 ((10#${ENTRYPOINT_MAX_INSTANCES} >= 10#${ENTRYPOINT_MIN_INSTANCES})) \
   || fail "ENTRYPOINT_MAX_INSTANCES must be at least ENTRYPOINT_MIN_INSTANCES"
+# Background collection of simulation job results: Cloud Tasks calls the
+# stable service URL (never the candidate tag) with an OIDC token of the
+# invoker service account, which Cloud Scheduler also uses for the sweep.
+[[ "${RECONCILIATION_QUEUE_VALUE}" =~ ^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/locations/[a-z0-9-]+/queues/[A-Za-z0-9-]{1,100}$ ]] \
+  || fail "RECONCILIATION_QUEUE_VALUE must be a full Cloud Tasks queue name"
+[[ "${RECONCILIATION_INVOKER_SERVICE_ACCOUNT_VALUE}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$ ]] \
+  || fail "RECONCILIATION_INVOKER_SERVICE_ACCOUNT_VALUE must be a service account email"
+[[ "${ENTRYPOINT_STABLE_URL}" =~ ^https://[a-z0-9.-]+$ ]] \
+  || fail "ENTRYPOINT_STABLE_URL must be the service's HTTPS URL without a path"
 # An unset GitHub variable arrives as an empty value. Default it to log-only
 # permission checks; switching to 1 is a separate operator decision.
 export SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE="${SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE:-0}"
@@ -173,6 +185,10 @@ jq -n '
     OTEL_METRICS_EXPORTER: "otlp",
     OTEL_TRACES_SAMPLER_ARG: "1.0",
     POLICYENGINE_OTEL_GOOGLE_AUDIENCE: env.POLICYENGINE_OTEL_GOOGLE_AUDIENCE,
+    RECONCILIATION_QUEUE: env.RECONCILIATION_QUEUE_VALUE,
+    RECONCILIATION_INVOKER_SERVICE_ACCOUNT: env.RECONCILIATION_INVOKER_SERVICE_ACCOUNT_VALUE,
+    RECONCILIATION_TARGET_URL: env.ENTRYPOINT_STABLE_URL,
+    SIMULATION_MODAL_ENVIRONMENT: env.MODAL_ENVIRONMENT,
     STAGE12_ENABLED: (
       if env.DEPLOY_STAGE12_V2 == "true" then env.STAGE12_ENABLED_VALUE else "0" end
     )

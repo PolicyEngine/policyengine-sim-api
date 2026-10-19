@@ -201,3 +201,80 @@ def test_the_simulation_database_url_must_be_canonical(database_url):
         make_settings(simulation_database_url=database_url).validate()
 
     assert "secret" not in str(error.value)
+
+
+RECONCILIATION = {
+    "simulation_database_url": "postgresql://simulation_runtime:secret@db/postgres",
+    "reconciliation_queue": (
+        "projects/policyengine-staging/locations/us-central1/queues/simulation-jobs"
+    ),
+    "reconciliation_invoker_service_account": (
+        "simulation-jobs-invoker@policyengine-staging.iam.gserviceaccount.com"
+    ),
+    "reconciliation_target_url": (
+        "https://policyengine-simulation-entry-staging-abc-uc.a.run.app"
+    ),
+    "simulation_modal_environment": "staging",
+}
+
+
+def test_reconciliation_settings_are_read_from_the_environment(monkeypatch):
+    from policyengine_simulation_entry.config import Settings
+
+    monkeypatch.setenv(
+        "SIMULATION_DATABASE_URL", RECONCILIATION["simulation_database_url"]
+    )
+    monkeypatch.setenv("RECONCILIATION_QUEUE", RECONCILIATION["reconciliation_queue"])
+    monkeypatch.setenv(
+        "RECONCILIATION_INVOKER_SERVICE_ACCOUNT",
+        RECONCILIATION["reconciliation_invoker_service_account"],
+    )
+    monkeypatch.setenv(
+        "RECONCILIATION_TARGET_URL", RECONCILIATION["reconciliation_target_url"]
+    )
+    monkeypatch.setenv("SIMULATION_MODAL_ENVIRONMENT", "staging")
+
+    settings = Settings.from_env()
+
+    assert {name: getattr(settings, name) for name in RECONCILIATION} == RECONCILIATION
+    assert settings.simulation_jobs_configured is True
+    make_settings(**RECONCILIATION).validate()
+
+
+def test_simulation_jobs_are_off_without_reconciliation_settings():
+    settings = make_settings(
+        simulation_database_url=RECONCILIATION["simulation_database_url"]
+    )
+
+    settings.validate()
+    assert settings.simulation_jobs_configured is False
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "reconciliation_queue",
+        "reconciliation_invoker_service_account",
+        "reconciliation_target_url",
+        "simulation_modal_environment",
+        "simulation_database_url",
+    ],
+)
+def test_reconciliation_settings_are_all_or_nothing(missing):
+    with pytest.raises(ConfigurationError, match="Simulation jobs require"):
+        make_settings(**{**RECONCILIATION, missing: ""}).validate()
+
+
+@pytest.mark.parametrize(
+    ("setting", "value"),
+    [
+        ("reconciliation_queue", "simulation-jobs"),
+        ("reconciliation_queue", "projects/p/locations/us-central1/queues/q/tasks"),
+        ("reconciliation_invoker_service_account", "invoker@example.com"),
+        ("reconciliation_target_url", "http://entry.a.run.app"),
+        ("reconciliation_target_url", "https://entry.a.run.app/internal"),
+    ],
+)
+def test_reconciliation_settings_must_be_well_formed(setting, value):
+    with pytest.raises(ConfigurationError, match=setting.upper()):
+        make_settings(**{**RECONCILIATION, setting: value}).validate()

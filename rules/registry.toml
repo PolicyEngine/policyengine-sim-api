@@ -218,6 +218,72 @@ workflow = ".github/workflows/pr.yml"
 job = "test"
 invocation = "uv run pytest tests/"
 
+[[rule]]
+id = "sim.persistence.conditional-job-writes"
+category = "persistence"
+statement = "Every simulation job transition and result write is one conditional update on the job's expected status (and submission an insert that does nothing on a conflicting input hash), so concurrent collectors, dispatchers or submitters change a job at most once; no lease is taken."
+rationale = "libs/policyengine-simulation-persistence/README.md#the-job-store"
+scope = ["libs/policyengine-simulation-persistence/src/policyengine_simulation_persistence/jobs.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "libs/policyengine-simulation-persistence"
+nodes = [
+  "tests/test_job_store_concurrency.py::test_a_second_collector_waits_for_the_first_then_changes_nothing",
+  "tests/test_job_store_concurrency.py::test_a_failure_racing_a_result_cannot_overwrite_it",
+  "tests/test_job_store_concurrency.py::test_a_second_dispatcher_waits_for_the_first_then_claims_nothing",
+  "tests/test_job_store_concurrency.py::test_concurrent_collectors_write_exactly_one_result",
+  "tests/test_job_store_concurrency.py::test_concurrent_identical_submissions_create_one_job",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "simulation-database"
+invocation = "uv run pytest tests/ -v -m postgres"
+
+[[rule]]
+id = "sim.persistence.status-reads-never-advance-work"
+category = "persistence"
+statement = "Simulation job status reads use only the Simulation Entrypoint's database: they never inspect, spawn or advance a Modal call; results are collected by Cloud Tasks and the Cloud Scheduler sweep."
+rationale = "libs/policyengine-simulation-persistence/README.md#the-job-store"
+scope = ["projects/policyengine-simulation-entry/src/policyengine_simulation_entry/simulation_jobs.py", "projects/policyengine-simulation-entry/src/policyengine_simulation_entry/app.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_simulation_jobs.py::test_status_reads_accept_a_job_id_or_a_modal_call_id_and_never_call_modal",
+  "tests/test_simulation_job_routes.py::test_status_reads_return_the_stored_result_from_the_database",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
+id = "sim.persistence.internal-routes-google-oidc"
+category = "persistence"
+statement = "The simulation job collection and sweep routes accept only Google-signed OIDC tokens whose audience is the service URL and whose email is the configured invoker service account."
+rationale = "projects/policyengine-simulation-entry/DEPLOYMENT.md"
+scope = ["projects/policyengine-simulation-entry/src/policyengine_simulation_entry/google_oidc.py", "projects/policyengine-simulation-entry/src/policyengine_simulation_entry/app.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_google_oidc.py::test_every_other_token_is_rejected",
+  "tests/test_simulation_job_routes.py::test_internal_routes_reject_callers_without_a_valid_google_token",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
 # --- Stage 12 persistence --------------------------------------------------
 
 [[rule]]

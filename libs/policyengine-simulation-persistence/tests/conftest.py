@@ -15,10 +15,12 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
+from alembic import command
 from migration_support import (
     MIGRATION_DATABASE_URL_VARIABLE,
     MIGRATOR_ROLE,
     TEST_ROLE_PASSWORD,
+    alembic_config,
 )
 from policyengine_simulation_persistence.schema import RUNTIME_ROLE
 from sqlalchemy import create_engine, text
@@ -112,3 +114,10 @@ def disposable_database(
                 text(f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE)')
             )
         server_engine.dispose()
+
+
+@pytest.fixture
+def migrated_database(disposable_database: DisposableDatabase) -> DisposableDatabase:
+    """Return a disposable database with the whole chain applied."""
+    command.upgrade(alembic_config(), "head")
+    return disposable_database

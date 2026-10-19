@@ -10,8 +10,9 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
@@ -42,6 +43,7 @@ from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
 from policyengine_simulation_persistence import HEAD_REVISION
+from policyengine_simulation_persistence.jobs import JobStore
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from starlette.datastructures import MutableHeaders
 
@@ -58,16 +60,32 @@ from policyengine_simulation_entry.backend import (
     SimulationBackend,
 )
 from policyengine_simulation_entry.config import Settings
+from policyengine_simulation_entry.google_oidc import (
+    GoogleOidcVerifier,
+    InternalCallerRejectedError,
+)
 from policyengine_simulation_entry.schemas import (
     BackendTelemetryAttributes,
     BackendTelemetryPayload,
     RequestIdentifiers,
     SimulationDatabaseReadiness,
     SimulationEntrypointReadinessResponse,
+    SimulationJobCollectionResponse,
+    SimulationJobError,
+    SimulationJobStatusResponse,
+    SimulationJobSweepResponse,
     TemporaryStage12ReportResponse,
     TemporaryStage12SubmissionResponse,
 )
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
+from policyengine_simulation_entry.simulation_jobs import (
+    REGISTERED_JOB_KINDS,
+    CloudTasksCollectionQueue,
+    JobView,
+    ModalCallDispatcher,
+    ModalCallInspector,
+    SimulationJobService,
+)
 from policyengine_simulation_entry.stage12_backend import (
     Stage12ComparisonBackend,
     TemporaryStage12DispatchFailed,
@@ -87,6 +105,19 @@ _json_object_adapter = TypeAdapter(JsonObject)
 type ResponseIdentifier = Literal["job_id", "batch_job_id"]
 STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS = 5.0
 SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS = 3.0
+SIMULATION_JOB_RETRY_AFTER_SECONDS = "5"
+_internal_bearer = HTTPBearer(auto_error=False)
+
+
+class InternalCallerVerifier(Protocol):
+    """Verify the token on a Cloud Tasks or Cloud Scheduler request.
+
+    The real implementation is ``GoogleOidcVerifier``; tests inject fakes.
+    """
+
+    def verify(self, token: str) -> None:
+        """Return when the token is valid; raise InternalCallerRejectedError."""
+        ...
 
 
 class SimulationDatabaseConnection(Protocol):
@@ -192,6 +223,8 @@ def create_app(
     auth_dependency: AuthenticationDependency | None = None,
     comparison_backend: ComparisonBackend | None = None,
     simulation_database: SimulationDatabaseConnection | None = None,
+    simulation_jobs: SimulationJobService | None = None,
+    internal_caller_verifier: InternalCallerVerifier | None = None,
 ) -> FastAPI:
     """Build the app with injectable auth/backend seams for hermetic tests."""
     runtime_settings = settings or Settings.from_env()
@@ -199,6 +232,37 @@ def create_app(
     if runtime_database is None and runtime_settings.simulation_database_url:
         runtime_database = SimulationDatabase.from_url(
             runtime_settings.simulation_database_url
+        )
+    runtime_jobs = simulation_jobs
+    runtime_collection_queue: CloudTasksCollectionQueue | None = None
+    if (
+        runtime_jobs is None
+        and runtime_settings.simulation_jobs_configured
+        and isinstance(runtime_database, SimulationDatabase)
+    ):
+        runtime_collection_queue = CloudTasksCollectionQueue(
+            queue=runtime_settings.reconciliation_queue,
+            target_url=runtime_settings.reconciliation_target_url,
+            invoker_service_account=(
+                runtime_settings.reconciliation_invoker_service_account
+            ),
+        )
+        runtime_jobs = SimulationJobService(
+            store=JobStore(runtime_database.engine),
+            dispatcher=ModalCallDispatcher(
+                runtime_settings.simulation_modal_environment
+            ),
+            inspector=ModalCallInspector(),
+            queue=runtime_collection_queue,
+            job_kinds=REGISTERED_JOB_KINDS,
+        )
+    runtime_verifier = internal_caller_verifier
+    if runtime_verifier is None and runtime_settings.simulation_jobs_configured:
+        runtime_verifier = GoogleOidcVerifier(
+            audience=runtime_settings.reconciliation_target_url,
+            service_account_email=(
+                runtime_settings.reconciliation_invoker_service_account
+            ),
         )
 
     @asynccontextmanager
@@ -209,6 +273,8 @@ def create_app(
             yield
         finally:
             await runtime_backend.close()
+            if runtime_collection_queue is not None:
+                await runtime_collection_queue.close()
             if runtime_database is not None:
                 runtime_database.dispose()
             runtime.shutdown()
@@ -592,6 +658,153 @@ def create_app(
             status_code=202 if running else 200,
             content=payload.model_dump(mode="json"),
             headers=response_headers or None,
+        )
+
+    def simulation_jobs_unavailable() -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Simulation jobs are unavailable."},
+            headers={"Retry-After": "10"},
+        )
+
+    async def internal_caller(
+        credentials: HTTPAuthorizationCredentials | None = Depends(_internal_bearer),
+    ) -> None:
+        """Admit only Cloud Tasks and Cloud Scheduler, by their Google token."""
+        verifier = runtime_verifier
+        if verifier is None:
+            raise HTTPException(status_code=503, headers={"Retry-After": "10"})
+        if credentials is None:
+            raise HTTPException(status_code=403)
+        try:
+            await asyncio.to_thread(verifier.verify, credentials.credentials)
+        except InternalCallerRejectedError as error:
+            logger.info(
+                "simulation_job_internal_caller_rejected",
+                extra={"reason": str(error)},
+            )
+            raise HTTPException(status_code=403) from error
+
+    def job_status_payload(view: JobView) -> SimulationJobStatusResponse:
+        job = view.job
+        return SimulationJobStatusResponse(
+            job_id=job.id,
+            kind=job.kind,
+            status=job.status.value,
+            policyengine_version=job.policyengine_version,
+            modal_call_id=job.modal_call_id,
+            created_at=job.created_at,
+            dispatched_at=job.dispatched_at,
+            completed_at=job.completed_at,
+            error=(
+                SimulationJobError(code=job.error_code, message=job.error_message)
+                if job.error_code is not None
+                else None
+            ),
+            result=None if view.result is None else view.result.result,
+            result_sha256=None if view.result is None else view.result.result_sha256,
+        )
+
+    # Simulation job store (API v2 migration, Step 1). These routes are not in
+    # the OpenAPI document and no production caller uses them yet. Reading a
+    # job uses only the database and never checks or advances its Modal call.
+    @app.get(
+        "/simulation-jobs/{job_reference}",
+        include_in_schema=False,
+        dependencies=[Depends(simulation_reader)],
+    )
+    async def get_simulation_job(job_reference: str, request: Request) -> Response:
+        service = runtime_jobs
+        if service is None:
+            return simulation_jobs_unavailable()
+        try:
+            view = await service.find(job_reference)
+        # A failed database read becomes a 503; the caller polls again.
+        except Exception as error:  # noqa: BLE001  # any read failure becomes a 503
+            logger.error(  # noqa: TRY400  # the error type is enough; the traceback could expose the job reference's data
+                "simulation_job_status_failed",
+                extra={
+                    "request_id": request.state.request_id,
+                    "error_type": type(error).__name__,
+                },
+            )
+            return simulation_jobs_unavailable()
+        if view is None:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "Simulation job was not found."},
+            )
+        headers: dict[str, str] = {}
+        job_observability_id = bind_observability_id(request, view.job.observability_id)
+        if job_observability_id is not None:
+            headers[OBSERVABILITY_ID_HEADER] = job_observability_id
+        if not view.job.finished:
+            headers["Retry-After"] = SIMULATION_JOB_RETRY_AFTER_SECONDS
+        return JSONResponse(
+            status_code=200 if view.job.finished else 202,
+            content=job_status_payload(view).model_dump(mode="json"),
+            headers=headers or None,
+        )
+
+    @app.post(
+        "/internal/simulation-jobs/{job_id}/collect",
+        include_in_schema=False,
+        dependencies=[Depends(internal_caller)],
+    )
+    async def collect_simulation_job(job_id: UUID, request: Request) -> Response:
+        service = runtime_jobs
+        if service is None:
+            return simulation_jobs_unavailable()
+        try:
+            report = await service.collect(job_id)
+        # Modal, Cloud Tasks or the database failed; a 503 makes Cloud Tasks
+        # retry this task with its queue's backoff.
+        except Exception as error:  # noqa: BLE001  # every transient failure becomes a 503
+            logger.warning(
+                "simulation_job_collection_failed",
+                extra={
+                    "request_id": request.state.request_id,
+                    "job_id": str(job_id),
+                    "error_type": type(error).__name__,
+                },
+            )
+            return simulation_jobs_unavailable()
+        payload = SimulationJobCollectionResponse(
+            outcome=report.outcome.value,
+            job_status=None if report.job_status is None else report.job_status.value,
+            next_check_seconds=report.next_check_seconds,
+        )
+        return JSONResponse(content=payload.model_dump(mode="json"))
+
+    @app.post(
+        "/internal/simulation-jobs/sweep",
+        include_in_schema=False,
+        dependencies=[Depends(internal_caller)],
+    )
+    async def sweep_simulation_jobs(request: Request) -> Response:
+        service = runtime_jobs
+        if service is None:
+            return simulation_jobs_unavailable()
+        try:
+            report = await service.sweep()
+        except Exception as error:  # noqa: BLE001  # a failed sweep becomes a 503; the next run repeats it
+            logger.warning(
+                "simulation_job_sweep_failed",
+                extra={
+                    "request_id": request.state.request_id,
+                    "error_type": type(error).__name__,
+                },
+            )
+            return simulation_jobs_unavailable()
+        payload = SimulationJobSweepResponse(
+            abandoned=report.abandoned,
+            enqueued=report.enqueued,
+            enqueue_failures=report.enqueue_failures,
+        )
+        # Report refused tasks as a failed run, so Cloud Scheduler shows it.
+        return JSONResponse(
+            status_code=503 if report.enqueue_failures else 200,
+            content=payload.model_dump(mode="json"),
         )
 
     @app.post(

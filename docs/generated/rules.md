@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 43 | 1 | 0 | 14 | 58 |
+| mechanical | 46 | 1 | 0 | 14 | 61 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 44 of 58 rules.
+**Blocking:** 47 of 61 rules.
 
 ## Gaps
 
@@ -54,8 +54,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.deploy.smoke-tests-strict`
 - `sim.deploy.traffic-changes-exact`
 - `sim.deploy.workflow-shell-safety`
+- `sim.persistence.conditional-job-writes`
+- `sim.persistence.internal-routes-google-oidc`
 - `sim.persistence.migrate-before-entrypoint`
 - `sim.persistence.migration-cycle`
+- `sim.persistence.status-reads-never-advance-work`
 - `sim.process.rules-registry`
 - `sim.stage12.deployment-scope`
 - `sim.stage12.deployment-uses-api-schema`
@@ -125,32 +128,47 @@ flowchart LR
 
 | Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
 | --- | --- | --- | --- | --- | --- | --- | --- |
+| `sim.persistence.conditional-job-writes` | Every simulation job transition and result write is one conditional update on the job's expected status (and submission an insert that does nothing on a conflicting input hash), so concurrent collectors, dispatchers or submitters change a job at most once; no lease is taken. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_job_store_concurrency.py` | `pr.yml:simulation-database` | **unproven** |
 | `sim.persistence.executor-independent` | The Modal executor and gateway never declare, lock or import policyengine-simulation-persistence; only the Simulation Entrypoint and the migration job install it. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
+| `sim.persistence.internal-routes-google-oidc` | The simulation job collection and sweep routes accept only Google-signed OIDC tokens whose audience is the service URL and whose email is the configured invoker service account. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_google_oidc.py`, `projects/policyengine-simulation-entry/tests/test_simulation_job_routes.py` | `pr.yml:test` | **unproven** |
 | `sim.persistence.migrate-before-entrypoint` | Each deployment applies the simulation chain in its own job, the only one that receives SIMULATION_MIGRATION_DATABASE_URL, before the entrypoint candidate deploys; the entrypoint receives SIMULATION_DATABASE_URL as a pinned Secret Manager version; and the candidate smoke requires the database at the image's revision. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_simulation_database_deployment.py` | `pr.yml:test` | **unproven** |
 | `sim.persistence.migration-cycle` | On a fresh PostgreSQL, the simulation chain upgrades to its head, passes alembic check, downgrades to base and upgrades again, run by a non-superuser migrator, and the runtime role can read the revision but cannot change the schema. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_migration_cycle.py` | `pr.yml:simulation-database` | **unproven** |
 | `sim.persistence.no-modal-database-credentials` | No Modal secret, Modal deployment or Modal application receives SIMULATION_DATABASE_URL or SIMULATION_MIGRATION_DATABASE_URL; the Stage 12 comparison's own database secret is the only database credential Modal holds. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
 | `sim.persistence.one-migration-chain` | The simulation schema changes only through the one Alembic chain at migrations/ (configured by migrations/alembic.ini, versioned in simulation.alembic_version); no other Alembic configuration, environment or revision directory exists, and runtime source code contains no schema DDL. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
+| `sim.persistence.status-reads-never-advance-work` | Simulation job status reads use only the Simulation Entrypoint's database: they never inspect, spawn or advance a Modal call; results are collected by Cloud Tasks and the Cloud Scheduler sweep. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_simulation_job_routes.py`, `projects/policyengine-simulation-entry/tests/test_simulation_jobs.py` | `pr.yml:test` | **unproven** |
 
 ```mermaid
 flowchart LR
+  r_sim_persistence_conditional_job_writes("sim.persistence.conditional-job-writes (enforced)")
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_job_store_concurrency_py["pytest libs/policyengine-simulation-persistence/tests/test_job_store_concurrency.py"]
+  j_CI_pr_yml_simulation_database["CI pr.yml:simulation-database"]
   r_sim_persistence_executor_independent("sim.persistence.executor-independent (enforced)")
   e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py["pytest libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py"]
   j_CI_pr_yml_test["CI pr.yml:test"]
+  r_sim_persistence_internal_routes_google_oidc("sim.persistence.internal-routes-google-oidc (enforced)")
+  e_pytest_projects_policyengine_simulation_entry_tests_test_google_oidc_py__projects_policyengine_simulation_entry_tests_test_simulation_job_routes_py["pytest projects/policyengine-simulation-entry/tests/test_google_oidc.py, projects/policyengine-simulation-entry/tests/test_simulation_job_routes.py"]
   r_sim_persistence_migrate_before_entrypoint("sim.persistence.migrate-before-entrypoint (enforced)")
   e_pytest_projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py["pytest projects/policyengine-simulation-entry/tests/test_simulation_database_deployment.py"]
   r_sim_persistence_migration_cycle("sim.persistence.migration-cycle (enforced)")
   e_pytest_libs_policyengine_simulation_persistence_tests_test_migration_cycle_py["pytest libs/policyengine-simulation-persistence/tests/test_migration_cycle.py"]
-  j_CI_pr_yml_simulation_database["CI pr.yml:simulation-database"]
   r_sim_persistence_no_modal_database_credentials("sim.persistence.no-modal-database-credentials (enforced)")
   r_sim_persistence_one_migration_chain("sim.persistence.one-migration-chain (enforced)")
+  r_sim_persistence_status_reads_never_advance_work("sim.persistence.status-reads-never-advance-work (enforced)")
+  e_pytest_projects_policyengine_simulation_entry_tests_test_simulation_job_routes_py__projects_policyengine_simulation_entry_tests_test_simulation_jobs_py["pytest projects/policyengine-simulation-entry/tests/test_simulation_job_routes.py, projects/policyengine-simulation-entry/tests/test_simulation_jobs.py"]
+  r_sim_persistence_conditional_job_writes --> e_pytest_libs_policyengine_simulation_persistence_tests_test_job_store_concurrency_py
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_job_store_concurrency_py --> j_CI_pr_yml_simulation_database
   r_sim_persistence_executor_independent --> e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py
   e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py --> j_CI_pr_yml_test
+  r_sim_persistence_internal_routes_google_oidc --> e_pytest_projects_policyengine_simulation_entry_tests_test_google_oidc_py__projects_policyengine_simulation_entry_tests_test_simulation_job_routes_py
+  e_pytest_projects_policyengine_simulation_entry_tests_test_google_oidc_py__projects_policyengine_simulation_entry_tests_test_simulation_job_routes_py --> j_CI_pr_yml_test
   r_sim_persistence_migrate_before_entrypoint --> e_pytest_projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py
   e_pytest_projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py --> j_CI_pr_yml_test
   r_sim_persistence_migration_cycle --> e_pytest_libs_policyengine_simulation_persistence_tests_test_migration_cycle_py
   e_pytest_libs_policyengine_simulation_persistence_tests_test_migration_cycle_py --> j_CI_pr_yml_simulation_database
   r_sim_persistence_no_modal_database_credentials --> e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py
   r_sim_persistence_one_migration_chain --> e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py
+  r_sim_persistence_status_reads_never_advance_work --> e_pytest_projects_policyengine_simulation_entry_tests_test_simulation_job_routes_py__projects_policyengine_simulation_entry_tests_test_simulation_jobs_py
+  e_pytest_projects_policyengine_simulation_entry_tests_test_simulation_job_routes_py__projects_policyengine_simulation_entry_tests_test_simulation_jobs_py --> j_CI_pr_yml_test
 ```
 
 ## Deployment pipeline

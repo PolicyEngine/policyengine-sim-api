@@ -492,6 +492,15 @@ def _cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
         "SIMULATION_DATABASE_URL_SECRET_NAME": (
             "simulation-staging-runtime-database-url"
         ),
+        "RECONCILIATION_QUEUE_VALUE": (
+            "projects/policyengine-staging/locations/us-central1/queues/simulation-jobs"
+        ),
+        "RECONCILIATION_INVOKER_SERVICE_ACCOUNT_VALUE": (
+            "simulation-jobs-invoker@policyengine-staging.iam.gserviceaccount.com"
+        ),
+        "ENTRYPOINT_STABLE_URL": (
+            "https://policyengine-simulation-entry-staging-abc-uc.a.run.app"
+        ),
     }
 
 
