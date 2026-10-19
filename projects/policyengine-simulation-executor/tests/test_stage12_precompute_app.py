@@ -42,6 +42,9 @@ def test_precompute_image_installs_only_the_us_bundle(monkeypatch) -> None:
 
     assert "--country us" in command
     assert "--country uk" not in command
+    # Packages come from the locked environment; the uv environment has no pip.
+    assert "--no-packages" in command
+    assert "--venv" not in command
     local_source = next(
         call
         for call in module.precompute_image.calls

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import shlex
 from pathlib import Path
 
 from policyengine_simulation_executor.hf_access_validation import (
@@ -25,6 +24,7 @@ from policyengine_simulation_executor.stage12_cache.precompute import (
     verify_determinism_impl,
 )
 from policyengine_simulation_executor.stage12_cache.store import resolve_cache_bucket
+from src.modal.bundle_data import bundle_data_install_command
 
 import modal
 
@@ -43,26 +43,6 @@ hf_secret = modal.Secret.from_name(
 worker_secrets = [gcp_secret, hf_secret]
 
 
-def _bundle_install_command() -> str:
-    parts = [
-        "uvx",
-        "--from",
-        RESOLVED_BUNDLE.bundle.policyengine_requirement,
-        "policyengine",
-        "bundle",
-        "install",
-        RESOLVED_BUNDLE.bundle.policyengine_version,
-        "--venv",
-        "/.uv/.venv",
-        "--country",
-        "us",
-        "--data-dir",
-        STAGE12_DATA_DIR,
-        "--yes",
-    ]
-    return " ".join(shlex.quote(part) for part in parts)
-
-
 precompute_image = (
     modal.Image.debian_slim(python_version="3.13")
     .uv_sync(
@@ -70,7 +50,16 @@ precompute_image = (
         frozen=True,
         extra_options="--only-group modal-simulation-image",
     )
-    .run_commands(_bundle_install_command(), secrets=[hf_secret])
+    # The locked environment already holds .py and the country packages, so
+    # the bundle installs only the US data, as the v2 worker images do.
+    .run_commands(
+        bundle_data_install_command(
+            RESOLVED_BUNDLE.bundle.policyengine_version,
+            countries=("us",),
+            data_dir=STAGE12_DATA_DIR,
+        ),
+        secrets=[hf_secret],
+    )
     .env({"POLICYENGINE_DATA_FOLDER": STAGE12_DATA_DIR})
     .add_local_python_source(
         "src.modal",
