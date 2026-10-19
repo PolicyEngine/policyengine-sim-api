@@ -222,7 +222,7 @@ def _cached_model() -> Stage12CachedSimulation:
     return model
 
 
-def _output(complete: bool = True):
+def _output(*, complete: bool = True):
     household = {
         "household_id": pd.Series([1], dtype="int64"),
         "household_net_income": pd.Series([1.0], dtype="float32"),

@@ -716,6 +716,7 @@ class TestStage12CachePrecompute:
             capture_output=True,
             text=True,
             env=env,
+            check=False,
         )
         calls = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
         emitted = (
@@ -728,6 +729,7 @@ class TestStage12CachePrecompute:
             ["bash", "-n", str(self.script)],
             capture_output=True,
             text=True,
+            check=False,
         )
         assert syntax.returncode == 0, syntax.stderr
         digest = "a" * 64

@@ -230,13 +230,18 @@ class Stage12SegmentRunner:
 
     @staticmethod
     def _cancel_all(handles: list[tuple[int, Any]]) -> None:
-        for _, call in handles:
-            try:
-                call.cancel()
-            except Exception as error:  # noqa: BLE001  # cancellation is best effort and must reach every call
-                logger.warning(
-                    "Stage 12 segment cancellation failed (%s)", type(error).__name__
-                )
+        for handle in handles:
+            _cancel_segment_call(handle)
+
+
+def _cancel_segment_call(handle: tuple[int, Any]) -> None:
+    _, call = handle
+    try:
+        call.cancel()
+    except Exception as error:  # noqa: BLE001  # cancellation is best effort and must reach every call
+        logger.warning(
+            "Stage 12 segment cancellation failed (%s)", type(error).__name__
+        )
 
 
 def run_segmented_simulation(

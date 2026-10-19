@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
-from typing import Any
+from typing import Any, NoReturn
 
 from policyengine_simulation_contract.spm import spm_error_detail
 from policyengine_simulation_observability.errors import make_correlation_id
@@ -138,17 +138,20 @@ def validate_policy_periods(policy: Mapping[str, Any]) -> None:
             parts = period.split(".")
             if len(parts) not in {1, 2}:
                 _raise_invalid_period(parameter, period)
-            parsed = []
-            for part in parts:
-                try:
-                    parsed.append(date.fromisoformat(part))
-                except ValueError:
-                    _raise_invalid_period(parameter, period)
+            parsed = [_parse_period_date(parameter, period, part) for part in parts]
             if len(parsed) == 2 and parsed[1] < parsed[0]:
                 _raise_invalid_period(parameter, period)
 
 
-def _raise_invalid_period(parameter: str, period: str) -> None:
+def _parse_period_date(parameter: str, period: str, part: str) -> date:
+    try:
+        parsed = date.fromisoformat(part)
+    except ValueError:
+        _raise_invalid_period(parameter, period)
+    return parsed
+
+
+def _raise_invalid_period(parameter: str, period: str) -> NoReturn:
     msg = "invalid_policy_period"
     raise Stage12InputError(
         msg,

@@ -49,7 +49,8 @@ def test_us_partition_has_twenty_unique_groups_and_complete_state_coverage() -> 
 def test_partition_returns_independent_mutable_copies() -> None:
     first = stage12_region_groups("us")
     second = stage12_region_groups("us")
-    assert first is not None and second is not None
+    assert first is not None
+    assert second is not None
 
     first[-1].append("state/test")
 
@@ -105,8 +106,10 @@ def test_stage12_feature_modules_do_not_import_v1_feature_implementations() -> N
                 imported = [node.module or ""]
             else:
                 continue
-            for module in imported:
-                if module in FORBIDDEN_IMPORTS:
-                    violations.append(f"{path.name}: {module}")
+            violations.extend(
+                f"{path.name}: {module}"
+                for module in imported
+                if module in FORBIDDEN_IMPORTS
+            )
 
     assert violations == []

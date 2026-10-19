@@ -3698,8 +3698,7 @@ def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
     segment_error = RuntimeError("segment contains sensitive details")
 
     class SegmentFunction:
-        @staticmethod
-        def spawn(payload, *, observability_context):
+        def spawn(self, payload, *, observability_context):
             segment_index = payload["segment_index"]
             # The first segment fails on every probe; the others keep running.
             return ScriptedChildCall(
@@ -3710,7 +3709,7 @@ def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
     class SegmentFunctionLookup:
         @staticmethod
         def from_name(_app_name, _function_name):
-            return SegmentFunction
+            return SegmentFunction()
 
     def segmented_calculator(value, cancellation_requested):
         return Stage12SegmentRunner(

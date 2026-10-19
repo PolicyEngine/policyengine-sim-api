@@ -152,8 +152,10 @@ def test_work_selection_computes_only_missing_files() -> None:
     cold = precompute.select_work(_plan())
     warm = precompute.select_work(_plan(exists=True))
 
-    assert len(cold.datasets) == 3 and len(cold.baselines) == 60
-    assert warm.datasets == () and warm.baselines == ()
+    assert len(cold.datasets) == 3
+    assert len(cold.baselines) == 60
+    assert warm.datasets == ()
+    assert warm.baselines == ()
 
 
 class _Call:
@@ -307,7 +309,7 @@ def test_failed_determinism_validation_prevents_manifest_publication() -> None:
     )
     publish = _Function(lambda *_: "unexpected", events, "publish")
 
-    with pytest.raises(SystemExit, match="person.age differs"):
+    with pytest.raises(SystemExit, match=r"person\.age differs"):
         precompute.run_precompute(
             "cache-bucket",
             plan_artifacts=planner,
@@ -339,6 +341,7 @@ def test_manifest_records_content_hashes_and_sizes() -> None:
 
 @pytest.mark.parametrize("passes", [True, False])
 def test_a_run_with_no_new_baselines_still_checks_unverified_ones(
+    *,
     passes: bool,
 ) -> None:
     events = []
@@ -370,7 +373,7 @@ def test_a_run_with_no_new_baselines_still_checks_unverified_ones(
         run()
         assert len(publish.remote_calls) == 1
     else:
-        with pytest.raises(SystemExit, match="person.age"):
+        with pytest.raises(SystemExit, match=r"person\.age"):
             run()
         assert publish.remote_calls == []
     assert verify.remote_calls == [
