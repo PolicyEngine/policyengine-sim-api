@@ -194,22 +194,31 @@ fi
 # Every PR, including one for a branch left by an earlier run, is opened only
 # after the target wrapper's bundle and the release dispatch have been verified.
 # Read the target wrapper's release manifest without resolving the project.
-for attempt in 1 2 3; do
+#
+# A release dispatch arrives seconds after the PyPI upload, often before PyPI
+# serves the new version, so keep trying for about ten minutes. PyPI lets
+# clients cache its package index for ten minutes, so each attempt refreshes
+# uv's copy for this package; otherwise every retry would reuse the first
+# attempt's index, which doesn't list the new version.
+BUNDLE_INSPECTION_ATTEMPTS=20
+BUNDLE_INSPECTION_INTERVAL_SECONDS=30
+for ((attempt = 1; attempt <= BUNDLE_INSPECTION_ATTEMPTS; attempt++)); do
   if BUNDLE_OUTPUT=$(
     uv run \
       --isolated \
       --no-project \
       --with "${PACKAGE}==${LATEST}" \
+      --refresh-package "$PACKAGE" \
       python "$PYTHON_HELPER" bundle-versions
   ); then
     break
   fi
-  if [[ "$attempt" == "3" ]]; then
+  if ((attempt == BUNDLE_INSPECTION_ATTEMPTS)); then
     echo "ERROR: Could not inspect ${PACKAGE} ${LATEST} after ${attempt} attempts." >&2
     exit 1
   fi
-  echo "Bundle inspection attempt ${attempt} failed; retrying in 30s..."
-  sleep 30
+  echo "Bundle inspection attempt ${attempt} of ${BUNDLE_INSPECTION_ATTEMPTS} failed; retrying in ${BUNDLE_INSPECTION_INTERVAL_SECONDS}s..."
+  sleep "$BUNDLE_INSPECTION_INTERVAL_SECONDS"
 done
 
 BUNDLED_US_VERSION=$(printf '%s\n' "$BUNDLE_OUTPUT" | awk -F= '$1 == "us_version" {print $2}')
@@ -282,11 +291,16 @@ python3 "$PYTHON_HELPER" update-requirements \
   --latest "$LATEST"
 
 # The PyPI Simple index can briefly lag the JSON API after a release, so retry
-# the final project lock as well.
+# the final project lock as well. A retry refreshes uv's cached index, for the
+# same reason as the bundle inspection above.
 for attempt in 1 2 3; do
   if (
     cd "$PROJECT_PATH"
-    uv lock
+    if [[ "$attempt" == "1" ]]; then
+      uv lock
+    else
+      uv lock --refresh
+    fi
   ); then
     break
   fi

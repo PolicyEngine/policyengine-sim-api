@@ -18,6 +18,7 @@
       - Ran the Modal image smoke for Stage 12 persistence changes and added policyengine-fastapi to the PR test matrix
       - Ran the full PR workflow and the Modal image smoke only on the lowest unmerged pull request in a stack, behind a new CI complete gate job that fails on the others
     fixed:
+      - Kept the policyengine.py updater trying to inspect a new release for about ten minutes instead of 90 seconds, and refreshed uv's cached package index on every attempt and on each retried lock, so a release dispatched before PyPI serves it is no longer skipped
       - Preserved bounded reform stop dates in UK and US simulations while retaining current-law baseline artifact reuse
       - Resolved PolicyEngine-managed regional datasets using bundled data versions instead of release-manifest commit hashes when loading from GCS
       - Added a Modal app-release bundle backfill for missing data artifact revisions
