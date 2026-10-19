@@ -18,7 +18,11 @@ from .failures import (
     redacted_failure_detail,
     validate_policy_periods,
 )
-from .fanout import Stage12SegmentRunner, run_segmented_simulation
+from .fanout import (
+    SegmentRunnerSeams,
+    Stage12SegmentRunner,
+    run_segmented_simulation,
+)
 from .partition import (
     should_segment_simulation,
     stage12_region_groups,
@@ -47,6 +51,7 @@ __all__ = [
     "CoordinatorDependencies",
     "CoordinatorInvocation",
     "RetainedSimulationOutput",
+    "SegmentRunnerSeams",
     "SimulationCalculation",
     "SimulationWorkerDependencies",
     "Stage12CancellationError",

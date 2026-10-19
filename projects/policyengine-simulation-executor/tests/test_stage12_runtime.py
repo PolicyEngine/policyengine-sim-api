@@ -84,6 +84,7 @@ from policyengine_simulation_executor.stage12_runtime import (
     CoordinatorDependencies,
     CoordinatorInvocation,
     RetainedSimulationOutput,
+    SegmentRunnerSeams,
     SimulationCalculation,
     SimulationWorkerDependencies,
     Stage12SegmentRunner,
@@ -3879,10 +3880,12 @@ def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
             value,
             app_name="stage12-app",
             runtime=runtime,
-            modal_module=SimpleNamespace(Function=SegmentFunctionLookup),
-            groups=US_REGION_GROUPS,
-            sleep=lambda _seconds: None,
             cancellation_requested=cancellation_requested,
+            seams=SegmentRunnerSeams(
+                modal_module=SimpleNamespace(Function=SegmentFunctionLookup),
+                groups=US_REGION_GROUPS,
+                sleep=lambda _seconds: None,
+            ),
         ).run()
 
     with (
