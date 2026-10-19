@@ -44,24 +44,13 @@ def qualifying_cache_identity(
     spm: Mapping[str, Any] | None,
 ) -> Stage12BaselineCacheIdentity | None:
     """Return a safe cache identity, or None for an ineligible simulation."""
-    if simulation.role is not SimulationRole.BASELINE:
-        return None
-    if simulation.policy:
-        return None
-    if not dataset_is_default:
-        return None
-    if not isinstance(scoping_strategy, RegionGroupStrategy):
-        return None
-    raw_group = simulation.options.get("region_group")
-    if not isinstance(raw_group, list) or not raw_group:
-        return None
-    if any(
-        not isinstance(code, str) or not code.startswith("state/") for code in raw_group
+    if not _is_current_law_default_baseline(
+        simulation, dataset_is_default=dataset_is_default
     ):
         return None
-    region_codes = tuple(code for code in raw_group if isinstance(code, str))
-    scope_key = getattr(scoping_strategy, "cache_key", None)
-    if not isinstance(scope_key, str) or not scope_key:
+    region_codes = _state_region_group(simulation)
+    scope_key = _region_group_cache_key(scoping_strategy)
+    if region_codes is None or scope_key is None:
         return None
     return collect_baseline_identity(
         simulation,
@@ -70,6 +59,41 @@ def qualifying_cache_identity(
         scope_key=scope_key,
         spm=spm,
     )
+
+
+def _is_current_law_default_baseline(
+    simulation: PlannedSimulationExecutionInput, *, dataset_is_default: bool
+) -> bool:
+    """Whether a simulation is a baseline with no reform on the default dataset."""
+    return (
+        simulation.role is SimulationRole.BASELINE
+        and not simulation.policy
+        and dataset_is_default
+    )
+
+
+def _state_region_group(
+    simulation: PlannedSimulationExecutionInput,
+) -> tuple[str, ...] | None:
+    """Return the simulation's non-empty group of state regions, or None."""
+    raw_group = simulation.options.get("region_group")
+    if not isinstance(raw_group, list) or not raw_group:
+        return None
+    if any(
+        not isinstance(code, str) or not code.startswith("state/") for code in raw_group
+    ):
+        return None
+    return tuple(code for code in raw_group if isinstance(code, str))
+
+
+def _region_group_cache_key(scoping_strategy: ScopingStrategy | None) -> str | None:
+    """Return a region-group scope's cache key, or None when it has none."""
+    if not isinstance(scoping_strategy, RegionGroupStrategy):
+        return None
+    scope_key = getattr(scoping_strategy, "cache_key", None)
+    if not isinstance(scope_key, str) or not scope_key:
+        return None
+    return scope_key
 
 
 class Stage12CachedSimulation(Simulation):
