@@ -36,6 +36,9 @@ SEGMENT_FUNCTION_NAME = "run_single_simulation_segment_us"
 POLL_INTERVAL_INITIAL_SECONDS = 0.5
 POLL_INTERVAL_MAX_SECONDS = 8.0
 POLL_INTERVAL_BACKOFF_FACTOR = 2.0
+# A segment's poll may fail this many times in a row before its failure is
+# reported; a timeout between failures resets the count.
+CONSECUTIVE_POLL_ERROR_LIMIT = 2
 
 
 def _require_call(call: modal.FunctionCall | None) -> modal.FunctionCall:
@@ -166,7 +169,7 @@ class Stage12SegmentRunner:
                 except Exception as error:  # noqa: BLE001  # a segment's remote failure can be any exception type; it is retried once, then reported
                     attempts = poll_errors.get(index, 0) + 1
                     poll_errors[index] = attempts
-                    if attempts < 2:
+                    if attempts < CONSECUTIVE_POLL_ERROR_LIMIT:
                         logger.warning(
                             "Stage 12 segment %d poll failed once; retrying (%s)",
                             segment_index,

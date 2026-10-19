@@ -13,6 +13,9 @@ if TYPE_CHECKING:
 # the v1 runner when Stage 12 segmentation was introduced. Stage 12 must not
 # import the v1 partition: either execution path can now evolve without
 # changing the other one implicitly.
+# Every national partition has this many region groups.
+NATIONAL_PARTITION_GROUP_COUNT = 20
+
 US_REGION_GROUPS: tuple[tuple[str, ...], ...] = (
     ("state/hi", "state/ia", "state/wi"),
     ("state/ak", "state/ga", "state/la"),

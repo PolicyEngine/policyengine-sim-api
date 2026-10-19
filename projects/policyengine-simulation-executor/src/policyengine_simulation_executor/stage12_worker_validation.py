@@ -20,6 +20,7 @@ from policyengine_simulation_executor.simulation_runtime import (
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.stage12_cache.models import CacheManifest
 from policyengine_simulation_executor.stage12_cache.precompute import (
+    PRECOMPUTE_YEARS,
     _scoped_planned_simulation,
 )
 from policyengine_simulation_executor.stage12_runtime.partition import (
@@ -140,6 +141,12 @@ def _check_uk_local_authority_dataset(dataset_path: str) -> None:
     detect_uk_local_authority_metadata_from_hdf(dataset_path)
 
 
+# The installed cache holds one dataset per precomputed year and one baseline
+# per US region group per year; the deploy check probes the first year.
+STAGE12_CACHE_ARTIFACT_COUNT = len(PRECOMPUTE_YEARS) * (1 + len(US_REGION_GROUPS))
+STAGE12_CACHE_PROBE_YEAR = PRECOMPUTE_YEARS[0]
+
+
 def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
     """Validate the baked manifest and require one real baseline cache hit."""
     data_folder = Path(resolve_data_folder())
@@ -149,21 +156,21 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
         msg = "installed Stage 12 cache manifest digest differs"
         raise RuntimeError(msg)
     manifest = CacheManifest.model_validate_json(payload)
-    if manifest.years != (2026, 2027, 2025):
+    if manifest.years != PRECOMPUTE_YEARS:
         msg = "installed Stage 12 cache years differ"
         raise RuntimeError(msg)
-    if len(manifest.artifacts) != 63:
+    if len(manifest.artifacts) != STAGE12_CACHE_ARTIFACT_COUNT:
         msg = "installed Stage 12 cache artifact count differs"
         raise RuntimeError(msg)
     probe = next(
         item
         for item in manifest.artifacts
-        if item.type == "baseline" and item.year == 2026
+        if item.type == "baseline" and item.year == STAGE12_CACHE_PROBE_YEAR
     )
     probe_path = data_folder / probe.filename
     _check_dataset_access(str(probe_path), probe.content_sha256)
     calculation = calculate_simulation_frames(
-        _scoped_planned_simulation(2026, US_REGION_GROUPS[0])
+        _scoped_planned_simulation(STAGE12_CACHE_PROBE_YEAR, US_REGION_GROUPS[0])
     )
     if calculation.cache_outcome != "hit":
         msg = "deployed Stage 12 cache probe did not load a cache hit"
@@ -172,7 +179,7 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
         "manifest_sha256": expected_manifest_sha256,
         "partition_sha256": manifest.partition_sha256,
         "years": list(manifest.years),
-        "segment_count": 20,
+        "segment_count": len(US_REGION_GROUPS),
         "dataset_count": sum(item.type == "dataset" for item in manifest.artifacts),
         "baseline_count": sum(item.type == "baseline" for item in manifest.artifacts),
     }

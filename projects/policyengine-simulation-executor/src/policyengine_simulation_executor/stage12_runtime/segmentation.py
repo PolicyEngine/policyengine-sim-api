@@ -15,7 +15,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 
 from .output_planning import validate_output_frames
-from .partition import stage12_region_groups
+from .partition import NATIONAL_PARTITION_GROUP_COUNT, stage12_region_groups
 from .segment_contracts import Stage12SegmentInput, Stage12SegmentResult
 from .simulation import SimulationCalculation, calculate_simulation_frames
 
@@ -39,8 +39,11 @@ def build_segment_inputs(
     if not selected:
         msg = "Stage 12 simulation has no national partition"
         raise ValueError(msg)
-    if len(selected) != 20:
-        msg = "Stage 12 national partition must contain 20 groups"
+    if len(selected) != NATIONAL_PARTITION_GROUP_COUNT:
+        msg = (
+            "Stage 12 national partition must contain "
+            f"{NATIONAL_PARTITION_GROUP_COUNT} groups"
+        )
         raise ValueError(msg)
     return tuple(
         Stage12SegmentInput(
