@@ -384,14 +384,28 @@ and coordinator images do not contain these files. Deployment validation runs
 one real 2026 region-group baseline and requires it to load the precomputed
 file without recalculation.
 
-Readers released before cache releases reject fields they do not know, and
+Manifest schema version 2 records, for each country a worker application
+serves, whether it is society-wide capable (it has a single-simulation worker,
+so the report coordinator may be given its reports) and which function
+calculates its households. The Simulation Entrypoint's comparison adapter skips
+any country that the manifest does not mark as society-wide capable, with the
+reason `unsupported_country`.
+
+Readers released before a schema change reject fields they do not know, and
 the manifest is published before the Cloud Run revision that reads it is
-promoted. The publisher therefore writes the manifest under the
-`active-with-cache` key and the same manifest without cache releases under the
-`active` key, which those readers keep reading. Current readers read
-`active-with-cache`, falling back to `active` only before the first publish
-that writes both keys. Removing the `active` copy needs a later change, once
-no deployed or rollback revision reads it.
+promoted. The publisher therefore writes the schema version 2 manifest under
+the `active-schema-2` key, the same manifest in schema version 1 form (without
+the capability and household fields) under the `active-with-cache` key, and the
+schema version 1 form without cache releases under the `active` key. Readers
+released before schema version 2 keep reading `active-with-cache`, and readers
+released before cache releases keep reading `active`. Current readers read
+`active-schema-2`, falling back to `active-with-cache` and then `active` only
+before the first schema version 2 publish; a schema version 1 document read
+that way marks every listed country society-wide capable, with no household
+function. Schema version 1 cannot describe a country that is not society-wide
+capable, so a manifest holding one is written only under `active-schema-2`,
+and the older keys keep the last manifest written there. Removing the older
+copies needs a later change, once no deployed or rollback revision reads them.
 
 Only an empty-policy baseline using the bundle's default dataset and an exact
 region-group scope can read a baseline cache file. Reform calculations always

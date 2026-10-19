@@ -38,6 +38,21 @@ def test_publisher_uses_only_packaged_bundle_values() -> None:
     )
 
 
+def test_publisher_marks_every_bundle_country_society_wide_capable() -> None:
+    worker = publisher.build_worker(_validation().model_dump(mode="json"))
+    resolved = publisher.load_stage12_bundle()
+
+    assert [country.model_dump(mode="json") for country in worker.countries] == [
+        {
+            "country": country.country,
+            "society_wide_capable": True,
+            "single_simulation_callable": f"run_single_simulation_{country.country}",
+            "household_callable": None,
+        }
+        for country in resolved.bundle.countries
+    ]
+
+
 def test_publisher_rejects_validation_for_another_application() -> None:
     payload = _validation().model_dump(mode="json")
     payload["application_name"] = "policyengine-simulation-v2-py-another"

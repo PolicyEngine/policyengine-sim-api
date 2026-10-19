@@ -121,6 +121,25 @@ def test_segmentation_selection_is_forwarded_to_both_simulations(segmented) -> N
     assert result.report.reform.options == {"segmented": segmented}
 
 
+def test_adapter_accepts_only_countries_the_manifest_marks_society_wide() -> None:
+    payload = {**eligible_payload(), "country": "uk", "region": "uk", "version": None}
+
+    household_only = adapt_annual_comparison(
+        payload,
+        evaluation_id=EVALUATION_ID,
+        worker=worker(household_only=("uk",)),
+    )
+    society_wide = adapt_annual_comparison(
+        payload,
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert household_only.report is None
+    assert household_only.skip_reason is ComparisonSkipReason.UNSUPPORTED_COUNTRY
+    assert society_wide.eligible
+
+
 @pytest.mark.parametrize(
     ("update", "reason"),
     [

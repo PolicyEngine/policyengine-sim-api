@@ -28,7 +28,8 @@ NOW = datetime(2026, 9, 14, tzinfo=UTC)
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
-def worker() -> V2WorkerVersion:
+def worker(*, household_only: tuple[str, ...] = ()) -> V2WorkerVersion:
+    """Return a validated 5.2.0 worker; ``household_only`` countries run no reports."""
     countries = []
     country_workers = []
     for country, package, package_version, dataset in (
@@ -59,10 +60,17 @@ def worker() -> V2WorkerVersion:
                 ),
             )
         )
+        society_wide = country not in household_only
         country_workers.append(
             V2CountryWorker(
                 country=country,
-                single_simulation_callable=f"run_single_simulation_{country}",
+                society_wide_capable=society_wide,
+                single_simulation_callable=(
+                    f"run_single_simulation_{country}" if society_wide else None
+                ),
+                household_callable=(
+                    None if society_wide else f"calculate_household_{country}"
+                ),
             )
         )
     application_name = v2_application_name("5.2.0")
@@ -85,8 +93,12 @@ def worker() -> V2WorkerVersion:
             validated_at=datetime(2026, 9, 14, tzinfo=UTC),
             validation_invocation_id="validation-1",
             country_validation_invocation_ids={
-                "us": "validation-us",
-                "uk": "validation-uk",
+                country_worker.country: f"validation-{country_worker.country}"
+                for country_worker in country_workers
+                if country_worker.society_wide_capable
+            },
+            household_validation_invocation_ids={
+                country: f"household-validation-{country}" for country in household_only
             },
         ),
     )

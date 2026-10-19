@@ -22,10 +22,7 @@ from policyengine_simulation_contract.stage12_execution import (
 
 if TYPE_CHECKING:
     from policyengine_simulation_contract.stage12_bundle import CountryId
-    from policyengine_simulation_contract.stage12_manifest import (
-        V2CountryWorker,
-        V2WorkerVersion,
-    )
+    from policyengine_simulation_contract.stage12_manifest import V2WorkerVersion
 
 
 class ComparisonSkipReason(StrEnum):
@@ -87,20 +84,17 @@ def _skip(reason: ComparisonSkipReason) -> AdaptedComparisonRun:
     return AdaptedComparisonRun(report=None, skip_reason=reason)
 
 
-def _country_worker(worker: V2WorkerVersion, country: str) -> V2CountryWorker | None:
-    return next(
-        (item for item in worker.countries if item.country == country),
-        None,
-    )
-
-
 def adapt_annual_comparison(
     payload: dict[str, Any],
     *,
     evaluation_id: UUID,
     worker: V2WorkerVersion,
 ) -> AdaptedComparisonRun:
-    """Convert only the reviewed production request shape without guessing."""
+    """Convert only the reviewed production request shape without guessing.
+
+    Only a country the manifest marks as society-wide capable is converted;
+    any other country is skipped as unsupported.
+    """
     if any(
         value is not None
         for key, value in payload.items()
@@ -116,7 +110,7 @@ def adapt_annual_comparison(
     if segmented is not None and not isinstance(segmented, bool):
         return _skip(ComparisonSkipReason.UNSUPPORTED_REQUEST_SHAPE)
     country = payload.get("country")
-    if not isinstance(country, str) or _country_worker(worker, country) is None:
+    if not isinstance(country, str) or worker.society_wide_worker(country) is None:
         return _skip(ComparisonSkipReason.UNSUPPORTED_COUNTRY)
     bundle_country = next(
         item for item in worker.bundle.countries if item.country == country

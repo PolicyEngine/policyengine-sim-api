@@ -26,8 +26,8 @@ OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000012"
 
 
 class FakeLoader:
-    def __init__(self):
-        self.worker = worker()
+    def __init__(self, *, household_only: tuple[str, ...] = ()):
+        self.worker = worker(household_only=household_only)
         self.resolved_versions = []
 
     def resolve(self, version=None):
@@ -65,7 +65,14 @@ class FakeInvoker:
         return "modal-call-1"
 
 
-def _backend(store, invoker, *, environment="staging", modal_environment="staging"):
+def _backend(
+    store,
+    invoker,
+    *,
+    environment="staging",
+    modal_environment="staging",
+    household_only=(),
+):
     runtime = MagicMock()
     runtime.capture_context.return_value = {
         "observability_id": "00000000-0000-4000-8000-000000000099",
@@ -76,7 +83,7 @@ def _backend(store, invoker, *, environment="staging", modal_environment="stagin
             environment=environment,
             stage12_v2_manifest_environment=modal_environment,
         ),
-        manifest_loader=FakeLoader(),
+        manifest_loader=FakeLoader(household_only=household_only),
         store=store,
         invoker=invoker,
         runtime=runtime,
@@ -342,6 +349,60 @@ def test_temporary_submission_rejects_unsupported_input_without_side_effects() -
     assert error.value.reason == "unsupported_request_shape"
     assert store.events == []
     assert invoker.calls == []
+
+
+UK_PAYLOAD = {**eligible_payload(), "country": "uk", "region": "uk", "version": None}
+
+
+def test_temporary_submission_rejects_a_country_without_society_wide_reports() -> None:
+    store = FakeStore()
+    invoker = FakeInvoker()
+
+    with pytest.raises(TemporaryStage12UnsupportedRequestError) as error:
+        asyncio.run(
+            _backend(store, invoker, household_only=("uk",)).submit_temporary_report(
+                request_payload=UK_PAYLOAD,
+                request_id="request-1",
+                observability_id=OBSERVABILITY_ID,
+            )
+        )
+
+    assert error.value.reason == "unsupported_country"
+    assert store.events == []
+    assert invoker.calls == []
+
+
+def test_automatic_submission_skips_a_country_without_society_wide_reports() -> None:
+    invoker = FakeInvoker()
+
+    asyncio.run(
+        _backend(
+            FakeStore(), invoker, household_only=("uk",)
+        ).dispatch_after_production(
+            request_payload=UK_PAYLOAD,
+            production_response=_response(),
+            request_id="request-1",
+            observability_id=OBSERVABILITY_ID,
+        )
+    )
+
+    assert invoker.calls == []
+
+
+def test_society_wide_country_dispatches_its_own_simulation_callable() -> None:
+    invoker = FakeInvoker()
+
+    asyncio.run(
+        _backend(FakeStore(), invoker, household_only=("us",)).submit_temporary_report(
+            request_payload=UK_PAYLOAD,
+            request_id="request-1",
+            observability_id=OBSERVABILITY_ID,
+        )
+    )
+
+    assert invoker.calls[0]["context_payload"]["simulation_callable"] == (
+        "run_single_simulation_uk"
+    )
 
 
 def test_temporary_status_reads_coordinator_owned_postgres_state() -> None:
