@@ -5,7 +5,11 @@ from .aggregation import (
     build_aggregate_report,
     build_spm_result,
 )
-from .coordination import coordinate_report
+from .coordination import (
+    CoordinatorDependencies,
+    CoordinatorInvocation,
+    coordinate_report,
+)
 from .failures import (
     Stage12CancellationError,
     Stage12ExecutionError,
@@ -39,6 +43,8 @@ from .simulation import (
 _build_spm_result = build_spm_result
 
 __all__ = [
+    "CoordinatorDependencies",
+    "CoordinatorInvocation",
     "RetainedSimulationOutput",
     "SimulationCalculation",
     "Stage12CancellationError",

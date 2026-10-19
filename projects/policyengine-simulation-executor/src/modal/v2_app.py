@@ -434,6 +434,10 @@ def coordinate_report(
     invocation already claimed returns a ``deduplicated`` marker instead.
     """
     from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        CoordinatorDependencies,
+        CoordinatorInvocation,
+    )
+    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         coordinate_report as run_report_coordinator,
     )
 
@@ -471,9 +475,11 @@ def coordinate_report(
                 payload,
                 context,
                 parent,
-                application_name=APP_NAME,
-                coordinator_invocation_id=coordinator_invocation_id,
-                runtime=runtime,
+                invocation=CoordinatorInvocation(
+                    application_name=APP_NAME,
+                    invocation_id=coordinator_invocation_id,
+                ),
+                dependencies=CoordinatorDependencies(runtime=runtime),
             )
         if result is None:
             msg = "Stage 12 report coordinator returned no result"

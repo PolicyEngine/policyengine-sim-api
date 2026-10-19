@@ -13,7 +13,11 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     ResultComparisonStatus,
 )
-from policyengine_simulation_executor.stage12_runtime import coordination
+from policyengine_simulation_executor.stage12_runtime import (
+    CoordinatorDependencies,
+    CoordinatorInvocation,
+    coordination,
+)
 from test_stage12_runtime import (
     BASELINE_ID,
     EVALUATION_ID,
@@ -416,13 +420,17 @@ def test_default_output_plan_resolver_measures_its_own_stages(monkeypatch):
         _report().model_dump(mode="json"),
         _context().model_dump(mode="json"),
         _parent().model_dump(mode="json"),
-        application_name=_context().modal_application,
-        coordinator_invocation_id="coordinator-1",
-        store=store,
-        artifacts=artifacts,
-        invoker=ConcurrentInvoker(artifacts),
-        aggregator=lambda **_: _aggregate_payload(),
-        runtime=runtime,
+        invocation=CoordinatorInvocation(
+            application_name=_context().modal_application,
+            invocation_id="coordinator-1",
+        ),
+        dependencies=CoordinatorDependencies(
+            store=store,
+            artifacts=artifacts,
+            invoker=ConcurrentInvoker(artifacts),
+            aggregator=lambda **_: _aggregate_payload(),
+            runtime=runtime,
+        ),
     )
 
     assert resolved == [EVALUATION_ID]

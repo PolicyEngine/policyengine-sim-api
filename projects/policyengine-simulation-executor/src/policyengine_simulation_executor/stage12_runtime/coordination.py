@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
@@ -20,6 +22,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
     ResultComparisonStatus,
     SimulationArtifactDescriptor,
+    SimulationRole,
     Stage12InvocationContext,
     Stage12OutputPlan,
 )
@@ -75,9 +78,11 @@ from .partition import should_segment_simulation
 from .simulation import descriptor_from_record, simulation_input_sha256
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
+    from contextlib import AbstractContextManager
 
     from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
 SIMULATION_POLL_INITIAL_SECONDS = 0.25
 SIMULATION_POLL_MAX_SECONDS = 1.0
@@ -407,6 +412,23 @@ def _child_record(
     )
 
 
+def _validate_dispatch_context(
+    report: ReportExecutionInput,
+    context: Stage12InvocationContext,
+    application_name: str,
+) -> None:
+    """Reject a dispatch context naming another application, worker or bundle."""
+    if application_name != context.modal_application:
+        msg = "report coordinator application differs from dispatch context"
+        raise ValueError(msg)
+    if report.baseline.bundle.policyengine_version != context.worker_version:
+        msg = "report worker version differs from dispatch context"
+        raise ValueError(msg)
+    if report.baseline.bundle.bundle_manifest_sha256 != context.bundle_manifest_sha256:
+        msg = "report bundle digest differs from dispatch context"
+        raise ValueError(msg)
+
+
 def _validate_submitted_parent(
     *,
     report: ReportExecutionInput,
@@ -414,6 +436,18 @@ def _validate_submitted_parent(
     parent: ComparisonReportRecord,
 ) -> None:
     """Reject dispatch metadata that does not describe this exact report."""
+    _validate_parent_matches_invocation(report=report, context=context, parent=parent)
+    _validate_parent_is_unclaimed(parent)
+    _validate_parent_production_link(report=report, context=context, parent=parent)
+
+
+def _validate_parent_matches_invocation(
+    *,
+    report: ReportExecutionInput,
+    context: Stage12InvocationContext,
+    parent: ComparisonReportRecord,
+) -> None:
+    """Require every parent field the dispatch fixes to match the report and context."""
     bundle = report.baseline.bundle
     expected = {
         "evaluation_id": report.evaluation_id,
@@ -438,6 +472,10 @@ def _validate_submitted_parent(
         if getattr(parent, field) != value:
             msg = f"submitted parent {field} does not match invocation"
             raise ValueError(msg)
+
+
+def _validate_parent_is_unclaimed(parent: ComparisonReportRecord) -> None:
+    """Require a pending parent that no coordinator has started."""
     if parent.status is not ComparisonRunLifecycleStatus.PENDING:
         msg = "submitted parent must be pending"
         raise ValueError(msg)
@@ -447,6 +485,15 @@ def _validate_submitted_parent(
     if parent.coordinator_invocation_id is not None:
         msg = "submitted parent must not contain an invocation identifier"
         raise ValueError(msg)
+
+
+def _validate_parent_production_link(
+    *,
+    report: ReportExecutionInput,
+    context: Stage12InvocationContext,
+    parent: ComparisonReportRecord,
+) -> None:
+    """Require a direct parent to stand alone and a shadow parent to name its job."""
     production_job_id = context.production_function_call_id
     if production_job_id is None:
         if parent.production_identity != f"direct:{report.evaluation_id}":
@@ -527,88 +574,116 @@ def _require_artifact_digest(
         raise ValueError(mismatch_message)
 
 
-def coordinate_report(
-    payload: object,
-    context_payload: object,
-    parent_payload: object,
-    *,
-    application_name: str,
-    coordinator_invocation_id: str,
-    store: ComparisonStore | None = None,
-    artifacts: Stage12ArtifactStore | None = None,
-    invoker: ChildInvoker | None = None,
-    aggregator: Callable[..., dict[str, Any]] = build_aggregate_report,
-    output_plan_resolver: Callable[[ReportExecutionInput], Stage12OutputPlan]
-    | None = None,
-    runtime: ObservabilityRuntime | None = None,
-    sleep: Callable[[float], None] = time.sleep,
-    monotonic: Callable[[], float] = time.monotonic,
-    wait_timeout_seconds: float = SIMULATION_WAIT_TIMEOUT_SECONDS,
-) -> dict[str, Any]:
-    """Run one Stage 12 comparison report end to end; return its aggregate descriptor.
+@dataclass(frozen=True)
+class CoordinatorInvocation:
+    """The deployed coordinator call running a report: its Modal app and call ID."""
 
-    Claims the parent report (one already running or finished returns a
-    ``deduplicated`` summary instead), starts or reattaches the baseline and
-    reform child simulations within one shared wait window, and aggregates
-    their digest-checked artifacts; shadow runs are then compared with the
-    production result. A dispatch context that disagrees with the report
-    raises ``ValueError`` before the claim; any later failure stops the
-    unfinished children, marks the report FAILED and raises a
-    ``RuntimeError`` that carries no calculation detail.
+    application_name: str
+    invocation_id: str
+
+
+@dataclass(frozen=True)
+class CoordinatorDependencies:
+    """Seams the coordinator uses; an unset seam selects the deployed default.
+
+    The defaults are the Stage 12 database store, the private artifact
+    bucket, Modal child invocation, the standard aggregate builder and output
+    plan resolution, no telemetry runtime, the real clock and sleep, and the
+    standard child wait window.
     """
-    # Open the shared child-wait window before any setup work.
-    child_wait_deadline = monotonic() + wait_timeout_seconds
-    report = ReportExecutionInput.model_validate(payload)
-    context = Stage12InvocationContext.model_validate(context_payload)
-    submitted_parent = ComparisonReportRecord.model_validate(parent_payload)
-    if application_name != context.modal_application:
-        msg = "report coordinator application differs from dispatch context"
-        raise ValueError(msg)
-    if report.baseline.bundle.policyengine_version != context.worker_version:
-        msg = "report worker version differs from dispatch context"
-        raise ValueError(msg)
-    if report.baseline.bundle.bundle_manifest_sha256 != context.bundle_manifest_sha256:
-        msg = "report bundle digest differs from dispatch context"
-        raise ValueError(msg)
-    _validate_submitted_parent(
-        report=report,
-        context=context,
-        parent=submitted_parent,
+
+    store: ComparisonStore | None = None
+    artifacts: Stage12ArtifactStore | None = None
+    invoker: ChildInvoker | None = None
+    aggregator: Callable[..., dict[str, Any]] = build_aggregate_report
+    output_plan_resolver: Callable[[ReportExecutionInput], Stage12OutputPlan] | None = (
+        None
     )
-    persistence = store or runtime_store(runtime)
-    artifact_storage = artifacts or artifact_store()
-    child_invoker = invoker or ModalChildInvoker()
-    stage_plan: StagePlan = (
-        STAGE12_SHADOW_REPORT_STAGES
-        if context.production_function_call_id is not None
-        else STAGE12_CANONICAL_REPORT_STAGES
+    runtime: ObservabilityRuntime | None = None
+    sleep: Callable[[float], None] = time.sleep
+    monotonic: Callable[[], float] = time.monotonic
+    wait_timeout_seconds: float = SIMULATION_WAIT_TIMEOUT_SECONDS
+
+
+@dataclass
+class _ReportCoordination:
+    """One claimed report's inputs and resolved seams, run through each phase."""
+
+    report: ReportExecutionInput
+    context: Stage12InvocationContext
+    invocation: CoordinatorInvocation
+    persistence: ComparisonStore
+    artifact_storage: Stage12ArtifactStore
+    child_invoker: ChildInvoker
+    dependencies: CoordinatorDependencies
+    stage_plan: StagePlan
+    # The last stage entered and whether it finished, for failure causes.
+    progress: StageProgress
+    # The shared child-wait window closes at this monotonic time.
+    child_wait_deadline: float
+    # Each child by role: its plan, its started call and its descriptor once
+    # finished, so a failure at any point can stop the unfinished children.
+    simulations: dict[str, PlannedSimulationExecutionInput] = dataclasses.field(
+        default_factory=dict
     )
-    progress = StageProgress()
-    stage_span = partial(
-        tracked_stage,
-        stage_plan=stage_plan,
-        progress=progress,
-        runtime=runtime,
+    calls: dict[str, ChildCall] = dataclasses.field(default_factory=dict)
+    descriptors: dict[str, SimulationArtifactDescriptor] = dataclasses.field(
+        default_factory=dict
     )
-    stage_scope = partial(stage_span, operation=True)
-    with stage_span(Stage.STAGE12_COORDINATOR_CLAIM):
-        parent, should_execute = _claim_parent(
-            submitted=submitted_parent,
-            coordinator_invocation_id=coordinator_invocation_id,
-            store=persistence,
+
+    @property
+    def runtime(self) -> ObservabilityRuntime | None:
+        """The telemetry runtime, or None when the coordinator records nothing."""
+        return self.dependencies.runtime
+
+    def span(
+        self,
+        stage: Stage,
+        attributes: Mapping[str, object] | None = None,
+    ) -> AbstractContextManager[object]:
+        """Track ``stage`` for failure causes and time it as a span."""
+        return tracked_stage(
+            stage,
+            attributes,
+            stage_plan=self.stage_plan,
+            progress=self.progress,
+            runtime=self.runtime,
         )
-    if not should_execute:
-        return {
-            "deduplicated": True,
-            "evaluation_id": str(parent.evaluation_id),
-            "status": parent.status.value,
+
+    def stage_scope(
+        self,
+        stage: Stage,
+        attributes: Mapping[str, object] | None = None,
+    ) -> AbstractContextManager[object]:
+        """Track ``stage`` for failure causes and record it as an operation."""
+        return tracked_stage(
+            stage,
+            attributes,
+            stage_plan=self.stage_plan,
+            progress=self.progress,
+            runtime=self.runtime,
+            operation=True,
+        )
+
+    def run(self, parent: ComparisonReportRecord) -> dict[str, Any]:
+        """Plan, start and await both children, then aggregate and complete."""
+        output_plan, planned_simulations = self._prepare(parent)
+        self.simulations = {
+            simulation.role.value: simulation for simulation in planned_simulations
         }
-    descriptors: dict[str, SimulationArtifactDescriptor] = {}
-    calls: dict[str, ChildCall] = {}
-    simulations: dict[str, PlannedSimulationExecutionInput] = {}
-    try:
-        with stage_scope(Stage.STAGE12_COORDINATOR_PREPARATION):
-            context = context.model_copy(
+        children = self._create_children(planned_simulations)
+        descriptors, calls = self._start_children(planned_simulations, children)
+        # Every required call has been started before the coordinator observes
+        # baseline and reform together through nonblocking result probes.
+        self._wait_for_children(calls, descriptors)
+        return self._aggregate_and_complete(parent, output_plan, descriptors)
+
+    def _prepare(
+        self, parent: ComparisonReportRecord
+    ) -> tuple[Stage12OutputPlan, tuple[PlannedSimulationExecutionInput, ...]]:
+        """Bind the run's artifact prefix, then plan the outputs and child inputs."""
+        with self.stage_scope(Stage.STAGE12_COORDINATOR_PREPARATION):
+            self.context = self.context.model_copy(
                 update={
                     "artifact_prefix": (
                         f"stage-12-runs/{parent.environment}/"
@@ -619,157 +694,205 @@ def coordinate_report(
                     "retention_expires_at": parent.retention_expires_at,
                 }
             )
-            function_name = context.simulation_callable
-            with stage_scope(
+            with self.stage_scope(
                 Stage.STAGE12_OUTPUT_PLANNING,
-                {"country": report.baseline.geography.country},
+                {"country": self.report.baseline.geography.country},
             ):
-                if output_plan_resolver is None:
+                resolver = self.dependencies.output_plan_resolver
+                if resolver is None:
                     output_plan = resolve_report_output_plan(
-                        report,
-                        stage_scope=stage_scope,
+                        self.report,
+                        stage_scope=self.stage_scope,
                     )
                 else:
-                    output_plan = output_plan_resolver(report)
-            planned_inputs: list[PlannedSimulationExecutionInput] = []
-            for simulation in (report.baseline, report.reform):
-                with stage_scope(
+                    output_plan = resolver(self.report)
+            simulations = []
+            for simulation in (self.report.baseline, self.report.reform):
+                with self.stage_scope(
                     Stage.STAGE12_CHILD_INPUT_PLANNING,
                     {"simulation_role": simulation.role.value},
                 ):
-                    planned_inputs.append(
-                        plan_simulation_input(simulation, output_plan)
-                    )
-            planned_simulations = tuple(planned_inputs)
-        simulations = {
-            simulation.role.value: simulation for simulation in planned_simulations
-        }
-        with stage_span(Stage.STAGE12_CHILD_STATE_CREATE):
-            children = {
-                simulation.role: persistence.create_or_resolve_simulation(
+                    simulations.append(plan_simulation_input(simulation, output_plan))
+        return output_plan, tuple(simulations)
+
+    def _create_children(
+        self, planned_simulations: tuple[PlannedSimulationExecutionInput, ...]
+    ) -> dict[SimulationRole, ComparisonSimulationRecord]:
+        """Create each child's row, or resolve the row an earlier attempt made."""
+        with self.span(Stage.STAGE12_CHILD_STATE_CREATE):
+            return {
+                simulation.role: self.persistence.create_or_resolve_simulation(
                     _child_record(
                         simulation=simulation,
-                        context=context,
-                        function_name=function_name,
+                        context=self.context,
+                        function_name=self.context.simulation_callable,
                     )
                 ).record
                 for simulation in planned_simulations
             }
+
+    def _start_children(
+        self,
+        planned_simulations: tuple[PlannedSimulationExecutionInput, ...],
+        children: dict[SimulationRole, ComparisonSimulationRecord],
+    ) -> tuple[dict[str, SimulationArtifactDescriptor], dict[str, ChildCall]]:
+        """Reuse finished children, reattach running ones and dispatch the rest."""
+        descriptors = self.descriptors
+        calls = self.calls
         for simulation in planned_simulations:
             child = children[simulation.role]
+            role = simulation.role.value
             if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
-                descriptor = descriptor_from_record(child, simulation)
-                retained = artifact_storage.read(descriptor.artifact.uri)
-                _require_artifact_digest(
-                    retained,
-                    descriptor.artifact.content_sha256,
-                    mismatch_message="retained child artifact digest mismatch",
-                )
-                descriptor = descriptor.model_copy(
-                    update={
-                        "artifact": descriptor.artifact.model_copy(
-                            update={"size_bytes": len(retained)}
-                        ),
-                        "calculation_provenance": (
-                            deserialize_calculation_provenance(retained)
-                        ),
-                    }
-                )
-                descriptors[simulation.role.value] = descriptor
-                continue
-            if (
+                descriptors[role] = self._retained_descriptor(child, simulation)
+            elif (
                 child.status is ComparisonRunLifecycleStatus.RUNNING
                 and child.modal_invocation_id is not None
                 and not child.modal_invocation_id.startswith("dispatch-pending-")
             ):
-                calls[simulation.role.value] = child_invoker.restore(
-                    child.modal_invocation_id
-                )
-                continue
-            dispatching_at = datetime.now(UTC)
-            dispatch_placeholder = f"dispatch-pending-{uuid4()}"
-            persistence.replace_simulation(
-                child.model_copy(
-                    update={
-                        "status": ComparisonRunLifecycleStatus.RUNNING,
-                        "modal_invocation_id": dispatch_placeholder,
-                        "started_at": child.started_at or dispatching_at,
-                        "updated_at": dispatching_at,
-                        "error_code": None,
-                        "error_summary": None,
-                        "completed_at": None,
-                    }
-                )
+                calls[role] = self.child_invoker.restore(child.modal_invocation_id)
+            else:
+                calls[role] = self._dispatch_child(child, simulation)
+        return descriptors, calls
+
+    def _retained_descriptor(
+        self,
+        child: ComparisonSimulationRecord,
+        simulation: PlannedSimulationExecutionInput,
+    ) -> SimulationArtifactDescriptor:
+        """Describe a succeeded child's digest-checked retained artifact."""
+        descriptor = descriptor_from_record(child, simulation)
+        retained = self.artifact_storage.read(descriptor.artifact.uri)
+        _require_artifact_digest(
+            retained,
+            descriptor.artifact.content_sha256,
+            mismatch_message="retained child artifact digest mismatch",
+        )
+        return descriptor.model_copy(
+            update={
+                "artifact": descriptor.artifact.model_copy(
+                    update={"size_bytes": len(retained)}
+                ),
+                "calculation_provenance": (
+                    deserialize_calculation_provenance(retained)
+                ),
+            }
+        )
+
+    def _dispatch_child(
+        self,
+        child: ComparisonSimulationRecord,
+        simulation: PlannedSimulationExecutionInput,
+    ) -> ChildCall:
+        """Mark the child dispatching, spawn it, and attach its Modal call ID.
+
+        A spawn failure is reported and recorded on the child (unless it already
+        finished), every started peer is stopped, and Stage12ExecutionError is
+        raised with the failure.
+        """
+        dispatching_at = datetime.now(UTC)
+        dispatch_placeholder = f"dispatch-pending-{uuid4()}"
+        self.persistence.replace_simulation(
+            child.model_copy(
+                update={
+                    "status": ComparisonRunLifecycleStatus.RUNNING,
+                    "modal_invocation_id": dispatch_placeholder,
+                    "started_at": child.started_at or dispatching_at,
+                    "updated_at": dispatching_at,
+                    "error_code": None,
+                    "error_summary": None,
+                    "completed_at": None,
+                }
             )
-            try:
-                with stage_span(
-                    Stage.STAGE12_CHILD_DISPATCH,
-                    {"simulation_role": simulation.role.value},
-                ):
-                    child_observability_context = (
-                        runtime.capture_context() if runtime is not None else None
-                    )
-                    call = child_invoker.spawn(
-                        application_name=application_name,
-                        function_name=function_name,
-                        environment=context.modal_environment,
-                        simulation=simulation.model_dump(mode="json"),
-                        context=context.model_dump(mode="json"),
-                        observability_context=child_observability_context,
-                    )
-            except Exception as error:  # noqa: BLE001  # any dispatch failure is recorded on the child and stops its started peers
-                detail = report_failure(
-                    error,
-                    runtime=runtime,
-                    failure_scope="child_dispatch",
-                    default_code="simulation_dispatch_failed",
-                    attributes=_simulation_failure_attributes(simulation),
-                    progress=progress,
+        )
+        try:
+            with self.span(
+                Stage.STAGE12_CHILD_DISPATCH,
+                {"simulation_role": simulation.role.value},
+            ):
+                child_observability_context = (
+                    self.runtime.capture_context() if self.runtime is not None else None
                 )
-                _record_child_failure(
-                    store=persistence,
-                    simulation=simulation,
-                    detail=detail,
+                call = self.child_invoker.spawn(
+                    application_name=self.invocation.application_name,
+                    function_name=self.context.simulation_callable,
+                    environment=self.context.modal_environment,
+                    simulation=simulation.model_dump(mode="json"),
+                    context=self.context.model_dump(mode="json"),
+                    observability_context=child_observability_context,
                 )
-                _cancel_pending_simulations(
-                    calls=calls,
-                    simulations=simulations,
-                    roles=set(calls),
-                    store=persistence,
-                    detail=_cancellation(
-                        f"the {simulation.role.value} simulation failed"
-                    ),
-                )
-                raise Stage12ExecutionError(detail) from None
-            calls[simulation.role.value] = call
-            persistence.attach_simulation_invocation(
-                simulation.simulation_execution_id,
-                expected_placeholder=dispatch_placeholder,
-                modal_invocation_id=call.object_id,
-                updated_at=datetime.now(UTC),
+        except Exception as error:  # noqa: BLE001  # any dispatch failure is recorded on the child and stops its started peers
+            detail = report_failure(
+                error,
+                runtime=self.runtime,
+                failure_scope="child_dispatch",
+                default_code="simulation_dispatch_failed",
+                attributes=_simulation_failure_attributes(simulation),
+                progress=self.progress,
             )
-        # Every required call has been started before the coordinator observes
-        # baseline and reform together through nonblocking result probes.
-        with stage_span(Stage.STAGE12_CHILD_WAIT):
+            _record_child_failure(
+                store=self.persistence,
+                simulation=simulation,
+                detail=detail,
+            )
+            _cancel_pending_simulations(
+                calls=self.calls,
+                simulations=self.simulations,
+                roles=set(self.calls),
+                store=self.persistence,
+                detail=_cancellation(f"the {simulation.role.value} simulation failed"),
+            )
+            raise Stage12ExecutionError(detail) from None
+        # Record the call before attaching its ID, so a failed attach still
+        # stops it.
+        self.calls[simulation.role.value] = call
+        self.persistence.attach_simulation_invocation(
+            simulation.simulation_execution_id,
+            expected_placeholder=dispatch_placeholder,
+            modal_invocation_id=call.object_id,
+            updated_at=datetime.now(UTC),
+        )
+        return call
+
+    def _wait_for_children(
+        self,
+        calls: dict[str, ChildCall],
+        descriptors: dict[str, SimulationArtifactDescriptor],
+    ) -> None:
+        """Observe every started child together until each has a descriptor.
+
+        A child's failure, or the shared wait window closing, stops the
+        unfinished children and raises Stage12ExecutionError.
+        """
+        with self.span(Stage.STAGE12_CHILD_WAIT):
             _observe_simulations(
                 calls=calls,
-                simulations=simulations,
+                simulations=self.simulations,
                 descriptors=descriptors,
-                store=persistence,
-                runtime=runtime,
-                progress=progress,
-                wait_stage_name=stage_plan.name(Stage.STAGE12_CHILD_WAIT),
-                sleep=sleep,
-                monotonic=monotonic,
-                deadline=child_wait_deadline,
-                timeout_seconds=wait_timeout_seconds,
+                store=self.persistence,
+                runtime=self.runtime,
+                progress=self.progress,
+                wait_stage_name=self.stage_plan.name(Stage.STAGE12_CHILD_WAIT),
+                sleep=self.dependencies.sleep,
+                monotonic=self.dependencies.monotonic,
+                deadline=self.child_wait_deadline,
+                timeout_seconds=self.dependencies.wait_timeout_seconds,
             )
-        baseline = descriptors["baseline"]
-        reform = descriptors["reform"]
-        validate_aligned_outputs(report, output_plan, baseline, reform)
-        with stage_span(Stage.STAGE12_ARTIFACT_READ):
-            baseline_payload = artifact_storage.read(baseline.artifact.uri)
-            reform_payload = artifact_storage.read(reform.artifact.uri)
+
+    def _read_retained_outputs(
+        self,
+        output_plan: Stage12OutputPlan,
+        baseline: SimulationArtifactDescriptor,
+        reform: SimulationArtifactDescriptor,
+    ) -> tuple[
+        RetainedSimulationOutput,
+        RetainedSimulationOutput,
+        UKLocalAuthorityMetadata | None,
+    ]:
+        """Read, digest-check and validate both children's retained artifacts."""
+        validate_aligned_outputs(self.report, output_plan, baseline, reform)
+        with self.span(Stage.STAGE12_ARTIFACT_READ):
+            baseline_payload = self.artifact_storage.read(baseline.artifact.uri)
+            reform_payload = self.artifact_storage.read(reform.artifact.uri)
         _require_artifact_digest(
             baseline_payload,
             baseline.artifact.content_sha256,
@@ -783,34 +906,53 @@ def coordinate_report(
         baseline_frames = deserialize_simulation_frames(baseline_payload)
         reform_frames = deserialize_simulation_frames(reform_payload)
         uk_local_authority_metadata = validate_uk_local_authority_metadata(
-            report.baseline.geography.country,
+            self.report.baseline.geography.country,
             deserialize_uk_local_authority_metadata(baseline_payload),
             deserialize_uk_local_authority_metadata(reform_payload),
-            region_code=report.baseline.geography.region,
+            region_code=self.report.baseline.geography.region,
         )
         validate_output_frames(baseline_frames, output_plan)
         validate_output_frames(reform_frames, output_plan)
-        with stage_span(Stage.STAGE12_AGGREGATION):
-            aggregate = aggregator(
-                report=report,
-                baseline=RetainedSimulationOutput(baseline_frames, baseline),
-                reform=RetainedSimulationOutput(reform_frames, reform),
+        return (
+            RetainedSimulationOutput(baseline_frames, baseline),
+            RetainedSimulationOutput(reform_frames, reform),
+            uk_local_authority_metadata,
+        )
+
+    def _aggregate_and_complete(
+        self,
+        parent: ComparisonReportRecord,
+        output_plan: Stage12OutputPlan,
+        descriptors: dict[str, SimulationArtifactDescriptor],
+    ) -> dict[str, Any]:
+        """Aggregate both outputs, store the aggregate and complete the parent.
+
+        A shadow run's result is then compared with the production result.
+        """
+        baseline, reform, uk_local_authority_metadata = self._read_retained_outputs(
+            output_plan, descriptors["baseline"], descriptors["reform"]
+        )
+        with self.span(Stage.STAGE12_AGGREGATION):
+            aggregate = self.dependencies.aggregator(
+                report=self.report,
+                baseline=baseline,
+                reform=reform,
                 uk_local_authority_metadata=uk_local_authority_metadata,
             )
-        with stage_span(Stage.STAGE12_AGGREGATE_ARTIFACT_WRITE):
-            aggregate_artifact = artifact_storage.write_aggregate(
-                prefix=context.artifact_prefix,
+        with self.span(Stage.STAGE12_AGGREGATE_ARTIFACT_WRITE):
+            aggregate_artifact = self.artifact_storage.write_aggregate(
+                prefix=self.context.artifact_prefix,
                 payload=aggregate,
             )
         descriptor = AggregateReportArtifactDescriptor(
-            evaluation_id=report.evaluation_id,
+            evaluation_id=self.report.evaluation_id,
             artifact=aggregate_artifact,
-            baseline_artifact_sha256=baseline.artifact.content_sha256,
-            reform_artifact_sha256=reform.artifact.content_sha256,
-            bundle=report.baseline.bundle,
+            baseline_artifact_sha256=baseline.descriptor.artifact.content_sha256,
+            reform_artifact_sha256=reform.descriptor.artifact.content_sha256,
+            bundle=self.report.baseline.bundle,
         )
         completed = datetime.now(UTC)
-        completed_parent = persistence.replace_report(
+        completed_parent = self.persistence.replace_report(
             parent.model_copy(
                 update={
                     "status": ComparisonRunLifecycleStatus.SUCCEEDED,
@@ -826,48 +968,48 @@ def coordinate_report(
         compare_completed_report(
             parent=completed_parent,
             aggregate=aggregate,
-            context=context,
-            store=persistence,
-            artifacts=artifact_storage,
-            invoker=child_invoker,
-            runtime=runtime,
-            stage_plan=stage_plan,
+            context=self.context,
+            store=self.persistence,
+            artifacts=self.artifact_storage,
+            invoker=self.child_invoker,
+            runtime=self.runtime,
+            stage_plan=self.stage_plan,
         )
         return descriptor.model_dump(mode="json")
-    # Persist a redacted cause for any coordinator, child-call, aggregation, or
-    # artifact failure before returning a stable exception to Modal.
-    except Exception as error:  # noqa: BLE001  # every failure is persisted before a stable exception returns to Modal
+
+    def fail(self, parent: ComparisonReportRecord, error: Exception) -> None:
+        """Record a failed run once, stop its unfinished children, fail the parent.
+
+        Child, dispatch and wait-timeout failures raise Stage12ExecutionError
+        only after reporting the original failure and stopping their unfinished
+        peers. Any other failure is reported here, once, before any database
+        write. If it occurred after a child started, such as a failed
+        placeholder write or invocation attach, every started, unfinished child
+        is then stopped so none keeps running for a failed report.
+        """
         if isinstance(error, Stage12ExecutionError):
-            # Child, dispatch and wait-timeout failures raise
-            # Stage12ExecutionError only after reporting the original failure
-            # and stopping their unfinished peers.
             detail = error.detail
         else:
-            # Any other failure is reported here, once, before any database
-            # write. If it occurred after a child started, such as a failed
-            # placeholder write or invocation attach, every started,
-            # unfinished child is then stopped so none keeps running for a
-            # failed report.
             detail = report_failure(
                 error,
-                runtime=runtime,
+                runtime=self.runtime,
                 failure_scope="report_coordination",
                 default_code="report_coordination_failed",
-                attributes={"evaluation_id": str(report.evaluation_id)},
-                progress=progress,
+                attributes={"evaluation_id": str(self.report.evaluation_id)},
+                progress=self.progress,
             )
             _cancel_pending_simulations(
-                calls=calls,
-                simulations=simulations,
-                roles=set(calls) - set(descriptors),
-                store=persistence,
+                calls=self.calls,
+                simulations=self.simulations,
+                roles=set(self.calls) - set(self.descriptors),
+                store=self.persistence,
                 detail=_cancellation("the coordinator failed"),
             )
-        record_failure_cause(runtime, error, detail.error_summary)
+        record_failure_cause(self.runtime, error, detail.error_summary)
         failed_at = datetime.now(UTC)
         persist_failure_record(
             partial(
-                persistence.replace_report,
+                self.persistence.replace_report,
                 parent.model_copy(
                     update={
                         "status": ComparisonRunLifecycleStatus.FAILED,
@@ -879,8 +1021,75 @@ def coordinate_report(
                     }
                 ),
             ),
-            runtime=runtime,
+            runtime=self.runtime,
             failure_scope="report_coordination",
         )
+
+
+def coordinate_report(
+    payload: object,
+    context_payload: object,
+    parent_payload: object,
+    *,
+    invocation: CoordinatorInvocation,
+    dependencies: CoordinatorDependencies | None = None,
+) -> dict[str, Any]:
+    """Run one Stage 12 comparison report end to end; return its aggregate descriptor.
+
+    Claims the parent report (one already running or finished returns a
+    ``deduplicated`` summary instead), starts or reattaches the baseline and
+    reform child simulations within one shared wait window, and aggregates
+    their digest-checked artifacts; shadow runs are then compared with the
+    production result. A dispatch context that disagrees with the report
+    raises ``ValueError`` before the claim; any later failure stops the
+    unfinished children, marks the report FAILED and raises a
+    ``RuntimeError`` that carries no calculation detail.
+    """
+    dependencies = dependencies or CoordinatorDependencies()
+    # Open the shared child-wait window before any setup work.
+    child_wait_deadline = dependencies.monotonic() + dependencies.wait_timeout_seconds
+    report = ReportExecutionInput.model_validate(payload)
+    context = Stage12InvocationContext.model_validate(context_payload)
+    submitted_parent = ComparisonReportRecord.model_validate(parent_payload)
+    _validate_dispatch_context(report, context, invocation.application_name)
+    _validate_submitted_parent(
+        report=report,
+        context=context,
+        parent=submitted_parent,
+    )
+    coordination = _ReportCoordination(
+        report=report,
+        context=context,
+        invocation=invocation,
+        persistence=dependencies.store or runtime_store(dependencies.runtime),
+        artifact_storage=dependencies.artifacts or artifact_store(),
+        child_invoker=dependencies.invoker or ModalChildInvoker(),
+        dependencies=dependencies,
+        stage_plan=(
+            STAGE12_SHADOW_REPORT_STAGES
+            if context.production_function_call_id is not None
+            else STAGE12_CANONICAL_REPORT_STAGES
+        ),
+        progress=StageProgress(),
+        child_wait_deadline=child_wait_deadline,
+    )
+    with coordination.span(Stage.STAGE12_COORDINATOR_CLAIM):
+        parent, should_execute = _claim_parent(
+            submitted=submitted_parent,
+            coordinator_invocation_id=invocation.invocation_id,
+            store=coordination.persistence,
+        )
+    if not should_execute:
+        return {
+            "deduplicated": True,
+            "evaluation_id": str(parent.evaluation_id),
+            "status": parent.status.value,
+        }
+    try:
+        return coordination.run(parent)
+    # Persist a redacted cause for any coordinator, child-call, aggregation, or
+    # artifact failure before returning a stable exception to Modal.
+    except Exception as error:  # noqa: BLE001  # every failure is persisted before a stable exception returns to Modal
+        coordination.fail(parent, error)
         msg = "Stage 12 report coordination failed"
         raise RuntimeError(msg) from None

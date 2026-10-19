@@ -81,6 +81,8 @@ from policyengine_simulation_executor.stage12_artifacts import (
     serialize_simulation_frames,
 )
 from policyengine_simulation_executor.stage12_runtime import (
+    CoordinatorDependencies,
+    CoordinatorInvocation,
     RetainedSimulationOutput,
     SimulationCalculation,
     Stage12SegmentRunner,
@@ -240,9 +242,16 @@ def _aggregate_payload(result=None) -> dict:
     ).model_dump(mode="json")
 
 
-def coordinate_report(*args, **kwargs):
-    kwargs.setdefault("output_plan_resolver", lambda _: _output_plan())
-    return coordinate_report_impl(*args, **kwargs)
+def coordinate_report(*payloads, application_name, coordinator_invocation_id, **seams):
+    seams.setdefault("output_plan_resolver", lambda _: _output_plan())
+    return coordinate_report_impl(
+        *payloads,
+        invocation=CoordinatorInvocation(
+            application_name=application_name,
+            invocation_id=coordinator_invocation_id,
+        ),
+        dependencies=CoordinatorDependencies(**seams),
+    )
 
 
 class RecordingRuntime:
@@ -1604,13 +1613,17 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
         _report().model_dump(mode="json"),
         context.model_dump(mode="json"),
         parent.model_dump(mode="json"),
-        application_name=context.modal_application,
-        coordinator_invocation_id="coordinator-1",
-        store=store,
-        artifacts=artifacts,
-        invoker=invoker,
-        aggregator=aggregate,
-        output_plan_resolver=resolver,
+        invocation=CoordinatorInvocation(
+            application_name=context.modal_application,
+            invocation_id="coordinator-1",
+        ),
+        dependencies=CoordinatorDependencies(
+            store=store,
+            artifacts=artifacts,
+            invoker=invoker,
+            aggregator=aggregate,
+            output_plan_resolver=resolver,
+        ),
     )
 
     assert invoker.events == ["spawn:baseline", "spawn:reform"]
