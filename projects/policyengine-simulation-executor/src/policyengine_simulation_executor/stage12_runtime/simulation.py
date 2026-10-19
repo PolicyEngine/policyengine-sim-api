@@ -59,6 +59,7 @@ from .output_planning import apply_output_plan, validate_output_frames
 from .partition import should_segment_simulation
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
     from types import ModuleType
     from uuid import UUID
 
@@ -443,8 +444,6 @@ def run_single_simulation(
     and raises a ``RuntimeError`` that carries no calculation detail.
     """
     dependencies = dependencies or SimulationWorkerDependencies()
-    calculator = dependencies.calculator
-    segmented_calculator = dependencies.segmented_calculator
     runtime = dependencies.runtime
     simulation = PlannedSimulationExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
@@ -454,6 +453,64 @@ def run_single_simulation(
     child = persistence.get_simulation(simulation.simulation_execution_id)
     if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
         return descriptor_from_record(child, simulation).model_dump(mode="json")
+    running = _claim_simulation(persistence, child)
+    cancellation_requested = _cancellation_check(persistence, simulation)
+    progress = StageProgress(role=simulation.role.value)
+    stage_span = partial(
+        tracked_stage,
+        tracking=StageTracking(STAGE12_SIMULATION_STAGES, progress, runtime),
+    )
+    try:
+        validate_policy_periods(simulation.policy)
+        with stage_span(Stage.STAGE12_INPUT_WRITE):
+            artifact_storage.write_input(
+                prefix=context.artifact_prefix,
+                simulation=simulation,
+            )
+        calculation = _calculate(
+            simulation,
+            dependencies,
+            progress=progress,
+            stage_span=stage_span,
+            cancellation_requested=cancellation_requested,
+        )
+        validate_output_frames(calculation.frames, simulation.output_plan)
+        with stage_span(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE):
+            descriptor = artifact_storage.write_simulation(
+                prefix=context.artifact_prefix,
+                simulation=simulation,
+                frames=calculation.frames,
+                calculation_provenance=calculation.calculation_provenance,
+                uk_local_authority_metadata=calculation.uk_local_authority_metadata,
+            )
+        _record_success(persistence, running, descriptor)
+        return descriptor.model_dump(mode="json")
+    except Stage12CancellationError:
+        msg = "Stage 12 simulation was cancelled"
+        raise RuntimeError(msg) from None
+    # Persist a redacted cause for any country-package calculation failure
+    # before returning a stable exception to Modal.
+    except Exception as error:  # noqa: BLE001  # every calculation failure is persisted before a stable exception returns to Modal
+        _record_failure(
+            error,
+            simulation,
+            persistence=persistence,
+            runtime=runtime,
+            progress=progress,
+        )
+        msg = "Stage 12 simulation execution failed"
+        raise RuntimeError(msg) from None
+
+
+def _claim_simulation(
+    persistence: ComparisonStore,
+    child: ComparisonSimulationRecord,
+) -> ComparisonSimulationRecord:
+    """Mark an active simulation running and return its record, or refuse it.
+
+    The claim is a conditional write, so a simulation whose record changed
+    meanwhile, for example because the coordinator cancelled it, is not run.
+    """
     if child.status not in {
         ComparisonRunLifecycleStatus.PENDING,
         ComparisonRunLifecycleStatus.RUNNING,
@@ -477,6 +534,14 @@ def run_single_simulation(
     if not claimed:
         msg = "Stage 12 simulation was cancelled"
         raise RuntimeError(msg)
+    return running
+
+
+def _cancellation_check(
+    persistence: ComparisonStore,
+    simulation: PlannedSimulationExecutionInput,
+) -> Callable[[], bool]:
+    """Return a check of whether the coordinator has stopped this simulation."""
 
     def cancellation_requested() -> bool:
         try:
@@ -490,104 +555,103 @@ def run_single_simulation(
             return False
         return latest.status is not ComparisonRunLifecycleStatus.RUNNING
 
-    progress = StageProgress(role=simulation.role.value)
-    stage_span = partial(
-        tracked_stage,
-        tracking=StageTracking(STAGE12_SIMULATION_STAGES, progress, runtime),
-    )
-    try:
-        validate_policy_periods(simulation.policy)
-        with stage_span(Stage.STAGE12_INPUT_WRITE):
-            artifact_storage.write_input(
-                prefix=context.artifact_prefix,
-                simulation=simulation,
-            )
-        if segmented_calculator is not None and should_segment_simulation(simulation):
-            calculated = segmented_calculator(simulation, cancellation_requested)
-        elif calculator is calculate_simulation_frames:
-            calculated = calculate_simulation_frames(
-                simulation,
-                runtime=runtime,
-                progress=progress,
-            )
-        else:
-            with stage_span(Stage.STAGE12_CALCULATION):
-                calculated = calculator(simulation)
-        if isinstance(calculated, SimulationCalculation):
-            frames = calculated.frames
-            calculation_provenance = calculated.calculation_provenance
-            uk_local_authority_metadata = calculated.uk_local_authority_metadata
-        else:
-            frames = calculated
-            calculation_provenance = None
-            uk_local_authority_metadata = None
-        validate_output_frames(frames, simulation.output_plan)
-        with stage_span(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE):
-            descriptor = artifact_storage.write_simulation(
-                prefix=context.artifact_prefix,
-                simulation=simulation,
-                frames=frames,
-                calculation_provenance=calculation_provenance,
-                uk_local_authority_metadata=uk_local_authority_metadata,
-            )
-        completed = datetime.now(UTC)
-        _, replaced = persistence.replace_simulation_if_status(
-            running.model_copy(
-                update={
-                    "status": ComparisonRunLifecycleStatus.SUCCEEDED,
-                    "output_uri": descriptor.artifact.uri,
-                    "output_sha256": descriptor.artifact.content_sha256,
-                    "output_schema_version": descriptor.output_schema_version,
-                    "row_identity_columns": descriptor.row_identity.identifier_columns,
-                    "row_count": descriptor.row_identity.row_count,
-                    "row_identity_sha256": descriptor.row_identity.identity_sha256,
-                    "updated_at": completed,
-                    "completed_at": completed,
-                }
-            ),
-            expected_status=ComparisonRunLifecycleStatus.RUNNING,
+    return cancellation_requested
+
+
+def _calculate(
+    simulation: PlannedSimulationExecutionInput,
+    dependencies: SimulationWorkerDependencies,
+    *,
+    progress: StageProgress,
+    stage_span: Callable[[Stage], AbstractContextManager[object]],
+    cancellation_requested: Callable[[], bool],
+) -> SimulationCalculation:
+    """Run the segmented, standard or injected calculation this simulation uses."""
+    segmented_calculator = dependencies.segmented_calculator
+    if segmented_calculator is not None and should_segment_simulation(simulation):
+        calculated = segmented_calculator(simulation, cancellation_requested)
+    elif dependencies.calculator is calculate_simulation_frames:
+        calculated = calculate_simulation_frames(
+            simulation,
+            runtime=dependencies.runtime,
+            progress=progress,
         )
-        _require_completion_recorded(replaced=replaced)
-        return descriptor.model_dump(mode="json")
-    except Stage12CancellationError:
-        msg = "Stage 12 simulation was cancelled"
-        raise RuntimeError(msg) from None
-    # Persist a redacted cause for any country-package calculation failure
-    # before returning a stable exception to Modal.
-    except Exception as error:  # noqa: BLE001  # every calculation failure is persisted before a stable exception returns to Modal
-        if isinstance(error, Stage12ExecutionError):
-            # A segmented calculation reports its segment failure where it
-            # occurs, before raising this error.
-            detail = error.detail
-        else:
-            detail = report_failure(
-                error,
-                FailureSite(
-                    scope="simulation_execution",
-                    default_code="simulation_execution_failed",
-                    attributes={
-                        "simulation_role": simulation.role.value,
-                        "evaluation_id": str(simulation.evaluation_id),
-                        "simulation_execution_id": str(
-                            simulation.simulation_execution_id
-                        ),
-                    },
-                ),
-                runtime=runtime,
-                progress=progress,
-            )
-        record_failure_cause(runtime, error, detail.error_summary)
-        failed_at = datetime.now(UTC)
-        persist_failure_record(
-            partial(
-                _mark_running_simulation_failed,
-                persistence,
-                simulation.simulation_execution_id,
-                detail=detail,
-                failed_at=failed_at,
+    else:
+        with stage_span(Stage.STAGE12_CALCULATION):
+            calculated = dependencies.calculator(simulation)
+    if isinstance(calculated, SimulationCalculation):
+        return calculated
+    return SimulationCalculation(frames=calculated)
+
+
+def _record_success(
+    persistence: ComparisonStore,
+    running: ComparisonSimulationRecord,
+    descriptor: SimulationArtifactDescriptor,
+) -> None:
+    """Record the stored artifact on the running simulation.
+
+    Raises ``Stage12CancellationError`` when the coordinator stopped the
+    simulation first.
+    """
+    completed = datetime.now(UTC)
+    _, replaced = persistence.replace_simulation_if_status(
+        running.model_copy(
+            update={
+                "status": ComparisonRunLifecycleStatus.SUCCEEDED,
+                "output_uri": descriptor.artifact.uri,
+                "output_sha256": descriptor.artifact.content_sha256,
+                "output_schema_version": descriptor.output_schema_version,
+                "row_identity_columns": descriptor.row_identity.identifier_columns,
+                "row_count": descriptor.row_identity.row_count,
+                "row_identity_sha256": descriptor.row_identity.identity_sha256,
+                "updated_at": completed,
+                "completed_at": completed,
+            }
+        ),
+        expected_status=ComparisonRunLifecycleStatus.RUNNING,
+    )
+    _require_completion_recorded(replaced=replaced)
+
+
+def _record_failure(
+    error: Exception,
+    simulation: PlannedSimulationExecutionInput,
+    *,
+    persistence: ComparisonStore,
+    runtime: ObservabilityRuntime | None,
+    progress: StageProgress,
+) -> None:
+    """Report a calculation failure once, then record it if still running."""
+    if isinstance(error, Stage12ExecutionError):
+        # A segmented calculation reports its segment failure where it
+        # occurs, before raising this error.
+        detail = error.detail
+    else:
+        detail = report_failure(
+            error,
+            FailureSite(
+                scope="simulation_execution",
+                default_code="simulation_execution_failed",
+                attributes={
+                    "simulation_role": simulation.role.value,
+                    "evaluation_id": str(simulation.evaluation_id),
+                    "simulation_execution_id": str(simulation.simulation_execution_id),
+                },
             ),
             runtime=runtime,
-            failure_scope="simulation_execution",
+            progress=progress,
         )
-        msg = "Stage 12 simulation execution failed"
-        raise RuntimeError(msg) from None
+    record_failure_cause(runtime, error, detail.error_summary)
+    failed_at = datetime.now(UTC)
+    persist_failure_record(
+        partial(
+            _mark_running_simulation_failed,
+            persistence,
+            simulation.simulation_execution_id,
+            detail=detail,
+            failed_at=failed_at,
+        ),
+        runtime=runtime,
+        failure_scope="simulation_execution",
+    )
