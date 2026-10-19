@@ -32,6 +32,7 @@ from policyengine_observability import (
     configure,
 )
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
+from policyengine_simulation_contract.report_execution import ReportExecutionError
 from policyengine_simulation_contract.spm import (
     SPMComparisonProvenance,
     SPMInputError,
@@ -60,6 +61,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ReportAggregate,
     ReportExecutionInput,
     ReportOutputRequirements,
+    ReportResultDelivery,
     ResultComparisonStatus,
     RowIdentity,
     SimulationArtifactDescriptor,
@@ -80,6 +82,8 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
+    Stage12ExecutionError,
+    Stage12FailureDetail,
     Stage12SegmentRunner,
     _build_spm_result,
     build_aggregate_report,
@@ -3919,3 +3923,169 @@ def test_exhausted_wait_window_gives_the_children_no_extra_time() -> None:
     assert [len(call.probed_at) for call in invoker.calls.values()] == [1, 1]
     assert [call.cancel_count for call in invoker.calls.values()] == [1, 1]
     assert store.parent.error_code == "simulation_wait_timeout"
+
+
+# Return-to-caller delivery: the coordinator and its simulations write no
+# database rows, return typed values and raise a typed error on failure.
+
+
+def _returning_context() -> Stage12InvocationContext:
+    return Stage12InvocationContext.model_validate(
+        {
+            **_context().model_dump(mode="json"),
+            "result_delivery": ReportResultDelivery.RETURN_TO_CALLER.value,
+        }
+    )
+
+
+class NoDatabaseStore:
+    """A store that fails the test on any use: a returned report writes no rows."""
+
+    def __getattr__(self, name):
+        pytest.fail(f"a returned report used the Stage 12 store ({name})")
+
+
+@pytest.fixture
+def forbid_database(monkeypatch):
+    """Fail the test if a returned report builds a Stage 12 database store."""
+
+    def refuse_store(*_args, **_kwargs):
+        pytest.fail("a returned report built a Stage 12 database store")
+
+    monkeypatch.setattr(simulation_module, "runtime_store", refuse_store)
+    monkeypatch.setattr(coordination_module, "runtime_store", refuse_store)
+
+
+def _run_returned_simulation(simulation, **options):
+    return run_single_simulation(
+        simulation.model_dump(mode="json"),
+        _returning_context().model_dump(mode="json"),
+        required_country="us",
+        **{"artifacts": FakeArtifacts(), **options},
+    )
+
+
+def test_returned_simulation_stores_its_artifact_without_the_database(
+    forbid_database,
+) -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    artifacts = FakeArtifacts()
+
+    result = _run_returned_simulation(
+        simulation,
+        artifacts=artifacts,
+        calculator=lambda _: _frames(),
+    )
+
+    descriptor = SimulationArtifactDescriptor.model_validate(result)
+    assert descriptor.role is SimulationRole.BASELINE
+    assert descriptor.simulation_execution_id == BASELINE_ID
+    stored = artifacts.read(descriptor.artifact.uri)
+    assert sha256(stored).hexdigest() == descriptor.artifact.content_sha256
+    assert artifacts.input_writes == [
+        (_context().artifact_prefix, SimulationRole.BASELINE)
+    ]
+
+
+def test_returned_simulation_never_uses_a_stage12_store_it_was_given() -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+
+    result = _run_returned_simulation(
+        simulation,
+        store=NoDatabaseStore(),
+        calculator=lambda _: _frames(),
+    )
+
+    assert result["role"] == "baseline"
+
+
+def test_returned_simulation_failure_raises_its_redacted_detail(
+    forbid_database,
+) -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    runtime = RecordingRuntime()
+
+    def fail(_simulation):
+        msg = "could not reach postgresql://runtime:database-secret@db.example/postgres"
+        raise RuntimeError(msg)
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _run_returned_simulation(simulation, calculator=fail, runtime=runtime)
+
+    failure = raised.value.failure
+    assert failure.evaluation_id == EVALUATION_ID
+    assert failure.error_code == "simulation_execution_failed"
+    assert _failure_cause(failure.error_summary) == (
+        "RuntimeError in stage12_calculation (baseline): "
+        "could not reach postgresql://[REDACTED]@db.example/postgres"
+    )
+    assert str(raised.value) == "Report execution failed"
+    assert raised.value.__cause__ is None
+    assert raised.value.__suppress_context__ is True
+    [recorded_cause] = runtime.recorded_exceptions
+    assert str(recorded_cause) == failure.error_summary
+
+
+def test_returned_simulation_keeps_a_typed_input_failure(forbid_database) -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE).model_copy(
+        update={
+            "policy": {"gov.irs.credits.ctc.amount.base[0].amount": {"2026": 3_000}}
+        }
+    )
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _run_returned_simulation(
+            simulation,
+            calculator=lambda _: pytest.fail("calculation must not start"),
+        )
+
+    assert raised.value.failure.error_code == "invalid_policy_period"
+    assert raised.value.failure.error_summary.startswith(
+        "Policy parameter 'gov.irs.credits.ctc.amount.base[0].amount' has invalid "
+        "effective period '2026'"
+    )
+
+
+def test_returned_segmented_simulation_is_never_told_to_stop_by_the_database(
+    forbid_database,
+) -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    received = []
+
+    def segmented_calculator(value, cancellation_requested):
+        received.append(value)
+        assert cancellation_requested() is False
+        return SimulationCalculation(frames=_frames())
+
+    _run_returned_simulation(
+        simulation,
+        calculator=lambda _: pytest.fail("monolithic calculator was selected"),
+        segmented_calculator=segmented_calculator,
+    )
+
+    assert received == [simulation]
+
+
+def test_returned_segmented_simulation_keeps_the_segment_failure(
+    forbid_database,
+) -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    segment_failure = Stage12FailureDetail(
+        error_code="segment_execution_failed",
+        error_summary="Segment 3: MemoryError in stage12_calculation",
+    )
+
+    def segmented_calculator(_value, _cancellation_requested):
+        raise Stage12ExecutionError(segment_failure)
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _run_returned_simulation(
+            simulation,
+            calculator=lambda _: pytest.fail("monolithic calculator was selected"),
+            segmented_calculator=segmented_calculator,
+        )
+
+    assert raised.value.failure.error_code == "segment_execution_failed"
+    assert raised.value.failure.error_summary == (
+        "Segment 3: MemoryError in stage12_calculation"
+    )

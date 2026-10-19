@@ -19,6 +19,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     ComparisonSimulationRecord,
     PlannedSimulationExecutionInput,
+    ReportResultDelivery,
     RowIdentity,
     SimulationArtifactDescriptor,
     SimulationExecutionInput,
@@ -48,6 +49,7 @@ from .failures import (
     Stage12CancellationError,
     Stage12ExecutionError,
     Stage12FailureDetail,
+    report_execution_error,
     validate_policy_periods,
 )
 from .output_planning import apply_output_plan, validate_output_frames
@@ -394,6 +396,144 @@ def _mark_running_simulation_failed(
     )
 
 
+type SimulationCalculator = Callable[
+    [PlannedSimulationExecutionInput],
+    Mapping[str, pd.DataFrame] | SimulationCalculation,
+]
+type SegmentedSimulationCalculator = Callable[
+    [PlannedSimulationExecutionInput, Callable[[], bool]], SimulationCalculation
+]
+
+
+def _calculate_and_store(
+    simulation: PlannedSimulationExecutionInput,
+    context: Stage12InvocationContext,
+    *,
+    artifact_storage: Stage12ArtifactStore,
+    calculator: SimulationCalculator,
+    segmented_calculator: SegmentedSimulationCalculator | None,
+    cancellation_requested: Callable[[], bool],
+    runtime: ObservabilityRuntime | None,
+    progress: StageProgress,
+) -> SimulationArtifactDescriptor:
+    """Check the policy, calculate the simulation and store its input and artifact.
+
+    An eligible US simulation goes to ``segmented_calculator``, which checks
+    ``cancellation_requested`` while it waits for its segments.
+    """
+    stage_span = partial(
+        tracked_stage,
+        stage_plan=STAGE12_SIMULATION_STAGES,
+        progress=progress,
+        runtime=runtime,
+    )
+    validate_policy_periods(simulation.policy)
+    with stage_span(Stage.STAGE12_INPUT_WRITE):
+        artifact_storage.write_input(
+            prefix=context.artifact_prefix,
+            simulation=simulation,
+        )
+    if segmented_calculator is not None and should_segment_simulation(simulation):
+        calculated = segmented_calculator(simulation, cancellation_requested)
+    elif calculator is calculate_simulation_frames:
+        calculated = calculate_simulation_frames(
+            simulation,
+            runtime=runtime,
+            progress=progress,
+        )
+    else:
+        with stage_span(Stage.STAGE12_CALCULATION):
+            calculated = calculator(simulation)
+    if isinstance(calculated, SimulationCalculation):
+        frames = calculated.frames
+        calculation_provenance = calculated.calculation_provenance
+        uk_local_authority_metadata = calculated.uk_local_authority_metadata
+    else:
+        frames = calculated
+        calculation_provenance = None
+        uk_local_authority_metadata = None
+    validate_output_frames(frames, simulation.output_plan)
+    with stage_span(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE):
+        return artifact_storage.write_simulation(
+            prefix=context.artifact_prefix,
+            simulation=simulation,
+            frames=frames,
+            calculation_provenance=calculation_provenance,
+            uk_local_authority_metadata=uk_local_authority_metadata,
+        )
+
+
+def _simulation_failure_detail(
+    error: Exception,
+    *,
+    simulation: PlannedSimulationExecutionInput,
+    runtime: ObservabilityRuntime | None,
+    progress: StageProgress,
+) -> Stage12FailureDetail:
+    """Report a calculation failure once and return its redacted detail."""
+    if isinstance(error, Stage12ExecutionError):
+        # A segmented calculation reports its segment failure where it
+        # occurs, before raising this error.
+        return error.detail
+    return report_failure(
+        error,
+        runtime=runtime,
+        failure_scope="simulation_execution",
+        default_code="simulation_execution_failed",
+        attributes={
+            "simulation_role": simulation.role.value,
+            "evaluation_id": str(simulation.evaluation_id),
+            "simulation_execution_id": str(simulation.simulation_execution_id),
+        },
+        progress=progress,
+    )
+
+
+def _never_cancelled() -> bool:
+    """Report no cancellation: nothing records one for a returned simulation."""
+    return False
+
+
+def _run_simulation_for_caller(
+    simulation: PlannedSimulationExecutionInput,
+    context: Stage12InvocationContext,
+    *,
+    artifact_storage: Stage12ArtifactStore,
+    calculator: SimulationCalculator,
+    segmented_calculator: SegmentedSimulationCalculator | None,
+    runtime: ObservabilityRuntime | None,
+) -> dict[str, Any]:
+    """Calculate one simulation for a returned report, without database access.
+
+    The simulation is always calculated. No record can carry a cancellation,
+    so the coordinator stops this call through Modal instead. A failure
+    raises ``ReportExecutionError`` with the redacted detail a Stage 12 row
+    would record.
+    """
+    progress = StageProgress(role=simulation.role.value)
+    try:
+        descriptor = _calculate_and_store(
+            simulation,
+            context,
+            artifact_storage=artifact_storage,
+            calculator=calculator,
+            segmented_calculator=segmented_calculator,
+            cancellation_requested=_never_cancelled,
+            runtime=runtime,
+            progress=progress,
+        )
+    except Exception as error:  # noqa: BLE001  # every calculation failure reaches the caller as a typed error with its redacted detail
+        detail = _simulation_failure_detail(
+            error,
+            simulation=simulation,
+            runtime=runtime,
+            progress=progress,
+        )
+        record_failure_cause(runtime, error, detail.error_summary)
+        raise report_execution_error(simulation.evaluation_id, detail) from None
+    return descriptor.model_dump(mode="json")
+
+
 def run_single_simulation(
     payload: object,
     context_payload: object,
@@ -401,14 +541,8 @@ def run_single_simulation(
     required_country: CountryId,
     store: ComparisonStore | None = None,
     artifacts: Stage12ArtifactStore | None = None,
-    calculator: Callable[
-        [PlannedSimulationExecutionInput],
-        Mapping[str, pd.DataFrame] | SimulationCalculation,
-    ] = calculate_simulation_frames,
-    segmented_calculator: Callable[
-        [PlannedSimulationExecutionInput, Callable[[], bool]], SimulationCalculation
-    ]
-    | None = None,
+    calculator: SimulationCalculator = calculate_simulation_frames,
+    segmented_calculator: SegmentedSimulationCalculator | None = None,
     runtime: ObservabilityRuntime | None = None,
 ) -> dict[str, Any]:
     """Calculate one planned simulation, store its artifact, and return its descriptor.
@@ -416,10 +550,23 @@ def run_single_simulation(
     A child already marked succeeded returns its stored descriptor without
     recalculating. A failure after the run is marked running marks it FAILED
     and raises a ``RuntimeError`` that carries no calculation detail.
+
+    When the context's ``result_delivery`` returns the report to its caller,
+    no Stage 12 row is read or written, ``store`` is not used, and a failure
+    raises ``ReportExecutionError`` with its redacted detail instead.
     """
     simulation = PlannedSimulationExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
     _require_context(simulation, context, required_country=required_country)
+    if context.result_delivery is ReportResultDelivery.RETURN_TO_CALLER:
+        return _run_simulation_for_caller(
+            simulation,
+            context,
+            artifact_storage=artifacts or artifact_store(),
+            calculator=calculator,
+            segmented_calculator=segmented_calculator,
+            runtime=runtime,
+        )
     persistence = store or runtime_store(runtime)
     artifact_storage = artifacts or artifact_store()
     child = persistence.get_simulation(simulation.simulation_execution_id)
@@ -462,47 +609,17 @@ def run_single_simulation(
         return latest.status is not ComparisonRunLifecycleStatus.RUNNING
 
     progress = StageProgress(role=simulation.role.value)
-    stage_span = partial(
-        tracked_stage,
-        stage_plan=STAGE12_SIMULATION_STAGES,
-        progress=progress,
-        runtime=runtime,
-    )
     try:
-        validate_policy_periods(simulation.policy)
-        with stage_span(Stage.STAGE12_INPUT_WRITE):
-            artifact_storage.write_input(
-                prefix=context.artifact_prefix,
-                simulation=simulation,
-            )
-        if segmented_calculator is not None and should_segment_simulation(simulation):
-            calculated = segmented_calculator(simulation, cancellation_requested)
-        elif calculator is calculate_simulation_frames:
-            calculated = calculate_simulation_frames(
-                simulation,
-                runtime=runtime,
-                progress=progress,
-            )
-        else:
-            with stage_span(Stage.STAGE12_CALCULATION):
-                calculated = calculator(simulation)
-        if isinstance(calculated, SimulationCalculation):
-            frames = calculated.frames
-            calculation_provenance = calculated.calculation_provenance
-            uk_local_authority_metadata = calculated.uk_local_authority_metadata
-        else:
-            frames = calculated
-            calculation_provenance = None
-            uk_local_authority_metadata = None
-        validate_output_frames(frames, simulation.output_plan)
-        with stage_span(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE):
-            descriptor = artifact_storage.write_simulation(
-                prefix=context.artifact_prefix,
-                simulation=simulation,
-                frames=frames,
-                calculation_provenance=calculation_provenance,
-                uk_local_authority_metadata=uk_local_authority_metadata,
-            )
+        descriptor = _calculate_and_store(
+            simulation,
+            context,
+            artifact_storage=artifact_storage,
+            calculator=calculator,
+            segmented_calculator=segmented_calculator,
+            cancellation_requested=cancellation_requested,
+            runtime=runtime,
+            progress=progress,
+        )
         completed = datetime.now(UTC)
         _, replaced = persistence.replace_simulation_if_status(
             running.model_copy(
@@ -528,23 +645,12 @@ def run_single_simulation(
     # Persist a redacted cause for any country-package calculation failure
     # before returning a stable exception to Modal.
     except Exception as error:  # noqa: BLE001  # every calculation failure is persisted before a stable exception returns to Modal
-        if isinstance(error, Stage12ExecutionError):
-            # A segmented calculation reports its segment failure where it
-            # occurs, before raising this error.
-            detail = error.detail
-        else:
-            detail = report_failure(
-                error,
-                runtime=runtime,
-                failure_scope="simulation_execution",
-                default_code="simulation_execution_failed",
-                attributes={
-                    "simulation_role": simulation.role.value,
-                    "evaluation_id": str(simulation.evaluation_id),
-                    "simulation_execution_id": str(simulation.simulation_execution_id),
-                },
-                progress=progress,
-            )
+        detail = _simulation_failure_detail(
+            error,
+            simulation=simulation,
+            runtime=runtime,
+            progress=progress,
+        )
         record_failure_cause(runtime, error, detail.error_summary)
         failed_at = datetime.now(UTC)
         persist_failure_record(
