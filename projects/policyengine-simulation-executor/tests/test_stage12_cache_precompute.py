@@ -225,11 +225,13 @@ def test_precompute_finishes_dataset_wave_before_baseline_wave() -> None:
 
     digest = precompute.run_precompute(
         "cache-bucket",
-        plan_artifacts=planner,
-        build_dataset=dataset,
-        compute_baseline=baseline,
-        verify_determinism=verify,
-        publish_manifest=publish,
+        functions=precompute.CachePrecomputeFunctions(
+            plan_artifacts=planner,
+            build_dataset=dataset,
+            compute_baseline=baseline,
+            verify_determinism=verify,
+            publish_manifest=publish,
+        ),
         echo=lines.append,
     )
 
@@ -260,11 +262,13 @@ def test_warm_verified_precompute_skips_builds_and_determinism_check() -> None:
 
     precompute.run_precompute(
         "cache-bucket",
-        plan_artifacts=planner,
-        build_dataset=unused,
-        compute_baseline=unused,
-        verify_determinism=verify,
-        publish_manifest=publish,
+        functions=precompute.CachePrecomputeFunctions(
+            plan_artifacts=planner,
+            build_dataset=unused,
+            compute_baseline=unused,
+            verify_determinism=verify,
+            publish_manifest=publish,
+        ),
     )
 
     assert unused.spawn_calls == []
@@ -312,11 +316,13 @@ def test_failed_determinism_validation_prevents_manifest_publication() -> None:
     with pytest.raises(SystemExit, match=r"person\.age differs"):
         precompute.run_precompute(
             "cache-bucket",
-            plan_artifacts=planner,
-            build_dataset=dataset,
-            compute_baseline=baseline,
-            verify_determinism=verify,
-            publish_manifest=publish,
+            functions=precompute.CachePrecomputeFunctions(
+                plan_artifacts=planner,
+                build_dataset=dataset,
+                compute_baseline=baseline,
+                verify_determinism=verify,
+                publish_manifest=publish,
+            ),
         )
 
     assert publish.remote_calls == []
@@ -361,11 +367,13 @@ def test_a_run_with_no_new_baselines_still_checks_unverified_ones(
     def run() -> None:
         precompute.run_precompute(
             "cache-bucket",
-            plan_artifacts=planner,
-            build_dataset=unused,
-            compute_baseline=unused,
-            verify_determinism=verify,
-            publish_manifest=publish,
+            functions=precompute.CachePrecomputeFunctions(
+                plan_artifacts=planner,
+                build_dataset=unused,
+                compute_baseline=unused,
+                verify_determinism=verify,
+                publish_manifest=publish,
+            ),
             echo=lambda _line: None,
         )
 
