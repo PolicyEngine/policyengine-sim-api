@@ -248,3 +248,85 @@ def test_merge_rejects_duplicate_entity_ids_across_groups() -> None:
 
     with pytest.raises(ValueError, match="duplicate IDs"):
         merge_segment_results(simulation, results)
+
+
+def _with_frames(
+    result: Stage12SegmentResult, frames: dict[str, pd.DataFrame]
+) -> Stage12SegmentResult:
+    payload, _ = serialize_simulation_frames(frames)
+    return result.model_copy(
+        update={
+            "parquet_payload": payload,
+            "payload_sha256": sha256(payload).hexdigest(),
+        }
+    )
+
+
+def test_merge_rejects_a_result_set_that_omits_a_segment() -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    results = _results(simulation)
+    results[-1] = results[-1].model_copy(update={"segment_index": 99})
+
+    with pytest.raises(
+        ValueError, match=r"^Stage 12 segmented calculation omitted a segment$"
+    ):
+        merge_segment_results(simulation, results)
+
+
+def test_merge_rejects_a_result_for_another_region_group() -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    results = _results(simulation)
+    results[0] = results[0].model_copy(update={"region_codes": results[1].region_codes})
+
+    with pytest.raises(
+        ValueError, match=r"^Stage 12 segment result names another region group$"
+    ):
+        merge_segment_results(simulation, results)
+
+
+def test_merge_rejects_segments_with_different_entities() -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    results = _results(simulation)
+    results[1] = _with_frames(results[1], {"household": _frames(1)["household"]})
+
+    with pytest.raises(
+        ValueError, match=r"^Stage 12 segment entity schemas do not match$"
+    ):
+        merge_segment_results(simulation, results)
+
+
+def test_merge_rejects_segments_with_different_column_dtypes() -> None:
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    results = _results(simulation)
+    frames = _frames(1)
+    frames["household"] = frames["household"].astype(
+        {"household_net_income": "float64"}
+    )
+    results[1] = _with_frames(results[1], frames)
+
+    with pytest.raises(
+        ValueError, match=r"^Stage 12 segment column dtypes do not match$"
+    ):
+        merge_segment_results(simulation, results)
+
+
+def test_merge_rejects_an_entity_without_its_identifier(monkeypatch) -> None:
+    # The serializer refuses frames without an identifier, so only a payload
+    # written elsewhere could decode to one; decode every segment to one.
+    from policyengine_simulation_executor.stage12_runtime import segmentation
+
+    without_identifier = {
+        **_frames(0),
+        "household": _frames(0)["household"].drop(columns="household_id"),
+    }
+    monkeypatch.setattr(
+        segmentation,
+        "deserialize_simulation_frames",
+        lambda _payload: without_identifier,
+    )
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+
+    with pytest.raises(
+        ValueError, match=r"^Stage 12 segment entity 'household' has no identifier$"
+    ):
+        merge_segment_results(simulation, _results(simulation))
