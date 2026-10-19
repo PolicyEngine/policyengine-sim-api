@@ -1,5 +1,10 @@
 # pyright: reportAttributeAccessIssue=false
-"""Separately named Stage 12 Modal coordinator and country workers.
+"""Separately named v2 Modal application: report coordinator and country workers.
+
+Besides the Stage 12 report coordinator and simulation workers, it defines one
+household function for every country in the PolicyEngine.py bundle,
+``calculate_household_{country}``, which calculates one household under one or
+more policies.
 
 This module defines additional resources. It does not rename or modify the
 existing ``policyengine-simulation-py{version}`` applications.
@@ -12,6 +17,9 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from policyengine_simulation_contract.household_execution import (
+    household_callable_name,
+)
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_executor import stage12_runtime
 from policyengine_simulation_executor.hf_access_validation import (
@@ -39,6 +47,7 @@ from policyengine_simulation_observability.stages import (
     STAGE12_SEGMENT_STAGES,
     STAGE12_SHADOW_REPORT_STAGES,
     STAGE12_SIMULATION_STAGES,
+    V2_HOUSEHOLD_STAGES,
     Stage,
 )
 from policyengine_simulation_observability.telemetry import (
@@ -138,26 +147,31 @@ def _country_bundle(country: CountryId) -> Stage12CountryBundle:
 
 
 def build_v2_image(
-    countries: tuple[CountryId, ...], *, include_us_cache: bool = False
+    countries: tuple[CountryId, ...],
+    *,
+    include_us_cache: bool = False,
+    include_bundle_data: bool = True,
 ) -> modal.Image:
     """Build a Stage 12 image with the bundle's certified data for ``countries``.
 
     The bundle manifest digest and per-country bundle values are baked into
     the image environment, which worker validation checks at run time. With
-    ``include_us_cache``, the image also holds the published US cache.
+    ``include_us_cache``, the image also holds the published US cache. Without
+    ``include_bundle_data``, the image holds no datasets, which household
+    calculations do not need.
     """
     country_values = {
         country: _country_bundle(country).model_dump(mode="json")
         for country in countries
     }
-    image = (
-        modal.Image.debian_slim(python_version="3.13")
-        .uv_sync(
-            uv_project_dir=_UV_PROJECT_DIR,
-            frozen=True,
-            extra_options="--only-group modal-simulation-image",
-        )
-        .run_commands(
+    image = modal.Image.debian_slim(python_version="3.13").uv_sync(
+        uv_project_dir=_UV_PROJECT_DIR,
+        frozen=True,
+        extra_options="--only-group modal-simulation-image",
+    )
+    data_environment: dict[str, str] = {}
+    if include_bundle_data:
+        image = image.run_commands(
             bundle_data_install_command(
                 RESOLVED_BUNDLE.bundle.policyengine_version,
                 countries=countries,
@@ -165,23 +179,21 @@ def build_v2_image(
             ),
             secrets=[hf_secret],
         )
-        .env(
-            {
-                **modal_image_environment(),
-                "POLICYENGINE_DATA_FOLDER": STAGE12_DATA_DIR,
-                "STAGE12_BUNDLE_MANIFEST_SHA256": (
-                    RESOLVED_BUNDLE.bundle_manifest_sha256
-                ),
-                "STAGE12_BUNDLE_VALUES": json.dumps(
-                    country_values,
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ),
-                "STAGE12_CACHE_MANIFEST_DIGEST": os.environ.get(
-                    "STAGE12_CACHE_MANIFEST_DIGEST", ""
-                ),
-            }
-        )
+        data_environment["POLICYENGINE_DATA_FOLDER"] = STAGE12_DATA_DIR
+    image = image.env(
+        {
+            **modal_image_environment(),
+            **data_environment,
+            "STAGE12_BUNDLE_MANIFEST_SHA256": (RESOLVED_BUNDLE.bundle_manifest_sha256),
+            "STAGE12_BUNDLE_VALUES": json.dumps(
+                country_values,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            "STAGE12_CACHE_MANIFEST_DIGEST": os.environ.get(
+                "STAGE12_CACHE_MANIFEST_DIGEST", ""
+            ),
+        }
     )
     if include_us_cache:
         image = image.run_function(
@@ -206,6 +218,10 @@ def build_v2_image(
 us_worker_image = build_v2_image(("us",), include_us_cache=True)
 uk_worker_image = build_v2_image(("uk",))
 coordinator_image = build_v2_image(("us", "uk"))
+HOUSEHOLD_COUNTRIES: tuple[CountryId, ...] = tuple(
+    country.country for country in RESOLVED_BUNDLE.bundle.countries
+)
+household_image = build_v2_image(HOUSEHOLD_COUNTRIES, include_bundle_data=False)
 
 
 def _validate(country: CountryId) -> dict:
@@ -481,3 +497,95 @@ def coordinate_report(
         return result
     finally:
         runtime.shutdown()
+
+
+# Household function sizing. A household calculation holds one country model
+# and, for each policy, one simulation of the household at every axis point.
+# Each container reserves 4 GiB and may use up to 16 GiB, the memory of a
+# whole Public API instance, before Modal stops it, so a large household
+# calculated with every variable at many axis points still fits. The timeout
+# is three times the Public API's 300-second request timeout.
+HOUSEHOLD_FUNCTION_CPU = 2.0
+HOUSEHOLD_FUNCTION_MEMORY_MIB = (4096, 16384)
+HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS = 900
+HOUSEHOLD_FUNCTION_MAX_CONTAINERS = 20
+
+
+def _run_household_calculation(
+    country: CountryId,
+    payload: dict,
+    observability_context: dict | None,
+) -> dict:
+    """Calculate one household request for ``country`` and return its outcome."""
+    from policyengine_simulation_contract.household_execution import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        HouseholdExecutionRequest,
+        HouseholdWorkerIdentity,
+    )
+    from policyengine_simulation_executor import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        household_calculation,
+    )
+
+    runtime = init_process_observability(
+        service_name=f"policyengine-v2-household-{country}-worker",
+        service_role="v2_household_worker",
+        platform="modal",
+        environment=os.getenv("MODAL_ENVIRONMENT", "local"),
+    )
+    try:
+        propagated = normalize_observability_context(observability_context)
+        with runtime.operation(
+            V2_HOUSEHOLD_STAGES.name(Stage.V2_HOUSEHOLD_EXECUTION),
+            attributes={"country": country},
+            remote_context=propagated,
+        ):
+            request = HouseholdExecutionRequest.model_validate(payload)
+            if request.country != country:
+                msg = f"this function calculates {country} households only"
+                raise ValueError(msg)
+            outcome = household_calculation.calculate_household(
+                request,
+                worker=HouseholdWorkerIdentity(
+                    application_name=APP_NAME,
+                    function_name=household_callable_name(country),
+                ),
+                span=lambda name, attributes: runtime.span(name, attributes=attributes),
+            )
+            return outcome.model_dump(mode="json")
+    finally:
+        runtime.shutdown()
+
+
+def _household_function(country: CountryId) -> Callable[..., dict]:
+    """Return the household function for ``country``, named for Modal.
+
+    Modal imports a deployed function by its qualified name, so the function
+    is given its global name and stored in this module under that name.
+    """
+
+    def calculate_household(
+        payload: dict,
+        *,
+        observability_context: dict | None = None,
+    ) -> dict:
+        return _run_household_calculation(country, payload, observability_context)
+
+    function_name = household_callable_name(country)
+    calculate_household.__name__ = function_name
+    calculate_household.__qualname__ = function_name
+    calculate_household.__doc__ = (
+        f"Calculate one {country} household under each requested policy."
+    )
+    return calculate_household
+
+
+for _household_country in HOUSEHOLD_COUNTRIES:
+    globals()[household_callable_name(_household_country)] = app.function(
+        image=household_image,
+        cpu=HOUSEHOLD_FUNCTION_CPU,
+        memory=HOUSEHOLD_FUNCTION_MEMORY_MIB,
+        timeout=HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS,
+        retries=0,
+        max_containers=HOUSEHOLD_FUNCTION_MAX_CONTAINERS,
+        secrets=[],
+        name=household_callable_name(_household_country),
+    )(_household_function(_household_country))

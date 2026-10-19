@@ -9,7 +9,7 @@ from policyengine_simulation_contract.stage12_manifest import V2WorkerValidation
 from src.modal.utils import update_v2_version_manifest as publisher
 
 
-def _validation() -> V2WorkerValidation:
+def _validation(*, household_functions: bool = False) -> V2WorkerValidation:
     resolved = publisher.load_stage12_bundle()
     application_name = publisher.v2_application_name(
         resolved.bundle.policyengine_version
@@ -24,6 +24,11 @@ def _validation() -> V2WorkerValidation:
             "us": "validation-us-1",
             "uk": "validation-uk-1",
         },
+        household_validation_invocation_ids=(
+            {"us": "household-us-1", "uk": "household-uk-1"}
+            if household_functions
+            else {}
+        ),
     )
 
 
@@ -51,6 +56,20 @@ def test_publisher_marks_every_bundle_country_society_wide_capable() -> None:
         }
         for country in resolved.bundle.countries
     ]
+
+
+def test_publisher_records_the_validated_household_functions() -> None:
+    worker = publisher.build_worker(
+        _validation(household_functions=True).model_dump(mode="json")
+    )
+
+    assert [
+        (country.country, country.household_callable) for country in worker.countries
+    ] == [
+        ("us", "calculate_household_us"),
+        ("uk", "calculate_household_uk"),
+    ]
+    assert all(country.society_wide_capable for country in worker.countries)
 
 
 def test_publisher_rejects_validation_for_another_application() -> None:
