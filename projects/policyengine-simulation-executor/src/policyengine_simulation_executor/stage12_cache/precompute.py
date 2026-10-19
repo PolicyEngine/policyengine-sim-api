@@ -65,9 +65,10 @@ from .models import (
 from .store import Stage12CacheStore
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     import modal
+    import pandas as pd
 
 PRECOMPUTE_YEARS = (2026, 2027, 2025)
 MANIFEST_DIGEST_PREFIX = "STAGE12_CACHE_MANIFEST_DIGEST="
@@ -341,6 +342,27 @@ def compute_baseline_impl(
     )
 
 
+def _frame_differences(
+    cached: Mapping[str, pd.DataFrame], fresh: Mapping[str, pd.DataFrame]
+) -> list[str]:
+    """Describe every entity and column where two sets of frames differ, in order."""
+    differences = []
+    for entity in sorted(set(cached) | set(fresh)):
+        left = cached.get(entity)
+        right = fresh.get(entity)
+        if left is None or right is None:
+            differences.append(f"{entity}: missing on one side")
+            continue
+        for column in sorted(set(left) | set(right)):
+            if column not in left or column not in right:
+                differences.append(f"{entity}.{column}: only on one side")
+            elif str(left[column].dtype) != str(right[column].dtype):
+                differences.append(f"{entity}.{column}: dtype differs")
+            elif not left[column].equals(right[column]):
+                differences.append(f"{entity}.{column}: values differ")
+    return differences
+
+
 def verify_determinism_impl(
     bucket: str, plan: PrecomputePlan, expected: BaselinePlanEntry
 ) -> DeterminismVerdict:
@@ -363,22 +385,8 @@ def verify_determinism_impl(
             f"(cache outcome {cached_calculation.cache_outcome})"
         )
         raise RuntimeError(msg)
-    cached = cached_calculation.frames
     fresh = stage12_simulation.calculate_simulation_frames(reform).frames
-    differences = []
-    for entity in sorted(set(cached) | set(fresh)):
-        left = cached.get(entity)
-        right = fresh.get(entity)
-        if left is None or right is None:
-            differences.append(f"{entity}: missing on one side")
-            continue
-        for column in sorted(set(left) | set(right)):
-            if column not in left or column not in right:
-                differences.append(f"{entity}.{column}: only on one side")
-            elif str(left[column].dtype) != str(right[column].dtype):
-                differences.append(f"{entity}.{column}: dtype differs")
-            elif not left[column].equals(right[column]):
-                differences.append(f"{entity}.{column}: values differ")
+    differences = _frame_differences(cached_calculation.frames, fresh)
     if not differences:
         store.write_json(
             determinism_record_path(plan.baselines),
