@@ -3010,25 +3010,32 @@ class StartupWriteError(Exception):
     """A coordinator persistence failure after a child may have started."""
 
 
+@dataclass(frozen=True)
+class ChildCallScript:
+    """What a scripted child call does when probed or cancelled.
+
+    It returns ``result`` or raises ``wait_error`` once probed (``during_wait``
+    runs first), and raises ``cancel_error`` when cancelled; with none set, it
+    keeps running.
+    """
+
+    result: object = None
+    wait_error: Exception | None = None
+    cancel_error: Exception | None = None
+    during_wait: object = None
+
+
 class ScriptedChildCall:
     """A started child that keeps running unless the test scripts an outcome."""
 
-    def __init__(
-        self,
-        object_id,
-        *,
-        clock=None,
-        result=None,
-        wait_error=None,
-        cancel_error=None,
-        during_wait=None,
-    ):
+    def __init__(self, object_id, *, clock=None, script=None):
+        script = script or ChildCallScript()
         self.object_id = object_id
         self.clock = clock
-        self.result = result
-        self.wait_error = wait_error
-        self.cancel_error = cancel_error
-        self.during_wait = during_wait
+        self.result = script.result
+        self.wait_error = script.wait_error
+        self.cancel_error = script.cancel_error
+        self.during_wait = script.during_wait
         self.probed_at = []
         self.cancel_count = 0
 
@@ -3085,10 +3092,12 @@ class ScriptedChildInvoker:
         call = ScriptedChildCall(
             f"call-{role}",
             clock=self.clock,
-            result=self.results.get(role),
-            wait_error=self.wait_errors.get(role),
-            cancel_error=self.cancel_errors.get(role),
-            during_wait=self.during_wait.get(role),
+            script=ChildCallScript(
+                result=self.results.get(role),
+                wait_error=self.wait_errors.get(role),
+                cancel_error=self.cancel_errors.get(role),
+                during_wait=self.during_wait.get(role),
+            ),
         )
         self.calls[role] = call
         return call
@@ -3867,7 +3876,9 @@ def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
             # The first segment fails on every probe; the others keep running.
             return ScriptedChildCall(
                 f"segment-{segment_index}",
-                wait_error=segment_error if segment_index == 0 else None,
+                script=ChildCallScript(
+                    wait_error=segment_error if segment_index == 0 else None
+                ),
             )
 
     class SegmentFunctionLookup:
