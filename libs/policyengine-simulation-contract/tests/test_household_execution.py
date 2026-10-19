@@ -26,6 +26,7 @@ from policyengine_simulation_contract.household_execution import (
     RunningHouseholdCalculation,
     SubmitHouseholdCalculationRequest,
     SucceededHouseholdCalculation,
+    household_callable_name,
     parse_household_calculation_poll_response,
     parse_household_execution_outcome,
 )
@@ -445,3 +446,57 @@ def test_poll_responses_are_discriminated_by_status() -> None:
         parse_household_calculation_poll_response(
             {"status": "succeeded", "job_id": str(JOB_ID)}
         )
+
+
+def test_bundle_provenance_is_read_from_a_normalized_bundle() -> None:
+    from policyengine_simulation_contract.stage12_bundle import (
+        Stage12BundleManifest,
+        Stage12CountryBundle,
+        Stage12Dataset,
+    )
+
+    dataset = Stage12Dataset(
+        identity="populace_uk_2023",
+        uri="hf://policyengine/data/populace_uk_2023.h5@r1",
+        artifact_revision="r1",
+        sha256="c" * 64,
+        repo_type="dataset",
+    )
+    bundle = Stage12BundleManifest(
+        policyengine_version="6.7.5",
+        policyengine_requirement="policyengine==6.7.5",
+        core_package_version="3.33.0",
+        core_package_requirement="policyengine-core==3.33.0",
+        countries=(
+            Stage12CountryBundle(
+                country="uk",
+                country_package_name="policyengine-uk",
+                country_package_version="2.130.1",
+                country_package_requirement="policyengine-uk==2.130.1",
+                data_package_name="populace-data",
+                data_package_version="0.1.0",
+                data_release_version="r1",
+                data_artifact_revision="r1",
+                default_dataset="populace_uk_2023",
+                default_dataset_uri=dataset.uri,
+                datasets=(dataset,),
+            ),
+        ),
+    )
+
+    provenance = HouseholdBundleProvenance.from_bundle(
+        bundle, bundle_manifest_sha256="d" * 64, country="uk"
+    )
+
+    assert provenance.model_dump() == {
+        "policyengine_version": "6.7.5",
+        "core_package_version": "3.33.0",
+        "country_package_name": "policyengine-uk",
+        "country_package_version": "2.130.1",
+        "bundle_manifest_sha256": "d" * 64,
+    }
+    with pytest.raises(ValueError, match="does not carry"):
+        HouseholdBundleProvenance.from_bundle(
+            bundle, bundle_manifest_sha256="d" * 64, country="us"
+        )
+    assert household_callable_name("uk") == "calculate_household_uk"

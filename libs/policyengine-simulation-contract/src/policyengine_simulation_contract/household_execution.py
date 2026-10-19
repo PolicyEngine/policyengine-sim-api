@@ -57,7 +57,12 @@ from policyengine_simulation_contract.spm import (
 if TYPE_CHECKING:
     from pydantic import ModelWrapValidatorHandler, SerializerFunctionWrapHandler
 
+    from policyengine_simulation_contract.stage12_bundle import Stage12BundleManifest
+
 HOUSEHOLD_CONTRACT_SCHEMA_VERSION = 1
+# A v2 worker application's household function for a country is this prefix
+# followed by the country ID, such as ``calculate_household_us``.
+HOUSEHOLD_CALLABLE_PREFIX = "calculate_household_"
 # Size limits. The entity and value limits match the Public API's stored v2
 # households; the variable limit leaves room for a complete calculated
 # household sent back as input, which holds every variable of each entity.
@@ -440,6 +445,37 @@ class HouseholdBundleProvenance(StrictHouseholdModel):
     country_package_name: ContractText
     country_package_version: ContractText
     bundle_manifest_sha256: Sha256Digest
+
+    @classmethod
+    def from_bundle(
+        cls,
+        bundle: Stage12BundleManifest,
+        *,
+        bundle_manifest_sha256: str,
+        country: str,
+    ) -> HouseholdBundleProvenance:
+        """Return ``country``'s provenance within a normalized bundle manifest.
+
+        Raises ValueError when the bundle does not carry ``country``.
+        """
+        country_bundle = next(
+            (item for item in bundle.countries if item.country == country), None
+        )
+        if country_bundle is None:
+            msg = f"the bundle does not carry country {country!r}"
+            raise ValueError(msg)
+        return cls(
+            policyengine_version=bundle.policyengine_version,
+            core_package_version=bundle.core_package_version,
+            country_package_name=country_bundle.country_package_name,
+            country_package_version=country_bundle.country_package_version,
+            bundle_manifest_sha256=bundle_manifest_sha256,
+        )
+
+
+def household_callable_name(country: str) -> str:
+    """Return the name of a v2 worker application's household function."""
+    return f"{HOUSEHOLD_CALLABLE_PREFIX}{country}"
 
 
 class _HouseholdCalculationInputs(StrictHouseholdModel):
