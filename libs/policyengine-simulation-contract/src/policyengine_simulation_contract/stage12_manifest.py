@@ -21,7 +21,10 @@ from policyengine_simulation_contract.stage12_bundle import (
 
 V1_ROUTING_STATE_NAME = "simulation-api-routing-state"
 V2_VERSION_MANIFEST_NAME = "simulation-api-v2-version-manifest"
-ACTIVE_MANIFEST_KEY = "active"
+ACTIVE_MANIFEST_KEY = "active-with-cache"
+# Readers released before Stage 12 cache releases forbid unknown fields, so
+# they keep reading this key, which holds the same manifest without them.
+PRE_CACHE_MANIFEST_KEY = "active"
 V2_APPLICATION_PREFIX = "policyengine-simulation-v2-py"
 V1_APPLICATION_PREFIX = "policyengine-simulation-py"
 _CALLABLE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
@@ -43,6 +46,21 @@ class V2CountryWorker(StrictManifestModel):
     single_simulation_callable: CallableName
 
 
+class Stage12CacheRelease(StrictManifestModel):
+    """The US cache a worker image holds: its manifest digest and coverage.
+
+    The cache covers 3 datasets and 60 baselines, one per region-group segment
+    and year.
+    """
+
+    manifest_sha256: Sha256Digest
+    partition_sha256: Sha256Digest
+    years: tuple[int, ...]
+    segment_count: Literal[20] = 20
+    dataset_count: Literal[3] = 3
+    baseline_count: Literal[60] = 60
+
+
 class V2WorkerValidation(StrictManifestModel):
     """Receipt for a successful validation of a deployed v2 worker application.
 
@@ -56,6 +74,7 @@ class V2WorkerValidation(StrictManifestModel):
     validated_at: datetime
     validation_invocation_id: ManifestText
     country_validation_invocation_ids: dict[CountryId, ManifestText]
+    cache: Stage12CacheRelease | None = None
 
 
 class V2WorkerVersion(StrictManifestModel):
@@ -71,6 +90,7 @@ class V2WorkerVersion(StrictManifestModel):
     bundle: Stage12BundleManifest
     bundle_manifest_sha256: Sha256Digest
     validation: V2WorkerValidation
+    cache: Stage12CacheRelease | None = None
 
     @model_validator(mode="after")
     def validate_worker(self) -> V2WorkerVersion:
@@ -96,6 +116,9 @@ class V2WorkerVersion(StrictManifestModel):
             raise ValueError(msg)
         if self.validation.bundle_manifest_sha256 != self.bundle_manifest_sha256:
             msg = "worker validation names another bundle digest"
+            raise ValueError(msg)
+        if self.validation.cache != self.cache:
+            msg = "worker cache metadata differs from worker validation"
             raise ValueError(msg)
         countries = tuple(worker.country for worker in self.countries)
         bundle_countries = tuple(country.country for country in self.bundle.countries)
@@ -192,6 +215,22 @@ def _is_newer(candidate: str, current: str | None) -> bool:
         return False
 
 
+def pre_cache_manifest_payload(manifest: V2VersionManifest) -> dict[str, object]:
+    """Return the manifest as readers released before cache releases accept it."""
+    return manifest.model_dump(
+        mode="json",
+        exclude={"versions": {"__all__": {"cache": True, "validation": {"cache"}}}},
+    )
+
+
+def _current_manifest(store: V2ManifestStore) -> object:
+    current = store.get(ACTIVE_MANIFEST_KEY)
+    if current is None:
+        # Until the first publish that writes both keys.
+        current = store.get(PRE_CACHE_MANIFEST_KEY)
+    return current
+
+
 def build_next_v2_manifest(
     *,
     current: object,
@@ -239,13 +278,14 @@ def publish_v2_manifest(
     partial update.
     """
     next_manifest = build_next_v2_manifest(
-        current=store.get(ACTIVE_MANIFEST_KEY),
+        current=_current_manifest(store),
         worker=worker,
         force_default=force_default,
     )
-    # The entire validated document replaces one store value. Readers cannot
-    # observe a partial update assembled from several keys.
+    # Each key holds one entire validated document, and a reader reads only
+    # one key, so no reader observes a partial update assembled from several.
     store[ACTIVE_MANIFEST_KEY] = next_manifest.model_dump(mode="json")
+    store[PRE_CACHE_MANIFEST_KEY] = pre_cache_manifest_payload(next_manifest)
     return next_manifest
 
 
@@ -263,7 +303,7 @@ class V2ManifestLoader:
         The fallback covers a missing or invalid stored value; with no earlier
         valid copy, ValueError is raised instead.
         """
-        value = self._store.get(ACTIVE_MANIFEST_KEY)
+        value = _current_manifest(self._store)
         try:
             manifest = V2VersionManifest.model_validate(value)
         except (TypeError, ValueError):

@@ -540,6 +540,55 @@ class Stage12PersistenceStore:
             )
             return _simulation(updated)
 
+    def replace_simulation_if_status(
+        self,
+        record: ComparisonSimulationRecord,
+        *,
+        expected_status: ComparisonRunLifecycleStatus,
+    ) -> tuple[ComparisonSimulationRecord, bool]:
+        """Replace a simulation only while it remains in ``expected_status``."""
+        values = _record_values(record)
+        with self._transaction("replace_simulation_if_status") as connection:
+            row = (
+                connection.execute(
+                    select(comparison_simulations)
+                    .where(
+                        comparison_simulations.c.simulation_execution_id
+                        == record.simulation_execution_id
+                    )
+                    .with_for_update()
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                msg = (
+                    "comparison simulation "
+                    f"{record.simulation_execution_id} does not exist"
+                )
+                raise LookupError(msg)
+            existing = _simulation(row)
+            require_simulation_identity(existing, record)
+            if existing.status is not expected_status:
+                return existing, False
+            require_lifecycle_transition(existing.status, record.status)
+            updated = (
+                connection.execute(
+                    update(comparison_simulations)
+                    .where(
+                        comparison_simulations.c.simulation_execution_id
+                        == record.simulation_execution_id
+                    )
+                    .values(
+                        **{name: values[name] for name in SIMULATION_MUTABLE_COLUMNS}
+                    )
+                    .returning(*comparison_simulations.c)
+                )
+                .mappings()
+                .one()
+            )
+            return _simulation(updated), True
+
     def attach_simulation_invocation(
         self,
         simulation_execution_id: UUID,

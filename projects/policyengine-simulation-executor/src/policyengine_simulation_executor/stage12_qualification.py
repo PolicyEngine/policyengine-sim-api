@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from typing import Any, Literal
@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict
 from policyengine_simulation_executor.simulation_microdata import (
     rebuild_entity_frame,
 )
+from policyengine_simulation_executor.simulation_runtime import _country_module
 from policyengine_simulation_executor.stage12_artifacts import (
     canonical_json_bytes,
     serialize_simulation_frames,
@@ -42,8 +43,13 @@ from policyengine_simulation_executor.stage12_parity import (
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
     build_aggregate_report,
+    build_segment_inputs,
+    calculate_segment,
     calculate_simulation_frames,
+    merge_segment_results,
+    should_segment_simulation,
     simulation_input_sha256,
+    stage12_region_groups_for_model,
 )
 from policyengine_simulation_executor.stage12_runtime.aggregation import (
     validate_uk_local_authority_metadata,
@@ -80,6 +86,32 @@ SingleSimulationRunner = Callable[
     Mapping[str, pd.DataFrame] | SimulationCalculation,
 ]
 AggregateBuilder = Callable[..., dict[str, Any]]
+
+
+def _run_stage12_simulation_for_qualification(
+    simulation: PlannedSimulationExecutionInput,
+    *,
+    groups: Sequence[Sequence[str]] | None = None,
+    segment_runner: Callable[[object], object] | None = None,
+    monolithic_runner: SingleSimulationRunner | None = None,
+) -> SimulationCalculation:
+    """Exercise the segmented calculation and merge without Modal transport."""
+    run_monolithic = monolithic_runner or calculate_simulation_frames
+    if not should_segment_simulation(simulation):
+        return _calculation(run_monolithic(simulation))
+    selected_groups = groups
+    if selected_groups is None:
+        country = simulation.geography.country
+        selected_groups = stage12_region_groups_for_model(
+            country,
+            _country_module(country).model,
+        )
+    run_segment = segment_runner or calculate_segment
+    results = [
+        run_segment(segment)
+        for segment in build_segment_inputs(simulation, groups=selected_groups)
+    ]
+    return merge_segment_results(simulation, results, groups=selected_groups)
 
 
 def _local_qualification_runtime() -> ObservabilityRuntime:
@@ -127,6 +159,7 @@ def _validate_matching_input(
         "policyengine_version": bundle.policyengine_version,
         "version": bundle.country_package_version,
         "spm": baseline.options.get("spm"),
+        "segmented": baseline.options.get("segmented"),
     }
     for field, expected_value in expected.items():
         actual_value = existing_request.get(field)
@@ -250,8 +283,9 @@ def qualify_report_parity(
             return run_simulation_impl(request, runtime=qualification_runtime)
 
         existing_runner = run_existing
+    default_stage12_runner = single_simulation_runner is None
     if single_simulation_runner is None:
-        single_simulation_runner = calculate_simulation_frames
+        single_simulation_runner = _run_stage12_simulation_for_qualification
     if aggregate_builder is None:
         aggregate_builder = build_aggregate_report
 
@@ -280,11 +314,18 @@ def qualify_report_parity(
             "report.data_version",
         )
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        baseline_future = executor.submit(single_simulation_runner, baseline_input)
-        reform_future = executor.submit(single_simulation_runner, reform_input)
-        baseline_calculation = _calculation(baseline_future.result())
-        reform_calculation = _calculation(reform_future.result())
+    if default_stage12_runner:
+        # The production segments run in isolated Modal processes. Run the
+        # local qualifier sequentially so country-model process caches are not
+        # accessed concurrently by Python threads.
+        baseline_calculation = _calculation(single_simulation_runner(baseline_input))
+        reform_calculation = _calculation(single_simulation_runner(reform_input))
+    else:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            baseline_future = executor.submit(single_simulation_runner, baseline_input)
+            reform_future = executor.submit(single_simulation_runner, reform_input)
+            baseline_calculation = _calculation(baseline_future.result())
+            reform_calculation = _calculation(reform_future.result())
 
     compare_simulation_frames(
         existing_baseline,

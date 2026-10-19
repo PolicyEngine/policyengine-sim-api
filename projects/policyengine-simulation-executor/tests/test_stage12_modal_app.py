@@ -58,6 +58,21 @@ def _invoke(
 ):
     from policyengine_simulation_executor import stage12_runtime
 
+    if function_name == "run_single_simulation_segment_us":
+
+        class Result:
+            def model_dump(self, *, mode):
+                assert mode == "python"
+                return implementation()
+
+        monkeypatch.setattr(
+            stage12_runtime, "calculate_segment", lambda *_, **__: Result()
+        )
+        return module.run_single_simulation_segment_us(
+            {"simulation": {"role": "baseline"}, "segment_index": 0},
+            observability_context=_observability_context(),
+        )
+
     if function_name == "coordinate_report":
         monkeypatch.setattr(
             module.modal,
@@ -181,6 +196,14 @@ def test_v2_static_runtime_file_smoke_uses_exact_uk_worker_image(monkeypatch) ->
     }
 
 
+def test_only_us_worker_image_fetches_stage12_cache(monkeypatch) -> None:
+    module = _load(monkeypatch)
+
+    assert any(call[0] == "run_function" for call in module.us_worker_image.calls)
+    assert not any(call[0] == "run_function" for call in module.uk_worker_image.calls)
+    assert not any(call[0] == "run_function" for call in module.coordinator_image.calls)
+
+
 def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     monkeypatch,
 ) -> None:
@@ -190,18 +213,24 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     assert set(functions) == {
         "validate_worker_us",
         "validate_worker_uk",
+        "run_single_simulation_segment_us",
         "run_single_simulation_us",
         "run_single_simulation_uk",
         "coordinate_report",
     }
     assert functions["run_single_simulation_us"]["image"] is module.us_worker_image
     assert functions["run_single_simulation_uk"]["image"] is module.uk_worker_image
-    assert functions["run_single_simulation_us"]["timeout"] == 3000
+    assert (
+        functions["run_single_simulation_segment_us"]["image"] is module.us_worker_image
+    )
+    assert functions["run_single_simulation_segment_us"]["timeout"] == 3600
+    assert functions["run_single_simulation_segment_us"]["max_containers"] == 300
+    assert functions["run_single_simulation_us"]["timeout"] == 3900
     assert functions["run_single_simulation_uk"]["timeout"] == 3000
     assert functions["run_single_simulation_us"]["max_containers"] == 10
     assert functions["run_single_simulation_uk"]["max_containers"] == 10
     assert functions["coordinate_report"]["image"] is module.coordinator_image
-    assert functions["coordinate_report"]["timeout"] == 4500
+    assert functions["coordinate_report"]["timeout"] == 5400
     assert functions["coordinate_report"]["max_containers"] == 10
     assert "asgi_app" not in vars(module)
 
@@ -211,6 +240,7 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     [
         "run_single_simulation_us",
         "run_single_simulation_uk",
+        "run_single_simulation_segment_us",
         "coordinate_report",
     ],
 )
@@ -237,6 +267,7 @@ def test_stage12_functions_propagate_identifier_and_close_runtime(
     [
         "run_single_simulation_us",
         "run_single_simulation_uk",
+        "run_single_simulation_segment_us",
         "coordinate_report",
     ],
 )

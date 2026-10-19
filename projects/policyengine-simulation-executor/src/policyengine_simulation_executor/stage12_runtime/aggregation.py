@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
+from policyengine.core import Simulation
 from policyengine_simulation_contract.spm import build_spm_comparison_provenance
 from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
@@ -58,6 +60,14 @@ def validate_uk_local_authority_metadata(
         msg = "non-UK simulation artifacts contain UK authority metadata"
         raise ValueError(msg)
     return None
+
+
+class PrecomputedSimulation(Simulation):
+    """A Stage 12 aggregate input whose output dataset is already complete."""
+
+    def ensure(self) -> None:
+        """Do not recalculate frames loaded from Stage 12 artifacts."""
+        return
 
 
 def validate_aligned_outputs(
@@ -157,9 +167,6 @@ def build_aggregate_report(
     Runs the standard macro output builder over stand-in simulations that load
     the stored frames, so no model is recomputed.
     """
-    from policyengine_simulation_executor.segmented_national_reduce import (  # noqa: PLC0415  # the segmented reduce module loads only when a report is aggregated
-        PrecomputedSimulation,
-    )
     from policyengine_simulation_executor.simulation_output_builder import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_output_builder.SimulationOutputBuilder
         SimulationOutputBuilder,
     )

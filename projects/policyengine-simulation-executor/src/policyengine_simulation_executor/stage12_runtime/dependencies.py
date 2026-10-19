@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from policyengine_simulation_contract.stage12_execution import (
         ComparisonReportPersistenceResult,
         ComparisonReportRecord,
+        ComparisonRunLifecycleStatus,
         ComparisonSimulationPersistenceResult,
         ComparisonSimulationRecord,
     )
@@ -71,6 +72,18 @@ class ComparisonStore(Protocol):
         """Write the simulation's mutable fields over the stored one."""
         ...
 
+    def replace_simulation_if_status(
+        self,
+        record: ComparisonSimulationRecord,
+        *,
+        expected_status: ComparisonRunLifecycleStatus,
+    ) -> tuple[ComparisonSimulationRecord, bool]:
+        """Replace the simulation only while it is in ``expected_status``.
+
+        Return the stored record and whether this call replaced it.
+        """
+        ...
+
     def attach_simulation_invocation(
         self,
         simulation_execution_id: UUID,
@@ -93,6 +106,10 @@ class ChildCall(Protocol):
 
     def get(self, *, timeout: float | None = None) -> object:
         """Wait up to ``timeout`` seconds (indefinitely if None) for the result."""
+        ...
+
+    def cancel(self) -> None:
+        """Ask the platform to stop the child call."""
         ...
 
 

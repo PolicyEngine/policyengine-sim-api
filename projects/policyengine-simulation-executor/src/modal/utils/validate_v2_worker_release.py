@@ -12,6 +12,7 @@ from uuid import uuid4
 import modal
 from policyengine_simulation_contract.stage12_manifest import (
     ManifestText,
+    Stage12CacheRelease,
     V2WorkerValidation,
     v2_application_name,
 )
@@ -41,15 +42,19 @@ def _spawn_validation(
     return result, invocation_id
 
 
-def validate_release(*, environment: str) -> V2WorkerValidation:
+def validate_release(
+    *, environment: str, expected_cache_manifest_sha256: str
+) -> V2WorkerValidation:
     """Invoke each deployed country validation function and return the release record.
 
     Raises RuntimeError when a function does not report success, returns no
-    invocation id, or reports bundle values that differ from the local bundle.
+    invocation id, reports bundle values that differ from the local bundle, or
+    reports a US cache other than ``expected_cache_manifest_sha256``.
     """
     resolved = load_stage12_bundle()
     application_name = v2_application_name(resolved.bundle.policyengine_version)
     invocation_ids: dict[CountryId, ManifestText] = {}
+    cache_release: Stage12CacheRelease | None = None
     for country_bundle in resolved.bundle.countries:
         function_name = f"validate_worker_{country_bundle.country}"
         result, invocation_id = _spawn_validation(
@@ -78,6 +83,15 @@ def validate_release(*, environment: str) -> V2WorkerValidation:
         if mismatches:
             msg = f"{function_name} reported bundle values that differ from deployment"
             raise RuntimeError(msg)
+        if country_bundle.country == "us":
+            reported_cache = result.get("cache")
+            cache_release = Stage12CacheRelease.model_validate(reported_cache)
+            if cache_release.manifest_sha256 != expected_cache_manifest_sha256:
+                msg = f"{function_name} reported another cache manifest"
+                raise RuntimeError(msg)
+        elif result.get("cache") is not None:
+            msg = f"{function_name} unexpectedly reported a cache"
+            raise RuntimeError(msg)
         invocation_ids[country_bundle.country] = invocation_id
     return V2WorkerValidation(
         validated=True,
@@ -86,6 +100,7 @@ def validate_release(*, environment: str) -> V2WorkerValidation:
         validated_at=datetime.now(timezone.utc),
         validation_invocation_id=f"stage12-validation-{uuid4()}",
         country_validation_invocation_ids=invocation_ids,
+        cache=cache_release,
     )
 
 
@@ -96,8 +111,12 @@ def main() -> None:
     )
     parser.add_argument("--environment", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--cache-manifest-sha256", required=True)
     args = parser.parse_args()
-    validation = validate_release(environment=args.environment)
+    validation = validate_release(
+        environment=args.environment,
+        expected_cache_manifest_sha256=args.cache_manifest_sha256,
+    )
     args.output.write_text(
         json.dumps(
             validation.model_dump(mode="json"),

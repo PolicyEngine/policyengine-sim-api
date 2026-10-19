@@ -11,7 +11,49 @@ if TYPE_CHECKING:
 
     from policyengine_observability import ObservabilityRuntime
 
+    from .failure_causes import StageProgress
+
+from .failures import Stage12FailureDetail, redacted_failure_detail
+
 logger = logging.getLogger(__name__)
+
+
+def report_failure(
+    error: Exception,
+    *,
+    runtime: ObservabilityRuntime | None,
+    failure_scope: str,
+    default_code: str,
+    attributes: Mapping[str, object] | None = None,
+    segment_index: int | None = None,
+    progress: StageProgress | None = None,
+) -> Stage12FailureDetail:
+    """Report a failure once and return the safe detail to persist for it.
+
+    The report is emitted before any database write is attempted, as
+    ``report_original_failure`` requires. An unexpected error's detail has a
+    new correlation ID, and the report carries the same ID, so the redacted
+    summary persisted for callers leads back to this one record of the
+    original error. ``progress`` names the failing stage in that summary.
+    """
+    detail = redacted_failure_detail(
+        error,
+        default_code=default_code,
+        segment_index=segment_index,
+        progress=progress,
+    )
+    correlation = (
+        {"correlation_id": detail.correlation_id}
+        if detail.correlation_id is not None
+        else {}
+    )
+    report_original_failure(
+        error,
+        runtime=runtime,
+        failure_scope=failure_scope,
+        attributes={**(attributes or {}), **correlation},
+    )
+    return detail
 
 
 def report_original_failure(
@@ -70,10 +112,14 @@ def _emit_error(
     attributes: Mapping[str, object],
 ) -> None:
     if runtime is None:
+        failure_label = str(attributes.get("stage12_failure_scope"))
+        correlation_id = attributes.get("correlation_id")
+        if correlation_id is not None:
+            failure_label = f"{failure_label}; correlation_id={correlation_id}"
         logger.error(
             "%s (%s)",
             message,
-            attributes.get("stage12_failure_scope"),
+            failure_label,
             exc_info=error,
         )
         return

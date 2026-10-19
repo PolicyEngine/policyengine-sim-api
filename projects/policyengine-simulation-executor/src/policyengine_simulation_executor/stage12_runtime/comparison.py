@@ -15,6 +15,9 @@ from policyengine_simulation_contract.stage12_execution import (
 from policyengine_simulation_observability.stages import Stage, StagePlan
 
 from policyengine_simulation_executor.stage12_result_comparison import compare_results
+from policyengine_simulation_executor.stage12_timeouts import (
+    PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS,
+)
 
 from .failure_causes import failure_summary
 
@@ -25,7 +28,6 @@ if TYPE_CHECKING:
 
     from .dependencies import ChildInvoker, ComparisonStore
 
-PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS = 900
 logger = logging.getLogger(__name__)
 
 
