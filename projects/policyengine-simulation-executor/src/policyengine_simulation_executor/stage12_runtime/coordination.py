@@ -66,6 +66,7 @@ from .failure_causes import (
     tracked_stage,
 )
 from .failure_recording import (
+    FailureSite,
     persist_failure_record,
     report_failure,
     report_original_failure,
@@ -288,10 +289,12 @@ def _child_failure_detail(
     """
     detail = report_failure(
         error,
+        FailureSite(
+            scope="child_wait",
+            default_code="simulation_invocation_failed",
+            attributes=_simulation_failure_attributes(simulation),
+        ),
         runtime=runtime,
-        failure_scope="child_wait",
-        default_code="simulation_invocation_failed",
-        attributes=_simulation_failure_attributes(simulation),
         progress=progress,
     )
     try:
@@ -740,10 +743,12 @@ class _ReportCoordination:
         except Exception as error:  # noqa: BLE001  # any dispatch failure is recorded on the child and stops its started peers
             detail = report_failure(
                 error,
+                FailureSite(
+                    scope="child_dispatch",
+                    default_code="simulation_dispatch_failed",
+                    attributes=_simulation_failure_attributes(simulation),
+                ),
                 runtime=self.runtime,
-                failure_scope="child_dispatch",
-                default_code="simulation_dispatch_failed",
-                attributes=_simulation_failure_attributes(simulation),
                 progress=self.progress,
             )
             _record_child_failure(
@@ -981,10 +986,12 @@ class _ReportCoordination:
         else:
             detail = report_failure(
                 error,
+                FailureSite(
+                    scope="report_coordination",
+                    default_code="report_coordination_failed",
+                    attributes={"evaluation_id": str(self.report.evaluation_id)},
+                ),
                 runtime=self.runtime,
-                failure_scope="report_coordination",
-                default_code="report_coordination_failed",
-                attributes={"evaluation_id": str(self.report.evaluation_id)},
                 progress=self.progress,
             )
             _cancel_pending_simulations(

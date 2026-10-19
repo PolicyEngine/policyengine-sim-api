@@ -48,7 +48,7 @@ from .failure_causes import (
     record_failure_cause,
     tracked_stage,
 )
-from .failure_recording import persist_failure_record, report_failure
+from .failure_recording import FailureSite, persist_failure_record, report_failure
 from .failures import (
     Stage12CancellationError,
     Stage12ExecutionError,
@@ -555,14 +555,18 @@ def run_single_simulation(
         else:
             detail = report_failure(
                 error,
+                FailureSite(
+                    scope="simulation_execution",
+                    default_code="simulation_execution_failed",
+                    attributes={
+                        "simulation_role": simulation.role.value,
+                        "evaluation_id": str(simulation.evaluation_id),
+                        "simulation_execution_id": str(
+                            simulation.simulation_execution_id
+                        ),
+                    },
+                ),
                 runtime=runtime,
-                failure_scope="simulation_execution",
-                default_code="simulation_execution_failed",
-                attributes={
-                    "simulation_role": simulation.role.value,
-                    "evaluation_id": str(simulation.evaluation_id),
-                    "simulation_execution_id": str(simulation.simulation_execution_id),
-                },
                 progress=progress,
             )
         record_failure_cause(runtime, error, detail.error_summary)

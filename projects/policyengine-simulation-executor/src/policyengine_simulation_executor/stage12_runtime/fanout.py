@@ -14,7 +14,7 @@ from policyengine_simulation_observability.stages import (
 
 from policyengine_simulation_executor.simulation_runtime import _country_module
 
-from .failure_recording import report_failure
+from .failure_recording import FailureSite, report_failure
 from .failures import Stage12CancellationError, Stage12ExecutionError
 from .partition import stage12_region_groups_for_model
 from .segmentation import build_segment_inputs, merge_segment_results
@@ -178,18 +178,20 @@ class Stage12SegmentRunner:
                         continue
                     detail = report_failure(
                         error,
+                        FailureSite(
+                            scope="segment_call",
+                            default_code="segment_execution_failed",
+                            attributes={
+                                "simulation_role": self.simulation.role.value,
+                                "evaluation_id": str(self.simulation.evaluation_id),
+                                "simulation_execution_id": str(
+                                    self.simulation.simulation_execution_id
+                                ),
+                                "segment_index": segment_index,
+                            },
+                            segment_index=segment_index,
+                        ),
                         runtime=self.runtime,
-                        failure_scope="segment_call",
-                        default_code="segment_execution_failed",
-                        attributes={
-                            "simulation_role": self.simulation.role.value,
-                            "evaluation_id": str(self.simulation.evaluation_id),
-                            "simulation_execution_id": str(
-                                self.simulation.simulation_execution_id
-                            ),
-                            "segment_index": segment_index,
-                        },
-                        segment_index=segment_index,
                     )
                     self._cancel_all(handles)
                     raise Stage12ExecutionError(detail) from None
