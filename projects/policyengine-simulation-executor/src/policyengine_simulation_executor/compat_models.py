@@ -27,6 +27,9 @@ class SimulationOptions(BaseModel):
     # surface always runs monolithically, so segmented=false is trivially
     # honored and segmented=true has no effect here.
     segmented: bool | None = None
+    # Accepted for parity with the gateway contract. Only segmented US
+    # national runs build per-state blocks, so it has no effect here.
+    include_regions: bool | None = None
 
     model_config = ConfigDict(extra="forbid")
 

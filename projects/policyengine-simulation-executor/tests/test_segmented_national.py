@@ -364,6 +364,67 @@ class TestSegmentedNationalRunner:
         assert "segmented" not in captured["simulation_params"]
         assert "_telemetry" not in captured["simulation_params"]
 
+    def test__never_forwards_include_regions_to_children(self):
+        payload = sn.build_group_child_payload(
+            {**NATIONAL, "include_regions": False}, ["state/ca"]
+        )
+        assert "include_regions" not in payload
+
+    @pytest.mark.parametrize(
+        ("include_regions", "expected"),
+        [(None, ["state/hi"]), (True, ["state/hi"]), (False, [])],
+    )
+    def test__reduce_receives_the_eligible_region_filters(
+        self, monkeypatch, include_regions, expected
+    ):
+        captured = {}
+        resolved = []
+
+        def fake_build_national_output(child_results, **kwargs):
+            captured.update(kwargs)
+            return {"budget": {}}
+
+        def fake_eligible(codes, *, country, country_module):
+            resolved.append(list(codes))
+            return {"state/hi": "hi-filter"}
+
+        monkeypatch.setattr(sn, "build_national_output", fake_build_national_output)
+        monkeypatch.setattr(sn, "row_filter_regions_on_dataset", fake_eligible)
+        monkeypatch.setattr(sr, "_country_module", lambda c: _bare_country_module())
+
+        params = {**NATIONAL}
+        if include_regions is not None:
+            params["include_regions"] = include_regions
+        _runner(FakeModal(_twenty_calls()), params=params).run()
+
+        assert sorted(captured["regions"]) == expected
+        assert "include_regions" not in captured["simulation_params"]
+        if expected:
+            # Every partition state is offered, in partition order.
+            assert resolved == [
+                [code for group in US_NATIONAL_REGION_GROUPS for code in group]
+            ]
+        else:
+            assert resolved == []
+
+    def test__region_resolution_failure_only_drops_the_blocks(self, monkeypatch):
+        captured = {}
+
+        def fake_build_national_output(child_results, **kwargs):
+            captured.update(kwargs)
+            return {"budget": {}}
+
+        def broken(codes, *, country, country_module):
+            msg = "bundle unavailable"
+            raise RuntimeError(msg)
+
+        monkeypatch.setattr(sn, "build_national_output", fake_build_national_output)
+        monkeypatch.setattr(sn, "row_filter_regions_on_dataset", broken)
+        monkeypatch.setattr(sr, "_country_module", lambda c: _bare_country_module())
+
+        assert _runner(FakeModal(_twenty_calls())).run() == {"budget": {}}
+        assert captured["regions"] == {}
+
     def test__uk_has_no_partition_to_run(self):
         with pytest.raises(ValueError, match="No national partition"):
             _runner(FakeModal([]), params={"country": "uk", "scope": "macro"})

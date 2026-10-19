@@ -64,6 +64,7 @@ class Stage(StrEnum):
 
     SEGMENTED_NATIONAL_CHILD_SPAWN = "segmented_national_child_spawn"
     SEGMENTED_NATIONAL_REDUCE = "segmented_national_reduce"
+    SEGMENTED_NATIONAL_REGION_OUTPUTS = "segmented_national_region_outputs"
     MODAL_JOB_METADATA_READ = "modal_job_metadata_read"
     MODAL_JOB_PROGRESS_READ = "modal_job_progress_read"
 
@@ -197,6 +198,7 @@ _SEGMENTED_NATIONAL = (
     Stage.SEGMENTED_NATIONAL_CHILD_SPAWN,
     Stage.MODAL_JOB_STATUS_POLL,
     Stage.SEGMENTED_NATIONAL_REDUCE,
+    Stage.SEGMENTED_NATIONAL_REGION_OUTPUTS,
     *_COMMON_SIMULATION,
 )
 

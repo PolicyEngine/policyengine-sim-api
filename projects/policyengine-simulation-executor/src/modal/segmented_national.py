@@ -41,6 +41,11 @@ from policyengine_simulation_executor.job_progress import (
 from policyengine_simulation_executor.national_partition import (
     national_region_groups,
 )
+from policyengine_simulation_executor.national_region_outputs import (
+    INCLUDE_REGIONS_FIELD,
+    include_regions_requested,
+    row_filter_regions_on_dataset,
+)
 from policyengine_simulation_executor.segmented_national_reduce import (
     build_national_output,
 )
@@ -88,7 +93,10 @@ MAX_CHILD_ATTEMPTS = 2
 # builder owns _telemetry: stripped, then re-attached when present.)
 # `region` is stripped because v1-style national parents carry
 # region:"us", and a child must scope by its region_group alone.
-CHILD_STRIP_FIELDS = frozenset({"segmented", "_metadata", "region"})
+# `include_regions` only shapes the parent's reduce.
+CHILD_STRIP_FIELDS = frozenset(
+    {"segmented", "_metadata", "region", INCLUDE_REGIONS_FIELD}
+)
 
 # Reforms under this prefix activate labor-supply behavioral responses.
 # policyengine decides LSR activity from simulation.policy — which the
@@ -547,6 +555,7 @@ class SegmentedNationalRunner:
         # The canonical internal-key stripper, plus the opt-out knob.
         simulation_params, _, _ = split_internal_payload(self.params)
         simulation_params.pop("segmented", None)
+        simulation_params.pop(INCLUDE_REGIONS_FIELD, None)
         with self.runtime.span(
             SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_REDUCE)
         ):
@@ -558,6 +567,7 @@ class SegmentedNationalRunner:
                 year=_parse_year(simulation_params),
                 resolved_data_version=None,
                 runtime=self.runtime,
+                regions=self._region_block_strategies(country_module),
             )
         output.update(
             combine_spm_results(
@@ -570,6 +580,27 @@ class SegmentedNationalRunner:
             if output.get(key):
                 self.runtime.set_context(**{key: str(output[key])})
         return output
+
+    def _region_block_strategies(self, country_module: ModuleType) -> dict[str, Any]:
+        """Return the partition's states that get a per-state block, with their filters.
+
+        Empty when the request sets ``include_regions`` to false, or when no
+        state's own run is a row filter on the national dataset. A failure
+        here only drops the blocks; the national output is unaffected.
+        """
+        if not include_regions_requested(self.params):
+            return {}
+        codes = [code for group in self.groups for code in group]
+        try:
+            return row_filter_regions_on_dataset(
+                codes, country=self.country, country_module=country_module
+            )
+        except Exception as exc:  # noqa: BLE001  # per-state blocks are optional; the national run continues without them
+            logger.warning(
+                "Per-state blocks skipped: region resolution failed (%s)",
+                type(exc).__name__,
+            )
+            return {}
 
 
 def run_segmented_national_impl(

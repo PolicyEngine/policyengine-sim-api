@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from policyengine_simulation_contract.spm import SPMComparisonProvenance
 
@@ -298,8 +298,8 @@ class CongressionalDistrictImpactOutput(MacroOutputModel):
     districts: list[CongressionalDistrictImpactRecord]
 
 
-class SingleYearMacroOutput(MacroOutputModel):
-    """Completed response returned by a single-year macro simulation."""
+class _SingleYearMacroOutputFields(MacroOutputModel):
+    """Fields shared by a single-year macro result and its per-region blocks."""
 
     spm_provenance: SPMComparisonProvenance | None = None
 
@@ -320,3 +320,30 @@ class SingleYearMacroOutput(MacroOutputModel):
     local_authority_impact: GeographicImpactOutput | None
     congressional_district_impact: CongressionalDistrictImpactOutput | None
     cliff_impact: CliffImpactOutput | None = None
+
+
+class RegionMacroOutput(_SingleYearMacroOutputFields):
+    """One region's block inside a national single-year macro result.
+
+    It has the same fields and units as the result of a separate run for that
+    region. Its ``spm_provenance`` is absent: the national result's receipt
+    covers every block.
+    """
+
+
+class SingleYearMacroOutput(_SingleYearMacroOutputFields):
+    """Completed response returned by a single-year macro simulation."""
+
+    regions: dict[str, RegionMacroOutput] | None = Field(
+        default=None,
+        description=(
+            "Per-region results of a US national run, keyed by region code "
+            "(for example `state/ca`). Each value has the same shape and "
+            "units as the result of a separate run with that `region`, "
+            "computed from the national run's own households. Present only "
+            "for segmented US national runs, and only for regions whose own "
+            "run filters the same dataset by row; a region whose block "
+            "could not be built is left out. Set `include_regions` to false "
+            "to leave out every block."
+        ),
+    )

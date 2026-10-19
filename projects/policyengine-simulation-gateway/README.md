@@ -13,6 +13,26 @@ response still reports the dataset and data version used. Use `region` or
 `region_group` to select a geographic subset; the worker resolves the
 appropriate dataset for that region from its release bundle.
 
+## Per-state results of a US national run
+
+A completed segmented US national run can add `result.regions`, keyed by
+region code (`state/ca`). Each value has the same fields and units as the
+result of a separate run with that `region`, so a client can show one state
+without a new simulation. The worker builds each block at the reduce: it
+applies the state's own row filter to the national microdata and runs the
+same output builder. No model runs again.
+
+- A state gets a block only when its own run filters the national dataset by
+  row. When the release bundle routes state runs to another dataset (for
+  example the ACS local-area file), that state has no block, because its own
+  run uses other households.
+- A block that fails to build is left out and logged. The national result is
+  not affected.
+- A block has no `spm_provenance`; the national receipt covers it.
+- `include_regions: false` leaves out every block. Monolithic runs
+  (`segmented: false`, cliff and labor-supply runs), state runs, budget-window
+  children and UK runs never have the field.
+
 ## Country-version routing
 
 A request that names a country model `version` resolves to the app the

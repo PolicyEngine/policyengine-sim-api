@@ -1,6 +1,7 @@
 """Tests for gateway Pydantic models."""
 
 import json
+from pathlib import Path
 
 import pytest
 from policyengine_simulation_contract.gateway_models import (
@@ -234,6 +235,17 @@ class TestSimulationRequest:
         request = SimulationRequest(country="us", scope="macro", segmented=True)
         assert request.segmented is True
 
+    def test_simulation_request_include_regions_defaults_to_none(self):
+        """Absent include_regions means the default (blocks on)."""
+        request = SimulationRequest(country="us", scope="macro")
+        assert request.include_regions is None
+        assert "include_regions" not in request.model_dump(exclude_none=True)
+
+    def test_simulation_request_accepts_include_regions_opt_out(self):
+        """include_regions=False round-trips to the worker payload."""
+        request = SimulationRequest(country="us", scope="macro", include_regions=False)
+        assert request.model_dump(exclude_none=True)["include_regions"] is False
+
     def test_simulation_request_rejects_unknown_fields(self):
         """Unknown fields should fail fast with ``extra="forbid"``."""
         with pytest.raises(ValidationError):
@@ -397,6 +409,65 @@ class TestJobStatusResponse:
         assert response.policyengine_bundle.dataset == (
             "gs://external-bucket/custom/file.h5@custom-v1"
         )
+
+
+MACRO_RESULT = json.loads(
+    (Path(__file__).parent / "fixtures" / "single_year_macro_result.json").read_text()
+)
+
+
+def _region_block() -> dict:
+    """Return a state block: the national result fields without the SPM receipt."""
+    return {k: v for k, v in MACRO_RESULT.items() if k != "spm_provenance"}
+
+
+class TestPerRegionBlocks:
+    """The optional ``result.regions`` of a US national run (issue #829)."""
+
+    def test_result_without_regions_keeps_its_keys(self):
+        response = JobStatusResponse(status="complete", result=MACRO_RESULT)
+        dumped = response.model_dump(mode="json", exclude_none=True)["result"]
+        assert "regions" not in dumped
+        assert response.result is not None
+        assert response.result.regions is None
+
+    def test_result_with_regions_round_trips(self):
+        result = {
+            **MACRO_RESULT,
+            "regions": {"state/ca": _region_block(), "state/tx": _region_block()},
+        }
+        response = JobStatusResponse.model_validate(
+            {"status": "complete", "result": result}
+        )
+        dumped = response.model_dump(mode="json")["result"]
+        assert set(dumped["regions"]) == {"state/ca", "state/tx"}
+        assert dumped["regions"]["state/ca"] == {
+            **_region_block(),
+            "spm_provenance": None,
+        }
+        again = JobStatusResponse.model_validate(
+            {"status": "complete", "result": dumped}
+        )
+        assert again == response
+
+    def test_a_block_has_the_same_fields_as_a_result(self):
+        from policyengine_simulation_contract.macro_output import (
+            RegionMacroOutput,
+            SingleYearMacroOutput,
+        )
+
+        assert set(RegionMacroOutput.model_fields) == (
+            set(SingleYearMacroOutput.model_fields) - {"regions"}
+        )
+
+    def test_a_block_rejects_unknown_and_nested_region_fields(self):
+        for extra in ({"unknown": 1}, {"regions": {}}):
+            result = {
+                **MACRO_RESULT,
+                "regions": {"state/ca": {**_region_block(), **extra}},
+            }
+            with pytest.raises(ValidationError):
+                JobStatusResponse(status="complete", result=result)
 
 
 class TestOperationalResponses:

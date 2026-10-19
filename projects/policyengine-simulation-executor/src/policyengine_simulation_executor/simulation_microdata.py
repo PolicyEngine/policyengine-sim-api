@@ -38,7 +38,16 @@ def extract_output_microdata(
     this only reads arrays — no model recompute. All columns (including the
     ``*_id`` link columns) are emitted so the coordinator's ``map_to_entity``
     stays valid on the reassembled national data.
+
+    The household table also carries the household inputs that a state's
+    row filter reads (``state_fips``), copied from the loaded input dataset,
+    so the coordinator can build per-state blocks with that same filter.
+    They are not model outputs, so the simulation's output variables and
+    baseline artifacts are unchanged.
     """
+    from policyengine_simulation_executor.national_region_outputs import (  # noqa: PLC0415  # the microdata export loads only when a run asks for it
+        household_input_columns,
+    )
 
     def dump(
         simulation: Simulation,
@@ -47,6 +56,12 @@ def extract_output_microdata(
         dtypes: dict[str, dict[str, str]] = {}
         for entity, frame in simulation.output_dataset.data.entity_data.items():
             df = pd.DataFrame(frame)
+            if entity == "household" and "household_id" in df.columns:
+                for name, values in household_input_columns(
+                    (baseline, reform), df["household_id"]
+                ).items():
+                    if name not in df.columns:
+                        df[name] = values
             columns[entity] = df.to_dict("list")
             dtypes[entity] = {col: str(dtype) for col, dtype in df.dtypes.items()}
         return columns, dtypes

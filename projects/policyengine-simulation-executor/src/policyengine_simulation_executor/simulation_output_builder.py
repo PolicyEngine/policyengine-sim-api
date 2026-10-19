@@ -131,14 +131,18 @@ class SimulationOutputBuilder:
             )
 
     def serialize(self) -> dict[str, Any]:
-        """Build the output and dump it to JSON-compatible data."""
+        """Build the output and dump it to JSON-compatible data.
+
+        ``regions`` is never built here (only the segmented national reduce
+        adds per-state blocks), so it is left out of the dump.
+        """
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.CALCULATION)):
             output = self.build()
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
             with self._span(
                 ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_MODEL_DUMP)
             ):
-                return output.model_dump(mode="json")
+                return output.model_dump(mode="json", exclude={"regions"})
 
     def _build_detailed_budget(self) -> DetailedBudgetOutput:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_DETAILED_BUDGET)):

@@ -371,7 +371,10 @@ def test_builder_returns_schema_modules_before_legacy_dict_dump(monkeypatch):
 
 
 def test_builder_returns_existing_single_year_macro_shape(monkeypatch):
-    output = _build_schema_output(monkeypatch).model_dump(mode="json")
+    built = _build_schema_output(monkeypatch)
+    # Only the segmented national reduce adds per-state blocks.
+    assert built.regions is None
+    output = built.model_dump(mode="json", exclude={"regions"})
 
     assert set(output) == CURRENT_SINGLE_YEAR_MACRO_KEYS
     assert output == CURRENT_SINGLE_YEAR_MACRO_RESULT
