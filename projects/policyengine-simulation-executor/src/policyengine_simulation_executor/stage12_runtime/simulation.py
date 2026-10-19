@@ -63,13 +63,15 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from policyengine.core import Dataset
-    from policyengine.core.scoping_strategy import ScopingStrategy
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.spm import SPMProvenance
     from policyengine_simulation_contract.stage12_bundle import CountryId
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
-    from policyengine_simulation_executor.simulation_runtime import DatasetSelection
+    from policyengine_simulation_executor.simulation_runtime import (
+        DatasetSelection,
+        RegionResolution,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -84,41 +86,45 @@ class SimulationCalculation:
     cache_outcome: str | None = None
 
 
+@dataclass(frozen=True)
+class ResolvedSimulationInputs:
+    """The country model, region, dataset selection and dataset a run uses."""
+
+    country_module: ModuleType
+    region: RegionResolution
+    dataset_selection: DatasetSelection
+    dataset: Dataset
+
+
 def build_stage12_simulation(
     params: dict[str, Any],
     *,
-    dataset: Dataset,
-    dataset_selection: DatasetSelection,
-    country_module: ModuleType,
+    resolved: ResolvedSimulationInputs,
     policy: dict[str, Any] | None,
-    scoping_strategy: ScopingStrategy | None,
-    region_code: str | None,
     execution: PlannedSimulationExecutionInput,
 ) -> Simulation:
     """Construct a Stage 12 simulation without selecting v1 cache code."""
     from policyengine_simulation_executor.spm import normalize_runtime_spm
 
     selection = normalize_runtime_spm(params)
-    resolved = load_stage12_bundle()
     identity = qualifying_cache_identity(
         execution,
-        resolved=resolved,
-        dataset_is_default=dataset_selection.is_default,
-        scoping_strategy=scoping_strategy,
+        resolved=load_stage12_bundle(),
+        dataset_is_default=resolved.dataset_selection.is_default,
+        scoping_strategy=resolved.region.scoping_strategy,
         spm=selection,
     )
     simulation_type = Stage12CachedSimulation if identity is not None else Simulation
     model = simulation_type(
         **({"spm": selection} if selection is not None else {}),
         **({"id": identity.simulation_id} if identity is not None else {}),
-        dataset=dataset,
-        tax_benefit_model_version=country_module.model,
+        dataset=resolved.dataset,
+        tax_benefit_model_version=resolved.country_module.model,
         policy=policy,
-        scoping_strategy=scoping_strategy,
+        scoping_strategy=resolved.region.scoping_strategy,
     )
     if isinstance(model, Stage12CachedSimulation):
         model.configure_stage12_cache(execution.output_plan)
-    del region_code
     return model
 
 
@@ -268,12 +274,13 @@ def calculate_simulation_frames(
         with stage_span(Stage.SIMULATION_BUILD):
             model = build_stage12_simulation(
                 params,
-                dataset=dataset,
-                dataset_selection=dataset_selection,
-                country_module=country_module,
+                resolved=ResolvedSimulationInputs(
+                    country_module=country_module,
+                    region=region,
+                    dataset_selection=dataset_selection,
+                    dataset=dataset,
+                ),
                 policy=policy,
-                scoping_strategy=region.scoping_strategy,
-                region_code=region.code,
                 execution=simulation,
             )
         with stage_span(Stage.STAGE12_CALCULATION):

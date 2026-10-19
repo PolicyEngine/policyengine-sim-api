@@ -475,17 +475,18 @@ def test_planned_baseline_file_is_the_one_the_worker_saves_and_loads(
 
     worker_model = simulation_module.build_stage12_simulation(
         params,
-        dataset=Dataset(
-            name="in-memory",
-            description="Naming only",
-            year=entry.year,
-            filepath=dataset_path,
+        resolved=simulation_module.ResolvedSimulationInputs(
+            country_module=country_module,
+            region=region,
+            dataset_selection=SimpleNamespace(is_default=True),
+            dataset=Dataset(
+                name="in-memory",
+                description="Naming only",
+                year=entry.year,
+                filepath=dataset_path,
+            ),
         ),
-        dataset_selection=SimpleNamespace(is_default=True),
-        country_module=country_module,
         policy=None,
-        scoping_strategy=region.scoping_strategy,
-        region_code=region.code,
         execution=planned,
     )
 

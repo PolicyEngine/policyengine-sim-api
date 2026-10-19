@@ -592,9 +592,9 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
         received["load_country_module"] = country_module
         return dataset
 
-    def build_simulation(_params, *, dataset, dataset_selection, **_kwargs):
-        received["build_dataset"] = dataset
-        received["build_selection"] = dataset_selection
+    def build_simulation(_params, *, resolved, **_kwargs):
+        received["build_dataset"] = resolved.dataset
+        received["build_selection"] = resolved.dataset_selection
         return Model()
 
     monkeypatch.setattr(
