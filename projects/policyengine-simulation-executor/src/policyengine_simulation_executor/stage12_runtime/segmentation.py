@@ -131,7 +131,22 @@ def merge_segment_results(
     """Validate and merge all segment payloads into one national result."""
     expected = build_segment_inputs(simulation, groups=groups)
     results = [Stage12SegmentResult.model_validate(payload) for payload in payloads]
-    if len(results) != len(expected):
+    by_index = _results_by_segment_index(results, expected_count=len(expected))
+    decoded, provenance = _decode_segments_in_order(simulation, expected, by_index)
+    merged = _merge_entity_frames(decoded)
+    validate_output_frames(merged, simulation.output_plan)
+    return SimulationCalculation(
+        frames=merged,
+        calculation_provenance=_merge_calculation_provenance(provenance),
+        cache_outcome=None,
+    )
+
+
+def _results_by_segment_index(
+    results: Sequence[Stage12SegmentResult], *, expected_count: int
+) -> dict[int, Stage12SegmentResult]:
+    """Index a complete set of segment results, rejecting a duplicate index."""
+    if len(results) != expected_count:
         msg = "Stage 12 segmented calculation returned an incomplete result set"
         raise ValueError(msg)
     by_index: dict[int, Stage12SegmentResult] = {}
@@ -140,7 +155,19 @@ def merge_segment_results(
             msg = "Stage 12 segmented calculation returned a duplicate index"
             raise ValueError(msg)
         by_index[result.segment_index] = result
+    return by_index
 
+
+def _decode_segments_in_order(
+    simulation: PlannedSimulationExecutionInput,
+    expected: Sequence[Stage12SegmentInput],
+    by_index: Mapping[int, Stage12SegmentResult],
+) -> tuple[list[dict[str, pd.DataFrame]], list[SPMProvenance | None]]:
+    """Decode each planned segment's result, in partition order.
+
+    Each result must exist and name the simulation's role and its segment's
+    region group.
+    """
     decoded: list[dict[str, pd.DataFrame]] = []
     provenance: list[SPMProvenance | None] = []
     for segment in expected:
@@ -156,7 +183,17 @@ def merge_segment_results(
             raise ValueError(msg)
         decoded.append(deserialize_simulation_frames(result.parquet_payload))
         provenance.append(deserialize_calculation_provenance(result.parquet_payload))
+    return decoded, provenance
 
+
+def _merge_entity_frames(
+    decoded: Sequence[Mapping[str, pd.DataFrame]],
+) -> dict[str, pd.DataFrame]:
+    """Concatenate each entity's segment frames, which must share one schema.
+
+    Every segment must have the same entities and column dtypes, and each
+    merged entity must have unique identifiers.
+    """
     expected_entities = set(decoded[0])
     if any(set(frames) != expected_entities for frames in decoded[1:]):
         msg = "Stage 12 segment entity schemas do not match"
@@ -180,9 +217,4 @@ def merge_segment_results(
             msg = f"Stage 12 segment entity {entity!r} has duplicate IDs"
             raise ValueError(msg)
         merged[entity] = frame
-    validate_output_frames(merged, simulation.output_plan)
-    return SimulationCalculation(
-        frames=merged,
-        calculation_provenance=_merge_calculation_provenance(provenance),
-        cache_outcome=None,
-    )
+    return merged
