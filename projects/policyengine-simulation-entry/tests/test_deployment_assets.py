@@ -132,7 +132,8 @@ def _write_fake_smoke_curl(tmp_path: Path, revisions: list[str]) -> tuple[Path, 
                 printf '{"status":"healthy"}' > "${body_file}"
                 ;;
               */ready)
-                printf '{"status":"ready"}'
+                ready_body='{"status":"ready"}'
+                printf '%s' "${FAKE_CURL_READY:-${ready_body}}"
                 ;;
               */versions)
                 versions='{}'
@@ -348,8 +349,9 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert "SIMULATION_ENTRYPOINT_PUBLIC_URL" not in reusable_workflow
     assert "staging.simulation.api.policyengine.org" not in deploy_workflow
     assert (
-        # Sentinel, restore and final routing acknowledgement use secrets too.
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 15
+        # Sentinel, restore, final routing acknowledgement and the simulation
+        # database migration use secrets too.
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 16
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow
@@ -487,6 +489,9 @@ def _cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
         "STAGE12_DATABASE_URL_SECRET_NAME": "stage12-staging-database-url",
         "MODAL_TOKEN_ID_SECRET_NAME": "modal-token-id",
         "MODAL_TOKEN_SECRET_SECRET_NAME": "modal-token-secret",
+        "SIMULATION_DATABASE_URL_SECRET_NAME": (
+            "simulation-staging-runtime-database-url"
+        ),
     }
 
 
@@ -525,6 +530,7 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
     secrets_argument = arguments[arguments.index("--set-secrets") + 1]
     assert secrets_argument == (
         "OLD_GATEWAY_AUTH_CLIENT_SECRET=old-client-secret:3,"
+        "SIMULATION_DATABASE_URL=simulation-staging-runtime-database-url:3,"
         "MODAL_TOKEN_ID=modal-token-id:3,"
         "MODAL_TOKEN_SECRET=modal-token-secret:3,"
         "STAGE12_DATABASE_URL=stage12-staging-database-url:3"

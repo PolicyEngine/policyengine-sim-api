@@ -1,0 +1,90 @@
+"""Run the simulation migration chain against a fresh PostgreSQL database."""
+
+from __future__ import annotations
+
+import pytest
+from alembic import command
+from migration_support import alembic_config
+from policyengine_simulation_persistence import (
+    HEAD_REVISION,
+    SIMULATION_SCHEMA,
+    create_simulation_engine,
+    read_schema_revision,
+)
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import ProgrammingError
+
+pytestmark = pytest.mark.postgres
+
+
+def _revision(database_url: str) -> str | None:
+    engine = create_simulation_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            return read_schema_revision(connection)
+    finally:
+        engine.dispose()
+
+
+def test_upgrade_check_downgrade_upgrade_cycle(disposable_database) -> None:
+    config = alembic_config()
+
+    command.upgrade(config, "head")
+    assert _revision(disposable_database.migrator_url) == HEAD_REVISION
+    command.check(config)
+
+    command.downgrade(config, "base")
+    assert _revision(disposable_database.migrator_url) is None
+
+    command.upgrade(config, "head")
+    assert _revision(disposable_database.migrator_url) == HEAD_REVISION
+    command.check(config)
+
+
+def test_the_version_table_lives_only_in_the_simulation_schema(
+    disposable_database,
+) -> None:
+    command.upgrade(alembic_config(), "head")
+
+    engine = create_engine(
+        disposable_database.superuser_url.replace(
+            "postgresql://", "postgresql+psycopg://", 1
+        )
+    )
+    try:
+        with engine.connect() as connection:
+            inspector = inspect(connection)
+            assert inspector.has_table("alembic_version", schema=SIMULATION_SCHEMA)
+            assert not inspector.has_table("alembic_version", schema="public")
+    finally:
+        engine.dispose()
+
+
+def test_an_unmigrated_database_reports_no_revision(disposable_database) -> None:
+    assert _revision(disposable_database.migrator_url) is None
+
+
+def test_the_runtime_role_reads_the_revision_but_cannot_change_the_schema(
+    disposable_database,
+) -> None:
+    command.upgrade(alembic_config(), "head")
+
+    assert _revision(disposable_database.runtime_url) == HEAD_REVISION
+    engine = create_simulation_engine(disposable_database.runtime_url)
+    try:
+        with (
+            pytest.raises(ProgrammingError, match="permission denied"),
+            engine.begin() as connection,
+        ):
+            connection.execute(
+                text("CREATE TABLE simulation.unowned (identifier integer)")
+            )
+        with (
+            pytest.raises(ProgrammingError, match="permission denied"),
+            engine.begin() as connection,
+        ):
+            connection.execute(
+                text("UPDATE simulation.alembic_version SET version_num = ''")
+            )
+    finally:
+        engine.dispose()

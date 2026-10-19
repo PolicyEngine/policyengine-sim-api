@@ -83,6 +83,7 @@ test:
 		projects/policyengine-simulation-gateway \
 		libs/policyengine-simulation-contract \
 		libs/policyengine-simulation-observability \
+		libs/policyengine-simulation-persistence \
 		libs/policyengine-stage12-persistence \
 		libs/policyengine-fastapi; do \
 		echo "Testing $$proj..."; \

@@ -90,6 +90,10 @@ class Settings:
     stage12_database_url: str = ""
     stage12_artifact_bucket: str = ""
     stage12_retention_days: int = 30
+    # The runtime role's URL for the Simulation Entrypoint's own schema. Empty
+    # outside deployed environments; nothing on the old-gateway or Stage 12
+    # paths reads it.
+    simulation_database_url: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -140,6 +144,7 @@ class Settings:
             stage12_database_url=os.getenv("STAGE12_DATABASE_URL", ""),
             stage12_artifact_bucket=os.getenv("STAGE12_ARTIFACT_BUCKET", ""),
             stage12_retention_days=int(os.getenv("STAGE12_RETENTION_DAYS", "30")),
+            simulation_database_url=os.getenv("SIMULATION_DATABASE_URL", ""),
         )
 
     @property
@@ -251,4 +256,9 @@ class Settings:
             "postgresql://"
         ):
             msg = "STAGE12_DATABASE_URL must use the canonical postgresql:// scheme."
+            raise ConfigurationError(msg)
+        if self.simulation_database_url and not self.simulation_database_url.startswith(
+            "postgresql://"
+        ):
+            msg = "SIMULATION_DATABASE_URL must use the canonical postgresql:// scheme."
             raise ConfigurationError(msg)

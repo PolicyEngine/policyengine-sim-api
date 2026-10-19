@@ -162,3 +162,42 @@ def test_stage12_database_url_requires_the_canonical_scheme(database_url):
 def test_stage12_retention_is_fixed_at_thirty_days():
     with pytest.raises(ConfigurationError, match="exactly 30"):
         make_settings(stage12_retention_days=31).validate()
+
+
+def test_the_simulation_database_is_optional(monkeypatch):
+    from policyengine_simulation_entry.config import Settings
+
+    monkeypatch.delenv("SIMULATION_DATABASE_URL", raising=False)
+    settings = Settings.from_env()
+
+    assert settings.simulation_database_url == ""
+    settings_with_gateway = make_settings(simulation_database_url="")
+    settings_with_gateway.validate()
+
+
+def test_the_simulation_database_url_is_read_from_the_environment(monkeypatch):
+    from policyengine_simulation_entry.config import Settings
+
+    monkeypatch.setenv(
+        "SIMULATION_DATABASE_URL",
+        "postgresql://simulation_runtime:secret@db.example:5432/postgres",
+    )
+
+    assert Settings.from_env().simulation_database_url == (
+        "postgresql://simulation_runtime:secret@db.example:5432/postgres"
+    )
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "postgres://simulation_runtime:secret@db.example/postgres",
+        "postgresql+psycopg://simulation_runtime:secret@db.example/postgres",
+        "mysql://simulation_runtime:secret@db.example/postgres",
+    ],
+)
+def test_the_simulation_database_url_must_be_canonical(database_url):
+    with pytest.raises(ConfigurationError, match="SIMULATION_DATABASE_URL") as error:
+        make_settings(simulation_database_url=database_url).validate()
+
+    assert "secret" not in str(error.value)

@@ -7,7 +7,8 @@
 per-file-target-version = { "scripts/**" = "py311" }
 # Directories that are not regular packages on purpose, so they have no
 # __init__.py: standalone scripts, the implicit namespace package that holds
-# scripts.rules, and proof fixtures. Ruff resolves modules as if each listed
+# scripts.rules, proof fixtures, and the Alembic chain, whose environment and
+# revisions Alembic loads by path. Ruff resolves modules as if each listed
 # directory, and every directory under it, had an __init__.py. This is a
 # top-level setting: ruff rejects it in [lint]. The executor's src/modal/utils
 # scripts are not listed, because ruff would then treat them as part of a
@@ -15,6 +16,7 @@ per-file-target-version = { "scripts/**" = "py311" }
 # an inline INP001 suppression instead.
 namespace-packages = [
     ".github/scripts",
+    "migrations",
     "projects/policyengine-simulation-executor/scripts",
     "rules/fixtures",
     "scripts",

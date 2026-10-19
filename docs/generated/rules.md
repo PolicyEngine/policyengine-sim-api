@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 39 | 1 | 0 | 14 | 54 |
+| mechanical | 43 | 1 | 0 | 14 | 58 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 40 of 54 rules.
+**Blocking:** 44 of 58 rules.
 
 ## Gaps
 
@@ -54,10 +54,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.deploy.smoke-tests-strict`
 - `sim.deploy.traffic-changes-exact`
 - `sim.deploy.workflow-shell-safety`
+- `sim.persistence.migrate-before-entrypoint`
+- `sim.persistence.migration-cycle`
 - `sim.process.rules-registry`
 - `sim.stage12.deployment-scope`
 - `sim.stage12.deployment-uses-api-schema`
-- `sim.stage12.no-migration-chain`
 - `sim.stage12.no-production-user-associations`
 - `sim.stage12.persistence-typed-dml-only`
 - `sim.stage12.production-lock-has-db-runtime`
@@ -92,7 +93,6 @@ flowchart LR
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sim.stage12.deployment-scope` | Main-branch deploys roll out Stage 12 in both environments; a Stage 12-only deploy runs candidate tests and the requested promotion but never redeploys existing Modal resources or runs the existing stack's complete integration suite; the Stage 12 worker can request a Google OIDC token. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.stage12.deployment-uses-api-schema` | Stage 12 deployment uses the API-owned schema directly, and the Stage 12 runtime it deploys uses typed DML without raw SQL or schema changes. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
-| `sim.stage12.no-migration-chain` | This repository has no schema migration chain (no Alembic); Stage 12 tables are migrated by policyengine-api. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_stage12_schema_authority.py` | `pr.yml:test` | **unproven** |
 | `sim.stage12.no-production-user-associations` | Stage 12 runtime modules never create production user associations (user_simulations or user_reports). | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_stage12_schema_authority.py` | `pr.yml:test` | **unproven** |
 | `sim.stage12.no-schema-ddl` | Simulation runtimes and the Stage 12 persistence library contain no schema DDL (CREATE, ALTER, DROP or TRUNCATE of tables, types, schemas or databases, or create_all); policyengine-api owns the schema. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_stage12_schema_authority.py` | `pr.yml:test` | yes |
 | `sim.stage12.persistence-typed-dml-only` | The Stage 12 persistence library and runtime use typed SQLAlchemy Core DML only: no raw SQL text, driver-level SQL or schema operations. | mechanical | enforced | yes | pytest `libs/policyengine-stage12-persistence/tests/test_source_boundaries.py` | `pr.yml:test` | **unproven** |
@@ -104,9 +104,8 @@ flowchart LR
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py["pytest projects/policyengine-simulation-entry/tests/test_deployment_assets.py"]
   j_CI_pr_yml_test["CI pr.yml:test"]
   r_sim_stage12_deployment_uses_api_schema("sim.stage12.deployment-uses-api-schema (enforced)")
-  r_sim_stage12_no_migration_chain("sim.stage12.no-migration-chain (enforced)")
-  e_pytest_projects_policyengine_simulation_entry_tests_test_stage12_schema_authority_py["pytest projects/policyengine-simulation-entry/tests/test_stage12_schema_authority.py"]
   r_sim_stage12_no_production_user_associations("sim.stage12.no-production-user-associations (enforced)")
+  e_pytest_projects_policyengine_simulation_entry_tests_test_stage12_schema_authority_py["pytest projects/policyengine-simulation-entry/tests/test_stage12_schema_authority.py"]
   r_sim_stage12_no_schema_ddl("sim.stage12.no-schema-ddl (enforced)")
   r_sim_stage12_persistence_typed_dml_only("sim.stage12.persistence-typed-dml-only (enforced)")
   e_pytest_libs_policyengine_stage12_persistence_tests_test_source_boundaries_py["pytest libs/policyengine-stage12-persistence/tests/test_source_boundaries.py"]
@@ -114,13 +113,44 @@ flowchart LR
   r_sim_stage12_deployment_scope --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py --> j_CI_pr_yml_test
   r_sim_stage12_deployment_uses_api_schema --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
-  r_sim_stage12_no_migration_chain --> e_pytest_projects_policyengine_simulation_entry_tests_test_stage12_schema_authority_py
-  e_pytest_projects_policyengine_simulation_entry_tests_test_stage12_schema_authority_py --> j_CI_pr_yml_test
   r_sim_stage12_no_production_user_associations --> e_pytest_projects_policyengine_simulation_entry_tests_test_stage12_schema_authority_py
+  e_pytest_projects_policyengine_simulation_entry_tests_test_stage12_schema_authority_py --> j_CI_pr_yml_test
   r_sim_stage12_no_schema_ddl --> e_pytest_projects_policyengine_simulation_entry_tests_test_stage12_schema_authority_py
   r_sim_stage12_persistence_typed_dml_only --> e_pytest_libs_policyengine_stage12_persistence_tests_test_source_boundaries_py
   e_pytest_libs_policyengine_stage12_persistence_tests_test_source_boundaries_py --> j_CI_pr_yml_test
   r_sim_stage12_production_lock_has_db_runtime --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
+```
+
+## Simulation persistence
+
+| Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sim.persistence.executor-independent` | The Modal executor and gateway never declare, lock or import policyengine-simulation-persistence; only the Simulation Entrypoint and the migration job install it. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
+| `sim.persistence.migrate-before-entrypoint` | Each deployment applies the simulation chain in its own job, the only one that receives SIMULATION_MIGRATION_DATABASE_URL, before the entrypoint candidate deploys; the entrypoint receives SIMULATION_DATABASE_URL as a pinned Secret Manager version; and the candidate smoke requires the database at the image's revision. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_simulation_database_deployment.py` | `pr.yml:test` | **unproven** |
+| `sim.persistence.migration-cycle` | On a fresh PostgreSQL, the simulation chain upgrades to its head, passes alembic check, downgrades to base and upgrades again, run by a non-superuser migrator, and the runtime role can read the revision but cannot change the schema. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_migration_cycle.py` | `pr.yml:simulation-database` | **unproven** |
+| `sim.persistence.no-modal-database-credentials` | No Modal secret, Modal deployment or Modal application receives SIMULATION_DATABASE_URL or SIMULATION_MIGRATION_DATABASE_URL; the Stage 12 comparison's own database secret is the only database credential Modal holds. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
+| `sim.persistence.one-migration-chain` | The simulation schema changes only through the one Alembic chain at migrations/ (configured by migrations/alembic.ini, versioned in simulation.alembic_version); no other Alembic configuration, environment or revision directory exists, and runtime source code contains no schema DDL. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
+
+```mermaid
+flowchart LR
+  r_sim_persistence_executor_independent("sim.persistence.executor-independent (enforced)")
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py["pytest libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py"]
+  j_CI_pr_yml_test["CI pr.yml:test"]
+  r_sim_persistence_migrate_before_entrypoint("sim.persistence.migrate-before-entrypoint (enforced)")
+  e_pytest_projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py["pytest projects/policyengine-simulation-entry/tests/test_simulation_database_deployment.py"]
+  r_sim_persistence_migration_cycle("sim.persistence.migration-cycle (enforced)")
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_migration_cycle_py["pytest libs/policyengine-simulation-persistence/tests/test_migration_cycle.py"]
+  j_CI_pr_yml_simulation_database["CI pr.yml:simulation-database"]
+  r_sim_persistence_no_modal_database_credentials("sim.persistence.no-modal-database-credentials (enforced)")
+  r_sim_persistence_one_migration_chain("sim.persistence.one-migration-chain (enforced)")
+  r_sim_persistence_executor_independent --> e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py --> j_CI_pr_yml_test
+  r_sim_persistence_migrate_before_entrypoint --> e_pytest_projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py
+  e_pytest_projects_policyengine_simulation_entry_tests_test_simulation_database_deployment_py --> j_CI_pr_yml_test
+  r_sim_persistence_migration_cycle --> e_pytest_libs_policyengine_simulation_persistence_tests_test_migration_cycle_py
+  e_pytest_libs_policyengine_simulation_persistence_tests_test_migration_cycle_py --> j_CI_pr_yml_simulation_database
+  r_sim_persistence_no_modal_database_credentials --> e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py
+  r_sim_persistence_one_migration_chain --> e_pytest_libs_policyengine_simulation_persistence_tests_test_ownership_boundaries_py
 ```
 
 ## Deployment pipeline

@@ -1,4 +1,8 @@
-"""Keep Stage 12 database schema ownership outside simulation runtimes."""
+"""Keep Stage 12 database schema ownership outside simulation runtimes.
+
+The Simulation Entrypoint's own schema has its own ownership rules, checked in
+libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py.
+"""
 
 from __future__ import annotations
 
@@ -38,12 +42,6 @@ def test_rule_proof_stage12_no_schema_ddl() -> None:
     good = (fixtures / "good_stage12_runtime.py").read_text(encoding="utf-8")
     assert DDL_PATTERN.search(bad) is not None
     assert DDL_PATTERN.search(good) is None
-
-
-def test_simulation_repository_has_no_schema_migration_chain() -> None:
-    assert not list(REPOSITORY_ROOT.glob("alembic*.ini"))
-    assert not list(REPOSITORY_ROOT.rglob("alembic/versions"))
-    assert not list(REPOSITORY_ROOT.rglob("migrations/versions"))
 
 
 def test_stage12_runtime_cannot_create_production_user_associations() -> None:
