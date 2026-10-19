@@ -311,91 +311,6 @@ def _child_failure_detail(
     return detail
 
 
-def _observe_simulations(
-    *,
-    calls: dict[str, ChildCall],
-    simulations: dict[str, PlannedSimulationExecutionInput],
-    descriptors: dict[str, SimulationArtifactDescriptor],
-    store: ComparisonStore,
-    runtime: ObservabilityRuntime | None,
-    progress: StageProgress,
-    wait_stage_name: str,
-    sleep: Callable[[float], None],
-    monotonic: Callable[[], float],
-    deadline: float,
-    timeout_seconds: float,
-) -> None:
-    pending = set(calls)
-    poll_interval = SIMULATION_POLL_INITIAL_SECONDS
-
-    while pending:
-        progress_made = False
-        for role in sorted(pending):
-            call = calls[role]
-            try:
-                # The probe records the child's role, so a failure names it.
-                with progress.stage(wait_stage_name, role=role):
-                    result = call.get(timeout=0)
-                    descriptor = SimulationArtifactDescriptor.model_validate(result)
-            except TimeoutError:
-                continue
-            except Exception as error:  # noqa: BLE001  # a child call's failure can be any exception type; it is recorded and stops the other child
-                detail = _child_failure_detail(
-                    error=error,
-                    simulation=simulations[role],
-                    store=store,
-                    runtime=runtime,
-                    progress=progress,
-                )
-                _cancel_pending_simulations(
-                    calls=calls,
-                    simulations=simulations,
-                    roles=pending - {role},
-                    store=store,
-                    detail=_cancellation(f"the {role} simulation failed"),
-                )
-                raise Stage12ExecutionError(detail) from None
-            descriptors[role] = descriptor
-            pending.remove(role)
-            progress_made = True
-
-        if not pending:
-            return
-        remaining_seconds = deadline - monotonic()
-        if remaining_seconds <= 0:
-            detail = Stage12FailureDetail(
-                error_code="simulation_wait_timeout",
-                error_summary=(
-                    "Stage 12 simulations did not finish within "
-                    f"{timeout_seconds:g} seconds of the report coordinator "
-                    "starting."
-                ),
-            )
-            wait_timeout = Stage12ExecutionError(detail)
-            report_original_failure(
-                wait_timeout,
-                runtime=runtime,
-                failure_scope="child_wait_timeout",
-            )
-            _cancel_pending_simulations(
-                calls=calls,
-                simulations=simulations,
-                roles=pending,
-                store=store,
-                detail=_cancellation(
-                    f"the {timeout_seconds:g}-second wait window closed"
-                ),
-            )
-            raise wait_timeout
-        # Never sleep past the deadline, so the window closes on time.
-        sleep(min(poll_interval, remaining_seconds))
-        poll_interval = (
-            SIMULATION_POLL_INITIAL_SECONDS
-            if progress_made
-            else _next_poll_interval(poll_interval)
-        )
-
-
 def _child_record(
     *,
     simulation: PlannedSimulationExecutionInput,
@@ -866,18 +781,88 @@ class _ReportCoordination:
         unfinished children and raises Stage12ExecutionError.
         """
         with self.span(Stage.STAGE12_CHILD_WAIT):
-            _observe_simulations(
-                calls=calls,
-                simulations=self.simulations,
-                descriptors=descriptors,
-                store=self.persistence,
-                runtime=self.runtime,
-                progress=self.progress,
-                wait_stage_name=self.stage_plan.name(Stage.STAGE12_CHILD_WAIT),
-                sleep=self.dependencies.sleep,
-                monotonic=self.dependencies.monotonic,
-                deadline=self.child_wait_deadline,
-                timeout_seconds=self.dependencies.wait_timeout_seconds,
+            self._observe_children(calls, descriptors)
+
+    def _observe_children(
+        self,
+        calls: dict[str, ChildCall],
+        descriptors: dict[str, SimulationArtifactDescriptor],
+    ) -> None:
+        """Probe every unfinished child, without blocking, until each finishes.
+
+        Between passes the coordinator sleeps, backing off while no child
+        finishes, and never past the shared wait window.
+        """
+        wait_stage_name = self.stage_plan.name(Stage.STAGE12_CHILD_WAIT)
+        timeout_seconds = self.dependencies.wait_timeout_seconds
+        pending = set(calls)
+        poll_interval = SIMULATION_POLL_INITIAL_SECONDS
+
+        while pending:
+            progress_made = False
+            for role in sorted(pending):
+                call = calls[role]
+                try:
+                    # The probe records the child's role, so a failure names it.
+                    with self.progress.stage(wait_stage_name, role=role):
+                        result = call.get(timeout=0)
+                        descriptor = SimulationArtifactDescriptor.model_validate(result)
+                except TimeoutError:
+                    continue
+                except Exception as error:  # noqa: BLE001  # a child call's failure can be any exception type; it is recorded and stops the other child
+                    detail = _child_failure_detail(
+                        error=error,
+                        simulation=self.simulations[role],
+                        store=self.persistence,
+                        runtime=self.runtime,
+                        progress=self.progress,
+                    )
+                    _cancel_pending_simulations(
+                        calls=calls,
+                        simulations=self.simulations,
+                        roles=pending - {role},
+                        store=self.persistence,
+                        detail=_cancellation(f"the {role} simulation failed"),
+                    )
+                    raise Stage12ExecutionError(detail) from None
+                descriptors[role] = descriptor
+                pending.remove(role)
+                progress_made = True
+
+            if not pending:
+                return
+            remaining_seconds = self.child_wait_deadline - self.dependencies.monotonic()
+            if remaining_seconds <= 0:
+                detail = Stage12FailureDetail(
+                    error_code="simulation_wait_timeout",
+                    error_summary=(
+                        "Stage 12 simulations did not finish within "
+                        f"{timeout_seconds:g} seconds of the report coordinator "
+                        "starting."
+                    ),
+                )
+                wait_timeout = Stage12ExecutionError(detail)
+                report_original_failure(
+                    wait_timeout,
+                    runtime=self.runtime,
+                    failure_scope="child_wait_timeout",
+                )
+                _cancel_pending_simulations(
+                    calls=calls,
+                    simulations=self.simulations,
+                    roles=pending,
+                    store=self.persistence,
+                    detail=_cancellation(
+                        f"the {timeout_seconds:g}-second wait window closed"
+                    ),
+                )
+                raise wait_timeout
+            # Never sleep past the deadline, so the window closes on time.
+            self.dependencies.sleep(min(poll_interval, remaining_seconds))
+            poll_interval = (
+                SIMULATION_POLL_INITIAL_SECONDS
+                if progress_made
+                else _next_poll_interval(poll_interval)
             )
 
     def _read_retained_outputs(
