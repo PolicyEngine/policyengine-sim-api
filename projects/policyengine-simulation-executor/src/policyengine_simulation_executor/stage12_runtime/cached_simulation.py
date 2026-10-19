@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from policyengine.core import Simulation
 from policyengine.core.scoping_strategy import RegionGroupStrategy
+from policyengine.core.simulation import _cache
 from policyengine_simulation_contract.stage12_execution import (
     PlannedSimulationExecutionInput,
     SimulationRole,
@@ -14,11 +15,12 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from pydantic import PrivateAttr
 
-from policyengine_simulation_executor.stage12_runtime.output_planning import (
-    validate_output_frames,
+from policyengine_simulation_executor.stage12_cache.keys import (
+    Stage12BaselineCacheIdentity,
+    collect_baseline_identity,
 )
 
-from .keys import Stage12BaselineCacheIdentity, collect_baseline_identity
+from .output_planning import validate_output_frames
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -98,9 +100,11 @@ class Stage12CachedSimulation(Simulation):
     def ensure(self) -> None:
         """Load or calculate the output, then check any loaded file.
 
-        A file that fails the output plan is recalculated, saved again and
-        replaces the in-memory cache entry. Raises ``RuntimeError`` when a file
-        was loaded but no output plan was configured.
+        A file that fails the output plan is recalculated and saved again, and
+        .py's in-memory cache is cleared, because it still holds the incomplete
+        output and offers no way to replace one entry. The next ``ensure`` then
+        loads the saved file. Raises ``RuntimeError`` when a file was loaded but
+        no output plan was configured.
         """
         self._computed_this_process = False
         super().ensure()
@@ -123,12 +127,6 @@ class Stage12CachedSimulation(Simulation):
             self._record_outcome(CACHE_INCOMPLETE)
             self.run()
             self.save()
-            from policyengine.core.simulation import (  # noqa: PLC0415  # resolved per call, as .py's Simulation.ensure resolves it, so a patched _cache is the one updated
-                _cache,
-            )
-
-            storage_id = getattr(self, "storage_id", self.id)
-            _cache._cache.pop(storage_id, None)  # noqa: SLF001  # LRUCache has no public removal, and add() keeps an existing entry
-            _cache.add(storage_id, self)
+            _cache.clear()
             return
         self._record_outcome(CACHE_HIT)

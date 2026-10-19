@@ -18,7 +18,7 @@ from policyengine_simulation_executor.stage12_cache.keys import (
     collect_baseline_identity,
     collect_dataset_identity,
 )
-from policyengine_simulation_executor.stage12_cache.runtime import (
+from policyengine_simulation_executor.stage12_runtime.cached_simulation import (
     CACHE_HIT,
     CACHE_INCOMPLETE,
     CACHE_MISS,
@@ -288,3 +288,28 @@ def test_incomplete_cache_recalculates(monkeypatch) -> None:
 
     assert model.stage12_cache_outcome == CACHE_INCOMPLETE
     assert "household_net_income" in model.output_dataset.data.entity_data["household"]
+
+
+def test_incomplete_cache_leaves_no_incomplete_output_in_memory(monkeypatch) -> None:
+    """.py cached the incomplete output when it loaded the file; it is cleared."""
+    from policyengine.core.simulation import _cache
+
+    def load_incomplete_file_and_cache_it(simulation: Simulation) -> None:
+        simulation.output_dataset = _output(complete=False)
+        _cache.add(simulation.storage_id, simulation.model_copy())
+
+    model = _cached_model()
+    monkeypatch.setattr(Simulation, "ensure", load_incomplete_file_and_cache_it)
+    monkeypatch.setattr(
+        Simulation,
+        "run",
+        lambda self: setattr(self, "output_dataset", _output()),
+    )
+    monkeypatch.setattr(Simulation, "save", lambda self: None)
+    try:
+        model.ensure()
+
+        assert model.stage12_cache_outcome == CACHE_INCOMPLETE
+        assert _cache.get(model.storage_id) is None
+    finally:
+        _cache.clear()

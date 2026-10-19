@@ -12,6 +12,8 @@ from policyengine_simulation_observability.stages import (
     Stage,
 )
 
+from policyengine_simulation_executor.simulation_runtime import _country_module
+
 from .failure_recording import report_failure
 from .failures import Stage12CancellationError, Stage12ExecutionError
 from .partition import stage12_region_groups_for_model
@@ -19,6 +21,7 @@ from .segmentation import build_segment_inputs, merge_segment_results
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+    from types import ModuleType
 
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.stage12_execution import (
@@ -35,6 +38,14 @@ POLL_INTERVAL_MAX_SECONDS = 8.0
 POLL_INTERVAL_BACKOFF_FACTOR = 2.0
 
 
+def _require_call(call: modal.FunctionCall | None) -> modal.FunctionCall:
+    """Return ``call``, raising ``RuntimeError`` when a dispatch returned none."""
+    if call is None:
+        msg = "Stage 12 segment dispatch returned no call"
+        raise RuntimeError(msg)
+    return call
+
+
 def _next_backoff(current: float, *, maximum: float) -> float:
     return min(current * POLL_INTERVAL_BACKOFF_FACTOR, maximum)
 
@@ -48,7 +59,7 @@ class Stage12SegmentRunner:
         *,
         app_name: str,
         runtime: ObservabilityRuntime,
-        modal_module: Any = modal,  # noqa: ANN401  # the Modal SDK module, or a test stand-in with the same Function attribute
+        modal_module: ModuleType = modal,
         groups: Sequence[Sequence[str]] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
@@ -75,10 +86,6 @@ class Stage12SegmentRunner:
     def _groups(self) -> list[list[str]]:
         if self.groups is not None:
             return self.groups
-        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # loads the v1 runtime only when the groups come from the installed model
-            _country_module,
-        )
-
         country = self.simulation.geography.country
         return stage12_region_groups_for_model(
             country,
@@ -111,10 +118,7 @@ class Stage12SegmentRunner:
                         segment.model_dump(mode="python"),
                         observability_context=self.runtime.capture_context(),
                     )
-                if call is None:
-                    msg = "Stage 12 segment dispatch returned no call"
-                    raise RuntimeError(msg)  # noqa: TRY301  # the handler below cancels the segments already started
-                handles.append((segment.segment_index, call))
+                handles.append((segment.segment_index, _require_call(call)))
         except Exception:
             self._cancel_all(handles)
             raise

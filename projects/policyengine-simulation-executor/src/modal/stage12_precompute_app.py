@@ -11,6 +11,20 @@ from policyengine_simulation_executor.hf_access_validation import (
     HF_RUNTIME_ENV_NAME,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+from policyengine_simulation_executor.stage12_cache.models import (
+    BaselinePlanEntry,
+    DatasetPlanEntry,
+    PrecomputePlan,
+)
+from policyengine_simulation_executor.stage12_cache.precompute import (
+    build_dataset_impl,
+    compute_baseline_impl,
+    plan_artifacts_impl,
+    publish_manifest_impl,
+    run_precompute,
+    verify_determinism_impl,
+)
+from policyengine_simulation_executor.stage12_cache.store import resolve_cache_bucket
 
 import modal
 
@@ -78,10 +92,6 @@ precompute_image = (
 )
 def plan_artifacts(bucket: str) -> dict:
     """Plan the cache's datasets and baselines, marking those ``bucket`` holds."""
-    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        plan_artifacts_impl,
-    )
-
     return plan_artifacts_impl(bucket).model_dump()
 
 
@@ -94,13 +104,6 @@ def plan_artifacts(bucket: str) -> dict:
 )
 def build_dataset(bucket: str, expected: dict) -> dict:
     """Build and upload the planned dataset ``expected``; return the build result."""
-    from policyengine_simulation_executor.stage12_cache.models import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        DatasetPlanEntry,
-    )
-    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        build_dataset_impl,
-    )
-
     return build_dataset_impl(
         bucket, DatasetPlanEntry.model_validate(expected)
     ).model_dump()
@@ -115,13 +118,6 @@ def build_dataset(bucket: str, expected: dict) -> dict:
 )
 def compute_baseline(bucket: str, expected: dict) -> dict:
     """Calculate and upload the planned baseline ``expected``; return the result."""
-    from policyengine_simulation_executor.stage12_cache.models import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        BaselinePlanEntry,
-    )
-    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        compute_baseline_impl,
-    )
-
     return compute_baseline_impl(
         bucket, BaselinePlanEntry.model_validate(expected)
     ).model_dump()
@@ -136,14 +132,6 @@ def compute_baseline(bucket: str, expected: dict) -> dict:
 )
 def verify_determinism(bucket: str, plan: dict, expected: dict) -> dict:
     """Recalculate the stored baseline ``expected``; record a pass for ``plan``."""
-    from policyengine_simulation_executor.stage12_cache.models import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        BaselinePlanEntry,
-        PrecomputePlan,
-    )
-    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        verify_determinism_impl,
-    )
-
     return verify_determinism_impl(
         bucket,
         PrecomputePlan.model_validate(plan),
@@ -160,26 +148,12 @@ def verify_determinism(bucket: str, plan: dict, expected: dict) -> dict:
 )
 def publish_manifest(bucket: str, plan: dict) -> str:
     """Publish the cache manifest for ``plan`` and return its digest."""
-    from policyengine_simulation_executor.stage12_cache.models import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        PrecomputePlan,
-    )
-    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        publish_manifest_impl,
-    )
-
     return publish_manifest_impl(bucket, PrecomputePlan.model_validate(plan))
 
 
 @app.local_entrypoint()
 def main() -> None:
     """Build any missing cache files, check determinism and publish the manifest."""
-    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # loaded only when the local entrypoint runs, not at deploy time
-        run_precompute,
-    )
-    from policyengine_simulation_executor.stage12_cache.store import (  # noqa: PLC0415  # loaded only when the local entrypoint runs, not at deploy time
-        resolve_cache_bucket,
-    )
-
     run_precompute(
         resolve_cache_bucket(),
         plan_artifacts=plan_artifacts,

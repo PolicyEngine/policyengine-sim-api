@@ -12,7 +12,21 @@ from typing import TYPE_CHECKING, Any
 from policyengine_simulation_executor.release_bundle import (
     resolve_local_bundle_dataset_path,
 )
+from policyengine_simulation_executor.simulation_runtime import (
+    _normalise_policy,
+    resolve_data_folder,
+)
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+from policyengine_simulation_executor.stage12_cache.models import CacheManifest
+from policyengine_simulation_executor.stage12_cache.precompute import (
+    _scoped_planned_simulation,
+)
+from policyengine_simulation_executor.stage12_runtime.partition import (
+    US_REGION_GROUPS,
+)
+from policyengine_simulation_executor.stage12_runtime.simulation import (
+    calculate_simulation_frames,
+)
 
 if TYPE_CHECKING:
     from policyengine_simulation_contract.stage12_bundle import CountryId
@@ -67,10 +81,6 @@ def _run_non_serving_calculation(country: CountryId) -> None:
     extra_variables = ["household_net_income"]
     options: dict[str, Any] = {}
     if country == "us":
-        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # the v1 runtime loads only for the US validation reform
-            _normalise_policy,
-        )
-
         people = [
             {
                 "age": 40,
@@ -131,22 +141,6 @@ def _check_uk_local_authority_dataset(dataset_path: str) -> None:
 
 def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
     """Validate the baked manifest and require one real baseline cache hit."""
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # loaded only by the US worker's cache check, not by UK workers or at deploy time
-        resolve_data_folder,
-    )
-    from policyengine_simulation_executor.stage12_cache.models import (  # noqa: PLC0415  # loaded only by the US worker's cache check, not by UK workers or at deploy time
-        CacheManifest,
-    )
-    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # loaded only by the US worker's cache check, not by UK workers or at deploy time
-        _scoped_planned_simulation,
-    )
-    from policyengine_simulation_executor.stage12_runtime.partition import (  # noqa: PLC0415  # loaded only by the US worker's cache check, not by UK workers or at deploy time
-        US_REGION_GROUPS,
-    )
-    from policyengine_simulation_executor.stage12_runtime.simulation import (  # noqa: PLC0415  # loaded only by the US worker's cache check, not by UK workers or at deploy time
-        calculate_simulation_frames,
-    )
-
     data_folder = Path(resolve_data_folder())
     manifest_path = data_folder / ".stage12-cache-manifest.json"
     payload = manifest_path.read_bytes()

@@ -22,7 +22,16 @@ from policyengine_simulation_contract.stage12_execution import (
     stage12_output_plan_sha256,
 )
 
+from policyengine_simulation_executor import simulation_runtime
+from policyengine_simulation_executor.simulation_runtime import (
+    _country_module,
+    _resolve_region,
+)
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+from policyengine_simulation_executor.stage12_runtime import (
+    simulation as stage12_simulation,
+)
+from policyengine_simulation_executor.stage12_runtime.cached_simulation import CACHE_HIT
 from policyengine_simulation_executor.stage12_runtime.output_planning import (
     plan_simulation_input,
     resolve_report_output_plan,
@@ -50,14 +59,14 @@ from .models import (
     DeterminismVerdict,
     ManifestArtifact,
     PrecomputePlan,
-    RemoteFunction,
     WorkSelection,
 )
-from .runtime import CACHE_HIT
 from .store import Stage12CacheStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+    import modal
 
 PRECOMPUTE_YEARS = (2026, 2027, 2025)
 MANIFEST_DIGEST_PREFIX = "STAGE12_CACHE_MANIFEST_DIGEST="
@@ -147,10 +156,6 @@ def _scoped_planned_simulation(
 
 
 def _scope_key(year: int, group: tuple[str, ...]) -> str:
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
-        _country_module,
-        _resolve_region,
-    )
 
     params = {
         "country": "us",
@@ -270,11 +275,6 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
     Raises ``RuntimeError`` when the installed bundle gives another identity
     than the plan, or when the cache path already holds other data.
     """
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
-        _country_module,
-        resolve_data_folder,
-    )
-
     resolved = load_stage12_bundle()
     identity = collect_dataset_identity(resolved, country="us", year=expected.year)
     if identity.store_path != expected.path:
@@ -284,9 +284,9 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
     _country_module("us").ensure_datasets(
         datasets=[identity.dataset],
         years=[expected.year],
-        data_folder=resolve_data_folder(),
+        data_folder=simulation_runtime.resolve_data_folder(),
     )
-    local_path = Path(resolve_data_folder()) / identity.filename
+    local_path = Path(simulation_runtime.resolve_data_folder()) / identity.filename
     uploaded, stored = Stage12CacheStore(bucket).upload_file(expected.path, local_path)
     return DatasetBuildResult(
         **stored.model_dump(),
@@ -297,12 +297,9 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
 
 
 def _ensure_dataset_file(bucket: str, year: int) -> None:
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
-        resolve_data_folder,
-    )
 
     identity = collect_dataset_identity(load_stage12_bundle(), country="us", year=year)
-    local_path = Path(resolve_data_folder()) / identity.filename
+    local_path = Path(simulation_runtime.resolve_data_folder()) / identity.filename
     if not local_path.exists():
         Stage12CacheStore(bucket).download_file(identity.store_path, local_path)
 
@@ -316,13 +313,6 @@ def compute_baseline_impl(
     when .py saved no file under the planned name, or when the cache path
     already holds other data.
     """
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
-        resolve_data_folder,
-    )
-    from policyengine_simulation_executor.stage12_runtime.simulation import (  # noqa: PLC0415  # resolved per call so tests can patch stage12_runtime.simulation.calculate_simulation_frames
-        calculate_simulation_frames,
-    )
-
     simulation, identity = _baseline_identity(
         expected.year, tuple(expected.region_codes)
     )
@@ -331,8 +321,8 @@ def compute_baseline_impl(
         raise RuntimeError(msg)
     _ensure_dataset_file(bucket, expected.year)
     started = time.monotonic()
-    calculate_simulation_frames(simulation)
-    local_path = Path(resolve_data_folder()) / identity.filename
+    stage12_simulation.calculate_simulation_frames(simulation)
+    local_path = Path(simulation_runtime.resolve_data_folder()) / identity.filename
     if not local_path.exists():
         msg = (
             f"Stage 12 baseline calculation produced no cache file {identity.filename}"
@@ -354,13 +344,6 @@ def verify_determinism_impl(
     bucket: str, plan: PrecomputePlan, expected: BaselinePlanEntry
 ) -> DeterminismVerdict:
     """Compare a stored baseline with a fresh calculation and record a pass."""
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
-        resolve_data_folder,
-    )
-    from policyengine_simulation_executor.stage12_runtime.simulation import (  # noqa: PLC0415  # resolved per call so tests can patch stage12_runtime.simulation.calculate_simulation_frames
-        calculate_simulation_frames,
-    )
-
     if expected not in plan.baselines:
         msg = "Stage 12 determinism probe is not a planned baseline"
         raise RuntimeError(msg)
@@ -369,10 +352,10 @@ def verify_determinism_impl(
     baseline = _scoped_planned_simulation(expected.year, group)
     reform = _scoped_planned_simulation(expected.year, group, reform=True)
     _ensure_dataset_file(bucket, expected.year)
-    local_path = Path(resolve_data_folder()) / expected.filename
+    local_path = Path(simulation_runtime.resolve_data_folder()) / expected.filename
     if not local_path.exists():
         store.download_file(expected.path, local_path)
-    cached_calculation = calculate_simulation_frames(baseline)
+    cached_calculation = stage12_simulation.calculate_simulation_frames(baseline)
     if cached_calculation.cache_outcome != CACHE_HIT:
         msg = (
             "Stage 12 determinism check did not load the stored baseline "
@@ -380,7 +363,7 @@ def verify_determinism_impl(
         )
         raise RuntimeError(msg)
     cached = cached_calculation.frames
-    fresh = calculate_simulation_frames(reform).frames
+    fresh = stage12_simulation.calculate_simulation_frames(reform).frames
     differences = []
     for entity in sorted(set(cached) | set(fresh)):
         left = cached.get(entity)
@@ -461,11 +444,11 @@ def publish_manifest_impl(bucket: str, plan: PrecomputePlan) -> str:
 def run_precompute(
     bucket: str,
     *,
-    plan_artifacts: RemoteFunction,
-    build_dataset: RemoteFunction,
-    compute_baseline: RemoteFunction,
-    verify_determinism: RemoteFunction,
-    publish_manifest: RemoteFunction,
+    plan_artifacts: modal.Function,
+    build_dataset: modal.Function,
+    compute_baseline: modal.Function,
+    verify_determinism: modal.Function,
+    publish_manifest: modal.Function,
     echo: Callable[[str], None] = print,
 ) -> str:
     """Build the missing cache files, check determinism, publish the manifest.

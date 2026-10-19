@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
+from policyengine_simulation_executor import stage12_runtime
 from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
     HF_RUNTIME_ENV_NAME,
@@ -22,6 +23,8 @@ from policyengine_simulation_executor.stage12_bundle import (
     assertion_values,
     load_stage12_bundle,
 )
+from policyengine_simulation_executor.stage12_cache.models import CacheManifest
+from policyengine_simulation_executor.stage12_cache.store import Stage12CacheStore
 from policyengine_simulation_executor.stage12_timeouts import (
     COORDINATOR_TIMEOUT_SECONDS,
     UK_SIMULATION_TIMEOUT_SECONDS,
@@ -76,13 +79,6 @@ def _deploy_time_cache_inputs() -> tuple[str, dict | None]:
     digest = os.environ.get("STAGE12_CACHE_MANIFEST_DIGEST")
     if not digest:
         return bucket, None
-    from policyengine_simulation_executor.stage12_cache.models import (  # noqa: PLC0415  # only the deploying machine reads the cache manifest
-        CacheManifest,
-    )
-    from policyengine_simulation_executor.stage12_cache.store import (  # noqa: PLC0415  # only the deploying machine reads the cache manifest
-        Stage12CacheStore,
-    )
-
     payload = Stage12CacheStore(bucket).read_manifest(digest)
     if payload is None:
         msg = "Stage 12 cache manifest is unavailable"
@@ -267,10 +263,6 @@ def run_single_simulation_segment_us(
     observability_context: dict | None = None,
 ) -> dict:
     """Calculate one US region-group segment and return its artifact descriptor."""
-    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        calculate_segment,
-    )
-
     runtime = init_process_observability(
         service_name="policyengine-stage12-us-segment-worker",
         service_role="stage12_segment_worker",
@@ -290,9 +282,9 @@ def run_single_simulation_segment_us(
             },
             remote_context=propagated,
         ):
-            result = calculate_segment(payload, runtime=runtime).model_dump(
-                mode="python"
-            )
+            result = stage12_runtime.calculate_segment(
+                payload, runtime=runtime
+            ).model_dump(mode="python")
         if result is None:
             msg = "Stage 12 segment calculation returned no result"
             raise RuntimeError(msg)

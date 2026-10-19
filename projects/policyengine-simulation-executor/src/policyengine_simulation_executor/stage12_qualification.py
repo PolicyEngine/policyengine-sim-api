@@ -29,6 +29,7 @@ from pydantic import BaseModel, ConfigDict
 from policyengine_simulation_executor.simulation_microdata import (
     rebuild_entity_frame,
 )
+from policyengine_simulation_executor.simulation_runtime import _country_module
 from policyengine_simulation_executor.stage12_artifacts import (
     canonical_json_bytes,
     serialize_simulation_frames,
@@ -100,10 +101,6 @@ def _run_stage12_simulation_for_qualification(
         return _calculation(run_monolithic(simulation))
     selected_groups = groups
     if selected_groups is None:
-        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # loads the v1 runtime only when the groups come from the installed model
-            _country_module,
-        )
-
         country = simulation.geography.country
         selected_groups = stage12_region_groups_for_model(
             country,

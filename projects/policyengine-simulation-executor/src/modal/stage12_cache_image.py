@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import json
+import os
+from hashlib import sha256
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+from google.oauth2 import service_account
 
 if TYPE_CHECKING:
     from google.cloud.storage import Client
@@ -12,13 +18,6 @@ def fetch_stage12_cache(
     bucket: str, manifest: dict | None, *, client: Client | None = None
 ) -> None:
     """Download and verify every manifest-listed cache file into the image."""
-    # Image.run_function runs this before the project source is added to the
-    # image, so the function imports everything it needs itself.
-    import json  # noqa: PLC0415  # self-contained image-build function
-    import os  # noqa: PLC0415  # self-contained image-build function
-    from hashlib import sha256  # noqa: PLC0415  # self-contained image-build function
-    from pathlib import Path  # noqa: PLC0415  # self-contained image-build function
-
     if not bucket or not manifest:
         msg = "Stage 12 cache deployment has no bucket or manifest"
         raise RuntimeError(msg)
@@ -37,7 +36,7 @@ def fetch_stage12_cache(
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, list):
         msg = "Stage 12 cache manifest has no artifact list"
-        raise RuntimeError(msg)  # noqa: TRY004  # a malformed manifest fails the image build like every other manifest check
+        raise TypeError(msg)
     type_counts = {
         kind: sum(
             item.get("type") == kind for item in artifacts if isinstance(item, dict)
@@ -65,10 +64,6 @@ def fetch_stage12_cache(
         if raw_credentials:
             decoded = json.loads(raw_credentials)
             info = json.loads(decoded) if isinstance(decoded, str) else decoded
-            from google.oauth2 import (  # noqa: PLC0415  # self-contained image-build function
-                service_account,
-            )
-
             credentials = {
                 "credentials": service_account.Credentials.from_service_account_info(
                     info
@@ -85,7 +80,7 @@ def fetch_stage12_cache(
     for artifact in artifacts:
         if not isinstance(artifact, dict):
             msg = "Stage 12 cache artifact entry is invalid"
-            raise RuntimeError(msg)  # noqa: TRY004  # a malformed manifest fails the image build like every other manifest check
+            raise TypeError(msg)
         filename = artifact.get("filename")
         path = artifact.get("path")
         expected_digest = artifact.get("content_sha256")

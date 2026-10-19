@@ -11,13 +11,16 @@ from .failures import (
     validate_policy_periods,
 )
 from .fanout import Stage12SegmentRunner, run_segmented_simulation
-from .partition import stage12_region_groups, stage12_region_groups_for_model
+from .partition import (
+    should_segment_simulation,
+    stage12_region_groups,
+    stage12_region_groups_for_model,
+)
 from .segment_contracts import Stage12SegmentInput, Stage12SegmentResult
 from .segmentation import (
     build_segment_inputs,
     calculate_segment,
     merge_segment_results,
-    should_segment_simulation,
 )
 from .simulation import (
     SimulationCalculation,

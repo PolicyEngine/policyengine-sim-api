@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Protocol
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -142,23 +142,3 @@ class CacheManifest(StrictCacheModel):
     def canonical_payload(self) -> dict[str, Any]:
         """Return the JSON payload that is hashed and stored, keyed by ``schema``."""
         return self.model_dump(mode="json", by_alias=True)
-
-
-class SpawnedCall(Protocol):
-    """The handle a spawned Modal call returns."""
-
-    def get(self) -> object:
-        """Block until the call finishes and return its result."""
-        ...
-
-
-class RemoteFunction(Protocol):
-    """The part of a Modal function handle the precompute run uses."""
-
-    def remote(self, *args: Any) -> object:  # noqa: ANN401  # mirrors modal.Function.remote, whose parameters differ per function
-        """Run the function in its container and block until it returns."""
-        ...
-
-    def spawn(self, *args: Any) -> SpawnedCall:  # noqa: ANN401  # mirrors modal.Function.spawn, whose parameters differ per function
-        """Start the call without waiting for it."""
-        ...

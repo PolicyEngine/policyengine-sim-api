@@ -40,6 +40,7 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata,
 )
 
+from .cached_simulation import Stage12CachedSimulation, qualifying_cache_identity
 from .dependencies import ComparisonStore, artifact_store, runtime_store
 from .failure_causes import StageProgress, record_failure_cause, tracked_stage
 from .failure_recording import persist_failure_record, report_failure
@@ -50,6 +51,7 @@ from .failures import (
     validate_policy_periods,
 )
 from .output_planning import apply_output_plan, validate_output_frames
+from .partition import should_segment_simulation
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -92,11 +94,6 @@ def build_stage12_simulation(
     from policyengine_simulation_executor.spm import normalize_runtime_spm
 
     selection = normalize_runtime_spm(params)
-    from policyengine_simulation_executor.stage12_cache.runtime import (  # noqa: PLC0415  # the cache runtime imports this package, so a module-level import would be circular
-        Stage12CachedSimulation,
-        qualifying_cache_identity,
-    )
-
     resolved = load_stage12_bundle()
     identity = qualifying_cache_identity(
         execution,
@@ -360,6 +357,18 @@ def descriptor_from_record(
     )
 
 
+def _require_completion_recorded(*, replaced: bool) -> None:
+    """Raise ``Stage12CancellationError`` when the completion write replaced nothing.
+
+    The coordinator records a cancelled simulation as failed while it is still
+    running, so a write that finds the record no longer running means this
+    simulation was cancelled.
+    """
+    if not replaced:
+        msg = "Stage 12 simulation was cancelled"
+        raise Stage12CancellationError(msg)
+
+
 def _mark_running_simulation_failed(
     persistence: ComparisonStore,
     simulation_execution_id: UUID,
@@ -443,7 +452,7 @@ def run_single_simulation(
     def cancellation_requested() -> bool:
         try:
             latest = persistence.get_simulation(simulation.simulation_execution_id)
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001  # a failed status read is logged and treated as not cancelled, so the calculation continues
             logger.warning(
                 "Stage 12 cancellation check failed for %s (%s)",
                 simulation.simulation_execution_id,
@@ -466,10 +475,6 @@ def run_single_simulation(
                 prefix=context.artifact_prefix,
                 simulation=simulation,
             )
-        from .segmentation import (  # noqa: PLC0415  # segmentation imports this module, so a module-level import would be circular
-            should_segment_simulation,
-        )
-
         if segmented_calculator is not None and should_segment_simulation(simulation):
             calculated = segmented_calculator(simulation, cancellation_requested)
         elif calculator is calculate_simulation_frames:
@@ -515,9 +520,7 @@ def run_single_simulation(
             ),
             expected_status=ComparisonRunLifecycleStatus.RUNNING,
         )
-        if not replaced:
-            msg = "Stage 12 simulation was cancelled"
-            raise Stage12CancellationError(msg)  # noqa: TRY301  # handled below like a cancellation raised during the calculation
+        _require_completion_recorded(replaced=replaced)
         return descriptor.model_dump(mode="json")
     except Stage12CancellationError:
         msg = "Stage 12 simulation was cancelled"

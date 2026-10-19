@@ -454,7 +454,7 @@ def test_planned_baseline_file_is_the_one_the_worker_saves_and_loads(
     from policyengine.tax_benefit_models.common.model_version import (
         output_dataset_filepath,
     )
-    from policyengine_simulation_executor.stage12_cache.runtime import (
+    from policyengine_simulation_executor.stage12_runtime.cached_simulation import (
         Stage12CachedSimulation,
     )
 

@@ -70,7 +70,7 @@ from .output_planning import (
     resolve_report_output_plan,
     validate_output_frames,
 )
-from .segmentation import should_segment_simulation
+from .partition import should_segment_simulation
 from .simulation import descriptor_from_record, simulation_input_sha256
 
 if TYPE_CHECKING:
@@ -183,7 +183,7 @@ def _cancel_pending_simulations(
                 status=ComparisonRunLifecycleStatus.FAILED,
                 detail=detail,
             )
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001  # a failed cancellation write is logged and must not replace the failure that caused it
             _log_child_operation_failure(
                 logging.ERROR,
                 "Stage 12 could not record cancellation of %s simulation %s "
@@ -204,7 +204,7 @@ def _cancel_pending_simulations(
             continue
         try:
             calls[role].cancel()
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001  # a failed Modal cancellation is logged and must not replace the failure that caused it
             _log_child_operation_failure(
                 logging.WARNING,
                 "Stage 12 could not cancel %s simulation %s in report %s (%s)",
@@ -254,7 +254,7 @@ def _record_child_failure(
             status=ComparisonRunLifecycleStatus.FAILED,
             detail=detail,
         )
-    except Exception as state_error:  # noqa: BLE001
+    except Exception as state_error:  # noqa: BLE001  # a failed state write is logged and must not replace the child's failure
         _log_child_state_failure(simulation=simulation, error=state_error)
 
 
@@ -284,7 +284,7 @@ def _child_failure_detail(
     )
     try:
         child = store.get_simulation(simulation.simulation_execution_id)
-    except Exception as state_error:  # noqa: BLE001
+    except Exception as state_error:  # noqa: BLE001  # if the child's record cannot be read, its call failure is reported instead
         _log_child_state_failure(simulation=simulation, error=state_error)
     else:
         if (
@@ -327,7 +327,7 @@ def _observe_simulations(
                     descriptor = SimulationArtifactDescriptor.model_validate(result)
             except TimeoutError:
                 continue
-            except Exception as error:  # noqa: BLE001
+            except Exception as error:  # noqa: BLE001  # a child call's failure can be any exception type; it is recorded and stops the other child
                 detail = _child_failure_detail(
                     error=error,
                     simulation=simulations[role],
