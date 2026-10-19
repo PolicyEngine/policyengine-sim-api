@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 from policyengine.core import Simulation
 from policyengine_simulation_contract.stage12_bundle import (
     ResolvedStage12Bundle,
@@ -201,6 +202,72 @@ def test_only_current_law_default_dataset_baseline_qualifies() -> None:
     )
     assert (
         qualifying_cache_identity(baseline, **{**kwargs, "dataset_is_default": False})
+        is None
+    )
+
+
+def _scoping_strategy(name):
+    from policyengine.core.scoping_strategy import (
+        RegionGroupStrategy,
+        RowFilterStrategy,
+    )
+
+    class KeylessRegionGroup(RegionGroupStrategy):
+        """A region group whose scope reports no cache key."""
+
+        @property
+        def cache_key(self) -> str:
+            return ""
+
+    california = RowFilterStrategy(variable_name="state_code", variable_value="CA")
+    return {
+        "none": None,
+        "row-filter": california,
+        "region-group": _strategy(),
+        "keyless-region-group": KeylessRegionGroup(members=[california]),
+    }[name]
+
+
+@pytest.mark.parametrize(
+    ("options", "strategy_name"),
+    [
+        pytest.param({"region_group": ["state/ca"]}, "none", id="no-scoping-strategy"),
+        pytest.param(
+            {"region_group": ["state/ca"]}, "row-filter", id="not-a-region-group"
+        ),
+        pytest.param({}, "region-group", id="no-region-group"),
+        pytest.param({"region_group": []}, "region-group", id="empty-region-group"),
+        pytest.param(
+            {"region_group": "state/ca"}, "region-group", id="region-group-not-a-list"
+        ),
+        pytest.param(
+            {"region_group": ["country/us"]}, "region-group", id="non-state-region"
+        ),
+        pytest.param(
+            {"region_group": ["state/ca", 3]}, "region-group", id="non-text-region"
+        ),
+        pytest.param(
+            {"region_group": ["state/ca"]},
+            "keyless-region-group",
+            id="scope-without-cache-key",
+        ),
+    ],
+)
+def test_only_a_state_region_group_with_a_scope_cache_key_qualifies(
+    options, strategy_name
+) -> None:
+    baseline = _planned_simulation(SimulationRole.BASELINE).model_copy(
+        update={"options": options}
+    )
+
+    assert (
+        qualifying_cache_identity(
+            baseline,
+            resolved=_resolved(),
+            dataset_is_default=True,
+            scoping_strategy=_scoping_strategy(strategy_name),
+            spm=SPM_SELECTION,
+        )
         is None
     )
 
