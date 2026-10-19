@@ -457,6 +457,98 @@ def test_determinism_check_records_only_a_pass_that_loaded_the_stored_file(
     assert (record_path in client.objects) is (expected == "recorded")
 
 
+def _use_determinism_calculations(monkeypatch, tmp_path, cached, fresh) -> None:
+    monkeypatch.setattr(simulation_runtime, "resolve_data_folder", lambda: tmp_path)
+    monkeypatch.setattr(precompute, "_ensure_dataset_file", lambda *_: None)
+    monkeypatch.setattr(
+        precompute,
+        "_scoped_planned_simulation",
+        lambda _year, _group, *, reform=False: "reform" if reform else "baseline",
+    )
+    calculations = {
+        "baseline": SimulationCalculation(frames=cached, cache_outcome="hit"),
+        "reform": SimulationCalculation(frames=fresh),
+    }
+    monkeypatch.setattr(
+        simulation_module,
+        "calculate_simulation_frames",
+        lambda planned: calculations[planned],
+    )
+
+
+def test_determinism_check_reports_each_kind_of_frame_difference(
+    monkeypatch, tmp_path
+) -> None:
+    client = _FakeClient()
+    _use_store(monkeypatch, client)
+    plan = _plan(exists=True, verified=False)
+    probe = plan.baselines[0]
+    (tmp_path / probe.filename).write_bytes(b"h5")
+    cached = {
+        "person": pd.DataFrame({"person_id": [1], "age": [30], "income": [1.0]}),
+        "tax_unit": pd.DataFrame({"tax_unit_id": [1]}),
+    }
+    fresh = {
+        "household": pd.DataFrame({"household_id": [1]}),
+        "person": pd.DataFrame({"person_id": [2], "age": [30.0]}),
+    }
+    _use_determinism_calculations(monkeypatch, tmp_path, cached, fresh)
+
+    verdict = precompute.verify_determinism_impl("cache-bucket", plan, probe)
+
+    assert verdict.equal is False
+    assert verdict.differences == (
+        "household: missing on one side",
+        "person.age: dtype differs",
+        "person.income: only on one side",
+        "person.person_id: values differ",
+        "tax_unit: missing on one side",
+    )
+    assert precompute.determinism_record_path(plan.baselines) not in client.objects
+
+
+def test_determinism_check_rejects_a_probe_that_is_not_a_planned_baseline() -> None:
+    plan = _plan(exists=True, verified=False)
+    unplanned = plan.baselines[0].model_copy(update={"simulation_id": "unplanned"})
+
+    with pytest.raises(
+        RuntimeError, match=r"^Stage 12 determinism probe is not a planned baseline$"
+    ):
+        precompute.verify_determinism_impl("cache-bucket", plan, unplanned)
+
+
+@pytest.mark.parametrize("already_local", [True, False])
+def test_determinism_check_downloads_the_stored_baseline_only_when_missing(
+    monkeypatch, tmp_path, *, already_local
+) -> None:
+    downloads = []
+
+    class RecordingStore:
+        def __init__(self, _bucket):
+            pass
+
+        def download_file(self, path, local_path):
+            downloads.append((path, local_path))
+
+        def write_json(self, *_):
+            pass
+
+    monkeypatch.setattr(precompute, "Stage12CacheStore", RecordingStore)
+    plan = _plan(exists=True, verified=False)
+    probe = plan.baselines[0]
+    if already_local:
+        (tmp_path / probe.filename).write_bytes(b"h5")
+    _use_determinism_calculations(monkeypatch, tmp_path, _frames(30), _frames(30))
+
+    verdict = precompute.verify_determinism_impl("cache-bucket", plan, probe)
+
+    assert verdict.equal is True
+    expected_downloads = (
+        [] if already_local else [(probe.path, tmp_path / probe.filename)]
+    )
+    assert downloads == expected_downloads
+
+
 def test_planned_baseline_file_is_the_one_the_worker_saves_and_loads(
     monkeypatch,
 ) -> None:
