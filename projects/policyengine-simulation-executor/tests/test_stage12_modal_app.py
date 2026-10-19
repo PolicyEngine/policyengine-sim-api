@@ -289,6 +289,68 @@ def test_stage12_functions_close_runtime_after_application_error(
     assert runtime.shutdown_calls == 1
 
 
+def _invoke_coordinator(monkeypatch, module, context, *parent):
+    from policyengine_simulation_executor import stage12_runtime
+
+    runtime = RecordingRuntime()
+    received = {}
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+    monkeypatch.setattr(
+        module.modal,
+        "current_function_call_id",
+        lambda: "call-1",
+        raising=False,
+    )
+
+    def implementation(payload, context_payload, parent_payload, **options):
+        received.update(
+            parent=parent_payload,
+            coordinator_invocation_id=options["coordinator_invocation_id"],
+        )
+        return {"ok": True}
+
+    monkeypatch.setattr(stage12_runtime, "coordinate_report", implementation)
+    result = module.coordinate_report(
+        {},
+        context,
+        *parent,
+        observability_context=_observability_context(),
+    )
+    return result, received, runtime
+
+
+def test_coordinator_runs_a_returned_report_without_a_parent(monkeypatch) -> None:
+    module = _load(monkeypatch)
+
+    result, received, runtime = _invoke_coordinator(
+        monkeypatch, module, {"result_delivery": "return_to_caller"}
+    )
+
+    assert result == {"ok": True}
+    assert received == {"parent": None, "coordinator_invocation_id": "call-1"}
+    assert runtime.operations[0]["attributes"] == {
+        "runner_name": "stage12",
+        "execution_mode": "authoritative",
+        "result_delivery": "return_to_caller",
+    }
+
+
+def test_coordinator_operation_attributes_are_unchanged_for_stage12(
+    monkeypatch,
+) -> None:
+    module = _load(monkeypatch)
+
+    _, received, runtime = _invoke_coordinator(
+        monkeypatch, module, {}, {"evaluation_id": "parent"}
+    )
+
+    assert received["parent"] == {"evaluation_id": "parent"}
+    assert runtime.operations[0]["attributes"] == {
+        "runner_name": "stage12",
+        "execution_mode": "authoritative",
+    }
+
+
 def test_external_package_values_are_assertions_only(monkeypatch) -> None:
     install_fake_modal(monkeypatch)
     monkeypatch.setenv("STAGE12_EXPECT_US_VERSION", "not-the-bundled-version")

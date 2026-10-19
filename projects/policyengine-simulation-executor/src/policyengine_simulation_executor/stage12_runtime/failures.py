@@ -107,6 +107,16 @@ def report_execution_error(
     )
 
 
+def failure_detail_from_returned_error(
+    error: ReportExecutionError,
+) -> Stage12FailureDetail:
+    """Recreate the failure a returned simulation raised, keeping its values."""
+    return failure_detail_from_record(
+        error_code=error.failure.error_code,
+        error_summary=error.failure.error_summary,
+    )
+
+
 def redacted_failure_detail(
     error: BaseException,
     *,

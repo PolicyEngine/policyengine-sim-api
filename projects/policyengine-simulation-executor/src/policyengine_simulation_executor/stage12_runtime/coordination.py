@@ -4,14 +4,23 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
+from policyengine_simulation_contract.report_execution import (
+    ReportExecutionError,
+    ReportExecutionProvenance,
+    ReportExecutionResult,
+    report_aggregate_sha256,
+)
 from policyengine_simulation_contract.stage12_execution import (
     AggregateReportArtifactDescriptor,
+    AggregateReportArtifactPayload,
     ComparisonReportRecord,
     ComparisonRunAggregationStatus,
     ComparisonRunLifecycleStatus,
@@ -33,6 +42,7 @@ from policyengine_simulation_observability.stages import (
 
 from policyengine_simulation_executor.stage12_artifacts import (
     Stage12ArtifactStore,
+    comparison_run_prefix,
     deserialize_calculation_provenance,
     deserialize_simulation_frames,
     deserialize_uk_local_authority_metadata,
@@ -65,6 +75,8 @@ from .failures import (
     Stage12ExecutionError,
     Stage12FailureDetail,
     failure_detail_from_record,
+    failure_detail_from_returned_error,
+    report_execution_error,
 )
 from .output_planning import (
     plan_simulation_input,
@@ -77,7 +89,11 @@ from .simulation import descriptor_from_record, simulation_input_sha256
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import pandas as pd
     from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
+
+    from .output_planning import StageScope
 
 SIMULATION_POLL_INITIAL_SECONDS = 0.25
 SIMULATION_POLL_MAX_SECONDS = 1.0
@@ -300,12 +316,66 @@ def _child_failure_detail(
     return detail
 
 
+def _returned_child_failure_detail(
+    *,
+    error: Exception,
+    simulation: PlannedSimulationExecutionInput,
+    runtime: ObservabilityRuntime | None,
+    progress: StageProgress,
+) -> Stage12FailureDetail:
+    """Report a returned report's failed child call; return its report's failure.
+
+    The failure the child raised as ``ReportExecutionError`` takes precedence
+    over the redacted call error, as a Stage 12 child's recorded failure does.
+    """
+    detail = report_failure(
+        error,
+        runtime=runtime,
+        failure_scope="child_wait",
+        default_code="simulation_invocation_failed",
+        attributes=_simulation_failure_attributes(simulation),
+        progress=progress,
+    )
+    if isinstance(error, ReportExecutionError):
+        return failure_detail_from_returned_error(error)
+    return detail
+
+
+def _cancel_returned_simulations(
+    *,
+    calls: dict[str, ChildCall],
+    simulations: dict[str, PlannedSimulationExecutionInput],
+    roles: set[str],
+    detail: Stage12FailureDetail | None = None,
+) -> None:
+    """Stop each started, unfinished child of a returned report through Modal.
+
+    No record exists to carry ``detail`` or to tell a segmented child to stop,
+    so every child is cancelled through Modal. Modal does not cancel the
+    region-group segment calls a segmented child started; they run until they
+    finish or time out. A cancellation error is logged rather than raised, so
+    it never replaces the failure that caused the cancellation.
+    """
+    del detail
+    for role in sorted(roles):
+        try:
+            calls[role].cancel()
+        except Exception as error:  # noqa: BLE001  # a failed Modal cancellation is logged and must not replace the failure that caused it
+            _log_child_operation_failure(
+                logging.WARNING,
+                "Stage 12 could not cancel %s simulation %s in report %s (%s)",
+                simulation=simulations[role],
+                error=error,
+            )
+
+
 def _observe_simulations(
     *,
     calls: dict[str, ChildCall],
     simulations: dict[str, PlannedSimulationExecutionInput],
     descriptors: dict[str, SimulationArtifactDescriptor],
-    store: ComparisonStore,
+    child_failure_detail: Callable[..., Stage12FailureDetail],
+    cancel_simulations: Callable[..., None],
     runtime: ObservabilityRuntime | None,
     progress: StageProgress,
     wait_stage_name: str,
@@ -314,6 +384,12 @@ def _observe_simulations(
     deadline: float,
     timeout_seconds: float,
 ) -> None:
+    """Wait for every started child within the shared window, or stop them all.
+
+    ``child_failure_detail(error=, simulation=)`` reports a failed child and
+    returns the report's failure; ``cancel_simulations(roles=, detail=)``
+    stops the children still running.
+    """
     pending = set(calls)
     poll_interval = SIMULATION_POLL_INITIAL_SECONDS
 
@@ -329,18 +405,12 @@ def _observe_simulations(
             except TimeoutError:
                 continue
             except Exception as error:  # noqa: BLE001  # a child call's failure can be any exception type; it is recorded and stops the other child
-                detail = _child_failure_detail(
+                detail = child_failure_detail(
                     error=error,
                     simulation=simulations[role],
-                    store=store,
-                    runtime=runtime,
-                    progress=progress,
                 )
-                _cancel_pending_simulations(
-                    calls=calls,
-                    simulations=simulations,
+                cancel_simulations(
                     roles=pending - {role},
-                    store=store,
                     detail=_cancellation(f"the {role} simulation failed"),
                 )
                 raise Stage12ExecutionError(detail) from None
@@ -366,11 +436,8 @@ def _observe_simulations(
                 runtime=runtime,
                 failure_scope="child_wait_timeout",
             )
-            _cancel_pending_simulations(
-                calls=calls,
-                simulations=simulations,
+            cancel_simulations(
                 roles=pending,
-                store=store,
                 detail=_cancellation(
                     f"the {timeout_seconds:g}-second wait window closed"
                 ),
@@ -527,6 +594,24 @@ def _require_artifact_digest(
         raise ValueError(mismatch_message)
 
 
+def _validate_dispatch(
+    *,
+    report: ReportExecutionInput,
+    context: Stage12InvocationContext,
+    application_name: str,
+) -> None:
+    """Reject a dispatch whose application, worker or bundle differs from the report."""
+    if application_name != context.modal_application:
+        msg = "report coordinator application differs from dispatch context"
+        raise ValueError(msg)
+    if report.baseline.bundle.policyengine_version != context.worker_version:
+        msg = "report worker version differs from dispatch context"
+        raise ValueError(msg)
+    if report.baseline.bundle.bundle_manifest_sha256 != context.bundle_manifest_sha256:
+        msg = "report bundle digest differs from dispatch context"
+        raise ValueError(msg)
+
+
 def _child_context_payload(context: Stage12InvocationContext) -> dict[str, Any]:
     """Return the dispatch context a child simulation receives.
 
@@ -540,10 +625,304 @@ def _child_context_payload(context: Stage12InvocationContext) -> dict[str, Any]:
     return context.model_dump(mode="json")
 
 
+def _plan_simulations(
+    report: ReportExecutionInput,
+    *,
+    output_plan_resolver: Callable[[ReportExecutionInput], Stage12OutputPlan] | None,
+    stage_scope: StageScope,
+) -> tuple[Stage12OutputPlan, tuple[PlannedSimulationExecutionInput, ...]]:
+    """Resolve the report's shared output plan and attach it to both inputs."""
+    with stage_scope(
+        Stage.STAGE12_OUTPUT_PLANNING,
+        {"country": report.baseline.geography.country},
+    ):
+        if output_plan_resolver is None:
+            output_plan = resolve_report_output_plan(
+                report,
+                stage_scope=stage_scope,
+            )
+        else:
+            output_plan = output_plan_resolver(report)
+    planned_inputs: list[PlannedSimulationExecutionInput] = []
+    for simulation in (report.baseline, report.reform):
+        with stage_scope(
+            Stage.STAGE12_CHILD_INPUT_PLANNING,
+            {"simulation_role": simulation.role.value},
+        ):
+            planned_inputs.append(plan_simulation_input(simulation, output_plan))
+    return output_plan, tuple(planned_inputs)
+
+
+@dataclass(frozen=True)
+class _SimulationOutputs:
+    """The checked baseline and reform outputs one report aggregates."""
+
+    baseline: SimulationArtifactDescriptor
+    reform: SimulationArtifactDescriptor
+    baseline_frames: dict[str, pd.DataFrame]
+    reform_frames: dict[str, pd.DataFrame]
+    uk_local_authority_metadata: UKLocalAuthorityMetadata | None
+
+    def aggregate(
+        self,
+        report: ReportExecutionInput,
+        aggregator: Callable[..., dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Return ``aggregator``'s aggregate report payload for these outputs."""
+        return aggregator(
+            report=report,
+            baseline_frames=self.baseline_frames,
+            reform_frames=self.reform_frames,
+            baseline_descriptor=self.baseline,
+            reform_descriptor=self.reform,
+            uk_local_authority_metadata=self.uk_local_authority_metadata,
+        )
+
+
+def _read_simulation_outputs(
+    *,
+    report: ReportExecutionInput,
+    output_plan: Stage12OutputPlan,
+    descriptors: dict[str, SimulationArtifactDescriptor],
+    artifact_storage: Stage12ArtifactStore,
+    stage_span: StageScope,
+) -> _SimulationOutputs:
+    """Read both children's artifacts and check they form this report's pair.
+
+    Raises ``ValueError`` when the artifacts do not align, a digest does not
+    match, the UK authority metadata disagrees, or a frame misses the plan.
+    """
+    baseline = descriptors["baseline"]
+    reform = descriptors["reform"]
+    validate_aligned_outputs(report, output_plan, baseline, reform)
+    with stage_span(Stage.STAGE12_ARTIFACT_READ):
+        baseline_payload = artifact_storage.read(baseline.artifact.uri)
+        reform_payload = artifact_storage.read(reform.artifact.uri)
+    _require_artifact_digest(
+        baseline_payload,
+        baseline.artifact.content_sha256,
+        mismatch_message="baseline artifact digest mismatch",
+    )
+    _require_artifact_digest(
+        reform_payload,
+        reform.artifact.content_sha256,
+        mismatch_message="reform artifact digest mismatch",
+    )
+    baseline_frames = deserialize_simulation_frames(baseline_payload)
+    reform_frames = deserialize_simulation_frames(reform_payload)
+    uk_local_authority_metadata = validate_uk_local_authority_metadata(
+        report.baseline.geography.country,
+        deserialize_uk_local_authority_metadata(baseline_payload),
+        deserialize_uk_local_authority_metadata(reform_payload),
+        region_code=report.baseline.geography.region,
+    )
+    validate_output_frames(baseline_frames, output_plan)
+    validate_output_frames(reform_frames, output_plan)
+    return _SimulationOutputs(
+        baseline=baseline,
+        reform=reform,
+        baseline_frames=baseline_frames,
+        reform_frames=reform_frames,
+        uk_local_authority_metadata=uk_local_authority_metadata,
+    )
+
+
+def _returned_result(
+    *,
+    report: ReportExecutionInput,
+    context: Stage12InvocationContext,
+    output_plan: Stage12OutputPlan,
+    outputs: _SimulationOutputs,
+    aggregate: dict[str, Any],
+    coordinator_invocation_id: str,
+) -> ReportExecutionResult:
+    """Check the aggregate and build the result a returned report delivers.
+
+    The aggregate passes the checks a Stage 12 aggregate artifact write
+    applies, must describe this report, and its result must be a
+    ``SingleYearMacroOutput``.
+    """
+    payload = AggregateReportArtifactPayload.model_validate(aggregate)
+    if (
+        payload.evaluation_id != report.evaluation_id
+        or payload.bundle != report.baseline.bundle
+        or payload.requested_aggregates != report.requested_aggregates
+    ):
+        msg = "aggregate does not describe this report"
+        raise ValueError(msg)
+    macro_output = SingleYearMacroOutput.model_validate(payload.result)
+    return ReportExecutionResult(
+        evaluation_id=report.evaluation_id,
+        requested_aggregates=report.requested_aggregates,
+        aggregate=macro_output,
+        aggregate_sha256=report_aggregate_sha256(macro_output),
+        output_plan=output_plan,
+        baseline=outputs.baseline,
+        reform=outputs.reform,
+        provenance=ReportExecutionProvenance(
+            bundle=report.baseline.bundle,
+            worker_version=context.worker_version,
+            modal_environment=context.modal_environment,
+            modal_application=context.modal_application,
+            simulation_callable=context.simulation_callable,
+            version_manifest_sha256=context.version_manifest_sha256,
+            coordinator_invocation_id=coordinator_invocation_id,
+        ),
+        completed_at=datetime.now(UTC),
+    )
+
+
+def _coordinate_report_for_caller(
+    report: ReportExecutionInput,
+    context: Stage12InvocationContext,
+    *,
+    application_name: str,
+    coordinator_invocation_id: str,
+    artifact_storage: Stage12ArtifactStore,
+    child_invoker: ChildInvoker,
+    aggregator: Callable[..., dict[str, Any]],
+    output_plan_resolver: Callable[[ReportExecutionInput], Stage12OutputPlan] | None,
+    runtime: ObservabilityRuntime | None,
+    sleep: Callable[[float], None],
+    monotonic: Callable[[], float],
+    child_wait_deadline: float,
+    wait_timeout_seconds: float,
+) -> dict[str, Any]:
+    """Run one report and return its ``ReportExecutionResult``, writing no rows.
+
+    Nothing claims the report, so a repeated dispatch runs it again; the
+    caller deduplicates. Artifacts go under the Stage 12 layout for the
+    context's environment, creation time and report. Both children start
+    with the same delivery, so they write no rows either, and a child that
+    must stop is cancelled through Modal. No aggregate artifact is written:
+    the aggregate is returned inline. Every failure is reported once,
+    recorded as the operation's cause, and raised as ``ReportExecutionError``
+    with its redacted detail.
+    """
+    stage_plan = STAGE12_CANONICAL_REPORT_STAGES
+    progress = StageProgress()
+    stage_span = partial(
+        tracked_stage,
+        stage_plan=stage_plan,
+        progress=progress,
+        runtime=runtime,
+    )
+    stage_scope = partial(stage_span, operation=True)
+    descriptors: dict[str, SimulationArtifactDescriptor] = {}
+    calls: dict[str, ChildCall] = {}
+    simulations: dict[str, PlannedSimulationExecutionInput] = {}
+    cancel_simulations = partial(
+        _cancel_returned_simulations,
+        calls=calls,
+        simulations=simulations,
+    )
+    try:
+        with stage_scope(Stage.STAGE12_COORDINATOR_PREPARATION):
+            context = context.model_copy(
+                update={
+                    "artifact_prefix": comparison_run_prefix(
+                        environment=context.environment,
+                        created_at=context.created_at,
+                        evaluation_id=report.evaluation_id,
+                    )
+                }
+            )
+            output_plan, planned_simulations = _plan_simulations(
+                report,
+                output_plan_resolver=output_plan_resolver,
+                stage_scope=stage_scope,
+            )
+        simulations.update(
+            {simulation.role.value: simulation for simulation in planned_simulations}
+        )
+        for simulation in planned_simulations:
+            try:
+                with stage_span(
+                    Stage.STAGE12_CHILD_DISPATCH,
+                    {"simulation_role": simulation.role.value},
+                ):
+                    call = child_invoker.spawn(
+                        application_name=application_name,
+                        function_name=context.simulation_callable,
+                        environment=context.modal_environment,
+                        simulation=simulation.model_dump(mode="json"),
+                        context=_child_context_payload(context),
+                        observability_context=(
+                            runtime.capture_context() if runtime is not None else None
+                        ),
+                    )
+            except Exception as error:  # noqa: BLE001  # any dispatch failure stops the started peer and returns to the caller as a typed error
+                detail = report_failure(
+                    error,
+                    runtime=runtime,
+                    failure_scope="child_dispatch",
+                    default_code="simulation_dispatch_failed",
+                    attributes=_simulation_failure_attributes(simulation),
+                    progress=progress,
+                )
+                cancel_simulations(roles=set(calls))
+                raise Stage12ExecutionError(detail) from None
+            calls[simulation.role.value] = call
+        with stage_span(Stage.STAGE12_CHILD_WAIT):
+            _observe_simulations(
+                calls=calls,
+                simulations=simulations,
+                descriptors=descriptors,
+                child_failure_detail=partial(
+                    _returned_child_failure_detail,
+                    runtime=runtime,
+                    progress=progress,
+                ),
+                cancel_simulations=cancel_simulations,
+                runtime=runtime,
+                progress=progress,
+                wait_stage_name=stage_plan.name(Stage.STAGE12_CHILD_WAIT),
+                sleep=sleep,
+                monotonic=monotonic,
+                deadline=child_wait_deadline,
+                timeout_seconds=wait_timeout_seconds,
+            )
+        outputs = _read_simulation_outputs(
+            report=report,
+            output_plan=output_plan,
+            descriptors=descriptors,
+            artifact_storage=artifact_storage,
+            stage_span=stage_span,
+        )
+        with stage_span(Stage.STAGE12_AGGREGATION):
+            result = _returned_result(
+                report=report,
+                context=context,
+                output_plan=output_plan,
+                outputs=outputs,
+                aggregate=outputs.aggregate(report, aggregator),
+                coordinator_invocation_id=coordinator_invocation_id,
+            )
+        return result.model_dump(mode="json")
+    except Exception as error:  # noqa: BLE001  # every failure returns to the caller as a typed error with its redacted detail
+        if isinstance(error, Stage12ExecutionError):
+            # Child, dispatch and wait-timeout failures raise
+            # Stage12ExecutionError only after reporting the original failure
+            # and stopping their unfinished peers.
+            detail = error.detail
+        else:
+            detail = report_failure(
+                error,
+                runtime=runtime,
+                failure_scope="report_coordination",
+                default_code="report_coordination_failed",
+                attributes={"evaluation_id": str(report.evaluation_id)},
+                progress=progress,
+            )
+            cancel_simulations(roles=set(calls) - set(descriptors))
+        record_failure_cause(runtime, error, detail.error_summary)
+        raise report_execution_error(report.evaluation_id, detail) from None
+
+
 def coordinate_report(
     payload: object,
     context_payload: object,
-    parent_payload: object,
+    parent_payload: object | None = None,
     *,
     application_name: str,
     coordinator_invocation_id: str,
@@ -568,21 +947,46 @@ def coordinate_report(
     raises ``ValueError`` before the claim; any later failure stops the
     unfinished children, marks the report FAILED and raises a
     ``RuntimeError`` that carries no calculation detail.
+
+    When the context's ``result_delivery`` returns the report to its caller,
+    ``parent_payload`` must be absent and ``store`` is not used: the report
+    returns a ``ReportExecutionResult`` payload or raises
+    ``ReportExecutionError`` (see ``_coordinate_report_for_caller``).
     """
     # Open the shared child-wait window before any setup work.
     child_wait_deadline = monotonic() + wait_timeout_seconds
     report = ReportExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
+    if context.result_delivery is ReportResultDelivery.RETURN_TO_CALLER:
+        if parent_payload is not None:
+            msg = "a report returned to its caller takes no Stage 12 parent record"
+            raise ValueError(msg)
+        _validate_dispatch(
+            report=report,
+            context=context,
+            application_name=application_name,
+        )
+        return _coordinate_report_for_caller(
+            report,
+            context,
+            application_name=application_name,
+            coordinator_invocation_id=coordinator_invocation_id,
+            artifact_storage=artifacts or artifact_store(),
+            child_invoker=invoker or ModalChildInvoker(),
+            aggregator=aggregator,
+            output_plan_resolver=output_plan_resolver,
+            runtime=runtime,
+            sleep=sleep,
+            monotonic=monotonic,
+            child_wait_deadline=child_wait_deadline,
+            wait_timeout_seconds=wait_timeout_seconds,
+        )
     submitted_parent = ComparisonReportRecord.model_validate(parent_payload)
-    if application_name != context.modal_application:
-        msg = "report coordinator application differs from dispatch context"
-        raise ValueError(msg)
-    if report.baseline.bundle.policyengine_version != context.worker_version:
-        msg = "report worker version differs from dispatch context"
-        raise ValueError(msg)
-    if report.baseline.bundle.bundle_manifest_sha256 != context.bundle_manifest_sha256:
-        msg = "report bundle digest differs from dispatch context"
-        raise ValueError(msg)
+    _validate_dispatch(
+        report=report,
+        context=context,
+        application_name=application_name,
+    )
     _validate_submitted_parent(
         report=report,
         context=context,
@@ -633,27 +1037,11 @@ def coordinate_report(
                 }
             )
             function_name = context.simulation_callable
-            with stage_scope(
-                Stage.STAGE12_OUTPUT_PLANNING,
-                {"country": report.baseline.geography.country},
-            ):
-                if output_plan_resolver is None:
-                    output_plan = resolve_report_output_plan(
-                        report,
-                        stage_scope=stage_scope,
-                    )
-                else:
-                    output_plan = output_plan_resolver(report)
-            planned_inputs: list[PlannedSimulationExecutionInput] = []
-            for simulation in (report.baseline, report.reform):
-                with stage_scope(
-                    Stage.STAGE12_CHILD_INPUT_PLANNING,
-                    {"simulation_role": simulation.role.value},
-                ):
-                    planned_inputs.append(
-                        plan_simulation_input(simulation, output_plan)
-                    )
-            planned_simulations = tuple(planned_inputs)
+            output_plan, planned_simulations = _plan_simulations(
+                report,
+                output_plan_resolver=output_plan_resolver,
+                stage_scope=stage_scope,
+            )
         simulations = {
             simulation.role.value: simulation for simulation in planned_simulations
         }
@@ -768,7 +1156,18 @@ def coordinate_report(
                 calls=calls,
                 simulations=simulations,
                 descriptors=descriptors,
-                store=persistence,
+                child_failure_detail=partial(
+                    _child_failure_detail,
+                    store=persistence,
+                    runtime=runtime,
+                    progress=progress,
+                ),
+                cancel_simulations=partial(
+                    _cancel_pending_simulations,
+                    calls=calls,
+                    simulations=simulations,
+                    store=persistence,
+                ),
                 runtime=runtime,
                 progress=progress,
                 wait_stage_name=stage_plan.name(Stage.STAGE12_CHILD_WAIT),
@@ -777,41 +1176,15 @@ def coordinate_report(
                 deadline=child_wait_deadline,
                 timeout_seconds=wait_timeout_seconds,
             )
-        baseline = descriptors["baseline"]
-        reform = descriptors["reform"]
-        validate_aligned_outputs(report, output_plan, baseline, reform)
-        with stage_span(Stage.STAGE12_ARTIFACT_READ):
-            baseline_payload = artifact_storage.read(baseline.artifact.uri)
-            reform_payload = artifact_storage.read(reform.artifact.uri)
-        _require_artifact_digest(
-            baseline_payload,
-            baseline.artifact.content_sha256,
-            mismatch_message="baseline artifact digest mismatch",
+        outputs = _read_simulation_outputs(
+            report=report,
+            output_plan=output_plan,
+            descriptors=descriptors,
+            artifact_storage=artifact_storage,
+            stage_span=stage_span,
         )
-        _require_artifact_digest(
-            reform_payload,
-            reform.artifact.content_sha256,
-            mismatch_message="reform artifact digest mismatch",
-        )
-        baseline_frames = deserialize_simulation_frames(baseline_payload)
-        reform_frames = deserialize_simulation_frames(reform_payload)
-        uk_local_authority_metadata = validate_uk_local_authority_metadata(
-            report.baseline.geography.country,
-            deserialize_uk_local_authority_metadata(baseline_payload),
-            deserialize_uk_local_authority_metadata(reform_payload),
-            region_code=report.baseline.geography.region,
-        )
-        validate_output_frames(baseline_frames, output_plan)
-        validate_output_frames(reform_frames, output_plan)
         with stage_span(Stage.STAGE12_AGGREGATION):
-            aggregate = aggregator(
-                report=report,
-                baseline_frames=baseline_frames,
-                reform_frames=reform_frames,
-                baseline_descriptor=baseline,
-                reform_descriptor=reform,
-                uk_local_authority_metadata=uk_local_authority_metadata,
-            )
+            aggregate = outputs.aggregate(report, aggregator)
         with stage_span(Stage.STAGE12_AGGREGATE_ARTIFACT_WRITE):
             aggregate_artifact = artifact_storage.write_aggregate(
                 prefix=context.artifact_prefix,
@@ -820,8 +1193,8 @@ def coordinate_report(
         descriptor = AggregateReportArtifactDescriptor(
             evaluation_id=report.evaluation_id,
             artifact=aggregate_artifact,
-            baseline_artifact_sha256=baseline.artifact.content_sha256,
-            reform_artifact_sha256=reform.artifact.content_sha256,
+            baseline_artifact_sha256=outputs.baseline.artifact.content_sha256,
+            reform_artifact_sha256=outputs.reform.artifact.content_sha256,
             bundle=report.baseline.bundle,
         )
         completed = datetime.now(UTC)

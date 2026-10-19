@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from policyengine_simulation_contract.stage12_execution import ReportResultDelivery
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_executor import stage12_runtime
 from policyengine_simulation_executor.hf_access_validation import (
@@ -423,7 +424,7 @@ def run_single_simulation_uk(
 def coordinate_report(
     payload: dict,
     context: dict,
-    parent: dict,
+    parent: dict | None = None,
     *,
     observability_context: dict | None = None,
 ) -> dict:
@@ -432,6 +433,10 @@ def coordinate_report(
     A ``production_function_call_id`` in ``context`` marks a shadow run whose
     result is compared with that production job's. A report another
     invocation already claimed returns a ``deduplicated`` marker instead.
+
+    A ``result_delivery`` of ``return_to_caller`` in ``context`` takes no
+    ``parent`` and writes no database rows: the report returns a
+    ``ReportExecutionResult`` payload or raises ``ReportExecutionError``.
     """
     from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         coordinate_report as run_report_coordinator,
@@ -452,19 +457,21 @@ def coordinate_report(
         if context.get("production_function_call_id")
         else STAGE12_CANONICAL_REPORT_STAGES
     )
+    attributes = {
+        "runner_name": "stage12",
+        "execution_mode": (
+            "shadow" if context.get("production_function_call_id") else "authoritative"
+        ),
+    }
+    if context.get("result_delivery") == ReportResultDelivery.RETURN_TO_CALLER:
+        # Telemetry tells returned reports apart from Stage 12 runs.
+        attributes["result_delivery"] = ReportResultDelivery.RETURN_TO_CALLER.value
     try:
         propagated = normalize_observability_context(observability_context)
         result = None
         with runtime.operation(
             stage_plan.name(Stage.STAGE12_COORDINATOR_EXECUTION),
-            attributes={
-                "runner_name": "stage12",
-                "execution_mode": (
-                    "shadow"
-                    if context.get("production_function_call_id")
-                    else "authoritative"
-                ),
-            },
+            attributes=attributes,
             remote_context=propagated,
         ):
             result = run_report_coordinator(

@@ -32,7 +32,13 @@ from policyengine_observability import (
     configure,
 )
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
-from policyengine_simulation_contract.report_execution import ReportExecutionError
+from policyengine_simulation_contract.report_execution import (
+    ReportExecutionError,
+    ReportExecutionFailure,
+    ReportExecutionProvenance,
+    ReportExecutionResult,
+    report_aggregate_sha256,
+)
 from policyengine_simulation_contract.spm import (
     SPMComparisonProvenance,
     SPMInputError,
@@ -116,6 +122,7 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata,
 )
 from policyengine_stage12_persistence import store as persistence_store_module
+from pydantic import ValidationError
 from sqlalchemy.exc import OperationalError
 
 NOW = datetime(2026, 9, 15, tzinfo=UTC)
@@ -4088,4 +4095,316 @@ def test_returned_segmented_simulation_keeps_the_segment_failure(
     assert raised.value.failure.error_code == "segment_execution_failed"
     assert raised.value.failure.error_summary == (
         "Segment 3: MemoryError in stage12_calculation"
+    )
+
+
+def _macro_aggregate(**_values):
+    return _aggregate_payload(CURRENT_SINGLE_YEAR_MACRO_RESULT)
+
+
+def _coordinate_returned_report(invoker, *, context=None, report=None, **options):
+    context = context or _returning_context()
+    options.setdefault("artifacts", FakeArtifacts())
+    options.setdefault("aggregator", _macro_aggregate)
+    return coordinate_report(
+        (report or _report()).model_dump(mode="json"),
+        context.model_dump(mode="json"),
+        None,
+        application_name=context.modal_application,
+        coordinator_invocation_id="coordinator-1",
+        invoker=invoker,
+        **options,
+    )
+
+
+def test_returned_report_returns_its_typed_result_without_the_database(
+    forbid_database,
+) -> None:
+    artifacts = FakeArtifacts()
+    invoker = ContextRecordingInvoker(artifacts)
+    observed = {}
+
+    def aggregate(**values):
+        observed.update(values)
+        return _macro_aggregate()
+
+    # The coordinator, not the caller, chooses where artifacts go.
+    caller_context = _returning_context().model_copy(
+        update={"artifact_prefix": f"caller-chosen/{EVALUATION_ID}"}
+    )
+
+    returned = _coordinate_returned_report(
+        invoker,
+        context=caller_context,
+        artifacts=artifacts,
+        aggregator=aggregate,
+    )
+
+    result = ReportExecutionResult.model_validate(returned)
+    assert returned == result.model_dump(mode="json")
+    assert result.evaluation_id == EVALUATION_ID
+    assert result.requested_aggregates == tuple(ReportAggregate)
+    assert result.aggregate == SingleYearMacroOutput.model_validate(
+        CURRENT_SINGLE_YEAR_MACRO_RESULT
+    )
+    assert result.aggregate_sha256 == report_aggregate_sha256(result.aggregate)
+    assert result.output_plan == _output_plan()
+    assert result.baseline.simulation_execution_id == BASELINE_ID
+    assert result.reform.simulation_execution_id == REFORM_ID
+    for descriptor in (result.baseline, result.reform):
+        stored = artifacts.read(descriptor.artifact.uri)
+        assert sha256(stored).hexdigest() == descriptor.artifact.content_sha256
+    assert result.provenance == ReportExecutionProvenance(
+        bundle=_bundle(),
+        worker_version="5.2.0",
+        modal_environment="staging",
+        modal_application="policyengine-simulation-v2-py5-2-0",
+        simulation_callable="run_single_simulation_us",
+        version_manifest_sha256="b" * 64,
+        coordinator_invocation_id="coordinator-1",
+    )
+    assert result.completed_at.tzinfo is not None
+    assert observed["baseline_frames"]["household"][
+        "household_net_income"
+    ].tolist() == [100.0]
+    assert observed["reform_frames"]["household"]["household_net_income"].tolist() == [
+        120.0
+    ]
+    assert artifacts.aggregate_writes == []
+    assert invoker.events == ["spawn:baseline", "spawn:reform"]
+    latest_start = max(interval[0] for interval in invoker.intervals.values())
+    earliest_end = min(interval[1] for interval in invoker.intervals.values())
+    assert latest_start < earliest_end
+    assert [context["result_delivery"] for context in invoker.child_contexts] == [
+        "return_to_caller",
+        "return_to_caller",
+    ]
+    assert [context["artifact_prefix"] for context in invoker.child_contexts] == [
+        _context().artifact_prefix,
+        _context().artifact_prefix,
+    ]
+
+
+def test_returned_report_takes_no_stage12_parent_record(forbid_database) -> None:
+    invoker = ConcurrentInvoker(FakeArtifacts())
+
+    with pytest.raises(ValueError, match="no Stage 12 parent record"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _returning_context().model_dump(mode="json"),
+            _parent().model_dump(mode="json"),
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            artifacts=FakeArtifacts(),
+            invoker=invoker,
+            aggregator=_macro_aggregate,
+        )
+
+    assert invoker.events == []
+
+
+def test_stage12_report_still_requires_its_parent_record() -> None:
+    invoker = ConcurrentInvoker(FakeArtifacts())
+
+    with pytest.raises(ValidationError):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            None,
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=FakeStore(),
+            artifacts=FakeArtifacts(),
+            invoker=invoker,
+            aggregator=lambda **_: _aggregate_payload(),
+        )
+
+    assert invoker.events == []
+
+
+def test_returned_report_checks_the_dispatch_context_before_starting() -> None:
+    invoker = ConcurrentInvoker(FakeArtifacts())
+
+    with pytest.raises(ValueError, match="application differs"):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _returning_context().model_dump(mode="json"),
+            None,
+            application_name="policyengine-simulation-v2-py9-9-9",
+            coordinator_invocation_id="coordinator-1",
+            store=NoDatabaseStore(),
+            artifacts=FakeArtifacts(),
+            invoker=invoker,
+            aggregator=_macro_aggregate,
+        )
+
+    assert invoker.events == []
+
+
+@pytest.mark.parametrize("segmented", [True, False])
+def test_returned_report_raises_the_failed_childs_detail_and_stops_its_peer(
+    forbid_database,
+    segmented,
+) -> None:
+    child_failure = ReportExecutionFailure(
+        evaluation_id=EVALUATION_ID,
+        error_code="SPM_YEAR_UNAVAILABLE",
+        error_summary="No SPM values for 2026",
+    )
+    invoker = ScriptedChildInvoker(
+        wait_errors={"baseline": ReportExecutionError(child_failure)}
+    )
+    runtime = RecordingRuntime()
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _coordinate_returned_report(
+            invoker,
+            report=_report_with_segmentation(segmented=segmented),
+            runtime=runtime,
+        )
+
+    assert raised.value.failure == child_failure
+    assert raised.value.__cause__ is None
+    assert raised.value.__suppress_context__ is True
+    # No record can tell a segmented child to stop, so Modal cancels it.
+    assert invoker.calls["reform"].cancel_count == 1
+    assert invoker.calls["baseline"].cancel_count == 0
+    [recorded_cause] = runtime.recorded_exceptions
+    assert str(recorded_cause) == "No SPM values for 2026"
+
+
+def test_returned_report_redacts_a_child_call_failure_without_detail(
+    forbid_database,
+) -> None:
+    invoker = ScriptedChildInvoker(
+        wait_errors={"reform": LookupError("worker lost with token=opaque-token")}
+    )
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _coordinate_returned_report(invoker)
+
+    failure = raised.value.failure
+    assert failure.error_code == "simulation_invocation_failed"
+    assert _failure_cause(failure.error_summary) == (
+        "LookupError in stage12_child_wait (reform): worker lost with token=[REDACTED]"
+    )
+    assert invoker.calls["baseline"].cancel_count == 1
+    assert invoker.calls["reform"].cancel_count == 0
+
+
+@pytest.mark.parametrize("segmented", [True, False])
+def test_returned_report_wait_timeout_stops_every_child_through_modal(
+    forbid_database,
+    segmented,
+) -> None:
+    invoker = ScriptedChildInvoker()
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _coordinate_returned_report(
+            invoker,
+            report=_report_with_segmentation(segmented=segmented),
+            wait_timeout_seconds=0,
+        )
+
+    assert raised.value.failure.error_code == "simulation_wait_timeout"
+    assert raised.value.failure.error_summary == (
+        "Stage 12 simulations did not finish within 0 seconds of the report "
+        "coordinator starting."
+    )
+    assert [call.cancel_count for call in invoker.calls.values()] == [1, 1]
+
+
+def test_returned_report_dispatch_failure_stops_the_started_child(
+    forbid_database,
+) -> None:
+    invoker = ReformDispatchFailureInvoker()
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _coordinate_returned_report(invoker)
+
+    failure = raised.value.failure
+    assert failure.error_code == "simulation_dispatch_failed"
+    assert _failure_cause(failure.error_summary) == (
+        "ConnectionError in stage12_child_dispatch (reform): "
+        "dispatch contains sensitive details"
+    )
+    assert invoker.events == ["spawn:baseline", "spawn:reform"]
+    assert invoker.calls["baseline"].cancel_count == 1
+
+
+def test_returned_report_cancellation_error_does_not_replace_the_failure(
+    forbid_database,
+    caplog,
+) -> None:
+    invoker = ScriptedChildInvoker(
+        wait_errors={"reform": LookupError("reform worker failed")},
+        cancel_errors={"baseline": ConnectionError("cancel contains sensitive data")},
+    )
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _coordinate_returned_report(invoker)
+
+    assert raised.value.failure.error_code == "simulation_invocation_failed"
+    assert invoker.calls["baseline"].cancel_count == 1
+    _assert_log_identifies_child(
+        _coordination_log(caplog, logging.WARNING),
+        role="baseline",
+        error_type="ConnectionError",
+    )
+
+
+def test_returned_report_rejects_an_aggregate_outside_the_macro_output_schema(
+    forbid_database,
+) -> None:
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _coordinate_returned_report(
+            ConcurrentInvoker(artifacts),
+            artifacts=artifacts,
+            aggregator=lambda **_: _aggregate_payload({"budget": {}}),
+        )
+
+    failure = raised.value.failure
+    assert failure.error_code == "report_coordination_failed"
+    assert _failure_cause(failure.error_summary).startswith(
+        "ValidationError in stage12_aggregation: "
+    )
+    assert artifacts.aggregate_writes == []
+
+
+def test_returned_report_rejects_an_aggregate_for_another_report(
+    forbid_database,
+) -> None:
+    artifacts = FakeArtifacts()
+
+    def aggregate_for_another_report(**_values):
+        return {**_macro_aggregate(), "evaluation_id": str(uuid4())}
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _coordinate_returned_report(
+            ConcurrentInvoker(artifacts),
+            artifacts=artifacts,
+            aggregator=aggregate_for_another_report,
+        )
+
+    assert raised.value.failure.error_code == "report_coordination_failed"
+    assert "does not describe this report" in raised.value.failure.error_summary
+
+
+def test_returned_report_rejects_artifacts_that_do_not_satisfy_the_plan(
+    forbid_database,
+) -> None:
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _coordinate_returned_report(
+            ConcurrentInvoker(artifacts, wrong_plan_digest=True),
+            artifacts=artifacts,
+            aggregator=lambda **_: pytest.fail("aggregation must not start"),
+        )
+
+    assert raised.value.failure.error_code == "report_coordination_failed"
+    assert "do not satisfy the report output plan" in (
+        raised.value.failure.error_summary
     )
