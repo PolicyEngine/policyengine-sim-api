@@ -19,7 +19,7 @@ TEST_RUNTIME = NoOpObservabilityRuntime()
 
 
 def _bare_country_module():
-    """A country module whose model has no loadable region registry."""
+    """Return a country module whose model has no loadable region registry."""
     return SimpleNamespace(
         model=SimpleNamespace(get_region=lambda code: None, region_registry=None)
     )
@@ -167,7 +167,8 @@ class FakeCall:
             self.before_each_poll()
         if self.errors_once > 0:
             self.errors_once -= 1
-            raise ConnectionError("transient control-plane blip")
+            msg = "transient control-plane blip"
+            raise ConnectionError(msg)
         if self.error is not None:
             raise self.error
         if self.polls_until_ready > 0:
@@ -179,7 +180,8 @@ class FakeCall:
         self.cancel_attempts += 1
         if self.cancel_failures > 0:
             self.cancel_failures -= 1
-            raise ConnectionError("cancel RPC failed")
+            msg = "cancel RPC failed"
+            raise ConnectionError(msg)
         self.cancelled = True
 
 
@@ -205,7 +207,8 @@ class FakeModal:
             self.fail_spawn_at is not None
             and len(self.spawned_payloads) == self.fail_spawn_at
         ):
-            raise ConnectionError("spawn RPC failed")
+            msg = "spawn RPC failed"
+            raise ConnectionError(msg)
         self.spawned_payloads.append(payload)
         self.spawned_observability_contexts.append(observability_context)
         return self._calls[len(self.spawned_payloads) - 1]
@@ -401,7 +404,7 @@ POLLS_TO_REACH_DEADLINE = int(sn.CHILD_DEADLINE_SECONDS // SECONDS_PER_STUCK_POL
 
 
 def _stuck_call(clock):
-    """A child that never finishes; each poll of it moves the clock on."""
+    """Return a child that never finishes; each poll of it moves the clock on."""
     return FakeCall(
         None,
         polls_until_ready=10**6,
@@ -410,7 +413,7 @@ def _stuck_call(clock):
 
 
 def _crashing_call(clock):
-    """A child that fails outright (takes a clock to match ``_stuck_call``)."""
+    """Return a child that fails outright (takes a clock to match ``_stuck_call``)."""
     return FakeCall(None, error=ValueError("child crashed"))
 
 
@@ -733,7 +736,7 @@ class TestDispatchRunSimulation:
     def test__eligible_national_takes_the_segmented_path(self, monkeypatch):
         calls = {}
 
-        def fake_segmented(params, *, app_name, runtime):
+        def fake_segmented(params, *, app_name, runtime, progress):
             calls["segmented"] = (params, app_name)
             return {"segmented": True}
 
@@ -822,7 +825,7 @@ def _spm_child(index, *, selection=SPM_SELECTION, year="2026"):
 
 
 def _spm_child_missing(index, field):
-    """A child whose canonical receipt lost a resolved option."""
+    """Return a child whose canonical receipt lost a resolved option."""
     child = _spm_child(index)
     del child["spm_provenance"]["baseline"]["receipt"][field]
     return child
@@ -830,8 +833,10 @@ def _spm_child_missing(index, field):
 
 @pytest.fixture
 def stub_reduce(monkeypatch):
-    """The microdata reduce itself is covered by
-    test_segmented_national_reduce; these tests pin the SPM merge."""
+    """Stub out the microdata reduce so these tests pin only the SPM merge.
+
+    The reduce itself is covered by test_segmented_national_reduce.
+    """
     monkeypatch.setattr(
         sn, "build_national_output", lambda children, **kwargs: {"budget": {}}
     )
@@ -907,7 +912,7 @@ class TestDispatchResolvesSPM:
         )
         seen = {}
 
-        def fake_segmented(params, *, app_name, runtime):
+        def fake_segmented(params, *, app_name, runtime, progress):
             seen["params"] = params
             return {"segmented": True}
 
@@ -926,7 +931,8 @@ class TestDispatchResolvesSPM:
         # Resolution failures are cheap only if they happen before 20
         # children are spawned.
         def unavailable(params):
-            raise SPMInputError("SPM_GEOGRAPHY_REQUIRED", "County required")
+            error_code = "SPM_GEOGRAPHY_REQUIRED"
+            raise SPMInputError(error_code, "County required")
 
         monkeypatch.setattr(executor_spm, "normalize_runtime_spm", unavailable)
         monkeypatch.setattr(

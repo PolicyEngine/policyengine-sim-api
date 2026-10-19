@@ -32,6 +32,7 @@ from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
+from policyengine_simulation_executor.job_progress import NULL_JOB_PROGRESS
 from policyengine_simulation_executor.release_bundle import (
     BUNDLE_RECEIPT_FILENAME,
     get_country_release_bundle,
@@ -79,6 +80,8 @@ from policyengine_simulation_executor.simulation_runtime import (
 )
 from policyengine_simulation_observability.stages import Stage
 
+CONSTITUENCY_CSV_PATH = "/tmp/constituencies_2024.csv"
+
 
 def _params_with_spm(params, selection):
     """Return request parameters after the runtime resolves SPM settings."""
@@ -121,7 +124,8 @@ class _FakeSimulation:
         self.output_dataset = _FakeOutputDataset(household)
 
     def ensure(self):
-        raise AssertionError("test data is already materialized")
+        msg = "test data is already materialized"
+        raise AssertionError(msg)
 
 
 class _TrackedSpan(AbstractContextManager):
@@ -298,7 +302,8 @@ def _stub_policyengine_output_calls(monkeypatch, baseline, reform) -> None:
                     if simulation is baseline
                     else REFORM_POVERTY_BY_RACE
                 )
-            raise AssertionError(f"Unexpected poverty output: {name}")
+            msg = f"Unexpected poverty output: {name}"
+            raise AssertionError(msg)
 
         return compute
 
@@ -633,8 +638,11 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
 
 
 def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
-    """The hit/incomplete/miss attribute is the rollout metric for the
-    artifact pipeline; losing the export would blind that measurement."""
+    """run_simulation_impl must export the baseline artifact outcome attribute.
+
+    The hit/incomplete/miss attribute is the rollout metric for the artifact
+    pipeline; losing the export would blind that measurement.
+    """
     dataset = object()
     country_module = SimpleNamespace(model=SimpleNamespace(version="1.715.2"))
     selection = installed_spm_selection()
@@ -1126,6 +1134,7 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
             "resolved_region_code": "us",
             "runtime": runtime,
             "uk_local_authority_metadata": None,
+            "progress": NULL_JOB_PROGRESS,
         }
     ]
 
@@ -1241,7 +1250,7 @@ def test_run_simulation_impl_core_passes_detected_uk_boundary_to_builder(monkeyp
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
-        lambda *args, **kwargs: object(),
+        lambda *args, **kwargs: SimpleNamespace(on_first_ensure=lambda callback: None),
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime.SimulationOutputBuilder",
@@ -1735,7 +1744,8 @@ def test_builder_budgetary_impact_propagates_required_calculation_errors(monkeyp
     baseline, reform = _macro_baseline_reform()
 
     def fail_change_output_variable(*args, **kwargs):
-        raise RuntimeError("household_tax missing")
+        msg = "household_tax missing"
+        raise RuntimeError(msg)
 
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_budget._change_output_variable",
@@ -1765,7 +1775,7 @@ def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
             assert baseline_simulation is baseline
             assert reform_simulation is reform
             assert kwargs == {
-                "constituency_csv_path": "/tmp/constituencies_2024.csv",
+                "constituency_csv_path": CONSTITUENCY_CSV_PATH,
                 "download_missing_assets": False,
             }
             return SimpleNamespace(constituency_results=expected)
@@ -1779,7 +1789,7 @@ def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_geographic."
         "_required_uk_geography_lookup_csv_path",
-        lambda spec: "/tmp/constituencies_2024.csv",
+        lambda spec: CONSTITUENCY_CSV_PATH,
     )
 
     result = _simulation_output_builder(

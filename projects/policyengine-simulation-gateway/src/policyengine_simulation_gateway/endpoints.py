@@ -1,14 +1,14 @@
-"""
-FastAPI endpoints for the Gateway API.
-"""
+"""FastAPI endpoints for the Gateway API."""
 
 import logging
 import re
 from dataclasses import dataclass
-from typing import TypedDict
+from datetime import UTC, datetime
+from typing import Any, TypedDict
 
 import modal
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.budget_window_state import (
     build_batch_status_response,
@@ -23,6 +23,7 @@ from policyengine_simulation_contract.gateway_models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
     BudgetWindowBatchSubmitResponse,
+    GatewayRequestBase,
     HealthResponse,
     JobStatusResponse,
     JobSubmitResponse,
@@ -36,9 +37,18 @@ from policyengine_simulation_contract.gateway_models import (
 from policyengine_simulation_contract.hf_dataset import (
     HuggingFaceDatasetReferenceError,
 )
+from policyengine_simulation_contract.job_progress import (
+    JOB_PROGRESS_CAPABILITY_KEY,
+    JobStatus,
+    job_progress_fields,
+    supported_job_progress_capability,
+)
+from policyengine_simulation_contract.job_progress_state import get_job_progress
+from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_contract.spm import (
     SPMCapability,
     SPMInputError,
+    SPMSelection,
     resolve_spm_selection,
     spm_error_detail,
 )
@@ -69,6 +79,10 @@ POLICYENGINE_VERSION_DICT_NAME = "simulation-api-policyengine-versions"
 ROUTING_STATE_DICT_NAME = "simulation-api-routing-state"
 ROUTING_STATE_ACTIVE_KEY = "active"
 SUPPORTED_ROUTE_KINDS = ("policyengine", "us", "uk")
+# Job metadata keys that the status response never echoes directly.
+_INTERNAL_JOB_METADATA_KEYS = frozenset(
+    {"observability_id", "submitted_at", JOB_PROGRESS_CAPABILITY_KEY}
+)
 
 
 class VersionRoutingState(TypedDict, total=False):
@@ -80,6 +94,14 @@ class VersionRoutingState(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class RouteResolution:
+    """The Modal app a request routes to, and the provenance the gateway reports.
+
+    ``response_version`` is the version echoed to the caller, and
+    ``bundle_manifest`` is empty when the route came from the legacy version
+    dicts. ``route_provenance`` marks pre-canonical routes, which SPM
+    resolution treats differently.
+    """
+
     app_name: str
     response_version: str
     policyengine_version: str | None
@@ -91,14 +113,15 @@ class RouteResolution:
     country_model_version: str | None = None
 
 
-def _job_metadata_store():
+def _job_metadata_store() -> "modal.Dict":
     return modal.Dict.from_name(JOB_METADATA_DICT_NAME, create_if_missing=True)
 
 
 def _runtime(request: Request) -> ObservabilityRuntime:
     runtime = getattr(request.app.state, "policyengine_observability", None)
     if not isinstance(runtime, ObservabilityRuntime):
-        raise RuntimeError("Simulation gateway observability is not configured")
+        msg = "Simulation gateway observability is not configured"
+        raise RuntimeError(msg)  # noqa: TRY004  # a missing runtime is a configuration error, not a bad argument; FastAPI handlers surface it unchanged
     return runtime
 
 
@@ -158,7 +181,7 @@ def _resolve_dataset_uri_from_app_bundle(
     )
 
 
-def _modal_exception_class(name: str):
+def _modal_exception_class(name: str) -> type[BaseException] | None:
     exception_module = getattr(modal, "exception", None)
     if exception_module is None:
         return None
@@ -176,7 +199,7 @@ def _is_modal_job_not_found(exc: BaseException) -> bool:
     )
 
 
-def _optional_modal_dict(name: str):
+def _optional_modal_dict(name: str) -> "modal.Dict | None":
     try:
         return modal.Dict.from_name(name)
     except KeyError:
@@ -226,7 +249,7 @@ def _bundle_manifest(state: dict, policyengine_version: str | None) -> dict:
 def _policyengine_version_for_app(
     state: dict, app_name: str, *, country: str, model_version: str
 ) -> str | None:
-    """The wrapper version serving this country route, or None.
+    """Return the wrapper version serving this country route, or None.
 
     Behaviour change from the pre-canonical gateway, deliberate: a country
     route whose one candidate bundle states a *different* model version is
@@ -275,10 +298,11 @@ def _policyengine_version_for_app(
     if len(matching) == 1 and not unclassified:
         return matching[0]
     if len(candidates) > 1:
-        raise ValueError(
+        msg = (
             f"Ambiguous bundle for {country} version {model_version}; pass "
             "policyengine_version to select a bundle explicitly"
         )
+        raise ValueError(msg)
     if not candidates:
         return None
     version = next(iter(candidates))
@@ -313,7 +337,8 @@ def _resolve_policyengine_route(
 ) -> RouteResolution:
     app_name = _routing_state_routes(state, "policyengine").get(policyengine_version)
     if not isinstance(app_name, str):
-        raise ValueError(f"Unknown policyengine.py version {policyengine_version}")
+        msg = f"Unknown policyengine.py version {policyengine_version}"
+        raise ValueError(msg)  # noqa: TRY004  # an unknown version is a request error; route resolution callers catch ValueError
     return RouteResolution(
         app_name=app_name,
         response_version=response_version or policyengine_version,
@@ -369,11 +394,12 @@ def _validate_legacy_version_matches_bundle(
         return
     model_version = country_bundle.get("model_version")
     if isinstance(model_version, str) and requested_version != model_version:
-        raise ValueError(
+        msg = (
             f"Requested {country} version {requested_version} does not match "
             f"policyengine.py bundle {manifest.get('policyengine_version')} "
             f"({country} model version {model_version})"
         )
+        raise ValueError(msg)
 
 
 def _resolve_from_active_state(
@@ -412,7 +438,8 @@ def _resolve_from_active_state(
             )
             if country_resolution is not None:
                 return country_resolution
-        raise ValueError("Routing state does not define a latest route")
+        msg = "Routing state does not define a latest route"
+        raise ValueError(msg)
 
     country_resolution = _resolve_country_route(
         state,
@@ -422,10 +449,11 @@ def _resolve_from_active_state(
     policyengine_app = _routing_state_routes(state, "policyengine").get(version)
     if country_resolution is not None and isinstance(policyengine_app, str):
         if country_resolution.app_name != policyengine_app:
-            raise ValueError(
+            msg = (
                 f"Ambiguous version {version} for country {country}; pass "
                 "policyengine_version to select a bundle explicitly"
             )
+            raise ValueError(msg)
         return _resolve_policyengine_route(
             state,
             policyengine_version=version,
@@ -438,7 +466,8 @@ def _resolve_from_active_state(
             policyengine_version=version,
         )
 
-    raise ValueError(f"Unknown version {version} for country {country}")
+    msg = f"Unknown version {version} for country {country}"
+    raise ValueError(msg)
 
 
 def _resolve_from_legacy_dicts(
@@ -450,11 +479,13 @@ def _resolve_from_legacy_dicts(
     if policyengine_version is not None:
         policyengine_versions = _optional_modal_dict(POLICYENGINE_VERSION_DICT_NAME)
         if policyengine_versions is None:
-            raise ValueError(f"Unknown policyengine.py version {policyengine_version}")
+            msg = f"Unknown policyengine.py version {policyengine_version}"
+            raise ValueError(msg)
         try:
             app_name = policyengine_versions[policyengine_version]
         except KeyError:
-            raise ValueError(f"Unknown policyengine.py version {policyengine_version}")
+            msg = f"Unknown policyengine.py version {policyengine_version}"
+            raise ValueError(msg)
         return RouteResolution(
             app_name=app_name,
             response_version=policyengine_version,
@@ -484,7 +515,8 @@ def _resolve_from_legacy_dicts(
                     policyengine_version=version,
                     bundle_manifest={},
                 )
-        raise ValueError(f"Unknown version {resolved_version} for country {country}")
+        msg = f"Unknown version {resolved_version} for country {country}"
+        raise ValueError(msg)
 
     return RouteResolution(
         app_name=app_name,
@@ -500,13 +532,12 @@ _SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 
 def _certified_dataset_sha256(country_bundle: dict) -> str | None:
-    """The certified SHA-256 of the app's default dataset, if recorded.
+    """Return the certified SHA-256 of the app's default dataset, if recorded.
 
     ``dataset`` in a bundle response is always the app's default dataset URI
     (``_resolve_dataset_uri_from_app_bundle``), so the digest describes it.
     Malformed or missing values are omitted rather than repeated.
     """
-
     digest = country_bundle.get("default_dataset_sha256")
     # fullmatch: ``$`` would also accept a trailing newline.
     if isinstance(digest, str) and _SHA256_HEX.fullmatch(digest):
@@ -539,8 +570,9 @@ def _build_policyengine_bundle(
         try:
             capability = SPMCapability.model_validate(capability)
         except ValueError as exc:
+            error_code = "SPM_CONFIGURATION_UNAVAILABLE"
             raise SPMInputError(
-                "SPM_CONFIGURATION_UNAVAILABLE",
+                error_code,
                 "This worker bundle has invalid canonical SPM capability metadata",
             ) from exc
     return PolicyEngineBundle(
@@ -563,7 +595,6 @@ def _bundle_identities(state: dict) -> dict[str, dict[str, PolicyEngineBundle]]:
     dataset cannot be resolved is reported without a dataset rather than
     failing the whole response.
     """
-
     identities: dict[str, dict[str, PolicyEngineBundle]] = {}
     for policyengine_version, app_bundle in _routing_state_bundles(state).items():
         if not isinstance(app_bundle, dict):
@@ -584,7 +615,8 @@ def _bundle_identities(state: dict) -> dict[str, dict[str, PolicyEngineBundle]]:
                 # One historical entry with an unresolvable dataset must not
                 # take /versions down for every caller; report it without one.
                 logger.warning(
-                    "Cannot resolve the %s dataset of policyengine %s for /versions: %s",
+                    "Cannot resolve the %s dataset of policyengine %s "
+                    "for /versions: %s",
                     country,
                     policyengine_version,
                     exc,
@@ -613,7 +645,7 @@ def _bundle_identities(state: dict) -> dict[str, dict[str, PolicyEngineBundle]]:
 
 
 def _certified_model_version(country: str, route: RouteResolution) -> str | None:
-    """The country model version the registry states for this route.
+    """Return the country model version the registry states for this route.
 
     ``PolicyEngineBundle.model_version`` falls back to the routing response
     version so the response always carries one. On a policyengine-keyed
@@ -629,7 +661,11 @@ def _certified_model_version(country: str, route: RouteResolution) -> str | None
     return route.country_model_version
 
 
-def _resolve_request_spm(request, bundle, route):
+def _resolve_request_spm(
+    request: GatewayRequestBase,
+    bundle: PolicyEngineBundle,
+    route: RouteResolution,
+) -> JsonObject | None:
     selection = resolve_spm_selection(
         request.country,
         request.spm,
@@ -639,13 +675,14 @@ def _resolve_request_spm(request, bundle, route):
         route_provenance=route.route_provenance,
     )
     if selection is not None:
-        from policyengine_simulation_contract.spm import SPMSelection
-
         request.spm = SPMSelection.model_validate(selection)
     return selection
 
 
-def _bundle_payload(bundle: PolicyEngineBundle, **dump_kwargs) -> dict:
+def _bundle_payload(
+    bundle: PolicyEngineBundle,
+    **dump_kwargs: Any,  # noqa: ANN401  # forwarded unchanged to BaseModel.model_dump
+) -> dict:
     """Dump a bundle, omitting fields added after the legacy body when unset.
 
     The 202 and 500 job bodies splat this dict in directly, bypassing the
@@ -662,12 +699,24 @@ def _serialize_job_metadata(
     resolved_app_name: str,
     bundle: PolicyEngineBundle,
     observability_id: str | None = None,
+    *,
+    submitted_at: datetime | None = None,
+    job_progress: int | None = None,
 ) -> dict:
     return {
         "resolved_app_name": resolved_app_name,
         "policyengine_bundle": _bundle_payload(bundle),
         "observability_id": observability_id,
+        "submitted_at": None if submitted_at is None else submitted_at.isoformat(),
+        JOB_PROGRESS_CAPABILITY_KEY: job_progress,
     }
+
+
+def _route_job_progress_capability(route: RouteResolution) -> int | None:
+    manifest = route.bundle_manifest
+    if not isinstance(manifest, dict):
+        return None
+    return supported_job_progress_capability(manifest.get(JOB_PROGRESS_CAPABILITY_KEY))
 
 
 def _bind_observability_id(
@@ -680,7 +729,7 @@ def _bind_observability_id(
     if observability_id is not None:
         try:
             runtime.set_context(observability_id=observability_id)
-        except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+        except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
             pass
     return observability_id
 
@@ -707,8 +756,43 @@ def _public_job_metadata(job_metadata: dict | None) -> dict:
     if not isinstance(job_metadata, dict):
         return {}
     return {
-        key: value for key, value in job_metadata.items() if key != "observability_id"
+        key: value
+        for key, value in job_metadata.items()
+        if key not in _INTERNAL_JOB_METADATA_KEYS
     }
+
+
+def _job_progress_payload(
+    runtime: ObservabilityRuntime,
+    job_id: str,
+    job_metadata: dict,
+    status: JobStatus,
+) -> dict:
+    """Return the optional stage fields for a status response.
+
+    Stage reporting never changes the status, the result or the HTTP code: a
+    failed or malformed read drops the stage fields instead of guessing.
+    """
+    reports_stages = (
+        supported_job_progress_capability(job_metadata.get(JOB_PROGRESS_CAPABILITY_KEY))
+        is not None
+    )
+    record = None
+    if reports_stages:
+        try:
+            with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_PROGRESS_READ)):
+                record = get_job_progress(job_id)
+        except Exception as exc:  # noqa: BLE001  # stage reporting is optional
+            logger.warning(
+                "Job progress unavailable for %s: %s", job_id, type(exc).__name__
+            )
+            reports_stages = False
+    return job_progress_fields(
+        status=status,
+        submitted_at=job_metadata.get("submitted_at"),
+        record=record,
+        reports_stages=reports_stages,
+    )
 
 
 def _build_budget_window_parent_payload(
@@ -744,7 +828,8 @@ def resolve_route(
     """Resolve a country/package or policyengine.py version to a Modal app."""
     country_lower = country.lower()
     if country_lower not in ("us", "uk"):
-        raise ValueError(f"Unknown country: {country}")
+        msg = f"Unknown country: {country}"
+        raise ValueError(msg)
 
     state = _active_routing_state()
     if state:
@@ -778,9 +863,8 @@ async def submit_simulation(
     request: SimulationRequest,
     http_request: Request,
     response: Response,
-):
-    """
-    Submit a simulation job.
+) -> JobSubmitResponse | JSONResponse:
+    """Submit a simulation job.
 
     Matches the existing Cloud Run API endpoint path.
     Routes to the appropriate app based on country and version params.
@@ -853,6 +937,7 @@ async def submit_simulation(
     # Spawn the job (returns immediately). ``Function.from_name`` is a lazy
     # handle — the control-plane RPC (hydration) happens inside ``spawn`` —
     # so both live under the spawn segment to time the real network cost.
+    submitted_at = datetime.now(UTC)
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
         sim_func = modal.Function.from_name(route.app_name, "run_simulation")
         call = sim_func.spawn(
@@ -862,7 +947,13 @@ async def submit_simulation(
 
     runtime.set_context(job_id=call.object_id)
 
-    job_metadata = _serialize_job_metadata(route.app_name, bundle, observability_id)
+    job_metadata = _serialize_job_metadata(
+        route.app_name,
+        bundle,
+        observability_id,
+        submitted_at=submitted_at,
+        job_progress=_route_job_progress_capability(route),
+    )
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_METADATA_WRITE)):
         _job_metadata_store()[call.object_id] = job_metadata
 
@@ -888,10 +979,8 @@ async def submit_budget_window_batch(
     request: BudgetWindowBatchRequest,
     http_request: Request,
     response: Response,
-):
-    """
-    Submit a budget-window batch job.
-    """
+) -> BudgetWindowBatchSubmitResponse | JSONResponse:
+    """Submit a budget-window batch job."""
     runtime = _runtime(http_request)
     observability_id = _start_workflow_observability(http_request, runtime)
     response.headers[OBSERVABILITY_ID_HEADER] = observability_id
@@ -981,15 +1070,17 @@ async def submit_budget_window_batch(
     response_model_exclude_none=True,
     dependencies=[Depends(require_auth)],
 )
-async def get_job_status(job_id: str, request: Request, response: Response):
-    """
-    Poll for job status.
+async def get_job_status(
+    job_id: str, request: Request, response: Response
+) -> JobStatusResponse | JSONResponse:
+    """Poll for job status.
 
     Returns:
         - 200 with status="complete" and result when done
         - 202 with status="running" while in progress
         - 500 with status="failed" and error on failure
         - 404 if job_id not found
+
     """
     runtime = _runtime(request)
     runtime.set_context(job_id=job_id)
@@ -1018,17 +1109,25 @@ async def get_job_status(job_id: str, request: Request, response: Response):
         runtime.record_exception(exc, handled=False, status_code=500)
         raise
 
+    def with_progress(status: JobStatus) -> dict:
+        return {
+            **public_metadata,
+            **_job_progress_payload(runtime, job_id, job_metadata, status),
+        }
+
     try:
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)):
             result = call.get(timeout=0)
+        complete_metadata = with_progress("complete")
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
             return JobStatusResponse(
-                status="complete", result=result, **public_metadata
+                status="complete", result=result, **complete_metadata
             )
     except TimeoutError:
+        running_metadata = with_progress("running")
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
-            return running_job_response(public_metadata, headers=response_headers)
-    except Exception as exc:
+            return running_job_response(running_metadata, headers=response_headers)
+    except Exception as exc:  # noqa: BLE001  # call.get re-raises whatever the worker raised; every failure becomes a failed-job response, logged with its traceback by log_and_redact_exception
         if _is_modal_job_not_found(exc):
             runtime.record_exception(exc, handled=True, status_code=404)
             raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
@@ -1037,7 +1136,7 @@ async def get_job_status(job_id: str, request: Request, response: Response):
             return failed_job_response(
                 error=detail.message,
                 errors=[detail.model_dump()],
-                job_metadata=public_metadata,
+                job_metadata=with_progress("failed"),
                 headers=response_headers,
             )
         redacted = log_and_redact_exception(
@@ -1046,10 +1145,11 @@ async def get_job_status(job_id: str, request: Request, response: Response):
             scope="simulation_job_status",
             context={"job_id": job_id},
         )
+        failed_metadata = with_progress("failed")
         with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
             return failed_job_response(
                 error=redacted,
-                job_metadata=public_metadata,
+                job_metadata=failed_metadata,
                 headers=response_headers,
             )
 
@@ -1064,10 +1164,8 @@ async def get_budget_window_job_status(
     batch_job_id: str,
     request: Request,
     response: Response,
-):
-    """
-    Poll for budget-window batch status.
-    """
+) -> JSONResponse:
+    """Poll for budget-window batch status."""
     runtime = _runtime(request)
     runtime.set_context(batch_job_id=batch_job_id)
     with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)):
@@ -1099,7 +1197,7 @@ async def get_budget_window_job_status(
     try:
         with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)):
             call = modal.FunctionCall.from_id(batch_job_id)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # any lookup failure degrades to the seed state; logged below with its traceback at warning level
         # The endpoint degrades gracefully to the seed state (a successful
         # 202/200 response), so this must NOT be recorded as a request
         # error — recording the exception would emit a request failure and
@@ -1135,7 +1233,7 @@ async def get_budget_window_job_status(
             return batch_status_response(
                 build_batch_status_response(seed_state), headers=response_headers
             )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # call.get re-raises whatever the batch worker raised; every failure is persisted as a failed batch, logged with its traceback by log_and_redact_exception
         # Persist the failure so subsequent polls don't resurrect the
         # "submitted" status from the seed store (#448). We deliberately
         # overwrite the main job store entry as well as the seed so either
@@ -1172,7 +1270,7 @@ async def get_budget_window_job_status(
         return batch_status_response(status_response, headers=response_headers)
 
 
-@router.get("/versions", response_model=VersionsResponse)
+@router.get("/versions")
 async def list_versions(request: Request) -> VersionsResponse:
     """List all available routing versions."""
     runtime = _runtime(request)
@@ -1218,7 +1316,7 @@ def _version_map_from_state(state: VersionRoutingState, kind: str) -> VersionMap
     return VersionMap(versions)
 
 
-@router.get("/versions/{kind}", response_model=VersionMap)
+@router.get("/versions/{kind}")
 async def get_country_versions(kind: str, request: Request) -> VersionMap:
     """Get available versions for policyengine, US, or UK routing."""
     runtime = _runtime(request)
@@ -1244,16 +1342,16 @@ async def get_country_versions(kind: str, request: Request) -> VersionMap:
         return VersionMap(dict(version_dict))
 
 
-@router.get("/health", response_model=HealthResponse)
+@router.get("/health")
 async def health() -> HealthResponse:
     """Health check endpoint."""
     return HealthResponse()
 
 
-@router.post("/ping", response_model=PingResponse)
+@router.post("/ping")
 async def ping(request: PingRequest) -> PingResponse:
-    """
-    Verify the API is able to receive and process requests.
-    Matches the policyengine_fastapi.ping endpoint for test compatibility.
+    """Verify the API can receive and process requests.
+
+    Responds with the request's ``value`` plus one as ``incremented``.
     """
     return PingResponse(incremented=request.value + 1)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from workflow_script_support import (
@@ -17,6 +17,9 @@ from workflow_script_support import (
     FakeCommands,
     run_script,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 REUSABLE_DEPLOY_WORKFLOW = WORKFLOWS_DIR / "simulation-deploy.reusable.yml"
 
@@ -27,9 +30,10 @@ def fakes(tmp_path: Path) -> FakeCommands:
 
 
 def _step(workflow: str, name: str) -> str:
-    """The text of one workflow step, from its ``- name:`` to the next step."""
+    """Return one workflow step's text, from its ``- name:`` to the next step."""
     match = re.search(
-        rf"^(?P<indent> +)- name: {re.escape(name)}\n(?P<body>.*?)(?=^(?P=indent)- |^  \S|\Z)",
+        rf"^(?P<indent> +)- name: {re.escape(name)}\n"
+        r"(?P<body>.*?)(?=^(?P=indent)- |^  \S|\Z)",
         workflow,
         flags=re.MULTILINE | re.DOTALL,
     )
@@ -321,9 +325,10 @@ def test_deploy_workflow_runs_the_stage12_worker_scripts():
         validation
     )
     assert (
-        f'run: ../../.github/scripts/{VALIDATE_V2_WORKERS} "${{{{ inputs.modal_environment }}}}" '
-        '"${{ steps.stage12_cache.outputs.manifest_digest }}"\n'
-    ) in validation
+        f"run: ../../.github/scripts/{VALIDATE_V2_WORKERS} "
+        '"${{ inputs.modal_environment }}" '
+        '"${{ steps.stage12_cache.outputs.manifest_digest }}"\n' in validation
+    )
 
     assert "application_name: ${{ steps.application.outputs.name }}" in workflow
     assert "validation_file: ${{ steps.validation.outputs.file }}" in workflow

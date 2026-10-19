@@ -55,17 +55,17 @@ class RecordingRuntime:
 
 
 def _raised(error: Exception) -> Exception:
-    try:
+    with pytest.raises(type(error)) as caught:
         raise error
-    except Exception as caught:  # noqa: BLE001
-        return caught
+    return caught.value
 
 
 def test_summary_names_type_stage_role_and_message() -> None:
     progress = StageProgress(role="reform")
+    msg = "Variable 'country' not found in household data"
 
     with pytest.raises(ValueError) as caught, progress.stage("stage12_calculation"):
-        raise ValueError("Variable 'country' not found in household data")
+        raise ValueError(msg)
 
     assert failure_summary(caught.value, progress=progress) == (
         "ValueError in stage12_calculation (reform): "
@@ -107,7 +107,8 @@ def test_database_url_credentials_are_redacted_from_the_summary() -> None:
 
 def test_connection_string_password_assignment_is_redacted() -> None:
     error = RuntimeError(
-        f"invalid dsn: host=pooler.example.com user=postgres password={DATABASE_PASSWORD}"
+        "invalid dsn: host=pooler.example.com user=postgres "
+        f"password={DATABASE_PASSWORD}"
     )
 
     summary = failure_summary(error)
@@ -138,7 +139,10 @@ def test_secret_environment_values_are_redacted(monkeypatch) -> None:
     [
         ("Authorization: Bearer abc.def-ghi", "abc.def-ghi"),
         (
-            "download https://storage.example.com/data.h5?X-Goog-Signature=signed123 failed",
+            (
+                "download https://storage.example.com/data.h5"
+                "?X-Goog-Signature=signed123 failed"
+            ),
             "signed123",
         ),
         ("token rejected: hf_abcdefghijklmnopqrstuvwxyz0123", "hf_abcdefghij"),
@@ -335,7 +339,8 @@ def test_database_errors_report_the_driver_cause_without_parameters() -> None:
         (
             (
                 'null value in column "status" violates not-null constraint\n'
-                "DETAIL:  Failing row contains (stored-identifier, stored\nvalue, null)."
+                "DETAIL:  Failing row contains "
+                "(stored-identifier, stored\nvalue, null)."
             ),
             (
                 'null value in column "status" violates not-null constraint '
@@ -427,7 +432,8 @@ def test_summary_is_bounded_to_the_persisted_column_length() -> None:
 def test_unprintable_errors_still_produce_a_summary() -> None:
     class UnprintableError(Exception):
         def __str__(self) -> str:
-            raise RuntimeError("cannot render")
+            msg = "cannot render"
+            raise RuntimeError(msg)
 
     assert failure_summary(UnprintableError()) == "UnprintableError"
 
@@ -450,7 +456,8 @@ def test_recorded_cause_is_redacted_and_keeps_the_original_stack() -> None:
 def test_recording_failures_never_escape() -> None:
     class FailingRuntime:
         def record_exception(self, *_args, **_kwargs) -> None:
-            raise RuntimeError("exporter unavailable")
+            msg = "exporter unavailable"
+            raise RuntimeError(msg)
 
     record_failure_cause(FailingRuntime(), ValueError("cause"), "ValueError: cause")
     record_failure_cause(None, ValueError("cause"), "ValueError: cause")
@@ -458,6 +465,7 @@ def test_recording_failures_never_escape() -> None:
 
 def _progress_in(stage_name: str) -> StageProgress:
     progress = StageProgress()
+    msg = "stage failed"
     with pytest.raises(RuntimeError), progress.stage(stage_name):
-        raise RuntimeError("stage failed")
+        raise RuntimeError(msg)
     return progress

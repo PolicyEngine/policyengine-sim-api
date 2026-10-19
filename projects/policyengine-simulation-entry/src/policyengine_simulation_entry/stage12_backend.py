@@ -6,11 +6,10 @@ import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 import modal
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
     ComparisonRunAggregationStatus,
@@ -34,8 +33,12 @@ from policyengine_simulation_observability.stages import (
 )
 from policyengine_stage12_persistence import Stage12PersistenceStore
 
-from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.stage12_adapter import adapt_annual_comparison
+
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
+
+    from policyengine_simulation_entry.config import Settings
 
 logger = logging.getLogger(__name__)
 AUTOMATIC_REPORT_NAMESPACE = uuid5(
@@ -47,15 +50,21 @@ AUTOMATIC_REPORT_NAMESPACE = uuid5(
 class ComparisonStore(Protocol):
     """Read temporary comparison state from the API-owned schema."""
 
-    def get_report(self, evaluation_id: UUID) -> ComparisonReportRecord: ...
+    def get_report(self, evaluation_id: UUID) -> ComparisonReportRecord:
+        """Return the parent report row; raise LookupError if there is none."""
+        ...
 
     def list_simulations(
         self,
         evaluation_id: UUID,
-    ) -> tuple[ComparisonSimulationRecord, ...]: ...
+    ) -> tuple[ComparisonSimulationRecord, ...]:
+        """Return the simulation rows recorded so far for one report."""
+        ...
 
 
 class ReportInvoker(Protocol):
+    """Seam that starts a worker's report coordinator, so tests can avoid Modal."""
+
     async def spawn(
         self,
         *,
@@ -64,7 +73,9 @@ class ReportInvoker(Protocol):
         context_payload: dict[str, Any],
         parent_payload: dict[str, Any],
         observability_context: dict[str, Any] | None = None,
-    ) -> str: ...
+    ) -> str:
+        """Start the coordinator without waiting for it and return the call ID."""
+        ...
 
 
 type PreparedReport = tuple[
@@ -77,24 +88,29 @@ type PreparedReport = tuple[
 ]
 
 
-class TemporaryStage12UnsupportedRequest(ValueError):
+class TemporaryStage12UnsupportedRequestError(ValueError):
     """A temporary direct request cannot be normalized by the reviewed adapter."""
 
     def __init__(self, reason: str) -> None:
+        """Keep the adapter's skip reason, which the route returns to the caller."""
         super().__init__("Stage 12 does not support this request")
         self.reason = reason
 
 
-class TemporaryStage12DispatchFailed(RuntimeError):
+class TemporaryStage12DispatchFailed(RuntimeError):  # noqa: N818  # app logs its name as error_type in stage12_comparison_dispatch_failed
     """Modal did not acknowledge a Stage 12 coordinator submission."""
 
     def __init__(self, report: ComparisonReportRecord) -> None:
+        """Keep the report record, already marked failed, for the 502 response."""
         super().__init__("Stage 12 comparison-run dispatch failed")
         self.report = report
 
 
 class ModalReportInvoker:
+    """Invoker that spawns report coordinators deployed as Modal functions."""
+
     def __init__(self, environment: str) -> None:
+        """Look up coordinator functions in this Modal environment."""
         self._environment = environment
 
     async def spawn(
@@ -106,6 +122,10 @@ class ModalReportInvoker:
         parent_payload: dict[str, Any],
         observability_context: dict[str, Any] | None = None,
     ) -> str:
+        """Spawn the worker's report coordinator and return its Modal call ID.
+
+        Raise RuntimeError if Modal returns no invocation identifier.
+        """
         function = modal.Function.from_name(
             worker.application_name,
             worker.report_coordinator_callable,
@@ -121,13 +141,18 @@ class ModalReportInvoker:
         )
         invocation_id = getattr(call, "object_id", None)
         if not isinstance(invocation_id, str) or not invocation_id:
-            raise RuntimeError(
-                "Modal report dispatch returned no invocation identifier"
-            )
+            msg = "Modal report dispatch returned no invocation identifier"
+            raise RuntimeError(msg)
         return invocation_id
 
 
 class Stage12ComparisonBackend:
+    """Backend that prepares Stage 12 comparison runs for Modal coordinators.
+
+    It writes no database rows: the spawned coordinator owns all durable
+    state, and this class only reads it back for polling.
+    """
+
     def __init__(
         self,
         settings: Settings,
@@ -137,6 +162,7 @@ class Stage12ComparisonBackend:
         invoker: ReportInvoker,
         runtime: ObservabilityRuntime,
     ) -> None:
+        """Wire the manifest, persistence, invoker and telemetry dependencies."""
         self._settings = settings
         self._manifest_loader = manifest_loader
         self._store = store
@@ -150,6 +176,10 @@ class Stage12ComparisonBackend:
         *,
         runtime: ObservabilityRuntime,
     ) -> Stage12ComparisonBackend:
+        """Build the production backend from the Modal manifest and Stage 12 database.
+
+        The manifest Dict must already exist; it is never created here.
+        """
         manifest_store = modal.Dict.from_name(
             settings.stage12_v2_manifest_name,
             environment_name=settings.stage12_v2_manifest_environment,
@@ -171,6 +201,14 @@ class Stage12ComparisonBackend:
         request_id: str,
         observability_id: str,
     ) -> None:
+        """Spawn a shadow comparison of an accepted production job.
+
+        The evaluation ID is derived from the environment, production job and
+        worker version, so a repeat dispatch maps to the same report. Requests
+        the adapter cannot represent are skipped with a telemetry event.
+        Raise ValueError if the production response has no ``job_id`` and
+        TemporaryStage12DispatchFailed if Modal does not accept the spawn.
+        """
         prepared = await asyncio.to_thread(
             self._prepare_automatic_report,
             request_payload=request_payload,
@@ -202,7 +240,6 @@ class Stage12ComparisonBackend:
         observability_id: str,
     ) -> ComparisonReportRecord:
         """Submit one direct report and return after Modal acknowledges it."""
-
         prepared = await asyncio.to_thread(
             self._prepare_temporary_report,
             request_payload=request_payload,
@@ -226,7 +263,6 @@ class Stage12ComparisonBackend:
         evaluation_id: UUID,
     ) -> tuple[ComparisonReportRecord, tuple[ComparisonSimulationRecord, ...]]:
         """Read coordinator-owned durable state without polling Modal."""
-
         return await asyncio.to_thread(self._get_temporary_report, evaluation_id)
 
     def _get_temporary_report(
@@ -235,7 +271,8 @@ class Stage12ComparisonBackend:
     ) -> tuple[ComparisonReportRecord, tuple[ComparisonSimulationRecord, ...]]:
         report = self._store.get_report(evaluation_id)
         if report.environment != self._settings.environment:
-            raise LookupError(f"comparison report {evaluation_id} does not exist")
+            msg = f"comparison report {evaluation_id} does not exist"
+            raise LookupError(msg)
         return report, self._store.list_simulations(evaluation_id)
 
     def _resolve_report(
@@ -334,7 +371,9 @@ class Stage12ComparisonBackend:
             )
         )
         if report is None:
-            raise TemporaryStage12UnsupportedRequest(skip_reason or "unsupported_input")
+            raise TemporaryStage12UnsupportedRequestError(
+                skip_reason or "unsupported_input"
+            )
         parent = self._parent_record(
             evaluation_id=evaluation_id,
             request_id=request_id,
@@ -360,7 +399,8 @@ class Stage12ComparisonBackend:
             response.get("job_id") if isinstance(response, dict) else None
         )
         if not isinstance(production_identity, str) or not production_identity:
-            raise ValueError("accepted production response has no job identifier")
+            msg = "accepted production response has no job identifier"
+            raise ValueError(msg)
 
         version, worker, manifest_sha256 = self._manifest_loader.resolve(
             self._settings.stage12_v2_worker_version
@@ -430,7 +470,6 @@ class Stage12ComparisonBackend:
         observability_id: str,
     ) -> ComparisonReportRecord:
         """Return after Modal accepts the coordinator; perform no database writes."""
-
         artifact_prefix = (
             f"stage-12-runs/{self._settings.environment}/"
             f"{parent.created_at:%Y}/{parent.created_at:%m}/"
@@ -438,7 +477,7 @@ class Stage12ComparisonBackend:
         )
         try:
             raw_context = self._runtime.capture_context()
-        except Exception:
+        except Exception:  # noqa: BLE001  # telemetry is non-fatal: a failed context capture dispatches without one
             raw_context = None
         captured_context = dict(raw_context) if isinstance(raw_context, dict) else {}
         captured_context.pop("observability_id", None)
@@ -492,7 +531,7 @@ class Stage12ComparisonBackend:
                         ),
                     },
                 )
-        except Exception as error:  # noqa: BLE001
+        except Exception as error:  # noqa: BLE001  # any dispatch failure is recorded on the parent run, then re-raised as TemporaryStage12DispatchFailed
             failed_at = datetime.now(UTC)
             failed = parent.model_copy(
                 update={

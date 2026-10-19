@@ -9,14 +9,14 @@ from pathlib import Path
 
 from scripts.rules.adapters import check_adapters
 from scripts.rules.baseline import (
-    BaseUnavailable,
+    BaseUnavailableError,
     check_baselines,
     default_base_ref,
     load_base_registry,
 )
 from scripts.rules.discover import discover_hidden
 from scripts.rules.load import load_registry
-from scripts.rules.model import Violation
+from scripts.rules.model import Registry, Violation
 from scripts.rules.render import (
     AGENTS_MD,
     RULES_MD,
@@ -38,11 +38,13 @@ RENDER_FIX = "run python -m scripts.rules render and commit the result"
 
 @dataclass
 class GuardResult:
+    """Guard violations, which fail the run, and notes, which only inform."""
+
     violations: list[Violation] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
 
-def _stale_outputs(registry, root: Path) -> list[Violation]:
+def _stale_outputs(registry: Registry, root: Path) -> list[Violation]:
     violations = []
     rules_md = root / RULES_MD
     if not rules_md.exists():
@@ -75,6 +77,11 @@ def run_guard(
     today: date | None = None,
     compare_base: bool = True,
 ) -> GuardResult:
+    """Run every registry check, then compare baselines with the base ref.
+
+    Stop after the schema errors if the registry does not load. An unreadable
+    base ref is a violation on GitHub Actions and only a note elsewhere.
+    """
     clear_caches()
     result = GuardResult()
     registry, schema_violations = load_registry(root)
@@ -97,12 +104,13 @@ def run_guard(
         return result
     if ref is None:
         result.notes.append(
-            "no base ref (set --base-ref or GITHUB_BASE_REF); baseline comparison skipped"
+            "no base ref (set --base-ref or GITHUB_BASE_REF); "
+            "baseline comparison skipped"
         )
     else:
         try:
             base = load_base_registry(root, ref)
-        except BaseUnavailable:
+        except BaseUnavailableError:
             if os.environ.get("GITHUB_ACTIONS"):
                 result.violations.append(
                     Violation(

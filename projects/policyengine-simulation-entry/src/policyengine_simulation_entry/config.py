@@ -26,12 +26,14 @@ def _truthy(value: str | None, *, default: bool = False) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
-def _stage12_enabled(value: str | None) -> bool:
+def _binary_flag(name: str) -> bool:
+    value = os.getenv(name)
     if value is None or value == "0":
         return False
     if value == "1":
         return True
-    raise ConfigurationError("STAGE12_ENABLED must be exactly 0 or 1.")
+    msg = f"{name} must be exactly 0 or 1."
+    raise ConfigurationError(msg)
 
 
 def _normalized_issuer(value: str) -> str:
@@ -52,13 +54,14 @@ def _validate_https_url(
         or parsed.username is not None
         or parsed.password is not None
     ):
-        raise ConfigurationError(f"{name} must be an absolute HTTPS URL.")
+        msg = f"{name} must be an absolute HTTPS URL."
+        raise ConfigurationError(msg)
     if parsed.params or parsed.query or parsed.fragment:
-        raise ConfigurationError(
-            f"{name} must not contain parameters, a query string, or a fragment."
-        )
+        msg = f"{name} must not contain parameters, a query string, or a fragment."
+        raise ConfigurationError(msg)
     if not allow_path and parsed.path not in {"", "/"}:
-        raise ConfigurationError(f"{name} must not contain a path.")
+        msg = f"{name} must not contain a path."
+        raise ConfigurationError(msg)
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,9 @@ class Settings:
     old_gateway_auth_audience: str
     old_gateway_auth_client_id: str
     old_gateway_auth_client_secret: str
+    # False records callers that lack a route permission and lets them
+    # through; True rejects them with 403.
+    enforce_permissions: bool = False
     connect_timeout_seconds: float = 5.0
     request_timeout_seconds: float = 25.0
     stage12_enabled: bool = False
@@ -87,6 +93,11 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
+        """Read settings from environment variables, applying defaults.
+
+        Only STAGE12_ENABLED is checked here (it must be 0 or 1); call validate
+        for everything else. Auth is required unless explicitly disabled.
+        """
         return cls(
             environment=os.getenv("APP_ENVIRONMENT", "local").lower(),
             revision=os.getenv("K_REVISION", ""),
@@ -107,13 +118,16 @@ class Settings:
             old_gateway_auth_client_secret=os.getenv(
                 "OLD_GATEWAY_AUTH_CLIENT_SECRET", ""
             ),
+            enforce_permissions=_binary_flag(
+                "SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS"
+            ),
             connect_timeout_seconds=float(
                 os.getenv("OLD_GATEWAY_CONNECT_TIMEOUT_SECONDS", "5")
             ),
             request_timeout_seconds=float(
                 os.getenv("OLD_GATEWAY_REQUEST_TIMEOUT_SECONDS", "25")
             ),
-            stage12_enabled=_stage12_enabled(os.getenv("STAGE12_ENABLED")),
+            stage12_enabled=_binary_flag("STAGE12_ENABLED"),
             stage12_v2_manifest_name=os.getenv(
                 "STAGE12_V2_MANIFEST_NAME",
                 V2_VERSION_MANIFEST_NAME,
@@ -130,10 +144,12 @@ class Settings:
 
     @property
     def production(self) -> bool:
+        """Whether this is a production environment, where auth must stay on."""
         return self.environment in PRODUCTION_ENVIRONMENTS
 
     @property
     def stage12_resources_configured(self) -> bool:
+        """Whether the Stage 12 manifest environment, database and bucket are set."""
         return all(
             (
                 self.stage12_v2_manifest_environment,
@@ -143,19 +159,25 @@ class Settings:
         )
 
     def validate(self) -> None:
+        """Raise ConfigurationError unless the service can start safely.
+
+        Called from the app lifespan, so a misconfigured revision fails at
+        startup rather than on its first request. Stage 12 resources must be
+        configured all together or not at all.
+        """
         if self.production and not self.auth_required:
-            raise ConfigurationError(
-                "Caller authentication cannot be disabled in production."
-            )
+            msg = "Caller authentication cannot be disabled in production."
+            raise ConfigurationError(msg)
 
         if bool(self.auth_issuer) != bool(self.auth_audience):
-            raise ConfigurationError(
-                "Set both SIMULATION_ENTRYPOINT_AUTH_ISSUER and SIMULATION_ENTRYPOINT_AUTH_AUDIENCE."
+            msg = (
+                "Set both SIMULATION_ENTRYPOINT_AUTH_ISSUER and "
+                "SIMULATION_ENTRYPOINT_AUTH_AUDIENCE."
             )
+            raise ConfigurationError(msg)
         if self.auth_required and not self.auth_issuer:
-            raise ConfigurationError(
-                "Caller authentication is required but issuer/audience are missing."
-            )
+            msg = "Caller authentication is required but issuer/audience are missing."
+            raise ConfigurationError(msg)
         if self.auth_issuer:
             _validate_https_url(
                 "SIMULATION_ENTRYPOINT_AUTH_ISSUER",
@@ -171,9 +193,8 @@ class Settings:
         }
         missing = [name for name, value in required_backend.items() if not value]
         if missing:
-            raise ConfigurationError(
-                f"Missing old-gateway configuration: {', '.join(missing)}."
-            )
+            msg = f"Missing old-gateway configuration: {', '.join(missing)}."
+            raise ConfigurationError(msg)
 
         _validate_https_url(
             "OLD_GATEWAY_AUTH_ISSUER",
@@ -181,7 +202,8 @@ class Settings:
         )
 
         if self.connect_timeout_seconds <= 0 or self.request_timeout_seconds <= 0:
-            raise ConfigurationError("Old-gateway timeouts must be positive.")
+            msg = "Old-gateway timeouts must be positive."
+            raise ConfigurationError(msg)
 
         _validate_https_url(
             "OLD_GATEWAY_URL",
@@ -193,9 +215,8 @@ class Settings:
         if upstream_hostname is None or not upstream_hostname.endswith(
             MODAL_GATEWAY_HOST_SUFFIX
         ):
-            raise ConfigurationError(
-                "OLD_GATEWAY_URL must point to the existing Modal gateway."
-            )
+            msg = "OLD_GATEWAY_URL must point to the existing Modal gateway."
+            raise ConfigurationError(msg)
 
         try:
             assert_separate_manifest_names(
@@ -205,7 +226,8 @@ class Settings:
         except ValueError as error:
             raise ConfigurationError(str(error)) from error
         if self.stage12_retention_days != 30:
-            raise ConfigurationError("STAGE12_RETENTION_DAYS must be exactly 30.")
+            msg = "STAGE12_RETENTION_DAYS must be exactly 30."
+            raise ConfigurationError(msg)
         required_stage12 = {
             "STAGE12_V2_MANIFEST_ENVIRONMENT": self.stage12_v2_manifest_environment,
             "STAGE12_DATABASE_URL": self.stage12_database_url,
@@ -220,13 +242,13 @@ class Settings:
                 "Stage 12 resources require: " + ", ".join(missing_stage12) + "."
             )
         if self.stage12_enabled and not self.stage12_resources_configured:
-            raise ConfigurationError(
+            msg = (
                 "STAGE12_ENABLED=1 requires the Stage 12 manifest, database, "
                 "and artifact resources."
             )
+            raise ConfigurationError(msg)
         if self.stage12_database_url and not self.stage12_database_url.startswith(
             "postgresql://"
         ):
-            raise ConfigurationError(
-                "STAGE12_DATABASE_URL must use the canonical postgresql:// scheme."
-            )
+            msg = "STAGE12_DATABASE_URL must use the canonical postgresql:// scheme."
+            raise ConfigurationError(msg)

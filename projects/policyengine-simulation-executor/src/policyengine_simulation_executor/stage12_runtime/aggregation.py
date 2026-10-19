@@ -2,20 +2,27 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from policyengine.core import Simulation
-from policyengine_simulation_contract.stage12_bundle import CountryId
+from policyengine_simulation_contract.spm import build_spm_comparison_provenance
 from policyengine_simulation_contract.stage12_execution import (
     ReportExecutionInput,
     SimulationArtifactDescriptor,
     Stage12OutputPlan,
     stage12_output_plan_sha256,
 )
-from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
-from pydantic import JsonValue
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    import pandas as pd
+    from policyengine.tax_benefit_models.uk.datasets import PolicyEngineUKDataset
+    from policyengine.tax_benefit_models.us.datasets import PolicyEngineUSDataset
+    from policyengine_simulation_contract.stage12_bundle import CountryId
+    from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
+    from pydantic import JsonValue
 
 
 def validate_uk_local_authority_metadata(
@@ -32,23 +39,26 @@ def validate_uk_local_authority_metadata(
     the report's region is national or nation-level and the bundle routes
     both constituency and local-authority regions to another dataset.
     """
-
     if country == "uk":
         if baseline is None and reform is None:
-            from policyengine_simulation_executor.uk_local_authority_metadata import (
+            from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # UK-only branch, reached only when a UK report has no metadata
                 uk_area_codes_required,
             )
 
             if region_code is None or uk_area_codes_required(region_code):
-                raise ValueError("UK simulation artifact metadata is missing")
+                msg = "UK simulation artifact metadata is missing"
+                raise ValueError(msg)
             return None
         if baseline is None or reform is None:
-            raise ValueError("UK simulation artifact metadata is missing on one side")
+            msg = "UK simulation artifact metadata is missing on one side"
+            raise ValueError(msg)
         if baseline != reform:
-            raise ValueError("UK simulation artifact boundary versions do not match")
+            msg = "UK simulation artifact boundary versions do not match"
+            raise ValueError(msg)
         return baseline
     if baseline is not None or reform is not None:
-        raise ValueError("non-UK simulation artifacts contain UK authority metadata")
+        msg = "non-UK simulation artifacts contain UK authority metadata"
+        raise ValueError(msg)
     return None
 
 
@@ -57,7 +67,6 @@ class PrecomputedSimulation(Simulation):
 
     def ensure(self) -> None:
         """Do not recalculate frames loaded from Stage 12 artifacts."""
-
         return
 
 
@@ -67,25 +76,36 @@ def validate_aligned_outputs(
     baseline: SimulationArtifactDescriptor,
     reform: SimulationArtifactDescriptor,
 ) -> None:
+    """Check that two simulation artifacts can be aggregated as this report's pair.
+
+    Raises ``ValueError`` unless the roles, evaluation, bundle, output schema,
+    output plan and row identities all line up.
+    """
     if baseline.role.value != "baseline" or reform.role.value != "reform":
-        raise ValueError("simulation artifacts have incorrect report roles")
+        msg = "simulation artifacts have incorrect report roles"
+        raise ValueError(msg)
     if (
         baseline.evaluation_id != report.evaluation_id
         or reform.evaluation_id != report.evaluation_id
     ):
-        raise ValueError("simulation artifacts name another comparison run")
+        msg = "simulation artifacts name another comparison run"
+        raise ValueError(msg)
     if baseline.bundle != reform.bundle or baseline.bundle != report.baseline.bundle:
-        raise ValueError("simulation artifacts have incompatible bundle provenance")
+        msg = "simulation artifacts have incompatible bundle provenance"
+        raise ValueError(msg)
     if baseline.output_schema_version != reform.output_schema_version:
-        raise ValueError("simulation artifacts use incompatible output schemas")
+        msg = "simulation artifacts use incompatible output schemas"
+        raise ValueError(msg)
     expected_plan_sha256 = stage12_output_plan_sha256(output_plan)
     if (
         baseline.output_plan_sha256 != expected_plan_sha256
         or reform.output_plan_sha256 != expected_plan_sha256
     ):
-        raise ValueError("simulation artifacts do not satisfy the report output plan")
+        msg = "simulation artifacts do not satisfy the report output plan"
+        raise ValueError(msg)
     if baseline.row_identity != reform.row_identity:
-        raise ValueError("simulation artifacts have incompatible stable row identities")
+        msg = "simulation artifacts have incompatible stable row identities"
+        raise ValueError(msg)
 
 
 def _dataset_from_frames(
@@ -93,8 +113,10 @@ def _dataset_from_frames(
     *,
     country: CountryId,
     year: int,
-):
-    from microdf import MicroDataFrame
+) -> PolicyEngineUSDataset | PolicyEngineUKDataset:
+    from microdf import (  # noqa: PLC0415  # dataset rebuild: kept with the country dataset classes below, which load lazily
+        MicroDataFrame,
+    )
 
     fields = {}
     for entity, frame in frames.items():
@@ -140,10 +162,15 @@ def build_aggregate_report(
     reform_descriptor: SimulationArtifactDescriptor,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> dict[str, Any]:
-    from policyengine_simulation_executor.simulation_output_builder import (
+    """Build the aggregate report payload from retained baseline and reform frames.
+
+    Runs the standard macro output builder over stand-in simulations that load
+    the stored frames, so no model is recomputed.
+    """
+    from policyengine_simulation_executor.simulation_output_builder import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_output_builder.SimulationOutputBuilder
         SimulationOutputBuilder,
     )
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime._country_module
         _country_module,
         _runtime_policy,
     )
@@ -163,7 +190,10 @@ def build_aggregate_report(
         ),
     }
 
-    def stand_in(dataset, policy: dict[str, JsonValue]):
+    def stand_in(
+        dataset: PolicyEngineUSDataset | PolicyEngineUKDataset,
+        policy: dict[str, JsonValue],
+    ) -> PrecomputedSimulation:
         simulation = PrecomputedSimulation(
             dataset=dataset,
             tax_benefit_model_version=country_module.model,
@@ -219,20 +249,24 @@ def build_spm_result(
     baseline_descriptor: SimulationArtifactDescriptor,
     reform_descriptor: SimulationArtifactDescriptor,
 ) -> dict[str, Any]:
+    """Return the ``spm_provenance`` fields for the report; empty without SPM.
+
+    Raises ``ValueError`` when either artifact lacks an SPM receipt covering the
+    report year.
+    """
     requested_spm = report.baseline.options.get("spm")
     if requested_spm is None:
         return {}
-    from policyengine_simulation_contract.spm import (
-        build_spm_comparison_provenance,
-    )
 
     baseline_provenance = baseline_descriptor.calculation_provenance
     reform_provenance = reform_descriptor.calculation_provenance
     if baseline_provenance is None or reform_provenance is None:
-        raise ValueError("SPM calculation provenance is missing")
+        msg = "SPM calculation provenance is missing"
+        raise ValueError(msg)
     for receipt in (baseline_provenance, reform_provenance):
         if str(report.baseline.year) not in receipt.years:
-            raise ValueError("SPM calculation provenance does not cover report year")
+            msg = "SPM calculation provenance does not cover report year"
+            raise ValueError(msg)
     comparison = build_spm_comparison_provenance(
         baseline_receipts=[baseline_provenance],
         reform_receipts=[reform_provenance],

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 from policyengine_observability import (
@@ -13,12 +13,15 @@ from policyengine_observability import (
     ObservabilityRuntime,
     instrument_httpx,
 )
-from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 from pydantic import ValidationError
 
-from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.schemas import BackendServiceToken
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.json_types import JsonObject
+
+    from policyengine_simulation_entry.config import Settings
 
 SAFE_RESPONSE_HEADERS = frozenset(
     {
@@ -32,31 +35,44 @@ SAFE_RESPONSE_HEADERS = frozenset(
 )
 
 
-class BackendUnavailable(RuntimeError):
+class BackendUnavailableError(RuntimeError):
     """The backend could not be reached."""
 
 
-class BackendTimeout(RuntimeError):
+class BackendTimeoutError(RuntimeError):
     """The backend did not answer within the configured timeout."""
 
 
-class BackendAuthenticationError(BackendUnavailable):
+class BackendAuthenticationError(BackendUnavailableError):
     """The service could not authenticate to the backend."""
 
 
 @dataclass(frozen=True)
 class BackendResponse:
+    """A backend reply with only the safe-to-forward response headers kept."""
+
     status_code: int
     content: bytes
     headers: dict[str, str]
 
 
 class SimulationBackend(Protocol):
-    async def start(self) -> None: ...
+    """Backend the entry routes forward simulation requests to.
 
-    async def close(self) -> None: ...
+    The app starts it in the lifespan and closes it on shutdown.
+    """
 
-    async def ready(self) -> bool: ...
+    async def start(self) -> None:
+        """Open connections; called once when the app starts."""
+        ...
+
+    async def close(self) -> None:
+        """Release connections; called when the app shuts down."""
+        ...
+
+    async def ready(self) -> bool:
+        """Return whether the backend can serve requests, for the /ready probe."""
+        ...
 
     async def request(
         self,
@@ -66,7 +82,12 @@ class SimulationBackend(Protocol):
         json_body: JsonObject | None = None,
         request_id: str | None = None,
         observability_id: str | None = None,
-    ) -> BackendResponse: ...
+    ) -> BackendResponse:
+        """Send one request and return the backend's response.
+
+        Raise BackendUnavailableError or BackendTimeoutError when no response arrives.
+        """
+        ...
 
 
 class ClientCredentialsTokenProvider:
@@ -74,7 +95,8 @@ class ClientCredentialsTokenProvider:
 
     REFRESH_MARGIN_SECONDS = 60
 
-    def __init__(self, settings: Settings, client: httpx.AsyncClient):
+    def __init__(self, settings: Settings, client: httpx.AsyncClient) -> None:
+        """Start with no cached token; the first get_token call fetches one."""
         self.settings = settings
         self.client = client
         self._token: str | None = None
@@ -82,6 +104,10 @@ class ClientCredentialsTokenProvider:
         self._lock = asyncio.Lock()
 
     async def get_token(self) -> str:
+        """Return a bearer token, refetching it within a minute of expiry.
+
+        Raise BackendAuthenticationError if Auth0 cannot issue one.
+        """
         async with self._lock:
             now = time.time()
             if (
@@ -90,10 +116,12 @@ class ClientCredentialsTokenProvider:
             ):
                 await self._fetch()
             if self._token is None:  # pragma: no cover
-                raise BackendAuthenticationError("Auth0 returned no token.")
+                msg = "Auth0 returned no token."
+                raise BackendAuthenticationError(msg)
             return self._token
 
     def invalidate(self) -> None:
+        """Drop the cached token so the next get_token call fetches a new one."""
         self._token = None
         self._expires_at = 0.0
 
@@ -115,9 +143,8 @@ class ClientCredentialsTokenProvider:
         except BackendAuthenticationError:
             raise
         except (httpx.HTTPError, TypeError, ValueError, ValidationError) as exc:
-            raise BackendAuthenticationError(
-                "Unable to obtain old-gateway credentials."
-            ) from exc
+            msg = "Unable to obtain old-gateway credentials."
+            raise BackendAuthenticationError(msg) from exc
 
 
 class OldGatewayBackend:
@@ -129,7 +156,8 @@ class OldGatewayBackend:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         runtime: ObservabilityRuntime | None = None,
-    ):
+    ) -> None:
+        """Configure the backend; no HTTP client exists until start is called."""
         self.settings = settings
         self.transport = transport
         self.observability = runtime
@@ -137,6 +165,7 @@ class OldGatewayBackend:
         self.token_provider: ClientCredentialsTokenProvider | None = None
 
     async def start(self) -> None:
+        """Create the instrumented HTTP client and token provider; idempotent."""
         if self.client is not None:
             return
         timeout = httpx.Timeout(
@@ -158,6 +187,7 @@ class OldGatewayBackend:
         )
 
     async def close(self) -> None:
+        """Close the HTTP client; start may be called again afterwards."""
         if self.client is not None:
             await self.client.aclose()
         self.client = None
@@ -165,13 +195,15 @@ class OldGatewayBackend:
 
     def _runtime(self) -> tuple[httpx.AsyncClient, ClientCredentialsTokenProvider]:
         if self.client is None or self.token_provider is None:
-            raise BackendUnavailable("Old-gateway backend is not started.")
+            msg = "Old-gateway backend is not started."
+            raise BackendUnavailableError(msg)
         return self.client, self.token_provider
 
     async def ready(self) -> bool:
+        """Return whether the old gateway answers GET /health with 200."""
         try:
             response = await self.request("GET", "/health")
-        except (BackendUnavailable, BackendTimeout):
+        except (BackendUnavailableError, BackendTimeoutError):
             return False
         return response.status_code == 200
 
@@ -184,6 +216,13 @@ class OldGatewayBackend:
         request_id: str | None = None,
         observability_id: str | None = None,
     ) -> BackendResponse:
+        """Forward one request to the old gateway with a service bearer token.
+
+        A connection failure is retried once for GET only. A 401 or 403 refreshes
+        the token and replays once for any method, then raises
+        BackendAuthenticationError. Raise BackendUnavailableError if the client is
+        not started or the gateway is unreachable, and BackendTimeoutError on timeout.
+        """
         client, token_provider = self._runtime()
         method = method.upper()
         connection_retries_remaining = 1 if method == "GET" else 0
@@ -208,11 +247,14 @@ class OldGatewayBackend:
                 if connection_retries_remaining:
                     connection_retries_remaining -= 1
                     continue
-                raise BackendUnavailable("Old gateway is unavailable.") from exc
+                msg = "Old gateway is unavailable."
+                raise BackendUnavailableError(msg) from exc
             except httpx.TimeoutException as exc:
-                raise BackendTimeout("Old gateway timed out.") from exc
+                msg = "Old gateway timed out."
+                raise BackendTimeoutError(msg) from exc
             except httpx.RequestError as exc:
-                raise BackendUnavailable("Old gateway is unavailable.") from exc
+                msg = "Old gateway is unavailable."
+                raise BackendUnavailableError(msg) from exc
 
             if response.status_code in {401, 403}:
                 if auth_refreshes_remaining:
@@ -222,9 +264,8 @@ class OldGatewayBackend:
                     # 403 before endpoint processing. One credential-refresh
                     # replay is therefore safe for POST as well as GET.
                     continue
-                raise BackendAuthenticationError(
-                    "Old gateway rejected refreshed service credentials."
-                )
+                msg = "Old gateway rejected refreshed service credentials."
+                raise BackendAuthenticationError(msg)
 
             return BackendResponse(
                 status_code=response.status_code,

@@ -14,6 +14,8 @@ from policyengine_simulation_contract.uk_geography import (
 )
 from policyengine_simulation_executor import simulation_output_geographic
 
+CONSTITUENCY_CSV_PATH = "/tmp/constituencies_2024.csv"
+
 
 def _complete_constituency_record() -> dict[str, object]:
     return {
@@ -54,7 +56,7 @@ def test_required_uk_lookup_uses_gcp_credentials(monkeypatch) -> None:
         assert spec is CONSTITUENCY_ASSET_SPEC
         assert kwargs == {"download_missing_assets": True}
         observed.append("lookup-resolved")
-        return "/tmp/constituencies_2024.csv"
+        return CONSTITUENCY_CSV_PATH
 
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime.setup_gcp_credentials",
@@ -69,7 +71,7 @@ def test_required_uk_lookup_uses_gcp_credentials(monkeypatch) -> None:
         CONSTITUENCY_ASSET_SPEC
     )
 
-    assert result == "/tmp/constituencies_2024.csv"
+    assert result == CONSTITUENCY_CSV_PATH
     assert observed == ["credentials-entered", "lookup-resolved"]
 
 

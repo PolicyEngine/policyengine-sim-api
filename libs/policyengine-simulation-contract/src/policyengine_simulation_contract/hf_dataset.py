@@ -28,6 +28,11 @@ class HuggingFaceDatasetReferenceError(ValueError):
 
 @dataclass(frozen=True)
 class HFDatasetReference:
+    """An ``hf://`` dataset URI split into Hub repo, in-repo path and revision.
+
+    ``revision`` is None when the URI carries no ``@revision`` pin.
+    """
+
     repo_id: str
     path: str
     revision: str | None
@@ -44,7 +49,6 @@ def parse_hf_dataset_uri(dataset_uri: str) -> HFDatasetReference | None:
     Hub API needs ``org/repo`` and ``revision`` separately, while path
     validation needs the artifact path within the repo.
     """
-
     if not dataset_uri.startswith("hf://"):
         return None
 
@@ -56,9 +60,8 @@ def parse_hf_dataset_uri(dataset_uri: str) -> HFDatasetReference | None:
     )
     parts = path_with_repo.split("/", maxsplit=2)
     if len(parts) != 3 or not all(parts):
-        raise HuggingFaceDatasetReferenceError(
-            f"Invalid Hugging Face dataset URI: {dataset_uri!r}"
-        )
+        msg = f"Invalid Hugging Face dataset URI: {dataset_uri!r}"
+        raise HuggingFaceDatasetReferenceError(msg)
     return HFDatasetReference(
         repo_id=f"{parts[0]}/{parts[1]}",
         path=parts[2],
@@ -80,21 +83,23 @@ def _fetch_hf_dataset_revision(
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
 
-    request = Request(url, headers=headers)
+    request = Request(url, headers=headers)  # noqa: S310  # Hub API URL: the HF_ENDPOINT base (https by default) and quoted path parts
     try:
-        with urlopen(request, timeout=HF_REQUEST_TIMEOUT_SECONDS) as response:
+        with urlopen(request, timeout=HF_REQUEST_TIMEOUT_SECONDS) as response:  # noqa: S310  # the Hub API request built above
             return json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         detail = exc.reason or f"HTTP {exc.code}"
-        raise HuggingFaceDatasetReferenceError(
+        msg = (
             f"Hugging Face dataset revision {repo_id}@{revision} was not found: "
             f"{detail}"
-        ) from exc
+        )
+        raise HuggingFaceDatasetReferenceError(msg) from exc
     except (OSError, URLError, json.JSONDecodeError) as exc:
-        raise HuggingFaceDatasetReferenceError(
+        msg = (
             f"Unable to validate Hugging Face dataset revision "
             f"{repo_id}@{revision}: {exc}"
-        ) from exc
+        )
+        raise HuggingFaceDatasetReferenceError(msg) from exc
 
 
 def _siblings_contain_path(payload: dict[str, Any], path: str) -> bool | None:
@@ -116,7 +121,6 @@ def _siblings_contain_path(payload: dict[str, Any], path: str) -> bool | None:
 
 def validate_hf_dataset_uri(dataset_uri: str) -> str:
     """Validate an explicit ``hf://`` dataset URI if it pins a revision."""
-
     parsed = parse_hf_dataset_uri(dataset_uri)
     if parsed is None or parsed.revision is None:
         return dataset_uri
@@ -124,16 +128,16 @@ def validate_hf_dataset_uri(dataset_uri: str) -> str:
     payload = _fetch_hf_dataset_revision(parsed.repo_id, parsed.revision, _hf_token())
     contains_path = _siblings_contain_path(payload, parsed.path)
     if contains_path is False:
-        raise HuggingFaceDatasetReferenceError(
+        msg = (
             f"Hugging Face dataset revision {parsed.repo_id}@{parsed.revision} "
             f"does not contain artifact {parsed.path!r}"
         )
+        raise HuggingFaceDatasetReferenceError(msg)
     return dataset_uri
 
 
 def with_hf_revision(dataset_uri: str, revision: str) -> str:
     """Return ``dataset_uri`` pinned to ``revision`` and validate it on the Hub."""
-
     if not dataset_uri.startswith("hf://"):
         return dataset_uri
     without_revision = dataset_uri.rsplit("@", maxsplit=1)[0]

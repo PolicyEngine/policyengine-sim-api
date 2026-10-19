@@ -25,10 +25,13 @@ LEGACY_SOURCES = ["legacy-country-dict", "legacy-seed", PUBLISHED_GENERATION]
 
 
 def legacy_route(mock_modal, source, model_version):
-    """Two shapes of pre-canonical route: the original per-country Modal
-    dicts, and a seeded routing-state country route the registry ties to no
-    wrapper bundle. For the latter, ``source`` is the state's ``generation``
-    marker, which must not change how the route resolves."""
+    """Stage one of two shapes of pre-canonical route for ``model_version``.
+
+    The shapes are the original per-country Modal dicts, and a seeded
+    routing-state country route the registry ties to no wrapper bundle. For
+    the latter, ``source`` is the state's ``generation`` marker, which must
+    not change how the route resolves.
+    """
     app_name = "policyengine-simulation-us1-715-2-uk2-88-20"
     if source == "legacy-country-dict":
         app_name = "legacy-app"
@@ -380,9 +383,11 @@ LEGACY_BUNDLE_KEYS = {
 
 @pytest.mark.parametrize("source", LEGACY_SOURCES)
 def test_legacy_poll_bodies_carry_no_spm_key(mock_modal, client, source):
-    """The 202 and 500 bodies splat job metadata in raw, bypassing the
-    routes' ``response_model_exclude_none``. A legacy no-SPM job must stay
-    byte-identical to the pre-SPM gateway."""
+    """Legacy no-SPM poll bodies must stay byte-identical to the pre-SPM gateway.
+
+    The 202 and 500 bodies splat job metadata in raw, bypassing the routes'
+    ``response_model_exclude_none``.
+    """
     legacy_route(mock_modal, source, "1.715.2")
     submitted = client.post("/simulate/economy/comparison", json={"country": "us"})
     assert submitted.status_code == 200, submitted.text
@@ -448,7 +453,7 @@ def test_publishing_does_not_revoke_a_seeded_country_route(
 
 
 def wrapper_route_without_manifest(mock_modal, wrapper):
-    """A seeded wrapper route the app-release snapshot had no bundle for."""
+    """Seed a wrapper route the app-release snapshot had no bundle for."""
     state = deepcopy(TEST_ROUTING_STATE)
     app_name = f"policyengine-simulation-py{wrapper.replace('.', '-')}"
     state["routes"]["policyengine"][wrapper] = app_name
@@ -460,9 +465,12 @@ def wrapper_route_without_manifest(mock_modal, wrapper):
 def test_pinned_wrapper_route_without_manifest_submits_without_spm(
     mock_modal, client, endpoint, extra, wrapper
 ):
-    """With no manifest the response's ``model_version`` echoes the wrapper
+    """A pinned pre-canonical wrapper with no manifest still submits.
+
+    With no manifest the response's ``model_version`` echoes the wrapper
     version. Reading that back as a country model version rejected the two
-    pinned pre-canonical bundles."""
+    pinned pre-canonical bundles.
+    """
     wrapper_route_without_manifest(mock_modal, wrapper)
     response = client.post(
         endpoint, json={"country": "us", "policyengine_version": wrapper, **extra}
@@ -492,8 +500,11 @@ def test_pinned_wrapper_through_legacy_dicts_submits_without_spm(
 def test_unpinned_wrapper_route_without_manifest_still_fails_closed(
     mock_modal, client, endpoint, extra
 ):
-    """Only the two pinned pre-canonical wrappers are vouched for without a
-    manifest; an unrecognized bundle proves nothing."""
+    """Fail closed for an unpinned wrapper route that has no manifest.
+
+    Only the two pinned pre-canonical wrappers are vouched for without a
+    manifest; an unrecognized bundle proves nothing.
+    """
     wrapper_route_without_manifest(mock_modal, "5.4.0")
     response = client.post(
         endpoint, json={"country": "us", "policyengine_version": "5.4.0", **extra}
@@ -507,8 +518,10 @@ def test_unpinned_wrapper_route_without_manifest_still_fails_closed(
 def test_stated_model_version_still_contradicts_the_wrapper_pin(
     mock_modal, client, endpoint, extra
 ):
-    """A manifest that states a post-canonical model under a pinned wrapper
-    is a republish we cannot vouch for."""
+    """Refuse a pinned wrapper whose manifest states a post-canonical model.
+
+    That manifest is a republish we cannot vouch for.
+    """
     state = deepcopy(TEST_ROUTING_STATE)
     original = state["bundles"]["4.10.0"]
     state["routes"]["policyengine"]["5.3.0"] = original["app_name"]
@@ -527,7 +540,7 @@ def test_stated_model_version_still_contradicts_the_wrapper_pin(
 
 
 def republished_wrapper_state(mock_modal, *, model_version):
-    """The registry a re-publish leaves behind.
+    """Stage the registry a re-publish leaves behind.
 
     ``update_version_registry`` only ever adds country routes and it
     overwrites the bundle manifest for the wrapper version it deploys, so
@@ -548,9 +561,12 @@ def republished_wrapper_state(mock_modal, *, model_version):
 def test_stale_country_route_is_refused_rather_than_served(
     mock_modal, client, endpoint, extra
 ):
-    """The behaviour change. Before, this route resolved and the 202 body
-    contradicted itself: ``version`` from the stale route,
-    ``policyengine_bundle.model_version`` from the live manifest."""
+    """Refuse a stale country route instead of serving it (the behaviour change).
+
+    Before, this route resolved and the 202 body contradicted itself:
+    ``version`` from the stale route, ``policyengine_bundle.model_version``
+    from the live manifest.
+    """
     republished_wrapper_state(mock_modal, model_version="1.470.0")
     response = client.post(
         endpoint, json={"country": "us", "version": "1.459.0", **extra}
@@ -567,9 +583,11 @@ def test_stale_country_route_is_refused_rather_than_served(
 def test_a_country_route_its_bundle_still_states_is_served(
     mock_modal, client, endpoint, extra
 ):
-    """The other half: a route the manifest agrees with keeps working, so
-    the refusal above is about disagreement and not about single-candidate
-    country routes in general."""
+    """Keep serving a country route the manifest agrees with.
+
+    The other half: the refusal above is about disagreement and not about
+    single-candidate country routes in general.
+    """
     republished_wrapper_state(mock_modal, model_version="1.459.0")
     response = client.post(
         endpoint, json={"country": "us", "version": "1.459.0", **extra}
@@ -604,8 +622,10 @@ def test_a_bundle_that_states_no_model_version_contradicts_nothing(
 
 
 def test_poll_bodies_carry_the_dataset_sha256_only_when_recorded(mock_modal, client):
-    """A worker bundle with a certified dataset digest reports it in raw
-    202 bodies; one without keeps the legacy key set."""
+    """Report a recorded dataset digest in raw 202 bodies.
+
+    A worker bundle without a certified dataset digest keeps the legacy key set.
+    """
     from copy import deepcopy
 
     from fixtures.gateway_endpoints import TEST_ROUTING_STATE

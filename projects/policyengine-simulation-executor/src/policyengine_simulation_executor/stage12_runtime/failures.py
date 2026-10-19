@@ -37,6 +37,7 @@ class Stage12InputError(ValueError):
     """An input error whose code and message are safe to return to the caller."""
 
     def __init__(self, code: str, message: str) -> None:
+        """Keep the safe ``code`` and ``message`` for the caller."""
         self.code = code
         self.message = message
         super().__init__(message)
@@ -46,11 +47,12 @@ class Stage12ExecutionError(RuntimeError):
     """Carry one safe failure between Stage 12 execution layers."""
 
     def __init__(self, detail: Stage12FailureDetail) -> None:
+        """Carry ``detail``; the exception's own message is fixed and generic."""
         self.detail = detail
         super().__init__("Stage 12 execution failed")
 
 
-class Stage12Cancellation(RuntimeError):
+class Stage12CancellationError(RuntimeError):
     """Stop a simulation whose durable record was cancelled by its parent."""
 
 
@@ -75,7 +77,6 @@ def failure_detail_from_record(
     error_summary: str | None,
 ) -> Stage12FailureDetail:
     """Recreate a propagated failure without replacing its persisted values."""
-
     return _safe_detail(
         error_code=error_code,
         error_summary=error_summary or "Simulation failed",
@@ -97,7 +98,6 @@ def redacted_failure_detail(
     the error once with that ID so the summary leads back to it. The cause is
     shortened, never the ID, to fit the summary limit.
     """
-
     if isinstance(error, Stage12ExecutionError):
         return error.detail
     if isinstance(error, Stage12InputError):
@@ -130,7 +130,6 @@ def redacted_failure_detail(
 
 def validate_policy_periods(policy: Mapping[str, Any]) -> None:
     """Require effective dates in the wire formats emitted by the frontend."""
-
     for parameter, value in policy.items():
         if not isinstance(value, Mapping):
             continue
@@ -150,8 +149,9 @@ def validate_policy_periods(policy: Mapping[str, Any]) -> None:
 
 
 def _raise_invalid_period(parameter: str, period: str) -> None:
+    msg = "invalid_policy_period"
     raise Stage12InputError(
-        "invalid_policy_period",
+        msg,
         f"Policy parameter {parameter!r} has invalid effective period "
         f"{period!r}; expected YYYY-MM-DD or "
         "YYYY-MM-DD.YYYY-MM-DD.",

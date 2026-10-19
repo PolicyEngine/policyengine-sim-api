@@ -19,9 +19,14 @@ app = modal.App("policyengine-stage12-v2-static-runtime-files-smoke")
 
 
 def validate_installed_uk_local_authority_dataset() -> str:
+    """Return the local authority boundary version of the installed UK dataset.
+
+    Raises if the image has no installed certified UK dataset.
+    """
     dataset_path = resolve_local_bundle_dataset_path("uk", None)
     if dataset_path is None:
-        raise RuntimeError("installed certified UK dataset is unavailable")
+        msg = "installed certified UK dataset is unavailable"
+        raise RuntimeError(msg)
     return detect_uk_local_authority_metadata_from_hdf(
         dataset_path
     ).boundary_version.value
@@ -29,7 +34,7 @@ def validate_installed_uk_local_authority_dataset() -> str:
 
 @app.function(image=uk_worker_image, timeout=600, memory=512)
 def smoke_stage12_static_runtime_files() -> dict[str, int | str]:
-
+    """Count the UK local authority files inside the UK worker image."""
     resources = load_uk_local_authority_resources()
     return {
         "names": len(resources.names),
@@ -47,6 +52,7 @@ def smoke_stage12_static_runtime_files() -> dict[str, int | str]:
 
 @app.local_entrypoint()
 def main() -> None:
+    """Run the smoke remotely and raise unless counts and boundary version match."""
     observed = smoke_stage12_static_runtime_files.remote()
     expected_counts = {
         "names": 378,
@@ -54,13 +60,15 @@ def main() -> None:
         "lad23_coordinates": 361,
     }
     if {key: observed.get(key) for key in expected_counts} != expected_counts:
-        raise RuntimeError(
+        msg = (
             f"Stage 12 static runtime file smoke returned invalid counts: {observed!r}"
         )
+        raise RuntimeError(msg)
     supported_versions = {version.value for version in UKLocalAuthorityBoundaryVersion}
     if observed.get("installed_dataset_boundary_version") not in supported_versions:
-        raise RuntimeError(
+        msg = (
             "Stage 12 static runtime file smoke could not identify the installed "
             f"UK dataset boundary version: {observed!r}"
         )
-    print("Stage 12 static runtime file smoke OK")
+        raise RuntimeError(msg)
+    print("Stage 12 static runtime file smoke OK")  # noqa: T201  # Modal local entrypoint: runs locally, and stdout is the smoke's report

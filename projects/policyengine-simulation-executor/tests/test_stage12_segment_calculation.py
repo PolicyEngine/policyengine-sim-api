@@ -137,6 +137,7 @@ def test_merge_rejects_missing_or_incompatible_segment_spm_receipts(
 
 def test_eligibility_matches_stage12_supported_national_shape() -> None:
     simulation = _planned_simulation(SimulationRole.BASELINE)
+    requirements = simulation.output_plan.requirements
     assert should_segment_simulation(simulation) is True
     assert (
         should_segment_simulation(
@@ -162,7 +163,7 @@ def test_eligibility_matches_stage12_supported_national_shape() -> None:
                 update={
                     "output_plan": simulation.output_plan.model_copy(
                         update={
-                            "requirements": simulation.output_plan.requirements.model_copy(
+                            "requirements": requirements.model_copy(
                                 update={"include_cliff_impacts": True}
                             )
                         }

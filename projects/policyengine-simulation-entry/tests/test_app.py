@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from typing import TYPE_CHECKING
 from unittest.mock import Mock
 from uuid import UUID
 
@@ -10,7 +11,6 @@ import pytest
 from conftest import FakeBackend, make_settings
 from fastapi import HTTPException
 from policyengine_observability import REQUEST_ID_HEADER
-from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     SimulationRole,
@@ -19,12 +19,12 @@ from policyengine_simulation_entry import app as app_module
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.backend import (
     BackendResponse,
-    BackendTimeout,
-    BackendUnavailable,
+    BackendTimeoutError,
+    BackendUnavailableError,
 )
 from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12DispatchFailed,
-    TemporaryStage12UnsupportedRequest,
+    TemporaryStage12UnsupportedRequestError,
 )
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 from stage12_fixtures import (
@@ -33,6 +33,9 @@ from stage12_fixtures import (
     comparison_simulation,
     eligible_payload,
 )
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.json_types import JsonObject
 
 
 def response(
@@ -81,7 +84,8 @@ class TemporaryComparisonBackend:
     async def get_temporary_report(self, evaluation_id):
         self.polls.append(evaluation_id)
         if evaluation_id != self.report.evaluation_id:
-            raise LookupError("missing report")
+            msg = "missing report"
+            raise LookupError(msg)
         return self.report, self.simulations
 
 
@@ -224,7 +228,8 @@ def test_automatic_comparison_dispatch_preserves_production_response(
 def test_comparison_dispatch_failure_cannot_change_production_response(backend):
     class FailingComparisonBackend:
         async def dispatch_after_production(self, **_):
-            raise RuntimeError("comparison unavailable")
+            msg = "comparison unavailable"
+            raise RuntimeError(msg)
 
     payload = {
         "job_id": "fc-123",
@@ -392,7 +397,8 @@ def test_temporary_stage12_poll_not_found_has_short_retry_hint(backend):
     class MissingComparisonBackend(TemporaryComparisonBackend):
         async def get_temporary_report(self, evaluation_id):
             self.polls.append(evaluation_id)
-            raise LookupError("not created")
+            msg = "not created"
+            raise LookupError(msg)
 
     comparison = MissingComparisonBackend()
     app = create_app(
@@ -626,7 +632,7 @@ def test_temporary_stage12_poll_returns_404_for_unknown_report(backend):
     ("error", "status_code", "expected"),
     [
         (
-            TemporaryStage12UnsupportedRequest("unsupported_cliff_calculation"),
+            TemporaryStage12UnsupportedRequestError("unsupported_cliff_calculation"),
             422,
             {"reason": "unsupported_cliff_calculation"},
         ),
@@ -908,8 +914,12 @@ def test_request_validation_matches_shared_contract(client):
 @pytest.mark.parametrize(
     ("error", "expected_status", "expected_detail"),
     [
-        (BackendUnavailable("unavailable"), 503, "Simulation backend is unavailable."),
-        (BackendTimeout("timed out"), 504, "Simulation backend timed out."),
+        (
+            BackendUnavailableError("unavailable"),
+            503,
+            "Simulation backend is unavailable.",
+        ),
+        (BackendTimeoutError("timed out"), 504, "Simulation backend timed out."),
     ],
 )
 def test_backend_failures_are_sanitized(error, expected_status, expected_detail):
@@ -942,7 +952,8 @@ def test_backend_failures_are_sanitized(error, expected_status, expected_detail)
 def test_unexpected_failure_preserves_correlation_headers_and_request_log(caplog):
     class FailingBackend(FakeBackend):
         async def request(self, *args, **kwargs):
-            raise RuntimeError("unexpected backend failure")
+            msg = "unexpected backend failure"
+            raise RuntimeError(msg)
 
     app = create_app(
         settings=make_settings(),

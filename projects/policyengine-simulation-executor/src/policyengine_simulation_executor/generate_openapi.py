@@ -1,3 +1,5 @@
+"""Write the executor app's OpenAPI spec to ``artifacts/openapi.json`` when imported."""
+
 import json
 from pathlib import Path
 
@@ -11,4 +13,4 @@ openapi_spec = app.openapi()
 with open(output_path, "w") as f:
     json.dump(openapi_spec, f, indent=4)
 
-print(f"OpenAPI spec written to {output_path}")
+print(f"OpenAPI spec written to {output_path}")  # noqa: T201  # command-line script: reports where it wrote the spec

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from policyengine_observability import ObservabilityRuntime
-from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
+from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     Stage,
@@ -21,6 +20,10 @@ from policyengine_simulation_executor import (
     simulation_output_inequality,
     simulation_output_labor,
     simulation_output_poverty,
+)
+from policyengine_simulation_executor.job_progress import (
+    NULL_JOB_PROGRESS,
+    JobProgressReporter,
 )
 from policyengine_simulation_executor.release_bundle import get_country_release_bundle
 from policyengine_simulation_executor.simulation_macro_output import (
@@ -40,9 +43,19 @@ from policyengine_simulation_executor.simulation_macro_output import (
     SingleYearMacroOutput,
 )
 
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
+
 
 @dataclass
 class SimulationOutputBuilder:
+    """Assemble one year's macro output from a computed baseline and reform.
+
+    Each output segment is built inside its own observability span when a
+    ``runtime`` is given.
+    """
+
     country: str
     simulation_params: dict[str, Any]
     country_module: Any
@@ -53,16 +66,23 @@ class SimulationOutputBuilder:
     resolved_region_code: str | None = None
     runtime: ObservabilityRuntime | None = None
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
+    progress: JobProgressReporter = NULL_JOB_PROGRESS
     _analysis: Any = field(default=None, init=False)
 
     def __post_init__(self) -> None:
+        """Normalize ``country`` to lower case."""
         self.country = self.country.lower()
 
-    def _span(self, name: str):
+    def _span(self, name: str) -> AbstractContextManager[object]:
         return self.runtime.span(name) if self.runtime is not None else nullcontext()
 
     @property
-    def analysis(self) -> Any:
+    def analysis(self) -> object:
+        """Country economic impact analysis, computed on first access and reused.
+
+        Cliff impacts are included only when the request sets
+        ``include_cliffs`` to True.
+        """
         if self._analysis is None:
             with self._span(ANNUAL_IMPACT_STAGES.name(Stage.ECONOMIC_IMPACT_ANALYSIS)):
                 self._analysis = self.country_module.economic_impact_analysis(
@@ -70,12 +90,15 @@ class SimulationOutputBuilder:
                     self.reform,
                     include_cliff_impacts=self._include_cliff_impacts(),
                 )
+            # Both simulations have run; the rest is output aggregation.
+            self.progress.enter(JobStage.OUTPUTS)
         return self._analysis
 
     def _include_cliff_impacts(self) -> bool:
         return self.simulation_params.get("include_cliffs") is True
 
     def build(self) -> SingleYearMacroOutput:
+        """Build every output segment into the typed single-year macro output."""
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_BUILD)):
             poverty_outputs = self._build_poverty_outputs()
             wealth_decile = getattr(self.analysis, "wealth_decile_impacts", None)
@@ -108,6 +131,7 @@ class SimulationOutputBuilder:
             )
 
     def serialize(self) -> dict[str, Any]:
+        """Build the output and dump it to JSON-compatible data."""
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.CALCULATION)):
             output = self.build()
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
@@ -146,14 +170,14 @@ class SimulationOutputBuilder:
                 self.baseline, self.reform
             )
 
-    def _build_wealth_decile(self, wealth_decile: Any) -> DecileOutput | None:
+    def _build_wealth_decile(self, wealth_decile: object) -> DecileOutput | None:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_WEALTH_DECILE)):
             return simulation_output_distribution.build_wealth_decile(
                 self.country, wealth_decile
             )
 
     def _build_intra_wealth_decile(
-        self, intra_wealth_decile: Any
+        self, intra_wealth_decile: object
     ) -> IntraDecileOutput | None:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_INTRA_WEALTH_DECILE)):
             return simulation_output_distribution.build_intra_wealth_decile(
@@ -169,15 +193,15 @@ class SimulationOutputBuilder:
             return simulation_output_cliff.build_cliff_impact(self.analysis)
 
     def _build_geographic_impact_output(
-        self, value: Any
+        self, value: object
     ) -> GeographicImpactOutput | None:
         return simulation_output_geographic.build_geographic_impact_output(value)
 
-    def _build_decile_output(self, collection: Any) -> DecileOutput:
+    def _build_decile_output(self, collection: object) -> DecileOutput:
         return simulation_output_distribution.build_decile_output(collection)
 
     def _build_intra_decile_output_from_collection(
-        self, collection: Any
+        self, collection: object
     ) -> IntraDecileOutput:
         return simulation_output_distribution.build_intra_decile_output_from_collection(
             collection
@@ -186,10 +210,10 @@ class SimulationOutputBuilder:
     def _build_poverty_output(
         self,
         *,
-        baseline: Any,
-        reform: Any,
-        baseline_by_age: Any,
-        reform_by_age: Any,
+        baseline: object,
+        reform: object,
+        baseline_by_age: object,
+        reform_by_age: object,
     ) -> PovertyOutput:
         return simulation_output_poverty.build_poverty_output(
             country=self.country,
@@ -202,8 +226,8 @@ class SimulationOutputBuilder:
     def _build_poverty_by_gender_output(
         self,
         *,
-        baseline_by_gender: Any,
-        reform_by_gender: Any,
+        baseline_by_gender: object,
+        reform_by_gender: object,
     ) -> PovertyByGenderOutput:
         return simulation_output_poverty.build_poverty_by_gender_output(
             country=self.country,
@@ -214,8 +238,8 @@ class SimulationOutputBuilder:
     def _build_poverty_by_race_output(
         self,
         *,
-        baseline_by_race: Any,
-        reform_by_race: Any,
+        baseline_by_race: object,
+        reform_by_race: object,
     ) -> PovertyByRaceOutput:
         return simulation_output_poverty.build_poverty_by_race_output(
             baseline_by_race=baseline_by_race,

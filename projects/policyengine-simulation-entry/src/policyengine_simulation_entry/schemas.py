@@ -10,11 +10,16 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     ComparisonSimulationRecord,
 )
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class CallerIdentity(BaseModel):
-    """Validated identity claims from an inbound Auth0 access token."""
+    """Validated identity claims from an inbound Auth0 access token.
+
+    Aliased fields are read only by their registered JWT claim names, never by
+    field name: a token's ``grant_types`` or ``subject`` claim must not stand
+    in for ``gty`` or ``sub``, because those decide whether ``scope`` counts.
+    """
 
     subject: str | None = Field(default=None, alias="sub")
     issuer: str = Field(alias="iss")
@@ -24,8 +29,24 @@ class CallerIdentity(BaseModel):
     scope: str | None = None
     permissions: list[str] | None = None
     authorized_party: str | None = Field(default=None, alias="azp")
+    grant_types: tuple[str, ...] = Field(default=(), alias="gty")
 
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore")
+
+    @field_validator("grant_types", mode="before")
+    @classmethod
+    def _grant_types_from_claim(cls, claim: object) -> tuple[str, ...]:
+        """Read ``gty`` as a string or a list of strings.
+
+        Auth0 may issue it as a list (for example a refresh-token grant). Any
+        other shape is ignored rather than rejecting an otherwise valid token,
+        because the claim only widens what ``scope`` may grant.
+        """
+        if isinstance(claim, str):
+            return (claim,)
+        if isinstance(claim, list):
+            return tuple(item for item in claim if isinstance(item, str))
+        return ()
 
 
 class BackendServiceToken(BaseModel):

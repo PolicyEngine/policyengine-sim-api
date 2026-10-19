@@ -21,12 +21,19 @@ which is what makes it safe to ship before any artifacts exist.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from policyengine.core import Simulation
+from policyengine.core.scoping_strategy import RegionGroupStrategy
+from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
 from pydantic import PrivateAttr
 
 from policyengine_simulation_executor import artifact_keys
+from policyengine_simulation_executor.stage_reporting_simulation import (
+    StageReportingSimulation,
+)
+
+if TYPE_CHECKING:
+    from policyengine.core.scoping_strategy import ScopingStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +52,9 @@ def qualifying_baseline_identity(
     *,
     country: str,
     dataset_is_default: bool,
-    policy: Any,
+    policy: object,
     region_code: str | None,
-    scoping_strategy: Any,
+    scoping_strategy: ScopingStrategy | None,
     year: int,
 ) -> artifact_keys.BaselineArtifactIdentity | None:
     """Full artifact identity for a qualifying baseline, else None.
@@ -68,8 +75,6 @@ def qualifying_baseline_identity(
     reader cannot disagree by construction. Identity-collection errors
     propagate: the writer must fail loudly on them.
     """
-    from policyengine.core.scoping_strategy import RegionGroupStrategy
-
     if policy is not None:
         return None
     if str(params.get("scope") or "").lower() != "macro":
@@ -103,16 +108,18 @@ def deterministic_baseline_id(
     *,
     country: str,
     dataset_is_default: bool,
-    policy: Any,
+    policy: object,
     region_code: str | None,
-    scoping_strategy: Any,
+    scoping_strategy: ScopingStrategy | None,
     year: int,
 ) -> str | None:
-    """The runtime wrapper: id for a qualifying baseline, else None.
+    """Return the deterministic simulation id for a qualifying baseline, else None.
 
+    This is the runtime reader's wrapper around ``qualifying_baseline_identity``.
     Unlike the writer, the read path must never fail a request over
     identity collection (a manifest/receipt hiccup) — it degrades to a
-    random id, meaning no artifact reuse for that request.
+    random id, meaning no artifact reuse for that request. SPM selection
+    errors still propagate, since they mean the request itself is invalid.
     """
     try:
         identity = qualifying_baseline_identity(
@@ -125,8 +132,6 @@ def deterministic_baseline_id(
             year=year,
         )
     except Exception as exc:
-        from policyengine_simulation_contract.spm import spm_error_detail
-
         if spm_error_detail(exc):
             raise
         logger.warning(
@@ -139,7 +144,7 @@ def deterministic_baseline_id(
     return None if identity is None else identity.simulation_id
 
 
-class ArtifactBaselineSimulation(Simulation):
+class ArtifactBaselineSimulation(StageReportingSimulation):
     """A Simulation whose ``ensure()`` validates what it loads."""
 
     _computed_this_process: bool = PrivateAttr(default=False)
@@ -150,7 +155,8 @@ class ArtifactBaselineSimulation(Simulation):
         """Set by ``ensure()``; None until then."""
         return self._artifact_outcome
 
-    def run(self):
+    def run(self) -> None:
+        """Run the model, noting that this process computed the output itself."""
         self._computed_this_process = True
         super().run()
 
@@ -169,6 +175,13 @@ class ArtifactBaselineSimulation(Simulation):
             self._artifact_outcome = outcome
 
     def ensure(self) -> None:
+        """Load or compute the output, recomputing when a loaded artifact is incomplete.
+
+        A load counts only if it has every requested output column and, under
+        an SPM selection, a valid receipt for the dataset year; otherwise the
+        model runs, the result is saved and the in-process cache entry is
+        replaced. Records the hit/miss/incomplete outcome on first call.
+        """
         # The wrapper restores selection metadata on load/cache hits. Keep the
         # request's selection so an invalid cached entry cannot replace it.
         selection = getattr(self, "spm_config", None)
@@ -179,9 +192,9 @@ class ArtifactBaselineSimulation(Simulation):
             self._record_outcome(OUTCOME_MISS)
             return
 
-        from policyengine_simulation_contract.spm import SPMInputError
-
-        from policyengine_simulation_executor.spm import simulation_spm_result
+        from policyengine_simulation_executor.spm import (
+            simulation_spm_result,
+        )
 
         # A tax-only artifact can legitimately have no receipt years. Check its
         # columns first, then treat unusable cached receipts as another gap.
@@ -215,9 +228,11 @@ class ArtifactBaselineSimulation(Simulation):
         # completed output instead of revalidating (and re-running) against
         # the incomplete one. LRUCache.add keeps the OLD value for an
         # existing key and exposes no remove, so evict directly first.
-        from policyengine.core.simulation import _cache
+        from policyengine.core.simulation import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine's simulation cache
+            _cache,
+        )
 
-        _cache._cache.pop(getattr(self, "storage_id", self.id), None)
+        _cache._cache.pop(getattr(self, "storage_id", self.id), None)  # noqa: SLF001  # policyengine's LRUCache has no public remove
         _cache.add(
             getattr(self, "storage_id", self.id),
             self.model_copy(deep=False) if selection is not None else self,

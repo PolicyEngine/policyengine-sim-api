@@ -15,10 +15,16 @@ stub has no capability so fixed identifier tests remain tied to their
 synthetic inputs instead of whichever PolicyEngine release is installed.
 """
 
+from __future__ import annotations
+
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pytest
 
 
-def install_identity_stubs(monkeypatch):
+def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     """Stub the identity seams with the canonical synthetic version-set.
 
     Returns mutable bundle, receipt, and SPM-capability state, plus a handle
@@ -28,9 +34,13 @@ def install_identity_stubs(monkeypatch):
     # This module imports ``get_release_manifest`` by value while constructing
     # country models. Import it before replacing the manifest module's function
     # so full-suite ordering cannot bind this test's stub into production code.
-    import policyengine.tax_benefit_models.common.model_version  # noqa: F401
-    from policyengine.provenance import manifest as manifest_module
-    from policyengine_simulation_executor import release_bundle
+    import policyengine.tax_benefit_models.common.model_version  # noqa: F401  # must load before the manifest stubs are installed (see above)
+    from policyengine.provenance import (
+        manifest as manifest_module,
+    )
+    from policyengine_simulation_executor import (  # noqa: PLC0415  # patch target, imported when the stubs are installed
+        release_bundle,
+    )
 
     bundle = SimpleNamespace(
         country="us",
@@ -78,7 +88,9 @@ def install_identity_stubs(monkeypatch):
         ),
     )
 
-    from policyengine_simulation_executor import spm as executor_spm
+    from policyengine_simulation_executor import (
+        spm as executor_spm,
+    )
 
     state.installed_spm_capability = executor_spm.runtime_spm_capability
     monkeypatch.setattr(

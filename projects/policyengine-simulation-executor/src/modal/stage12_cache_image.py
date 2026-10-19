@@ -2,29 +2,42 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 
-def fetch_stage12_cache(bucket: str, manifest: dict | None, *, client=None) -> None:
+if TYPE_CHECKING:
+    from google.cloud.storage import Client
+
+
+def fetch_stage12_cache(
+    bucket: str, manifest: dict | None, *, client: Client | None = None
+) -> None:
     """Download and verify every manifest-listed cache file into the image."""
-
-    import json
-    import os
-    from hashlib import sha256
-    from pathlib import Path
+    # Image.run_function runs this before the project source is added to the
+    # image, so the function imports everything it needs itself.
+    import json  # noqa: PLC0415  # self-contained image-build function
+    import os  # noqa: PLC0415  # self-contained image-build function
+    from hashlib import sha256  # noqa: PLC0415  # self-contained image-build function
+    from pathlib import Path  # noqa: PLC0415  # self-contained image-build function
 
     if not bucket or not manifest:
-        raise RuntimeError("Stage 12 cache deployment has no bucket or manifest")
+        msg = "Stage 12 cache deployment has no bucket or manifest"
+        raise RuntimeError(msg)
     if manifest.get("schema") != "stage12-mf1":
-        raise RuntimeError("Stage 12 cache manifest schema is unsupported")
+        msg = "Stage 12 cache manifest schema is unsupported"
+        raise RuntimeError(msg)
     bundle = manifest.get("bundle")
     if not isinstance(bundle, dict) or bundle.get(
         "bundle_manifest_sha256"
     ) != os.getenv("STAGE12_BUNDLE_MANIFEST_SHA256"):
-        raise RuntimeError("Stage 12 cache manifest names another installed bundle")
+        msg = "Stage 12 cache manifest names another installed bundle"
+        raise RuntimeError(msg)
     if manifest.get("years") != [2026, 2027, 2025]:
-        raise RuntimeError("Stage 12 cache manifest has an unexpected year set")
+        msg = "Stage 12 cache manifest has an unexpected year set"
+        raise RuntimeError(msg)
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, list):
-        raise RuntimeError("Stage 12 cache manifest has no artifact list")
+        msg = "Stage 12 cache manifest has no artifact list"
+        raise RuntimeError(msg)  # noqa: TRY004  # a malformed manifest fails the image build like every other manifest check
     type_counts = {
         kind: sum(
             item.get("type") == kind for item in artifacts if isinstance(item, dict)
@@ -32,7 +45,8 @@ def fetch_stage12_cache(bucket: str, manifest: dict | None, *, client=None) -> N
         for kind in ("dataset", "baseline")
     }
     if type_counts != {"dataset": 3, "baseline": 60}:
-        raise RuntimeError("Stage 12 cache manifest has an unexpected artifact count")
+        msg = "Stage 12 cache manifest has an unexpected artifact count"
+        raise RuntimeError(msg)
     canonical = json.dumps(
         manifest,
         sort_keys=True,
@@ -42,7 +56,8 @@ def fetch_stage12_cache(bucket: str, manifest: dict | None, *, client=None) -> N
     ).encode("utf-8")
     manifest_digest = sha256(canonical).hexdigest()
     if manifest_digest != os.getenv("STAGE12_CACHE_MANIFEST_DIGEST"):
-        raise RuntimeError("Stage 12 cache manifest digest differs from deployment")
+        msg = "Stage 12 cache manifest digest differs from deployment"
+        raise RuntimeError(msg)
 
     if client is None:
         credentials = {}
@@ -50,7 +65,9 @@ def fetch_stage12_cache(bucket: str, manifest: dict | None, *, client=None) -> N
         if raw_credentials:
             decoded = json.loads(raw_credentials)
             info = json.loads(decoded) if isinstance(decoded, str) else decoded
-            from google.oauth2 import service_account
+            from google.oauth2 import (  # noqa: PLC0415  # self-contained image-build function
+                service_account,
+            )
 
             credentials = {
                 "credentials": service_account.Credentials.from_service_account_info(
@@ -67,7 +84,8 @@ def fetch_stage12_cache(bucket: str, manifest: dict | None, *, client=None) -> N
     filenames: set[str] = set()
     for artifact in artifacts:
         if not isinstance(artifact, dict):
-            raise RuntimeError("Stage 12 cache artifact entry is invalid")
+            msg = "Stage 12 cache artifact entry is invalid"
+            raise RuntimeError(msg)  # noqa: TRY004  # a malformed manifest fails the image build like every other manifest check
         filename = artifact.get("filename")
         path = artifact.get("path")
         expected_digest = artifact.get("content_sha256")
@@ -80,7 +98,8 @@ def fetch_stage12_cache(bucket: str, manifest: dict | None, *, client=None) -> N
             or not isinstance(expected_digest, str)
             or not isinstance(expected_size, int)
         ):
-            raise RuntimeError("Stage 12 cache artifact metadata is invalid")
+            msg = "Stage 12 cache artifact metadata is invalid"
+            raise RuntimeError(msg)
         filenames.add(filename)
         destination = data_dir / filename
         partial = destination.with_name(filename + ".partial")
@@ -91,9 +110,11 @@ def fetch_stage12_cache(bucket: str, manifest: dict | None, *, client=None) -> N
                 while chunk := stream.read(1024 * 1024):
                     digest.update(chunk)
             if partial.stat().st_size != expected_size:
-                raise RuntimeError("Stage 12 cache artifact size differs")
+                msg = "Stage 12 cache artifact size differs"
+                raise RuntimeError(msg)
             if digest.hexdigest() != expected_digest:
-                raise RuntimeError("Stage 12 cache artifact digest differs")
+                msg = "Stage 12 cache artifact digest differs"
+                raise RuntimeError(msg)
             partial.replace(destination)
         finally:
             partial.unlink(missing_ok=True)

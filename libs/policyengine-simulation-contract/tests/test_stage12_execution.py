@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from uuid import UUID
 
 import pytest
@@ -28,7 +28,9 @@ from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
-from pydantic import JsonValue
+
+if TYPE_CHECKING:
+    from pydantic import JsonValue
 
 
 def _plan() -> Stage12OutputPlan:
@@ -94,7 +96,7 @@ def _spm_comparison() -> dict[str, JsonValue]:
         ),
     )
     return cast(
-        dict[str, JsonValue],
+        "dict[str, JsonValue]",
         build_spm_comparison_provenance(
             baseline_receipts=(receipt,),
             reform_receipts=(receipt,),
@@ -254,8 +256,8 @@ def test_aggregate_artifact_accepts_only_canonical_spm_provenance() -> None:
         )
 
     mismatched = _spm_comparison()
-    reform = cast(dict[str, JsonValue], mismatched["reform"])
-    receipt = cast(dict[str, JsonValue], reform["receipt"])
+    reform = cast("dict[str, JsonValue]", mismatched["reform"])
+    receipt = cast("dict[str, JsonValue]", reform["receipt"])
     receipt["years"] = ["2027"]
     with pytest.raises(ValueError, match="baseline and reform"):
         AggregateReportArtifactPayload(

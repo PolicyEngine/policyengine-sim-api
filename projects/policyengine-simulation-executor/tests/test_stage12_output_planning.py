@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import pandas as pd
 import pytest
 from policyengine.core import Simulation
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     BundleProvenance,
     DatasetArtifactMediaType,
@@ -28,7 +28,10 @@ from policyengine_simulation_executor.stage12_runtime.output_planning import (
     validate_output_frames,
 )
 from policyengine_simulation_observability.stages import Stage
-from pydantic import JsonValue
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.stage12_bundle import CountryId
+    from pydantic import JsonValue
 
 EVALUATION_ID = UUID("00000000-0000-0000-0000-000000000001")
 
@@ -187,7 +190,8 @@ def test_unrelated_policy_does_not_activate_labor_supply_outputs() -> None:
 
 def test_planning_is_deterministic_and_never_ensures_a_simulation(monkeypatch) -> None:
     def reject_ensure(_simulation):
-        raise AssertionError("output planning must not execute a simulation")
+        msg = "output planning must not execute a simulation"
+        raise AssertionError(msg)
 
     monkeypatch.setattr(Simulation, "ensure", reject_ensure)
 

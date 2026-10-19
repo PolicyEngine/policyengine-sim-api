@@ -58,10 +58,28 @@ DOCKERFILE = (
 )
 
 
+def _run_bash(
+    *arguments: str | Path,
+    check: bool,
+    capture_output: bool = False,
+    env: dict[str, str] | None = None,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run bash on a repository deployment script, with text output."""
+    return subprocess.run(
+        ["bash", *arguments],
+        check=check,
+        capture_output=capture_output,
+        text=True,
+        env=env,
+        cwd=cwd,
+    )
+
+
 def test_deployment_scripts_have_valid_shell_syntax():
-    subprocess.run(["bash", "-n", TRAFFIC_SCRIPT], check=True)
-    subprocess.run(["bash", "-n", SMOKE_SCRIPT], check=True)
-    subprocess.run(["bash", "-n", CLOUD_RUN_DEPLOY_SCRIPT], check=True)
+    _run_bash("-n", TRAFFIC_SCRIPT, check=True)
+    _run_bash("-n", SMOKE_SCRIPT, check=True)
+    _run_bash("-n", CLOUD_RUN_DEPLOY_SCRIPT, check=True)
     assert os.access(SMOKE_SCRIPT, os.X_OK)
     assert os.access(CLOUD_RUN_DEPLOY_SCRIPT, os.X_OK)
 
@@ -135,7 +153,7 @@ def _write_fake_smoke_curl(tmp_path: Path, revisions: list[str]) -> tuple[Path, 
                 exit 2
                 ;;
             esac
-            """),
+            """),  # noqa: E501  # the fake curl writes its HTTP header block with one printf
         encoding="utf-8",
     )
     fake_curl.chmod(0o755)
@@ -167,17 +185,13 @@ def test_stable_smoke_retries_the_previous_revision_until_target_is_served(
         [old_revision, old_revision, target_revision],
     )
 
-    subprocess.run(
-        [
-            "bash",
-            SMOKE_SCRIPT,
-            "https://simulation.example.test",
-            target_revision,
-            old_revision,
-        ],
+    _run_bash(
+        SMOKE_SCRIPT,
+        "https://simulation.example.test",
+        target_revision,
+        old_revision,
         check=True,
         capture_output=True,
-        text=True,
         env=_smoke_test_env(tmp_path, state_file, revisions_file),
     )
 
@@ -193,17 +207,13 @@ def test_stable_smoke_rejects_an_unexpected_revision_without_retrying(tmp_path: 
         [unexpected_revision, target_revision],
     )
 
-    result = subprocess.run(
-        [
-            "bash",
-            SMOKE_SCRIPT,
-            "https://simulation.example.test",
-            target_revision,
-            old_revision,
-        ],
+    result = _run_bash(
+        SMOKE_SCRIPT,
+        "https://simulation.example.test",
+        target_revision,
+        old_revision,
         check=False,
         capture_output=True,
-        text=True,
         env=_smoke_test_env(tmp_path, state_file, revisions_file),
     )
 
@@ -220,16 +230,12 @@ def test_candidate_smoke_rejects_a_revision_mismatch_without_retrying(tmp_path: 
         [old_revision, target_revision],
     )
 
-    result = subprocess.run(
-        [
-            "bash",
-            SMOKE_SCRIPT,
-            "https://candidate.example.test",
-            target_revision,
-        ],
+    result = _run_bash(
+        SMOKE_SCRIPT,
+        "https://candidate.example.test",
+        target_revision,
         check=False,
         capture_output=True,
-        text=True,
         env=_smoke_test_env(tmp_path, state_file, revisions_file),
     )
 
@@ -248,17 +254,13 @@ def test_stable_smoke_fails_when_the_previous_revision_does_not_converge(
         [old_revision, old_revision, old_revision],
     )
 
-    result = subprocess.run(
-        [
-            "bash",
-            SMOKE_SCRIPT,
-            "https://simulation.example.test",
-            target_revision,
-            old_revision,
-        ],
+    result = _run_bash(
+        SMOKE_SCRIPT,
+        "https://simulation.example.test",
+        target_revision,
+        old_revision,
         check=False,
         capture_output=True,
-        text=True,
         env=_smoke_test_env(tmp_path, state_file, revisions_file),
     )
 
@@ -410,7 +412,8 @@ def test_cloud_run_deployment_does_not_interpolate_github_values_in_shell():
     assert ":latest" not in deployment_script
 
 
-def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_path):
+def _cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
+    """Return a complete deployment environment backed by a fake gcloud."""
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
@@ -443,13 +446,16 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
-    arguments_capture = tmp_path / "gcloud-arguments.txt"
-    env_capture = tmp_path / "runtime-environment.json"
-    command_environment = os.environ | {
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name != "SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"
+    }
+    return environment | {
         "PATH": f"{fake_bin}:{os.environ['PATH']}",
         "RUNNER_TEMP": str(tmp_path),
-        "GCLOUD_ARGUMENTS_CAPTURE": str(arguments_capture),
-        "GCLOUD_ENV_FILE_CAPTURE": str(env_capture),
+        "GCLOUD_ARGUMENTS_CAPTURE": str(tmp_path / "gcloud-arguments.txt"),
+        "GCLOUD_ENV_FILE_CAPTURE": str(tmp_path / "runtime-environment.json"),
         "PROJECT_ID": "policyengine-staging",
         "REGION": "us-central1",
         "IMAGE": "us-central1-docker.pkg.dev/project/repository/image:sha",
@@ -482,6 +488,12 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
         "MODAL_TOKEN_ID_SECRET_NAME": "modal-token-id",
         "MODAL_TOKEN_SECRET_SECRET_NAME": "modal-token-secret",
     }
+
+
+def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_path):
+    command_environment = _cloud_run_deploy_environment(tmp_path)
+    arguments_capture = Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"])
+    env_capture = Path(command_environment["GCLOUD_ENV_FILE_CAPTURE"])
 
     subprocess.run(
         [CLOUD_RUN_DEPLOY_SCRIPT],
@@ -518,6 +530,83 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
         "STAGE12_DATABASE_URL=stage12-staging-database-url:3"
     )
     assert ":latest" not in secrets_argument
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [(None, "0"), ("", "0"), ("0", "0"), ("1", "1")],
+    ids=["unset", "empty", "log-only", "enforced"],
+)
+def test_cloud_run_deployment_defaults_permission_enforcement_to_log_only(
+    tmp_path,
+    configured,
+    expected,
+):
+    command_environment = _cloud_run_deploy_environment(tmp_path)
+    if configured is not None:
+        command_environment["SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"] = (
+            configured
+        )
+
+    subprocess.run(
+        [CLOUD_RUN_DEPLOY_SCRIPT],
+        check=True,
+        env=command_environment,
+    )
+
+    runtime_environment = json.loads(
+        Path(command_environment["GCLOUD_ENV_FILE_CAPTURE"]).read_text(encoding="utf-8")
+    )
+    assert runtime_environment["SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS"] == expected
+
+
+@pytest.mark.parametrize("configured", ["true", "yes", "2", " 1"])
+def test_cloud_run_deployment_rejects_invalid_permission_enforcement(
+    tmp_path,
+    configured,
+):
+    command_environment = _cloud_run_deploy_environment(tmp_path)
+    command_environment["SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"] = configured
+
+    result = subprocess.run(
+        [CLOUD_RUN_DEPLOY_SCRIPT],
+        check=False,
+        env=command_environment,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert (
+        "SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE must be 0 or 1"
+        in result.stderr
+    )
+    assert not Path(command_environment["GCLOUD_ENV_FILE_CAPTURE"]).exists()
+
+
+def test_permission_enforcement_reaches_candidate_and_authenticated_tests():
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    assert (
+        reusable_workflow.count(
+            "SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE: "
+            "${{ vars.SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS }}"
+        )
+        == 1
+    )
+    # Every deployed authentication run must know whether the target revision
+    # enforces permissions, so its enforcement check runs or skips correctly.
+    authenticated_runs = reusable_workflow.count(
+        "run: uv run pytest authenticated_tests/ -v"
+    )
+    assert authenticated_runs == 3
+    assert (
+        reusable_workflow.count(
+            "SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS: "
+            "${{ vars.SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS }}"
+        )
+        == authenticated_runs
+    )
 
 
 def test_cloud_run_revision_tags_are_valid_on_the_first_workflow_run():
@@ -616,16 +705,17 @@ def test_full_stack_promotion_order_is_explicit():
         "update_routing",
     } <= promote_needs
     assert (
-        'cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"'
-        in reusable_workflow
+        'cloud-run-simulation-entry-smoke.sh "${STABLE_URL}" "${TARGET_REVISION}" '
+        '"${PREVIOUS_REVISION}"' in reusable_workflow
     )
     assert (
-        'cloud-run-simulation-entry-smoke.sh "${CUSTOM_URL}" "${TARGET_REVISION}" "${PREVIOUS_REVISION}"'
-        in reusable_workflow
+        'cloud-run-simulation-entry-smoke.sh "${CUSTOM_URL}" "${TARGET_REVISION}" '
+        '"${PREVIOUS_REVISION}"' in reusable_workflow
     )
     assert (
-        'cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.deploy_entrypoint.outputs.revision }}"'
-        in reusable_workflow
+        "cloud-run-simulation-entry-smoke.sh "
+        '"${{ needs.deploy_entrypoint.outputs.candidate_url }}" '
+        '"${{ needs.deploy_entrypoint.outputs.revision }}"' in reusable_workflow
     )
     assert "failure() && steps.promote.outcome == 'success'" in reusable_workflow
     assert "needs: beta" in deploy_workflow
@@ -1128,7 +1218,6 @@ def test_finalizer_always_resolves_a_publication_with_the_release_gate_outcome(
 @pytest.mark.parametrize("job", ["integration", "promote_entrypoint"])
 def test_a_failing_sentinel_fails_its_step(tmp_path, job):
     """#744 review: `|| true` on the sentinel command must not pass a failure."""
-
     step = _sentinel_check_step(_workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)[job])
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -1141,12 +1230,16 @@ def test_a_failing_sentinel_fails_its_step(tmp_path, job):
     script = step["run"].replace(
         "${{ needs.deploy_entrypoint.outputs.candidate_url }}", "https://candidate"
     )
-    result = subprocess.run(
+    result = _run_bash(
         # GitHub runs `run` blocks with bash -e -o pipefail.
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", script],
+        "--noprofile",
+        "--norc",
+        "-eo",
+        "pipefail",
+        "-c",
+        script,
         check=False,
         capture_output=True,
-        text=True,
         env={
             "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             "RUNNER_TEMP": str(tmp_path),
@@ -1158,7 +1251,6 @@ def test_a_failing_sentinel_fails_its_step(tmp_path, job):
 
 def test_stage12_only_promotion_runs_whatever_the_skipped_stack_jobs():
     """#743 review: the explicit status function must stay active."""
-
     promote = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["promote_entrypoint"]
     context = {
         "inputs": {"promote_entrypoint": True, "deploy_existing_stack": False},
@@ -1181,7 +1273,6 @@ def test_stage12_only_promotion_runs_whatever_the_skipped_stack_jobs():
 
 def test_smoke_rejects_a_latest_wrapper_that_lags_alone(tmp_path: Path):
     """#743 review: the wrapper's latest is checked, not only the model's."""
-
     import copy
 
     versions = copy.deepcopy(VERSIONS_BODY)
@@ -1197,7 +1288,6 @@ def test_smoke_rejects_a_latest_wrapper_that_lags_alone(tmp_path: Path):
 
 def _run_routing_step_with_a_failing_command(tmp_path, step, failed_command, **env):
     """Run the real body with Actions' shell and a failing CLI seam."""
-
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "uv").write_text(
@@ -1218,11 +1308,15 @@ def _run_routing_step_with_a_failing_command(tmp_path, step, failed_command, **e
     plan = runner_temp / "routing-plans" / "routing-plan-prod-1" / "plan.json"
     plan.parent.mkdir(parents=True)
     plan.write_text("{}")
-    result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+    result = _run_bash(
+        "--noprofile",
+        "--norc",
+        "-eo",
+        "pipefail",
+        "-c",
+        step["run"],
         check=False,
         capture_output=True,
-        text=True,
         env={
             "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             "RUNNER_TEMP": str(runner_temp),
@@ -1339,8 +1433,8 @@ def test_each_publication_is_named_by_its_run_attempt_and_environment():
         if step.get("name") == "Plan the routing change"
     )
     assert (
-        '--publication-id "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${RELEASE_ENVIRONMENT}"'
-        in plan["run"]
+        '--publication-id "${GITHUB_RUN_ID}-'
+        '${GITHUB_RUN_ATTEMPT}-${RELEASE_ENVIRONMENT}"' in plan["run"]
     )
     assert plan["env"]["RELEASE_ENVIRONMENT"] == "${{ inputs.release_environment }}"
 
@@ -1472,19 +1566,15 @@ def test_failed_release_gate_cannot_report_a_successful_release(tmp_path, failed
     }
     env[failed_gate] = "failure"
     # A later step cannot run after this gate under Actions' bash -e behavior.
-    result = subprocess.run(
-        [
-            "bash",
-            "-eo",
-            "pipefail",
-            "-c",
-            gate["run"] + '\ntouch "$1"',
-            "gate",
-            str(marker),
-        ],
+    result = _run_bash(
+        "-eo",
+        "pipefail",
+        "-c",
+        gate["run"] + '\ntouch "$1"',
+        "gate",
+        str(marker),
         check=False,
         capture_output=True,
-        text=True,
         env=env,
         cwd=REPOSITORY_ROOT,
     )
@@ -1515,11 +1605,13 @@ def test_release_success_requires_completed_finalization_for_published_routing(
         ]
         if step.get("name") == "Check deployment result"
     )
-    completed = subprocess.run(
-        ["bash", "-eo", "pipefail", "-c", gate["run"]],
+    completed = _run_bash(
+        "-eo",
+        "pipefail",
+        "-c",
+        gate["run"],
         check=False,
         capture_output=True,
-        text=True,
         cwd=REPOSITORY_ROOT,
         env={
             "PATH": os.environ["PATH"],
@@ -1602,7 +1694,7 @@ def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
                 exit 2
                 ;;
             esac
-            """),
+            """),  # noqa: E501  # the fake gcloud prints each JSON response on one line, as gcloud does
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -1615,15 +1707,18 @@ def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
         "SIMULATION_ENTRYPOINT_SERVICE": "policyengine-simulation-entry",
     }
 
-    subprocess.run(
-        ["bash", TRAFFIC_SCRIPT],
+    _run_bash(
+        TRAFFIC_SCRIPT,
         check=True,
         capture_output=True,
-        text=True,
         env={
             **base_env,
-            "SIMULATION_ENTRYPOINT_TARGET_REVISION": "policyengine-simulation-entry-00002-new",
-            "SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION": "policyengine-simulation-entry-00001-old",
+            "SIMULATION_ENTRYPOINT_TARGET_REVISION": (
+                "policyengine-simulation-entry-00002-new"
+            ),
+            "SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION": (
+                "policyengine-simulation-entry-00001-old"
+            ),
         },
     )
     assert (
@@ -1631,15 +1726,18 @@ def test_traffic_changes_are_exact_revision_validated_and_reversible(tmp_path):
         == "policyengine-simulation-entry-00002-new"
     )
 
-    subprocess.run(
-        ["bash", TRAFFIC_SCRIPT],
+    _run_bash(
+        TRAFFIC_SCRIPT,
         check=True,
         capture_output=True,
-        text=True,
         env={
             **base_env,
-            "SIMULATION_ENTRYPOINT_TARGET_REVISION": "policyengine-simulation-entry-00001-old",
-            "SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION": "policyengine-simulation-entry-00002-new",
+            "SIMULATION_ENTRYPOINT_TARGET_REVISION": (
+                "policyengine-simulation-entry-00001-old"
+            ),
+            "SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION": (
+                "policyengine-simulation-entry-00002-new"
+            ),
         },
     )
     assert (
@@ -1661,24 +1759,27 @@ def test_traffic_change_refuses_an_intervening_promotion(tmp_path):
             set -euo pipefail
             active="$(cat "${FAKE_GCLOUD_STATE}")"
             printf '{"status":{"traffic":[{"revisionName":"%s","percent":100}]}}\\n' "${active}"
-            """),
+            """),  # noqa: E501  # the fake gcloud prints its JSON response on one line, as gcloud does
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
 
-    result = subprocess.run(
-        ["bash", TRAFFIC_SCRIPT],
+    result = _run_bash(
+        TRAFFIC_SCRIPT,
         check=False,
         capture_output=True,
-        text=True,
         env={
             **os.environ,
             "GCLOUD_BIN": str(fake_gcloud),
             "FAKE_GCLOUD_STATE": str(state_file),
             "SIMULATION_ENTRYPOINT_GCP_PROJECT_ID": "simulation-entry-test",
             "SIMULATION_ENTRYPOINT_SERVICE": "policyengine-simulation-entry",
-            "SIMULATION_ENTRYPOINT_TARGET_REVISION": "policyengine-simulation-entry-00002-new",
-            "SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION": "policyengine-simulation-entry-00001-old",
+            "SIMULATION_ENTRYPOINT_TARGET_REVISION": (
+                "policyengine-simulation-entry-00002-new"
+            ),
+            "SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION": (
+                "policyengine-simulation-entry-00001-old"
+            ),
         },
     )
 
@@ -1749,11 +1850,12 @@ def _run_identity_smoke(tmp_path: Path, versions: dict, **expected: str):
         "FAKE_CURL_VERSIONS": str(versions_file),
         **expected,
     }
-    return subprocess.run(
-        ["bash", SMOKE_SCRIPT, "https://simulation.example.test", revision],
+    return _run_bash(
+        SMOKE_SCRIPT,
+        "https://simulation.example.test",
+        revision,
         check=False,
         capture_output=True,
-        text=True,
         env=env,
     )
 
@@ -1874,7 +1976,6 @@ def test_smoke_accepts_an_unrecorded_digest_only_when_none_is_served(
     tmp_path: Path,
 ):
     """A release published before digests were recorded serves none."""
-
     import copy
 
     versions = copy.deepcopy(VERSIONS_BODY)
@@ -1892,7 +1993,6 @@ def test_smoke_accepts_an_unrecorded_digest_only_when_none_is_served(
 
 def test_smoke_rejects_worker_routes_to_an_old_app(tmp_path: Path):
     """#743 round-2 review: the version and its model route to the new app."""
-
     import copy
 
     versions = copy.deepcopy(VERSIONS_BODY)
@@ -1920,7 +2020,6 @@ def test_smoke_rejects_worker_routes_to_an_old_app(tmp_path: Path):
 @pytest.mark.parametrize("how", ["unset", "empty"])
 def test_smoke_refuses_an_incomplete_identity(tmp_path: Path, missing, how):
     """#743 round-2 review: an absent expectation never weakens the gate."""
-
     expected = dict(IDENTITY)
     if how == "unset":
         del expected[missing]
@@ -1957,7 +2056,6 @@ def test_smoke_refuses_malformed_expectations(tmp_path: Path, name, value):
 
 def test_smoke_rejects_a_bundle_recorded_for_another_wrapper(tmp_path: Path):
     """#743 round-2 review: the bundle must be the expected version's own."""
-
     import copy
 
     versions = copy.deepcopy(VERSIONS_BODY)
@@ -1977,7 +2075,6 @@ def _workflow_jobs(path: Path) -> dict:
 
 def test_deploy_gates_pass_the_release_identity_to_the_smoke():
     """Review M2: the active workflow (not comments) wires the whole identity."""
-
     jobs = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)
     assert (
         jobs["prepare"]["outputs"]["uk_dataset_sha256"]
@@ -1993,7 +2090,9 @@ def test_deploy_gates_pass_the_release_identity_to_the_smoke():
         if "cloud-run-simulation-entry-smoke.sh" in step.get("run", "")
     )
     expected = {
-        "EXPECTED_IDENTITY": "${{ inputs.deploy_existing_stack && 'required' || 'none' }}",
+        "EXPECTED_IDENTITY": (
+            "${{ inputs.deploy_existing_stack && 'required' || 'none' }}"
+        ),
         "EXPECTED_APP_NAME": (
             "${{ inputs.deploy_existing_stack && "
             "needs.deploy_executor.outputs.app_name || '' }}"
@@ -2003,7 +2102,8 @@ def test_deploy_gates_pass_the_release_identity_to_the_smoke():
             "needs.prepare.outputs.policyengine_version || '' }}"
         ),
         "EXPECTED_UK_MODEL_VERSION": (
-            "${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_version || '' }}"
+            "${{ inputs.deploy_existing_stack && "
+            "needs.prepare.outputs.uk_version || '' }}"
         ),
         "EXPECTED_UK_DATASET_SHA256": (
             "${{ inputs.deploy_existing_stack && "

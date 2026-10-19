@@ -10,8 +10,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
@@ -47,6 +47,20 @@ from src.modal.static_runtime_files import add_static_runtime_files
 
 import modal
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from policyengine_simulation_contract.stage12_bundle import (
+        CountryId,
+        Stage12CountryBundle,
+    )
+    from policyengine_simulation_contract.stage12_execution import (
+        PlannedSimulationExecutionInput,
+    )
+    from policyengine_simulation_executor.stage12_runtime.simulation import (
+        SimulationCalculation,
+    )
+
 STAGE12_DATA_DIR = "/opt/policyengine/stage12-data"
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
 RESOLVED_BUNDLE = load_stage12_bundle()
@@ -56,22 +70,27 @@ APP_NAME = v2_application_name(RESOLVED_BUNDLE.bundle.policyengine_version)
 
 def _deploy_time_cache_inputs() -> tuple[str, dict | None]:
     """Resolve and validate the cache manifest on the deploying machine."""
-
     if not modal.is_local():
         return "", None
     bucket = os.environ.get("STAGE12_CACHE_BUCKET", "")
     digest = os.environ.get("STAGE12_CACHE_MANIFEST_DIGEST")
     if not digest:
         return bucket, None
-    from policyengine_simulation_executor.stage12_cache.models import CacheManifest
-    from policyengine_simulation_executor.stage12_cache.store import Stage12CacheStore
+    from policyengine_simulation_executor.stage12_cache.models import (  # noqa: PLC0415  # only the deploying machine reads the cache manifest
+        CacheManifest,
+    )
+    from policyengine_simulation_executor.stage12_cache.store import (  # noqa: PLC0415  # only the deploying machine reads the cache manifest
+        Stage12CacheStore,
+    )
 
     payload = Stage12CacheStore(bucket).read_manifest(digest)
     if payload is None:
-        raise RuntimeError("Stage 12 cache manifest is unavailable")
+        msg = "Stage 12 cache manifest is unavailable"
+        raise RuntimeError(msg)
     manifest = CacheManifest.model_validate(payload)
     if manifest.bundle.bundle_manifest_sha256 != RESOLVED_BUNDLE.bundle_manifest_sha256:
-        raise RuntimeError("Stage 12 cache manifest names another bundle")
+        msg = "Stage 12 cache manifest names another bundle"
+        raise RuntimeError(msg)
     return bucket, manifest.canonical_payload()
 
 
@@ -98,7 +117,8 @@ assert_expected_bundle_values(
     _external_assertions(dict(os.environ)),
 )
 if os.environ.get("MODAL_APP_NAME") not in {None, "", APP_NAME}:
-    raise RuntimeError("MODAL_APP_NAME does not match the bundle-derived v2 name")
+    msg = "MODAL_APP_NAME does not match the bundle-derived v2 name"
+    raise RuntimeError(msg)
 
 
 app = modal.App(APP_NAME)
@@ -115,7 +135,7 @@ worker_secrets = [
 ]
 
 
-def _country_bundle(country: CountryId):
+def _country_bundle(country: CountryId) -> Stage12CountryBundle:
     return next(
         item for item in RESOLVED_BUNDLE.bundle.countries if item.country == country
     )
@@ -124,6 +144,12 @@ def _country_bundle(country: CountryId):
 def build_v2_image(
     countries: tuple[CountryId, ...], *, include_us_cache: bool = False
 ) -> modal.Image:
+    """Build a Stage 12 image with the bundle's certified data for ``countries``.
+
+    The bundle manifest digest and per-country bundle values are baked into
+    the image environment, which worker validation checks at run time. With
+    ``include_us_cache``, the image also holds the published US cache.
+    """
     country_values = {
         country: _country_bundle(country).model_dump(mode="json")
         for country in countries
@@ -187,7 +213,7 @@ coordinator_image = build_v2_image(("us", "uk"))
 
 
 def _validate(country: CountryId) -> dict:
-    from policyengine_simulation_executor.stage12_worker_validation import (
+    from policyengine_simulation_executor.stage12_worker_validation import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         validate_country_worker,
     )
 
@@ -209,6 +235,7 @@ def _validate(country: CountryId) -> dict:
     secrets=worker_secrets,
 )
 def validate_worker_us() -> dict:
+    """Validate the US worker image without serving and return its bundle values."""
     return _validate("us")
 
 
@@ -221,6 +248,7 @@ def validate_worker_us() -> dict:
     secrets=worker_secrets,
 )
 def validate_worker_uk() -> dict:
+    """Validate the UK worker image without serving and return its bundle values."""
     return _validate("uk")
 
 
@@ -238,7 +266,10 @@ def run_single_simulation_segment_us(
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    from policyengine_simulation_executor.stage12_runtime import calculate_segment
+    """Calculate one US region-group segment and return its artifact descriptor."""
+    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        calculate_segment,
+    )
 
     runtime = init_process_observability(
         service_name="policyengine-stage12-us-segment-worker",
@@ -263,7 +294,8 @@ def run_single_simulation_segment_us(
                 mode="python"
             )
         if result is None:
-            raise RuntimeError("Stage 12 segment calculation returned no result")
+            msg = "Stage 12 segment calculation returned no result"
+            raise RuntimeError(msg)
         return result
     finally:
         runtime.shutdown()
@@ -284,7 +316,8 @@ def run_single_simulation_us(
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    from policyengine_simulation_executor.stage12_runtime import (
+    """Calculate one planned US simulation and return its artifact descriptor."""
+    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         run_segmented_simulation,
         run_single_simulation,
     )
@@ -296,7 +329,10 @@ def run_single_simulation_us(
         environment=os.getenv("MODAL_ENVIRONMENT", "local"),
     )
 
-    def segmented_calculator(simulation, cancellation_requested):
+    def segmented_calculator(
+        simulation: PlannedSimulationExecutionInput,
+        cancellation_requested: Callable[[], bool],
+    ) -> SimulationCalculation:
         return run_segmented_simulation(
             simulation,
             app_name=APP_NAME,
@@ -323,7 +359,8 @@ def run_single_simulation_us(
                 runtime=runtime,
             )
         if result is None:
-            raise RuntimeError("Stage 12 US simulation returned no result")
+            msg = "Stage 12 US simulation returned no result"
+            raise RuntimeError(msg)
         return result
     finally:
         runtime.shutdown()
@@ -344,7 +381,8 @@ def run_single_simulation_uk(
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    from policyengine_simulation_executor.stage12_runtime import (
+    """Calculate one planned UK simulation and return its artifact descriptor."""
+    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         run_single_simulation,
     )
 
@@ -372,7 +410,8 @@ def run_single_simulation_uk(
                 runtime=runtime,
             )
         if result is None:
-            raise RuntimeError("Stage 12 UK simulation returned no result")
+            msg = "Stage 12 UK simulation returned no result"
+            raise RuntimeError(msg)
         return result
     finally:
         runtime.shutdown()
@@ -396,13 +435,20 @@ def coordinate_report(
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    from policyengine_simulation_executor.stage12_runtime import (
+    """Run one Stage 12 report: fan out both simulations, aggregate, and persist.
+
+    A ``production_function_call_id`` in ``context`` marks a shadow run whose
+    result is compared with that production job's. A report another
+    invocation already claimed returns a ``deduplicated`` marker instead.
+    """
+    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         coordinate_report as run_report_coordinator,
     )
 
     coordinator_invocation_id = modal.current_function_call_id()
     if coordinator_invocation_id is None:
-        raise RuntimeError("Modal coordinator invocation identifier is unavailable")
+        msg = "Modal coordinator invocation identifier is unavailable"
+        raise RuntimeError(msg)
     runtime = init_process_observability(
         service_name="policyengine-stage12-coordinator",
         service_role="stage12_report_coordinator",
@@ -438,7 +484,8 @@ def coordinate_report(
                 runtime=runtime,
             )
         if result is None:
-            raise RuntimeError("Stage 12 report coordinator returned no result")
+            msg = "Stage 12 report coordinator returned no result"
+            raise RuntimeError(msg)
         return result
     finally:
         runtime.shutdown()

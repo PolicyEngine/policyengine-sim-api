@@ -4,24 +4,28 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import modal
-from policyengine_observability import ObservabilityRuntime
-from policyengine_simulation_contract.stage12_execution import (
-    PlannedSimulationExecutionInput,
-)
 from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
     Stage,
 )
 
 from .failure_recording import report_failure
-from .failures import Stage12Cancellation, Stage12ExecutionError
+from .failures import Stage12CancellationError, Stage12ExecutionError
 from .partition import stage12_region_groups_for_model
 from .segmentation import build_segment_inputs, merge_segment_results
-from .simulation import SimulationCalculation
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.stage12_execution import (
+        PlannedSimulationExecutionInput,
+    )
+
+    from .simulation import SimulationCalculation
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +48,18 @@ class Stage12SegmentRunner:
         *,
         app_name: str,
         runtime: ObservabilityRuntime,
-        modal_module: Any = modal,
+        modal_module: Any = modal,  # noqa: ANN401  # the Modal SDK module, or a test stand-in with the same Function attribute
         groups: Sequence[Sequence[str]] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
         poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
         cancellation_requested: Callable[[], bool] | None = None,
     ) -> None:
+        """Look up the segment function deployed in ``app_name``.
+
+        ``groups`` replaces the region groups read from the installed model,
+        and ``cancellation_requested`` is checked between polls.
+        """
         self.simulation = simulation
         self.runtime = runtime
         self.sleep = sleep
@@ -66,7 +75,7 @@ class Stage12SegmentRunner:
     def _groups(self) -> list[list[str]]:
         if self.groups is not None:
             return self.groups
-        from policyengine_simulation_executor.simulation_runtime import (
+        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # loads the v1 runtime only when the groups come from the installed model
             _country_module,
         )
 
@@ -77,6 +86,13 @@ class Stage12SegmentRunner:
         )
 
     def run(self) -> SimulationCalculation:
+        """Start every segment, wait for all of them, and merge their results.
+
+        A segment whose result cannot be read twice in a row raises
+        ``Stage12ExecutionError``, and a requested cancellation raises
+        ``Stage12CancellationError``. Either way, every started segment is
+        cancelled first.
+        """
         groups = self._groups()
         segments = build_segment_inputs(self.simulation, groups=groups)
         self.runtime.set_context(
@@ -96,7 +112,8 @@ class Stage12SegmentRunner:
                         observability_context=self.runtime.capture_context(),
                     )
                 if call is None:
-                    raise RuntimeError("Stage 12 segment dispatch returned no call")
+                    msg = "Stage 12 segment dispatch returned no call"
+                    raise RuntimeError(msg)  # noqa: TRY301  # the handler below cancels the segments already started
                 handles.append((segment.segment_index, call))
         except Exception:
             self._cancel_all(handles)
@@ -108,7 +125,8 @@ class Stage12SegmentRunner:
         ):
             payloads = self._collect(handles)
         if payloads is None:
-            raise RuntimeError("Stage 12 segment wait returned no payloads")
+            msg = "Stage 12 segment wait returned no payloads"
+            raise RuntimeError(msg)
         merged: SimulationCalculation | None = None
         with self.runtime.span(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_MERGE)
@@ -119,7 +137,8 @@ class Stage12SegmentRunner:
                 groups=groups,
             )
         if merged is None:
-            raise RuntimeError("Stage 12 segment merge returned no calculation")
+            msg = "Stage 12 segment merge returned no calculation"
+            raise RuntimeError(msg)
         return merged
 
     def _collect(self, handles: list[tuple[int, Any]]) -> list[object]:
@@ -140,7 +159,7 @@ class Stage12SegmentRunner:
                 except TimeoutError:
                     poll_errors.pop(index, None)
                     continue
-                except Exception as error:
+                except Exception as error:  # noqa: BLE001  # a segment's remote failure can be any exception type; it is retried once, then reported
                     attempts = poll_errors.get(index, 0) + 1
                     poll_errors[index] = attempts
                     if attempts < 2:
@@ -181,7 +200,8 @@ class Stage12SegmentRunner:
                 current_sleep = self.poll_interval_initial_seconds
 
         if any(result is None for result in results):
-            raise RuntimeError("Stage 12 segment collection is incomplete")
+            msg = "Stage 12 segment collection is incomplete"
+            raise RuntimeError(msg)
         return [result for result in results if result is not None]
 
     def _wait_with_cancellation(
@@ -201,15 +221,18 @@ class Stage12SegmentRunner:
         if not self.cancellation_requested():
             return
         self._cancel_all(handles)
-        raise Stage12Cancellation("Stage 12 simulation was cancelled")
+        msg = "Stage 12 simulation was cancelled"
+        raise Stage12CancellationError(msg)
 
     @staticmethod
     def _cancel_all(handles: list[tuple[int, Any]]) -> None:
         for _, call in handles:
             try:
                 call.cancel()
-            except Exception:
-                pass
+            except Exception as error:  # noqa: BLE001  # cancellation is best effort and must reach every call
+                logger.warning(
+                    "Stage 12 segment cancellation failed (%s)", type(error).__name__
+                )
 
 
 def run_segmented_simulation(
@@ -219,6 +242,7 @@ def run_segmented_simulation(
     runtime: ObservabilityRuntime,
     cancellation_requested: Callable[[], bool] | None = None,
 ) -> SimulationCalculation:
+    """Calculate ``simulation`` as region-group segments in ``app_name``; merge them."""
     return Stage12SegmentRunner(
         simulation,
         app_name=app_name,

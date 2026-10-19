@@ -109,7 +109,7 @@ class ArtifactManifest(_StrictModel):
     artifacts: list[ManifestArtifact]
 
     def canonical_payload(self) -> dict[str, Any]:
-        """The exact dict shape that gets digested and stored."""
+        """Return the exact dict that gets digested and stored, keyed by wire alias."""
         return self.model_dump(by_alias=True)
 
 
@@ -137,6 +137,8 @@ class DeployedMarker(_StrictModel):
 
 
 class DatasetBuildResult(_StrictModel):
+    """Result of one dataset build; ``uploaded`` is False if the key existed."""
+
     year: int
     path: str
     uploaded: bool
@@ -145,6 +147,12 @@ class DatasetBuildResult(_StrictModel):
 
 
 class BaselineComputeResult(_StrictModel):
+    """Outcome of one cohort baseline computation and its write-once upload.
+
+    ``outcome`` is the baseline's artifact outcome (hit/incomplete/miss) from
+    its ``ensure()`` call; seconds are wall-clock, rounded to 0.1.
+    """
+
     year: int
     group: list[str]
     simulation_id: str
@@ -155,6 +163,11 @@ class BaselineComputeResult(_StrictModel):
 
 
 class DeterminismVerdict(_StrictModel):
+    """Whether a stored baseline matches a fresh recompute, column by column.
+
+    ``differences`` lists at most the first 50 mismatches.
+    """
+
     equal: bool
     differences: list[str]
 
@@ -162,6 +175,10 @@ class DeterminismVerdict(_StrictModel):
 class RemoteFunction(Protocol):
     """The slice of a Modal function handle the orchestration uses."""
 
-    def remote(self, *args: Any) -> Any: ...
+    def remote(self, *args: Any) -> Any:  # noqa: ANN401  # mirrors modal.Function.remote; payloads and results vary per function
+        """Run the function in its container and block until it returns."""
+        ...
 
-    def spawn(self, *args: Any) -> Any: ...
+    def spawn(self, *args: Any) -> Any:  # noqa: ANN401  # mirrors modal.Function.spawn; payloads vary and the returned FunctionCall is untyped here
+        """Start the call without waiting; the handle's ``get()`` returns the result."""
+        ...

@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from fixtures.test_modal_scripts import REPO_ROOT, SCRIPTS_DIR
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 SCRIPT = SCRIPTS_DIR / "update-policyengine-package.sh"
 
 
 @pytest.fixture
 def fake_repo(tmp_path: Path) -> Path:
+    """Return a fake checkout whose ``simulation`` project pins policyengine 4.0.0."""
     project = tmp_path / "simulation"
     project.mkdir(parents=True)
 
@@ -56,12 +60,14 @@ version = "0.1.0"
 
 @pytest.fixture
 def fake_bin(tmp_path: Path) -> Path:
+    """Return an empty directory for fake executables, to put first on PATH."""
     path = tmp_path / "bin"
     path.mkdir()
     return path
 
 
 def write_executable(path: Path, content: str) -> None:
+    """Write ``content`` to ``path`` and mark it executable."""
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
 
@@ -75,8 +81,12 @@ def install_fake_git(
     diff_has_changes: bool = False,
     branch_pin: str = "4.1.0",
 ) -> None:
-    """A fake git; ``show`` prints the update branch's pyproject pinning ``branch_pin``."""
+    """Install a fake ``git`` that appends each call to ``log``.
 
+    ``remote_branch_exists`` and ``diff_has_changes`` set the ``ls-remote``
+    and ``diff`` exit codes, and ``show`` prints the update branch's pyproject
+    pinning ``branch_pin``; every other command succeeds silently.
+    """
     write_executable(
         fake_bin / "git",
         f"""#!/usr/bin/env bash
@@ -119,6 +129,11 @@ def install_fake_gh(
     open_pr: str = "",
     open_issue: str = "679",
 ) -> None:
+    """Install a fake ``gh`` that appends each call to ``log`` and answers canned JSON.
+
+    ``open_issue`` and ``open_pr`` (empty for none) drive the existing issue
+    and PR lookups; the first line of a created PR's body is logged too.
+    """
     write_executable(
         fake_bin / "gh",
         f"""#!/usr/bin/env bash
@@ -172,7 +187,7 @@ if [[ "$1" == "pr" && "$2" == "create" ]]; then
 fi
 
 exit 0
-""",
+""",  # noqa: E501  # the fake gh prints each JSON response on one line, as gh does
     )
 
 
@@ -187,6 +202,11 @@ def install_fake_uv(
     bundled_spm_version: str = "1.0.0",
     bundled_uk_dataset_sha256: str = "a" * 64,
 ) -> None:
+    """Install a fake ``uv`` that appends each call to ``log``.
+
+    Only the updater's isolated ``bundle-versions`` query for policyengine
+    4.1.0 prints anything: the ``bundled_*`` versions as ``key=value`` lines.
+    """
     write_executable(
         fake_bin / "uv",
         f"""#!/usr/bin/env bash
@@ -216,6 +236,7 @@ exit 0
 
 
 def updater_env(fake_bin: Path, **extra: str) -> dict[str, str]:
+    """Return this environment with ``fake_bin`` first on PATH, plus ``extra``."""
     env = os.environ.copy()
     env.update(
         {
@@ -228,8 +249,9 @@ def updater_env(fake_bin: Path, **extra: str) -> dict[str, str]:
 
 
 def run_updater(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", str(SCRIPT), *args],
+    """Run the updater from the repo root; a non-zero exit is returned, not raised."""
+    return subprocess.run(  # noqa: S603  # runs the repository updater script with test-built arguments
+        ["bash", str(SCRIPT), *args],  # noqa: S607  # bash from PATH, as the workflow runs the script
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,

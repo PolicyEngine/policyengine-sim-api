@@ -18,7 +18,7 @@ from policyengine_simulation_entry.stage12_backend import (
     ModalReportInvoker,
     Stage12ComparisonBackend,
     TemporaryStage12DispatchFailed,
-    TemporaryStage12UnsupportedRequest,
+    TemporaryStage12UnsupportedRequestError,
 )
 from stage12_fixtures import eligible_payload, worker
 
@@ -44,7 +44,8 @@ class FakeStore:
     def get_report(self, evaluation_id):
         self.events.append(("get_report", evaluation_id))
         if self.current is None or self.current.evaluation_id != evaluation_id:
-            raise LookupError("missing report")
+            msg = "missing report"
+            raise LookupError(msg)
         return self.current
 
     def list_simulations(self, evaluation_id):
@@ -329,7 +330,7 @@ def test_temporary_submission_rejects_unsupported_input_without_side_effects() -
     store = FakeStore()
     invoker = FakeInvoker()
 
-    with pytest.raises(TemporaryStage12UnsupportedRequest) as error:
+    with pytest.raises(TemporaryStage12UnsupportedRequestError) as error:
         asyncio.run(
             _backend(store, invoker).submit_temporary_report(
                 request_payload={**eligible_payload(), "include_cliffs": "true"},

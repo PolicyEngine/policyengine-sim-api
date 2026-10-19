@@ -16,7 +16,8 @@ from policyengine_simulation_executor.stage12_qualification import (
 def _json_object(path: Path) -> dict[str, Any]:
     value = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
-        raise ValueError(f"{path} must contain one JSON object")
+        msg = f"{path} must contain one JSON object"
+        raise TypeError(msg)
     return value
 
 
@@ -27,10 +28,12 @@ def _tolerances(path: Path | None) -> dict[str, NumericalTolerance]:
     tolerances = {}
     for field, configuration in value.items():
         if not isinstance(configuration, dict):
-            raise ValueError(f"tolerance for {field!r} must be an object")
+            msg = f"tolerance for {field!r} must be an object"
+            raise TypeError(msg)
         unknown = set(configuration) - {"absolute", "relative"}
         if unknown:
-            raise ValueError(f"tolerance for {field!r} has unknown fields")
+            msg = f"tolerance for {field!r} has unknown fields"
+            raise ValueError(msg)
         tolerances[field] = NumericalTolerance(
             absolute=float(configuration.get("absolute", 0.0)),
             relative=float(configuration.get("relative", 0.0)),
@@ -39,6 +42,7 @@ def _tolerances(path: Path | None) -> dict[str, NumericalTolerance]:
 
 
 def main() -> None:
+    """Qualify one report against the existing executor and print the receipt JSON."""
     parser = argparse.ArgumentParser(
         description=(
             "Compare the existing combined executor with the Stage 12 independent "

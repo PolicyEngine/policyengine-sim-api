@@ -77,7 +77,8 @@ precompute_image = (
     secrets=worker_secrets,
 )
 def plan_artifacts(bucket: str) -> dict:
-    from policyengine_simulation_executor.stage12_cache.precompute import (
+    """Plan the cache's datasets and baselines, marking those ``bucket`` holds."""
+    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         plan_artifacts_impl,
     )
 
@@ -92,8 +93,11 @@ def plan_artifacts(bucket: str) -> dict:
     secrets=worker_secrets,
 )
 def build_dataset(bucket: str, expected: dict) -> dict:
-    from policyengine_simulation_executor.stage12_cache.models import DatasetPlanEntry
-    from policyengine_simulation_executor.stage12_cache.precompute import (
+    """Build and upload the planned dataset ``expected``; return the build result."""
+    from policyengine_simulation_executor.stage12_cache.models import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        DatasetPlanEntry,
+    )
+    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         build_dataset_impl,
     )
 
@@ -110,8 +114,11 @@ def build_dataset(bucket: str, expected: dict) -> dict:
     secrets=worker_secrets,
 )
 def compute_baseline(bucket: str, expected: dict) -> dict:
-    from policyengine_simulation_executor.stage12_cache.models import BaselinePlanEntry
-    from policyengine_simulation_executor.stage12_cache.precompute import (
+    """Calculate and upload the planned baseline ``expected``; return the result."""
+    from policyengine_simulation_executor.stage12_cache.models import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        BaselinePlanEntry,
+    )
+    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         compute_baseline_impl,
     )
 
@@ -128,11 +135,12 @@ def compute_baseline(bucket: str, expected: dict) -> dict:
     secrets=worker_secrets,
 )
 def verify_determinism(bucket: str, plan: dict, expected: dict) -> dict:
-    from policyengine_simulation_executor.stage12_cache.models import (
+    """Recalculate the stored baseline ``expected``; record a pass for ``plan``."""
+    from policyengine_simulation_executor.stage12_cache.models import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         BaselinePlanEntry,
         PrecomputePlan,
     )
-    from policyengine_simulation_executor.stage12_cache.precompute import (
+    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         verify_determinism_impl,
     )
 
@@ -151,8 +159,11 @@ def verify_determinism(bucket: str, plan: dict, expected: dict) -> dict:
     secrets=worker_secrets,
 )
 def publish_manifest(bucket: str, plan: dict) -> str:
-    from policyengine_simulation_executor.stage12_cache.models import PrecomputePlan
-    from policyengine_simulation_executor.stage12_cache.precompute import (
+    """Publish the cache manifest for ``plan`` and return its digest."""
+    from policyengine_simulation_executor.stage12_cache.models import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        PrecomputePlan,
+    )
+    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         publish_manifest_impl,
     )
 
@@ -160,11 +171,12 @@ def publish_manifest(bucket: str, plan: dict) -> str:
 
 
 @app.local_entrypoint()
-def main():
-    from policyengine_simulation_executor.stage12_cache.precompute import (
+def main() -> None:
+    """Build any missing cache files, check determinism and publish the manifest."""
+    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # loaded only when the local entrypoint runs, not at deploy time
         run_precompute,
     )
-    from policyengine_simulation_executor.stage12_cache.store import (
+    from policyengine_simulation_executor.stage12_cache.store import (  # noqa: PLC0415  # loaded only when the local entrypoint runs, not at deploy time
         resolve_cache_bucket,
     )
 

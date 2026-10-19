@@ -44,9 +44,11 @@ class FakeGcsClient:
 
 
 def _manifest():
-    """The wire shape fetch_artifacts consumes, derived from the schema
-    (the layer itself cannot import the model, so it speaks the canonical
-    dict — building the fake through ArtifactManifest keeps it honest)."""
+    """Return the wire shape fetch_artifacts consumes, derived from the schema.
+
+    The layer itself cannot import the model, so it speaks the canonical
+    dict — building the fake through ArtifactManifest keeps it honest.
+    """
     return ArtifactManifest.model_validate(
         {
             "schema": "mf1",
@@ -123,8 +125,7 @@ class TestFetchArtifacts:
         assert fake_client.downloads == []
 
     def test_overwrites_a_preexisting_same_named_file(self, fake_client, data_folder):
-        """No skip-if-exists: stale same-named bytes must never survive
-        into the image."""
+        """No skip-if-exists: stale same-named bytes must never reach the image."""
         data_folder.mkdir(parents=True)
         stale = data_folder / "populace_year_2026.h5"
         stale.write_bytes(b"stale")
@@ -169,8 +170,7 @@ class TestFreshnessGate:
     def test_proceeds_without_an_installed_receipt_file(
         self, monkeypatch, tmp_path, fake_client, data_folder
     ):
-        """Lenient by design: local fault-drill runs have no bundle
-        receipt file."""
+        """Lenient by design: local fault-drill runs have no bundle receipt file."""
         monkeypatch.setenv(
             "POLICYENGINE_BUNDLE_RECEIPT", str(tmp_path / "does-not-exist.json")
         )
@@ -179,10 +179,12 @@ class TestFreshnessGate:
 
 
 class TestCredentialShim:
-    """The client=None path: credentials are built in memory from the
-    secret blob via service_account.Credentials.from_service_account_info
+    """The client=None path: credentials are built in memory from the secret blob.
+
+    They come from service_account.Credentials.from_service_account_info
     (never written to disk — the layer's filesystem is committed into the
-    image), falling back to ambient ADC when no blob is present."""
+    image), falling back to ambient ADC when no blob is present.
+    """
 
     @pytest.fixture
     def patched_google(self, monkeypatch, fake_client):
@@ -249,16 +251,21 @@ class TestCredentialShim:
 
 
 def test_fetch_never_writes_credentials_to_disk():
-    """A run_function layer commits its container filesystem into the
-    image, so the shim must never materialize the key as a file."""
+    """The credential shim must never materialize the key as a file.
+
+    A run_function layer commits its container filesystem into the image.
+    """
     source = Path(image_setup.__file__).read_text(encoding="utf-8")
     assert "tempfile" not in source
 
 
 def test_image_setup_module_stays_self_contained():
-    """The fetch layer runs before add_local_python_source, so the module
-    must have no module-level imports and must never import the executor
-    package, even lazily inside a function body."""
+    """The image setup module must not import the executor package at all.
+
+    The fetch layer runs before add_local_python_source, so the module must
+    have no module-level imports and must never import the executor package,
+    even lazily inside a function body.
+    """
     source = Path(image_setup.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
 

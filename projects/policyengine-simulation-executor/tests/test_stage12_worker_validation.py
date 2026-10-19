@@ -54,7 +54,7 @@ def test_validation_checks_dataset_and_non_serving_calculation() -> None:
 
 
 def test_non_serving_us_calculation_supports_national_spm() -> None:
-    """The deployed-worker check must not invent a county for its synthetic household."""
+    """The deployed-worker check invents no county for its synthetic household."""
     _run_non_serving_calculation("us")
 
 

@@ -47,7 +47,10 @@ class FakeCommands:
         path.chmod(0o755)
 
     def calls(self, name: str | None = None) -> list[list[str]]:
-        """Every recorded call (``[command, *arguments]``), optionally of one command."""
+        """Return each recorded call as ``[command, *arguments]``.
+
+        Given ``name``, return only that command's calls.
+        """
         if not self.log.exists():
             return []
         recorded = [
@@ -57,7 +60,7 @@ class FakeCommands:
         return [call for call in recorded if name is None or call[0] == name]
 
     def env(self, **overrides: str) -> dict[str, str]:
-        """The environment to run a script in, with the fakes first on PATH."""
+        """Return the environment to run a script in, with the fakes first on PATH."""
         return {
             **os.environ,
             "PATH": f"{self.directory}{os.pathsep}{os.environ['PATH']}",
@@ -84,7 +87,7 @@ def run_script(
 
 
 def github_output(path: Path) -> dict[str, str]:
-    """The ``name=value`` pairs a script appended to ``$GITHUB_OUTPUT``."""
+    """Return the ``name=value`` pairs a script appended to ``$GITHUB_OUTPUT``."""
     if not path.exists():
         return {}
     pairs = {}

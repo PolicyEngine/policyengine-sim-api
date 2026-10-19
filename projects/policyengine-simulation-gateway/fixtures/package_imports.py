@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import importlib
 import sys
-from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+    from types import ModuleType
 
 GATEWAY_MODEL_MODULE = "policyengine_simulation_contract.gateway_models"
 GATEWAY_ENDPOINTS_MODULE = "policyengine_simulation_gateway.endpoints"
@@ -32,6 +36,7 @@ class GatewayImportModuleNames:
 
 @pytest.fixture()
 def gateway_import_module_names() -> GatewayImportModuleNames:
+    """Return the module names the import-boundary tests assert on."""
     return GatewayImportModuleNames()
 
 
@@ -58,10 +63,12 @@ def isolated_gateway_model_import_modules() -> Iterator[None]:
 
 
 @pytest.fixture()
-def import_gateway_models(isolated_gateway_model_import_modules):
+def import_gateway_models(
+    isolated_gateway_model_import_modules: None,
+) -> Callable[[], ModuleType]:
     """Import gateway models from a clean module state."""
 
-    def import_models():
+    def import_models() -> ModuleType:
         return importlib.import_module(GATEWAY_MODEL_MODULE)
 
     return import_models

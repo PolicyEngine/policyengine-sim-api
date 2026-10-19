@@ -18,6 +18,10 @@ _DOC_REFERENCE = re.compile(r"[\w./-]+\.md\b")
 
 
 def check_adapters(agents: Agents, root: Path) -> list[Violation]:
+    """Return a violation for each way an adapter stops being a short pointer.
+
+    Missing adapter files are skipped rather than reported.
+    """
     violations = []
     instructions = Path(agents.instructions).name
     for adapter in agents.adapters:
@@ -44,7 +48,8 @@ def check_adapters(agents: Agents, root: Path) -> list[Violation]:
         if others:
             v(
                 f"references other docs ({', '.join(others)})",
-                f"list skills and rules in {instructions} only; keep {adapter} a pointer",
+                f"list skills and rules in {instructions} only; "
+                f"keep {adapter} a pointer",
             )
         if BEGIN in text:
             v(

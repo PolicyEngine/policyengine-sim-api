@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from policyengine.core import Simulation
 from policyengine.core.scoping_strategy import RegionGroupStrategy
-from policyengine_simulation_contract.stage12_bundle import ResolvedStage12Bundle
 from policyengine_simulation_contract.stage12_execution import (
     PlannedSimulationExecutionInput,
     SimulationRole,
@@ -22,6 +20,12 @@ from policyengine_simulation_executor.stage12_runtime.output_planning import (
 
 from .keys import Stage12BaselineCacheIdentity, collect_baseline_identity
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from policyengine.core.scoping_strategy import ScopingStrategy
+    from policyengine_simulation_contract.stage12_bundle import ResolvedStage12Bundle
+
 logger = logging.getLogger(__name__)
 
 CACHE_HIT = "hit"
@@ -34,11 +38,10 @@ def qualifying_cache_identity(
     *,
     resolved: ResolvedStage12Bundle,
     dataset_is_default: bool,
-    scoping_strategy: Any,
+    scoping_strategy: ScopingStrategy | None,
     spm: Mapping[str, Any] | None,
 ) -> Stage12BaselineCacheIdentity | None:
     """Return a safe cache identity, or None for an ineligible simulation."""
-
     if simulation.role is not SimulationRole.BASELINE:
         return None
     if simulation.policy:
@@ -76,12 +79,15 @@ class Stage12CachedSimulation(Simulation):
 
     @property
     def stage12_cache_outcome(self) -> str | None:
+        """The first cache outcome of ``ensure``: hit, incomplete or miss."""
         return self._stage12_cache_outcome
 
     def configure_stage12_cache(self, output_plan: Stage12OutputPlan) -> None:
+        """Set the output plan a loaded cache file must satisfy."""
         self._stage12_output_plan = output_plan
 
     def run(self) -> None:
+        """Calculate the simulation, noting that this process computed it."""
         self._computed_this_process = True
         super().run()
 
@@ -90,6 +96,12 @@ class Stage12CachedSimulation(Simulation):
             self._stage12_cache_outcome = outcome
 
     def ensure(self) -> None:
+        """Load or calculate the output, then check any loaded file.
+
+        A file that fails the output plan is recalculated, saved again and
+        replaces the in-memory cache entry. Raises ``RuntimeError`` when a file
+        was loaded but no output plan was configured.
+        """
         self._computed_this_process = False
         super().ensure()
         if self._computed_this_process:
@@ -97,7 +109,8 @@ class Stage12CachedSimulation(Simulation):
             return
         plan = self._stage12_output_plan
         if plan is None:
-            raise RuntimeError("Stage 12 cached simulation has no output plan")
+            msg = "Stage 12 cached simulation has no output plan"
+            raise RuntimeError(msg)
         data = getattr(getattr(self, "output_dataset", None), "data", None)
         entity_data = getattr(data, "entity_data", None)
         try:
@@ -110,10 +123,12 @@ class Stage12CachedSimulation(Simulation):
             self._record_outcome(CACHE_INCOMPLETE)
             self.run()
             self.save()
-            from policyengine.core.simulation import _cache
+            from policyengine.core.simulation import (  # noqa: PLC0415  # resolved per call, as .py's Simulation.ensure resolves it, so a patched _cache is the one updated
+                _cache,
+            )
 
             storage_id = getattr(self, "storage_id", self.id)
-            _cache._cache.pop(storage_id, None)
+            _cache._cache.pop(storage_id, None)  # noqa: SLF001  # LRUCache has no public removal, and add() keeps an existing entry
             _cache.add(storage_id, self)
             return
         self._record_outcome(CACHE_HIT)

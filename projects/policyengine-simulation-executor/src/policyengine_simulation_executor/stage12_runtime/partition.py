@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 # This is an independent snapshot of the measured 20-way partition used by
 # the v1 runner when Stage 12 segmentation was introduced. Stage 12 must not
 # import the v1 partition: either execution path can now evolve without
@@ -34,23 +32,22 @@ US_REGION_GROUPS: tuple[tuple[str, ...], ...] = (
 
 def stage12_region_groups(country: str) -> list[list[str]] | None:
     """Return a mutable copy of the Stage 12 partition when supported."""
-
     if country.lower() != "us":
         return None
     return [list(group) for group in US_REGION_GROUPS]
 
 
-def stage12_region_groups_for_model(country: str, model: Any) -> list[list[str]]:
+def stage12_region_groups_for_model(country: str, model: object) -> list[list[str]]:
     """Return the partition, retaining newly registered state regions.
 
     The static partition is measured for the certified dataset. A later model
     can register another state-level region before the partition is rebalanced;
     assigning it to the final group prevents silently omitting its households.
     """
-
     groups = stage12_region_groups(country)
     if groups is None:
-        raise ValueError(f"Stage 12 has no national partition for {country!r}")
+        msg = f"Stage 12 has no national partition for {country!r}"
+        raise ValueError(msg)
     registry = getattr(model, "region_registry", None)
     if registry is None:
         return groups

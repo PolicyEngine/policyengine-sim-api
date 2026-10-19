@@ -787,7 +787,8 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
     store.children[simulation.simulation_execution_id] = _child(simulation)
 
     def fail(_simulation):
-        raise RuntimeError("country package calculation failed")
+        msg = "country package calculation failed"
+        raise RuntimeError(msg)
 
     with pytest.raises(
         RuntimeError, match="Stage 12 simulation execution failed"
@@ -818,9 +819,8 @@ def test_single_worker_persists_and_records_a_redacted_cause() -> None:
     runtime = RecordingRuntime()
 
     def fail(_simulation):
-        raise RuntimeError(
-            "could not reach postgresql://runtime:database-secret@db.example/postgres"
-        )
+        msg = "could not reach postgresql://runtime:database-secret@db.example/postgres"
+        raise RuntimeError(msg)
 
     with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
         run_single_simulation(
@@ -846,7 +846,8 @@ def test_single_worker_persists_and_records_a_redacted_cause() -> None:
 def test_single_worker_names_the_failing_artifact_write_stage() -> None:
     class FailingSimulationArtifacts(FakeArtifacts):
         def write_simulation(self, **_kwargs):
-            raise OSError("bucket write rejected")
+            msg = "bucket write rejected"
+            raise OSError(msg)
 
     store = FakeStore()
     simulation = _planned_simulation(SimulationRole.BASELINE)
@@ -875,7 +876,8 @@ def test_single_worker_preserves_typed_failure_values() -> None:
     store.children[simulation.simulation_execution_id] = _child(simulation)
 
     def fail(_simulation):
-        raise SPMInputError("SPM_YEAR_UNAVAILABLE", "No SPM values for 2026")
+        msg = "SPM_YEAR_UNAVAILABLE"
+        raise SPMInputError(msg, "No SPM values for 2026")
 
     with pytest.raises(RuntimeError, match="Stage 12 simulation execution failed"):
         run_single_simulation(
@@ -934,7 +936,6 @@ CORRELATION_SUFFIX = re.compile(r" \(correlation_id=(?P<correlation_id>[0-9a-f]+
 
 def _correlation_id(error_summary: str) -> str:
     """Return the correlation ID that ends a redacted failure summary."""
-
     match = CORRELATION_SUFFIX.search(error_summary)
     assert match is not None, error_summary
     return match["correlation_id"]
@@ -942,7 +943,6 @@ def _correlation_id(error_summary: str) -> str:
 
 def _failure_cause(error_summary: str) -> str:
     """Return the redacted cause before a failure summary's correlation ID."""
-
     _correlation_id(error_summary)
     return CORRELATION_SUFFIX.sub("", error_summary)
 
@@ -1446,7 +1446,8 @@ class ConcurrentInvoker:
             started = time.monotonic()
             time.sleep(0.05)
             if role == self.fail_role:
-                raise RuntimeError("child calculation failed")
+                msg = "child calculation failed"
+                raise RuntimeError(msg)
             frames = _frames(100.0 if role == "baseline" else 120.0)
             if self.missing_column and role == "reform":
                 frames["household"] = frames["household"].drop(
@@ -1747,10 +1748,11 @@ class UnavailableProductionCall:
     object_id = "production-job-1"
 
     def get(self, *, timeout=None):
-        raise ConnectionError(
+        msg = (
             "production result unavailable at "
             "https://storage.example.com/result.json?X-Goog-Signature=signed-value"
         )
+        raise ConnectionError(msg)
 
 
 class UnavailableProductionInvoker(ConcurrentInvoker):
@@ -1923,7 +1925,8 @@ def test_coordinator_observes_one_role_failure_while_the_peer_is_pending(
                     }
                 )
             )
-            raise RuntimeError("remote wrapper")
+            msg = "remote wrapper"
+            raise RuntimeError(msg)
 
         def cancel(self):
             return None
@@ -1937,7 +1940,8 @@ def test_coordinator_observes_one_role_failure_while_the_peer_is_pending(
             return failed_call if role.value == failed_role else baseline_call
 
         def restore(self, invocation_id):
-            raise AssertionError(f"unexpected restored invocation {invocation_id}")
+            msg = f"unexpected restored invocation {invocation_id}"
+            raise AssertionError(msg)
 
     with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
         coordinate_report(
@@ -1977,11 +1981,13 @@ def test_dispatch_failure_cancels_an_already_started_peer() -> None:
         def spawn(self, *, simulation, **_):
             role = PlannedSimulationExecutionInput.model_validate(simulation).role
             if role is SimulationRole.REFORM:
-                raise ConnectionError("dispatch contains sensitive details")
+                msg = "dispatch contains sensitive details"
+                raise ConnectionError(msg)
             return baseline_call
 
         def restore(self, invocation_id):
-            raise AssertionError(f"unexpected restored invocation {invocation_id}")
+            msg = f"unexpected restored invocation {invocation_id}"
+            raise AssertionError(msg)
 
     with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
         coordinate_report(
@@ -2027,7 +2033,8 @@ def test_coordinator_propagates_an_already_persisted_child_failure() -> None:
                     }
                 )
             )
-            raise RuntimeError("remote wrapper must not replace the child failure")
+            msg = "remote wrapper must not replace the child failure"
+            raise RuntimeError(msg)
 
     class PersistedFailureInvoker:
         def spawn(self, *, simulation, **_):
@@ -2040,7 +2047,8 @@ def test_coordinator_propagates_an_already_persisted_child_failure() -> None:
             )
 
         def restore(self, invocation_id):
-            raise AssertionError(f"unexpected restored invocation {invocation_id}")
+            msg = f"unexpected restored invocation {invocation_id}"
+            raise AssertionError(msg)
 
     with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
         coordinate_report(
@@ -2094,7 +2102,8 @@ def test_coordinator_rejects_artifacts_that_do_not_satisfy_the_shared_plan(
 def test_coordinator_records_failure_when_child_persistence_fails() -> None:
     class FailingChildStore(FakeStore):
         def create_or_resolve_simulation(self, record):
-            raise RuntimeError("database rejected the child record")
+            msg = "database rejected the child record"
+            raise RuntimeError(msg)
 
     store = FailingChildStore()
 
@@ -2136,7 +2145,8 @@ class WorkerRecordedFailureCall:
                 "completed_at": NOW,
             }
         )
-        raise RuntimeError("Stage 12 simulation execution failed")
+        msg = "Stage 12 simulation execution failed"
+        raise RuntimeError(msg)
 
 
 class UnreachedCall:
@@ -2144,7 +2154,8 @@ class UnreachedCall:
         self.object_id = object_id
 
     def get(self, *, timeout=None):
-        raise AssertionError("the coordinator observes baseline first")
+        msg = "the coordinator observes baseline first"
+        raise AssertionError(msg)
 
     def cancel(self):
         return None
@@ -2167,7 +2178,8 @@ class WorkerRecordedFailureInvoker:
         return UnreachedCall("call-reform")
 
     def restore(self, invocation_id):
-        raise AssertionError(f"unexpected restored invocation {invocation_id}")
+        msg = f"unexpected restored invocation {invocation_id}"
+        raise AssertionError(msg)
 
 
 def test_coordinator_keeps_the_cause_recorded_by_a_failed_worker() -> None:
@@ -2262,7 +2274,7 @@ def test_coordinator_builds_its_store_with_the_coordinator_runtime(
     assert store.parent.status is ComparisonRunLifecycleStatus.SUCCEEDED
 
 
-def test_coordinator_does_not_deduplicate_against_its_own_claim_after_a_lost_commit() -> (
+def test_coordinator_does_not_deduplicate_against_its_own_claim_after_a_lost_commit() -> (  # noqa: E501  # the test name spells out the lost-commit scenario
     None
 ):
     # SQLAlchemy raises a failed COMMIT without a statement, like a refused
@@ -2535,7 +2547,8 @@ class RefusingDispatchInvoker:
         raise self.dispatch_error
 
     def restore(self, invocation_id):
-        raise AssertionError(f"unexpected restored invocation {invocation_id}")
+        msg = f"unexpected restored invocation {invocation_id}"
+        raise AssertionError(msg)
 
 
 def test_coordinator_reports_a_child_dispatch_failure_once() -> None:
@@ -2715,7 +2728,8 @@ class TimeoutCall:
         self.cancelled = 0
 
     def get(self, *, timeout=None):
-        raise TimeoutError("contains sensitive timeout details")
+        msg = "contains sensitive timeout details"
+        raise TimeoutError(msg)
 
     def cancel(self):
         self.cancelled += 1
@@ -2731,7 +2745,8 @@ class TimeoutInvoker:
         return TimeoutCall(f"call-{role}")
 
     def restore(self, invocation_id):
-        raise AssertionError(f"unexpected restored invocation {invocation_id}")
+        msg = f"unexpected restored invocation {invocation_id}"
+        raise AssertionError(msg)
 
 
 def test_coordinator_records_bounded_timeout_without_an_aggregate() -> None:
@@ -2865,7 +2880,8 @@ class ScriptedChildCall:
             raise self.wait_error
         if self.result is not None:
             return self.result
-        raise TimeoutError("still running")
+        msg = "still running"
+        raise TimeoutError(msg)
 
     def cancel(self):
         self.cancel_count += 1
@@ -2922,7 +2938,8 @@ class PlaceholderWriteFailingStore(FakeStore):
     def replace_simulation(self, record):
         # The coordinator's only plain replacement is the dispatch placeholder.
         if record.simulation_execution_id == self.failing_simulation_id:
-            raise StartupWriteError("placeholder write contains sensitive details")
+            msg = "placeholder write contains sensitive details"
+            raise StartupWriteError(msg)
         return super().replace_simulation(record)
 
 
@@ -2933,14 +2950,16 @@ class AttachFailingStore(FakeStore):
 
     def attach_simulation_invocation(self, simulation_execution_id, **values):
         if simulation_execution_id == self.failing_simulation_id:
-            raise StartupWriteError("attach contains sensitive details")
+            msg = "attach contains sensitive details"
+            raise StartupWriteError(msg)
         return super().attach_simulation_invocation(simulation_execution_id, **values)
 
 
 class CancellationStateFailingStore(FakeStore):
     def replace_simulation_if_status(self, record, *, expected_status):
         if record.error_code == "simulation_cancelled":
-            raise ConnectionError("database contains sensitive details")
+            msg = "database contains sensitive details"
+            raise ConnectionError(msg)
         return super().replace_simulation_if_status(
             record, expected_status=expected_status
         )
@@ -3421,7 +3440,8 @@ class OwnChildStateFailingStore(FakeStore):
             and self.remaining_failures > 0
         ):
             self.remaining_failures -= 1
-            raise ChildStateError("database contains sensitive details")
+            msg = "database contains sensitive details"
+            raise ChildStateError(msg)
 
     def get_simulation(self, simulation_execution_id):
         self._fail_once("read", simulation_execution_id)
@@ -3491,7 +3511,8 @@ class ReformDispatchFailureInvoker(ScriptedChildInvoker):
         role = PlannedSimulationExecutionInput.model_validate(simulation).role
         if role is SimulationRole.REFORM:
             self.events.append("spawn:reform")
-            raise ConnectionError("dispatch contains sensitive details")
+            msg = "dispatch contains sensitive details"
+            raise ConnectionError(msg)
         return super().spawn(simulation=simulation, **values)
 
 

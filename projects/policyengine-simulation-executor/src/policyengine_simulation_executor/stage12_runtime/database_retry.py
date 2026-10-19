@@ -5,12 +5,16 @@ from __future__ import annotations
 import logging
 import random
 import time
-from collections.abc import Callable
 from contextlib import suppress
+from typing import TYPE_CHECKING
 
-from policyengine_observability import ObservabilityRuntime
-from sqlalchemy.engine import Connection
 from sqlalchemy.exc import OperationalError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from policyengine_observability import ObservabilityRuntime
+    from sqlalchemy.engine import Connection
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +46,6 @@ def open_connection_with_retry(
     Errors other than ``OperationalError`` propagate immediately, and retries
     stop once the retry budget is spent.
     """
-
     started = monotonic()
     attempt = 1
     delay_ceiling = INITIAL_RETRY_DELAY_SECONDS

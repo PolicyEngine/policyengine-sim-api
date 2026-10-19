@@ -5,10 +5,139 @@
 # be treated as Python 3.9. scripts/rules supports Python 3.11+ (and is shared
 # byte-for-byte with policyengine-api, which targets 3.11).
 per-file-target-version = { "scripts/**" = "py311" }
+# Directories that are not regular packages on purpose, so they have no
+# __init__.py: standalone scripts, the implicit namespace package that holds
+# scripts.rules, and proof fixtures. Ruff resolves modules as if each listed
+# directory, and every directory under it, had an __init__.py. This is a
+# top-level setting: ruff rejects it in [lint]. The executor's src/modal/utils
+# scripts are not listed, because ruff would then treat them as part of a
+# first-party "modal" package and regroup their Modal SDK imports; each keeps
+# an inline INP001 suppression instead.
+namespace-packages = [
+    ".github/scripts",
+    "projects/policyengine-simulation-executor/scripts",
+    "rules/fixtures",
+    "scripts",
+]
 
 [lint]
 select = [
     "E4", "E7", "E9", "F",
     # Group 1: safe auto-fixes.
     "FLY", "FURB", "I", "PIE", "PYI", "RET", "RSE", "UP", "W",
+    # Group 2: typing-only imports.
+    "TC",
+    # Group 3: annotations.
+    "ANN",
+    # Group 4: docstrings.
+    "D",
+    # Group 5: exceptions and messages.
+    "BLE", "EM", "TRY",
+    # Group 6: security, logging and debugging leftovers.
+    "DTZ", "ERA", "EXE", "FIX", "G", "LOG", "S", "T20", "TD",
+    # Group 7: structure and imports.
+    "A", "E", "FAST", "INP", "N", "PLC", "SLF", "TID253",
+]
+# Mutually exclusive pydocstyle pairs: keep D211 (no blank line before a class
+# docstring) and D212 (summary on the first line).
+ignore = ["D203", "D213"]
+
+[lint.per-file-ignores]
+# File-level exceptions are allowed only for tests, CI/CD scripts and
+# command-line scripts; the rules guard rejects any other pattern. See
+# docs/engineering/skills/rules-registry.md#file-level-exceptions.
+#
+# Tests may use pytest's bare assert, and need no docstrings, annotations or
+# named constants for magic numbers. They may also reach into private members,
+# live in directories that aren't packages, and import inside a test (often
+# after patching the environment). They also run repository scripts and use
+# fake credentials, temporary paths, naive datetimes, pickle and exec on
+# purpose, and may import the lazily loaded packages at module level. Every
+# other rule applies to tests.
+"**/tests/**" = [
+    "ANN", "D1", "DTZ001", "DTZ007", "INP001", "PLC0415", "PLR2004",
+    "S101", "S102", "S105", "S106", "S108", "S301", "S603", "S607", "SLF001",
+    "TID253",
+]
+# The deployed-service test suite (pytest, run against a live candidate) gets
+# the same test exemptions.
+"**/authenticated_tests/**" = [
+    "ANN", "D1", "DTZ001", "DTZ007", "INP001", "PLC0415", "PLR2004",
+    "S101", "S102", "S105", "S106", "S108", "S301", "S603", "S607", "SLF001",
+    "TID253",
+]
+# CI/CD scripts report on stdout.
+".github/**" = ["T201"]
+# Command-line scripts report on stdout, run other programs and use today's
+# date.
+"**/scripts/**" = ["DTZ011", "S603", "S607", "T201"]
+# Programs under src: the Modal deployment utilities, and the OpenAPI and
+# Stage 12 infrastructure commands. They report on stdout, and the release
+# sentinel opens URLs from its arguments. The Modal utilities run with
+# python -m from a directory that isn't a package.
+"projects/*/src/{modal/utils/*,policyengine_simulation_entry/generate_openapi,policyengine_simulation_entry/stage12_infrastructure,policyengine_simulation_gateway/generate_openapi}.py" = ["INP001", "S310", "T201"]
+
+[lint.flake8-tidy-imports]
+# Heavy or optional packages that load only inside the function that needs
+# them, never at module level (TID253 enforces it; TYPE_CHECKING imports are
+# fine). Ruff's PLC0415 accepts in-function imports of these without a
+# suppression. A package belongs here only if no application module imports it
+# at module level.
+banned-module-level-imports = [
+    "google.cloud",
+    "h5py",
+    "opentelemetry.exporter.cloud_monitoring",
+    "opentelemetry.exporter.cloud_trace",
+    "opentelemetry.instrumentation.logging",
+    "policyengine.bundle",
+    "policyengine.countries",
+    "policyengine.provenance",
+    "policyengine.tax_benefit_models",
+    "policyengine_simulation_executor.baseline_artifacts",
+    "policyengine_simulation_executor.spm",
+    "policyengine_us",
+    "pythonjsonlogger",
+    "spm_calculator",
+]
+
+[lint.flake8-type-checking]
+# Classes whose annotations Pydantic evaluates at runtime, so their imports must
+# stay at runtime. Ruff reads each base through the imports of the subclass's
+# own module and follows inheritance only through classes in that module, never
+# through a re-export, so a base is listed by the path its subclasses import it
+# from: the defining module for project bases, the public path for third-party
+# ones. See docs/engineering/skills/typing-only-imports.md; the
+# sim.quality.runtime-evaluated-models-resolve tests check every model.
+runtime-evaluated-base-classes = [
+    "policyengine.core.Simulation",
+    "policyengine_fastapi.observability.contracts.CorrelatedRunFields",
+    "policyengine_fastapi.observability.contracts.ObservabilityModel",
+    "policyengine_simulation_contract.gateway_models.GatewayRequestBase",
+    "policyengine_simulation_contract.macro_output.MacroOutputModel",
+    "policyengine_simulation_contract.macro_output.MacroRootModel",
+    "policyengine_simulation_contract.macro_output.SingleYearMacroOutput",
+    "policyengine_simulation_contract.stage12_bundle.StrictBundleModel",
+    "policyengine_simulation_contract.stage12_execution.SimulationExecutionInput",
+    "policyengine_simulation_contract.stage12_execution.StrictContractModel",
+    "policyengine_simulation_contract.stage12_manifest.StrictManifestModel",
+    "policyengine_simulation_executor.precompute_models._StrictModel",
+    "policyengine_simulation_executor.stage_reporting_simulation.StageReportingSimulation",
+    "pydantic.BaseModel",
+    "pydantic.RootModel",
+    "pydantic_settings.BaseSettings",
+]
+# FastAPI evaluates endpoint annotations when routes are registered.
+runtime-evaluated-decorators = [
+    "fastapi.APIRouter.api_route",
+    "fastapi.APIRouter.delete",
+    "fastapi.APIRouter.get",
+    "fastapi.APIRouter.patch",
+    "fastapi.APIRouter.post",
+    "fastapi.APIRouter.put",
+    "fastapi.FastAPI.api_route",
+    "fastapi.FastAPI.delete",
+    "fastapi.FastAPI.get",
+    "fastapi.FastAPI.patch",
+    "fastapi.FastAPI.post",
+    "fastapi.FastAPI.put",
 ]

@@ -20,7 +20,7 @@ from policyengine_simulation_executor.segmented_national_reduce import (
 
 
 def _child(household_ids, incomes, **extra):
-    """A minimal child output dict with a _microdata payload."""
+    """Return a minimal child output dict with a _microdata payload."""
     frame = {
         "household_id": list(household_ids),
         "household_net_income": [float(x) for x in incomes],
@@ -70,7 +70,8 @@ class TestConcatenateMicrodata:
 class TestPrecomputedSimulation:
     def test__ensure_never_computes(self, monkeypatch):
         def boom(self):
-            raise AssertionError("RECOMPUTE ATTEMPTED")
+            msg = "RECOMPUTE ATTEMPTED"
+            raise AssertionError(msg)
 
         monkeypatch.setattr(PrecomputedSimulation, "run", boom)
         simulation = PrecomputedSimulation()

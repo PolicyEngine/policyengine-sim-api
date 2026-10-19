@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from scripts.rules.model import Kind, Registry, Rule, Status, Tier, Violation
 from scripts.rules.resolve import node_exists
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 RULE_ID = re.compile(r"^[a-z0-9]+(\.[a-z0-9][a-z0-9-]*)+$")
 
@@ -53,6 +55,7 @@ PROOF_FILE_FIELDS = (
 
 
 def baseline_entries(path: Path) -> int:
+    """Count the entries in a baseline file, skipping blank and ``#`` comment lines."""
     return sum(
         1
         for line in path.read_text().splitlines()
@@ -175,7 +178,8 @@ def _validate_cross_fields(rule: Rule) -> list[Violation]:
     if kind is Kind.RUFF and rule.baseline is not None:
         v(
             "ruff is never ratcheted",
-            "remove the baseline and fix every violation in a standalone PR that also changes the ruff select list",
+            "remove the baseline and fix every violation in a standalone PR that "
+            "also changes the ruff select list",
         )
     if tier is Tier.JUDGMENT and kind not in (Kind.LLM_REVIEW, Kind.NONE):
         v(
@@ -240,6 +244,10 @@ def _validate_proof(rule: Rule, root: Path) -> list[Violation]:
 
 
 def validate(registry: Registry, root: Path, today: date) -> list[Violation]:
+    """Check the registry's fields and file references against the tree at ``root``.
+
+    ``today`` decides whether review dates and exceptions have expired.
+    """
     violations: list[Violation] = []
 
     def v(rule_id: str | None, message: str, fix: str, check: str = "schema") -> None:
@@ -323,7 +331,8 @@ def validate(registry: Registry, root: Path, today: date) -> list[Violation]:
             elif baseline_entries(path) != rule.baseline.count:
                 v(
                     rule.id,
-                    f"baseline count is {rule.baseline.count} but {rule.baseline.file} lists {baseline_entries(path)}",
+                    f"baseline count is {rule.baseline.count} but "
+                    f"{rule.baseline.file} lists {baseline_entries(path)}",
                     "make the count match the file",
                     "baseline",
                 )

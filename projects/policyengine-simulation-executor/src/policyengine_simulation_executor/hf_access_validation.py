@@ -16,8 +16,8 @@ from policyengine_simulation_executor.release_bundle import (
 )
 
 HF_RUNTIME_ENV_NAME = "HUGGING_FACE_TOKEN"
-HF_MODAL_SECRET_NAME = "pe-uk-private-hf-read-token"
-EXPECTED_HF_TOKEN_DISPLAY_NAME = "pe-uk-private-hf-read-token"
+HF_MODAL_SECRET_NAME = "pe-uk-private-hf-read-token"  # noqa: S105  # the Modal secret's name, not its value
+EXPECTED_HF_TOKEN_DISPLAY_NAME = "pe-uk-private-hf-read-token"  # noqa: S105  # the token's Hugging Face display name, not its value
 
 
 class HFAccessTarget(BaseModel):
@@ -59,12 +59,16 @@ class HFAccessTokenIdentity(BaseModel):
 
 
 class HFAuthIdentity(BaseModel):
+    """The ``auth`` block of a whoami-v2 response: the token that made the call."""
+
     model_config = ConfigDict(extra="ignore", frozen=True, populate_by_name=True)
 
     access_token: HFAccessTokenIdentity = Field(alias="accessToken")
 
 
 class HFWhoAmIIdentity(BaseModel):
+    """The whoami-v2 fields the audit reads: account name and calling token."""
+
     model_config = ConfigDict(extra="ignore", frozen=True)
 
     name: str
@@ -72,6 +76,8 @@ class HFWhoAmIIdentity(BaseModel):
 
 
 class HFArtifactAccess(BaseModel):
+    """Proof that the token can read one target: its resolved file metadata."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     target: HFAccessTarget
@@ -97,7 +103,6 @@ MetadataLoader = Callable[[HFAccessTarget, str], HFArtifactAccess]
 
 def build_uk_bundle_access_plan() -> tuple[HFAccessTarget, ...]:
     """Derive private Hugging Face artifacts from the installed .py bundle."""
-
     bundle = get_country_release_bundle("uk")
     targets: dict[tuple[str, str, str, str], HFAccessTarget] = {}
     for dataset_name, dataset_uri in bundle.dataset_uris.items():
@@ -105,19 +110,19 @@ def build_uk_bundle_access_plan() -> tuple[HFAccessTarget, ...]:
         if parsed is None:
             continue
         if parsed.revision is None:
-            raise RuntimeError(
-                f"UK bundle dataset {dataset_name!r} does not pin a revision"
-            )
+            msg = f"UK bundle dataset {dataset_name!r} does not pin a revision"
+            raise RuntimeError(msg)
         repo_type = bundle.dataset_repo_types.get(dataset_name)
         if repo_type == "model":
             validated_repo_type: Literal["model", "dataset"] = "model"
         elif repo_type == "dataset":
             validated_repo_type = "dataset"
         else:
-            raise RuntimeError(
+            msg = (
                 f"UK bundle dataset {dataset_name!r} has unsupported Hugging Face "
                 f"repository type {repo_type!r}"
             )
+            raise RuntimeError(msg)
         target = HFAccessTarget(
             repo_id=parsed.repo_id,
             repo_type=validated_repo_type,
@@ -127,12 +132,15 @@ def build_uk_bundle_access_plan() -> tuple[HFAccessTarget, ...]:
         key = (target.repo_id, target.repo_type, target.path, target.revision)
         targets[key] = target
     if not targets:
-        raise RuntimeError("The UK .py bundle contains no Hugging Face artifacts")
+        msg = "The UK .py bundle contains no Hugging Face artifacts"
+        raise RuntimeError(msg)
     return tuple(targets[key] for key in sorted(targets))
 
 
 def _load_whoami(token: str) -> Mapping[str, object]:
-    from huggingface_hub import HfApi
+    from huggingface_hub import (  # noqa: PLC0415  # huggingface_hub stays out of this module's import-time imports
+        HfApi,
+    )
 
     return HfApi().whoami(token=token)
 
@@ -163,21 +171,22 @@ def validate_uk_private_hf_access(
     metadata_loader: MetadataLoader = _load_metadata,
 ) -> HFCredentialAudit:
     """Validate identity, read-only permissions, and every planned artifact."""
-
     token = environment.get(HF_RUNTIME_ENV_NAME)
     if not token:
-        raise RuntimeError(f"{HF_RUNTIME_ENV_NAME} is required")
+        msg = f"{HF_RUNTIME_ENV_NAME} is required"
+        raise RuntimeError(msg)
     if not targets:
-        raise RuntimeError("At least one Hugging Face artifact must be checked")
+        msg = "At least one Hugging Face artifact must be checked"
+        raise RuntimeError(msg)
 
     identity = HFWhoAmIIdentity.model_validate(whoami_loader(token))
     token_identity = identity.auth.access_token
     if token_identity.display_name != EXPECTED_HF_TOKEN_DISPLAY_NAME:
-        raise RuntimeError(
-            f"Unexpected Hugging Face token identity: {token_identity.display_name!r}"
-        )
+        msg = f"Unexpected Hugging Face token identity: {token_identity.display_name!r}"
+        raise RuntimeError(msg)
     if token_identity.role != "fineGrained":
-        raise RuntimeError("The UK private-data token must be fine-grained")
+        msg = "The UK private-data token must be fine-grained"
+        raise RuntimeError(msg)
 
     permissions = set(token_identity.fine_grained.global_permissions)
     permissions.update(
@@ -186,9 +195,11 @@ def validate_uk_private_hf_access(
         for permission in scope.permissions
     )
     if "repo.content.read" not in permissions:
-        raise RuntimeError("The UK private-data token has no repository read scope")
+        msg = "The UK private-data token has no repository read scope"
+        raise RuntimeError(msg)
     if any("write" in permission for permission in permissions):
-        raise RuntimeError("The UK private-data token must not have write permission")
+        msg = "The UK private-data token must not have write permission"
+        raise RuntimeError(msg)
 
     artifacts = tuple(metadata_loader(target, token) for target in targets)
     return HFCredentialAudit(
@@ -201,5 +212,4 @@ def validate_uk_private_hf_access(
 
 def validate_configured_uk_private_hf_access() -> HFCredentialAudit:
     """Validate the configured token against every artifact in the UK bundle."""
-
     return validate_uk_private_hf_access(build_uk_bundle_access_plan())

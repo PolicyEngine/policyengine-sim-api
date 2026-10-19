@@ -1,12 +1,11 @@
-"""
-Pydantic models for the Gateway API.
-"""
+"""Pydantic models for the Gateway API."""
 
 import json
 from typing import ClassVar, Literal
 
 from policyengine_simulation_observability.telemetry import TelemetryEnvelope
 from pydantic import (
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
@@ -15,6 +14,10 @@ from pydantic import (
     model_validator,
 )
 
+from policyengine_simulation_contract.job_progress import (
+    JobSegmentProgress,
+    JobStage,
+)
 from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_contract.spm import (
@@ -41,7 +44,7 @@ class PolicyParameterChanges(RootModel[JsonObject]):
     """Policy parameter names mapped to their dated values."""
 
 
-def _move_internal_telemetry_alias(value):
+def _move_internal_telemetry_alias(value: object) -> object:
     if not isinstance(value, dict):
         return value
     if "_telemetry" in value and "telemetry" not in value:
@@ -50,7 +53,7 @@ def _move_internal_telemetry_alias(value):
     return value
 
 
-def _strip_internal_passthrough_fields(value):
+def _strip_internal_passthrough_fields(value: object) -> object:
     """Drop internal-only fields the gateway adds to payloads in flight.
 
     Parent batch entrypoints attach ``_metadata`` describing resolved routing,
@@ -59,7 +62,6 @@ def _strip_internal_passthrough_fields(value):
     ``extra="forbid"`` keeps catching unknown caller fields without breaking
     internal round-trips.
     """
-
     if not isinstance(value, dict):
         return value
     if not INTERNAL_PASSTHROUGH_FIELDS.intersection(value):
@@ -71,7 +73,7 @@ def _strip_internal_passthrough_fields(value):
     }
 
 
-def _enforce_max_payload_size(value):
+def _enforce_max_payload_size(value: object) -> object:
     if not isinstance(value, dict):
         return value
     try:
@@ -81,10 +83,11 @@ def _enforce_max_payload_size(value):
         # only guards against well-formed hostile payloads.
         return value
     if encoded_length > MAX_GATEWAY_REQUEST_BYTES:
-        raise ValueError(
+        msg = (
             f"Request body is too large ({encoded_length} bytes); the gateway "
             f"accepts at most {MAX_GATEWAY_REQUEST_BYTES} bytes."
         )
+        raise ValueError(msg)
     return value
 
 
@@ -126,17 +129,26 @@ class GatewayRequestBase(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def move_internal_telemetry_alias(cls, value):
+    def move_internal_telemetry_alias(cls, value: object) -> object:
+        """Accept the internal ``_telemetry`` key as ``telemetry`` before validation.
+
+        ``telemetry`` wins when a payload carries both keys.
+        """
         return _move_internal_telemetry_alias(value)
 
     @model_validator(mode="before")
     @classmethod
-    def strip_internal_passthrough_fields(cls, value):
+    def strip_internal_passthrough_fields(cls, value: object) -> object:
+        """Drop ``_metadata`` and ``_runtime_bundle`` before ``extra="forbid"`` runs."""
         return _strip_internal_passthrough_fields(value)
 
     @model_validator(mode="before")
     @classmethod
-    def enforce_max_payload_size(cls, value):
+    def enforce_max_payload_size(cls, value: object) -> object:
+        """Reject payloads whose JSON exceeds ``MAX_GATEWAY_REQUEST_BYTES``.
+
+        Runs before field parsing so oversized bodies never reach Pydantic.
+        """
         return _enforce_max_payload_size(value)
 
 
@@ -147,9 +159,10 @@ class SimulationRequest(GatewayRequestBase):
 
     @model_validator(mode="after")
     def region_xor_region_group(self) -> "SimulationRequest":
-        """A request scopes to a single region OR a region group, never both."""
+        """Reject a request that sets both ``region`` and ``region_group``."""
         if self.region is not None and self.region_group is not None:
-            raise ValueError("Provide `region` or `region_group`, not both.")
+            msg = "Provide `region` or `region_group`, not both."
+            raise ValueError(msg)
         return self
 
 
@@ -204,6 +217,56 @@ class JobStatusResponse(BaseModel):
     error: str | None = None
     resolved_app_name: str | None = None
     policyengine_bundle: PolicyEngineBundle | None = None
+    # Stage reporting. Present only for jobs whose worker reports stages;
+    # see policyengine_simulation_contract.job_progress.
+    stage: JobStage | None = Field(
+        default=None,
+        description=(
+            "Current stage of a running job, or the stage in which a failed "
+            "job stopped. Absent for complete jobs. Later versions may add "
+            "stages; clients must accept a value they do not know."
+        ),
+    )
+    progress: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description=(
+            "Coarse completion percent at the start of the current stage. It "
+            "changes only at stage boundaries, stays below 100 while running, "
+            "and is 100 when complete."
+        ),
+    )
+    progress_max: int | None = Field(
+        default=None,
+        ge=0,
+        le=100,
+        description=(
+            "Highest percent a running job reaches before its next stage "
+            "starts. A client can move a time-based estimate between "
+            "progress and progress_max."
+        ),
+    )
+    submitted_at: AwareDatetime | None = Field(
+        default=None, description="When the gateway accepted the job."
+    )
+    started_at: AwareDatetime | None = Field(
+        default=None, description="When a worker started the job."
+    )
+    stage_started_at: AwareDatetime | None = Field(
+        default=None, description="When the current stage started."
+    )
+    finished_at: AwareDatetime | None = Field(
+        default=None, description="When the worker finished or stopped the job."
+    )
+    segments: JobSegmentProgress | None = Field(
+        default=None,
+        description="Region segments of a segmented US national run.",
+    )
+    stage_durations: dict[JobStage, float] | None = Field(
+        default=None,
+        description="Seconds spent in each stage that has ended.",
+    )
 
 
 class BudgetWindowBatchRequest(GatewayRequestBase):
@@ -222,25 +285,36 @@ class BudgetWindowBatchRequest(GatewayRequestBase):
     @field_validator("start_year")
     @classmethod
     def validate_start_year(cls, value: str) -> str:
+        """Normalise ``start_year`` to a canonical integer string.
+
+        For example ``"02026"`` becomes ``"2026"``; non-integers are rejected.
+        """
         try:
             return str(int(value))
         except (TypeError, ValueError) as exc:
-            raise ValueError("start_year must be an integer year") from exc
+            msg = "start_year must be an integer year"
+            raise ValueError(msg) from exc
 
     @model_validator(mode="after")
     def validate_end_year(self) -> "BudgetWindowBatchRequest":
+        """Reject windows past ``MAX_END_YEAR``, region groups and cliff requests.
+
+        Budget windows run against a single ``region`` and do not compute cliff
+        impacts; those requests belong on the single-year endpoint.
+        """
         if self.region_group is not None:
-            raise ValueError("Provide `region` or `region_group`, not both.")
+            msg = "Provide `region` or `region_group`, not both."
+            raise ValueError(msg)
         end_year = int(self.start_year) + self.window_size - 1
         if end_year > self.MAX_END_YEAR:
-            raise ValueError(
-                f"budget-window end_year must be {self.MAX_END_YEAR} or earlier"
-            )
+            msg = f"budget-window end_year must be {self.MAX_END_YEAR} or earlier"
+            raise ValueError(msg)
         if self.include_cliffs is True:
-            raise ValueError(
+            msg = (
                 "budget-window cliff impacts are not supported; use the single-year "
                 "simulation endpoint with include_cliffs=true"
             )
+            raise ValueError(msg)
         return self
 
 
@@ -251,32 +325,32 @@ class BudgetWindowAnnualImpact(BaseModel):
 
     spm_provenance: SPMComparisonProvenance | None = None
     year: str
-    taxRevenueImpact: float
-    federalTaxRevenueImpact: float
-    stateTaxRevenueImpact: float
-    benefitSpendingImpact: float
-    budgetaryImpact: float
+    taxRevenueImpact: float  # noqa: N815  # published budget-window JSON field taxRevenueImpact
+    federalTaxRevenueImpact: float  # noqa: N815  # published budget-window JSON field federalTaxRevenueImpact
+    stateTaxRevenueImpact: float  # noqa: N815  # published budget-window JSON field stateTaxRevenueImpact
+    benefitSpendingImpact: float  # noqa: N815  # published budget-window JSON field benefitSpendingImpact
+    budgetaryImpact: float  # noqa: N815  # published budget-window JSON field budgetaryImpact
 
 
 class BudgetWindowTotals(BaseModel):
     """Aggregate totals for a completed budget-window response."""
 
     year: Literal["Total"] = "Total"
-    taxRevenueImpact: float
-    federalTaxRevenueImpact: float
-    stateTaxRevenueImpact: float
-    benefitSpendingImpact: float
-    budgetaryImpact: float
+    taxRevenueImpact: float  # noqa: N815  # published budget-window JSON field taxRevenueImpact
+    federalTaxRevenueImpact: float  # noqa: N815  # published budget-window JSON field federalTaxRevenueImpact
+    stateTaxRevenueImpact: float  # noqa: N815  # published budget-window JSON field stateTaxRevenueImpact
+    benefitSpendingImpact: float  # noqa: N815  # published budget-window JSON field benefitSpendingImpact
+    budgetaryImpact: float  # noqa: N815  # published budget-window JSON field budgetaryImpact
 
 
 class BudgetWindowResult(BaseModel):
     """Completed budget-window output."""
 
     kind: Literal["budgetWindow"] = "budgetWindow"
-    startYear: str
-    endYear: str
-    windowSize: int
-    annualImpacts: list[BudgetWindowAnnualImpact] = Field(default_factory=list)
+    startYear: str  # noqa: N815  # published budget-window JSON field startYear
+    endYear: str  # noqa: N815  # published budget-window JSON field endYear
+    windowSize: int  # noqa: N815  # published budget-window JSON field windowSize
+    annualImpacts: list[BudgetWindowAnnualImpact] = Field(default_factory=list)  # noqa: N815  # published budget-window JSON field annualImpacts
     totals: BudgetWindowTotals
 
 

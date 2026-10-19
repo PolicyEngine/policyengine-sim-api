@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import argparse
 import os
-from collections.abc import Mapping
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from policyengine_simulation_executor.artifact_store import ArtifactStore
 from policyengine_simulation_executor.precompute_models import DeployedMarker
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 def build_marker(
@@ -22,9 +25,11 @@ def build_marker(
     manifest_digest: str,
     env: Mapping[str, str],
 ) -> DeployedMarker:
-    """Pure marker assembly: the deploy identity that referenced this
-    manifest. Missing env vars become empty fields, never errors — the
-    marker write itself is the part that must not fail silently."""
+    """Assemble the marker for the deploy that referenced this manifest, without I/O.
+
+    Missing env vars become empty fields, never errors — the marker write
+    itself is the part that must not fail silently.
+    """
     server = env.get("GITHUB_SERVER_URL", "")
     repository = env.get("GITHUB_REPOSITORY", "")
     run_id = env.get("GITHUB_RUN_ID", "")
@@ -49,6 +54,7 @@ def build_marker(
 
 
 def main() -> None:
+    """Write this deploy's ``deployed/<environment>.json`` marker to the store."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--environment", required=True)
     parser.add_argument("--manifest-digest", required=True)

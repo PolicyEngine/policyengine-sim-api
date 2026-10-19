@@ -1,5 +1,7 @@
-"""Tests for the workflow scripts under .github/scripts/ that no deployment
-test covers: each runs the script with fake commands first on PATH."""
+"""Tests for the .github/scripts/ workflow scripts no deployment test covers.
+
+Each test runs the script with fake commands first on PATH.
+"""
 
 from __future__ import annotations
 

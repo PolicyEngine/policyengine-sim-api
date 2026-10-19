@@ -68,7 +68,9 @@ def normalized_compatibility_paths(spec: OpenAPIDocument) -> OpenAPIPathMap:
                 operation.pop("security", None)
     for path, description in {
         "/simulate/economy/comparison": "Invalid request (unknown country/version)",
-        "/simulate/economy/budget-window": "Invalid request (unknown country/version/year)",
+        "/simulate/economy/budget-window": (
+            "Invalid request (unknown country/version/year)"
+        ),
     }.items():
         paths[path]["post"]["responses"]["400"] = {"description": description}
     for path in ("/jobs/{job_id}", "/budget-window-jobs/{batch_job_id}"):
@@ -105,7 +107,7 @@ def test_canonical_spm_extensions_are_public():
 
 
 def test_route_table_is_frozen():
-    assert methods(cast(OpenAPIDocument, create_app().openapi())) == EXPECTED_ROUTES
+    assert methods(cast("OpenAPIDocument", create_app().openapi())) == EXPECTED_ROUTES
 
 
 def test_old_gateway_routes_are_all_present():
@@ -117,10 +119,10 @@ def test_old_gateway_routes_are_all_present():
         / "openapi.json"
     )
     gateway_spec = cast(
-        OpenAPIDocument,
+        "OpenAPIDocument",
         json.loads(gateway_spec_path.read_text()),
     )
-    cloud_run_routes = methods(cast(OpenAPIDocument, create_app().openapi()))
+    cloud_run_routes = methods(cast("OpenAPIDocument", create_app().openapi()))
 
     assert methods(gateway_spec) <= cloud_run_routes
 
@@ -134,10 +136,10 @@ def test_normalized_contract_matches_old_gateway():
         / "openapi.json"
     )
     gateway_spec = cast(
-        OpenAPIDocument,
+        "OpenAPIDocument",
         json.loads(gateway_spec_path.read_text()),
     )
-    cloud_run_spec = cast(OpenAPIDocument, create_app().openapi())
+    cloud_run_spec = cast("OpenAPIDocument", create_app().openapi())
 
     assert normalized_compatibility_paths(
         cloud_run_spec

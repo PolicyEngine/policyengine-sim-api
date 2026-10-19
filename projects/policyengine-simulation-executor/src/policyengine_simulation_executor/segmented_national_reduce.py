@@ -22,13 +22,14 @@ Two hazards this module exists to handle:
   aggregates drift ~1e-7 relative.
 """
 
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from microdf import MicroDataFrame
 from policyengine.core import Simulation
-from policyengine_observability import ObservabilityRuntime
 
 from policyengine_simulation_executor.simulation_microdata import (
     rebuild_entity_frame,
@@ -36,6 +37,12 @@ from policyengine_simulation_executor.simulation_microdata import (
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
 )
+
+if TYPE_CHECKING:
+    from types import ModuleType
+
+    from policyengine.tax_benefit_models.us.datasets import PolicyEngineUSDataset
+    from policyengine_observability import ObservabilityRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -57,12 +64,14 @@ def concatenate_microdata(
     concatenated in child order with source dtypes restored.
     """
     if not child_outputs:
-        raise ValueError("No child outputs to reduce")
+        msg = "No child outputs to reduce"
+        raise ValueError(msg)
     payloads = []
     for index, child in enumerate(child_outputs):
         payload = child.get("_microdata")
         if not payload:
-            raise ValueError(f"Child {index} returned no _microdata payload")
+            msg = f"Child {index} returned no _microdata payload"
+            raise ValueError(msg)
         payloads.append(payload)
 
     entities = list(payloads[0]["baseline"])
@@ -82,7 +91,9 @@ def concatenate_microdata(
     return sides
 
 
-def _us_dataset_from_frames(frames: dict[str, pd.DataFrame], *, year: int):
+def _us_dataset_from_frames(
+    frames: dict[str, pd.DataFrame], *, year: int
+) -> PolicyEngineUSDataset:
     """Wrap concatenated entity tables as an in-memory US dataset.
 
     Weights need no special handling: they ride as ``<entity>_weight``
@@ -115,21 +126,20 @@ def build_national_output(
     *,
     country: str,
     simulation_params: dict[str, Any],
-    country_module,
+    country_module: ModuleType,
     year: int,
     resolved_data_version: str | None = None,
     runtime: ObservabilityRuntime | None = None,
 ) -> dict[str, Any]:
-    """The reduce: children's microdata -> full national macro output dict.
+    """Reduce the children's microdata into the full national macro output dict.
 
     Runs the existing ``SimulationOutputBuilder`` over stand-in simulations
     with ``resolved_region_code=country`` so the national congressional
     district table populates. No model recompute occurs.
     """
     if country.lower() != "us":
-        raise ValueError(
-            f"No segmented-national reduce for country {country!r} (US only)"
-        )
+        msg = f"No segmented-national reduce for country {country!r} (US only)"
+        raise ValueError(msg)
 
     sides = concatenate_microdata(child_outputs)
     datasets = {
@@ -137,7 +147,7 @@ def build_national_output(
         for side, frames in sides.items()
     }
 
-    def stand_in(dataset) -> PrecomputedSimulation:
+    def stand_in(dataset: PolicyEngineUSDataset) -> PrecomputedSimulation:
         simulation = PrecomputedSimulation(
             dataset=dataset,
             tax_benefit_model_version=country_module.model,

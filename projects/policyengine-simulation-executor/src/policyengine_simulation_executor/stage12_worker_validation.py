@@ -7,14 +7,15 @@ from collections.abc import Callable, Mapping
 from hashlib import sha256
 from importlib import import_module
 from pathlib import Path
-from typing import Any
-
-from policyengine_simulation_contract.stage12_bundle import CountryId
+from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_executor.release_bundle import (
     resolve_local_bundle_dataset_path,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.stage12_bundle import CountryId
 
 REQUIRED_SECRET_ALTERNATIVES = (
     ("HUGGING_FACE_TOKEN",),
@@ -53,9 +54,11 @@ def _check_dataset_access(path: str, expected_sha256: str) -> None:
         while chunk := stream.read(1024 * 1024):
             digest.update(chunk)
     if dataset_path.stat().st_size == 0:
-        raise RuntimeError("Stage 12 installed dataset artifact is empty")
+        msg = "Stage 12 installed dataset artifact is empty"
+        raise RuntimeError(msg)
     if digest.hexdigest() != expected_sha256:
-        raise RuntimeError("Stage 12 installed dataset artifact digest differs")
+        msg = "Stage 12 installed dataset artifact digest differs"
+        raise RuntimeError(msg)
 
 
 def _run_non_serving_calculation(country: CountryId) -> None:
@@ -64,7 +67,7 @@ def _run_non_serving_calculation(country: CountryId) -> None:
     extra_variables = ["household_net_income"]
     options: dict[str, Any] = {}
     if country == "us":
-        from policyengine_simulation_executor.simulation_runtime import (
+        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # the v1 runtime loads only for the US validation reform
             _normalise_policy,
         )
 
@@ -87,17 +90,19 @@ def _run_non_serving_calculation(country: CountryId) -> None:
     )
     household = getattr(result, "household", None)
     if not isinstance(household, Mapping) or "household_net_income" not in household:
-        raise RuntimeError("Stage 12 validation calculation returned no net income")
+        msg = "Stage 12 validation calculation returned no net income"
+        raise RuntimeError(msg)
     if country == "us":
         tax_unit = getattr(result, "tax_unit", None)
         if not isinstance(tax_unit, Mapping) or not isinstance(
             tax_unit.get("ctc"), (int, float)
         ):
-            raise RuntimeError("Stage 12 validation reform returned no CTC value")
+            msg = "Stage 12 validation reform returned no CTC value"
+            raise RuntimeError(msg)
 
 
 def _check_uk_local_authority_resources() -> None:
-    from policyengine_simulation_executor.uk_local_authority_metadata import (
+    from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
         load_uk_local_authority_resources,
     )
 
@@ -107,7 +112,7 @@ def _check_uk_local_authority_resources() -> None:
 
 
 def _check_uk_local_authority_dataset(dataset_path: str) -> None:
-    from policyengine_simulation_executor.uk_local_authority_metadata import (
+    from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # resolved per call so tests can patch uk_local_authority_metadata
         detect_uk_local_authority_metadata_from_hdf,
         uk_area_regions_routed,
         uk_hdf_household_has_local_authority_codes,
@@ -126,16 +131,19 @@ def _check_uk_local_authority_dataset(dataset_path: str) -> None:
 
 def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
     """Validate the baked manifest and require one real baseline cache hit."""
-
-    from policyengine_simulation_executor.simulation_runtime import resolve_data_folder
-    from policyengine_simulation_executor.stage12_cache.models import CacheManifest
-    from policyengine_simulation_executor.stage12_cache.precompute import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # loaded only by the US worker's cache check, not by UK workers or at deploy time
+        resolve_data_folder,
+    )
+    from policyengine_simulation_executor.stage12_cache.models import (  # noqa: PLC0415  # loaded only by the US worker's cache check, not by UK workers or at deploy time
+        CacheManifest,
+    )
+    from policyengine_simulation_executor.stage12_cache.precompute import (  # noqa: PLC0415  # loaded only by the US worker's cache check, not by UK workers or at deploy time
         _scoped_planned_simulation,
     )
-    from policyengine_simulation_executor.stage12_runtime.partition import (
+    from policyengine_simulation_executor.stage12_runtime.partition import (  # noqa: PLC0415  # loaded only by the US worker's cache check, not by UK workers or at deploy time
         US_REGION_GROUPS,
     )
-    from policyengine_simulation_executor.stage12_runtime.simulation import (
+    from policyengine_simulation_executor.stage12_runtime.simulation import (  # noqa: PLC0415  # loaded only by the US worker's cache check, not by UK workers or at deploy time
         calculate_simulation_frames,
     )
 
@@ -143,12 +151,15 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
     manifest_path = data_folder / ".stage12-cache-manifest.json"
     payload = manifest_path.read_bytes()
     if sha256(payload).hexdigest() != expected_manifest_sha256:
-        raise RuntimeError("installed Stage 12 cache manifest digest differs")
+        msg = "installed Stage 12 cache manifest digest differs"
+        raise RuntimeError(msg)
     manifest = CacheManifest.model_validate_json(payload)
     if manifest.years != (2026, 2027, 2025):
-        raise RuntimeError("installed Stage 12 cache years differ")
+        msg = "installed Stage 12 cache years differ"
+        raise RuntimeError(msg)
     if len(manifest.artifacts) != 63:
-        raise RuntimeError("installed Stage 12 cache artifact count differs")
+        msg = "installed Stage 12 cache artifact count differs"
+        raise RuntimeError(msg)
     probe = next(
         item
         for item in manifest.artifacts
@@ -160,7 +171,8 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
         _scoped_planned_simulation(2026, US_REGION_GROUPS[0])
     )
     if calculation.cache_outcome != "hit":
-        raise RuntimeError("deployed Stage 12 cache probe did not load a cache hit")
+        msg = "deployed Stage 12 cache probe did not load a cache hit"
+        raise RuntimeError(msg)
     return {
         "manifest_sha256": expected_manifest_sha256,
         "partition_sha256": manifest.partition_sha256,
@@ -188,7 +200,6 @@ def validate_country_worker(
     cache_check: Callable[[str], dict[str, Any]] = _check_installed_cache,
 ) -> dict[str, Any]:
     """Validate imports, installed bundle, secrets, data, and calculation."""
-
     runtime_environment = environment if environment is not None else os.environ
     _require_secret_environment(runtime_environment)
     # Import the same typed persistence package and coordinator modules loaded
@@ -197,23 +208,20 @@ def validate_country_worker(
     import_module("policyengine_simulation_executor.stage12_runtime")
     resolved = load_stage12_bundle()
     if resolved.bundle_manifest_sha256 != expected_bundle_manifest_sha256:
-        raise RuntimeError(
-            "installed PolicyEngine.py bundle digest differs from deployment input"
-        )
+        msg = "installed PolicyEngine.py bundle digest differs from deployment input"
+        raise RuntimeError(msg)
     try:
         country_bundle = next(
             item for item in resolved.bundle.countries if item.country == country
         )
     except StopIteration:
-        raise RuntimeError(
-            f"installed PolicyEngine.py bundle does not support {country!r}"
-        ) from None
+        msg = f"installed PolicyEngine.py bundle does not support {country!r}"
+        raise RuntimeError(msg) from None
     import_module(f"policyengine.tax_benefit_models.{country}")
     installed_dataset_path = dataset_path_resolver(country)
     if installed_dataset_path is None:
-        raise RuntimeError(
-            f"installed certified dataset is unavailable for {country!r}"
-        )
+        msg = f"installed certified dataset is unavailable for {country!r}"
+        raise RuntimeError(msg)
     selected_dataset = next(
         dataset
         for dataset in country_bundle.datasets

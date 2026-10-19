@@ -13,11 +13,7 @@ from policyengine_api_simulation_client.models import PingRequest, PingResponse
     giveup=lambda e: getattr(e, "response", {}).get("status_code", 0) != 503,
 )
 def test_ping(client: Client | AuthenticatedClient):
-    """
-    Given a running simulation API
-    When a ping request is sent
-    Then the response contains the incremented value.
-    """
+    """Given a running simulation API, when pinged, then it returns value + 1."""
     response = ping_ping_post.sync(client=client, body=PingRequest(value=12))
     assert isinstance(response, PingResponse)
     assert response.incremented == 13

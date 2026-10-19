@@ -29,17 +29,21 @@ from __future__ import annotations
 import logging
 import os
 import re
-from collections.abc import Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import ErrorSummary
-from policyengine_simulation_observability.stages import Stage, StagePlan
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.exc import StatementError
 
 from policyengine_simulation_executor.hf_access_validation import HF_RUNTIME_ENV_NAME
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Mapping
+
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_observability.stages import Stage, StagePlan
 
 # The longest ``error_summary`` the contract accepts.
 MAX_FAILURE_SUMMARY_LENGTH: int = TypeAdapter(ErrorSummary).json_schema()["maxLength"]
@@ -82,7 +86,7 @@ _CREDENTIAL_HEADER = re.compile(
 )
 _BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
 _SECRET_KEY = (
-    r"[\w-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key"
+    r"[\w-]*(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key"  # noqa: S105  # a pattern for secret-looking key names, not a secret
     r"|private[_-]?key|credentials?|signature|sig)"
 )
 _SECRET_ASSIGNMENT = re.compile(
@@ -125,6 +129,7 @@ class StageProgress:
     """
 
     def __init__(self, *, role: str | None = None) -> None:
+        """Start with no stage entered, attributing stages to ``role`` by default."""
         self.process_role = role
         self.stage_name: str | None = None
         self.stage_role: str | None = role
@@ -132,6 +137,11 @@ class StageProgress:
 
     @contextmanager
     def stage(self, stage_name: str, *, role: str | None = None) -> Iterator[None]:
+        """Record ``stage_name`` as the current stage while the block runs.
+
+        The stage is marked finished only when the block exits without an
+        exception; ``role`` defaults to the process role.
+        """
         stage_role = role if role is not None else self.process_role
         self.stage_name = stage_name
         self.stage_role = stage_role
@@ -158,7 +168,6 @@ def tracked_stage(
     ``operation`` is true, and ``progress`` records the stage so that a
     failure names it. A ``simulation_role`` attribute sets the stage's role.
     """
-
     stage_name = stage_plan.name(stage)
     scope: AbstractContextManager[object]
     if runtime is None:
@@ -171,7 +180,7 @@ def tracked_stage(
         yield
 
 
-class Stage12FailureCause(Exception):
+class Stage12FailureCause(Exception):  # noqa: N818  # telemetry records its name as the error type of every recorded Stage 12 failure cause
     """A redacted stand-in for a failure, safe to export to telemetry."""
 
 
@@ -182,7 +191,6 @@ def redact_failure_message(message: str) -> str:
     returned. The word that limit cuts is dropped, because part of a secret
     may no longer match its pattern.
     """
-
     truncated = len(message) > MAX_REDACTED_MESSAGE_LENGTH
     redacted = (
         _before_last_word(message[:MAX_REDACTED_MESSAGE_LENGTH])
@@ -214,13 +222,12 @@ def failure_summary(
     progress: StageProgress | None = None,
 ) -> str:
     """Return a redacted ``<type> in <stage> (<role>): <message>`` summary."""
-
     error_type = type(error).__name__
     try:
         heading = f"{error_type}{_location(progress)}"
         message = redact_failure_message(_failure_message(error))
         return _bounded(f"{heading}: {message}" if message else heading)
-    except Exception:  # noqa: BLE001 - a summary must never mask the failure
+    except Exception:  # noqa: BLE001  # a summary must never mask the failure
         return _bounded(error_type)
 
 
@@ -230,13 +237,12 @@ def record_failure_cause(
     summary: str,
 ) -> None:
     """Attach the redacted cause, with the original stack, to the operation."""
-
     if runtime is None:
         return
     try:
         cause = Stage12FailureCause(summary).with_traceback(error.__traceback__)
         runtime.record_exception(cause, handled=True)
-    except Exception:  # noqa: BLE001 - telemetry must not change the outcome
+    except Exception:  # noqa: BLE001  # telemetry must not change the outcome
         logger.warning("stage12_failure_cause_not_recorded")
 
 

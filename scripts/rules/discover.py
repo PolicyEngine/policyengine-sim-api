@@ -8,7 +8,7 @@ reason in ``[discovery]``.
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from scripts.rules.model import Kind, Registry, Violation
 from scripts.rules.resolve import (
@@ -21,6 +21,9 @@ from scripts.rules.resolve import (
     test_names,
     workflow_jobs,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _hidden(message: str, fix: str) -> Violation:
@@ -57,6 +60,7 @@ def _discovered_tests(registry: Registry, root: Path) -> set[str]:
 
 
 def discover_hidden(registry: Registry, root: Path) -> list[Violation]:
+    """Return a hidden-rule violation for each check no rule references or ignores."""
     violations = []
     rules = registry.rules
 
@@ -145,7 +149,8 @@ def discover_hidden(registry: Registry, root: Path) -> list[Violation]:
         violations.append(
             _hidden(
                 f"guard test {node} is not referenced by any rule",
-                "add it to a pytest rule's nodes, or to discovery.ignore_tests with a reason",
+                "add it to a pytest rule's nodes, or to discovery.ignore_tests "
+                "with a reason",
             )
         )
 
@@ -158,7 +163,8 @@ def discover_hidden(registry: Registry, root: Path) -> list[Violation]:
                 violations.append(
                     _hidden(
                         f"CI job '{job_id}' in {workflow} enforces no registered rule",
-                        "reference it from a rule's [[rule.ci]], or add it to discovery.ignore_jobs with a reason",
+                        "reference it from a rule's [[rule.ci]], or add it to "
+                        "discovery.ignore_jobs with a reason",
                     )
                 )
     return violations

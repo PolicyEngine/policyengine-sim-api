@@ -1,10 +1,11 @@
-"""
-Simulation implementation - pure logic with snapshotted imports.
+"""Simulation implementation - pure logic with snapshotted imports.
 
 This module avoids importing policyengine at module level so the worker can
 load the requested country module without triggering cross-country imports.
 No Modal dependencies here.
 """
+
+from __future__ import annotations
 
 import contextlib
 import hashlib
@@ -13,20 +14,25 @@ import logging
 import os
 import tempfile
 import time
-from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from importlib import import_module
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
+from policyengine_simulation_contract.job_progress import JobStage
+from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     Stage,
 )
 from policyengine_simulation_observability.telemetry import split_internal_payload
 
+from policyengine_simulation_executor.job_progress import (
+    NULL_JOB_PROGRESS,
+    JobProgressReporter,
+)
 from policyengine_simulation_executor.release_bundle import (
     get_country_release_bundle,
     resolve_bundle_dataset_name,
@@ -34,6 +40,20 @@ from policyengine_simulation_executor.release_bundle import (
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from types import ModuleType
+
+    from policyengine.core import Dataset, Policy, Region, Simulation
+    from policyengine.core.scoping_strategy import ScopingStrategy
+    from policyengine.provenance.manifest import ArtifactPathReference
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_observability.telemetry import TelemetryEnvelope
+
+    from policyengine_simulation_executor.stage_reporting_simulation import (
+        StageReportingSimulation,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +64,12 @@ DEFAULT_YEAR = 2026
 
 @dataclass(frozen=True)
 class RegionResolution:
+    """A request's normalized region code, the dataset to load, and how to scope it.
+
+    ``scoping_strategy`` narrows the simulation to the region; None simulates
+    the whole dataset, as a national run does.
+    """
+
     code: str
     dataset_reference: str | None = None
     scoping_strategy: Any | None = None
@@ -65,8 +91,8 @@ def _normalize_credentials_blob(creds_json: str) -> str:
     double-encoded (the entire JSON object is wrapped in quotes with
     backslash-escaped interior quotes). Historically we always attempted
     the unescape as a fallback which could accidentally parse an already
-    clean blob. Only unwrap when the payload looks wrapped."""
-
+    clean blob. Only unwrap when the payload looks wrapped.
+    """
     try:
         json.loads(creds_json)
     except json.JSONDecodeError:
@@ -81,8 +107,7 @@ def _normalize_credentials_blob(creds_json: str) -> str:
 def setup_gcp_credentials(
     runtime: ObservabilityRuntime | None = None,
 ) -> Iterator[None]:
-    """
-    Set up GCP credentials from environment variable.
+    """Set up GCP credentials from environment variable.
 
     Modal secrets are injected as environment variables. The GCP library
     expects GOOGLE_APPLICATION_CREDENTIALS to point to a file path. If
@@ -107,7 +132,7 @@ def setup_gcp_credentials(
                 for k, v in os.environ.items()
                 if "GOOGLE" in k or "GCP" in k or "CREDENTIAL" in k
             }
-            logger.info(f"GCP-related env vars: {list(gcp_vars.keys())}")
+            logger.info("GCP-related env vars: %s", list(gcp_vars.keys()))
 
             if previous:
                 logger.info("GOOGLE_APPLICATION_CREDENTIALS already set")
@@ -135,7 +160,7 @@ def setup_gcp_credentials(
                     creds_file.write(normalized)
                     creds_file.flush()
                     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_file.name
-                    logger.info(f"GCP credentials written to {creds_file.name}")
+                    logger.info("GCP credentials written to %s", creds_file.name)
 
         yield
     finally:
@@ -151,9 +176,9 @@ def run_simulation_impl(
     params: dict,
     *,
     runtime: ObservabilityRuntime,
+    progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict:
-    """
-    Execute economic simulation.
+    """Execute economic simulation.
 
     Pure implementation with no Modal dependencies.
     Accepts the gateway simulation payload and returns the legacy macro result dict.
@@ -162,15 +187,10 @@ def run_simulation_impl(
     # cleaned up on exit so we never leave signed JSON material on disk.
     with setup_gcp_credentials(runtime):
         try:
-            return _run_simulation_impl_core(params, runtime=runtime)
+            return _run_simulation_impl_core(params, runtime=runtime, progress=progress)
         except ValueError as exc:
             # Gateway images intentionally do not install country packages.
             # Transport the public error through the shared contract instead.
-            from policyengine_simulation_contract.spm import (
-                SPMInputError,
-                spm_error_detail,
-            )
-
             detail = spm_error_detail(exc)
             if detail is not None:
                 raise SPMInputError(detail.code, detail.message) from None
@@ -182,26 +202,32 @@ def _parse_year(params: dict[str, Any]) -> int:
     return int(value)
 
 
-def _parse_policy_period(period_key: Any) -> tuple[datetime, datetime | None]:
+def _parse_policy_period(period_key: object) -> tuple[datetime, datetime | None]:
     """Parse effective dates or inclusive ``start.stop`` policy periods."""
     text = str(period_key)
-    parts = text.split(".")
     try:
-        if len(parts) not in {1, 2}:
-            raise ValueError
-        # The wrapper has always parsed dates with strptime, which also takes
-        # unpadded months and days ("2027-4-6"); accept what it accepted.
-        dates = [datetime.strptime(part, "%Y-%m-%d") for part in parts]
-        start = dates[0]
-        stop = dates[1] if len(dates) == 2 else None
-        if stop is not None and stop < start:
-            raise ValueError
+        return _parse_policy_period_dates(text)
     except ValueError:
-        raise ValueError(f"Invalid policy period key: {text!r}") from None
+        msg = f"Invalid policy period key: {text!r}"
+        raise ValueError(msg) from None
+
+
+def _parse_policy_period_dates(text: str) -> tuple[datetime, datetime | None]:
+    """Parse a date or ``start.stop`` range; raise a bare ``ValueError`` if invalid."""
+    parts = text.split(".")
+    if len(parts) not in {1, 2}:
+        raise ValueError
+    # The wrapper has always parsed dates with strptime, which also takes
+    # unpadded months and days ("2027-4-6"); accept what it accepted.
+    dates = [datetime.strptime(part, "%Y-%m-%d") for part in parts]  # noqa: DTZ007  # naive like policyengine.py's own period parsing; its ParameterValue dates are naive
+    start = dates[0]
+    stop = dates[1] if len(dates) == 2 else None
+    if stop is not None and stop < start:
+        raise ValueError
     return start, stop
 
 
-def _normalise_period_key(period_key: Any) -> str:
+def _normalise_period_key(period_key: object) -> str:
     """Validate policy period keys without discarding their stop dates."""
     text = str(period_key)
     _parse_policy_period(text)
@@ -224,7 +250,9 @@ def _normalise_policy(policy: dict[str, Any] | None) -> dict[str, Any] | None:
     return normalised
 
 
-def _compile_interval_policy(policy, *, country_module, year: int):
+def _compile_interval_policy(
+    policy: dict[str, Any] | None, *, country_module: ModuleType, year: int
+) -> dict[str, Any] | Policy | None:
     """Use public wrapper values for intervals its dict compiler cannot parse."""
     if not policy or not any(
         isinstance(value, dict) and any("." in str(key) for key in value)
@@ -232,9 +260,16 @@ def _compile_interval_policy(policy, *, country_module, year: int):
     ):
         return policy
 
-    from policyengine.core import ParameterValue, Policy
-    from policyengine.core.parameter import Parameter
-    from policyengine.tax_benefit_models.common.reform import compile_reform
+    from policyengine.core import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
+        ParameterValue,
+        Policy,
+    )
+    from policyengine.core.parameter import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
+        Parameter,
+    )
+    from policyengine.tax_benefit_models.common.reform import (
+        compile_reform,
+    )
 
     compiled = compile_reform(policy, year=year, model_version=country_module.model)
     parameter_values = []
@@ -260,8 +295,10 @@ def _compile_interval_policy(policy, *, country_module, year: int):
     return Policy(name="Reform", parameter_values=parameter_values)
 
 
-def _runtime_policy(policy, *, country_module, year: int):
-    """A request's policy as the wrapper must receive it.
+def _runtime_policy(
+    policy: dict[str, Any] | None, *, country_module: ModuleType, year: int
+) -> dict[str, Any] | Policy | None:
+    """Convert a request's policy into the form the wrapper must receive.
 
     Normalises the period keys, then compiles a policy with interval keys
     into wrapper parameter values (see ``_compile_interval_policy``). Every
@@ -276,7 +313,7 @@ def _resolve_dataset_reference(country: str) -> str:
     return resolve_bundle_dataset_name(country, None)
 
 
-def _normalise_region_code(country: str, region: Any) -> str:
+def _normalise_region_code(country: str, region: object) -> str:
     if region is None or str(region).strip() == "":
         return country
 
@@ -305,7 +342,7 @@ def _normalise_region_code(country: str, region: Any) -> str:
     return f"{prefix}/{value}"
 
 
-def _build_uk_weight_replacement_region(region_code: str):
+def _build_uk_weight_replacement_region(region_code: str) -> Region | None:
     if "/" not in region_code:
         return None
 
@@ -313,9 +350,13 @@ def _build_uk_weight_replacement_region(region_code: str):
     if prefix not in {"constituency", "local_authority"}:
         return None
 
-    from policyengine.core.region import Region
-    from policyengine.core.scoping_strategy import WeightReplacementStrategy
-    from policyengine.data.uk_geography_assets import (
+    from policyengine.core.region import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
+        Region,
+    )
+    from policyengine.core.scoping_strategy import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
+        WeightReplacementStrategy,
+    )
+    from policyengine.data.uk_geography_assets import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
         CONSTITUENCY_ASSET_SPEC,
         LOCAL_AUTHORITY_ASSET_SPEC,
     )
@@ -345,7 +386,9 @@ def _build_uk_weight_replacement_region(region_code: str):
 
 
 def _require_certified_uk_weight_matrix(
-    scoping_strategy, dataset, dataset_selection
+    scoping_strategy: ScopingStrategy | None,
+    dataset: Dataset,
+    dataset_selection: DatasetSelection,
 ) -> None:
     """Bind a weight-matrix region to the release of the dataset it reweights.
 
@@ -360,32 +403,37 @@ def _require_certified_uk_weight_matrix(
     release replaces, is never downloaded (see
     ``_build_uk_weight_replacement_region``).
     """
-
-    from policyengine.core.scoping_strategy import WeightReplacementStrategy
+    from policyengine.core.scoping_strategy import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
+        WeightReplacementStrategy,
+    )
 
     if not isinstance(scoping_strategy, WeightReplacementStrategy):
         return
 
-    from pathlib import Path
-
     import h5py
-    import pandas as pd
-    from policyengine.data.uk_geography_assets import (
+    import pandas as pd  # noqa: PLC0415  # UK weight-matrix check: kept with its lazily loaded data dependencies
+    from policyengine.data.uk_geography_assets import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
         UKGeographyAssetSpec,
         default_download_dir,
         resolve_uk_geography_asset_paths,
     )
-    from policyengine.provenance.dataset_materialization import materialize_dataset
-    from policyengine.provenance.manifest import get_release_manifest
+    from policyengine.provenance.dataset_materialization import (
+        materialize_dataset,
+    )
+    from policyengine.provenance.manifest import (
+        get_release_manifest,
+    )
 
-    from policyengine_simulation_executor import simulation_output_geographic
+    from policyengine_simulation_executor import (  # noqa: PLC0415  # simulation_output_geographic imports this module back lazily; kept lazy on both sides
+        simulation_output_geographic,
+    )
 
     region = scoping_strategy.region_code
     matrix_name = scoping_strategy.weight_matrix_key
     manifest = get_release_manifest("uk")
     package = manifest.data_package
 
-    def release(reference) -> tuple[str, str]:
+    def release(reference: ArtifactPathReference) -> tuple[str, str]:
         return (
             reference.repo_id or package.repo_id,
             reference.revision or package.release_manifest_revision or package.version,
@@ -393,9 +441,8 @@ def _require_certified_uk_weight_matrix(
 
     selected = manifest.datasets.get(dataset_selection.name)
     if selected is None:
-        raise ValueError(
-            f"UK dataset {dataset_selection.name!r} is not in the certified bundle"
-        )
+        msg = f"UK dataset {dataset_selection.name!r} is not in the certified bundle"
+        raise ValueError(msg)
     certified_name = next(
         (
             name
@@ -405,12 +452,13 @@ def _require_certified_uk_weight_matrix(
         None,
     )
     if certified_name is None:
-        raise ValueError(
+        msg = (
             f"UK region {region!r} reweights households with {matrix_name}, but the "
             f"certified bundle has no {matrix_name} from the release of "
             f"{dataset_selection.name!r}; a matrix from another release does not "
             "line up with its households."
         )
+        raise ValueError(msg)
     certified = materialize_dataset(
         "uk", certified_name, data_dir=default_download_dir()
     )
@@ -422,48 +470,53 @@ def _require_certified_uk_weight_matrix(
         weight_matrix_bucket=scoping_strategy.weight_matrix_bucket,
         lookup_csv_bucket=scoping_strategy.lookup_csv_bucket,
     )
-    simulation_output_geographic._required_uk_geography_lookup_csv_path(spec)
+    simulation_output_geographic._required_uk_geography_lookup_csv_path(spec)  # noqa: SLF001  # package-internal helper, called through its module so tests can patch it
     paths = resolve_uk_geography_asset_paths(spec, download_missing_assets=False)
     if Path(paths.weight_matrix_path).resolve() != Path(certified.path).resolve():
-        raise ValueError(
+        msg = (
             f"UK region {region!r} would read {paths.weight_matrix_path}, not the "
             f"{matrix_name} certified with {dataset_selection.name!r} "
             f"({certified.path})."
         )
+        raise ValueError(msg)
     year = str(dataset.year)
     with h5py.File(paths.weight_matrix_path, "r") as matrix:
         if year not in matrix:
             covered = ", ".join(sorted(matrix))
-            raise ValueError(
+            msg = (
                 f"UK region {region!r} reweights households with {matrix_name}, "
                 f"which has no weights for {year} (it covers {covered})."
             )
+            raise ValueError(msg)
         weights = matrix[year]
         if not isinstance(weights, h5py.Dataset):
-            raise TypeError(f"{matrix_name} entry {year} is not a weight matrix")
+            msg = f"{matrix_name} entry {year} is not a weight matrix"
+            raise TypeError(msg)
         matrix_households = weights.shape[-1]
     households = len(pd.DataFrame(dataset.data.entity_data["household"]))
     if households != matrix_households:
-        raise ValueError(
+        msg = (
             f"UK region {region!r} reweights households with {matrix_name}, "
             f"which was built for {matrix_households} households; the selected "
             f"UK dataset has {households}. Constituency and local-authority "
             "runs on this dataset need a local-area dataset that carries "
             "constituency and local-authority codes."
         )
+        raise ValueError(msg)
 
 
 def _region_parent_dataset_reference(
-    country_module,
+    country_module: ModuleType,
     country: str,
-    region,
+    region: Region,
 ) -> str:
     parent_code = getattr(region, "parent_code", None)
     visited: set[str] = set()
 
     while isinstance(parent_code, str) and parent_code:
         if parent_code in visited:
-            raise ValueError(f"Region hierarchy cycle at {parent_code}")
+            msg = f"Region hierarchy cycle at {parent_code}"
+            raise ValueError(msg)
         visited.add(parent_code)
 
         parent_region = country_module.model.get_region(parent_code)
@@ -481,22 +534,23 @@ def _region_parent_dataset_reference(
     return _resolve_dataset_reference(country)
 
 
-def _reject_unscoped_us_place_region(region_code: str, region) -> None:
+def _reject_unscoped_us_place_region(region_code: str, region: Region) -> None:
     if not region_code.startswith("place/"):
         return
     if getattr(region, "dataset_path", None) is not None:
         return
     if getattr(region, "scoping_strategy", None) is not None:
         return
-    raise ValueError(
+    msg = (
         "US place regions are not yet supported for runtime simulation because "
         "policyengine.py does not expose place-level dataset scoping."
     )
+    raise ValueError(msg)
 
 
 def _resolve_region(
     *,
-    country_module,
+    country_module: ModuleType,
     country: str,
     params: dict[str, Any],
 ) -> RegionResolution:
@@ -515,7 +569,8 @@ def _resolve_region(
     if region is None and country == "uk":
         region = _build_uk_weight_replacement_region(region_code)
     if region is None:
-        raise ValueError(f"Unsupported {country.upper()} region: {region_code}")
+        msg = f"Unsupported {country.upper()} region: {region_code}"
+        raise ValueError(msg)
     if country == "us":
         _reject_unscoped_us_place_region(region_code, region)
 
@@ -544,18 +599,17 @@ def _resolve_region(
 
 def _resolve_region_group(
     *,
-    country_module,
+    country_module: ModuleType,
     country: str,
     params: dict[str, Any],
 ) -> RegionResolution:
-    """Resolve a ``region_group`` (list of member region codes) to one
-    ``RegionGroupStrategy`` that scopes a single simulation to the union of the
-    members.
+    """Resolve a ``region_group`` list of region codes to one ``RegionGroupStrategy``.
 
+    The strategy scopes a single simulation to the union of the members.
     Members must be row-filter regions (states/CDs) so national weights are
     preserved (INV-5); the group filters the national dataset.
     """
-    from policyengine.core.scoping_strategy import (
+    from policyengine.core.scoping_strategy import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
         RegionGroupStrategy,
         RowFilterStrategy,
     )
@@ -565,20 +619,23 @@ def _resolve_region_group(
         for code in (params.get("region_group") or [])
     ]
     if not codes:
-        raise ValueError("region_group must contain at least one region code")
+        msg = "region_group must contain at least one region code"
+        raise ValueError(msg)
 
     members = []
     for code in codes:
         region = country_module.model.get_region(code)
         if region is None:
-            raise ValueError(f"Unsupported {country.upper()} region in group: {code}")
+            msg = f"Unsupported {country.upper()} region in group: {code}"
+            raise ValueError(msg)
         scoping_strategy = getattr(region, "scoping_strategy", None)
         if not isinstance(scoping_strategy, RowFilterStrategy):
-            raise ValueError(
+            msg = (
                 f"Region group member '{code}' is not a row-filter region "
                 f"(got {type(scoping_strategy).__name__}); region groups must "
                 "preserve national weights."
             )
+            raise ValueError(msg)  # noqa: TRY004  # an unsupported region in the request; run_simulation_impl handles ValueError specially
         members.append(scoping_strategy)
 
     return RegionResolution(
@@ -588,28 +645,29 @@ def _resolve_region_group(
     )
 
 
-def _country_module(country: str):
+def _country_module(country: str) -> ModuleType:
     country = country.lower()
     if country not in {"us", "uk"}:
-        raise ValueError(f"Unsupported country: {country}")
+        msg = f"Unsupported country: {country}"
+        raise ValueError(msg)
 
     return import_module(f"policyengine.tax_benefit_models.{country}")
 
 
 def resolve_data_folder() -> str:
-    """The folder datasets and baseline artifacts are read from and saved to.
+    """Return the folder datasets and baseline artifacts are read from and saved to.
 
     One home for the default: the precompute downloads store artifacts into
     this folder for ``ensure_datasets``/``Simulation.ensure()`` to find, so
     any divergence from ``_load_dataset``'s resolution strands them.
     """
-    return os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")
+    return os.environ.get("POLICYENGINE_DATA_FOLDER", "/tmp/policyengine-data")  # noqa: S108  # fixed data directory inside the Modal container
 
 
 def _nondefault_data_folder(country: str, name: str, uri: str) -> str:
     """Separate managed datasets even if their source filenames have the same stem."""
     identity = hashlib.sha256(f"{country}:{name}:{uri}".encode()).hexdigest()
-    return f"/tmp/policyengine-alternate-data/{identity}"
+    return f"/tmp/policyengine-alternate-data/{identity}"  # noqa: S108  # fixed data directory inside the Modal container
 
 
 def _resolve_dataset_selection(
@@ -619,7 +677,8 @@ def _resolve_dataset_selection(
 ) -> DatasetSelection:
     """Resolve the bundle's regional or default dataset to a managed name."""
     if "data" in params or "data_version" in params:
-        raise ValueError("Dataset overrides are not supported")
+        msg = "Dataset overrides are not supported"
+        raise ValueError(msg)
     country = params.get("country", "us").lower()
     bundle = get_country_release_bundle(country)
     if region_resolution is not None and region_resolution.dataset_reference:
@@ -639,18 +698,19 @@ def _resolve_dataset_selection(
             validate_hf=False,
         ):
             return DatasetSelection(name, uri, name == bundle.default_dataset)
-    raise ValueError(
+    msg = (
         f"Unsupported dataset {dataset_reference!r} for country {country!r}; "
         "choose a name in the certified release manifest"
     )
+    raise ValueError(msg)
 
 
 def _load_dataset(
     params: dict[str, Any],
     *,
     selection: DatasetSelection,
-    country_module=None,
-):
+    country_module: ModuleType | None = None,
+) -> Dataset:
     country = params.get("country", "us").lower()
     year = _parse_year(params)
     country_module = country_module or _country_module(country)
@@ -678,23 +738,26 @@ def _load_dataset(
 def _build_simulation(
     params: dict[str, Any],
     *,
-    dataset,
+    dataset: Dataset,
     dataset_selection: DatasetSelection,
     policy: dict[str, Any] | None,
-    scoping_strategy=None,
+    scoping_strategy: ScopingStrategy | None = None,
     region_code: str | None = None,
-):
-    from policyengine.core import Simulation
-
+) -> Simulation:
     from policyengine_simulation_executor.baseline_artifacts import (
         ArtifactBaselineSimulation,
         deterministic_baseline_id,
     )
-    from policyengine_simulation_executor.spm import normalize_runtime_spm
+    from policyengine_simulation_executor.spm import (
+        normalize_runtime_spm,
+    )
+    from policyengine_simulation_executor.stage_reporting_simulation import (  # noqa: PLC0415  # resolved per call so tests can patch stage_reporting_simulation
+        StageReportingSimulation,
+    )
 
     selection = normalize_runtime_spm(params)
     params = {**params, **({"spm": selection} if selection is not None else {})}
-    spm_kwargs = {"spm": selection} if selection is not None else {}
+    spm_kwargs: dict[str, Any] = {"spm": selection} if selection is not None else {}
     country = params.get("country", "us")
     country_module = _country_module(country)
     policy = _compile_interval_policy(
@@ -721,7 +784,7 @@ def _build_simulation(
             policy=policy,
             scoping_strategy=scoping_strategy,
         )
-    return Simulation(
+    return StageReportingSimulation(
         **spm_kwargs,
         dataset=dataset,
         tax_benefit_model_version=country_module.model,
@@ -730,10 +793,17 @@ def _build_simulation(
     )
 
 
+def _report_calculation_start(
+    simulation: StageReportingSimulation, progress: JobProgressReporter, stage: JobStage
+) -> None:
+    simulation.on_first_ensure(lambda: progress.enter(stage))
+
+
 def _run_simulation_impl_core(
     params: dict,
     *,
     runtime: ObservabilityRuntime,
+    progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict:
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
         simulation_params, telemetry, metadata = split_internal_payload(params)
@@ -783,7 +853,7 @@ def _run_simulation_impl_core(
             selection=dataset_selection,
             country_module=country_module,
         )
-    from policyengine_simulation_executor.uk_local_authority_metadata import (
+    from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
         detect_uk_local_authority_metadata,
     )
 
@@ -823,6 +893,9 @@ def _run_simulation_impl_core(
             region_code=region_resolution.code,
         )
 
+    _report_calculation_start(baseline, progress, JobStage.BASELINE)
+    _report_calculation_start(reform, progress, JobStage.REFORM)
+
     logger.info("Calculating economic impact")
     builder = SimulationOutputBuilder(
         country=country,
@@ -835,6 +908,7 @@ def _run_simulation_impl_core(
         resolved_region_code=region_resolution.code,
         runtime=runtime,
         uk_local_authority_metadata=uk_local_authority_metadata,
+        progress=progress,
     )
     output = builder.serialize()
     output.update(
@@ -850,7 +924,7 @@ def _run_simulation_impl_core(
         logger.info("Baseline artifact outcome: %s", artifact_outcome)
     logger.info("Comparison complete")
     if params.get("_emit_microdata"):
-        from policyengine_simulation_executor.simulation_microdata import (
+        from policyengine_simulation_executor.simulation_microdata import (  # noqa: PLC0415  # the microdata export loads only when a run asks for it
             extract_output_microdata,
         )
 
@@ -862,7 +936,7 @@ def _set_runtime_attributes(
     *,
     runtime: ObservabilityRuntime,
     simulation_params: dict[str, Any],
-    telemetry,
+    telemetry: TelemetryEnvelope | None,
     metadata: dict[str, Any],
     country: str,
 ) -> None:

@@ -25,15 +25,18 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from policyengine_observability import ObservabilityRuntime
+from policyengine_simulation_contract.job_progress import JobExecution, JobStage
 from policyengine_simulation_contract.spm import (
     SPMInputError,
     combine_spm_results,
     spm_error_detail,
+)
+from policyengine_simulation_executor.job_progress import (
+    NULL_JOB_PROGRESS,
+    JobProgressReporter,
 )
 from policyengine_simulation_executor.national_partition import (
     national_region_groups,
@@ -50,6 +53,12 @@ from policyengine_simulation_observability.telemetry import split_internal_paylo
 from src.modal.fanout import build_child_payload, next_backoff
 
 import modal
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from types import ModuleType
+
+    from policyengine_observability import ObservabilityRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -103,9 +112,9 @@ def _activates_labor_supply_response(params: dict[str, Any]) -> bool:
 
 
 def is_plain_national_macro(params: dict[str, Any]) -> bool:
-    """The request SHAPE of a plain US national macro run (ignores the
-    eligibility knobs — see ``should_run_segmented_national``).
+    """Return whether ``params`` has the request SHAPE of a plain US national macro run.
 
+    Ignores the eligibility knobs (see ``should_run_segmented_national``).
     National is spelled two ways in the wild: region omitted (the sim API's
     own convention) and ``region: "us"`` (what API v1 sends on every
     national run). Both must match, mirroring the worker's normalisation
@@ -123,7 +132,7 @@ def is_plain_national_macro(params: dict[str, Any]) -> bool:
 
 
 def should_run_segmented_national(params: dict[str, Any]) -> bool:
-    """True when a request should fan out across the national partition.
+    """Return True when a request should fan out across the national partition.
 
     Eligible: a plain US national macro shape, not opted out via
     ``segmented: false``. Falls back to monolithic for ``include_cliffs``
@@ -165,6 +174,7 @@ class ChildExecution:
 
     @property
     def group_label(self) -> str:
+        """Region codes joined with "+", as logs and telemetry name the group."""
         return "+".join(self.group)
 
 
@@ -177,7 +187,7 @@ class SegmentedNationalRunner:
         *,
         app_name: str,
         runtime: ObservabilityRuntime,
-        modal_module=None,
+        modal_module: ModuleType | None = None,
         poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
         poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
         child_deadline_seconds: float = CHILD_DEADLINE_SECONDS,
@@ -185,10 +195,16 @@ class SegmentedNationalRunner:
             PARENT_FUNCTION_TIMEOUT_SECONDS - PARENT_COMPLETION_MARGIN_SECONDS
         ),
         clock: Callable[[], float] = time.monotonic,
-    ):
+        progress: JobProgressReporter = NULL_JOB_PROGRESS,
+    ) -> None:
+        """Resolve the country's region groups and a lazy segment-worker handle.
+
+        Raises ValueError when the country has no national partition.
+        """
         self.params = params
         self.app_name = app_name
         self.runtime = runtime
+        self.progress = progress
         self.modal = modal if modal_module is None else modal_module
         self.poll_interval_initial_seconds = poll_interval_seconds
         self.poll_interval_max_seconds = poll_interval_max_seconds
@@ -207,7 +223,8 @@ class SegmentedNationalRunner:
         self.country = str(params.get("country") or "us").lower()
         groups = national_region_groups(self.country)
         if not groups:
-            raise ValueError(f"No national partition for country {self.country!r}")
+            msg = f"No national partition for country {self.country!r}"
+            raise ValueError(msg)
         self.groups = groups
         # Lazy handle, no RPC until first spawn (budget-window precedent).
         self.child_func = self.modal.Function.from_name(app_name, SEGMENT_FUNCTION_NAME)
@@ -221,25 +238,35 @@ class SegmentedNationalRunner:
             self.runtime.set_context(simulation_year=str(params["time_period"]))
 
     def run(self) -> dict[str, Any]:
+        """Spawn a child per region group, wait for all, and reduce to national output.
+
+        Any child failure cancels the remaining children and raises.
+        """
         country_module = self._country_module()
         self._extend_last_group_with_uncovered_states(country_module)
+        self.progress.start_segments(len(self.groups))
         children = self._spawn_all_children()
         child_results = self._collect(children)
+        self.progress.enter(JobStage.OUTPUTS)
         return self._reduce(child_results, country_module=country_module)
 
-    def _country_module(self):
-        from policyengine_simulation_executor.simulation_runtime import (
+    def _country_module(self) -> ModuleType:
+        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime._country_module
             _country_module,
         )
 
         return _country_module(self.country)
 
-    def _extend_last_group_with_uncovered_states(self, country_module) -> None:
-        """Registry state regions missing from the static partition ride in
-        the last group, loudly, so a new state-level region added to the
-        model cannot silently drop its households from national results.
-        (Households whose state has NO registered region remain invisible
-        here; the partition test pins the registry at pin-bump time.)
+    def _extend_last_group_with_uncovered_states(
+        self, country_module: ModuleType
+    ) -> None:
+        """Append registry state regions missing from the partition to the last group.
+
+        They ride along loudly (a warning and a run attribute) so a new
+        state-level region added to the model cannot silently drop its
+        households from national results. (Households whose state has NO
+        registered region remain invisible here; the partition test pins the
+        registry at pin-bump time.)
         """
         # region_registry is populated eagerly in the model version's
         # __init__; None only occurs for stub models (unit tests).
@@ -261,7 +288,7 @@ class SegmentedNationalRunner:
             self.runtime.set_context(partition_uncovered_regions=",".join(uncovered))
             self.groups[-1] = list(self.groups[-1]) + uncovered
 
-    def _spawn_child(self, group: list[str], *, attempt: int) -> Any:
+    def _spawn_child(self, group: list[str], *, attempt: int) -> modal.FunctionCall:
         payload = build_group_child_payload(self.params, group)
         observability_context = self.runtime.capture_context()
         with self.runtime.span(
@@ -350,13 +377,15 @@ class SegmentedNationalRunner:
                         if child.attempt > 1
                         else ""
                     )
-                    raise RuntimeError(
+                    msg = (
                         "Segmented national child failed for group "
                         f"{child.group_label}{retry_note}: {redacted}"
-                    ) from None
+                    )
+                    raise RuntimeError(msg) from None
                 pending.discard(index)
                 poll_errors.pop(index, None)
                 progress_made = True
+                self.progress.segment_completed()
             # Bounded aggregate instead of one segment per probe (see the
             # Stage registry note about long poll loops).
             self.runtime.set_context(segmented_poll_count=poll_count)
@@ -414,10 +443,11 @@ class SegmentedNationalRunner:
                 },
             )
             self._cancel_all(children)
-            raise RuntimeError(
+            msg = (
                 "Segmented national child timed out for group "
                 f"{overdue.group_label}: {reason}"
-            ) from None
+            )
+            raise RuntimeError(msg) from None
 
         self._cancel_call(overdue.call)
         self.superseded_children.append(overdue)
@@ -458,8 +488,11 @@ class SegmentedNationalRunner:
     def _fail_if_budget_exhausted(
         self, children: list[ChildExecution], pending: set[int]
     ) -> None:
-        """Fail in-band, cancelling children, before the Modal timeout can
-        kill the parent and strand them."""
+        """Fail in-band, cancelling children, once the parent budget is spent.
+
+        Failing here, before the Modal timeout can kill the parent, keeps the
+        children from being stranded.
+        """
         if not pending:
             return
         now = self.clock()
@@ -480,17 +513,18 @@ class SegmentedNationalRunner:
             },
         )
         self._cancel_all(children)
-        raise RuntimeError(
+        msg = (
             "Segmented national run exceeded its "
             f"{self.parent_budget_seconds:.0f}s budget with groups still "
             f"running: {outstanding_groups}"
         )
+        raise RuntimeError(msg)
 
     @staticmethod
-    def _cancel_call(call: Any) -> None:
+    def _cancel_call(call: modal.FunctionCall) -> None:
         try:
             call.cancel()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110  # best-effort cleanup: a failed cancel must not mask the failure being raised, and superseded calls are cancelled again later
             pass
 
     def _cancel_superseded_children(self) -> None:
@@ -503,8 +537,10 @@ class SegmentedNationalRunner:
             self._cancel_call(child.call)
         self._cancel_superseded_children()
 
-    def _reduce(self, child_results: list[dict], *, country_module) -> dict[str, Any]:
-        from policyengine_simulation_executor.simulation_runtime import (
+    def _reduce(
+        self, child_results: list[dict], *, country_module: ModuleType
+    ) -> dict[str, Any]:
+        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # Modal worker code: bound per call, like this module's other simulation_runtime imports
             _parse_year,
         )
 
@@ -537,12 +573,18 @@ class SegmentedNationalRunner:
 
 
 def run_segmented_national_impl(
-    params: dict[str, Any], *, app_name: str, runtime: ObservabilityRuntime
+    params: dict[str, Any],
+    *,
+    app_name: str,
+    runtime: ObservabilityRuntime,
+    progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict[str, Any]:
+    """Run ``params`` as a segmented national fan-out on ``app_name``'s segment pool."""
     return SegmentedNationalRunner(
         params,
         app_name=app_name,
         runtime=runtime,
+        progress=progress,
     ).run()
 
 
@@ -551,22 +593,30 @@ def dispatch_run_simulation(
     *,
     app_name: str,
     runtime: ObservabilityRuntime,
+    progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict[str, Any]:
-    """The run_simulation entrypoint's routing: segmented national fan-out
-    for eligible requests, the monolithic path for everything else."""
-    from policyengine_simulation_executor.spm import normalize_runtime_spm
+    """Route a ``run_simulation`` request to segmented fan-out or the monolithic path.
+
+    Segmented national fan-out serves eligible requests (see
+    ``should_run_segmented_national``); everything else runs monolithically.
+    """
+    from policyengine_simulation_executor.spm import (
+        normalize_runtime_spm,
+    )
 
     selection = normalize_runtime_spm(params)
     if selection is not None:
         params = {**params, "spm": selection}
     if should_run_segmented_national(params):
+        progress.set_execution(JobExecution.SEGMENTED)
         return run_segmented_national_impl(
             params,
             app_name=app_name,
             runtime=runtime,
+            progress=progress,
         )
 
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime.run_simulation_impl
         run_simulation_impl,
     )
 
@@ -574,4 +624,5 @@ def dispatch_run_simulation(
     # and UK requests must not pollute the segmented-vs-monolithic metric.
     if is_plain_national_macro(params):
         runtime.set_context(national_execution="monolithic")
-    return run_simulation_impl(params, runtime=runtime)
+    progress.set_execution(JobExecution.MONOLITHIC)
+    return run_simulation_impl(params, runtime=runtime, progress=progress)

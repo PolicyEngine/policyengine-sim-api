@@ -6,11 +6,10 @@ import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import modal
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_manifest import (
     ManifestText,
     Stage12CacheRelease,
@@ -18,6 +17,9 @@ from policyengine_simulation_contract.stage12_manifest import (
     v2_application_name,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.stage12_bundle import CountryId
 
 
 def _spawn_validation(
@@ -35,13 +37,20 @@ def _spawn_validation(
     result = call.get(timeout=1_000)
     invocation_id = getattr(call, "object_id", None)
     if not isinstance(invocation_id, str) or not invocation_id:
-        raise RuntimeError(f"{function_name} returned no Modal invocation identifier")
+        msg = f"{function_name} returned no Modal invocation identifier"
+        raise RuntimeError(msg)
     return result, invocation_id
 
 
 def validate_release(
     *, environment: str, expected_cache_manifest_sha256: str
 ) -> V2WorkerValidation:
+    """Invoke each deployed country validation function and return the release record.
+
+    Raises RuntimeError when a function does not report success, returns no
+    invocation id, reports bundle values that differ from the local bundle, or
+    reports a US cache other than ``expected_cache_manifest_sha256``.
+    """
     resolved = load_stage12_bundle()
     application_name = v2_application_name(resolved.bundle.policyengine_version)
     invocation_ids: dict[CountryId, ManifestText] = {}
@@ -54,7 +63,8 @@ def validate_release(
             environment=environment,
         )
         if not isinstance(result, dict) or result.get("validated") is not True:
-            raise RuntimeError(f"{function_name} did not report successful validation")
+            msg = f"{function_name} did not report successful validation"
+            raise RuntimeError(msg)
         expected = {
             "country": country_bundle.country,
             "policyengine_version": resolved.bundle.policyengine_version,
@@ -71,16 +81,17 @@ def validate_release(
             if result.get(key) != expected_value
         }
         if mismatches:
-            raise RuntimeError(
-                f"{function_name} reported bundle values that differ from deployment"
-            )
+            msg = f"{function_name} reported bundle values that differ from deployment"
+            raise RuntimeError(msg)
         if country_bundle.country == "us":
             reported_cache = result.get("cache")
             cache_release = Stage12CacheRelease.model_validate(reported_cache)
             if cache_release.manifest_sha256 != expected_cache_manifest_sha256:
-                raise RuntimeError(f"{function_name} reported another cache manifest")
+                msg = f"{function_name} reported another cache manifest"
+                raise RuntimeError(msg)
         elif result.get("cache") is not None:
-            raise RuntimeError(f"{function_name} unexpectedly reported a cache")
+            msg = f"{function_name} unexpectedly reported a cache"
+            raise RuntimeError(msg)
         invocation_ids[country_bundle.country] = invocation_id
     return V2WorkerValidation(
         validated=True,
@@ -94,6 +105,7 @@ def validate_release(
 
 
 def main() -> None:
+    """Write the release validation record to ``--output`` and print its id."""
     parser = argparse.ArgumentParser(
         description="Validate the deployed Stage 12 v2 worker release",
     )

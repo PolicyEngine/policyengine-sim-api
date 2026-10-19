@@ -24,10 +24,10 @@ from policyengine_simulation_contract.spm import (
     SPMProvenance,
 )
 from policyengine_simulation_contract.uk_geography import (
-    UKLocalAuthorityBoundaryVersion as UKLocalAuthorityBoundaryVersion,
+    UKLocalAuthorityBoundaryVersion as UKLocalAuthorityBoundaryVersion,  # noqa: PLC0414  # explicit re-export: callers import it from stage12_execution
 )
 from policyengine_simulation_contract.uk_geography import (
-    UKLocalAuthorityMetadata as UKLocalAuthorityMetadata,
+    UKLocalAuthorityMetadata as UKLocalAuthorityMetadata,  # noqa: PLC0414  # explicit re-export: callers import it from stage12_execution
 )
 
 ContractText = Annotated[str, Field(min_length=1, max_length=255)]
@@ -54,16 +54,22 @@ CountryId = Annotated[
 
 
 class StrictContractModel(BaseModel):
+    """Base for Stage 12 contracts; rejects unknown fields and non-finite numbers."""
+
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False, frozen=True)
 
 
 class SimulationRole(StrEnum):
+    """Role of a simulation: baseline or reform of a comparison, or a standalone run."""
+
     BASELINE = "baseline"
     REFORM = "reform"
     STANDALONE = "standalone"
 
 
 class ArtifactMediaType(StrEnum):
+    """Media type of a Stage 12 output artifact."""
+
     JSON = "application/json"
     PARQUET = "application/vnd.apache.parquet"
 
@@ -105,12 +111,16 @@ SIMULATION_PARQUET_PAYLOAD_CONTRACT = SimulationParquetPayloadContract()
 
 
 class DatasetArtifactMediaType(StrEnum):
+    """Media type of an input dataset artifact."""
+
     HDF5 = "application/x-hdf5"
     JSON = "application/json"
     PARQUET = "application/vnd.apache.parquet"
 
 
 class DatasetProvenance(StrictContractModel):
+    """The dataset a simulation used: identity, URI, revision and data package."""
+
     identity: ContractText
     uri: Annotated[str, Field(min_length=1, max_length=2048)]
     artifact_revision: ContractText
@@ -119,6 +129,12 @@ class DatasetProvenance(StrictContractModel):
 
 
 class BundleProvenance(StrictContractModel):
+    """The pinned software and data a simulation ran with.
+
+    Covers the PolicyEngine.py version, the country model package, the dataset,
+    and the SHA-256 of the bundle manifest they came from.
+    """
+
     policyengine_version: ContractText
     country_package_name: ContractText
     country_package_version: ContractText
@@ -127,6 +143,8 @@ class BundleProvenance(StrictContractModel):
 
 
 class ArtifactReference(StrictContractModel):
+    """An artifact in Cloud Storage, with its media type, SHA-256 and size in bytes."""
+
     uri: StorageUri
     media_type: ArtifactMediaType
     content_sha256: Sha256Digest
@@ -134,6 +152,11 @@ class ArtifactReference(StrictContractModel):
 
 
 class DatasetArtifactReference(StrictContractModel):
+    """A dataset artifact in Cloud Storage (``gs://``) or on Hugging Face (``hf://``).
+
+    ``size_bytes`` may be omitted when the size is not known.
+    """
+
     uri: DatasetArtifactUri
     media_type: DatasetArtifactMediaType
     content_sha256: Sha256Digest
@@ -141,11 +164,15 @@ class DatasetArtifactReference(StrictContractModel):
 
 
 class DatasetPopulationInput(StrictContractModel):
+    """Population input that simulates the households in a dataset artifact."""
+
     kind: Literal["dataset"] = "dataset"
     artifact: DatasetArtifactReference
 
 
 class HouseholdPopulationInput(StrictContractModel):
+    """Population input that simulates one household from a situation document."""
+
     kind: Literal["household"] = "household"
     document: dict[str, JsonValue]
 
@@ -157,6 +184,12 @@ PopulationInput = Annotated[
 
 
 class GeographySelection(StrictContractModel):
+    """Country and region to simulate, optionally filtered on one dataset field.
+
+    ``filter_field`` and ``filter_value`` must be given together, and
+    ``filter_strategy`` requires both.
+    """
+
     country: CountryId
     region: ContractText
     filter_field: ContractText | None = None
@@ -165,14 +198,25 @@ class GeographySelection(StrictContractModel):
 
     @model_validator(mode="after")
     def require_complete_filter(self) -> GeographySelection:
+        """Require the filter field and value together, and both for a strategy."""
         if (self.filter_field is None) != (self.filter_value is None):
-            raise ValueError("filter_field and filter_value must be supplied together")
+            msg = "filter_field and filter_value must be supplied together"
+            raise ValueError(msg)
         if self.filter_strategy is not None and self.filter_field is None:
-            raise ValueError("filter_strategy requires filter_field and filter_value")
+            msg = "filter_strategy requires filter_field and filter_value"
+            raise ValueError(msg)
         return self
 
 
 class SimulationExecutionInput(StrictContractModel):
+    """Everything needed to run one simulation of a comparison run.
+
+    ``evaluation_id`` identifies the comparison run and
+    ``simulation_execution_id`` this simulation within it. The input fixes the
+    policy, population, year, geography, options and pinned bundle; a baseline
+    and reform pair is described by ``ReportExecutionInput`` instead.
+    """
+
     contract_version: Literal[1] = 1
     evaluation_id: UUID
     simulation_execution_id: UUID
@@ -187,14 +231,20 @@ class SimulationExecutionInput(StrictContractModel):
     @model_validator(mode="before")
     @classmethod
     def reject_combined_policy_input(cls, value: object) -> object:
+        """Reject report-shaped input that carries ``baseline`` or ``reform`` keys.
+
+        One execution input describes one simulation; the pair belongs in
+        ``ReportExecutionInput``.
+        """
         if isinstance(value, dict) and ({"baseline", "reform"} & value.keys()):
-            raise ValueError(
-                "single-simulation input cannot contain baseline or reform fields"
-            )
+            msg = "single-simulation input cannot contain baseline or reform fields"
+            raise ValueError(msg)
         return value
 
 
 class ReportAggregate(StrEnum):
+    """A family of aggregate results that a comparison report computes."""
+
     BUDGET = "budget"
     POVERTY = "poverty"
     INEQUALITY = "inequality"
@@ -218,12 +268,13 @@ class ReportOutputRequirements(StrictContractModel):
         cls,
         value: tuple[ReportAggregate, ...],
     ) -> tuple[ReportAggregate, ...]:
+        """Require every ``ReportAggregate``, once each and in declaration order."""
         if len(value) != len(set(value)):
-            raise ValueError("report output aggregates must be unique")
+            msg = "report output aggregates must be unique"
+            raise ValueError(msg)
         if value != tuple(ReportAggregate):
-            raise ValueError(
-                "Stage 12 currently requires the complete aggregate profile"
-            )
+            msg = "Stage 12 currently requires the complete aggregate profile"
+            raise ValueError(msg)
         return value
 
 
@@ -245,26 +296,32 @@ class EntityOutputPlan(StrictContractModel):
     )
     @classmethod
     def require_canonical_variables(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Require variable names to be unique and sorted, so plans hash stably."""
         if len(value) != len(set(value)):
-            raise ValueError("output-plan variables must be unique")
+            msg = "output-plan variables must be unique"
+            raise ValueError(msg)
         if value != tuple(sorted(value)):
-            raise ValueError("output-plan variables must use canonical order")
+            msg = "output-plan variables must use canonical order"
+            raise ValueError(msg)
         return value
 
     @model_validator(mode="after")
     def require_variable_subsets(self) -> EntityOutputPlan:
+        """Require the additional and dataset variables not to overlap.
+
+        Both must also be subsets of ``materialized_variables``.
+        """
         if not set(self.additional_variables).issubset(self.materialized_variables):
-            raise ValueError(
-                "additional output-plan variables must be a materialized subset"
-            )
+            msg = "additional output-plan variables must be a materialized subset"
+            raise ValueError(msg)
         if not set(self.dataset_variables).issubset(self.materialized_variables):
-            raise ValueError(
-                "dataset output-plan variables must be a materialized subset"
-            )
+            msg = "dataset output-plan variables must be a materialized subset"
+            raise ValueError(msg)
         if set(self.additional_variables).intersection(self.dataset_variables):
-            raise ValueError(
+            msg = (
                 "calculated additional variables and dataset variables must be disjoint"
             )
+            raise ValueError(msg)
         return self
 
 
@@ -282,17 +339,19 @@ class Stage12OutputPlan(StrictContractModel):
         cls,
         value: tuple[EntityOutputPlan, ...],
     ) -> tuple[EntityOutputPlan, ...]:
+        """Require entity plans to be unique and sorted by entity name."""
         names = tuple(entity.entity for entity in value)
         if len(names) != len(set(names)):
-            raise ValueError("output-plan entities must be unique")
+            msg = "output-plan entities must be unique"
+            raise ValueError(msg)
         if names != tuple(sorted(names)):
-            raise ValueError("output-plan entities must use canonical order")
+            msg = "output-plan entities must use canonical order"
+            raise ValueError(msg)
         return value
 
 
 def stage12_output_plan_sha256(plan: Stage12OutputPlan) -> str:
     """Return the stable digest recorded by each Stage 12 child artifact."""
-
     payload = json.dumps(
         plan.model_dump(mode="json"),
         sort_keys=True,
@@ -310,12 +369,20 @@ class PlannedSimulationExecutionInput(SimulationExecutionInput):
 
     @model_validator(mode="after")
     def require_output_plan_country(self) -> PlannedSimulationExecutionInput:
+        """Reject an output plan built for a different country than the geography."""
         if self.output_plan.country != self.geography.country:
-            raise ValueError("output plan country must match simulation geography")
+            msg = "output plan country must match simulation geography"
+            raise ValueError(msg)
         return self
 
 
 class RowIdentity(StrictContractModel):
+    """Fingerprint of the rows in a simulation artifact.
+
+    Names the identifier columns and gives the row count and a SHA-256 over the
+    row identifiers, so artifacts can be checked to cover the same rows.
+    """
+
     schema_version: Literal[1] = 1
     identifier_columns: Annotated[tuple[ContractText, ...], Field(min_length=1)]
     row_count: Annotated[int, Field(ge=0)]
@@ -324,12 +391,21 @@ class RowIdentity(StrictContractModel):
     @field_validator("identifier_columns")
     @classmethod
     def require_unique_columns(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        """Reject repeated identifier column names."""
         if len(value) != len(set(value)):
-            raise ValueError("row identifier columns must be unique")
+            msg = "row identifier columns must be unique"
+            raise ValueError(msg)
         return value
 
 
 class SimulationArtifactDescriptor(StrictContractModel):
+    """The stored output of one simulation in a comparison run.
+
+    Points to the artifact and records the digest of the output plan it follows,
+    its row identity, its bundle provenance and, for SPM calculations, the
+    calculation receipt.
+    """
+
     contract_version: Literal[1] = 1
     evaluation_id: UUID
     simulation_execution_id: UUID
@@ -343,6 +419,12 @@ class SimulationArtifactDescriptor(StrictContractModel):
 
 
 class ReportExecutionInput(StrictContractModel):
+    """A baseline and reform simulation pair to run and aggregate into one report.
+
+    Both simulations must belong to this report, carry the baseline and reform
+    roles and distinct execution IDs, and differ only in their policy.
+    """
+
     contract_version: Literal[1] = 1
     evaluation_id: UUID
     baseline: SimulationExecutionInput
@@ -351,16 +433,26 @@ class ReportExecutionInput(StrictContractModel):
 
     @model_validator(mode="after")
     def require_aligned_simulations(self) -> ReportExecutionInput:
+        """Check the two simulations form one comparable report.
+
+        Roles must be baseline and reform, both must belong to this report with
+        distinct execution ids, and everything but the policy must match.
+        """
         if self.baseline.role is not SimulationRole.BASELINE:
-            raise ValueError("baseline input must use the baseline role")
+            msg = "baseline input must use the baseline role"
+            raise ValueError(msg)
         if self.reform.role is not SimulationRole.REFORM:
-            raise ValueError("reform input must use the reform role")
+            msg = "reform input must use the reform role"
+            raise ValueError(msg)
         if self.baseline.evaluation_id != self.evaluation_id:
-            raise ValueError("baseline evaluation_id must match the report")
+            msg = "baseline evaluation_id must match the report"
+            raise ValueError(msg)
         if self.reform.evaluation_id != self.evaluation_id:
-            raise ValueError("reform evaluation_id must match the report")
+            msg = "reform evaluation_id must match the report"
+            raise ValueError(msg)
         if self.baseline.simulation_execution_id == self.reform.simulation_execution_id:
-            raise ValueError("baseline and reform simulation identifiers must differ")
+            msg = "baseline and reform simulation identifiers must differ"
+            raise ValueError(msg)
         for field_name in (
             "population",
             "year",
@@ -369,15 +461,21 @@ class ReportExecutionInput(StrictContractModel):
             "bundle",
         ):
             if getattr(self.baseline, field_name) != getattr(self.reform, field_name):
-                raise ValueError(
-                    f"baseline and reform {field_name} must match before execution"
-                )
+                msg = f"baseline and reform {field_name} must match before execution"
+                raise ValueError(msg)
         if len(self.requested_aggregates) != len(set(self.requested_aggregates)):
-            raise ValueError("requested aggregates must be unique")
+            msg = "requested aggregates must be unique"
+            raise ValueError(msg)
         return self
 
 
 class AggregateReportArtifactDescriptor(StrictContractModel):
+    """The stored aggregate results of a comparison run.
+
+    Records the digests of the baseline and reform artifacts the results were
+    computed from, and the bundle provenance.
+    """
+
     contract_version: Literal[1] = 1
     evaluation_id: UUID
     artifact: ArtifactReference
@@ -403,16 +501,18 @@ class AggregateReportArtifactPayload(StrictContractModel):
         cls,
         value: tuple[ReportAggregate, ...],
     ) -> tuple[ReportAggregate, ...]:
+        """Reject repeated aggregate names."""
         if len(value) != len(set(value)):
-            raise ValueError("requested aggregates must be unique")
+            msg = "requested aggregates must be unique"
+            raise ValueError(msg)
         return value
 
     @model_validator(mode="after")
     def validate_spm_provenance(self) -> AggregateReportArtifactPayload:
         """Reject duplicate or noncanonical SPM data in aggregate artifacts."""
-
         if "spm_config" in self.result:
-            raise ValueError("aggregate result must not include legacy spm_config")
+            msg = "aggregate result must not include legacy spm_config"
+            raise ValueError(msg)
         # Reports without US SPM calculations serialize this optional field
         # as null. Validate a supplied record, not the absence of one.
         provenance = self.result.get("spm_provenance")
@@ -434,20 +534,27 @@ class ResultDifference(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_presence(self) -> ResultDifference:
+        """Check presence flags against values, and that deltas come as a pair.
+
+        An absent side must be null, and a relative delta needs an absolute one;
+        only an absolute delta may stand alone (a zero production value).
+        """
         if not self.production_present and not self.stage12_present:
-            raise ValueError(
-                "a result difference must be present in at least one result"
-            )
+            msg = "a result difference must be present in at least one result"
+            raise ValueError(msg)
         if not self.production_present and self.production_value is not None:
-            raise ValueError("an absent production value must be null")
+            msg = "an absent production value must be null"
+            raise ValueError(msg)
         if not self.stage12_present and self.stage12_value is not None:
-            raise ValueError("an absent Stage 12 value must be null")
+            msg = "an absent Stage 12 value must be null"
+            raise ValueError(msg)
         # A zero production value has no finite relative delta, so an absolute
         # delta with no relative delta is the only permitted partial pair.
         if (self.absolute_delta is None) != (self.relative_delta is None) and (
             self.absolute_delta is None or self.relative_delta is not None
         ):
-            raise ValueError("numeric deltas must be supplied together")
+            msg = "numeric deltas must be supplied together"
+            raise ValueError(msg)
         return self
 
 
@@ -466,17 +573,29 @@ class ResultComparisonArtifactPayload(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_differences(self) -> ResultComparisonArtifactPayload:
+        """Require a timezone-aware timestamp and a count and status that match."""
         if self.compared_at.tzinfo is None:
-            raise ValueError("comparison timestamp must include a timezone")
+            msg = "comparison timestamp must include a timezone"
+            raise ValueError(msg)
         if self.difference_count != len(self.differences):
-            raise ValueError("difference_count must equal the number of differences")
+            msg = "difference_count must equal the number of differences"
+            raise ValueError(msg)
         expected_status = "matched" if not self.differences else "different"
         if self.status != expected_status:
-            raise ValueError("comparison status does not match its differences")
+            msg = "comparison status does not match its differences"
+            raise ValueError(msg)
         return self
 
 
 class Stage12InvocationContext(StrictContractModel):
+    """Deployment and retention context for one comparison-run invocation.
+
+    Records the originating request, the environments, the worker version and
+    callable, the manifest digests and the artifact prefix. Automatic runs also
+    name the production function call they are compared with. Artifacts are kept
+    for at most 30 days after ``created_at``.
+    """
+
     contract_version: Literal[1] = 1
     request_id: ContractText
     # The logical environment labels durable records and artifact paths.
@@ -499,6 +618,7 @@ class Stage12InvocationContext(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_retention(self) -> Stage12InvocationContext:
+        """Require aware timestamps and a retention window of at most 30 days."""
         _validate_retention(self.created_at, self.retention_expires_at)
         return self
 
@@ -510,15 +630,20 @@ MAX_COMPARISON_RUN_ARTIFACT_RETENTION = timedelta(days=30)
 
 def _validate_retention(created_at: datetime, retention_expires_at: datetime) -> None:
     if created_at.tzinfo is None or retention_expires_at.tzinfo is None:
-        raise ValueError("comparison retention timestamps must include a timezone")
+        msg = "comparison retention timestamps must include a timezone"
+        raise ValueError(msg)
     retention = retention_expires_at - created_at
     if retention <= timedelta(0):
-        raise ValueError("comparison retention must be greater than zero")
+        msg = "comparison retention must be greater than zero"
+        raise ValueError(msg)
     if retention > MAX_COMPARISON_RUN_ARTIFACT_RETENTION:
-        raise ValueError("comparison retention must not exceed 30 days")
+        msg = "comparison retention must not exceed 30 days"
+        raise ValueError(msg)
 
 
 class ComparisonRunLifecycleStatus(StrEnum):
+    """Overall status of a comparison run."""
+
     PENDING = "pending"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -528,6 +653,8 @@ class ComparisonRunLifecycleStatus(StrEnum):
 
 
 class ComparisonRunAggregationStatus(StrEnum):
+    """Status of aggregating a comparison run's simulations into a report."""
+
     NOT_STARTED = "not_started"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -535,6 +662,8 @@ class ComparisonRunAggregationStatus(StrEnum):
 
 
 class ResultComparisonStatus(StrEnum):
+    """Outcome of checking a comparison run's aggregate result against production."""
+
     NOT_REQUESTED = "not_requested"
     PENDING = "pending"
     RUNNING = "running"
@@ -590,6 +719,12 @@ class ComparisonReportRecord(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_state(self) -> ComparisonReportRecord:
+        """Check that the row's fields are consistent with its lifecycle states.
+
+        Aggregate and comparison output fields come all-or-nothing, a success
+        needs its outputs and ``completed_at``, failures and skips need an
+        ``error_code``, and the retention window is at most 30 days.
+        """
         _validate_retention(self.created_at, self.retention_expires_at)
         output_fields = (
             self.aggregate_output_uri,
@@ -599,14 +734,18 @@ class ComparisonReportRecord(StrictContractModel):
         if any(value is not None for value in output_fields) and not all(
             value is not None for value in output_fields
         ):
-            raise ValueError("aggregate output fields must be supplied together")
+            msg = "aggregate output fields must be supplied together"
+            raise ValueError(msg)
         if self.status is ComparisonRunLifecycleStatus.SUCCEEDED:
             if self.aggregation_status is not ComparisonRunAggregationStatus.SUCCEEDED:
-                raise ValueError("a successful report requires successful aggregation")
+                msg = "a successful report requires successful aggregation"
+                raise ValueError(msg)
             if not all(value is not None for value in output_fields):
-                raise ValueError("a successful report requires an aggregate output")
+                msg = "a successful report requires an aggregate output"
+                raise ValueError(msg)
             if self.completed_at is None:
-                raise ValueError("a successful report requires completed_at")
+                msg = "a successful report requires completed_at"
+                raise ValueError(msg)
         if (
             self.status
             in {
@@ -615,7 +754,8 @@ class ComparisonReportRecord(StrictContractModel):
             }
             and self.error_code is None
         ):
-            raise ValueError("a failed or skipped report requires an error_code")
+            msg = "a failed or skipped report requires an error_code"
+            raise ValueError(msg)
         comparison_output_fields = (
             self.comparison_output_uri,
             self.comparison_output_sha256,
@@ -627,38 +767,43 @@ class ComparisonReportRecord(StrictContractModel):
             ResultComparisonStatus.RUNNING,
         }:
             if any(value is not None for value in comparison_output_fields):
-                raise ValueError(
-                    "an incomplete comparison cannot reference an output artifact"
-                )
+                msg = "an incomplete comparison cannot reference an output artifact"
+                raise ValueError(msg)
             if self.comparison_completed_at is not None:
-                raise ValueError("an incomplete comparison cannot have completed_at")
+                msg = "an incomplete comparison cannot have completed_at"
+                raise ValueError(msg)
             if self.comparison_error_code is not None:
-                raise ValueError("an incomplete comparison cannot have an error_code")
+                msg = "an incomplete comparison cannot have an error_code"
+                raise ValueError(msg)
             if self.comparison_error_summary is not None:
-                raise ValueError(
-                    "an incomplete comparison cannot have an error_summary"
-                )
+                msg = "an incomplete comparison cannot have an error_summary"
+                raise ValueError(msg)
         elif self.comparison_status in {
             ResultComparisonStatus.MATCHED,
             ResultComparisonStatus.DIFFERENT,
         }:
             if not all(value is not None for value in comparison_output_fields):
-                raise ValueError("a completed comparison requires an output artifact")
+                msg = "a completed comparison requires an output artifact"
+                raise ValueError(msg)
             if self.comparison_completed_at is None:
-                raise ValueError("a completed comparison requires completed_at")
+                msg = "a completed comparison requires completed_at"
+                raise ValueError(msg)
             if self.comparison_error_code is not None:
-                raise ValueError("a completed comparison cannot have an error_code")
+                msg = "a completed comparison cannot have an error_code"
+                raise ValueError(msg)
             if self.comparison_error_summary is not None:
-                raise ValueError("a completed comparison cannot have an error_summary")
+                msg = "a completed comparison cannot have an error_summary"
+                raise ValueError(msg)
         else:
             if any(value is not None for value in comparison_output_fields):
-                raise ValueError(
-                    "a failed comparison cannot reference an output artifact"
-                )
+                msg = "a failed comparison cannot reference an output artifact"
+                raise ValueError(msg)
             if self.comparison_completed_at is None:
-                raise ValueError("a failed comparison requires completed_at")
+                msg = "a failed comparison requires completed_at"
+                raise ValueError(msg)
             if self.comparison_error_code is None:
-                raise ValueError("a failed comparison requires an error_code")
+                msg = "a failed comparison requires an error_code"
+                raise ValueError(msg)
         return self
 
 
@@ -692,6 +837,12 @@ class ComparisonSimulationRecord(StrictContractModel):
 
     @model_validator(mode="after")
     def validate_state(self) -> ComparisonSimulationRecord:
+        """Check that the row's fields are consistent with its lifecycle status.
+
+        Output and row-identity fields come all-or-nothing, a success needs
+        them and ``completed_at``, failures and skips need an ``error_code``,
+        and the retention window is at most 30 days.
+        """
         _validate_retention(self.created_at, self.retention_expires_at)
         output_fields = (
             self.output_uri,
@@ -704,17 +855,22 @@ class ComparisonSimulationRecord(StrictContractModel):
         if any(value is not None for value in output_fields) and not all(
             value is not None for value in output_fields
         ):
-            raise ValueError("simulation output fields must be supplied together")
+            msg = "simulation output fields must be supplied together"
+            raise ValueError(msg)
         if self.row_identity_columns is not None:
             if not self.row_identity_columns:
-                raise ValueError("row_identity_columns must not be empty")
+                msg = "row_identity_columns must not be empty"
+                raise ValueError(msg)
             if len(self.row_identity_columns) != len(set(self.row_identity_columns)):
-                raise ValueError("row_identity_columns must be unique")
+                msg = "row_identity_columns must be unique"
+                raise ValueError(msg)
         if self.status is ComparisonRunLifecycleStatus.SUCCEEDED:
             if not all(value is not None for value in output_fields):
-                raise ValueError("a successful simulation requires an output")
+                msg = "a successful simulation requires an output"
+                raise ValueError(msg)
             if self.completed_at is None:
-                raise ValueError("a successful simulation requires completed_at")
+                msg = "a successful simulation requires completed_at"
+                raise ValueError(msg)
         if (
             self.status
             in {
@@ -723,17 +879,28 @@ class ComparisonSimulationRecord(StrictContractModel):
             }
             and self.error_code is None
         ):
-            raise ValueError("a failed or skipped simulation requires an error_code")
+            msg = "a failed or skipped simulation requires an error_code"
+            raise ValueError(msg)
         return self
 
 
 @dataclass(frozen=True)
 class ComparisonReportPersistenceResult:
+    """The stored parent row after an idempotent create.
+
+    ``created`` is False when an identical row already existed and was reused.
+    """
+
     record: ComparisonReportRecord
     created: bool
 
 
 @dataclass(frozen=True)
 class ComparisonSimulationPersistenceResult:
+    """The stored child row after an idempotent create.
+
+    ``created`` is False when an identical row already existed and was reused.
+    """
+
     record: ComparisonSimulationRecord
     created: bool

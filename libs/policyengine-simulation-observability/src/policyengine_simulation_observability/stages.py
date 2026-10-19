@@ -7,13 +7,18 @@ instead of distributing string literals across the gateway and workers.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 class RunConfiguration(StrEnum):
+    """Kind of simulation run; each has a fixed stage plan in ``RUN_STAGE_REGISTRY``."""
+
     ANNUAL_IMPACT = "annual_impact"
     BUDGET_WINDOW = "budget_window"
     SEGMENTED_NATIONAL = "segmented_national"
@@ -24,6 +29,8 @@ class RunConfiguration(StrEnum):
 
 
 class Stage(StrEnum):
+    """Every traced stage of any run; each value is the span name."""
+
     ANNUAL_EXECUTION = "run_simulation"
     BUDGET_WINDOW_EXECUTION = "run_budget_window_batch"
     SEGMENTED_NATIONAL_EXECUTION = "run_simulation_segment"
@@ -58,6 +65,7 @@ class Stage(StrEnum):
     SEGMENTED_NATIONAL_CHILD_SPAWN = "segmented_national_child_spawn"
     SEGMENTED_NATIONAL_REDUCE = "segmented_national_reduce"
     MODAL_JOB_METADATA_READ = "modal_job_metadata_read"
+    MODAL_JOB_PROGRESS_READ = "modal_job_progress_read"
 
     SIMULATION_OUTPUT_BUILD = "simulation_output_build"
     SIMULATION_OUTPUT_MODEL_DUMP = "simulation_output_model_dump"
@@ -107,16 +115,16 @@ class Stage(StrEnum):
 
 @dataclass(frozen=True)
 class StagePlan:
+    """Stages one run configuration may emit, in their expected order."""
+
     configuration: RunConfiguration
     stages: tuple[Stage, ...]
 
     def name(self, stage: Stage) -> str:
         """Return a configured stage name, rejecting unregistered use."""
-
         if stage not in self.stages:
-            raise ValueError(
-                f"{stage.value!r} is not registered for {self.configuration.value!r}"
-            )
+            msg = f"{stage.value!r} is not registered for {self.configuration.value!r}"
+            raise ValueError(msg)
         return stage.value
 
 
@@ -159,6 +167,7 @@ _ANNUAL_IMPACT = (
     Stage.MODAL_JOB_METADATA_WRITE,
     Stage.MODAL_JOB_METADATA_READ,
     Stage.MODAL_JOB_STATUS_POLL,
+    Stage.MODAL_JOB_PROGRESS_READ,
     Stage.MODAL_DICT_READ,
     *_COMMON_SIMULATION,
 )

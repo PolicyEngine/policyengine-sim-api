@@ -29,7 +29,8 @@ class FakeBlob:
     def _write(self, data, **kwargs):
         self.store.upload_calls.append((self.path, kwargs))
         if kwargs.get("if_generation_match") == 0 and self.path in self.store.objects:
-            raise PreconditionFailed(f"object exists: {self.path}")
+            msg = f"object exists: {self.path}"
+            raise PreconditionFailed(msg)
         self.store.objects[self.path] = data
 
     def upload_from_filename(self, filename, **kwargs):
@@ -46,7 +47,8 @@ class FakeBlob:
             # the transport dies.
             with open(filename, "wb") as handle:
                 handle.write(self.store.objects[self.path][:1])
-            raise ConnectionError("stream reset")
+            msg = "stream reset"
+            raise ConnectionError(msg)
         with open(filename, "wb") as handle:
             handle.write(self.store.objects[self.path])
 
@@ -115,8 +117,11 @@ def test_download_creates_parent_dirs(store, fake_client, tmp_path):
 
 
 def test_failed_download_leaves_no_file_at_the_final_name(store, fake_client, tmp_path):
-    """Callers guard on exists(): a truncated file surviving at the final
-    name would be trusted as complete by the next run in the container."""
+    """A failed download must not leave a truncated file at the final name.
+
+    Callers guard on exists(), so a truncated file surviving at the final
+    name would be trusted as complete by the next run in the container.
+    """
     fake_client.objects["datasets/us/d/populace_year_2026.h5"] = b"content"
     fake_client.broken_downloads.add("datasets/us/d/populace_year_2026.h5")
     destination = tmp_path / "populace_year_2026.h5"

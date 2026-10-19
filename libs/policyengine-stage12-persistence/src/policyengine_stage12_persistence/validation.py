@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -17,7 +18,6 @@ from sqlalchemy import (
     update,
 )
 from sqlalchemy.dialects.postgresql import ENUM, UUID, insert
-from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from policyengine_stage12_persistence.tables import (
@@ -31,6 +31,9 @@ from policyengine_stage12_persistence.tables import (
     comparison_simulations,
 )
 
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Connection, Engine
+
 REQUIRED_TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE")
 FORBIDDEN_TABLE_PRIVILEGES = ("TRUNCATE", "REFERENCES", "TRIGGER")
 
@@ -42,28 +45,35 @@ class Stage12RuntimeAccessError(RuntimeError):
 def _require_column_type(expected: object, actual: object, *, column: str) -> None:
     if isinstance(expected, ENUM):
         if not isinstance(actual, ENUM):
-            raise Stage12RuntimeAccessError(f"{column} has an unexpected type")
+            msg = f"{column} has an unexpected type"
+            raise Stage12RuntimeAccessError(msg)
         if expected.name != actual.name or tuple(expected.enums) != tuple(actual.enums):
-            raise Stage12RuntimeAccessError(f"{column} has an unexpected enum")
+            msg = f"{column} has an unexpected enum"
+            raise Stage12RuntimeAccessError(msg)
         return
     if isinstance(expected, UUID):
         if not isinstance(actual, UUID):
-            raise Stage12RuntimeAccessError(f"{column} has an unexpected type")
+            msg = f"{column} has an unexpected type"
+            raise Stage12RuntimeAccessError(msg)
         return
     if isinstance(expected, JSON):
         if not isinstance(actual, JSON):
-            raise Stage12RuntimeAccessError(f"{column} has an unexpected type")
+            msg = f"{column} has an unexpected type"
+            raise Stage12RuntimeAccessError(msg)
         return
     if isinstance(expected, DateTime):
         if not isinstance(actual, DateTime) or not actual.timezone:
-            raise Stage12RuntimeAccessError(f"{column} has an unexpected type")
+            msg = f"{column} has an unexpected type"
+            raise Stage12RuntimeAccessError(msg)
         return
     if isinstance(expected, String):
         if not isinstance(actual, String) or expected.length != actual.length:
-            raise Stage12RuntimeAccessError(f"{column} has an unexpected type")
+            msg = f"{column} has an unexpected type"
+            raise Stage12RuntimeAccessError(msg)
         return
     if isinstance(expected, Integer) and not isinstance(actual, Integer):
-        raise Stage12RuntimeAccessError(f"{column} has an unexpected type")
+        msg = f"{column} has an unexpected type"
+        raise Stage12RuntimeAccessError(msg)
 
 
 def _validate_table_schema(
@@ -81,15 +91,13 @@ def _validate_table_schema(
     }
     declared_columns = list(table.c)  # type: ignore[attr-defined]
     if set(live_columns) != {item.name for item in declared_columns}:
-        raise Stage12RuntimeAccessError(
-            f"{table_name} columns do not match the synchronized mapping"
-        )
+        msg = f"{table_name} columns do not match the synchronized mapping"
+        raise Stage12RuntimeAccessError(msg)
     for declared in declared_columns:
         live = live_columns[declared.name]
         if declared.nullable != live["nullable"]:
-            raise Stage12RuntimeAccessError(
-                f"{table_name}.{declared.name} has unexpected nullability"
-            )
+            msg = f"{table_name}.{declared.name} has unexpected nullability"
+            raise Stage12RuntimeAccessError(msg)
         _require_column_type(
             declared.type,
             live["type"],
@@ -99,7 +107,8 @@ def _validate_table_schema(
     primary_key = inspector.get_pk_constraint(table_name, schema="public")
     declared_primary_key = [column.name for column in table.primary_key]  # type: ignore[attr-defined]
     if primary_key.get("constrained_columns") != declared_primary_key:
-        raise Stage12RuntimeAccessError(f"{table_name} has an unexpected primary key")
+        msg = f"{table_name} has an unexpected primary key"
+        raise Stage12RuntimeAccessError(msg)
 
     unique_constraints = {
         item.get("name"): tuple(item.get("column_names") or ())
@@ -113,18 +122,16 @@ def _validate_table_schema(
     if unique_constraints.get(identity_constraint) != tuple(
         column.name for column in declared_unique.columns
     ):
-        raise Stage12RuntimeAccessError(
-            f"{table_name} has an unexpected identity constraint"
-        )
+        msg = f"{table_name} has an unexpected identity constraint"
+        raise Stage12RuntimeAccessError(msg)
 
     live_checks = {
         item.get("name")
         for item in inspector.get_check_constraints(table_name, schema="public")
     }
     if not check_constraints.issubset(live_checks):
-        raise Stage12RuntimeAccessError(
-            f"{table_name} is missing required check constraints"
-        )
+        msg = f"{table_name} is missing required check constraints"
+        raise Stage12RuntimeAccessError(msg)
 
     live_indexes = {
         item.get("name"): tuple(item.get("column_names") or ())
@@ -136,9 +143,8 @@ def _validate_table_schema(
     }
     for name, columns in declared_indexes.items():
         if live_indexes.get(name) != columns:
-            raise Stage12RuntimeAccessError(
-                f"{table_name} is missing the expected {name} index"
-            )
+            msg = f"{table_name} is missing the expected {name} index"
+            raise Stage12RuntimeAccessError(msg)
 
 
 def _validate_foreign_key(connection: Connection) -> None:
@@ -155,16 +161,16 @@ def _validate_foreign_key(connection: Connection) -> None:
         None,
     )
     if expected is None:
-        raise Stage12RuntimeAccessError("simulation parent foreign key is missing")
+        msg = "simulation parent foreign key is missing"
+        raise Stage12RuntimeAccessError(msg)
     if (
         expected.get("referred_schema") not in {None, "public"}
         or expected.get("referred_table") != REPORT_TABLE_NAME
         or expected.get("referred_columns") != ["evaluation_id"]
         or (expected.get("options") or {}).get("ondelete") != "CASCADE"
     ):
-        raise Stage12RuntimeAccessError(
-            "simulation parent foreign key has an unexpected definition"
-        )
+        msg = "simulation parent foreign key has an unexpected definition"
+        raise Stage12RuntimeAccessError(msg)
 
 
 def _has_schema_privilege(connection: Connection, privilege: str) -> bool:
@@ -195,24 +201,23 @@ def _has_table_privilege(
 def _validate_permissions(connection: Connection, *, expected_role: str) -> None:
     current_role = connection.execute(select(func.current_user())).scalar_one()
     if current_role != expected_role:
-        raise Stage12RuntimeAccessError(
-            "Stage 12 credential authenticated as an unexpected role"
-        )
+        msg = "Stage 12 credential authenticated as an unexpected role"
+        raise Stage12RuntimeAccessError(msg)
     if not _has_schema_privilege(connection, "USAGE"):
-        raise Stage12RuntimeAccessError("runtime role lacks public-schema USAGE")
+        msg = "runtime role lacks public-schema USAGE"
+        raise Stage12RuntimeAccessError(msg)
     if _has_schema_privilege(connection, "CREATE"):
-        raise Stage12RuntimeAccessError("runtime role has public-schema CREATE")
+        msg = "runtime role has public-schema CREATE"
+        raise Stage12RuntimeAccessError(msg)
     for table_name in (REPORT_TABLE_NAME, SIMULATION_TABLE_NAME):
         for privilege in REQUIRED_TABLE_PRIVILEGES:
             if not _has_table_privilege(connection, table_name, privilege):
-                raise Stage12RuntimeAccessError(
-                    f"runtime role lacks {privilege} on {table_name}"
-                )
+                msg = f"runtime role lacks {privilege} on {table_name}"
+                raise Stage12RuntimeAccessError(msg)
         for privilege in FORBIDDEN_TABLE_PRIVILEGES:
             if _has_table_privilege(connection, table_name, privilege):
-                raise Stage12RuntimeAccessError(
-                    f"runtime role unexpectedly has {privilege} on {table_name}"
-                )
+                msg = f"runtime role unexpectedly has {privilege} on {table_name}"
+                raise Stage12RuntimeAccessError(msg)
 
 
 def _exercise_runtime_dml(connection: Connection, *, environment: str) -> None:
@@ -270,14 +275,16 @@ def _exercise_runtime_dml(connection: Connection, *, environment: str) -> None:
         .returning(comparison_reports.c.evaluation_id)
     ).scalar_one()
     if inserted_report != evaluation_id:
-        raise Stage12RuntimeAccessError("report DML canary insert failed")
+        msg = "report DML canary insert failed"
+        raise Stage12RuntimeAccessError(msg)
     selected_report = connection.execute(
         select(comparison_reports.c.evaluation_id).where(
             comparison_reports.c.evaluation_id == evaluation_id
         )
     ).scalar_one()
     if selected_report != evaluation_id:
-        raise Stage12RuntimeAccessError("report DML canary select failed")
+        msg = "report DML canary select failed"
+        raise Stage12RuntimeAccessError(msg)
     updated_report = connection.execute(
         update(comparison_reports)
         .where(comparison_reports.c.evaluation_id == evaluation_id)
@@ -285,7 +292,8 @@ def _exercise_runtime_dml(connection: Connection, *, environment: str) -> None:
         .returning(comparison_reports.c.evaluation_id)
     ).scalar_one()
     if updated_report != evaluation_id:
-        raise Stage12RuntimeAccessError("report DML canary update failed")
+        msg = "report DML canary update failed"
+        raise Stage12RuntimeAccessError(msg)
 
     simulation_values = {
         "simulation_execution_id": simulation_execution_id,
@@ -319,14 +327,16 @@ def _exercise_runtime_dml(connection: Connection, *, environment: str) -> None:
         .returning(comparison_simulations.c.simulation_execution_id)
     ).scalar_one()
     if inserted_simulation != simulation_execution_id:
-        raise Stage12RuntimeAccessError("simulation DML canary insert failed")
+        msg = "simulation DML canary insert failed"
+        raise Stage12RuntimeAccessError(msg)
     selected_simulation = connection.execute(
         select(comparison_simulations.c.simulation_execution_id).where(
             comparison_simulations.c.simulation_execution_id == simulation_execution_id
         )
     ).scalar_one()
     if selected_simulation != simulation_execution_id:
-        raise Stage12RuntimeAccessError("simulation DML canary select failed")
+        msg = "simulation DML canary select failed"
+        raise Stage12RuntimeAccessError(msg)
     updated_simulation = connection.execute(
         update(comparison_simulations)
         .where(
@@ -336,7 +346,8 @@ def _exercise_runtime_dml(connection: Connection, *, environment: str) -> None:
         .returning(comparison_simulations.c.simulation_execution_id)
     ).scalar_one()
     if updated_simulation != simulation_execution_id:
-        raise Stage12RuntimeAccessError("simulation DML canary update failed")
+        msg = "simulation DML canary update failed"
+        raise Stage12RuntimeAccessError(msg)
     deleted_simulation = connection.execute(
         delete(comparison_simulations)
         .where(
@@ -345,14 +356,16 @@ def _exercise_runtime_dml(connection: Connection, *, environment: str) -> None:
         .returning(comparison_simulations.c.simulation_execution_id)
     ).scalar_one()
     if deleted_simulation != simulation_execution_id:
-        raise Stage12RuntimeAccessError("simulation DML canary delete failed")
+        msg = "simulation DML canary delete failed"
+        raise Stage12RuntimeAccessError(msg)
     deleted_report = connection.execute(
         delete(comparison_reports)
         .where(comparison_reports.c.evaluation_id == evaluation_id)
         .returning(comparison_reports.c.evaluation_id)
     ).scalar_one()
     if deleted_report != evaluation_id:
-        raise Stage12RuntimeAccessError("report DML canary delete failed")
+        msg = "report DML canary delete failed"
+        raise Stage12RuntimeAccessError(msg)
 
 
 def validate_runtime_database(
@@ -362,9 +375,9 @@ def validate_runtime_database(
     environment: str,
 ) -> None:
     """Inspect the live schema and roll back a complete typed DML canary."""
-
     if environment not in {"staging", "production"}:
-        raise Stage12RuntimeAccessError("environment must be staging or production")
+        msg = "environment must be staging or production"
+        raise Stage12RuntimeAccessError(msg)
     try:
         with engine.connect() as connection:
             _validate_permissions(connection, expected_role=expected_role)
@@ -392,6 +405,5 @@ def validate_runtime_database(
     except Stage12RuntimeAccessError:
         raise
     except SQLAlchemyError as error:
-        raise Stage12RuntimeAccessError(
-            f"Stage 12 runtime database verification failed ({type(error).__name__})"
-        ) from None
+        msg = f"Stage 12 runtime database verification failed ({type(error).__name__})"
+        raise Stage12RuntimeAccessError(msg) from None

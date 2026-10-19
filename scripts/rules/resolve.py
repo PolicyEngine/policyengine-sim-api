@@ -10,17 +10,26 @@ from __future__ import annotations
 import ast
 import re
 import tomllib
-from collections.abc import Callable
 from functools import cache
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from scripts.rules.file_exceptions import (
+    linted_files,
+    matching_files,
+    out_of_scope_files,
+)
 from scripts.rules.model import CiRef, Kind, Rule, Violation
 from scripts.rules.workflows import JobBlock, parse_jobs
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
 
 DEFAULT_RUNNER = "scripts/run_quality_guards.py"
 RUFF_DEFAULT_SELECT = ("E4", "E7", "E9", "F")
 PROOF_CI_FIELDS = ("workflow", "job", "invocation")
+# How many offending files a file-level exception violation names.
+SHOWN_OUT_OF_SCOPE_FILES = 3
 
 
 # --- shared readers -------------------------------------------------------
@@ -32,13 +41,16 @@ def _read(path: Path) -> str | None:
 
 
 def clear_caches() -> None:
+    """Forget cached file reads and parses, so the next check sees the files afresh."""
     _read.cache_clear()
     workflow_jobs.cache_clear()
     test_names.cache_clear()
+    linted_files.cache_clear()
 
 
 @cache
 def workflow_jobs(path: Path) -> tuple[dict[str, JobBlock], tuple[str, ...]]:
+    """Return a workflow's jobs by id and its parse problems; cached per path."""
     text = _read(path)
     if text is None:
         return {}, (f"{path.name} is missing",)
@@ -95,7 +107,10 @@ def node_exists(root: Path, node: str) -> str | None:
 
 
 def guard_names(root: Path, runner: str = DEFAULT_RUNNER) -> list[str] | None:
-    """String names in the ``GUARDS`` tuple of the quality-guard runner."""
+    """Return the string names in the runner's ``GUARDS`` tuple.
+
+    Return None if the runner is missing, and an empty list if it has no ``GUARDS``.
+    """
     text = _read(root / runner)
     if text is None:
         return None
@@ -129,7 +144,7 @@ def _toml(path: Path) -> dict[str, Any]:
 
 
 def ruff_lint_config(root: Path) -> dict[str, Any]:
-    """The ``lint`` table from ruff.toml, or ``[tool.ruff.lint]`` in pyproject."""
+    """Return ruff.toml's ``lint`` table, else ``[tool.ruff.lint]`` in pyproject."""
     ruff_toml = _toml(root / "ruff.toml")
     if ruff_toml:
         return ruff_toml.get("lint", {})
@@ -139,12 +154,14 @@ def ruff_lint_config(root: Path) -> dict[str, Any]:
 
 
 def ruff_selected(root: Path) -> tuple[str, ...]:
+    """Return ruff's ``select`` (its default when unset) plus ``extend-select``."""
     lint = ruff_lint_config(root)
     selected = tuple(lint.get("select", RUFF_DEFAULT_SELECT))
     return selected + tuple(lint.get("extend-select", ()))
 
 
 def mypy_files(root: Path) -> list[str]:
+    """Return ``[tool.mypy].files`` as a list, even when it is a single string."""
     files = (
         _toml(root / "pyproject.toml").get("tool", {}).get("mypy", {}).get("files", [])
     )
@@ -255,6 +272,45 @@ def _resolve_ruff(rule: Rule, root: Path) -> list[Violation]:
                     "match enforcer.pattern/codes to the ruff config",
                 )
             ]
+        return _file_level_exception_scope(rule, root, pattern)
+    return []
+
+
+def _file_level_exception_scope(
+    rule: Rule, root: Path, pattern: str
+) -> list[Violation]:
+    """Check a per-file ignore covers only tests, CI/CD and command-line scripts."""
+    out_of_scope = out_of_scope_files(root, pattern)
+    if out_of_scope is None:
+        return [
+            _v(
+                rule,
+                f"ruff per-file-ignores pattern {pattern!r} is negated",
+                "name the files the exception covers",
+            )
+        ]
+    if not matching_files(root, pattern):
+        return [
+            _v(
+                rule,
+                f"ruff per-file-ignores pattern {pattern!r} matches no files",
+                "fix the pattern, or remove the exception",
+            )
+        ]
+    if out_of_scope:
+        shown = ", ".join(out_of_scope[:SHOWN_OUT_OF_SCOPE_FILES])
+        hidden = len(out_of_scope) - SHOWN_OUT_OF_SCOPE_FILES
+        more = f" and {hidden} more" if hidden > 0 else ""
+        return [
+            _v(
+                rule,
+                f"ruff per-file-ignores {pattern!r} covers files that may not take "
+                f"file-level exceptions: {shown}{more}",
+                "file-level exceptions are only for tests, CI/CD scripts and "
+                "command-line scripts; narrow the pattern and suppress other "
+                "findings inline with a reason",
+            )
+        ]
     return []
 
 
@@ -321,6 +377,7 @@ RESOLVERS: dict[Kind, Callable[[Rule, Path], list[Violation]]] = {
 
 
 def resolve_enforcer(rule: Rule, root: Path) -> list[Violation]:
+    """Check that the rule's enforcer exists where its kind says it should."""
     return RESOLVERS[rule.enforcer.kind](rule, root)
 
 
@@ -330,7 +387,7 @@ def resolve_enforcer(rule: Rule, root: Path) -> list[Violation]:
 def _job_for(
     rule_id: str, ref: CiRef, root: Path, check: str, field: str
 ) -> tuple[JobBlock | None, list[Violation]]:
-    """The job a CI reference names, if it exists and runs the invocation."""
+    """Return the job a CI reference names if it runs the invocation, plus problems."""
 
     def v(message: str, fix: str) -> Violation:
         return Violation(rule_id, check, message, fix)
@@ -384,12 +441,13 @@ def resolve_ci(rule: Rule, root: Path) -> list[Violation]:
 
 
 def resolve_proof_ci(rule: Rule, root: Path) -> list[Violation]:
-    """A proof test must run in CI, or nothing shows the checker still works.
+    """Check that a CI job collects the rule's proof test.
 
-    The proof test itself asserts that the bad fixture is rejected and the good
-    one accepted; the guard checks that some CI job collects it. A proof runs
-    in the rule's own CI job when the rule is pytest-enforced; otherwise the
-    proof names its job with ``workflow``, ``job`` and ``invocation``.
+    Without that, nothing shows the checker still works. The proof test itself
+    asserts that the bad fixture is rejected and the good one accepted; the
+    guard checks that some CI job collects it. A proof runs in the rule's own
+    CI job when the rule is pytest-enforced; otherwise the proof names its job
+    with ``workflow``, ``job`` and ``invocation``.
     """
     if rule.proof is None or not isinstance(rule.proof.fields.get("test"), str):
         return []
@@ -409,7 +467,8 @@ def resolve_proof_ci(rule: Rule, root: Path) -> list[Violation]:
                 rule.id,
                 "proof",
                 "the proof test is not tied to a CI job",
-                "add proof.workflow, proof.job and proof.invocation naming the job that runs it",
+                "add proof.workflow, proof.job and proof.invocation naming the "
+                "job that runs it",
             )
         ]
     violations = []
@@ -432,7 +491,11 @@ def _test_coverage(
     root: Path,
     check: str,
 ) -> list[Violation]:
-    """The job's test command actually collects these root-relative test nodes."""
+    """Check that the job's test command collects these root-relative test nodes.
+
+    Only ``make`` targets and ``unittest discover`` commands are inspected; any
+    other command is trusted.
+    """
     violations = []
     collected: list[str] | None = None
     described = ""
@@ -454,7 +517,8 @@ def _test_coverage(
                     Violation(
                         rule_id,
                         check,
-                        f"{path} is not collected by {described} (collects {collected})",
+                        f"{path} is not collected by {described} "
+                        f"(collects {collected})",
                         "add it to what the job runs, or move the test",
                     )
                 )

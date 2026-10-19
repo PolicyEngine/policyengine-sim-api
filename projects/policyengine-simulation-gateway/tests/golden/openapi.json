@@ -331,7 +331,8 @@
           "senior",
           "all"
         ],
-        "title": "AgePovertyOutput"
+        "title": "AgePovertyOutput",
+        "description": "Baseline and reform poverty rates for children, adults, seniors and everyone."
       },
       "BaselineReformValue": {
         "properties": {
@@ -350,7 +351,8 @@
           "baseline",
           "reform"
         ],
-        "title": "BaselineReformValue"
+        "title": "BaselineReformValue",
+        "description": "A metric's value under the baseline and under the reform."
       },
       "BatchChildJobStatus": {
         "properties": {
@@ -925,7 +927,8 @@
           "households",
           "baseline_net_income"
         ],
-        "title": "BudgetaryImpact"
+        "title": "BudgetaryImpact",
+        "description": "Headline budget effect of the reform for the simulated year.\n\nImpacts are reform minus baseline totals in the country's currency.\n``budgetary_impact`` is ``tax_revenue_impact`` minus\n``benefit_spending_impact``; ``state_tax_revenue_impact`` covers US state\nincome tax and is 0 for the UK. ``households`` is the weighted number of\nhouseholds and ``baseline_net_income`` their total baseline net income."
       },
       "CliffImpactInSimulation": {
         "properties": {
@@ -944,7 +947,8 @@
           "cliff_gap",
           "cliff_share"
         ],
-        "title": "CliffImpactInSimulation"
+        "title": "CliffImpactInSimulation",
+        "description": "Exposure to tax-benefit cliffs in one simulation.\n\n``cliff_gap`` is the total net income people would lose from a small rise in\ntheir earnings, and ``cliff_share`` the share of adults on a cliff."
       },
       "CliffImpactOutput": {
         "properties": {
@@ -961,7 +965,8 @@
           "baseline",
           "reform"
         ],
-        "title": "CliffImpactOutput"
+        "title": "CliffImpactOutput",
+        "description": "Exposure to tax-benefit cliffs under the baseline and under the reform."
       },
       "CongressionalDistrictImpactOutput": {
         "properties": {
@@ -978,7 +983,8 @@
         "required": [
           "districts"
         ],
-        "title": "CongressionalDistrictImpactOutput"
+        "title": "CongressionalDistrictImpactOutput",
+        "description": "Reform impact for each US congressional district in the simulated region."
       },
       "CongressionalDistrictImpactRecord": {
         "properties": {
@@ -1022,7 +1028,8 @@
           "no_change_percentage",
           "population"
         ],
-        "title": "CongressionalDistrictImpactRecord"
+        "title": "CongressionalDistrictImpactRecord",
+        "description": "Reform impact on household net income in one US congressional district.\n\n``district`` is the state abbreviation and two-digit district number, such\nas ``\"CA-12\"``; at-large districts are numbered ``01``. The income changes\nare the average change per household and the relative change in the\ndistrict's total household net income. The three percentage fields are the\nshares of people whose household net income rises, falls, or stays\nessentially unchanged."
       },
       "ConstituencyImpactRecord": {
         "properties": {
@@ -1080,7 +1087,8 @@
           "relative_household_income_change",
           "population"
         ],
-        "title": "ConstituencyImpactRecord"
+        "title": "ConstituencyImpactRecord",
+        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income. ``x`` and ``y`` are integer map-rendering coordinates."
       },
       "DecileOutput": {
         "properties": {
@@ -1105,7 +1113,8 @@
           "average",
           "relative"
         ],
-        "title": "DecileOutput"
+        "title": "DecileOutput",
+        "description": "Change in average household net income in each decile.\n\nKeys are decile numbers from ``\"1\"`` (lowest) to ``\"10\"`` (highest); the same\nshape is used for income deciles and UK wealth deciles. ``average`` is the\nabsolute change and ``relative`` the change relative to the decile's\nbaseline average."
       },
       "DetailedBudgetOutput": {
         "additionalProperties": {
@@ -1137,7 +1146,8 @@
           "reform",
           "difference"
         ],
-        "title": "DetailedBudgetProgramOutput"
+        "title": "DetailedBudgetProgramOutput",
+        "description": "Baseline and reform totals for one program.\n\n``difference`` is reform minus baseline."
       },
       "GenderPovertyOutput": {
         "properties": {
@@ -1154,7 +1164,8 @@
           "male",
           "female"
         ],
-        "title": "GenderPovertyOutput"
+        "title": "GenderPovertyOutput",
+        "description": "Baseline and reform poverty rates for males and females."
       },
       "GeographicImpactOutput": {
         "items": {
@@ -1216,7 +1227,8 @@
           "top_10_pct_share",
           "top_1_pct_share"
         ],
-        "title": "InequalityOutput"
+        "title": "InequalityOutput",
+        "description": "Baseline and reform income inequality.\n\nCovers the Gini coefficient and the income shares of the top 10% and top 1%."
       },
       "IntraDecileOutput": {
         "properties": {
@@ -1244,7 +1256,42 @@
           "deciles",
           "all"
         ],
-        "title": "IntraDecileOutput"
+        "title": "IntraDecileOutput",
+        "description": "Share of people in each decile who gain or lose, grouped by size of change.\n\nThe categories are gaining or losing more or less than 5% of household net\nincome, or no change. ``deciles`` lists each category's share for deciles 1\nto 10 in order, and ``all`` gives each category's average across the deciles."
+      },
+      "JobSegmentProgress": {
+        "properties": {
+          "completed": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Completed"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "completed",
+          "total"
+        ],
+        "title": "JobSegmentProgress",
+        "description": "Completed region segments of a segmented national run."
+      },
+      "JobStage": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "loading_data",
+          "baseline",
+          "reform",
+          "simulating",
+          "outputs"
+        ],
+        "title": "JobStage",
+        "description": "Coarse stages of an annual economy job, in the order they run.\n\nA monolithic run moves through ``loading_data``, ``baseline``, ``reform``\nand ``outputs``. A segmented US national run computes baseline and reform\ntogether in parallel region segments, so it moves through\n``loading_data``, ``simulating`` and ``outputs``.\n\nLater versions may add stages. Clients must accept a value they do not\nknow, for example by showing a generic \"running\" state."
       },
       "JobStatusResponse": {
         "properties": {
@@ -1312,6 +1359,126 @@
                 "type": "null"
               }
             ]
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobStage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Current stage of a running job, or the stage in which a failed job stopped. Absent for complete jobs. Later versions may add stages; clients must accept a value they do not know."
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress",
+            "description": "Coarse completion percent at the start of the current stage. It changes only at stage boundaries, stays below 100 while running, and is 100 when complete."
+          },
+          "progress_max": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress Max",
+            "description": "Highest percent a running job reaches before its next stage starts. A client can move a time-based estimate between progress and progress_max."
+          },
+          "submitted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitted At",
+            "description": "When the gateway accepted the job."
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At",
+            "description": "When a worker started the job."
+          },
+          "stage_started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Started At",
+            "description": "When the current stage started."
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At",
+            "description": "When the worker finished or stopped the job."
+          },
+          "segments": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobSegmentProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Region segments of a segmented US national run."
+          },
+          "stage_durations": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "propertyNames": {
+                  "$ref": "#/components/schemas/JobStage"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage Durations",
+            "description": "Seconds spent in each stage that has ended."
           }
         },
         "type": "object",
@@ -1395,7 +1562,8 @@
           "income",
           "substitution"
         ],
-        "title": "LaborSupplyDecileMetric"
+        "title": "LaborSupplyDecileMetric",
+        "description": "Income- and substitution-effect responses keyed by income decile number."
       },
       "LaborSupplyDecileOutput": {
         "properties": {
@@ -1412,7 +1580,8 @@
           "average",
           "relative"
         ],
-        "title": "LaborSupplyDecileOutput"
+        "title": "LaborSupplyDecileOutput",
+        "description": "Labor supply responses by income decile.\n\n``average`` is the response per household and ``relative`` the response\nrelative to the decile's baseline earnings."
       },
       "LaborSupplyHoursOutput": {
         "properties": {
@@ -1446,7 +1615,8 @@
           "income_effect",
           "substitution_effect"
         ],
-        "title": "LaborSupplyHoursOutput"
+        "title": "LaborSupplyHoursOutput",
+        "description": "Total weekly hours worked under the baseline and reform, and how they change.\n\n``change`` is reform minus baseline, split into its income and substitution\neffects."
       },
       "LaborSupplyRelativeResponse": {
         "properties": {
@@ -1465,7 +1635,8 @@
           "income",
           "substitution"
         ],
-        "title": "LaborSupplyRelativeResponse"
+        "title": "LaborSupplyRelativeResponse",
+        "description": "Income- and substitution-effect responses relative to baseline earnings."
       },
       "LaborSupplyResponseOutput": {
         "properties": {
@@ -1506,7 +1677,8 @@
           "decile",
           "hours"
         ],
-        "title": "LaborSupplyResponseOutput"
+        "title": "LaborSupplyResponseOutput",
+        "description": "Behavioral labor supply response to the reform.\n\n``income_lsr`` and ``substitution_lsr`` are the total earnings changes from\nthe income and substitution effects, and ``total_change`` is their sum."
       },
       "LocalAuthorityImpactRecord": {
         "properties": {
@@ -1564,7 +1736,8 @@
           "relative_household_income_change",
           "population"
         ],
-        "title": "LocalAuthorityImpactRecord"
+        "title": "LocalAuthorityImpactRecord",
+        "description": "Reform impact on household net income in one UK local authority.\n\nFields mean the same as in ``ConstituencyImpactRecord``."
       },
       "PingRequest": {
         "properties": {
@@ -1684,7 +1857,8 @@
           "poverty",
           "deep_poverty"
         ],
-        "title": "PovertyByGenderOutput"
+        "title": "PovertyByGenderOutput",
+        "description": "Poverty and deep poverty rates by gender, as defined for ``PovertyOutput``."
       },
       "PovertyByRaceOutput": {
         "properties": {
@@ -1697,7 +1871,8 @@
         "required": [
           "poverty"
         ],
-        "title": "PovertyByRaceOutput"
+        "title": "PovertyByRaceOutput",
+        "description": "US poverty rates by race and ethnicity; there is no deep poverty breakdown."
       },
       "PovertyOutput": {
         "properties": {
@@ -1714,7 +1889,8 @@
           "poverty",
           "deep_poverty"
         ],
-        "title": "PovertyOutput"
+        "title": "PovertyOutput",
+        "description": "Poverty and deep poverty rates by age group.\n\nIn the US these are the SPM poverty and deep SPM poverty rates. In the UK,\n``poverty`` is relative and ``deep_poverty`` absolute poverty, both measured\nbefore housing costs."
       },
       "RacePovertyOutput": {
         "properties": {
@@ -1739,7 +1915,8 @@
           "hispanic",
           "other"
         ],
-        "title": "RacePovertyOutput"
+        "title": "RacePovertyOutput",
+        "description": "Baseline and reform poverty rates by race and ethnicity (US only)."
       },
       "SPMCapability": {
         "properties": {
@@ -1758,7 +1935,8 @@
         "required": [
           "defaults"
         ],
-        "title": "SPMCapability"
+        "title": "SPMCapability",
+        "description": "Canonical SPM support offered by a simulation version.\n\n``defaults`` is the pinned SPM selection, including the forecast artifact\nhash and scenario, that applies to any option a request leaves out."
       },
       "SPMComparisonProvenance": {
         "properties": {
@@ -1800,7 +1978,8 @@
           "code",
           "message"
         ],
-        "title": "SPMErrorDetail"
+        "title": "SPMErrorDetail",
+        "description": "A typed SPM input error.\n\n``code`` is one of a fixed set of stable values, such as\n``SPM_GEOGRAPHY_REQUIRED``, that clients can branch on; ``message`` explains\nthe problem to a person."
       },
       "SPMExecutionProvenance": {
         "properties": {

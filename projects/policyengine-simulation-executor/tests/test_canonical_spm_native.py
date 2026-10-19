@@ -13,7 +13,10 @@ from native_spm_support import materialize_native_household
 SOURCE = os.environ.get("SPM_NATIVE_SMOKE_SOURCE")
 pytestmark = pytest.mark.skipif(
     not SOURCE,
-    reason="Set SPM_NATIVE_SMOKE_SOURCE to the local native H5 for the bounded source integration smoke",
+    reason=(
+        "Set SPM_NATIVE_SMOKE_SOURCE to the local native H5 for the bounded "
+        "source integration smoke"
+    ),
 )
 
 

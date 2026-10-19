@@ -25,6 +25,10 @@ When adding, changing, or removing a rule, a guard test, a checker
 configuration, or a CI job that enforces one, read
 `docs/engineering/skills/rules-registry.md`.
 
+Before adding a Pydantic model or a class that other models inherit from, or
+moving an import under `if TYPE_CHECKING:`, read
+`docs/engineering/skills/typing-only-imports.md`.
+
 ## Development
 
 - Use Python 3.13 and `uv`.
@@ -109,6 +113,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 - `sim.deploy.image-smoke-covers-every-image-lib`: The image smoke path filter includes every library mounted into a Modal image, so a change to any of them runs the smoke. (doc-only, not checked: follow it yourself)
 - `sim.deploy.modal-image-smoke`: App entrypoints import inside the real Modal images before merge, whenever a library baked into an image changes. (blocking: CI job `image-smoke`)
 - `sim.deploy.numerical-sentinel-gate`: An existing-stack deployment computes the numerical release sentinel from the exact bundle it installs, and the candidate and stable services must reproduce it; a failing sentinel check fails its step. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
+- `sim.deploy.permission-enforcement-wired`: Simulation Entrypoint permission enforcement defaults to log-only, rejects any value other than 0 or 1, and reaches the candidate revision and every deployed authentication run. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
 - `sim.deploy.promotion-order-explicit`: Full-stack promotion order is explicit, and the reusable deployment rejects unexpectedly skipped phases. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
 - `sim.deploy.release-identity-smoke`: Deploy gates pass the whole release identity to the entrypoint smoke, which requires every expectation, refuses malformed ones, and rejects a release whose routes, latest pointers, bundle, UK model or UK dataset differ from that identity. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
 - `sim.deploy.revision-tags-valid`: Cloud Run revision tags are valid on a workflow's first run and fit the existing service names. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py`)
@@ -135,11 +140,17 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Code quality and tests
 
+- `sim.quality.ci-cd-scripts-ruff-exemptions`: CI/CD scripts under .github may print their output (T201); every other ruff rule applies to them. (blocking: ruff per-file ignore of T201 for `.github/**`)
+- `sim.quality.command-line-scripts-ruff-exemptions`: Command-line scripts under a scripts directory may print their output (T201), run other programs (S603, S607) and use today's date (DTZ011); every other ruff rule applies to them. (blocking: ruff per-file ignore of DTZ011, S603, S607, T201 for `**/scripts/**`)
+- `sim.quality.deployed-tests-ruff-exemptions`: The deployed-service test suite (projects/*/authenticated_tests, pytest run against a live candidate) gets the same ruff exemptions as unit tests (sim.quality.tests-ruff-exemptions); every other ruff rule applies to it. (blocking: ruff per-file ignore of ANN, D1, DTZ001, DTZ007, INP001, PLC0415, PLR2004, S101, S102, S105, S106, S108, S301, S603, S607, SLF001, TID253 for `**/authenticated_tests/**`)
 - `sim.quality.every-project-tested`: Every project and library with unit tests runs them in the PR test matrix. (doc-only, not checked: follow it yourself)
 - `sim.quality.ruff-format-src`: Source code under projects/*/src and libs/*/src is formatted with ruff format. (blocking: ruff format)
 - `sim.quality.ruff-format-tests`: Test code is formatted with ruff format too; CI currently checks only src directories. (doc-only, not checked: follow it yourself)
-- `sim.quality.ruff-lint`: All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. (blocking: ruff check (E4, E7, E9, F, FLY, FURB, I, PIE, PYI, RET, RSE, UP, W))
+- `sim.quality.ruff-lint`: All Python code passes ruff check with every rule family selected in ruff.toml, with no ratchet; families are added one themed group at a time until the selection is ALL. (blocking: ruff check (A, ANN, BLE, D, DTZ, E, E4, E7, E9, EM, ERA, EXE, F, FAST, FIX, FLY, FURB, G, I, INP, LOG, N, PIE, PLC, PYI, RET, RSE, S, SLF, T20, TC, TD, TID253, TRY, UP, W))
+- `sim.quality.runtime-evaluated-models-resolve`: Every Pydantic model is runtime-evaluated for ruff: one of its bases, read through the imports of the model's own module, is listed in ruff.toml's runtime-evaluated-base-classes or is a runtime-evaluated class in that same module; and every Pydantic model resolves its annotations once its package is imported. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py`, `projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py`)
+- `sim.quality.src-programs-ruff-exemptions`: Programs under src (the Modal deployment utilities, and the OpenAPI and Stage 12 infrastructure commands) may print their output (T201), open URLs from their arguments (S310) and, for the Modal utilities run with python -m, live in a directory that isn't a package (INP001); every other ruff rule applies to them. (blocking: ruff per-file ignore of INP001, S310, T201 for `projects/*/src/{modal/utils/*,policyengine_simulation_entry/generate_openapi,policyengine_simulation_entry/stage12_infrastructure,policyengine_simulation_gateway/generate_openapi}.py`)
 - `sim.quality.tests-pass`: Each project's unit tests pass in its own locked environment. (blocking: CI job `test`)
+- `sim.quality.tests-ruff-exemptions`: Test files may use pytest's bare assert, need no docstrings, annotations or named constants for magic numbers, and may reach into private members, live outside packages and import inside a test (S101, D1, ANN, PLR2004, SLF001, INP001, PLC0415). They may also run repository scripts (S603, S607) and use fake credentials (S105, S106), temporary paths (S108), naive datetimes (DTZ001, DTZ007), pickle (S301) and exec (S102), and may import the lazily loaded packages at module level (TID253). Every other ruff rule applies to tests. (blocking: ruff per-file ignore of ANN, D1, DTZ001, DTZ007, INP001, PLC0415, PLR2004, S101, S102, S105, S106, S108, S301, S603, S607, SLF001, TID253 for `**/tests/**`)
 
 ### CI workflows and scripts
 

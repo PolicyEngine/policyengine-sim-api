@@ -60,7 +60,7 @@ _EXPECTED_COUNTRIES = frozenset({"us", "uk"})
 
 def _summarize_bundle_status(status: dict) -> dict:
     """Reject an incomplete or mismatched runtime bundle and summarize it."""
-    import json
+    import json  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check that uses it
 
     package_names = {check.get("package") for check in status.get("packages", [])}
     dataset_countries = {check.get("country") for check in status.get("datasets", [])}
@@ -97,22 +97,31 @@ def _summarize_bundle_status(status: dict) -> dict:
 
 def _validate_installed_uk_local_authority_dataset() -> str:
     """Require the installed UK dataset to match one packaged boundary version."""
-
     dataset_path = resolve_local_bundle_dataset_path("uk", None)
     if dataset_path is None:
-        raise RuntimeError("installed certified UK dataset is unavailable")
+        msg = "installed certified UK dataset is unavailable"
+        raise RuntimeError(msg)
     metadata = detect_uk_local_authority_metadata_from_hdf(dataset_path)
     return metadata.boundary_version.value
 
 
 @app.function(image=smoke_image, timeout=600, memory=8192)
 def smoke_import_executor() -> dict:
-    import importlib
-    import os
-    import pkgutil
-    from pathlib import Path
+    """Check the installed bundle, then import the workers' lazy request-time modules.
 
-    from policyengine.bundle import inspect_bundle_status
+    Raises on any bundle mismatch or import failure; otherwise returns the
+    bundle summary and how many shared-library modules imported.
+    """
+    import importlib  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
+    import os  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
+    import pkgutil  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
+    from pathlib import (  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
+        Path,
+    )
+
+    from policyengine.bundle import (
+        inspect_bundle_status,
+    )
 
     bundle = _summarize_bundle_status(
         inspect_bundle_status(
@@ -134,15 +143,15 @@ def smoke_import_executor() -> dict:
     # policyengine.core chain) on EVERY request, so a break there crashes
     # all requests at import time — exactly the #602 failure class this
     # smoke exists to catch.
-    import policyengine_simulation_contract
-    import policyengine_simulation_observability
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: F401
+    import policyengine_simulation_contract  # noqa: PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
+    import policyengine_simulation_observability  # noqa: PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: F401, PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
         run_simulation_impl,
     )
-    from src.modal.budget_window_batch import (  # noqa: F401
+    from src.modal.budget_window_batch import (  # noqa: F401, PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
         run_budget_window_batch_impl,
     )
-    from src.modal.segmented_national import (  # noqa: F401
+    from src.modal.segmented_national import (  # noqa: F401, PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
         dispatch_run_simulation,
     )
 
@@ -161,7 +170,8 @@ def smoke_import_executor() -> dict:
 
 
 @app.local_entrypoint()
-def main():
+def main() -> None:
+    """Run the image smoke remotely and print its report."""
     report = smoke_import_executor.remote()
-    print(report)
-    print("executor image smoke OK")
+    print(report)  # noqa: T201  # Modal local entrypoint: runs locally, and stdout is the smoke's report
+    print("executor image smoke OK")  # noqa: T201  # Modal local entrypoint: runs locally, and stdout is the smoke's report

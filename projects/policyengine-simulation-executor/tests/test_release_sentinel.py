@@ -254,7 +254,6 @@ def test_the_sentinel_compares_the_budget_and_net_income():
 @pytest.mark.parametrize("path", COMPARED)
 def test_every_compared_value_must_agree(path):
     """#744 review: removing any one comparison must fail a test."""
-
     section, key = path.split(".")
     result = {**RESULT, section: {**RESULT[section], key: RESULT[section][key] * 1.01}}
     problems, _ = _check(FakeAPI(result=result))
@@ -269,7 +268,6 @@ def test_every_compared_value_must_agree(path):
 @pytest.mark.parametrize("value", [True, False, "6.1e9", None, [6.1e9]])
 def test_a_value_that_is_not_a_number_fails(value):
     """#744 review: a boolean is not a number, whatever Python says."""
-
     result = {**RESULT, "budget": {**RESULT["budget"], "budgetary_impact": value}}
     problems, _ = _check(FakeAPI(result=result))
     assert any("not a number" in problem for problem in problems), problems
@@ -301,7 +299,6 @@ def test_a_job_that_did_not_complete_fails_even_with_the_right_numbers(status):
 )
 def test_a_complete_job_without_an_object_result_fails(job):
     """#744 review: a worker returning None must not pass the sentinel."""
-
     problems, _ = _check(FakeAPI(job=job))
     assert len(problems) == 1
     assert "result, not an object" in problems[0]
@@ -312,7 +309,6 @@ def test_a_complete_job_without_an_object_result_fails(job):
 )
 def test_the_tolerance_is_floating_point_reordering_only(relative, agrees):
     """#744 review: a looser REL_TOL (a 1e-3 mismatch is £4m) must fail a test."""
-
     value = 4e9
     assert sentinel.agree(value, value * (1 + relative)) is agrees
 
@@ -323,7 +319,6 @@ def test_the_tolerance_is_floating_point_reordering_only(relative, agrees):
 )
 def test_the_absolute_tolerance_is_one_penny(actual, agrees):
     """Near zero, numerical agreement admits up to and including £0.01 of error."""
-
     assert sentinel.agree(0, actual) is agrees
     assert sentinel.agree(actual, 0) is agrees
 

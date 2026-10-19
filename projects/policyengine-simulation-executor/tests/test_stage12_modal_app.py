@@ -280,7 +280,8 @@ def test_stage12_functions_close_runtime_after_application_error(
     monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
 
     def fail(*_, **__):
-        raise LookupError("application failure")
+        msg = "application failure"
+        raise LookupError(msg)
 
     with pytest.raises(LookupError, match="application failure"):
         _invoke(monkeypatch, module, function_name, fail)

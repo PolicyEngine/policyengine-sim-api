@@ -1,18 +1,23 @@
-"""
-PolicyEngine Simulation - Versioned Modal App
+"""PolicyEngine Simulation versioned Modal app.
 
 This app contains the heavy simulation workload with snapshotted models.
 Each deployment creates a versioned app (e.g., policyengine-simulation-py4-10-0).
 
-The gateway app (policyengine-simulation-gateway) routes requests to these versioned apps.
+The gateway app (policyengine-simulation-gateway) routes requests to these
+versioned apps.
 """
 
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from policyengine_simulation_executor.hf_access_validation import (
     HF_MODAL_SECRET_NAME,
     HF_RUNTIME_ENV_NAME,
+)
+from policyengine_simulation_executor.job_progress import (
+    NULL_JOB_PROGRESS,
+    StoredJobProgressReporter,
 )
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_country_model_version,
@@ -38,6 +43,10 @@ from src.modal.static_runtime_files import add_static_runtime_files
 
 import modal
 
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_executor.job_progress import JobProgressReporter
+
 
 def _version_from_env_or_local_bundle_package(env_var: str, package: str) -> str:
     value = os.environ.get(env_var)
@@ -45,10 +54,11 @@ def _version_from_env_or_local_bundle_package(env_var: str, package: str) -> str
         return value
     if modal.is_local():
         return get_bundled_package_version(package)
-    raise RuntimeError(
+    msg = (
         f"{env_var} must be set in the Modal image environment for remote "
         "simulation workers."
     )
+    raise RuntimeError(msg)
 
 
 def _version_from_env_or_local_bundle(env_var: str, country: str) -> str:
@@ -57,10 +67,11 @@ def _version_from_env_or_local_bundle(env_var: str, country: str) -> str:
         return value
     if modal.is_local():
         return get_bundled_country_model_version(country)
-    raise RuntimeError(
+    msg = (
         f"{env_var} must be set in the Modal image environment for remote "
         "simulation workers."
     )
+    raise RuntimeError(msg)
 
 
 POLICYENGINE_VERSION = _version_from_env_or_local_bundle_package(
@@ -91,8 +102,7 @@ VERSION_ENV = {
 
 
 def get_app_name(policyengine_version: str) -> str:
-    """
-    Generate versioned app name from the policyengine.py package version.
+    """Generate versioned app name from the policyengine.py package version.
 
     Replaces dots with dashes for URL safety.
     Example: 4.10.0 -> policyengine-simulation-py4-10-0
@@ -147,16 +157,21 @@ def _deploy_time_artifact_inputs() -> tuple[str, dict | None]:
     bucket = os.environ.get("POLICYENGINE_ARTIFACT_BUCKET", "")
     if not digest:
         return bucket, None
-    from policyengine_simulation_executor.artifact_store import ArtifactStore
-    from policyengine_simulation_executor.precompute_models import ArtifactManifest
+    from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # deploy-time manifest check only; the app import stays light for the precompute and smoke apps
+        ArtifactStore,
+    )
+    from policyengine_simulation_executor.precompute_models import (  # noqa: PLC0415  # deploy-time manifest check only; the app import stays light for the precompute and smoke apps
+        ArtifactManifest,
+    )
 
     store = ArtifactStore(bucket or None)
     payload = store.read_manifest(digest)
     if payload is None:
-        raise RuntimeError(
+        msg = (
             f"Artifact manifest {digest} is not in the store: the deploy "
             "must consume a digest published by the precompute run."
         )
+        raise RuntimeError(msg)
     # Validate on the runner so a corrupt or foreign manifest fails the
     # deploy here, not mid-image-build.
     manifest = ArtifactManifest.model_validate(payload)
@@ -167,8 +182,7 @@ _ARTIFACT_BUCKET, _DEPLOY_MANIFEST = _deploy_time_artifact_inputs()
 
 
 def build_runtime_simulation_image() -> modal.Image:
-    """Image layers up to the version env — everything except the artifact
-    fetch and model snapshot.
+    """Build the image layers up to the version env (no artifact fetch or snapshot).
 
     Shared by the deployed app and the image smoke app
     (src/modal/smoke_app.py): all must construct these layers through
@@ -241,7 +255,7 @@ simulation_image = add_static_runtime_files(
 def _configure_modal_observability(
     *,
     service_role: str,
-):
+) -> "ObservabilityRuntime":
     return init_process_observability(
         service_name=APP_NAME,
         platform="modal",
@@ -251,10 +265,61 @@ def _configure_modal_observability(
     )
 
 
-def _set_modal_call_attributes(runtime) -> None:
+def _set_modal_call_attributes(runtime: "ObservabilityRuntime") -> None:
     try:
         runtime.set_context(function_call_id=modal.current_function_call_id())
-    except Exception:
+    except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal: a failed attribute must never fail the Modal call
+        pass
+
+
+def _job_progress_reporter() -> "JobProgressReporter":
+    """Return a stage reporter for this call, keyed by its public ``job_id``.
+
+    The gateway's ``job_id`` is the spawned call's ``object_id``, which is
+    this call's ``current_function_call_id()``. Without one there is nothing
+    to key the record by, so nothing is reported.
+
+    Budget-window children are ordinary ``run_simulation`` calls, so each
+    writes a record under its own call id. ``/budget-window-jobs`` does not
+    read those records yet; the writes are a few small Dict puts per year.
+    """
+    from policyengine_simulation_contract.job_progress_state import (  # noqa: PLC0415  # resolved per call so tests can patch job_progress_state
+        get_job_progress,
+        put_job_progress,
+    )
+
+    try:
+        job_id = modal.current_function_call_id()
+    except Exception:  # noqa: BLE001  # stage reporting is non-fatal
+        job_id = None
+    if not job_id:
+        return NULL_JOB_PROGRESS
+    return StoredJobProgressReporter(
+        job_id, write=put_job_progress, read=get_job_progress
+    )
+
+
+def _record_stage_durations(
+    runtime: "ObservabilityRuntime", progress: "JobProgressReporter"
+) -> None:
+    """Attach the job's stage durations to its operation telemetry.
+
+    Main-path traces cannot split the baseline from the reform calculation:
+    both run inside ``economic_impact_analysis``. These attributes can. The
+    durations add up over attempts when Modal runs the call again.
+    """
+    durations = progress.stage_durations()
+    if not durations:
+        return
+    try:
+        runtime.set_context(
+            job_attempts=progress.attempts(),
+            **{
+                f"job_stage_seconds_{stage.value}": seconds
+                for stage, seconds in durations.items()
+            },
+        )
+    except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
         pass
 
 
@@ -272,12 +337,14 @@ def run_simulation(
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    """
-    Execute economic simulation.
+    """Execute economic simulation.
 
     Imports the snapshotted implementation at runtime.
     Emits redacted operation data through the shared observability runtime.
+    Records the job's stage for status polls (see ``job_progress``).
     """
+    progress = _job_progress_reporter()
+    progress.start()
     runtime = _configure_modal_observability(service_role="simulation_worker")
 
     # We deliberately avoid sending full ``params`` or ``result`` blobs to
@@ -299,18 +366,38 @@ def run_simulation(
             remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
-            from src.modal.segmented_national import dispatch_run_simulation
-
-            # Plain national macro requests fan out across region groups
-            # by default (segmented: false opts out). APP_NAME is this
-            # deployed app; children spawn into its dedicated
-            # run_simulation_segment pool.
-            return dispatch_run_simulation(
-                params,
-                app_name=APP_NAME,
-                runtime=runtime,
+            from src.modal.segmented_national import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+                dispatch_run_simulation,
             )
+
+            try:
+                # Plain national macro requests fan out across region groups
+                # by default (segmented: false opts out). APP_NAME is this
+                # deployed app; children spawn into its dedicated
+                # run_simulation_segment pool.
+                return dispatch_run_simulation(
+                    params,
+                    app_name=APP_NAME,
+                    runtime=runtime,
+                    progress=progress,
+                )
+            except KeyboardInterrupt:
+                # Modal preempts with SIGINT and runs the call again; the
+                # record stays running for that attempt.
+                progress.interrupt()
+                raise
+            finally:
+                # Close the last stage inside the operation, so its
+                # completion record carries every stage duration.
+                progress.finish()
+                _record_stage_durations(runtime, progress)
+    except KeyboardInterrupt:
+        # Preempted before the calculation started.
+        progress.interrupt()
+        raise
     finally:
+        # A no-op unless the operation never started.
+        progress.finish()
         runtime.shutdown()
 
 
@@ -351,7 +438,7 @@ def run_simulation_segment(
             remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
-            from policyengine_simulation_executor.simulation_runtime import (
+            from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
                 run_simulation_impl,
             )
 
@@ -391,7 +478,9 @@ def run_budget_window_batch(
             remote_context=propagated,
         ):
             _set_modal_call_attributes(runtime)
-            from src.modal.budget_window_batch import run_budget_window_batch_impl
+            from src.modal.budget_window_batch import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+                run_budget_window_batch_impl,
+            )
 
             return run_budget_window_batch_impl(params, runtime=runtime)
     finally:

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid5
 
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     BundleProvenance,
     DatasetArtifactMediaType,
@@ -20,10 +19,22 @@ from policyengine_simulation_contract.stage12_execution import (
     SimulationExecutionInput,
     SimulationRole,
 )
-from policyengine_simulation_contract.stage12_manifest import V2WorkerVersion
+
+if TYPE_CHECKING:
+    from policyengine_simulation_contract.stage12_bundle import CountryId
+    from policyengine_simulation_contract.stage12_manifest import (
+        V2CountryWorker,
+        V2WorkerVersion,
+    )
 
 
 class ComparisonSkipReason(StrEnum):
+    """Why a request gets no Stage 12 comparison run.
+
+    The value is reported as the skip event's ``reason`` attribute and in the
+    422 body of the temporary direct-submission route.
+    """
+
     UNSUPPORTED_FLOW = "unsupported_flow"
     UNSUPPORTED_SCOPE = "unsupported_scope"
     UNSUPPORTED_BUDGET_WINDOW = "unsupported_budget_window"
@@ -36,11 +47,14 @@ class ComparisonSkipReason(StrEnum):
 
 @dataclass(frozen=True)
 class AdaptedComparisonRun:
+    """Adapter outcome: exactly one of ``report`` and ``skip_reason`` is set."""
+
     report: ReportExecutionInput | None
     skip_reason: ComparisonSkipReason | None
 
     @property
     def eligible(self) -> bool:
+        """Whether the request was adapted into a report rather than skipped."""
         return self.report is not None
 
 
@@ -73,7 +87,7 @@ def _skip(reason: ComparisonSkipReason) -> AdaptedComparisonRun:
     return AdaptedComparisonRun(report=None, skip_reason=reason)
 
 
-def _country_worker(worker: V2WorkerVersion, country: str):
+def _country_worker(worker: V2WorkerVersion, country: str) -> V2CountryWorker | None:
     return next(
         (item for item in worker.countries if item.country == country),
         None,
@@ -87,7 +101,6 @@ def adapt_annual_comparison(
     worker: V2WorkerVersion,
 ) -> AdaptedComparisonRun:
     """Convert only the reviewed production request shape without guessing."""
-
     if any(
         value is not None
         for key, value in payload.items()
@@ -173,7 +186,7 @@ def adapt_annual_comparison(
         )
     )
     geography = GeographySelection(
-        country=cast(CountryId, country),
+        country=cast("CountryId", country),
         region=region,
     )
     options = {

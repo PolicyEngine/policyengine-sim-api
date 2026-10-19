@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, uuid5
 
 from policyengine_simulation_contract.stage12_execution import (
@@ -31,6 +30,9 @@ from policyengine_simulation_executor.stage12_runtime.output_planning import (
 from policyengine_simulation_executor.stage12_runtime.partition import (
     US_REGION_GROUPS,
 )
+from policyengine_simulation_executor.stage12_runtime.simulation import (
+    simulation_runtime_params,
+)
 
 from .keys import (
     Stage12BaselineCacheIdentity,
@@ -51,7 +53,11 @@ from .models import (
     RemoteFunction,
     WorkSelection,
 )
+from .runtime import CACHE_HIT
 from .store import Stage12CacheStore
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
 
 PRECOMPUTE_YEARS = (2026, 2027, 2025)
 MANIFEST_DIGEST_PREFIX = "STAGE12_CACHE_MANIFEST_DIGEST="
@@ -59,6 +65,7 @@ DETERMINISM_SCHEMA = "stage12-dv1"
 
 
 def manifest_digest_line(digest: str) -> str:
+    """Return the output line that reports the published manifest digest."""
     return f"{MANIFEST_DIGEST_PREFIX}{digest}"
 
 
@@ -76,7 +83,9 @@ def _bundle_identity() -> CacheBundleIdentity:
     )
 
 
-def _planned_pair(year: int):
+def _planned_pair(
+    year: int,
+) -> tuple[PlannedSimulationExecutionInput, PlannedSimulationExecutionInput]:
     resolved = load_stage12_bundle()
     country = next(item for item in resolved.bundle.countries if item.country == "us")
     dataset = next(
@@ -131,14 +140,14 @@ def _planned_pair(year: int):
 
 def _scoped_planned_simulation(
     year: int, group: tuple[str, ...], *, reform: bool = False
-):
+) -> PlannedSimulationExecutionInput:
     baseline, reform_input = _planned_pair(year)
     selected = reform_input if reform else baseline
     return selected.model_copy(update={"options": {"region_group": list(group)}})
 
 
 def _scope_key(year: int, group: tuple[str, ...]) -> str:
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _country_module,
         _resolve_region,
     )
@@ -156,7 +165,8 @@ def _scope_key(year: int, group: tuple[str, ...]) -> str:
     )
     value = getattr(resolution.scoping_strategy, "cache_key", None)
     if not isinstance(value, str) or not value:
-        raise RuntimeError("Stage 12 region group produced no cache identity")
+        msg = "Stage 12 region group produced no cache identity"
+        raise RuntimeError(msg)
     return value
 
 
@@ -164,11 +174,7 @@ def _baseline_identity(
     year: int, group: tuple[str, ...]
 ) -> tuple[PlannedSimulationExecutionInput, Stage12BaselineCacheIdentity]:
     """Return a planned baseline and the identity its worker reads it under."""
-
     from policyengine_simulation_executor.spm import normalize_runtime_spm
-    from policyengine_simulation_executor.stage12_runtime.simulation import (
-        simulation_runtime_params,
-    )
 
     simulation = _scoped_planned_simulation(year, group)
     identity = collect_baseline_identity(
@@ -185,7 +191,6 @@ def _baseline_identity(
 
 def determinism_record(baselines: Sequence[BaselinePlanEntry]) -> dict[str, Any]:
     """Return the record a passing determinism check writes for these baselines."""
-
     return {
         "schema": DETERMINISM_SCHEMA,
         "baselines": [entry.digest for entry in baselines],
@@ -193,10 +198,20 @@ def determinism_record(baselines: Sequence[BaselinePlanEntry]) -> dict[str, Any]
 
 
 def determinism_record_path(baselines: Sequence[BaselinePlanEntry]) -> str:
+    """Return the bucket path of the determinism record for these baselines.
+
+    The path is named by the record's digest, so any change to the planned
+    baselines needs a new passing check.
+    """
     return f"determinism/us/{canonical_digest(determinism_record(baselines))}.json"
 
 
 def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
+    """Plan every dataset and baseline file and record which the bucket holds.
+
+    The plan covers each precompute year and US region group, and records
+    whether a passing determinism check exists for these baselines.
+    """
     resolved = load_stage12_bundle()
     store = Stage12CacheStore(bucket)
     datasets = []
@@ -243,7 +258,6 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
 
 def select_work(plan: PrecomputePlan) -> WorkSelection:
     """Select only missing files: a stored cache file is never replaced."""
-
     return WorkSelection(
         datasets=tuple(entry for entry in plan.datasets if not entry.exists),
         baselines=tuple(entry for entry in plan.baselines if not entry.exists),
@@ -251,7 +265,12 @@ def select_work(plan: PrecomputePlan) -> WorkSelection:
 
 
 def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildResult:
-    from policyengine_simulation_executor.simulation_runtime import (
+    """Have .py put one planned dataset year in the data folder, then upload it.
+
+    Raises ``RuntimeError`` when the installed bundle gives another identity
+    than the plan, or when the cache path already holds other data.
+    """
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _country_module,
         resolve_data_folder,
     )
@@ -259,7 +278,8 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
     resolved = load_stage12_bundle()
     identity = collect_dataset_identity(resolved, country="us", year=expected.year)
     if identity.store_path != expected.path:
-        raise RuntimeError("planned and runtime Stage 12 dataset identities differ")
+        msg = "planned and runtime Stage 12 dataset identities differ"
+        raise RuntimeError(msg)
     started = time.monotonic()
     _country_module("us").ensure_datasets(
         datasets=[identity.dataset],
@@ -277,7 +297,9 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
 
 
 def _ensure_dataset_file(bucket: str, year: int) -> None:
-    from policyengine_simulation_executor.simulation_runtime import resolve_data_folder
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
+        resolve_data_folder,
+    )
 
     identity = collect_dataset_identity(load_stage12_bundle(), country="us", year=year)
     local_path = Path(resolve_data_folder()) / identity.filename
@@ -288,8 +310,16 @@ def _ensure_dataset_file(bucket: str, year: int) -> None:
 def compute_baseline_impl(
     bucket: str, expected: BaselinePlanEntry
 ) -> BaselineBuildResult:
-    from policyengine_simulation_executor.simulation_runtime import resolve_data_folder
-    from policyengine_simulation_executor.stage12_runtime.simulation import (
+    """Calculate one planned baseline and upload the file .py saved.
+
+    Raises ``RuntimeError`` when the runtime identity differs from the plan,
+    when .py saved no file under the planned name, or when the cache path
+    already holds other data.
+    """
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
+        resolve_data_folder,
+    )
+    from policyengine_simulation_executor.stage12_runtime.simulation import (  # noqa: PLC0415  # resolved per call so tests can patch stage12_runtime.simulation.calculate_simulation_frames
         calculate_simulation_frames,
     )
 
@@ -297,15 +327,17 @@ def compute_baseline_impl(
         expected.year, tuple(expected.region_codes)
     )
     if identity.store_path != expected.path:
-        raise RuntimeError("planned and runtime Stage 12 baseline identities differ")
+        msg = "planned and runtime Stage 12 baseline identities differ"
+        raise RuntimeError(msg)
     _ensure_dataset_file(bucket, expected.year)
     started = time.monotonic()
     calculate_simulation_frames(simulation)
     local_path = Path(resolve_data_folder()) / identity.filename
     if not local_path.exists():
-        raise RuntimeError(
+        msg = (
             f"Stage 12 baseline calculation produced no cache file {identity.filename}"
         )
+        raise RuntimeError(msg)
     uploaded, stored = Stage12CacheStore(bucket).upload_file(expected.path, local_path)
     return BaselineBuildResult(
         **stored.model_dump(),
@@ -322,16 +354,16 @@ def verify_determinism_impl(
     bucket: str, plan: PrecomputePlan, expected: BaselinePlanEntry
 ) -> DeterminismVerdict:
     """Compare a stored baseline with a fresh calculation and record a pass."""
-
-    from policyengine_simulation_executor.simulation_runtime import resolve_data_folder
-    from policyengine_simulation_executor.stage12_runtime.simulation import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
+        resolve_data_folder,
+    )
+    from policyengine_simulation_executor.stage12_runtime.simulation import (  # noqa: PLC0415  # resolved per call so tests can patch stage12_runtime.simulation.calculate_simulation_frames
         calculate_simulation_frames,
     )
 
-    from .runtime import CACHE_HIT
-
     if expected not in plan.baselines:
-        raise RuntimeError("Stage 12 determinism probe is not a planned baseline")
+        msg = "Stage 12 determinism probe is not a planned baseline"
+        raise RuntimeError(msg)
     store = Stage12CacheStore(bucket)
     group = tuple(expected.region_codes)
     baseline = _scoped_planned_simulation(expected.year, group)
@@ -342,10 +374,11 @@ def verify_determinism_impl(
         store.download_file(expected.path, local_path)
     cached_calculation = calculate_simulation_frames(baseline)
     if cached_calculation.cache_outcome != CACHE_HIT:
-        raise RuntimeError(
+        msg = (
             "Stage 12 determinism check did not load the stored baseline "
             f"(cache outcome {cached_calculation.cache_outcome})"
         )
+        raise RuntimeError(msg)
     cached = cached_calculation.frames
     fresh = calculate_simulation_frames(reform).frames
     differences = []
@@ -374,6 +407,7 @@ def verify_determinism_impl(
 
 
 def build_manifest(plan: PrecomputePlan, store: Stage12CacheStore) -> CacheManifest:
+    """List every planned file with the digest and size the bucket reports."""
     artifacts = []
     for entry in plan.datasets:
         stored = store.describe(entry.path)
@@ -410,11 +444,17 @@ def build_manifest(plan: PrecomputePlan, store: Stage12CacheStore) -> CacheManif
 
 
 def publish_manifest_impl(bucket: str, plan: PrecomputePlan) -> str:
+    """Store the cache manifest and return its digest.
+
+    Raises ``RuntimeError`` when the bucket holds no passing determinism
+    record for the planned baselines.
+    """
     store = Stage12CacheStore(bucket)
     # Checked here, not only by the caller, so no run can publish baselines
     # that never passed the determinism check.
     if not store.exists(determinism_record_path(plan.baselines)):
-        raise RuntimeError("Stage 12 cache baselines have not passed determinism")
+        msg = "Stage 12 cache baselines have not passed determinism"
+        raise RuntimeError(msg)
     return store.write_manifest(build_manifest(plan, store).canonical_payload())
 
 
@@ -428,6 +468,12 @@ def run_precompute(
     publish_manifest: RemoteFunction,
     echo: Callable[[str], None] = print,
 ) -> str:
+    """Build the missing cache files, check determinism, publish the manifest.
+
+    Missing datasets are built first, then missing baselines, in parallel
+    Modal calls. Prints the manifest digest through ``echo`` and returns it.
+    Exits with ``SystemExit`` when the determinism check fails.
+    """
     plan = PrecomputePlan.model_validate(plan_artifacts.remote(bucket))
     work = select_work(plan)
     dataset_calls = [
@@ -455,6 +501,7 @@ def run_precompute(
             )
     digest = publish_manifest.remote(bucket, plan.model_dump())
     if not isinstance(digest, str) or not digest:
-        raise RuntimeError("Stage 12 cache manifest publisher returned no digest")
+        msg = "Stage 12 cache manifest publisher returned no digest"
+        raise RuntimeError(msg)
     echo(manifest_digest_line(digest))
     return digest

@@ -274,7 +274,8 @@ def test_sync_compatibility_endpoint_preserves_explicit_null(
 
     def capture(params, *, runtime):
         captured.append(params)
-        raise SPMInputError("SPM_GEOGRAPHY_REQUIRED", "intentional test stop")
+        error_code = "SPM_GEOGRAPHY_REQUIRED"
+        raise SPMInputError(error_code, "intentional test stop")
 
     monkeypatch.setattr(simulation, "run_simulation_impl", capture)
     app = FastAPI()
@@ -600,9 +601,11 @@ def test_fanout_and_budget_window_preserve_settings_and_receipts():
 
 
 def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
-    import policyengine.core
     import policyengine_simulation_executor.spm as spm
-    from policyengine_simulation_executor import baseline_artifacts
+    from policyengine_simulation_executor import (
+        baseline_artifacts,
+        stage_reporting_simulation,
+    )
 
     calls = []
     monkeypatch.setattr(spm, "normalize_runtime_spm", lambda params: SELECTION)
@@ -617,7 +620,11 @@ def test_worker_build_passes_selection_to_baseline_and_reform(monkeypatch):
     monkeypatch.setattr(
         baseline_artifacts, "ArtifactBaselineSimulation", lambda **k: calls.append(k)
     )
-    monkeypatch.setattr(policyengine.core, "Simulation", lambda **k: calls.append(k))
+    monkeypatch.setattr(
+        stage_reporting_simulation,
+        "StageReportingSimulation",
+        lambda **k: calls.append(k),
+    )
     for policy in (None, {"test": 123}):
         simulation_runtime._build_simulation(
             {"country": "us", "spm": SELECTION},

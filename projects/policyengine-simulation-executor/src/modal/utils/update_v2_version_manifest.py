@@ -22,6 +22,11 @@ from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 
 
 def build_worker(validation_payload: object) -> V2WorkerVersion:
+    """Build the installed bundle's v2 worker entry from a validation record.
+
+    Raises ValueError if the record is invalid or the entry carries a
+    credential-like key.
+    """
     resolved = load_stage12_bundle()
     validation = V2WorkerValidation.model_validate(validation_payload)
     worker = V2WorkerVersion(
@@ -44,6 +49,10 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
 
 
 def main() -> None:
+    """Publish the validated worker to the v2 manifest Dict and print the manifest.
+
+    Refuses a ``--manifest-name`` that is empty or names the v1 routing state.
+    """
     parser = argparse.ArgumentParser(
         description="Publish a validated Stage 12 v2 worker manifest",
     )

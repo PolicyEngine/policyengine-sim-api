@@ -8,7 +8,7 @@ from conftest import make_settings
 from policyengine_observability import REQUEST_ID_HEADER
 from policyengine_simulation_entry.backend import (
     BackendAuthenticationError,
-    BackendUnavailable,
+    BackendUnavailableError,
     OldGatewayBackend,
 )
 
@@ -199,7 +199,8 @@ async def test_post_connection_error_is_not_retried():
                 json={"access_token": "token", "expires_in": 3600},
             )
         gateway_attempts += 1
-        raise httpx.ConnectError("unavailable", request=request)
+        msg = "unavailable"
+        raise httpx.ConnectError(msg, request=request)
 
     backend = OldGatewayBackend(
         make_settings(),
@@ -207,7 +208,7 @@ async def test_post_connection_error_is_not_retried():
     )
     await backend.start()
     try:
-        with pytest.raises(BackendUnavailable):
+        with pytest.raises(BackendUnavailableError):
             await backend.request(
                 "POST",
                 "/simulate/economy/comparison",
@@ -232,7 +233,8 @@ async def test_get_connection_error_is_retried_once():
             )
         gateway_attempts += 1
         if gateway_attempts == 1:
-            raise httpx.ConnectError("unavailable", request=request)
+            msg = "unavailable"
+            raise httpx.ConnectError(msg, request=request)
         return httpx.Response(200, json={"status": "complete"})
 
     backend = OldGatewayBackend(

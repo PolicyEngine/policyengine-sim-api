@@ -1,3 +1,5 @@
+"""PolicyEngine simulation executor: the economy-comparison API and its runtime."""
+
 from fastapi import FastAPI
 from policyengine_observability import ObservabilityRuntime
 
@@ -9,9 +11,6 @@ to easily be run in whatever cloud provider container or desktop or test environ
 """
 
 
-def initialize(app: FastAPI, runtime: ObservabilityRuntime):
-    """
-    attach all routes to the app and configure them to use the provided SQLModel engine
-    and jwt settings.
-    """
+def initialize(app: FastAPI, runtime: ObservabilityRuntime) -> None:
+    """Mount the simulation routes on ``app``, reporting telemetry via ``runtime``."""
     app.include_router(create_router(runtime))

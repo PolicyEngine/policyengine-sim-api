@@ -1,3 +1,5 @@
+"""SQLModel engine and per-request session dependency helpers."""
+
 from collections.abc import Callable, Generator
 from typing import Any
 
@@ -13,8 +15,10 @@ from sqlmodel import Session
 
 
 def create_sqlite_engine(filename: str | None = None) -> Engine:
-    """
-    For desktop and testing, use sqlite to back sqlmodel
+    """Create a SQLite engine for desktop use and tests.
+
+    Without ``filename`` the database is in memory; StaticPool keeps that single
+    in-memory connection shared across threads.
     """
     sqlite_url = f"sqlite:///{filename}" if filename else "sqlite:///:memory:"
     connect_args = {"check_same_thread": False}
@@ -25,12 +29,12 @@ SessionGeneratorFactory = Callable[[], Generator[Session, Any, None]]
 
 
 def create_session_dep(engine: Engine) -> SessionGeneratorFactory:
-    """
-    given an SQLModelEngine create a session dependency for use in
-    routers.
+    """Return a FastAPI dependency that yields one SQLModel session per request.
+
+    The session is bound to ``engine`` and closed when the request finishes.
     """
 
-    def session_dep():
+    def session_dep() -> Generator[Session]:
         with Session(engine) as session:
             yield session
 

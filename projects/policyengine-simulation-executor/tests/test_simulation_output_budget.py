@@ -12,7 +12,7 @@ from policyengine_simulation_executor.simulation_output_budget import (
 
 
 def _simulation(columns: dict[str, list[float]]):
-    """A simulation whose household output is a MicroDataFrame, as policyengine builds it."""
+    """Build a simulation whose household output is a policyengine MicroDataFrame."""
     household = MicroDataFrame(pd.DataFrame(columns), weights="household_weight")
     return SimpleNamespace(
         output_dataset=SimpleNamespace(data=SimpleNamespace(household=household))

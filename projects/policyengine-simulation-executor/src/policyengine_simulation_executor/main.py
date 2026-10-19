@@ -1,9 +1,12 @@
+"""Local FastAPI entrypoint serving the executor routes plus ping and health probes."""
+
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from policyengine_fastapi import ping
-from policyengine_fastapi.exit import exit
+from policyengine_fastapi.exit import exit as app_exit
 from policyengine_fastapi.health import (
     HealthRegistry,
     HealthSystemReporter,
@@ -25,8 +28,9 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    async with exit.lifespan():
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Run the app inside the exit handler and flush observability on shutdown."""
+    async with app_exit.lifespan():
         try:
             yield
         finally:

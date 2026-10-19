@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from fixtures.test_policyengine_package_update_scripts import (
@@ -15,6 +15,9 @@ from fixtures.test_policyengine_package_update_scripts import (
     run_updater,
     updater_env,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytest_plugins = ("fixtures.test_policyengine_package_update_scripts",)
 
@@ -214,7 +217,6 @@ def test_a_recovered_branch_gets_no_pr_without_verification(
     message: str,
 ) -> None:
     """#743 round-2 review: branch recovery may not bypass validation."""
-
     gh_log = tmp_path / "gh.log"
     install_fake_git(
         fake_bin,
@@ -401,15 +403,30 @@ INSTALLED = "\n".join(
 )
 
 
+def _run_helper(
+    command: str,
+    *,
+    check: bool = False,
+    input_text: str | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run one command of the repository's Python update helper."""
+    return subprocess.run(
+        [sys.executable, str(HELPER), command],
+        input=input_text,
+        capture_output=True,
+        text=True,
+        check=check,
+        env=env,
+    )
+
+
 def _verify(payload: str) -> subprocess.CompletedProcess[str]:
     import os
 
-    return subprocess.run(
-        [sys.executable, str(HELPER), "verify-dispatch"],
-        input=INSTALLED,
-        capture_output=True,
-        text=True,
-        check=False,
+    return _run_helper(
+        "verify-dispatch",
+        input_text=INSTALLED,
         env={**os.environ, "RELEASE_PAYLOAD": payload},
     )
 
@@ -467,7 +484,6 @@ def test_verify_dispatch_rejects_another_bundle() -> None:
 
 def test_verify_dispatch_compares_the_certificate_when_installed_reports_one() -> None:
     """#743 round-2 review: removing the certificate comparison must fail a test."""
-
     import os
 
     installed = INSTALLED.replace(
@@ -475,12 +491,9 @@ def test_verify_dispatch_compares_the_certificate_when_installed_reports_one() -
     )
 
     def verify(payload: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [sys.executable, str(HELPER), "verify-dispatch"],
-            input=installed,
-            capture_output=True,
-            text=True,
-            check=False,
+        return _run_helper(
+            "verify-dispatch",
+            input_text=installed,
             env={**os.environ, "RELEASE_PAYLOAD": payload},
         )
 
@@ -492,16 +505,12 @@ def test_verify_dispatch_compares_the_certificate_when_installed_reports_one() -
 
 def test_verify_dispatch_fails_closed_when_the_installed_bundle_cannot_answer() -> None:
     """Review M3: a named dataset digest needs an installed one to compare."""
-
     import os
 
     installed = INSTALLED.replace("uk_dataset_sha256=" + "a" * 64, "uk_dataset_sha256=")
-    result = subprocess.run(
-        [sys.executable, str(HELPER), "verify-dispatch"],
-        input=installed,
-        capture_output=True,
-        text=True,
-        check=False,
+    result = _run_helper(
+        "verify-dispatch",
+        input_text=installed,
         env={**os.environ, "RELEASE_PAYLOAD": _payload()},
     )
     assert result.returncode != 0
@@ -582,7 +591,6 @@ def test_bundle_versions_matches_policyengine_release_identity() -> None:
     certified_data_artifact.sha256, packages.policyengine-core.version), so a
     real dispatch for the locked wrapper verifies.
     """
-
     import json
     import os
 
@@ -590,10 +598,8 @@ def test_bundle_versions_matches_policyengine_release_identity() -> None:
 
     bundle = get_current_bundle()
     record = bundle["data_releases"]["uk"]
-    output = subprocess.run(
-        [sys.executable, str(HELPER), "bundle-versions"],
-        capture_output=True,
-        text=True,
+    output = _run_helper(
+        "bundle-versions",
         check=True,
     ).stdout
     installed = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
@@ -609,12 +615,9 @@ def test_bundle_versions_matches_policyengine_release_identity() -> None:
             }
         },
     }
-    result = subprocess.run(
-        [sys.executable, str(HELPER), "verify-dispatch"],
-        input=output,
-        capture_output=True,
-        text=True,
-        check=False,
+    result = _run_helper(
+        "verify-dispatch",
+        input_text=output,
         env={**os.environ, "RELEASE_PAYLOAD": json.dumps(payload)},
     )
     assert result.returncode == 0, result.stderr
@@ -628,7 +631,6 @@ def test_bundle_versions_reports_the_receipt_certificate_digest(tmp_path) -> Non
     the digest it computes from the UK record must reach the output unchanged,
     and a dispatch naming another certificate must then be refused.
     """
-
     import json
     import os
 
@@ -643,10 +645,8 @@ def test_bundle_versions_reports_the_receipt_certificate_digest(tmp_path) -> Non
         "sys.modules['policyengine.provenance.receipt'] = module\n"
     )
     env = {**os.environ, "PYTHONPATH": str(stand_in)}
-    output = subprocess.run(
-        [sys.executable, str(HELPER), "bundle-versions"],
-        capture_output=True,
-        text=True,
+    output = _run_helper(
+        "bundle-versions",
         check=True,
         env=env,
     ).stdout
@@ -659,12 +659,9 @@ def test_bundle_versions_reports_the_receipt_certificate_digest(tmp_path) -> Non
     record = get_current_bundle()["data_releases"]["uk"]
     expected = hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest()
     assert installed["uk_certificate_sha256"] == expected
-    mismatch = subprocess.run(
-        [sys.executable, str(HELPER), "verify-dispatch"],
-        input=output,
-        capture_output=True,
-        text=True,
-        check=False,
+    mismatch = _run_helper(
+        "verify-dispatch",
+        input_text=output,
         env={
             **os.environ,
             "RELEASE_PAYLOAD": json.dumps(

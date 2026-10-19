@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from policyengine_simulation_executor.simulation_macro_output import (
     BaselineReformValue,
     InequalityOutput,
@@ -11,7 +9,11 @@ from policyengine_simulation_executor.simulation_macro_output import (
 from policyengine_simulation_executor.simulation_output_common import _number
 
 
-def build_inequality(analysis: Any) -> InequalityOutput:
+def build_inequality(analysis: object) -> InequalityOutput:
+    """Pair baseline and reform Gini and top 10% and top 1% income shares.
+
+    A metric the analysis lacks (or reports as NaN) is emitted as 0.0.
+    """
     baseline = getattr(analysis, "baseline_inequality", None)
     reform = getattr(analysis, "reform_inequality", None)
     if isinstance(baseline, InequalityOutput):

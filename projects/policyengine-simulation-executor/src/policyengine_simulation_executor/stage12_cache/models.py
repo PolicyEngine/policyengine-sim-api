@@ -8,10 +8,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class StrictCacheModel(BaseModel):
+    """Base for the cache models: unknown fields are rejected and values are frozen."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
 class CacheBundleIdentity(StrictCacheModel):
+    """The installed bundle's US package, data and dataset versions."""
+
     bundle_manifest_sha256: str
     policyengine_version: str
     core_package_version: str
@@ -22,6 +26,8 @@ class CacheBundleIdentity(StrictCacheModel):
 
 
 class DatasetPlanEntry(StrictCacheModel):
+    """One planned dataset year, its cache path and whether it is already stored."""
+
     year: int
     digest: str
     path: str
@@ -30,6 +36,12 @@ class DatasetPlanEntry(StrictCacheModel):
 
 
 class BaselinePlanEntry(StrictCacheModel):
+    """One planned baseline for a year and region group.
+
+    ``filename`` is the name .py saves and loads; ``exists`` records whether
+    the bucket already holds the file.
+    """
+
     year: int
     segment_index: Annotated[int, Field(ge=0, lt=20)]
     region_codes: Annotated[tuple[str, ...], Field(min_length=1)]
@@ -42,6 +54,12 @@ class BaselinePlanEntry(StrictCacheModel):
 
 
 class PrecomputePlan(StrictCacheModel):
+    """Every dataset and baseline the cache holds for the installed bundle.
+
+    ``determinism_verified`` is true when the bucket holds a passing
+    determinism record for exactly these baselines.
+    """
+
     schema_version: Literal[1] = 1
     years: tuple[int, ...]
     datasets: tuple[DatasetPlanEntry, ...]
@@ -52,23 +70,31 @@ class PrecomputePlan(StrictCacheModel):
 
 
 class WorkSelection(StrictCacheModel):
+    """The planned datasets and baselines a run still has to build."""
+
     datasets: tuple[DatasetPlanEntry, ...]
     baselines: tuple[BaselinePlanEntry, ...]
 
 
 class CacheObject(StrictCacheModel):
+    """A stored cache object's path, content digest and size."""
+
     path: str
     content_sha256: str
     size_bytes: Annotated[int, Field(ge=0)]
 
 
 class DatasetBuildResult(CacheObject):
+    """A built dataset file and whether this run uploaded it."""
+
     year: int
     uploaded: bool
     build_seconds: float
 
 
 class BaselineBuildResult(CacheObject):
+    """A computed baseline file and whether this run uploaded it."""
+
     year: int
     segment_index: int
     simulation_id: str
@@ -78,11 +104,18 @@ class BaselineBuildResult(CacheObject):
 
 
 class DeterminismVerdict(StrictCacheModel):
+    """Whether a stored baseline matched a fresh calculation.
+
+    ``differences`` lists at most the first 50 differing entities or columns.
+    """
+
     equal: bool
     differences: tuple[str, ...]
 
 
 class ManifestArtifact(StrictCacheModel):
+    """One dataset or baseline file listed in the cache manifest."""
+
     type: Literal["dataset", "baseline"]
     path: str
     filename: str
@@ -93,6 +126,8 @@ class ManifestArtifact(StrictCacheModel):
 
 
 class CacheManifest(StrictCacheModel):
+    """The published list of cache files for one bundle and region partition."""
+
     manifest_schema: Literal["stage12-mf1"] = Field(
         default="stage12-mf1",
         alias="schema",
@@ -105,10 +140,25 @@ class CacheManifest(StrictCacheModel):
     artifacts: tuple[ManifestArtifact, ...]
 
     def canonical_payload(self) -> dict[str, Any]:
+        """Return the JSON payload that is hashed and stored, keyed by ``schema``."""
         return self.model_dump(mode="json", by_alias=True)
 
 
-class RemoteFunction(Protocol):
-    def remote(self, *args: Any) -> Any: ...
+class SpawnedCall(Protocol):
+    """The handle a spawned Modal call returns."""
 
-    def spawn(self, *args: Any) -> Any: ...
+    def get(self) -> object:
+        """Block until the call finishes and return its result."""
+        ...
+
+
+class RemoteFunction(Protocol):
+    """The part of a Modal function handle the precompute run uses."""
+
+    def remote(self, *args: Any) -> object:  # noqa: ANN401  # mirrors modal.Function.remote, whose parameters differ per function
+        """Run the function in its container and block until it returns."""
+        ...
+
+    def spawn(self, *args: Any) -> SpawnedCall:  # noqa: ANN401  # mirrors modal.Function.spawn, whose parameters differ per function
+        """Start the call without waiting for it."""
+        ...

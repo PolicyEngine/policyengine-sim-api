@@ -450,7 +450,6 @@ def test_planned_baseline_file_is_the_one_the_worker_saves_and_loads(
     monkeypatch,
 ) -> None:
     """Uses the real bundle, US model and .py naming: no stubbed ensure()."""
-
     from policyengine.core import Dataset
     from policyengine.tax_benefit_models.common.model_version import (
         output_dataset_filepath,

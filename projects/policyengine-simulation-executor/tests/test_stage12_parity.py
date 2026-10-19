@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 from policyengine_simulation_executor.stage12_parity import (
     NumericalTolerance,
-    ParityMismatch,
+    ParityMismatchError,
     compare_aggregate_reports,
     compare_simulation_frames,
 )
@@ -42,7 +42,7 @@ def test_simulation_parity_requires_reviewed_field_specific_tolerance() -> None:
     incumbent = _frames()
     candidate = _frames(100.005)
 
-    with pytest.raises(ParityMismatch) as error:
+    with pytest.raises(ParityMismatchError) as error:
         compare_simulation_frames(incumbent, candidate)
     assert error.value.code == "numeric_value_mismatch"
     assert "100" not in str(error.value)
@@ -61,12 +61,12 @@ def test_simulation_parity_compares_schema_dtypes_and_row_membership() -> None:
     wrong_dtype["person"]["person_household_id"] = wrong_dtype["person"][
         "person_household_id"
     ].astype("int32")
-    with pytest.raises(ParityMismatch, match="dtype_mismatch"):
+    with pytest.raises(ParityMismatchError, match="dtype_mismatch"):
         compare_simulation_frames(_frames(), wrong_dtype)
 
     missing_row = _frames()
     missing_row["person"] = missing_row["person"].iloc[:1]
-    with pytest.raises(ParityMismatch, match="row_membership_mismatch"):
+    with pytest.raises(ParityMismatchError, match="row_membership_mismatch"):
         compare_simulation_frames(_frames(), missing_row)
 
 
@@ -80,7 +80,7 @@ def test_aggregate_parity_compares_every_field_and_bounds_diagnostics() -> None:
         "poverty": [{"name": "all", "rate": 0.12}],
     }
 
-    with pytest.raises(ParityMismatch) as error:
+    with pytest.raises(ParityMismatchError) as error:
         compare_aggregate_reports(incumbent, candidate)
     assert error.value.path == "budget.total"
     assert "100" not in str(error.value)

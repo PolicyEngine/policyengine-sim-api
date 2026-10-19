@@ -6,7 +6,7 @@ richer mock (fixtures/gateway/test_endpoints.py) for endpoint tests.
 """
 
 import pytest
-from policyengine_simulation_contract import budget_window_state
+from policyengine_simulation_contract import budget_window_state, job_progress_state
 
 
 class MockDict:
@@ -28,7 +28,7 @@ class MockDict:
 
 @pytest.fixture
 def mock_modal(monkeypatch):
-    """Patch modal.Dict in budget_window_state with an in-memory store."""
+    """Patch modal.Dict in the Dict-backed state modules with an in-memory store."""
     mock_dicts: dict[str, dict] = {}
 
     class MockModalDict:
@@ -37,11 +37,13 @@ def mock_modal(monkeypatch):
             if create_if_missing and name not in mock_dicts:
                 mock_dicts[name] = {}
             if name not in mock_dicts:
-                raise KeyError(f"Mock dict not configured for: {name}")
+                msg = f"Mock dict not configured for: {name}"
+                raise KeyError(msg)
             return MockDict(mock_dicts[name])
 
     class MockModal:
         Dict = MockModalDict
 
     monkeypatch.setattr(budget_window_state, "modal", MockModal)
+    monkeypatch.setattr(job_progress_state, "modal", MockModal)
     return {"dicts": mock_dicts}

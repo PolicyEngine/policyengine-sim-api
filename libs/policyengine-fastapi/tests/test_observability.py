@@ -35,7 +35,8 @@ def test_parse_header_value_pairs__raises_for_invalid_pair():
     except ValueError as error:
         assert "key=value" in str(error)
     else:
-        raise AssertionError("Expected invalid OTLP header parsing to fail")
+        msg = "Expected invalid OTLP header parsing to fail"
+        raise AssertionError(msg)
 
 
 def test_observability_config_disabled__returns_disabled_defaults():
@@ -120,7 +121,8 @@ def test_contract_models__reject_extra_fields():
     except ValidationError as error:
         assert "unexpected" in str(error)
     else:
-        raise AssertionError("Expected extra field validation to fail")
+        msg = "Expected extra field validation to fail"
+        raise AssertionError(msg)
 
 
 def test_noop_observability__accepts_calls_without_side_effects():

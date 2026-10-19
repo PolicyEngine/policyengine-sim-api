@@ -34,7 +34,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_executor.artifact_keys import (
     BaselineArtifactIdentity,
@@ -54,6 +55,15 @@ from policyengine_simulation_executor.precompute_models import (
     WorkSelection,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from types import ModuleType
+
+    from policyengine.core import Simulation
+
+    from policyengine_simulation_executor.artifact_store import ArtifactStore
+    from policyengine_simulation_executor.simulation_runtime import RegionResolution
+
 logger = logging.getLogger(__name__)
 
 PRECOMPUTE_COUNTRY = "us"
@@ -69,11 +79,12 @@ MANIFEST_DIGEST_PREFIX = "MANIFEST_DIGEST="
 
 
 def manifest_digest_line(digest: str) -> str:
+    """Format the ``MANIFEST_DIGEST=<digest>`` line the CI deploy job parses."""
     return f"{MANIFEST_DIGEST_PREFIX}{digest}"
 
 
 def cohort_params(year: int, group: list[str]) -> dict:
-    """The synthetic request a segmented-national child would receive."""
+    """Return the synthetic request a segmented-national child would receive."""
     return {
         "country": PRECOMPUTE_COUNTRY,
         "scope": "macro",
@@ -82,7 +93,9 @@ def cohort_params(year: int, group: list[str]) -> dict:
     }
 
 
-def _cohort_resolution(year: int, group: list[str]):
+def _cohort_resolution(
+    year: int, group: list[str]
+) -> tuple[dict[str, Any], ModuleType, RegionResolution]:
     """Cohort request params, country module, and region resolution.
 
     The planner's identity (``cohort_identity``) and the worker's
@@ -90,7 +103,7 @@ def _cohort_resolution(year: int, group: list[str]):
     resolution or the in-container id checks abort the run; sharing this
     prologue removes the drift surface.
     """
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _country_module,
         _resolve_region,
     )
@@ -110,7 +123,7 @@ def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
     from policyengine_simulation_executor.baseline_artifacts import (
         qualifying_baseline_identity,
     )
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _resolve_dataset_selection,
     )
 
@@ -126,11 +139,12 @@ def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
         year=year,
     )
     if identity is None:
-        raise RuntimeError(
+        msg = (
             f"Cohort request for year {year} group {group} does not qualify "
             "for a deterministic baseline id — writer and reader predicates "
             "have diverged."
         )
+        raise RuntimeError(msg)
     return identity
 
 
@@ -143,7 +157,7 @@ def select_work(plan: PrecomputePlan, *, force: bool) -> WorkSelection:
 
 
 def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
-    """The deploy manifest: receipt + every artifact the image must fetch."""
+    """Build the deploy manifest: the receipt and each artifact the image must fetch."""
     artifacts = [
         ManifestArtifact(
             type="dataset",
@@ -173,21 +187,24 @@ def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
 
 def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
     """Compute every expected artifact identity and its store presence."""
-    from policyengine_simulation_executor.artifact_keys import (
+    from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_keys.collect_dataset_identity
         collect_dataset_identity,
     )
-    from policyengine_simulation_executor.artifact_store import ArtifactStore
-    from policyengine_simulation_executor.national_partition import (
+    from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_store.ArtifactStore
+        ArtifactStore,
+    )
+    from policyengine_simulation_executor.national_partition import (  # noqa: PLC0415  # resolved per call so tests can patch national_partition.national_region_groups
         national_region_groups,
     )
-    from policyengine_simulation_executor.release_bundle import (
+    from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # resolved per call so tests can patch release_bundle.get_country_release_bundle
         get_country_release_bundle,
     )
 
     store = ArtifactStore(bucket)
     groups = national_region_groups(PRECOMPUTE_COUNTRY)
     if not groups:
-        raise RuntimeError(f"No national partition for {PRECOMPUTE_COUNTRY!r}")
+        msg = f"No national partition for {PRECOMPUTE_COUNTRY!r}"
+        raise RuntimeError(msg)
 
     datasets: list[DatasetPlanEntry] = []
     baselines: list[BaselinePlanEntry] = []
@@ -229,27 +246,28 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
 
 def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildResult:
     """Wave 1: build one single-year dataset and upload it."""
-    from pathlib import Path
-
-    from policyengine_simulation_executor.artifact_keys import (
+    from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_keys.collect_dataset_identity
         collect_dataset_identity,
     )
-    from policyengine_simulation_executor.artifact_store import ArtifactStore
-    from policyengine_simulation_executor.release_bundle import (
+    from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_store.ArtifactStore
+        ArtifactStore,
+    )
+    from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # resolved per call so tests can patch release_bundle.get_country_release_bundle
         get_country_release_bundle,
     )
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _country_module,
         resolve_data_folder,
     )
 
     identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, expected.year)
     if identity.store_path != expected.path:
-        raise RuntimeError(
+        msg = (
             "Planned and in-container dataset identities disagree "
             f"({expected.path} != {identity.store_path}); refusing to upload "
             "under a mismatched key."
         )
+        raise RuntimeError(msg)
 
     data_folder = resolve_data_folder()
     country_module = _country_module(PRECOMPUTE_COUNTRY)
@@ -263,7 +281,8 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
 
     local_file = Path(data_folder) / identity.filename
     if not local_file.exists():
-        raise RuntimeError(f"ensure_datasets produced no file at {local_file}")
+        msg = f"ensure_datasets produced no file at {local_file}"
+        raise RuntimeError(msg)
     uploaded = ArtifactStore(bucket).upload_file(identity.store_path, local_file)
     return DatasetBuildResult(
         year=expected.year,
@@ -274,15 +293,17 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
     )
 
 
-def _prepare_cohort_baseline(bucket: str, expected: BaselinePlanEntry):
+def _prepare_cohort_baseline(
+    bucket: str, expected: BaselinePlanEntry
+) -> tuple[ArtifactStore, Path, Simulation]:
     """Shared by compute and verify: dataset download + simulation build."""
-    from pathlib import Path
-
-    from policyengine_simulation_executor.artifact_keys import (
+    from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_keys.collect_dataset_identity
         collect_dataset_identity,
     )
-    from policyengine_simulation_executor.artifact_store import ArtifactStore
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_store.ArtifactStore
+        ArtifactStore,
+    )
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _build_simulation,
         _load_dataset,
         _resolve_dataset_selection,
@@ -313,19 +334,21 @@ def _prepare_cohort_baseline(bucket: str, expected: BaselinePlanEntry):
         region_code=resolution.code,
     )
     if baseline.id != expected.simulation_id:
-        raise RuntimeError(
+        msg = (
             "Planned and in-container baseline ids disagree "
             f"({expected.simulation_id} != {baseline.id}); refusing to act "
             "under a mismatched key."
         )
+        raise RuntimeError(msg)
     planned_storage_id = Path(expected.path).stem
     storage_id = getattr(baseline, "storage_id", baseline.id)
     if storage_id != planned_storage_id:
-        raise RuntimeError(
+        msg = (
             "Planned and in-container baseline storage ids disagree "
             f"({planned_storage_id} != {storage_id}); refusing to act "
             "under a mismatched key."
         )
+        raise RuntimeError(msg)
 
     # The extras economic_impact_analysis applies unconditionally before
     # ensure(); the artifact must carry them or every request would fail
@@ -348,10 +371,11 @@ def compute_baseline_impl(
 
     store, data_folder, baseline = _prepare_cohort_baseline(bucket, expected)
     if not isinstance(baseline, ArtifactBaselineSimulation):
-        raise RuntimeError(
+        msg = (
             "Precompute built a plain Simulation — the qualifying predicate "
             "rejected the cohort request shape."
         )
+        raise RuntimeError(msg)  # noqa: TRY004  # a precompute invariant failure, not a bad argument; raised across the compute_baseline Modal boundary and asserted by test_precompute
 
     started = time.monotonic()
     baseline.ensure()
@@ -361,7 +385,8 @@ def compute_baseline_impl(
         getattr(baseline, "storage_id", baseline.id)
     )
     if not artifact_file.exists():
-        raise RuntimeError(f"ensure() left no artifact at {artifact_file}")
+        msg = f"ensure() left no artifact at {artifact_file}"
+        raise RuntimeError(msg)
     uploaded = store.upload_file(expected.path, artifact_file)
     return BaselineComputeResult(
         year=expected.year,
@@ -386,9 +411,13 @@ def verify_determinism_impl(
     deliberately not used (HDF5 container metadata is not guaranteed
     stable).
     """
-    from policyengine.core import Simulation
+    from policyengine.core import (  # noqa: PLC0415  # resolved per call so tests can patch policyengine.core.Simulation
+        Simulation,
+    )
 
-    from policyengine_simulation_executor.baseline_artifacts import OUTCOME_HIT
+    from policyengine_simulation_executor.baseline_artifacts import (
+        OUTCOME_HIT,
+    )
 
     store, data_folder, baseline = _prepare_cohort_baseline(bucket, expected)
     artifact_file = data_folder / baseline_artifact_filename(
@@ -398,10 +427,11 @@ def verify_determinism_impl(
         store.download_file(expected.path, artifact_file)
     baseline.ensure()
     if baseline.artifact_outcome != OUTCOME_HIT:
-        raise RuntimeError(
+        msg = (
             "Determinism gate could not load the artifact it verifies "
             f"(outcome={baseline.artifact_outcome})"
         )
+        raise RuntimeError(msg)
 
     selection = getattr(baseline, "spm_config", None)
     fresh = Simulation(
@@ -434,7 +464,10 @@ def verify_determinism_impl(
 
 
 def publish_manifest_impl(bucket: str, plan: PrecomputePlan) -> str:
-    from policyengine_simulation_executor.artifact_store import ArtifactStore
+    """Store the plan's manifest write-once and return its content digest."""
+    from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_store.ArtifactStore
+        ArtifactStore,
+    )
 
     manifest = build_manifest(plan)
     return ArtifactStore(bucket).write_manifest(manifest.canonical_payload())
@@ -451,7 +484,7 @@ def run_precompute(
     publish_manifest: RemoteFunction,
     echo: Callable[[str], None] = print,
 ) -> str:
-    """The local-entrypoint orchestration: plan, spawn misses, gate, publish.
+    """Orchestrate the local entrypoint: plan, spawn misses, gate, publish.
 
     Takes the five Modal function handles as parameters (each offering
     ``.remote``/``.spawn``) so the flow is testable with plain fakes.

@@ -4,23 +4,30 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from scripts.rules.load import REGISTRY_PATH, load_text
 from scripts.rules.model import Registry, Status, Violation
 
+if TYPE_CHECKING:
+    from pathlib import Path
 
-class BaseUnavailable(Exception):
+
+class BaseUnavailableError(Exception):
     """The base ref could not be read."""
 
 
 def default_base_ref() -> str | None:
+    """Return ``origin/<GITHUB_BASE_REF>`` on a pull-request run, otherwise None."""
     base = os.environ.get("GITHUB_BASE_REF")
     return f"origin/{base}" if base else None
 
 
 def load_base_registry(root: Path, ref: str) -> Registry | None:
-    """The registry as it is on ``ref``, or None if the base has no registry yet."""
+    """Return the registry as it is on ``ref``, or None if the base has none yet.
+
+    Raise BaseUnavailableError when ``ref`` does not name a commit.
+    """
     verify = subprocess.run(
         ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
         cwd=root,
@@ -28,7 +35,7 @@ def load_base_registry(root: Path, ref: str) -> Registry | None:
         text=True,
     )
     if verify.returncode != 0:
-        raise BaseUnavailable(ref)
+        raise BaseUnavailableError(ref)
     shown = subprocess.run(
         ["git", "show", f"{ref}:{REGISTRY_PATH.as_posix()}"],
         cwd=root,
@@ -74,7 +81,8 @@ def check_baselines(
                         new.id,
                         "baseline",
                         f"status weakened from {old.status} to {new.status}",
-                        'add [rule.downgrade] reason = "..." so the downgrade is explicit and reviewable',
+                        'add [rule.downgrade] reason = "..." so the downgrade is '
+                        "explicit and reviewable",
                     )
                 )
     for rule_id in sorted(current_ids - {rule.id for rule in base.rules}):

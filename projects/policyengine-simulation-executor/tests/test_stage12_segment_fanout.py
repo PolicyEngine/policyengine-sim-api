@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from types import SimpleNamespace
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import pandas as pd
 import pytest
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import SimulationRole
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
-    Stage12Cancellation,
+    Stage12CancellationError,
     Stage12ExecutionError,
     Stage12SegmentRunner,
     build_segment_inputs,
@@ -22,6 +21,9 @@ from policyengine_simulation_executor.stage12_runtime.partition import (
     US_REGION_GROUPS,
 )
 from test_stage12_runtime import _planned_simulation
+
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
 
 
 def _frames(index: int) -> dict[str, pd.DataFrame]:
@@ -119,7 +121,7 @@ def _runner(*, errors: dict[int, list[Exception]] | None = None):
     runner = Stage12SegmentRunner(
         simulation,
         app_name="stage12-app",
-        runtime=cast(ObservabilityRuntime, runtime),
+        runtime=cast("ObservabilityRuntime", runtime),
         modal_module=SimpleNamespace(Function=FunctionLookup),
         groups=US_REGION_GROUPS,
         sleep=sleeps.append,
@@ -189,7 +191,8 @@ def test_dispatch_error_cancels_segments_that_already_started() -> None:
 
     def fail_during_dispatch(payload, *, observability_context):
         if payload["segment_index"] == 5:
-            raise ConnectionError("dispatch failed")
+            msg = "dispatch failed"
+            raise ConnectionError(msg)
         return spawn(payload, observability_context=observability_context)
 
     function.spawn = fail_during_dispatch
@@ -208,7 +211,7 @@ def test_persisted_parent_cancellation_cancels_all_segments() -> None:
     checks = iter([False, False, True])
     runner.cancellation_requested = lambda: next(checks, True)
 
-    with pytest.raises(Stage12Cancellation):
+    with pytest.raises(Stage12CancellationError):
         runner.run()
 
     assert sleeps == [0.5]

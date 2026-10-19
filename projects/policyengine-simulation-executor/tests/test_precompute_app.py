@@ -135,8 +135,10 @@ def _sample_plan():
 
 
 def test_wrappers_validate_dicts_in_and_dump_models_out(precompute_module, monkeypatch):
-    """The wrappers ARE the Modal serialization boundary: dict in,
-    validated model to the impl, model back, dict out."""
+    """The wrappers ARE the Modal serialization boundary.
+
+    Dict in, validated model to the impl, model back, dict out.
+    """
     from policyengine_simulation_executor import precompute as lib
     from policyengine_simulation_executor.precompute_models import (
         BaselineComputeResult,

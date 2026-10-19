@@ -139,7 +139,8 @@ class TestDeterministicBaselineId:
 
     def test_identity_collection_failure_degrades_to_random_id(self, monkeypatch):
         def boom(*args, **kwargs):
-            raise RuntimeError("manifest unavailable")
+            msg = "manifest unavailable"
+            raise RuntimeError(msg)
 
         monkeypatch.setattr(ak, "collect_baseline_identity", boom)
         assert (
@@ -181,9 +182,11 @@ class FakeModelVersion:
     def load(self, simulation):
         self.calls.append("load")
         if self.load_result == "absent":
-            raise FileNotFoundError("no artifact")
+            msg = "no artifact"
+            raise FileNotFoundError(msg)
         if self.load_result == "broken":
-            raise OSError("corrupt h5")
+            msg = "corrupt h5"
+            raise OSError(msg)
         frames = (
             _complete_frames()
             if self.load_result == "complete"
@@ -279,11 +282,12 @@ class TestArtifactBaselineSimulation:
         assert model.calls == ["run", "save"]
 
     def test_stale_cache_entry_is_replaced_after_recompute(self, fresh_cache):
-        """After a recompute that started from a cache hit on a DIFFERENT
-        (stale) object, the cache must hold the recomputed simulation.
-        LRUCache.add alone keeps the old value for an existing key, which
-        would make this request's second ensure() clobber the fresh output
-        and run the full model twice."""
+        """A recompute after a stale cache hit must leave the fresh simulation cached.
+
+        The stale hit is on a DIFFERENT object. LRUCache.add alone keeps the
+        old value for an existing key, which would make this request's second
+        ensure() clobber the fresh output and run the full model twice.
+        """
         stale = _make_sim(FakeModelVersion())
         stale.output_dataset = _output(_incomplete_frames())
         fresh_cache.add("bl1-test", stale)
@@ -324,9 +328,11 @@ class TestArtifactBaselineSimulation:
 
     def test_second_ensure_keeps_a_genuine_miss(self, fresh_cache):
         """Every request ensures the baseline twice (analysis + deciles).
+
         The second call self-hits the in-process cache with a complete
         column set — it must not overwrite the miss the request actually
-        experienced (the rollout metric depends on it)."""
+        experienced (the rollout metric depends on it).
+        """
         model = FakeModelVersion(load_result="absent")
         sim = _make_sim(model)
         sim.ensure()
@@ -349,8 +355,10 @@ class TestArtifactBaselineSimulation:
 class TestBuildSimulationSelection:
     @pytest.fixture
     def wired(self, monkeypatch):
-        from policyengine import core as policyengine_core
         from policyengine_simulation_executor import simulation_runtime as sr
+        from policyengine_simulation_executor import (
+            stage_reporting_simulation as srs,
+        )
 
         recorded = SimpleNamespace(
             artifact_kwargs=None,
@@ -368,15 +376,14 @@ class TestBuildSimulationSelection:
             def __init__(self, **kwargs):
                 recorded.plain_kwargs = kwargs
 
-        # Replacing ``Simulation`` also replaces a class inspected by the SPM
-        # capability resolver. Preserve the capability derived from the real
-        # installed class before installing the test double.
+        # Preserve the SPM capability derived from the real installed
+        # Simulation class before installing the test doubles.
         from policyengine_simulation_executor import spm as executor_spm
 
         installed_capability = executor_spm.runtime_spm_capability()
 
         monkeypatch.setattr(ba, "ArtifactBaselineSimulation", FakeArtifactSimulation)
-        monkeypatch.setattr(policyengine_core, "Simulation", FakePlainSimulation)
+        monkeypatch.setattr(srs, "StageReportingSimulation", FakePlainSimulation)
         monkeypatch.setattr(
             executor_spm,
             "runtime_spm_capability",
@@ -456,6 +463,7 @@ def test_bounded_reform_build_keeps_current_law_artifact_reuse(monkeypatch):
     from policyengine import core as policyengine_core
     from policyengine_simulation_executor import simulation_runtime as sr
     from policyengine_simulation_executor import spm as executor_spm
+    from policyengine_simulation_executor import stage_reporting_simulation as srs
 
     installed_capability = executor_spm.runtime_spm_capability()
     monkeypatch.setattr(
@@ -467,8 +475,8 @@ def test_bounded_reform_build_keeps_current_law_artifact_reuse(monkeypatch):
         lambda **kwargs: SimpleNamespace(kind="artifact", **kwargs),
     )
     monkeypatch.setattr(
-        policyengine_core,
-        "Simulation",
+        srs,
+        "StageReportingSimulation",
         lambda **kwargs: SimpleNamespace(kind="plain", **kwargs),
     )
     identities = []
@@ -521,7 +529,8 @@ class TestIdentityErrorContract:
 
     def test_qualifying_identity_propagates_collection_errors(self, monkeypatch):
         def boom(*args, **kwargs):
-            raise RuntimeError("receipt unreadable")
+            msg = "receipt unreadable"
+            raise RuntimeError(msg)
 
         monkeypatch.setattr(ak, "collect_baseline_identity", boom)
         with pytest.raises(RuntimeError, match="receipt unreadable"):
@@ -529,7 +538,8 @@ class TestIdentityErrorContract:
 
     def test_deterministic_id_swallows_collection_errors(self, monkeypatch):
         def boom(*args, **kwargs):
-            raise RuntimeError("receipt unreadable")
+            msg = "receipt unreadable"
+            raise RuntimeError(msg)
 
         monkeypatch.setattr(ak, "collect_baseline_identity", boom)
         assert ba.deterministic_baseline_id(**self._kwargs()) is None
@@ -564,9 +574,12 @@ def _year_data(person_columns=None):
 
 
 class DiskModelVersion:
-    """Duck model version reusing the REAL load/save implementations, so
-    these tests exercise genuine h5 files on disk — including the exception
-    type a missing artifact raises — without loading the US tax system."""
+    """Duck model version reusing the REAL load/save implementations.
+
+    These tests therefore exercise genuine h5 files on disk — including the
+    exception type a missing artifact raises — without loading the US tax
+    system.
+    """
 
     # PolicyEngine 6 reads this class-level value while restoring SPM metadata.
     # These disk tests are model-neutral, so keep the non-US branch selected.
@@ -801,7 +814,7 @@ class SPMWrapperSimulation(Simulation):
             return
         try:
             self.tax_benefit_model_version.load(self)
-        except Exception:
+        except Exception:  # noqa: BLE001  # mirrors .py's Simulation.ensure(), which runs and saves after any load failure
             self.run()
             self.save()
         # The wrapper files a snapshot, not the live object, so re-pointing
@@ -936,10 +949,13 @@ class TestEnsureValidatesSPMReceipts:
         assert model.calls == ["load", "run", "save"]
 
     def test_cached_entry_with_an_unusable_receipt_is_revalidated(self, fresh_cache):
-        """A cache hit skips the load entirely, so the entry's receipt is
-        the only thing standing between the request and someone else's
-        output. A tax-only run leaves a receipt with no years under the same
-        selection; the guard has to notice and recompute."""
+        """A cache hit whose receipt is unusable must be recomputed.
+
+        A cache hit skips the load entirely, so the entry's receipt is the
+        only thing standing between the request and someone else's output. A
+        tax-only run leaves a receipt with no years under the same selection;
+        the guard has to notice and recompute.
+        """
         stale = _make_spm_sim(SPMModelVersion())
         stale.output_dataset = _output(_complete_frames())
         stale.spm_receipt = _spm_receipt(year="2024")
@@ -953,11 +969,13 @@ class TestEnsureValidatesSPMReceipts:
         assert model.calls == ["run", "save"]
 
     def test_cached_selection_cannot_replace_the_request(self, fresh_cache):
-        """Defense in depth: an entry whose selection disagrees with the key
-        it is filed under. A correct wrapper never writes one — the key is
-        derived from the selection — but a cache hit restores the entry's
-        selection onto this request without revalidating, so the guard
-        keeps the request's own selection and recomputes under it."""
+        """Defense in depth: an entry whose selection disagrees with its key.
+
+        A correct wrapper never writes one — the key is derived from the
+        selection — but a cache hit restores the entry's selection onto this
+        request without revalidating, so the guard keeps the request's own
+        selection and recomputes under it.
+        """
         other = {**SPM_SELECTION, "scenario": "zero_real"}
         stale = _make_spm_sim(SPMModelVersion(), spm=other)
         stale.output_dataset = _output(_complete_frames())
@@ -992,8 +1010,10 @@ class TestEnsureValidatesSPMReceipts:
 
     def test_missing_columns_are_decided_before_the_receipt(self, fresh_cache):
         """A tax-only artifact can legitimately carry no usable receipt.
+
         Columns are checked first so the outcome is attributed to the gap
-        that actually exists, and the receipt is never consulted."""
+        that actually exists, and the receipt is never consulted.
+        """
         model = SPMModelVersion(
             load_result="incomplete",
             stored_config=deepcopy(SPM_SELECTION),
@@ -1005,8 +1025,11 @@ class TestEnsureValidatesSPMReceipts:
         assert sim._provenance_reads == []
 
     def test_a_request_without_a_selection_never_validates_receipts(self, fresh_cache):
-        """The legacy path: no selection, so a complete artifact is a hit
-        even though the wrapper surface exists and holds no receipt."""
+        """Without a selection, a complete artifact is a hit even with no receipt.
+
+        This is the legacy path: the wrapper surface exists but holds no
+        receipt.
+        """
         model = SPMModelVersion(stored_config=None, stored_receipt=None)
         sim = _make_spm_sim(model, sim_id="bl1-legacy")
         sim.spm = None
@@ -1050,9 +1073,11 @@ class TestEnsureValidatesSPMReceipts:
         assert fresh_cache.get(first.id) is None
 
     def test_the_replaced_cache_entry_is_a_snapshot(self, fresh_cache):
-        """The replacement is a copy so that re-pointing this simulation at
-        another selection and running it again cannot overwrite the output
-        the earlier key names."""
+        """The replacement cache entry is a copy, not the live simulation.
+
+        Re-pointing this simulation at another selection and running it again
+        therefore cannot overwrite the output the earlier key names.
+        """
         other = {**SPM_SELECTION, "scenario": "zero_real"}
         model = SPMModelVersion(stored_config=other, stored_receipt=_spm_receipt(other))
         sim = _make_spm_sim(model)

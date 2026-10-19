@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-
-from policyengine_simulation_contract.stage12_bundle import Stage12BundleManifest
+from typing import TYPE_CHECKING
 
 from .errors import Stage12BundleError
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from policyengine_simulation_contract.stage12_bundle import Stage12BundleManifest
+
 
 def assertion_values(bundle: Stage12BundleManifest) -> dict[str, str]:
+    """Flatten the bundle's assertable versions under dotted names.
+
+    Per-country fields are named ``countries.<country>.<field>``.
+    """
     values = {
         "policyengine_version": bundle.policyengine_version,
         "policyengine_requirement": bundle.policyengine_requirement,
@@ -38,12 +45,13 @@ def assert_expected_bundle_values(
     expected: Mapping[str, str],
 ) -> None:
     """Check external values without allowing them to select bundle content."""
-
     actual = assertion_values(bundle)
     for name, expected_value in expected.items():
         if name not in actual:
-            raise Stage12BundleError(f"Unknown Stage 12 bundle assertion {name!r}")
+            msg = f"Unknown Stage 12 bundle assertion {name!r}"
+            raise Stage12BundleError(msg)
         if actual[name] != expected_value:
-            raise Stage12BundleError(
+            msg = (
                 f"Stage 12 bundle assertion {name!r} does not match the packaged bundle"
             )
+            raise Stage12BundleError(msg)

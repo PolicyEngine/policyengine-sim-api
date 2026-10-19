@@ -38,7 +38,7 @@ US_NATIONAL_REGION_GROUPS: tuple[tuple[str, ...], ...] = (
 
 
 def national_region_groups(country: str) -> list[list[str]] | None:
-    """The region-group partition for a country's segmented national run.
+    """Return the region-group partition for a country's segmented national run.
 
     Returns None when the country has no partition (only the US has one),
     in which case national requests run monolithically.

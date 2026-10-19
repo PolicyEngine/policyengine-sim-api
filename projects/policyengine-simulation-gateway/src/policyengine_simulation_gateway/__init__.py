@@ -1,3 +1,1 @@
-"""
-Gateway package for PolicyEngine Simulation API.
-"""
+"""Gateway package for PolicyEngine Simulation API."""

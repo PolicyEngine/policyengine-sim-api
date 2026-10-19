@@ -4,16 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager, nullcontext
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
-import pandas as pd
 from policyengine.core import Simulation
 from policyengine.outputs import (
     configure_cliff_impact_variables,
     configure_labor_supply_response_variables,
     labor_supply_response_is_active,
 )
-from policyengine_simulation_contract.stage12_bundle import CountryId
 from policyengine_simulation_contract.stage12_execution import (
     EntityOutputPlan,
     PlannedSimulationExecutionInput,
@@ -24,6 +22,10 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12OutputPlan,
 )
 from policyengine_simulation_observability.stages import Stage
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from policyengine_simulation_contract.stage12_bundle import CountryId
 
 UK_GEOGRAPHIC_DATASET_VARIABLES: dict[str, tuple[str, ...]] = {
     "household": ("constituency_code_oa", "la_code_oa"),
@@ -36,7 +38,9 @@ class OutputVariableModel(Protocol):
     def resolve_entity_variables(
         self,
         simulation: Simulation,
-    ) -> dict[str, list[str]]: ...
+    ) -> dict[str, list[str]]:
+        """Return the output variables each entity must carry for ``simulation``."""
+        ...
 
 
 StageScope = Callable[
@@ -54,10 +58,14 @@ def _unmonitored_stage_scope(
 
 def _country_model(country: CountryId) -> OutputVariableModel:
     if country == "us":
-        from policyengine.tax_benefit_models import us
+        from policyengine.tax_benefit_models import (
+            us,
+        )
 
         return us.model
-    from policyengine.tax_benefit_models import uk
+    from policyengine.tax_benefit_models import (
+        uk,
+    )
 
     return uk.model
 
@@ -74,7 +82,6 @@ def _planning_simulation(
     intentionally bypassed. This object must never call ``ensure`` or access a
     dataset.
     """
-
     return Simulation.model_construct(
         id=f"stage12-output-plan-{simulation.role.value}",
         policy=dict(simulation.policy),
@@ -90,7 +97,8 @@ def _planning_simulation(
 def _include_cliff_impacts(report: ReportExecutionInput) -> bool:
     value = report.baseline.options.get("include_cliffs", False)
     if not isinstance(value, bool):
-        raise TypeError("include_cliffs must be a boolean")
+        msg = "include_cliffs must be a boolean"
+        raise TypeError(msg)
     return value
 
 
@@ -100,7 +108,6 @@ def _required_dataset_variables(
     aggregates: tuple[ReportAggregate, ...],
 ) -> dict[str, tuple[str, ...]]:
     """Return input-dataset columns copied into the materialized output."""
-
     if country == "uk" and ReportAggregate.GEOGRAPHIC in aggregates:
         return UK_GEOGRAPHIC_DATASET_VARIABLES
     return {}
@@ -140,7 +147,6 @@ def resolve_report_output_plan(
     stage_scope: StageScope = _unmonitored_stage_scope,
 ) -> Stage12OutputPlan:
     """Resolve one country-owned output schema for both report simulations."""
-
     country = report.baseline.geography.country
     stage_attributes = {"country": country}
     with stage_scope(Stage.STAGE12_COUNTRY_MODEL_LOAD, stage_attributes):
@@ -205,7 +211,6 @@ def plan_simulation_input(
     output_plan: Stage12OutputPlan,
 ) -> PlannedSimulationExecutionInput:
     """Attach a coordinator-resolved schema to one child input."""
-
     return PlannedSimulationExecutionInput.model_validate(
         {
             **simulation.model_dump(mode="json"),
@@ -219,7 +224,6 @@ def apply_output_plan(
     output_plan: Stage12OutputPlan,
 ) -> None:
     """Install required extra variables before a live simulation is ensured."""
-
     extras = {
         entity: list(variables)
         for entity, variables in (simulation.extra_variables or {}).items()
@@ -230,7 +234,7 @@ def apply_output_plan(
             if variable not in entity_extras:
                 entity_extras.append(variable)
     simulation.extra_variables = extras
-    model = cast(OutputVariableModel, simulation.tax_benefit_model_version)
+    model = cast("OutputVariableModel", simulation.tax_benefit_model_version)
     resolved = model.resolve_entity_variables(simulation)
     missing = {
         entity_plan.entity: sorted(
@@ -244,9 +248,8 @@ def apply_output_plan(
     }
     missing = {entity: variables for entity, variables in missing.items() if variables}
     if missing:
-        raise ValueError(
-            f"configured simulation does not satisfy output plan: {missing}"
-        )
+        msg = f"configured simulation does not satisfy output plan: {missing}"
+        raise ValueError(msg)
 
 
 def validate_output_frames(
@@ -254,14 +257,12 @@ def validate_output_frames(
     output_plan: Stage12OutputPlan,
 ) -> None:
     """Require every planned entity and column in materialized output frames."""
-
     missing_entities = [
         entity.entity for entity in output_plan.entities if entity.entity not in frames
     ]
     if missing_entities:
-        raise ValueError(
-            f"simulation output is missing planned entities: {missing_entities}"
-        )
+        msg = f"simulation output is missing planned entities: {missing_entities}"
+        raise ValueError(msg)
     missing_columns = {
         entity.entity: sorted(
             set(entity.materialized_variables) - set(frames[entity.entity].columns)
@@ -272,6 +273,5 @@ def validate_output_frames(
         entity: columns for entity, columns in missing_columns.items() if columns
     }
     if missing_columns:
-        raise ValueError(
-            f"simulation output is missing planned columns: {missing_columns}"
-        )
+        msg = f"simulation output is missing planned columns: {missing_columns}"
+        raise ValueError(msg)

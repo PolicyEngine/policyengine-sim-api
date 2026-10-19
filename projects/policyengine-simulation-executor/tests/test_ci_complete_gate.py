@@ -69,7 +69,8 @@ def test_image_smoke_runs_only_at_the_bottom_of_a_stack() -> None:
     )
     stack_condition = (
         "(!github.event.pull_request.stack || "
-        "github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref)"
+        "github.event.pull_request.stack.base.ref == "
+        "github.event.pull_request.base.ref)"
     )
 
     for job_id, job in smoke["jobs"].items():
@@ -103,16 +104,25 @@ def test_rule_proof_gate_check() -> None:
     assert gate_violations(good) == []
 
 
+def _run_gate_script(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", GATE_SCRIPT],
+        cwd=REPO,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
 def _run_gate(
     job_results: dict[str, str],
     *,
     pull_request_base_ref: str = "main",
     stack_base_ref: str = "",
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", GATE_SCRIPT],
-        cwd=REPO,
-        env={
+    return _run_gate_script(
+        {
             "HOME": os.environ.get("HOME", ""),
             "PATH": os.environ["PATH"],
             "JOB_RESULTS": json.dumps(
@@ -123,10 +133,7 @@ def _run_gate(
             ),
             "PULL_REQUEST_BASE_REF": pull_request_base_ref,
             "STACK_BASE_REF": stack_base_ref,
-        },
-        text=True,
-        capture_output=True,
-        check=False,
+        }
     )
 
 
@@ -179,13 +186,8 @@ def test_gate_fails_when_a_job_was_skipped_on_full_ci() -> None:
 
 
 def test_gate_requires_the_job_results() -> None:
-    result = subprocess.run(
-        ["bash", GATE_SCRIPT],
-        cwd=REPO,
-        env={"PATH": os.environ["PATH"], "PULL_REQUEST_BASE_REF": "main"},
-        text=True,
-        capture_output=True,
-        check=False,
+    result = _run_gate_script(
+        {"PATH": os.environ["PATH"], "PULL_REQUEST_BASE_REF": "main"}
     )
 
     assert result.returncode != 0

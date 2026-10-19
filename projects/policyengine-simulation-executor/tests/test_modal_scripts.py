@@ -6,15 +6,34 @@ Tests use subprocess to invoke the scripts and verify their behavior.
 
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
 from fixtures.test_modal_scripts import REPO_ROOT, SCRIPTS_DIR
 
 pytest_plugins = ("fixtures.test_modal_scripts",)
 
+FAKE_HF_TOKEN = "hf_test"
+
+
+def _run_bash(
+    *arguments: str,
+    env: dict[str, str] | None = None,
+    cwd: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run bash on a repository script, capturing text output; a failure is returned."""
+    return subprocess.run(
+        ["bash", *arguments],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=cwd,
+        check=False,
+    )
+
 
 class TestModalExtractVersions:
-    """Tests for modal-extract-versions.sh"""
+    """Tests for modal-extract-versions.sh."""
 
     script = SCRIPTS_DIR / "modal-extract-versions.sh"
 
@@ -24,11 +43,7 @@ class TestModalExtractVersions:
 
     def test_script_is_executable_or_can_be_run_with_bash(self):
         """Script should be runnable with bash."""
-        result = subprocess.run(
-            ["bash", "-n", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash("-n", str(self.script))
         assert result.returncode == 0, f"Syntax error in script: {result.stderr}"
 
     def test_extracts_versions_from_policyengine_bundle(self, temp_github_output):
@@ -41,12 +56,7 @@ class TestModalExtractVersions:
         env = os.environ.copy()
         env["GITHUB_OUTPUT"] = temp_github_output
 
-        result = subprocess.run(
-            ["bash", str(self.script), str(project_dir)],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        result = _run_bash(str(self.script), str(project_dir), env=env)
 
         assert result.returncode == 0, f"Script failed: {result.stderr}"
 
@@ -68,8 +78,8 @@ class TestModalExtractVersions:
 
         assert "policyengine_core_version" in workflow
         assert (
-            "POLICYENGINE_CORE_VERSION: ${{ needs.prepare.outputs.policyengine_core_version }}"
-            in workflow
+            "POLICYENGINE_CORE_VERSION: "
+            "${{ needs.prepare.outputs.policyengine_core_version }}" in workflow
         )
 
     def test_deploy_workflow_threads_force_latest_to_routing_publisher(self):
@@ -91,7 +101,7 @@ class TestModalExtractVersions:
 
 
 class TestModalHealthCheck:
-    """Tests for modal-health-check.sh"""
+    """Tests for modal-health-check.sh."""
 
     script = SCRIPTS_DIR / "modal-health-check.sh"
 
@@ -101,28 +111,18 @@ class TestModalHealthCheck:
 
     def test_script_syntax(self):
         """Script should have valid bash syntax."""
-        result = subprocess.run(
-            ["bash", "-n", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash("-n", str(self.script))
         assert result.returncode == 0, f"Syntax error: {result.stderr}"
 
     def test_requires_base_url_argument(self):
         """Should fail when no URL is provided."""
-        result = subprocess.run(
-            ["bash", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash(str(self.script))
         assert result.returncode != 0, "Should fail without URL argument"
 
     def test_fails_on_unreachable_url(self):
         """Should fail when URL is unreachable."""
-        result = subprocess.run(
-            ["bash", str(self.script), "http://localhost:99999/nonexistent", "1", "1"],
-            capture_output=True,
-            text=True,
+        result = _run_bash(
+            str(self.script), "http://localhost:99999/nonexistent", "1", "1"
         )
         assert result.returncode != 0, "Should fail on unreachable URL"
 
@@ -150,13 +150,7 @@ class TestModalImageSmoke:
         )
         env.pop("PE_UK_PRIVATE_HF_READ_TOKEN", None)
 
-        result = subprocess.run(
-            ["bash", str(self.script), "staging"],
-            capture_output=True,
-            text=True,
-            env=env,
-            check=False,
-        )
+        result = _run_bash(str(self.script), "staging", env=env)
 
         assert result.returncode != 0
         assert "PE_UK_PRIVATE_HF_READ_TOKEN is required" in result.stderr
@@ -176,23 +170,17 @@ class TestModalImageSmoke:
             {
                 "PATH": f"{fake_bin}:{env['PATH']}",
                 "UV_CALLS_LOG": str(uv_calls_log),
-                "PE_UK_PRIVATE_HF_READ_TOKEN": "hf_test",
+                "PE_UK_PRIVATE_HF_READ_TOKEN": FAKE_HF_TOKEN,
             }
         )
 
-        result = subprocess.run(
-            ["bash", str(self.script), "staging"],
-            capture_output=True,
-            text=True,
-            env=env,
-            check=False,
-        )
+        result = _run_bash(str(self.script), "staging", env=env)
 
         assert result.returncode == 0, result.stderr
         calls = uv_calls_log.read_text(encoding="utf-8").splitlines()
         assert calls[0] == (
             "run modal secret create pe-uk-private-hf-read-token "
-            "HUGGING_FACE_TOKEN=hf_test --env=staging --force"
+            f"HUGGING_FACE_TOKEN={FAKE_HF_TOKEN} --env=staging --force"
         )
         assert len(calls) == 4
 
@@ -261,7 +249,7 @@ class TestModalImageSmoke:
 
 
 class TestSimulationDeploymentSummary:
-    """Tests for simulation-deployment-summary.sh"""
+    """Tests for simulation-deployment-summary.sh."""
 
     script = SCRIPTS_DIR / "simulation-deployment-summary.sh"
 
@@ -271,11 +259,7 @@ class TestSimulationDeploymentSummary:
 
     def test_script_syntax(self):
         """Script should have valid bash syntax."""
-        result = subprocess.run(
-            ["bash", "-n", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash("-n", str(self.script))
         assert result.returncode == 0, f"Syntax error: {result.stderr}"
 
     def test_generates_success_summary(self, temp_github_step_summary):
@@ -283,17 +267,12 @@ class TestSimulationDeploymentSummary:
         env = os.environ.copy()
         env["GITHUB_STEP_SUMMARY"] = temp_github_step_summary
 
-        result = subprocess.run(
-            [
-                "bash",
-                str(self.script),
-                "success",
-                "https://beta.example.com",
-                "success",
-                "https://prod.example.com",
-            ],
-            capture_output=True,
-            text=True,
+        result = _run_bash(
+            str(self.script),
+            "success",
+            "https://beta.example.com",
+            "success",
+            "https://prod.example.com",
             env=env,
         )
 
@@ -315,17 +294,12 @@ class TestSimulationDeploymentSummary:
         env = os.environ.copy()
         env["GITHUB_STEP_SUMMARY"] = temp_github_step_summary
 
-        result = subprocess.run(
-            [
-                "bash",
-                str(self.script),
-                "skipped",
-                "",
-                "success",
-                "https://prod.example.com",
-            ],
-            capture_output=True,
-            text=True,
+        result = _run_bash(
+            str(self.script),
+            "skipped",
+            "",
+            "success",
+            "https://prod.example.com",
             env=env,
         )
 
@@ -338,7 +312,7 @@ class TestSimulationDeploymentSummary:
 
 
 class TestModalSyncSecrets:
-    """Tests for modal-sync-secrets.sh"""
+    """Tests for modal-sync-secrets.sh."""
 
     script = SCRIPTS_DIR / "modal-sync-secrets.sh"
 
@@ -348,38 +322,25 @@ class TestModalSyncSecrets:
 
     def test_script_syntax(self):
         """Script should have valid bash syntax."""
-        result = subprocess.run(
-            ["bash", "-n", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash("-n", str(self.script))
         assert result.returncode == 0, f"Syntax error: {result.stderr}"
 
     def test_requires_modal_environment_argument(self):
         """Should fail when no modal environment is provided."""
-        result = subprocess.run(
-            ["bash", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash(str(self.script))
         assert result.returncode != 0, "Should fail without modal environment"
 
     def test_fails_when_gateway_auth_config_is_partial(self):
         """Should fail before touching Modal when auth config is partial."""
         env = os.environ.copy()
-        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = "hf_test"
+        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = FAKE_HF_TOKEN
         env["GCP_CREDENTIALS_JSON"] = '{"type":"service_account"}'
         env["GATEWAY_AUTH_ISSUER"] = "https://tenant.auth0.com"
         env.pop("GATEWAY_AUTH_AUDIENCE", None)
         env.pop("GATEWAY_AUTH_CLIENT_ID", None)
         env.pop("GATEWAY_AUTH_CLIENT_SECRET", None)
 
-        result = subprocess.run(
-            ["bash", str(self.script), "staging"],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        result = _run_bash(str(self.script), "staging", env=env)
 
         assert result.returncode != 0
         assert "Gateway auth config is partial." in result.stderr
@@ -387,7 +348,7 @@ class TestModalSyncSecrets:
     def test_fails_when_auth_required_but_gateway_auth_vars_missing(self):
         """Required auth must refuse deploy when the GitHub secrets are absent."""
         env = os.environ.copy()
-        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = "hf_test"
+        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = FAKE_HF_TOKEN
         env["GCP_CREDENTIALS_JSON"] = '{"type":"service_account"}'
         env["GATEWAY_AUTH_REQUIRED"] = "1"
         for key in (
@@ -398,12 +359,7 @@ class TestModalSyncSecrets:
         ):
             env.pop(key, None)
 
-        result = subprocess.run(
-            ["bash", str(self.script), "staging"],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        result = _run_bash(str(self.script), "staging", env=env)
 
         assert result.returncode != 0
         assert "GATEWAY_AUTH_REQUIRED is enabled" in result.stderr
@@ -411,16 +367,10 @@ class TestModalSyncSecrets:
     def test_requires_gcp_credentials(self):
         """Artifact credential synchronization must fail before deployment."""
         env = os.environ.copy()
-        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = "hf_test"
+        env["PE_UK_PRIVATE_HF_READ_TOKEN"] = FAKE_HF_TOKEN
         env.pop("GCP_CREDENTIALS_JSON", None)
 
-        result = subprocess.run(
-            ["bash", str(self.script), "staging"],
-            capture_output=True,
-            text=True,
-            env=env,
-            check=False,
-        )
+        result = _run_bash(str(self.script), "staging", env=env)
 
         assert result.returncode != 0
         assert "GCP_CREDENTIALS_JSON is required" in result.stderr
@@ -439,7 +389,7 @@ class TestModalSyncSecrets:
             {
                 "PATH": f"{fake_bin}:{env['PATH']}",
                 "UV_CALLS_LOG": str(uv_calls_log),
-                "PE_UK_PRIVATE_HF_READ_TOKEN": "hf_test",
+                "PE_UK_PRIVATE_HF_READ_TOKEN": FAKE_HF_TOKEN,
                 "GCP_CREDENTIALS_JSON": '{"type":"service_account"}',
                 "GATEWAY_AUTH_ISSUER": "https://tenant.auth0.com",
                 "GATEWAY_AUTH_AUDIENCE": "https://simulation-api-beta.policyengine.org",
@@ -449,12 +399,7 @@ class TestModalSyncSecrets:
             }
         )
 
-        result = subprocess.run(
-            ["bash", str(self.script), "staging"],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        result = _run_bash(str(self.script), "staging", env=env)
 
         assert result.returncode == 0, result.stderr
         calls = uv_calls_log.read_text()
@@ -488,7 +433,7 @@ class TestModalSyncSecrets:
             {
                 "PATH": f"{fake_bin}:{env['PATH']}",
                 "UV_CALLS_LOG": str(uv_calls_log),
-                "PE_UK_PRIVATE_HF_READ_TOKEN": "hf_test",
+                "PE_UK_PRIVATE_HF_READ_TOKEN": FAKE_HF_TOKEN,
                 "GCP_CREDENTIALS_JSON": '{"type":"service_account"}',
             }
         )
@@ -501,13 +446,7 @@ class TestModalSyncSecrets:
         ):
             env.pop(key, None)
 
-        result = subprocess.run(
-            ["bash", str(self.script), "staging"],
-            capture_output=True,
-            text=True,
-            env=env,
-            check=False,
-        )
+        result = _run_bash(str(self.script), "staging", env=env)
 
         assert result.returncode != 0
         calls = uv_calls_log.read_text()
@@ -516,7 +455,7 @@ class TestModalSyncSecrets:
 
 
 class TestModalPrecompute:
-    """Tests for modal-precompute.sh"""
+    """Tests for modal-precompute.sh."""
 
     script = SCRIPTS_DIR / "modal-precompute.sh"
 
@@ -558,12 +497,7 @@ class TestModalPrecompute:
         else:
             env["POLICYENGINE_ARTIFACT_BUCKET"] = bucket
 
-        result = subprocess.run(
-            ["bash", str(self.script), *args],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        result = _run_bash(str(self.script), *args, env=env)
         calls = (
             log_path.read_text(encoding="utf-8").splitlines()
             if log_path.exists()
@@ -580,20 +514,12 @@ class TestModalPrecompute:
 
     def test_script_syntax(self):
         """Script should have valid bash syntax."""
-        result = subprocess.run(
-            ["bash", "-n", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash("-n", str(self.script))
         assert result.returncode == 0, f"Syntax error: {result.stderr}"
 
     def test_requires_modal_environment_argument(self):
         """Should fail when no modal environment is provided."""
-        result = subprocess.run(
-            ["bash", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash(str(self.script))
         assert result.returncode != 0, "Should fail without modal environment"
 
     def test_requires_artifact_bucket(self, tmp_path):
@@ -710,8 +636,10 @@ class TestModalPrecompute:
         )
 
     def test_deploy_workflow_threads_manifest_and_store_credentials_to_deploy(self):
-        """The deploy step resolves the manifest from GCS on the runner,
-        so it needs the digest, the store bucket, and GCP credentials."""
+        """The deploy step gets the digest, the store bucket, and GCP credentials.
+
+        It resolves the manifest from GCS on the runner, so it needs all three.
+        """
         reusable_workflow = (
             REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
@@ -769,7 +697,9 @@ class TestStage12CachePrecompute:
         github_output = tmp_path / "github-output.txt"
         uv_path = bin_dir / "uv"
         uv_path.write_text(
-            '#!/bin/bash\nprintf \'%s\\n\' "$*" >> "$UV_FAKE_LOG"\nprintf \'%s\\n\' "$UV_FAKE_OUTPUT"\n',
+            "#!/bin/bash\n"
+            'printf \'%s\\n\' "$*" >> "$UV_FAKE_LOG"\n'
+            'printf \'%s\\n\' "$UV_FAKE_OUTPUT"\n',
             encoding="utf-8",
         )
         uv_path.chmod(0o755)
@@ -827,8 +757,10 @@ class TestStage12CachePrecompute:
         assert emitted == ""
 
     def test_v1_force_recompute_never_reaches_the_immutable_cache(self):
-        """Stored Stage 12 cache files cannot be replaced, so nothing forces
-        a rebuild of them."""
+        """Nothing forces a rebuild of stored Stage 12 cache files.
+
+        Stored files cannot be replaced, so a forced rebuild could only fail.
+        """
         reusable_workflow = (
             REPO_ROOT / ".github" / "workflows" / "simulation-deploy.reusable.yml"
         ).read_text(encoding="utf-8")
@@ -846,7 +778,7 @@ class TestStage12CachePrecompute:
 
 
 class TestModalRecordDeployment:
-    """Tests for modal-record-deployment.sh"""
+    """Tests for modal-record-deployment.sh."""
 
     script = SCRIPTS_DIR / "modal-record-deployment.sh"
 
@@ -873,12 +805,7 @@ class TestModalRecordDeployment:
         else:
             env["POLICYENGINE_ARTIFACT_BUCKET"] = bucket
 
-        result = subprocess.run(
-            ["bash", str(self.script), *args],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        result = _run_bash(str(self.script), *args, env=env)
         calls = (
             log_path.read_text(encoding="utf-8").splitlines()
             if log_path.exists()
@@ -892,11 +819,7 @@ class TestModalRecordDeployment:
 
     def test_requires_environment_argument(self):
         """Should fail with no arguments."""
-        result = subprocess.run(
-            ["bash", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash(str(self.script))
         assert result.returncode != 0
 
     def test_requires_manifest_digest_argument(self, tmp_path):
@@ -958,7 +881,7 @@ class TestModalRecordDeployment:
 
 
 class TestModalGetUrl:
-    """Tests for modal-get-url.sh"""
+    """Tests for modal-get-url.sh."""
 
     script = SCRIPTS_DIR / "modal-get-url.sh"
 
@@ -968,25 +891,17 @@ class TestModalGetUrl:
 
     def test_script_syntax(self):
         """Script should have valid bash syntax."""
-        result = subprocess.run(
-            ["bash", "-n", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash("-n", str(self.script))
         assert result.returncode == 0, f"Syntax error: {result.stderr}"
 
     def test_requires_modal_environment_argument(self):
         """Should fail when no modal environment is provided."""
-        result = subprocess.run(
-            ["bash", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash(str(self.script))
         assert result.returncode != 0, "Should fail without modal environment"
 
 
 class TestModalSetupEnvironments:
-    """Tests for modal-setup-environments.sh"""
+    """Tests for modal-setup-environments.sh."""
 
     script = SCRIPTS_DIR / "modal-setup-environments.sh"
 
@@ -996,16 +911,12 @@ class TestModalSetupEnvironments:
 
     def test_script_syntax(self):
         """Script should have valid bash syntax."""
-        result = subprocess.run(
-            ["bash", "-n", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash("-n", str(self.script))
         assert result.returncode == 0, f"Syntax error: {result.stderr}"
 
 
 class TestSimulationRunIntegTests:
-    """Tests for simulation-run-integ-tests.sh"""
+    """Tests for simulation-run-integ-tests.sh."""
 
     script = SCRIPTS_DIR / "simulation-run-integ-tests.sh"
 
@@ -1015,29 +926,17 @@ class TestSimulationRunIntegTests:
 
     def test_script_syntax(self):
         """Script should have valid bash syntax."""
-        result = subprocess.run(
-            ["bash", "-n", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash("-n", str(self.script))
         assert result.returncode == 0, f"Syntax error: {result.stderr}"
 
     def test_requires_environment_argument(self):
         """Should fail when no environment is provided."""
-        result = subprocess.run(
-            ["bash", str(self.script)],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash(str(self.script))
         assert result.returncode != 0, "Should fail without environment"
 
     def test_requires_base_url_argument(self):
         """Should fail when no base URL is provided."""
-        result = subprocess.run(
-            ["bash", str(self.script), "beta"],
-            capture_output=True,
-            text=True,
-        )
+        result = _run_bash(str(self.script), "beta")
         assert result.returncode != 0, "Should fail without base URL"
 
     def test_fails_when_auth_config_is_partial(self):
@@ -1048,12 +947,7 @@ class TestSimulationRunIntegTests:
         env.pop("SIMULATION_TEST_AUTH_CLIENT_ID", None)
         env.pop("SIMULATION_TEST_AUTH_CLIENT_SECRET", None)
 
-        result = subprocess.run(
-            ["bash", str(self.script), "beta", "https://example.com"],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        result = _run_bash(str(self.script), "beta", "https://example.com", env=env)
 
         assert result.returncode != 0
         assert "Simulation integration-test auth config is partial." in result.stderr
@@ -1070,12 +964,7 @@ class TestSimulationRunIntegTests:
         ):
             env.pop(key, None)
 
-        result = subprocess.run(
-            ["bash", str(self.script), "beta", "https://example.com"],
-            capture_output=True,
-            text=True,
-            env=env,
-        )
+        result = _run_bash(str(self.script), "beta", "https://example.com", env=env)
 
         assert result.returncode != 0
         assert "SIMULATION_TEST_AUTH_REQUIRED is enabled" in result.stderr
@@ -1107,17 +996,12 @@ class TestSimulationRunIntegTests:
         ):
             env.pop(key, None)
 
-        result = subprocess.run(
-            [
-                "bash",
-                str(self.script),
-                "prod",
-                "https://example.com",
-                "1.690.7",
-                "2.88.20",
-            ],
-            capture_output=True,
-            text=True,
+        result = _run_bash(
+            str(self.script),
+            "prod",
+            "https://example.com",
+            "1.690.7",
+            "2.88.20",
             env=env,
             cwd=REPO_ROOT,
         )
@@ -1149,11 +1033,7 @@ class TestAllScriptsHaveShebang:
     def test_all_scripts_have_valid_syntax(self, all_modal_scripts):
         """All scripts should pass bash syntax check."""
         for script in all_modal_scripts:
-            result = subprocess.run(
-                ["bash", "-n", str(script)],
-                capture_output=True,
-                text=True,
-            )
+            result = _run_bash("-n", str(script))
             assert result.returncode == 0, (
                 f"{script.name} has syntax errors: {result.stderr}"
             )

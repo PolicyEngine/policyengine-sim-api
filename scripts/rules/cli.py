@@ -14,16 +14,25 @@ from scripts.rules.resolve import clear_caches
 from scripts.rules.validate import validate
 
 
+def _report(message: str) -> None:
+    """Print one line of the command's output."""
+    print(message)
+
+
 def _print(violations: list, notes: list[str] | None = None) -> int:
     for note in notes or []:
-        print(f"note: {note}")
+        _report(f"note: {note}")
     for violation in violations:
-        print(f"  - {violation}")
-    print("rules: failed" if violations else "rules: passed")
+        _report(f"  - {violation}")
+    _report("rules: failed" if violations else "rules: passed")
     return 1 if violations else 0
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run one rules command and return 1 if it found violations.
+
+    ``render`` refuses to write anything while the registry fails validation.
+    """
     parser = argparse.ArgumentParser(
         prog="python -m scripts.rules", description=__doc__
     )
@@ -38,7 +47,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--write-baselines",
         action="store_true",
-        help="ci-scripts only: record today's findings as the baselines (when adopting the rule)",
+        help=(
+            "ci-scripts only: record today's findings as the baselines "
+            "(when adopting the rule)"
+        ),
     )
     args = parser.parse_args(argv)
     root = args.root.resolve()
@@ -51,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
             ci_scripts.write_baselines(
                 registry, ci_scripts.find(registry.ci_scripts, root), root
             )
-            print("wrote ci_scripts baselines; update the rules' baseline counts")
+            _report("wrote ci_scripts baselines; update the rules' baseline counts")
             return 0
         violations, notes = ci_scripts.run_check(root)
         return _print(violations, notes)
@@ -67,9 +79,9 @@ def main(argv: list[str] | None = None) -> int:
     violations += validate(registry, root, date.today())
     if args.command == "render":
         if violations:
-            print("render refused: fix the registry first")
+            _report("render refused: fix the registry first")
             return _print(violations)
         for path in write_outputs(registry, root):
-            print(f"wrote {path.relative_to(root)}")
+            _report(f"wrote {path.relative_to(root)}")
         return 0
     return _print(violations)

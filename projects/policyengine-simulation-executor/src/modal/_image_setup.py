@@ -1,5 +1,4 @@
-"""
-Standalone image setup functions.
+"""Standalone image setup functions.
 
 These functions are executed during Modal image build and must not
 import any other modules from this package to avoid dependency issues.
@@ -7,8 +6,23 @@ The artifact fetch additionally runs BEFORE add_local_python_source,
 so policyengine_simulation_executor is not importable there at all.
 """
 
+# Annotation-only imports sit behind a local TYPE_CHECKING flag (not
+# typing.TYPE_CHECKING) because this module must have no module-level
+# imports; the annotations that use them are therefore quoted.
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+    from typing import Any
 
-def fetch_artifacts(bucket: str, manifest, *, client=None):
+    from google.cloud import storage
+
+
+def fetch_artifacts(
+    bucket: str,
+    manifest: "Mapping[str, Any] | None",
+    *,
+    client: "storage.Client | None" = None,
+) -> None:
     """Download every manifest-listed artifact into the image data folder.
 
     Runs as an image-build layer between ``.env(VERSION_ENV)`` and
@@ -25,21 +39,24 @@ def fetch_artifacts(bucket: str, manifest, *, client=None):
     ``client`` is a test seam; real builds construct a storage client from
     the layer's GCP secret (or ambient ADC for local drill runs).
     """
-    import json
-    import logging
-    import os
-    from pathlib import Path
+    import json  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+    import logging  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+    import os  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+    from pathlib import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+        Path,
+    )
 
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
     if not manifest:
-        raise RuntimeError(
+        msg = (
             "No artifact manifest was resolved on the deploying machine. "
             "Set POLICYENGINE_MANIFEST_DIGEST (from the precompute run's "
             "MANIFEST_DIGEST= output line) and POLICYENGINE_ARTIFACT_BUCKET, "
             "with GCP credentials available, then redeploy."
         )
+        raise RuntimeError(msg)
 
     # Freshness gate: refuse to bake artifacts computed for a different
     # version-set than the one this image installs.
@@ -52,12 +69,13 @@ def fetch_artifacts(bucket: str, manifest, *, client=None):
     for env_var, manifest_value in expected_env.items():
         image_value = os.environ.get(env_var)
         if image_value != manifest_value:
-            raise RuntimeError(
+            msg = (
                 f"Stale artifact manifest: the image has "
                 f"{env_var}={image_value!r} but the manifest was computed "
                 f"for {manifest_value!r}. Re-run the precompute for the "
                 "current version-set."
             )
+            raise RuntimeError(msg)
 
     installed_data_version = None
     receipt_path = os.environ.get("POLICYENGINE_BUNDLE_RECEIPT")
@@ -78,12 +96,13 @@ def fetch_artifacts(bucket: str, manifest, *, client=None):
             country,
         )
     elif installed_data_version != receipt["data_version"]:
-        raise RuntimeError(
+        msg = (
             f"Stale artifact manifest: installed {country} data version is "
             f"{installed_data_version!r} but the manifest was computed for "
             f"{receipt['data_version']!r}. Re-run the precompute for the "
             "current version-set."
         )
+        raise RuntimeError(msg)
 
     if client is None:
         creds_kwargs = {}
@@ -101,7 +120,9 @@ def fetch_artifacts(bucket: str, manifest, *, client=None):
                     raise
             info = json.loads(parsed) if isinstance(parsed, str) else parsed
 
-            from google.oauth2 import service_account
+            from google.oauth2 import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+                service_account,
+            )
 
             # Credentials built in memory, never written to disk: this
             # layer's container filesystem is committed into the image,
@@ -113,7 +134,9 @@ def fetch_artifacts(bucket: str, manifest, *, client=None):
                 "project": info.get("project_id"),
             }
         # No blob: ambient ADC (the local fault-drill path).
-        from google.cloud import storage
+        from google.cloud import (
+            storage,
+        )
 
         client = storage.Client(**creds_kwargs)
 
@@ -152,23 +175,28 @@ def fetch_artifacts(bucket: str, manifest, *, client=None):
         if not (data_folder / artifact["filename"]).exists()
     ]
     if absent:
-        raise RuntimeError(f"Artifact fetch did not produce expected files: {absent}")
+        msg = f"Artifact fetch did not produce expected files: {absent}"
+        raise RuntimeError(msg)
 
 
-def snapshot_models():
+def snapshot_models() -> None:
     """Pre-load models at image build time for fast cold starts."""
-    import logging
+    import logging  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
 
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
     logger.info("Pre-loading US tax-benefit system...")
-    from policyengine_us import CountryTaxBenefitSystem as USSystem
+    from policyengine_us import (
+        CountryTaxBenefitSystem as USSystem,
+    )
 
     USSystem()
 
     logger.info("Pre-loading UK tax-benefit system...")
-    from policyengine_uk import CountryTaxBenefitSystem as UKSystem
+    from policyengine_uk import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+        CountryTaxBenefitSystem as UKSystem,
+    )
 
     UKSystem()
 

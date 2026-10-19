@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
 from hashlib import sha256
+from typing import TYPE_CHECKING
 
 import pandas as pd
-from policyengine_observability import ObservabilityRuntime
-from policyengine_simulation_contract.spm import SPMProvenance
-from policyengine_simulation_contract.stage12_execution import (
-    PlannedSimulationExecutionInput,
-)
 from policyengine_simulation_observability.stages import STAGE12_SEGMENT_STAGES
 
 from policyengine_simulation_executor.stage12_artifacts import (
@@ -24,10 +19,18 @@ from .partition import stage12_region_groups
 from .segment_contracts import Stage12SegmentInput, Stage12SegmentResult
 from .simulation import SimulationCalculation, calculate_simulation_frames
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping, Sequence
+
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.spm import SPMProvenance
+    from policyengine_simulation_contract.stage12_execution import (
+        PlannedSimulationExecutionInput,
+    )
+
 
 def should_segment_simulation(simulation: PlannedSimulationExecutionInput) -> bool:
     """Return whether this logical simulation should use the US partition."""
-
     if simulation.geography.country != "us":
         return False
     if simulation.geography.region.strip().lower() != "us":
@@ -48,12 +51,13 @@ def build_segment_inputs(
     groups: Sequence[Sequence[str]] | None = None,
 ) -> tuple[Stage12SegmentInput, ...]:
     """Build one immutable single-policy input per region group."""
-
     selected = groups or stage12_region_groups(simulation.geography.country)
     if not selected:
-        raise ValueError("Stage 12 simulation has no national partition")
+        msg = "Stage 12 simulation has no national partition"
+        raise ValueError(msg)
     if len(selected) != 20:
-        raise ValueError("Stage 12 national partition must contain 20 groups")
+        msg = "Stage 12 national partition must contain 20 groups"
+        raise ValueError(msg)
     return tuple(
         Stage12SegmentInput(
             simulation=simulation,
@@ -84,7 +88,6 @@ def calculate_segment(
     runtime: ObservabilityRuntime | None = None,
 ) -> Stage12SegmentResult:
     """Calculate one segment without persistence or report aggregation."""
-
     segment = Stage12SegmentInput.model_validate(payload)
     scoped = _scoped_simulation(segment)
     if calculator is calculate_simulation_frames:
@@ -123,10 +126,12 @@ def _merge_calculation_provenance(
     if not present:
         return None
     if len(present) != len(values):
-        raise ValueError("segment calculation metadata is incomplete")
+        msg = "segment calculation metadata is incomplete"
+        raise ValueError(msg)
     receipt = present[0]
     if any(value != receipt for value in present[1:]):
-        raise ValueError("segment calculation provenance does not match")
+        msg = "segment calculation provenance does not match"
+        raise ValueError(msg)
     return receipt
 
 
@@ -137,19 +142,16 @@ def merge_segment_results(
     groups: Sequence[Sequence[str]] | None = None,
 ) -> SimulationCalculation:
     """Validate and merge all segment payloads into one national result."""
-
     expected = build_segment_inputs(simulation, groups=groups)
     results = [Stage12SegmentResult.model_validate(payload) for payload in payloads]
     if len(results) != len(expected):
-        raise ValueError(
-            "Stage 12 segmented calculation returned an incomplete result set"
-        )
+        msg = "Stage 12 segmented calculation returned an incomplete result set"
+        raise ValueError(msg)
     by_index: dict[int, Stage12SegmentResult] = {}
     for result in results:
         if result.segment_index in by_index:
-            raise ValueError(
-                "Stage 12 segmented calculation returned a duplicate index"
-            )
+            msg = "Stage 12 segmented calculation returned a duplicate index"
+            raise ValueError(msg)
         by_index[result.segment_index] = result
 
     decoded: list[dict[str, pd.DataFrame]] = []
@@ -157,17 +159,21 @@ def merge_segment_results(
     for segment in expected:
         result = by_index.get(segment.segment_index)
         if result is None:
-            raise ValueError("Stage 12 segmented calculation omitted a segment")
+            msg = "Stage 12 segmented calculation omitted a segment"
+            raise ValueError(msg)
         if result.role is not simulation.role:
-            raise ValueError("Stage 12 segment result names another simulation role")
+            msg = "Stage 12 segment result names another simulation role"
+            raise ValueError(msg)
         if result.region_codes != segment.region_codes:
-            raise ValueError("Stage 12 segment result names another region group")
+            msg = "Stage 12 segment result names another region group"
+            raise ValueError(msg)
         decoded.append(deserialize_simulation_frames(result.parquet_payload))
         provenance.append(deserialize_calculation_provenance(result.parquet_payload))
 
     expected_entities = set(decoded[0])
     if any(set(frames) != expected_entities for frames in decoded[1:]):
-        raise ValueError("Stage 12 segment entity schemas do not match")
+        msg = "Stage 12 segment entity schemas do not match"
+        raise ValueError(msg)
     merged: dict[str, pd.DataFrame] = {}
     for entity in sorted(expected_entities):
         parts = [frames[entity] for frames in decoded]
@@ -176,13 +182,16 @@ def merge_segment_results(
             if {
                 column: str(dtype) for column, dtype in part.dtypes.items()
             } != first_dtypes:
-                raise ValueError("Stage 12 segment column dtypes do not match")
+                msg = "Stage 12 segment column dtypes do not match"
+                raise ValueError(msg)
         frame = pd.concat(parts, ignore_index=True)
         identifier = f"{entity}_id"
         if identifier not in frame:
-            raise ValueError(f"Stage 12 segment entity {entity!r} has no identifier")
+            msg = f"Stage 12 segment entity {entity!r} has no identifier"
+            raise ValueError(msg)
         if frame[identifier].duplicated().any():
-            raise ValueError(f"Stage 12 segment entity {entity!r} has duplicate IDs")
+            msg = f"Stage 12 segment entity {entity!r} has duplicate IDs"
+            raise ValueError(msg)
         merged[entity] = frame
     validate_output_frames(merged, simulation.output_plan)
     return SimulationCalculation(

@@ -1,5 +1,4 @@
-"""
-PolicyEngine Simulation Gateway - Modal App Definition
+"""Modal app definition for the PolicyEngine Simulation Gateway.
 
 A lightweight, stable gateway that routes simulation requests to versioned
 simulation apps. This app rarely changes and provides a stable URL for consumers.
@@ -8,13 +7,19 @@ The gateway looks up the appropriate versioned app from the version dicts
 and spawns jobs on those apps.
 """
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import modal
 from policyengine_simulation_observability.observability import (
     modal_image_environment,
 )
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 # Stable app name - this should rarely change
 app = modal.App("policyengine-simulation-gateway")
@@ -38,9 +43,11 @@ _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() e
 
 
 def build_gateway_image() -> modal.Image:
-    """The gateway image, shared with the smoke app (smoke_app.py) so
-    both construct identical layer definitions and share Modal's
-    content-addressed cache."""
+    """Build the gateway's Modal image.
+
+    The smoke app (smoke_app.py) builds its image here too, so both construct
+    identical layer definitions and share Modal's content-addressed cache.
+    """
     return (
         modal.Image.debian_slim(python_version="3.13")
         .uv_sync(
@@ -64,9 +71,8 @@ gateway_image = build_gateway_image()
 
 @app.function(image=gateway_image, secrets=[gateway_auth_secret])
 @modal.asgi_app()
-def web_app():
-    """
-    FastAPI gateway for simulation job submission and polling.
+def web_app() -> FastAPI:
+    """FastAPI gateway for simulation job submission and polling.
 
     Provides stable endpoints:
       POST /simulate/economy/comparison - Submit a simulation job
@@ -74,23 +80,29 @@ def web_app():
       GET /versions - List available versions
       GET /health - Health check
     """
-    from fastapi import FastAPI
-    from policyengine_simulation_observability.observability import (
+    from fastapi import (  # noqa: PLC0415  # Modal function body: the gateway app is built in its container, not at deploy time
+        FastAPI,
+    )
+    from policyengine_simulation_observability.observability import (  # noqa: PLC0415  # Modal function body: the gateway app is built in its container, not at deploy time
         init_simulation_observability,
     )
 
-    from policyengine_simulation_gateway.auth import (
+    from policyengine_simulation_gateway.auth import (  # noqa: PLC0415  # Modal function body: the gateway app is built in its container, not at deploy time
         enforce_auth_configured_guard,
         enforce_production_auth_guard,
     )
-    from policyengine_simulation_gateway.correlation import (
+    from policyengine_simulation_gateway.correlation import (  # noqa: PLC0415  # Modal function body: the gateway app is built in its container, not at deploy time
         install_observability_id_middleware,
     )
-    from policyengine_simulation_gateway.endpoints import router
+    from policyengine_simulation_gateway.endpoints import (  # noqa: PLC0415  # Modal function body: the gateway app is built in its container, not at deploy time
+        router,
+    )
 
     api = FastAPI(
         title="PolicyEngine Simulation Gateway",
-        description="Submit and poll simulation jobs. Routes to versioned simulation apps.",
+        description=(
+            "Submit and poll simulation jobs. Routes to versioned simulation apps."
+        ),
         version="1.0.0",
     )
     runtime = init_simulation_observability(

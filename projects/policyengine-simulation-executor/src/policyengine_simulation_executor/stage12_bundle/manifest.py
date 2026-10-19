@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
 from hashlib import sha256
+from typing import TYPE_CHECKING
 
 from policyengine_simulation_contract.stage12_bundle import (
     SUPPORTED_COUNTRIES,
@@ -22,6 +22,9 @@ from .parsing import (
     require_text,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
 
 def _normalize_stage12_bundle(
     raw_bundle: object,
@@ -30,7 +33,8 @@ def _normalize_stage12_bundle(
 ) -> Stage12BundleManifest:
     bundle = require_mapping(raw_bundle, "root")
     if bundle.get("schema_version") != 2:
-        raise Stage12BundleError("PolicyEngine.py bundle schema_version must be 2")
+        msg = "PolicyEngine.py bundle schema_version must be 2"
+        raise Stage12BundleError(msg)
     policyengine_version = require_text(
         bundle.get("policyengine_version"),
         "policyengine_version",
@@ -39,9 +43,8 @@ def _normalize_stage12_bundle(
         require_text(bundle.get("bundle_version"), "bundle_version")
         != policyengine_version
     ):
-        raise Stage12BundleError(
-            "PolicyEngine.py bundle_version does not match policyengine_version"
-        )
+        msg = "PolicyEngine.py bundle_version does not match policyengine_version"
+        raise Stage12BundleError(msg)
 
     packages = require_mapping(bundle.get("packages"), "packages")
     packaged_policyengine_version, policyengine_requirement = require_exact_package(
@@ -49,9 +52,8 @@ def _normalize_stage12_bundle(
         "policyengine",
     )
     if packaged_policyengine_version != policyengine_version:
-        raise Stage12BundleError(
-            "PolicyEngine.py package version does not match the bundle version"
-        )
+        msg = "PolicyEngine.py package version does not match the bundle version"
+        raise Stage12BundleError(msg)
     core_package_version, core_package_requirement = require_exact_package(
         packages,
         "policyengine-core",
@@ -84,19 +86,18 @@ def normalize_stage12_bundle(
     supported_countries: Sequence[CountryId] = SUPPORTED_COUNTRIES,
 ) -> Stage12BundleManifest:
     """Normalize only values certified by the packaged `.py` bundle."""
-
     try:
         return _normalize_stage12_bundle(
             raw_bundle,
             supported_countries=supported_countries,
         )
     except ValidationError as error:
-        raise Stage12BundleError(
-            "PolicyEngine.py bundle contains malformed values"
-        ) from error
+        msg = "PolicyEngine.py bundle contains malformed values"
+        raise Stage12BundleError(msg) from error
 
 
 def bundle_digest(bundle: Stage12BundleManifest) -> str:
+    """Return the sha256 of the manifest's canonical (key-sorted, compact) JSON."""
     payload = json.dumps(
         bundle.model_dump(mode="json"),
         sort_keys=True,
@@ -108,6 +109,10 @@ def bundle_digest(bundle: Stage12BundleManifest) -> str:
 
 
 def resolve_stage12_bundle(raw_bundle: object) -> ResolvedStage12Bundle:
+    """Normalize a raw bundle and pair it with its manifest digest.
+
+    Raises ``Stage12BundleError`` when the bundle is incomplete or inconsistent.
+    """
     bundle = normalize_stage12_bundle(raw_bundle)
     return ResolvedStage12Bundle(
         bundle=bundle,
@@ -117,7 +122,8 @@ def resolve_stage12_bundle(raw_bundle: object) -> ResolvedStage12Bundle:
 
 def load_stage12_bundle() -> ResolvedStage12Bundle:
     """Read the installed PolicyEngine.py release's packaged bundle."""
-
-    from policyengine.bundle import get_current_bundle
+    from policyengine.bundle import (
+        get_current_bundle,
+    )
 
     return resolve_stage12_bundle(get_current_bundle())

@@ -1,3 +1,5 @@
+"""Google Cloud exporters for OpenTelemetry, and JSON logs shaped for Cloud Logging."""
+
 import logging
 import os
 
@@ -8,7 +10,7 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-from policyengine_fastapi.exit import exit
+from policyengine_fastapi.exit import exit as app_exit
 
 log = logging.getLogger(__name__)
 
@@ -23,11 +25,15 @@ log = logging.getLogger(__name__)
 
 
 class AddGcpProjectToTraceFilter(logging.Filter):
-    def __init__(self, project: str):
+    """Logging filter that qualifies trace IDs as ``projects/<project>/traces/<id>``."""
+
+    def __init__(self, project: str) -> None:
+        """Remember the GCP project used to qualify trace IDs."""
         super().__init__()
         self.project = project
 
-    def filter(self, record: logging.LogRecord):
+    def filter(self, record: logging.LogRecord) -> bool | logging.LogRecord:
+        """Qualify the record's ``otelTraceID``, if set, then apply the base filter."""
         if not hasattr(record, "otelTraceID"):
             return super().filter(record)
         record.otelTraceID = f"projects/{self.project}/traces/{record.otelTraceID}"  # type: ignore
@@ -43,36 +49,61 @@ def _get_project_id() -> str:
 
 
 def _get_project_id_from_metadata() -> str | None:
-    from urllib import request
+    from urllib import (  # noqa: PLC0415  # urllib.request loads only when the metadata probe runs
+        request,
+    )
 
-    url = "http://metadata.google.internal/computeMetadata/v1/project/project-id"
-    req = request.Request(url)
-    req.add_header("Metadata-Flavor", "Google")
     try:
-        return request.urlopen(req).read().decode()
-    except Exception as err:
+        return (
+            request.urlopen(
+                request.Request(
+                    "http://metadata.google.internal/computeMetadata/v1/project/project-id",
+                    headers={"Metadata-Flavor": "Google"},
+                )
+            )
+            .read()
+            .decode()
+        )
+    except Exception as err:  # noqa: BLE001  # best-effort probe: any failure falls back to GOOGLE_CLOUD_PROJECT
         log.info(
-            f"Unable to get the google project id from a local metadata service: {err}"
+            "Unable to get the google project id from a local metadata service: %s",
+            err,
         )
     return None
 
 
 class GCPLoggingInstrumentor:
-    def __init__(self, project_id: str | None = None):
+    """Logging setup that emits JSON logs in the shape Google Cloud Logging expects.
+
+    Configures the standard OpenTelemetry logging instrumentor and renames level,
+    timestamp and the trace and span IDs to the Cloud Logging fields, so log
+    lines link to their traces.
+    """
+
+    def __init__(self, project_id: str | None = None) -> None:
+        """Use ``project_id``, else look the project up.
+
+        The lookup asks the GCE metadata server, then ``GOOGLE_CLOUD_PROJECT``.
+        """
         self.project_id = project_id or _get_project_id()
 
-    """
-    Configures the standard opentelemetry logging instrumentor to generate
-    json logs as per gcp expectations.
-    """
+    def instrument(self) -> None:
+        """Send JSON logs to stderr and add OpenTelemetry trace IDs to log records.
 
-    def instrument(self):
-        from opentelemetry.instrumentation.logging import LoggingInstrumentor
-        from pythonjsonlogger.json import JsonFormatter
+        Uses ``logging.basicConfig``, so the handler is not installed if the root
+        logger already has handlers.
+        """
+        from opentelemetry.instrumentation.logging import (
+            LoggingInstrumentor,
+        )
+        from pythonjsonlogger.json import (
+            JsonFormatter,
+        )
 
-        logHandler = logging.StreamHandler()
+        log_handler = logging.StreamHandler()
         formatter = JsonFormatter(
-            "%(asctime)s %(levelname)s %(message)s %(otelTraceID)s %(otelSpanID)s %(otelTraceSampled)s",
+            "%(asctime)s %(levelname)s %(message)s "
+            "%(otelTraceID)s %(otelSpanID)s %(otelTraceSampled)s",
             rename_fields={
                 "levelname": "severity",
                 "asctime": "timestamp",
@@ -83,39 +114,42 @@ class GCPLoggingInstrumentor:
             datefmt="%Y-%m-%dT%H:%M:%SZ",
         )
 
-        logHandler.setFormatter(formatter)
-        logHandler.addFilter(AddGcpProjectToTraceFilter(self.project_id))
+        log_handler.setFormatter(formatter)
+        log_handler.addFilter(AddGcpProjectToTraceFilter(self.project_id))
 
         logging.basicConfig(
             level=logging.INFO,
-            handlers=[logHandler],
+            handlers=[log_handler],
         )
         LoggingInstrumentor().instrument()
 
 
-def export_ot_to_gcp(resource: Resource):
+def export_ot_to_gcp(resource: Resource) -> None:
+    """Export traces and metrics straight to Cloud Trace and Cloud Monitoring.
+
+    Meant for code running in Google Cloud. Installs global tracer and meter
+    providers for ``resource`` and registers an ``exit`` callback that flushes
+    both at shutdown.
+    """
     from opentelemetry.exporter.cloud_monitoring import (
         CloudMonitoringMetricsExporter,
     )
-    from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+    from opentelemetry.exporter.cloud_trace import (
+        CloudTraceSpanExporter,
+    )
 
-    """
-    configure opentelemetry to directly export to gcp cloudtrace/metrics
-    useful when running in the google cloud
-    """
-
-    traceProvider = TracerProvider(resource=resource)
+    trace_provider = TracerProvider(resource=resource)
     processor = BatchSpanProcessor(CloudTraceSpanExporter())
-    traceProvider.add_span_processor(processor)
-    trace.set_tracer_provider(traceProvider)
+    trace_provider.add_span_processor(processor)
+    trace.set_tracer_provider(trace_provider)
 
     reader = PeriodicExportingMetricReader(CloudMonitoringMetricsExporter())
-    meterProvider = MeterProvider(metric_readers=[reader], resource=resource)
-    metrics.set_meter_provider(meterProvider)
+    meter_provider = MeterProvider(metric_readers=[reader], resource=resource)
+    metrics.set_meter_provider(meter_provider)
 
-    @exit()
-    def flush_ot():
+    @app_exit()
+    def flush_ot() -> None:
         log.info("Flushing traces and metrics before shutdown")
-        traceProvider.force_flush()
-        meterProvider.force_flush()
+        trace_provider.force_flush()
+        meter_provider.force_flush()
         log.info("All metics and traces flushed.")

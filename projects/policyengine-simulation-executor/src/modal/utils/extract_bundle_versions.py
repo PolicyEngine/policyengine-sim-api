@@ -30,6 +30,11 @@ def _bundle_outputs() -> dict[str, str]:
 
 
 def main() -> None:
+    """Report the installed bundle's package and data versions.
+
+    ``--shell`` prints only ``key=value`` lines. Otherwise the pairs are
+    appended to ``$GITHUB_OUTPUT`` when it is set and a summary line is printed.
+    """
     outputs = _bundle_outputs()
 
     if "--shell" in sys.argv[1:]:

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
 from contextlib import suppress
+from typing import TYPE_CHECKING
 
-from policyengine_observability import ObservabilityRuntime
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
 
-from .failure_causes import StageProgress
+    from policyengine_observability import ObservabilityRuntime
+
+    from .failure_causes import StageProgress
+
 from .failures import Stage12FailureDetail, redacted_failure_detail
 
 logger = logging.getLogger(__name__)
@@ -32,7 +36,6 @@ def report_failure(
     summary persisted for callers leads back to this one record of the
     original error. ``progress`` names the failing stage in that summary.
     """
-
     detail = redacted_failure_detail(
         error,
         default_code=default_code,
@@ -66,7 +69,6 @@ def report_original_failure(
     session pooler has no free connections. Telemetry therefore receives the
     original cause first, so it survives a failed or hung database write.
     """
-
     _emit_error(
         "Stage 12 execution failed",
         error=error,
@@ -90,7 +92,6 @@ def persist_failure_record[WriteResult](
     original exception then remains visible only in telemetry; the record
     holds its redacted summary.
     """
-
     try:
         return write_failure_record()
     except Exception as persistence_error:  # noqa: BLE001

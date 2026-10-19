@@ -4,16 +4,23 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from importlib import import_module
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from policyengine_simulation_contract.spm import spm_error_detail
+
+if TYPE_CHECKING:
+    import pandas as pd
+    from _typeshed import ConvertibleToFloat
+    from policyengine.core import Simulation
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-def _number(value: Any, default: float = 0.0) -> float:
+def _number(value: ConvertibleToFloat | None, default: float = 0.0) -> float:
     if value is None:
         return default
     try:
@@ -25,7 +32,7 @@ def _number(value: Any, default: float = 0.0) -> float:
     return result
 
 
-def _collection_records(collection: Any) -> list[dict[str, Any]]:
+def _collection_records(collection: object) -> list[dict[str, Any]]:
     if collection is None:
         return []
     dataframe = getattr(collection, "dataframe", None)
@@ -36,7 +43,7 @@ def _collection_records(collection: Any) -> list[dict[str, Any]]:
     return []
 
 
-def _output_model_dump(value: Any) -> Any:
+def _output_model_dump(value: object) -> object:
     if value is None:
         return None
     if hasattr(value, "model_dump"):
@@ -46,14 +53,14 @@ def _output_model_dump(value: Any) -> Any:
     return None
 
 
-def _entity_data(simulation, entity: str):
+def _entity_data(simulation: Simulation, entity: str) -> pd.DataFrame:
     if simulation.output_dataset is None or simulation.output_dataset.data is None:
         simulation.ensure()
     return getattr(simulation.output_dataset.data, entity)
 
 
-def _count_output_entities(simulation, entity: str, weight: str) -> float:
-    """The weighted number of entities: the plain sum of their weights.
+def _count_output_entities(simulation: Simulation, entity: str, weight: str) -> float:
+    """Return the weighted number of entities: the plain sum of their weights.
 
     Output frames are microdf ``MicroDataFrame``s weighted by the entity's
     weight, so a column's ``.sum()`` is already a weighted sum. Summing the
@@ -66,12 +73,15 @@ def _count_output_entities(simulation, entity: str, weight: str) -> float:
     return float(np.asarray(data[weight], dtype=float).sum())
 
 
-def _sum_output_variable(simulation, variable: str, entity: str) -> float:
+def _sum_output_variable(simulation: Simulation, variable: str, entity: str) -> float:
     data = _entity_data(simulation, entity)
     if variable in data.columns:
         return float(data[variable].sum())
 
-    from policyengine.outputs import Aggregate, AggregateType
+    from policyengine.outputs import (  # noqa: PLC0415  # policyengine stays out of this module's import-time imports
+        Aggregate,
+        AggregateType,
+    )
 
     output = Aggregate(
         simulation=simulation,
@@ -83,13 +93,18 @@ def _sum_output_variable(simulation, variable: str, entity: str) -> float:
     return float(output.result)
 
 
-def _change_output_variable(baseline, reform, variable: str, entity: str) -> float:
+def _change_output_variable(
+    baseline: Simulation, reform: Simulation, variable: str, entity: str
+) -> float:
     baseline_data = _entity_data(baseline, entity)
     reform_data = _entity_data(reform, entity)
     if variable in baseline_data.columns and variable in reform_data.columns:
         return float((reform_data[variable] - baseline_data[variable]).sum())
 
-    from policyengine.outputs import ChangeAggregate, ChangeAggregateType
+    from policyengine.outputs import (  # noqa: PLC0415  # policyengine stays out of this module's import-time imports
+        ChangeAggregate,
+        ChangeAggregateType,
+    )
 
     output = ChangeAggregate(
         baseline_simulation=baseline,
@@ -102,21 +117,21 @@ def _change_output_variable(baseline, reform, variable: str, entity: str) -> flo
     return float(output.result)
 
 
-def _output_module_function(module_name: str, name: str):
+def _output_module_function(module_name: str, name: str) -> Callable[..., object]:
     module = import_module(f"policyengine.outputs.{module_name}")
     return getattr(module, name)
 
 
-def _poverty_module_function(name: str):
+def _poverty_module_function(name: str) -> Callable[..., object]:
     return _output_module_function("poverty", name)
 
 
-def _try_compute_output(label: str, fn, *args, **kwargs):
+def _try_compute_output[**P, T](
+    label: str, fn: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+) -> T | None:
     try:
         return fn(*args, **kwargs)
     except Exception as exc:
-        from policyengine_simulation_contract.spm import spm_error_detail
-
         if spm_error_detail(exc) is not None:
             raise
         logger.warning("Unable to calculate %s", label, exc_info=True)

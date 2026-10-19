@@ -37,6 +37,58 @@ A manifest that states *no* model version for the country — entry absent,
 or the value absent, non-string, empty or whitespace — contradicts nothing
 and still routes.
 
+## Job stage reporting
+
+`GET /jobs/{job_id}` adds optional fields to annual economy jobs, so a
+client can show real progress instead of a fixed duration estimate. Clients
+that read only `status` see no change.
+
+| Field | Meaning |
+|---|---|
+| `stage` | `queued`, `loading_data`, `baseline`, `reform`, `simulating` or `outputs`. Running jobs report their current stage; failed jobs report the stage they stopped in; complete jobs omit it. Later versions may add stages, so clients must accept a value they do not know. |
+| `progress` | Coarse percent, 0–100, at the start of the current stage. It changes only at stage boundaries, stays below 100 while running, and is 100 when complete. |
+| `progress_max` | The highest percent a running job reaches before its next stage starts. |
+| `submitted_at`, `started_at`, `stage_started_at`, `finished_at` | UTC timestamps. `started_at - submitted_at` is the queue time. |
+| `segments` | `{completed, total}` region segments of a segmented US national run, for captions. |
+| `stage_durations` | Seconds spent in each stage that has ended. |
+
+A monolithic run moves through `loading_data`, `baseline`, `reform` and
+`outputs`. A segmented US national run computes baseline and reform together
+in 20 region segments, so it moves through `loading_data`, `simulating` and
+`outputs`.
+
+The `run_simulation` worker writes a stage record to the Modal Dict
+`simulation-api-job-progress`, keyed by `job_id`. If Modal runs the same call
+again after a preemption, the preempted attempt leaves its record running
+rather than finishing it, and the new attempt continues that record and keeps
+the reported stage until it reaches a stage at least as far along, so
+`progress` never moves backwards, however many times the call is preempted. Budget-window children are ordinary
+`run_simulation` calls and write their own records, which
+`/budget-window-jobs` does not read yet. The gateway reports
+`queued` for a job without a record only when the worker app's bundle
+manifest declares `job_progress`; apps deployed before stage reporting never
+write a record, so their jobs get no stage fields. A failed read or a
+malformed record drops the stage fields; it never changes the status, the
+result or the HTTP status code.
+
+The `progress` value at each stage start (`STAGE_PROGRESS_FLOOR` in
+`policyengine_simulation_contract.job_progress`) depends on the execution
+path, which the worker records as `monolithic` or `segmented`.
+Completed segments do not move `progress`: the regional children finish at
+about the same time and California finishes last, so a segment count jumps
+late and then waits. For a smooth bar, a client moves its own time-based
+estimate between `progress` and `progress_max` and never moves the bar
+backwards. While a job is `queued`, its path is unknown, so `progress_max`
+is the highest limit of any path. The values
+come from one week of production telemetry (6–13 October 2026): queue time
+is about 39% of a UK national run, while the segmented calculation is about
+96% of a US national run. They stay provisional until per-stage runtime
+statistics exist for each country and region type (#780, phase 2).
+
+The worker also adds `job_stage_seconds_<stage>` attributes to its
+`run_simulation` operation, so telemetry can split the baseline from the
+reform calculation.
+
 ## Image dependencies
 
 The Modal image installs with `uv_sync(frozen=True)` from this project's

@@ -4,14 +4,12 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     AggregateReportArtifactDescriptor,
     ComparisonReportRecord,
@@ -75,6 +73,11 @@ from .output_planning import (
 from .segmentation import should_segment_simulation
 from .simulation import descriptor_from_record, simulation_input_sha256
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from policyengine_observability import ObservabilityRuntime
+
 SIMULATION_POLL_INITIAL_SECONDS = 0.25
 SIMULATION_POLL_MAX_SECONDS = 1.0
 SIMULATION_POLL_BACKOFF_FACTOR = 2.0
@@ -102,7 +105,6 @@ def _log_child_operation_failure(
     evaluation ID and error type, in that order. The error's own message is
     never logged.
     """
-
     error_type = type(error).__name__
     logger.log(
         level,
@@ -150,7 +152,6 @@ SIMULATION_CANCELLED_ERROR_CODE = "simulation_cancelled"
 
 def _cancellation(reason: str) -> Stage12FailureDetail:
     """Describe a child the coordinator stopped; ``reason`` ends the summary."""
-
     return Stage12FailureDetail(
         error_code=SIMULATION_CANCELLED_ERROR_CODE,
         error_summary=f"Cancelled after {reason}.",
@@ -173,7 +174,6 @@ def _cancel_pending_simulations(
     cancellation errors are logged rather than raised, so they never replace
     the failure that caused the cancellation.
     """
-
     for role in sorted(roles):
         simulation = simulations[role]
         try:
@@ -247,7 +247,6 @@ def _record_child_failure(
     A child that has already finished keeps its own outcome. A state error is
     logged rather than raised, so it never replaces the child's failure.
     """
-
     try:
         _replace_running_simulation(
             store=store,
@@ -275,7 +274,6 @@ def _child_failure_detail(
     the call's own failure is used and still recorded where possible, so a
     state error never replaces the child's failure.
     """
-
     detail = report_failure(
         error,
         runtime=runtime,
@@ -415,7 +413,6 @@ def _validate_submitted_parent(
     parent: ComparisonReportRecord,
 ) -> None:
     """Reject dispatch metadata that does not describe this exact report."""
-
     bundle = report.baseline.bundle
     expected = {
         "evaluation_id": report.evaluation_id,
@@ -438,26 +435,34 @@ def _validate_submitted_parent(
     }
     for field, value in expected.items():
         if getattr(parent, field) != value:
-            raise ValueError(f"submitted parent {field} does not match invocation")
+            msg = f"submitted parent {field} does not match invocation"
+            raise ValueError(msg)
     if parent.status is not ComparisonRunLifecycleStatus.PENDING:
-        raise ValueError("submitted parent must be pending")
+        msg = "submitted parent must be pending"
+        raise ValueError(msg)
     if parent.aggregation_status is not ComparisonRunAggregationStatus.NOT_STARTED:
-        raise ValueError("submitted parent aggregation must not be started")
+        msg = "submitted parent aggregation must not be started"
+        raise ValueError(msg)
     if parent.coordinator_invocation_id is not None:
-        raise ValueError("submitted parent must not contain an invocation identifier")
+        msg = "submitted parent must not contain an invocation identifier"
+        raise ValueError(msg)
     production_job_id = context.production_function_call_id
     if production_job_id is None:
         if parent.production_identity != f"direct:{report.evaluation_id}":
-            raise ValueError("direct parent identity does not match its report")
+            msg = "direct parent identity does not match its report"
+            raise ValueError(msg)
         if parent.incumbent_execution_id is not None:
-            raise ValueError("direct parent must not name a production execution")
+            msg = "direct parent must not name a production execution"
+            raise ValueError(msg)
         if parent.comparison_status is not ResultComparisonStatus.NOT_REQUESTED:
-            raise ValueError("direct parent must not request result comparison")
+            msg = "direct parent must not request result comparison"
+            raise ValueError(msg)
     elif (
         parent.production_identity != production_job_id
         or parent.incumbent_execution_id != production_job_id
     ):
-        raise ValueError("automatic parent does not match the production execution")
+        msg = "automatic parent does not match the production execution"
+        raise ValueError(msg)
 
 
 def _claim_parent(
@@ -467,7 +472,6 @@ def _claim_parent(
     store: ComparisonStore,
 ) -> tuple[ComparisonReportRecord, bool]:
     """Create the parent in Modal or claim a retry; reject duplicate execution."""
-
     coordinating_at = datetime.now(UTC)
     candidate = submitted.model_copy(
         update={
@@ -486,9 +490,8 @@ def _claim_parent(
     if persistence.created:
         return parent, True
     if parent.evaluation_id != submitted.evaluation_id:
-        raise ValueError(
-            "existing comparison identity has a different report identifier"
-        )
+        msg = "existing comparison identity has a different report identifier"
+        raise ValueError(msg)
     if parent.status in {
         ComparisonRunLifecycleStatus.RUNNING,
         ComparisonRunLifecycleStatus.SUCCEEDED,
@@ -512,6 +515,17 @@ def _claim_parent(
     return claimed, True
 
 
+def _require_artifact_digest(
+    payload: bytes,
+    expected_sha256: str,
+    *,
+    mismatch_message: str,
+) -> None:
+    """Raise ``ValueError(mismatch_message)`` unless ``payload`` matches its digest."""
+    if sha256(payload).hexdigest() != expected_sha256:
+        raise ValueError(mismatch_message)
+
+
 def coordinate_report(
     payload: object,
     context_payload: object,
@@ -530,17 +544,31 @@ def coordinate_report(
     monotonic: Callable[[], float] = time.monotonic,
     wait_timeout_seconds: float = SIMULATION_WAIT_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
+    """Run one Stage 12 comparison report end to end; return its aggregate descriptor.
+
+    Claims the parent report (one already running or finished returns a
+    ``deduplicated`` summary instead), starts or reattaches the baseline and
+    reform child simulations within one shared wait window, and aggregates
+    their digest-checked artifacts; shadow runs are then compared with the
+    production result. A dispatch context that disagrees with the report
+    raises ``ValueError`` before the claim; any later failure stops the
+    unfinished children, marks the report FAILED and raises a
+    ``RuntimeError`` that carries no calculation detail.
+    """
     # Open the shared child-wait window before any setup work.
     child_wait_deadline = monotonic() + wait_timeout_seconds
     report = ReportExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
     submitted_parent = ComparisonReportRecord.model_validate(parent_payload)
     if application_name != context.modal_application:
-        raise ValueError("report coordinator application differs from dispatch context")
+        msg = "report coordinator application differs from dispatch context"
+        raise ValueError(msg)
     if report.baseline.bundle.policyengine_version != context.worker_version:
-        raise ValueError("report worker version differs from dispatch context")
+        msg = "report worker version differs from dispatch context"
+        raise ValueError(msg)
     if report.baseline.bundle.bundle_manifest_sha256 != context.bundle_manifest_sha256:
-        raise ValueError("report bundle digest differs from dispatch context")
+        msg = "report bundle digest differs from dispatch context"
+        raise ValueError(msg)
     _validate_submitted_parent(
         report=report,
         context=context,
@@ -631,8 +659,11 @@ def coordinate_report(
             if child.status is ComparisonRunLifecycleStatus.SUCCEEDED:
                 descriptor = descriptor_from_record(child, simulation)
                 retained = artifact_storage.read(descriptor.artifact.uri)
-                if sha256(retained).hexdigest() != descriptor.artifact.content_sha256:
-                    raise ValueError("retained child artifact digest mismatch")
+                _require_artifact_digest(
+                    retained,
+                    descriptor.artifact.content_sha256,
+                    mismatch_message="retained child artifact digest mismatch",
+                )
                 descriptor = descriptor.model_copy(
                     update={
                         "artifact": descriptor.artifact.model_copy(
@@ -685,7 +716,7 @@ def coordinate_report(
                         context=context.model_dump(mode="json"),
                         observability_context=child_observability_context,
                     )
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001  # any dispatch failure is recorded on the child and stops its started peers
                 detail = report_failure(
                     error,
                     runtime=runtime,
@@ -738,10 +769,16 @@ def coordinate_report(
         with stage_span(Stage.STAGE12_ARTIFACT_READ):
             baseline_payload = artifact_storage.read(baseline.artifact.uri)
             reform_payload = artifact_storage.read(reform.artifact.uri)
-        if sha256(baseline_payload).hexdigest() != baseline.artifact.content_sha256:
-            raise ValueError("baseline artifact digest mismatch")
-        if sha256(reform_payload).hexdigest() != reform.artifact.content_sha256:
-            raise ValueError("reform artifact digest mismatch")
+        _require_artifact_digest(
+            baseline_payload,
+            baseline.artifact.content_sha256,
+            mismatch_message="baseline artifact digest mismatch",
+        )
+        _require_artifact_digest(
+            reform_payload,
+            reform.artifact.content_sha256,
+            mismatch_message="reform artifact digest mismatch",
+        )
         baseline_frames = deserialize_simulation_frames(baseline_payload)
         reform_frames = deserialize_simulation_frames(reform_payload)
         uk_local_authority_metadata = validate_uk_local_authority_metadata(
@@ -800,7 +837,7 @@ def coordinate_report(
         return descriptor.model_dump(mode="json")
     # Persist a redacted cause for any coordinator, child-call, aggregation, or
     # artifact failure before returning a stable exception to Modal.
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001  # every failure is persisted before a stable exception returns to Modal
         if isinstance(error, Stage12ExecutionError):
             # Child, dispatch and wait-timeout failures raise
             # Stage12ExecutionError only after reporting the original failure
@@ -846,4 +883,5 @@ def coordinate_report(
             runtime=runtime,
             failure_scope="report_coordination",
         )
-        raise RuntimeError("Stage 12 report coordination failed") from None
+        msg = "Stage 12 report coordination failed"
+        raise RuntimeError(msg) from None

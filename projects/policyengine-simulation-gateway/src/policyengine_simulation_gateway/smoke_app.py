@@ -22,14 +22,18 @@ app = modal.App("policyengine-simulation-gateway-smoke")
 
 @app.function(image=build_gateway_image(), timeout=300)
 def smoke_import_gateway() -> dict:
-    import importlib
-    import os
-    import pkgutil
+    """Import every shipped package module and build the ASGI app in-image.
 
-    import policyengine_simulation_contract
-    import policyengine_simulation_observability
+    Return the number of modules imported and the app's ``METHOD path`` routes.
+    """
+    import importlib  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
+    import os  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
+    import pkgutil  # noqa: PLC0415  # smoke app: standard-library import kept with the in-image check's other imports
 
-    import policyengine_simulation_gateway
+    import policyengine_simulation_contract  # noqa: PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
+    import policyengine_simulation_observability  # noqa: PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
+
+    import policyengine_simulation_gateway  # noqa: PLC0415  # smoke check: the import itself, inside the Modal image, is what this verifies
 
     imported = []
     for package in (
@@ -48,7 +52,9 @@ def smoke_import_gateway() -> dict:
     # import surface is exercised without real JWT material.
     os.environ.setdefault("GATEWAY_AUTH_ISSUER", "https://smoke.invalid/")
     os.environ.setdefault("GATEWAY_AUTH_AUDIENCE", "smoke")
-    from policyengine_simulation_gateway.testing import create_gateway_app
+    from policyengine_simulation_gateway.testing import (  # noqa: PLC0415  # smoke check: imported after the auth environment is staged
+        create_gateway_app,
+    )
 
     asgi_app = create_gateway_app()
     return {
@@ -62,9 +68,14 @@ def smoke_import_gateway() -> dict:
 
 
 @app.local_entrypoint()
-def main():
+def main() -> None:
+    """Run the in-image smoke remotely; fail unless modules and /health loaded."""
     report = smoke_import_gateway.remote()
-    print(report)
-    assert report["modules_imported"] > 0
-    assert any("/health" in route for route in report["routes"])
-    print("gateway image smoke OK")
+    print(report)  # noqa: T201  # Modal local entrypoint: runs locally, and stdout is the smoke's report
+    if report["modules_imported"] <= 0:
+        msg = f"Gateway image smoke imported no modules: {report!r}"
+        raise RuntimeError(msg)
+    if not any("/health" in route for route in report["routes"]):
+        msg = f"Gateway image smoke found no /health route: {report!r}"
+        raise RuntimeError(msg)
+    print("gateway image smoke OK")  # noqa: T201  # Modal local entrypoint: runs locally, and stdout is the smoke's report

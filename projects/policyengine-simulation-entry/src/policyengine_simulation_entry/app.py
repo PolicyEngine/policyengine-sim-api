@@ -6,9 +6,8 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, Request
@@ -46,11 +45,15 @@ from policyengine_simulation_observability.observability import (
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from starlette.datastructures import MutableHeaders
 
-from policyengine_simulation_entry.auth import CallerAuthenticator
+from policyengine_simulation_entry.auth import (
+    AuthenticationDependency,
+    CallerAuthenticator,
+    CallerAuthorizer,
+)
 from policyengine_simulation_entry.backend import (
     BackendResponse,
-    BackendTimeout,
-    BackendUnavailable,
+    BackendTimeoutError,
+    BackendUnavailableError,
     OldGatewayBackend,
     SimulationBackend,
 )
@@ -58,27 +61,38 @@ from policyengine_simulation_entry.config import Settings
 from policyengine_simulation_entry.schemas import (
     BackendTelemetryAttributes,
     BackendTelemetryPayload,
-    CallerIdentity,
     RequestIdentifiers,
     TemporaryStage12ReportResponse,
     TemporaryStage12SubmissionResponse,
 )
 from policyengine_simulation_entry.stage12_backend import (
+    Stage12ComparisonBackend,
     TemporaryStage12DispatchFailed,
-    TemporaryStage12UnsupportedRequest,
+    TemporaryStage12UnsupportedRequestError,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from starlette.middleware.base import RequestResponseEndpoint
 
 logger = logging.getLogger(__name__)
 BACKEND_RESPONSE_HEADER = {
     "X-PolicyEngine-Simulation-Backend": "old_gateway",
 }
 _json_object_adapter = TypeAdapter(JsonObject)
-type AuthenticationDependency = Callable[[], CallerIdentity | None]
 type ResponseIdentifier = Literal["job_id", "batch_job_id"]
 STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS = 5.0
 
 
 class ComparisonBackend(Protocol):
+    """Stage 12 comparison dispatch and polling seam used by the entry routes.
+
+    The real implementation is ``Stage12ComparisonBackend``; tests inject fakes.
+    The routes bound every call with a timeout and never let a failure here
+    alter the production v1 response.
+    """
+
     async def dispatch_after_production(
         self,
         *,
@@ -86,7 +100,13 @@ class ComparisonBackend(Protocol):
         production_response: bytes,
         request_id: str,
         observability_id: str,
-    ) -> None: ...
+    ) -> None:
+        """Start a shadow comparison run for a production job the gateway accepted.
+
+        ``production_response`` is the raw gateway response body; its ``job_id``
+        identifies the incumbent run being compared.
+        """
+        ...
 
     async def submit_temporary_report(
         self,
@@ -94,12 +114,16 @@ class ComparisonBackend(Protocol):
         request_payload: dict[str, Any],
         request_id: str,
         observability_id: str,
-    ) -> ComparisonReportRecord: ...
+    ) -> ComparisonReportRecord:
+        """Submit an operator-requested report and return its acknowledged record."""
+        ...
 
     async def get_temporary_report(
         self,
         evaluation_id: UUID,
-    ) -> tuple[ComparisonReportRecord, tuple[ComparisonSimulationRecord, ...]]: ...
+    ) -> tuple[ComparisonReportRecord, tuple[ComparisonSimulationRecord, ...]]:
+        """Return a report and its simulations; raise LookupError if it is unknown."""
+        ...
 
 
 def _model_json(model: BaseModel) -> JsonObject:
@@ -150,11 +174,10 @@ def create_app(
     comparison_backend: ComparisonBackend | None = None,
 ) -> FastAPI:
     """Build the app with injectable auth/backend seams for hermetic tests."""
-
     runtime_settings = settings or Settings.from_env()
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         runtime_settings.validate()
         await runtime_backend.start()
         try:
@@ -184,7 +207,7 @@ def create_app(
         if observability_id is not None:
             try:
                 runtime.set_context(observability_id=observability_id)
-            except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+            except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
                 pass
         return observability_id
 
@@ -220,26 +243,32 @@ def create_app(
                         "reason": "downstream_identifier_differed",
                     },
                 )
-            except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+            except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
                 pass
             return current
         return bind_observability_id(request, current or downstream)
 
     runtime_backend = backend or OldGatewayBackend(runtime_settings, runtime=runtime)
     authenticate = auth_dependency or CallerAuthenticator(runtime_settings, runtime)
+    authorizer = CallerAuthorizer(
+        authenticate=authenticate,
+        enforce=runtime_settings.enforce_permissions,
+        runtime=runtime,
+    )
+    simulation_submitter = authorizer.require_permission("simulation:submit")
+    simulation_reader = authorizer.require_permission("simulation:read")
+    stage12_operator = authorizer.require_permission("stage12:operate")
     runtime_comparison = comparison_backend
     if runtime_comparison is None and runtime_settings.stage12_resources_configured:
-        from policyengine_simulation_entry.stage12_backend import (
-            Stage12ComparisonBackend,
-        )
-
         runtime_comparison = Stage12ComparisonBackend.from_settings(
             runtime_settings,
             runtime=runtime,
         )
 
     @app.middleware("http")
-    async def request_context(request: Request, call_next):
+    async def request_context(
+        request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         headers = MutableHeaders(scope=request.scope)
         request_id = headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())
         incoming_observability_id = normalize_observability_id(
@@ -294,7 +323,7 @@ def create_app(
         event_identifiers: RequestIdentifiers = identifiers or {}
         try:
             runtime.set_context(backend="old_gateway", **event_identifiers)
-        except Exception:  # noqa: BLE001, S110 - telemetry is non-fatal
+        except Exception:  # noqa: BLE001, S110  # telemetry is non-fatal
             pass
         try:
             result = await runtime_backend.request(
@@ -346,8 +375,7 @@ def create_app(
                 response.headers[OBSERVABILITY_ID_HEADER] = observability_id
             elif OBSERVABILITY_ID_HEADER in response.headers:
                 del response.headers[OBSERVABILITY_ID_HEADER]
-            return response
-        except BackendTimeout:
+        except BackendTimeoutError:
             runtime.event(
                 "simulation_entry_backend_timeout",
                 attributes={
@@ -364,7 +392,7 @@ def create_app(
                     **BACKEND_RESPONSE_HEADER,
                 },
             )
-        except BackendUnavailable:
+        except BackendUnavailableError:
             runtime.event(
                 "simulation_entry_backend_unavailable",
                 attributes={
@@ -381,8 +409,8 @@ def create_app(
                     **BACKEND_RESPONSE_HEADER,
                 },
             )
-
-    protected = [Depends(authenticate)]
+        else:
+            return response
 
     def temporary_submission_payload(
         report: ComparisonReportRecord,
@@ -399,7 +427,7 @@ def create_app(
     @app.post(
         "/internal/stage12/reports",
         include_in_schema=False,
-        dependencies=protected,
+        dependencies=[Depends(stage12_operator)],
     )
     async def submit_temporary_stage12_report(
         body: SimulationRequest,
@@ -434,7 +462,7 @@ def create_app(
                 content={"detail": "Stage 12 submission acknowledgement timed out."},
                 headers={"Retry-After": "10"},
             )
-        except TemporaryStage12UnsupportedRequest as error:
+        except TemporaryStage12UnsupportedRequestError as error:
             return JSONResponse(
                 status_code=422,
                 content={
@@ -451,8 +479,8 @@ def create_app(
             )
         # This temporary diagnostic route must convert every integration
         # failure into an HTTP response rather than crash the application.
-        except Exception as error:  # noqa: BLE001
-            logger.error(
+        except Exception as error:  # noqa: BLE001  # every integration failure becomes a 503
+            logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
                 "stage12_direct_submission_failed",
                 extra={
                     "request_id": request.state.request_id,
@@ -478,7 +506,7 @@ def create_app(
     @app.get(
         "/internal/stage12/reports/{evaluation_id}",
         include_in_schema=False,
-        dependencies=protected,
+        dependencies=[Depends(stage12_operator)],
     )
     async def get_temporary_stage12_report(
         evaluation_id: UUID,
@@ -504,8 +532,8 @@ def create_app(
             )
         # Reading temporary diagnostic state crosses an internal HTTP boundary
         # whose concrete exception types are implementation details.
-        except Exception as error:  # noqa: BLE001
-            logger.error(
+        except Exception as error:  # noqa: BLE001  # any status-read failure becomes a 503
+            logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
                 "stage12_direct_status_failed",
                 extra={
                     "request_id": request.state.request_id,
@@ -557,7 +585,7 @@ def create_app(
                 "model": SimulationErrorResponse,
             },
         },
-        dependencies=protected,
+        dependencies=[Depends(simulation_submitter)],
     )
     async def submit_comparison(
         body: SimulationRequest,
@@ -590,7 +618,7 @@ def create_app(
                     timeout=STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS,
                 )
             except TimeoutError:
-                logger.error(
+                logger.error(  # noqa: TRY400  # an expected timeout, fully described by timeout_seconds; the traceback would show only asyncio cancellation
                     "stage12_comparison_dispatch_timed_out",
                     extra={
                         "request_id": request.state.request_id,
@@ -599,8 +627,8 @@ def create_app(
                 )
             # Automatic Stage 12 work must never change the production v1
             # response, including for unexpected integration failures.
-            except Exception as error:  # noqa: BLE001
-                logger.error(
+            except Exception as error:  # noqa: BLE001  # Stage 12 dispatch must never change the v1 response
+                logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
                     "stage12_comparison_dispatch_failed",
                     extra={
                         "request_id": request.state.request_id,
@@ -626,7 +654,7 @@ def create_app(
                 "model": SimulationErrorResponse,
             },
         },
-        dependencies=protected,
+        dependencies=[Depends(simulation_submitter)],
     )
     async def submit_budget_window(
         body: BudgetWindowBatchRequest,
@@ -665,7 +693,7 @@ def create_app(
             404: {"description": "Job not found"},
             500: {"description": "Job failed"},
         },
-        dependencies=protected,
+        dependencies=[Depends(simulation_reader)],
     )
     async def get_job(job_id: str, request: Request) -> Response:
         return await forward(
@@ -697,7 +725,7 @@ def create_app(
             404: {"description": "Batch job not found"},
             500: {"description": "Batch failed"},
         },
-        dependencies=protected,
+        dependencies=[Depends(simulation_reader)],
     )
     async def get_budget_window_job(
         batch_job_id: str,

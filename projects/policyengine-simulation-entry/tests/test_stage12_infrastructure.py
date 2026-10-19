@@ -11,20 +11,23 @@ SYNC_SCRIPT = REPO_ROOT / ".github/scripts/stage12-sync-modal-secrets.sh"
 DEPLOY_WORKFLOW = REPO_ROOT / ".github/workflows/simulation-deploy.reusable.yml"
 
 
+def _run_bash(
+    *arguments: str, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run bash on a repository script, capturing text output; a failure is returned."""
+    return subprocess.run(
+        ["bash", *arguments],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+
 def test_infrastructure_validation_is_bounded_and_valid_shell() -> None:
-    result = subprocess.run(
-        ["bash", "-n", str(SCRIPT)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    result = _run_bash("-n", str(SCRIPT))
     assert result.returncode == 0, result.stderr
-    sync_result = subprocess.run(
-        ["bash", "-n", str(SYNC_SCRIPT)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    sync_result = _run_bash("-n", str(SYNC_SCRIPT))
     assert sync_result.returncode == 0, sync_result.stderr
     source = SCRIPT.read_text(encoding="utf-8")
     assert "STAGE12_ENVIRONMENT" in source
@@ -66,13 +69,7 @@ def test_infrastructure_validation_is_bounded_and_valid_shell() -> None:
 
 
 def test_infrastructure_validation_rejects_missing_configuration() -> None:
-    result = subprocess.run(
-        ["bash", str(SCRIPT)],
-        capture_output=True,
-        text=True,
-        env={},
-        check=False,
-    )
+    result = _run_bash(str(SCRIPT), env={})
     assert result.returncode != 0
     assert "STAGE12_ENVIRONMENT is required" in result.stderr
 
@@ -105,13 +102,7 @@ def test_storage_validation_checks_runtime_and_deployment_credentials() -> None:
 
 
 def test_modal_secret_sync_rejects_missing_configuration() -> None:
-    result = subprocess.run(
-        ["bash", str(SYNC_SCRIPT), "staging"],
-        capture_output=True,
-        text=True,
-        env={},
-        check=False,
-    )
+    result = _run_bash(str(SYNC_SCRIPT), "staging", env={})
     assert result.returncode != 0
     assert "STAGE12_GCP_PROJECT_ID is required" in result.stderr
 

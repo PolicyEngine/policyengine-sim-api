@@ -98,11 +98,12 @@ def _get_decoder() -> JWTDecoder:
     issuer = os.environ.get(GATEWAY_AUTH_ISSUER_ENV)
     audience = os.environ.get(GATEWAY_AUTH_AUDIENCE_ENV)
     if not issuer or not audience:
-        raise RuntimeError(
+        msg = (
             "Gateway auth misconfigured: set "
             f"{GATEWAY_AUTH_ISSUER_ENV} and {GATEWAY_AUTH_AUDIENCE_ENV} or "
             f"{GATEWAY_AUTH_DISABLED_ENV}=1 for local/test use."
         )
+        raise RuntimeError(msg)
     if not issuer.endswith("/"):
         issuer = issuer + "/"
     return _build_decoder(issuer, audience)
@@ -153,18 +154,20 @@ def enforce_production_auth_guard(runtime: ObservabilityRuntime) -> None:
     ack = os.environ.get(GATEWAY_AUTH_DISABLED_ACK_ENV, "")
 
     if modal_env is None or modal_env.lower() in PRODUCTION_MODAL_ENVIRONMENTS:
-        raise AuthDisabledInProductionError(
+        msg = (
             f"Refusing to start gateway with {GATEWAY_AUTH_DISABLED_ENV}=1 "
             f"when {MODAL_ENVIRONMENT_ENV}={modal_env!r}. "
             "Disabling auth is only permitted in ephemeral dev environments."
         )
+        raise AuthDisabledInProductionError(msg)
 
     if ack != GATEWAY_AUTH_DISABLED_ACK_VALUE:
-        raise AuthDisabledWithoutAckError(
+        msg = (
             f"Refusing to start gateway with {GATEWAY_AUTH_DISABLED_ENV}=1 "
             f"unless {GATEWAY_AUTH_DISABLED_ACK_ENV}="
             f"{GATEWAY_AUTH_DISABLED_ACK_VALUE} is also set."
         )
+        raise AuthDisabledWithoutAckError(msg)
 
     banner = (
         "\n"
@@ -183,7 +186,7 @@ def enforce_production_auth_guard(runtime: ObservabilityRuntime) -> None:
                 "ack_value_present": True,
             },
         )
-    except Exception:  # pragma: no cover - observability must never block startup
+    except Exception:  # noqa: BLE001, S110  # pragma: no cover - observability must never block startup
         pass
 
 
@@ -204,19 +207,21 @@ def enforce_auth_configured_guard() -> None:
     audience = os.environ.get(GATEWAY_AUTH_AUDIENCE_ENV)
 
     if bool(issuer) != bool(audience):
-        raise AuthMisconfiguredError(
+        msg = (
             "Gateway auth is partially configured: set both "
             f"{GATEWAY_AUTH_ISSUER_ENV} and {GATEWAY_AUTH_AUDIENCE_ENV}, "
             "or clear both."
         )
+        raise AuthMisconfiguredError(msg)
 
     if _auth_required() and (not issuer or not audience):
-        raise AuthMisconfiguredError(
+        msg = (
             "Gateway auth is required but "
             f"{GATEWAY_AUTH_ISSUER_ENV}/{GATEWAY_AUTH_AUDIENCE_ENV} are not set "
             "in the container environment. Verify the "
             "'policyengine-gateway-auth' Modal secret is synced correctly."
         )
+        raise AuthMisconfiguredError(msg)
 
 
 def require_auth(
@@ -239,7 +244,6 @@ def require_auth(
     silently make the gateway private. Partial auth configuration always
     returns 503 because it indicates an incomplete secret.
     """
-
     if _auth_disabled():
         return None
 
@@ -260,8 +264,8 @@ def require_auth(
 
     try:
         decoder = _get_decoder()
-    except RuntimeError as exc:
-        logger.error("Gateway auth misconfigured: %s", exc)
+    except RuntimeError:
+        logger.exception("Gateway auth misconfigured")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Gateway authentication is not configured.",

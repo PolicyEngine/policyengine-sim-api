@@ -9,23 +9,22 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
-from typing import Any
-from uuid import UUID
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
-from policyengine_observability import ObservabilityRuntime
-from policyengine_simulation_contract.spm import SPMProvenance
-from policyengine_simulation_contract.stage12_bundle import CountryId
+from policyengine.core import Simulation
 from policyengine_simulation_contract.stage12_execution import (
+    ArtifactMediaType,
+    ArtifactReference,
     ComparisonRunLifecycleStatus,
     ComparisonSimulationRecord,
     PlannedSimulationExecutionInput,
+    RowIdentity,
     SimulationArtifactDescriptor,
     SimulationExecutionInput,
     Stage12InvocationContext,
     stage12_output_plan_sha256,
 )
-from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
     Stage,
@@ -45,18 +44,33 @@ from .dependencies import ComparisonStore, artifact_store, runtime_store
 from .failure_causes import StageProgress, record_failure_cause, tracked_stage
 from .failure_recording import persist_failure_record, report_failure
 from .failures import (
-    Stage12Cancellation,
+    Stage12CancellationError,
     Stage12ExecutionError,
     Stage12FailureDetail,
     validate_policy_periods,
 )
 from .output_planning import apply_output_plan, validate_output_frames
 
+if TYPE_CHECKING:
+    from types import ModuleType
+    from uuid import UUID
+
+    from policyengine.core import Dataset
+    from policyengine.core.scoping_strategy import ScopingStrategy
+    from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.spm import SPMProvenance
+    from policyengine_simulation_contract.stage12_bundle import CountryId
+    from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
+
+    from policyengine_simulation_executor.simulation_runtime import DatasetSelection
+
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class SimulationCalculation:
+    """A calculator's entity output frames plus metadata stored alongside them."""
+
     frames: Mapping[str, pd.DataFrame]
     calculation_provenance: SPMProvenance | None = None
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
@@ -66,22 +80,19 @@ class SimulationCalculation:
 def build_stage12_simulation(
     params: dict[str, Any],
     *,
-    dataset: Any,
-    dataset_selection: Any,
-    country_module: Any,
+    dataset: Dataset,
+    dataset_selection: DatasetSelection,
+    country_module: ModuleType,
     policy: dict[str, Any] | None,
-    scoping_strategy: Any,
+    scoping_strategy: ScopingStrategy | None,
     region_code: str | None,
     execution: PlannedSimulationExecutionInput,
-):
+) -> Simulation:
     """Construct a Stage 12 simulation without selecting v1 cache code."""
-
-    from policyengine.core import Simulation
-
     from policyengine_simulation_executor.spm import normalize_runtime_spm
 
     selection = normalize_runtime_spm(params)
-    from policyengine_simulation_executor.stage12_cache.runtime import (
+    from policyengine_simulation_executor.stage12_cache.runtime import (  # noqa: PLC0415  # the cache runtime imports this package, so a module-level import would be circular
         Stage12CachedSimulation,
         qualifying_cache_identity,
     )
@@ -113,7 +124,6 @@ def simulation_runtime_params(
     simulation: PlannedSimulationExecutionInput,
 ) -> dict[str, Any]:
     """Return the parameters a Stage 12 simulation is resolved and built from."""
-
     return {
         "country": simulation.geography.country,
         "scope": "macro",
@@ -124,6 +134,7 @@ def simulation_runtime_params(
 
 
 def simulation_input_sha256(simulation: SimulationExecutionInput) -> str:
+    """Hash a simulation input ignoring its run ids, so equal inputs hash equally."""
     normalized = simulation.model_dump(
         mode="json",
         exclude={"evaluation_id", "simulation_execution_id"},
@@ -138,25 +149,30 @@ def _require_context(
     required_country: CountryId,
 ) -> None:
     if simulation.geography.country != required_country:
-        raise ValueError("single-simulation input was sent to another country worker")
+        msg = "single-simulation input was sent to another country worker"
+        raise ValueError(msg)
     if simulation.bundle.policyengine_version != context.worker_version:
-        raise ValueError("single-simulation worker version does not match its context")
+        msg = "single-simulation worker version does not match its context"
+        raise ValueError(msg)
     if simulation.bundle.bundle_manifest_sha256 != context.bundle_manifest_sha256:
-        raise ValueError("single-simulation bundle digest does not match its context")
+        msg = "single-simulation bundle digest does not match its context"
+        raise ValueError(msg)
     if str(simulation.evaluation_id) not in context.artifact_prefix:
-        raise ValueError(
-            "single-simulation artifact prefix names another comparison run"
-        )
+        msg = "single-simulation artifact prefix names another comparison run"
+        raise ValueError(msg)
     if simulation.output_plan.country != required_country:
-        raise ValueError("single-simulation output plan names another country")
+        msg = "single-simulation output plan names another country"
+        raise ValueError(msg)
 
 
 def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
     resolved = load_stage12_bundle()
     if resolved.bundle_manifest_sha256 != simulation.bundle.bundle_manifest_sha256:
-        raise RuntimeError("installed bundle digest differs from the simulation input")
+        msg = "installed bundle digest differs from the simulation input"
+        raise RuntimeError(msg)
     if resolved.bundle.policyengine_version != simulation.bundle.policyengine_version:
-        raise RuntimeError("installed PolicyEngine.py version differs from the input")
+        msg = "installed PolicyEngine.py version differs from the input"
+        raise RuntimeError(msg)
     country = next(
         item
         for item in resolved.bundle.countries
@@ -177,7 +193,8 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
         "dataset_revision": simulation.bundle.dataset.artifact_revision,
     }
     if actual != expected:
-        raise RuntimeError("simulation provenance differs from the installed bundle")
+        msg = "simulation provenance differs from the installed bundle"
+        raise RuntimeError(msg)
 
 
 def calculate_simulation_frames(
@@ -188,7 +205,6 @@ def calculate_simulation_frames(
     progress: StageProgress | None = None,
 ) -> SimulationCalculation:
     """Run one policy and return the coordinator-planned entity output tables."""
-
     if progress is None:
         progress = StageProgress(role=simulation.role.value)
     stage_span = partial(
@@ -198,13 +214,15 @@ def calculate_simulation_frames(
         runtime=runtime,
     )
     if simulation.population.kind != "dataset":
-        raise ValueError("Stage 12 society-wide worker requires a dataset population")
+        msg = "Stage 12 society-wide worker requires a dataset population"
+        raise ValueError(msg)
     if simulation.population.artifact.uri != simulation.bundle.dataset.uri:
-        raise ValueError("population artifact differs from bundle dataset provenance")
+        msg = "population artifact differs from bundle dataset provenance"
+        raise ValueError(msg)
     _require_installed_bundle(simulation)
     country = simulation.geography.country
     params = simulation_runtime_params(simulation)
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
         _country_module,
         _load_dataset,
         _normalise_policy,
@@ -272,7 +290,8 @@ def calculate_simulation_frames(
         output_data = getattr(getattr(model, "output_dataset", None), "data", None)
         entity_data = getattr(output_data, "entity_data", None)
         if not isinstance(entity_data, Mapping):
-            raise TypeError("simulation produced no entity output tables")
+            msg = "simulation produced no entity output tables"
+            raise TypeError(msg)
         frames = {entity: pd.DataFrame(frame) for entity, frame in entity_data.items()}
         validate_output_frames(frames, simulation.output_plan)
         selection = getattr(model, "spm_config", None)
@@ -298,6 +317,11 @@ def descriptor_from_record(
     child: ComparisonSimulationRecord,
     simulation: PlannedSimulationExecutionInput,
 ) -> SimulationArtifactDescriptor:
+    """Rebuild the artifact descriptor of a child that already succeeded.
+
+    ``size_bytes`` is 0 because the record does not store it; raises
+    ``ValueError`` if the record lacks any output metadata.
+    """
     output_uri = child.output_uri
     output_sha256 = child.output_sha256
     output_schema_version = child.output_schema_version
@@ -312,12 +336,8 @@ def descriptor_from_record(
         or row_count is None
         or row_identity_sha256 is None
     ):
-        raise ValueError("successful child record has incomplete output metadata")
-    from policyengine_simulation_contract.stage12_execution import (
-        ArtifactMediaType,
-        ArtifactReference,
-        RowIdentity,
-    )
+        msg = "successful child record has incomplete output metadata"
+        raise ValueError(msg)
 
     return SimulationArtifactDescriptor(
         evaluation_id=simulation.evaluation_id,
@@ -348,7 +368,6 @@ def _mark_running_simulation_failed(
     failed_at: datetime,
 ) -> None:
     """Record a failure only while the simulation is still running."""
-
     latest = persistence.get_simulation(simulation_execution_id)
     if latest.status is not ComparisonRunLifecycleStatus.RUNNING:
         return
@@ -383,6 +402,12 @@ def run_single_simulation(
     | None = None,
     runtime: ObservabilityRuntime | None = None,
 ) -> dict[str, Any]:
+    """Calculate one planned simulation, store its artifact, and return its descriptor.
+
+    A child already marked succeeded returns its stored descriptor without
+    recalculating. A failure after the run is marked running marks it FAILED
+    and raises a ``RuntimeError`` that carries no calculation detail.
+    """
     simulation = PlannedSimulationExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
     _require_context(simulation, context, required_country=required_country)
@@ -395,7 +420,8 @@ def run_single_simulation(
         ComparisonRunLifecycleStatus.PENDING,
         ComparisonRunLifecycleStatus.RUNNING,
     }:
-        raise RuntimeError("Stage 12 simulation is no longer active")
+        msg = "Stage 12 simulation is no longer active"
+        raise RuntimeError(msg)
     started = datetime.now(UTC)
     running = child.model_copy(
         update={
@@ -411,7 +437,8 @@ def run_single_simulation(
         expected_status=child.status,
     )
     if not claimed:
-        raise RuntimeError("Stage 12 simulation was cancelled")
+        msg = "Stage 12 simulation was cancelled"
+        raise RuntimeError(msg)
 
     def cancellation_requested() -> bool:
         try:
@@ -439,7 +466,9 @@ def run_single_simulation(
                 prefix=context.artifact_prefix,
                 simulation=simulation,
             )
-        from .segmentation import should_segment_simulation
+        from .segmentation import (  # noqa: PLC0415  # segmentation imports this module, so a module-level import would be circular
+            should_segment_simulation,
+        )
 
         if segmented_calculator is not None and should_segment_simulation(simulation):
             calculated = segmented_calculator(simulation, cancellation_requested)
@@ -487,13 +516,15 @@ def run_single_simulation(
             expected_status=ComparisonRunLifecycleStatus.RUNNING,
         )
         if not replaced:
-            raise Stage12Cancellation("Stage 12 simulation was cancelled")
+            msg = "Stage 12 simulation was cancelled"
+            raise Stage12CancellationError(msg)  # noqa: TRY301  # handled below like a cancellation raised during the calculation
         return descriptor.model_dump(mode="json")
-    except Stage12Cancellation:
-        raise RuntimeError("Stage 12 simulation was cancelled") from None
+    except Stage12CancellationError:
+        msg = "Stage 12 simulation was cancelled"
+        raise RuntimeError(msg) from None
     # Persist a redacted cause for any country-package calculation failure
     # before returning a stable exception to Modal.
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001  # every calculation failure is persisted before a stable exception returns to Modal
         if isinstance(error, Stage12ExecutionError):
             # A segmented calculation reports its segment failure where it
             # occurs, before raising this error.
@@ -524,4 +555,5 @@ def run_single_simulation(
             runtime=runtime,
             failure_scope="simulation_execution",
         )
-        raise RuntimeError("Stage 12 simulation execution failed") from None
+        msg = "Stage 12 simulation execution failed"
+        raise RuntimeError(msg) from None

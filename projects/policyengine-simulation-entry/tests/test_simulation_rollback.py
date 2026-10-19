@@ -30,12 +30,27 @@ VALIDATOR = (
 )
 
 
-def _validate(**env: str) -> subprocess.CompletedProcess[str]:
+def _run_bash(
+    *arguments: str | Path,
+    check: bool,
+    capture_output: bool = False,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run bash on a repository rollback script or step, with text output."""
     return subprocess.run(
-        ["bash", VALIDATOR],
+        ["bash", *arguments],
+        check=check,
+        capture_output=capture_output,
+        text=True,
+        env=env,
+    )
+
+
+def _validate(**env: str) -> subprocess.CompletedProcess[str]:
+    return _run_bash(
+        VALIDATOR,
         check=False,
         capture_output=True,
-        text=True,
         env={"PATH": os.environ["PATH"], **env},
     )
 
@@ -205,7 +220,6 @@ def test_operator_recovery_prints_the_journal_then_restores_without_artifacts():
 
 def test_rollback_verifies_the_whole_restored_identity():
     """#743/#744: the smoke's identity is all or nothing, so pass all of it."""
-
     verify = _rollback_steps()[
         _step_index(_rollback_steps(), "cloud-run-simulation-entry-smoke.sh")
     ]
@@ -253,7 +267,6 @@ def _fake_gh(
     inventory: dict[int, list[dict]] | None = None,
 ) -> None:
     """Return API JSON and execute the workflow's real --jq filter with jq."""
-
     payloads = {}
     for attempt in range(1, attempts + 1):
         jobs = [_inventory_job() for _ in range(kept.get(attempt, 0))]
@@ -262,7 +275,10 @@ def _fake_gh(
         jobs.extend(
             [
                 _inventory_job(
-                    job="Complete beta deployment / Publish routing after all services pass"
+                    job=(
+                        "Complete beta deployment / "
+                        "Publish routing after all services pass"
+                    )
                 ),
                 _inventory_job(step="Record the plan artifact"),
                 _inventory_job(conclusion="failure"),
@@ -308,11 +324,13 @@ def _run_restore(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     _fake_gh(bin_dir, attempts, kept, inventory)
-    return subprocess.run(
-        ["bash", "-eo", "pipefail", "-c", _restore_script()],
+    return _run_bash(
+        "-eo",
+        "pipefail",
+        "-c",
+        _restore_script(),
         check=False,
         capture_output=True,
-        text=True,
         env={
             "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             "RUNNER_TEMP": str(runner_temp),
@@ -326,7 +344,6 @@ def _run_restore(
 
 def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
     """#744 review: a later attempt must not hide an earlier publication."""
-
     attempts = [1, 10, 2, 9]
     result = _run_restore(
         tmp_path, 10, {attempt: 1 for attempt in attempts}, present=attempts
@@ -343,7 +360,6 @@ def test_rollback_passes_every_attempts_plan_oldest_first(tmp_path):
 
 def test_rollback_refuses_when_an_attempts_plan_is_missing(tmp_path):
     """#744 review: attempt 1 published but its plan is gone; attempt 2's is not."""
-
     result = _run_restore(tmp_path, 2, {1: 1, 2: 1}, present=[2])
     assert result.returncode == 1
     assert "Attempt 1 of run 1 kept a prod routing plan that cannot be found" in (
@@ -381,7 +397,6 @@ def test_inventory_jq_selects_only_successfully_kept_target_plans(
     tmp_path, ignored_job
 ):
     """The workflow's job/step/conclusion jq selectors all run, not a stub."""
-
     result = _run_restore(
         tmp_path,
         2,
@@ -405,5 +420,5 @@ def test_rollbacks_share_the_deployment_concurrency_group():
 
 
 def test_validator_has_valid_shell_syntax_and_is_executable():
-    subprocess.run(["bash", "-n", VALIDATOR], check=True)
+    _run_bash("-n", VALIDATOR, check=True)
     assert os.access(VALIDATOR, os.X_OK)

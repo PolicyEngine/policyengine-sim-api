@@ -5,9 +5,8 @@ from __future__ import annotations
 import logging
 from contextlib import nullcontext
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
     ResultComparisonStatus,
@@ -15,14 +14,19 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from policyengine_simulation_observability.stages import Stage, StagePlan
 
-from policyengine_simulation_executor.stage12_artifacts import Stage12ArtifactStore
 from policyengine_simulation_executor.stage12_result_comparison import compare_results
 from policyengine_simulation_executor.stage12_timeouts import (
     PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS,
 )
 
-from .dependencies import ChildInvoker, ComparisonStore
 from .failure_causes import failure_summary
+
+if TYPE_CHECKING:
+    from policyengine_observability import ObservabilityRuntime
+
+    from policyengine_simulation_executor.stage12_artifacts import Stage12ArtifactStore
+
+    from .dependencies import ChildInvoker, ComparisonStore
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +43,6 @@ def compare_completed_report(
     stage_plan: StagePlan | None = None,
 ) -> None:
     """Persist an isolated production/Stage 12 comparison after aggregation."""
-
     production_job_id = context.production_function_call_id
     if production_job_id is None:
         return
@@ -108,7 +111,7 @@ def compare_completed_report(
         )
     # Result retrieval, validation, artifact storage, and persistence are all
     # deliberately isolated from the successful Stage 12 calculation.
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001  # comparison failures are recorded, never allowed to fail the Stage 12 calculation
         failed_at = datetime.now(UTC)
         try:
             latest = store.get_report(parent.evaluation_id)
@@ -138,7 +141,7 @@ def compare_completed_report(
                     "production_job_id": production_job_id,
                 },
             )
-        logger.error(
+        logger.error(  # noqa: TRY400  # Stage 12 failure logs carry only the error type; a traceback could expose request or calculation data
             "stage12_result_comparison_failed",
             extra={
                 "evaluation_id": str(parent.evaluation_id),

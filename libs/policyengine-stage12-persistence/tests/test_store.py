@@ -48,7 +48,7 @@ def test_runtime_engine_closes_connections_between_transactions(
                 physical_connection = connection.connection.driver_connection
                 assert connection.exec_driver_sql("SELECT 1").scalar_one() == 1
                 if fail_transaction:
-                    raise RuntimeError("calculation failed")
+                    _fail_the_calculation()
         except RuntimeError:
             assert fail_transaction
 
@@ -61,6 +61,12 @@ def test_runtime_engine_closes_connections_between_transactions(
             assert connection.exec_driver_sql("SELECT 1").scalar_one() == 1
     finally:
         engine.dispose()
+
+
+def _fail_the_calculation() -> None:
+    """Raise the failure a calculation inside the transaction would."""
+    msg = "calculation failed"
+    raise RuntimeError(msg)
 
 
 def _report() -> ComparisonReportRecord:
@@ -199,12 +205,12 @@ class RetryingConnectionOpener:
 
 def _sqlalchemy_commit_failure(monkeypatch) -> OperationalError:
     """Return the error SQLAlchemy raises when a COMMIT's reply is lost."""
-
     engine = create_engine("sqlite://")
 
     def commit_then_lose_the_reply(dbapi_connection):
         dbapi_connection.commit()
-        raise sqlite3.OperationalError("server closed the connection unexpectedly")
+        msg = "server closed the connection unexpectedly"
+        raise sqlite3.OperationalError(msg)
 
     monkeypatch.setattr(engine.dialect, "do_commit", commit_then_lose_the_reply)
     try:

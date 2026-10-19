@@ -1,4 +1,4 @@
-"""Numerical release sentinel: the deployed API computes what the bundle computes.
+r"""Numerical release sentinel: the deployed API computes what the bundle computes.
 
 ``expected`` runs each sentinel request in this process through
 ``run_simulation_impl``, the pure implementation the Modal simulation worker
@@ -17,7 +17,7 @@ stale cache or a broken route.
 Usage::
 
     python -m src.modal.utils.release_sentinel expected --output sentinel.json
-    python -m src.modal.utils.release_sentinel check --base-url URL \\
+    python -m src.modal.utils.release_sentinel check --base-url URL \
         --expected sentinel.json
 """
 
@@ -79,9 +79,10 @@ class SentinelError(RuntimeError):
 
 
 def worker_payload(request: Mapping[str, Any]) -> dict[str, Any]:
-    """The payload the gateway forwards to the worker for ``request``."""
-
-    from policyengine_simulation_contract.gateway_models import SimulationRequest
+    """Build the payload the gateway forwards to the worker for ``request``."""
+    from policyengine_simulation_contract.gateway_models import (  # noqa: PLC0415  # the contract models load only when a payload is built
+        SimulationRequest,
+    )
 
     return SimulationRequest.model_validate(dict(request)).model_dump(
         exclude={"version", "policyengine_version", "telemetry"},
@@ -91,28 +92,31 @@ def worker_payload(request: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def value_at(result: Mapping[str, Any], path: str) -> float:
+    """Return the finite number at the dotted ``path`` in ``result``."""
     node: Any = result
     for key in path.split("."):
         if not isinstance(node, Mapping) or key not in node:
-            raise SentinelError(f"the result has no {path}")
+            msg = f"the result has no {path}"
+            raise SentinelError(msg)
         node = node[key]
     if isinstance(node, bool) or not isinstance(node, (int, float)):
-        raise SentinelError(f"{path} is {node!r}, not a number")
+        msg = f"{path} is {node!r}, not a number"
+        raise SentinelError(msg)
     if not math.isfinite(node):
-        raise SentinelError(f"{path} is {node}, not a finite number")
+        msg = f"{path} is {node}, not a finite number"
+        raise SentinelError(msg)
     return float(node)
 
 
 def agree(expected: float, actual: float) -> bool:
     """Equal up to floating-point reduction order (symmetric)."""
-
     return abs(expected - actual) <= max(
         ABS_TOL, REL_TOL * max(abs(expected), abs(actual))
     )
 
 
 def _bundle_identity() -> dict[str, Any]:
-    from policyengine_simulation_executor.release_bundle import (
+    from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # resolved at call time, as the tests' module patches rely on
         get_country_release_bundle,
     )
 
@@ -128,10 +132,10 @@ def _bundle_identity() -> dict[str, Any]:
 
 
 def _local_runner() -> Callable[[dict[str, Any]], Mapping[str, Any]]:
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # loads the policyengine runtime only for the expected command; the tests patch it
         run_simulation_impl,
     )
-    from policyengine_simulation_executor.stage12_qualification import (
+    from policyengine_simulation_executor.stage12_qualification import (  # noqa: PLC0415  # loads the policyengine runtime only for the expected command; the tests patch it
         _local_qualification_runtime,
     )
 
@@ -146,11 +150,11 @@ def compute_expected(
     cases: tuple[dict[str, Any], ...] = SENTINEL_CASES,
 ) -> dict[str, Any]:
     """Run every case in this process and record its values."""
-
     runner = runner or _local_runner()
     identity = dict(identity or _bundle_identity())
     if not identity["uk"].get("dataset_sha256"):
-        raise SentinelError("the installed bundle records no UK dataset SHA-256")
+        msg = "the installed bundle records no UK dataset SHA-256"
+        raise SentinelError(msg)
     recorded = []
     for case in cases:
         started = time.monotonic()
@@ -201,16 +205,17 @@ def _http(
 
 
 def access_token(environ: Mapping[str, str] = os.environ) -> str | None:
-    """A client-credentials token when the test auth variables are configured."""
-
+    """Return a client-credentials token when the test auth variables are configured."""
     present = [name for name in _AUTH_VARS if environ.get(name)]
     if not present:
         if _truthy(environ.get("SIMULATION_TEST_AUTH_REQUIRED")):
-            raise SentinelError("SIMULATION_TEST_AUTH_REQUIRED is set but no auth vars")
+            msg = "SIMULATION_TEST_AUTH_REQUIRED is set but no auth vars"
+            raise SentinelError(msg)
         return None
     if len(present) != len(_AUTH_VARS):
         missing = sorted(set(_AUTH_VARS) - set(present))
-        raise SentinelError(f"partial auth configuration; missing {missing}")
+        msg = f"partial auth configuration; missing {missing}"
+        raise SentinelError(msg)
     status, _, payload = _http(
         "POST",
         environ["SIMULATION_TEST_AUTH_ISSUER"].rstrip("/") + "/oauth/token",
@@ -223,7 +228,8 @@ def access_token(environ: Mapping[str, str] = os.environ) -> str | None:
     )
     token = payload.get("access_token") if isinstance(payload, Mapping) else None
     if status != 200 or not token:
-        raise SentinelError(f"token request failed with HTTP {status}")
+        msg = f"token request failed with HTTP {status}"
+        raise SentinelError(msg)
     return str(token)
 
 
@@ -249,9 +255,9 @@ def check_deployment(
     clock: Callable[[], float] = time.monotonic,
 ) -> list[str]:
     """Submit each expected case to ``base_url`` and return what disagrees."""
-
     if expected.get("schema") != SCHEMA:
-        raise SentinelError(f"expected file schema is {expected.get('schema')!r}")
+        msg = f"expected file schema is {expected.get('schema')!r}"
+        raise SentinelError(msg)
     http = http or _http
     base_url = base_url.rstrip("/")
     version = expected["policyengine_version"]
@@ -274,7 +280,8 @@ def check_deployment(
         ):
             if served.get(field) != wanted:
                 problems.append(
-                    f"{label}: served {field} {served.get(field)!r}, expected {wanted!r}"
+                    f"{label}: served {field} {served.get(field)!r}, "
+                    f"expected {wanted!r}"
                 )
         deadline = clock() + timeout_seconds
         result = None
@@ -319,7 +326,13 @@ def check_deployment(
     return problems
 
 
+def _report(line: str, *, error: bool = False) -> None:
+    """Print one line of the command's report, to stderr for a failure."""
+    print(line, file=sys.stderr if error else sys.stdout)
+
+
 def main(argv: list[str] | None = None) -> int:
+    """Run the ``expected`` or ``check`` command and return its exit status."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
     expected_parser = commands.add_parser("expected", help="compute in-process values")
@@ -335,7 +348,7 @@ def main(argv: list[str] | None = None) -> int:
         with open(args.output, "w") as handle:
             json.dump(expected, handle, indent=2, sort_keys=True)
         for case in expected["cases"]:
-            print(f"{case['case_id']} ({case['seconds']}s): {case['values']}")
+            _report(f"{case['case_id']} ({case['seconds']}s): {case['values']}")
         return 0
 
     with open(args.expected) as handle:
@@ -347,13 +360,11 @@ def main(argv: list[str] | None = None) -> int:
         timeout_seconds=args.timeout_seconds,
     )
     if problems:
-        print(
-            "The deployed API does not reproduce the bundle's numbers:", file=sys.stderr
-        )
+        _report("The deployed API does not reproduce the bundle's numbers:", error=True)
         for problem in problems:
-            print(f"  {problem}", file=sys.stderr)
+            _report(f"  {problem}", error=True)
         return 1
-    print(
+    _report(
         f"{args.base_url} reproduces {len(expected['cases'])} sentinel case(s) for "
         f"policyengine {expected['policyengine_version']}, UK dataset "
         f"{expected['uk']['dataset_sha256']}"

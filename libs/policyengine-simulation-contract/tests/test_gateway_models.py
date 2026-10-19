@@ -29,11 +29,7 @@ class TestPingRequest:
     """Tests for PingRequest model."""
 
     def test_ping_request_accepts_integer_value(self):
-        """
-        Given an integer value
-        When creating a PingRequest
-        Then the model is created with the value.
-        """
+        """Given an integer value, a PingRequest is created with that value."""
         # Given
         value = 42
 
@@ -44,11 +40,7 @@ class TestPingRequest:
         assert request.value == 42
 
     def test_ping_request_accepts_negative_value(self):
-        """
-        Given a negative integer value
-        When creating a PingRequest
-        Then the model is created with the negative value.
-        """
+        """Given a negative integer, a PingRequest is created with that value."""
         # Given
         value = -10
 
@@ -59,11 +51,7 @@ class TestPingRequest:
         assert request.value == -10
 
     def test_ping_request_rejects_non_integer(self):
-        """
-        Given a non-integer value
-        When creating a PingRequest
-        Then a ValidationError is raised.
-        """
+        """Given a non-integer, creating a PingRequest raises ValidationError."""
         # Given
         value = "not_an_integer"
 
@@ -72,11 +60,7 @@ class TestPingRequest:
             PingRequest(value=value)
 
     def test_ping_request_rejects_missing_value(self):
-        """
-        Given no value
-        When creating a PingRequest
-        Then a ValidationError is raised.
-        """
+        """Given no value, creating a PingRequest raises ValidationError."""
         # When/Then
         with pytest.raises(ValidationError):
             PingRequest()
@@ -86,11 +70,7 @@ class TestPingResponse:
     """Tests for PingResponse model."""
 
     def test_ping_response_accepts_integer_incremented(self):
-        """
-        Given an integer incremented value
-        When creating a PingResponse
-        Then the model is created with the value.
-        """
+        """Given an incremented integer, a PingResponse is created with that value."""
         # Given
         incremented = 43
 
@@ -101,11 +81,7 @@ class TestPingResponse:
         assert response.incremented == 43
 
     def test_ping_response_serializes_correctly(self):
-        """
-        Given a PingResponse
-        When converting to dict
-        Then the correct structure is returned.
-        """
+        """Given a PingResponse, model_dump returns the expected structure."""
         # Given
         response = PingResponse(incremented=100)
 
@@ -130,21 +106,13 @@ class TestSimulationRequest:
         return payload
 
     def test_simulation_request_requires_country(self):
-        """
-        Given no country
-        When creating a SimulationRequest
-        Then a ValidationError is raised.
-        """
+        """Given no country, creating a SimulationRequest raises ValidationError."""
         # When/Then
         with pytest.raises(ValidationError):
             SimulationRequest()
 
     def test_simulation_request_accepts_country_only(self):
-        """
-        Given only a country
-        When creating a SimulationRequest
-        Then the model is created with version as None.
-        """
+        """Given only a country, a SimulationRequest is created with version None."""
         # Given
         country = "us"
 
@@ -156,11 +124,7 @@ class TestSimulationRequest:
         assert request.version is None
 
     def test_simulation_request_accepts_country_and_version(self):
-        """
-        Given a country and version
-        When creating a SimulationRequest
-        Then the model is created with both values.
-        """
+        """Given a country and version, a SimulationRequest keeps both values."""
         # Given
         country = "uk"
         version = "1.0.0"
@@ -208,10 +172,10 @@ class TestSimulationRequest:
         assert "process_id" not in request.telemetry.model_dump()
 
     def test_simulation_request_accepts_documented_simulation_fields(self):
-        """
-        Given the documented simulation fields (reform, region, scope)
-        When creating a SimulationRequest
-        Then the model accepts and preserves them.
+        """Accept and preserve the documented simulation fields.
+
+        Given reform, region and scope, when creating a SimulationRequest, then
+        the model accepts and preserves them.
         """
         # Given
         data = {
@@ -248,7 +212,7 @@ class TestSimulationRequest:
         assert request.region_group is None
 
     def test_simulation_request_rejects_region_and_region_group_together(self):
-        """region and region_group are mutually exclusive."""
+        """Region and region_group are mutually exclusive."""
         with pytest.raises(ValidationError, match="not both"):
             SimulationRequest(
                 country="us", region="state/hi", region_group=["state/ia"]
@@ -294,8 +258,11 @@ class TestSimulationRequest:
             )
 
     def test_simulation_request_rejects_oversized_payload(self):
-        """Payloads that exceed the gateway max should 422 before Pydantic
-        allocates proxy objects for the nested reform dict."""
+        """Reject payloads over the gateway maximum before parsing the reform.
+
+        They should 422 before Pydantic allocates proxy objects for the nested
+        reform dict.
+        """
         giant_reform = {
             f"mock.parameter[{i}]": {"2024-01-01": i} for i in range(10_000)
         }
@@ -303,8 +270,7 @@ class TestSimulationRequest:
             SimulationRequest(country="us", reform=giant_reform)
 
     def test_simulation_request_accepts_payload_just_below_256kb(self):
-        """256 KB boundary (#450): a payload just below the cap must be
-        accepted."""
+        """Accept a payload just below the 256 KB cap (boundary from #450)."""
         payload = self._payload_with_encoded_size(MAX_GATEWAY_REQUEST_BYTES - 1)
 
         # Must not raise — this is the just-under-cap happy path.
@@ -314,19 +280,17 @@ class TestSimulationRequest:
         assert request.reform.root == payload["reform"]
 
     def test_simulation_request_rejects_payload_just_above_256kb(self):
-        """The cap is strict: a payload that crosses 262_144 bytes by even a
-        few bytes should be rejected with a ``too large`` ValidationError."""
+        """Reject a payload a few bytes over the strict 262_144-byte cap.
+
+        The ValidationError should report the payload as ``too large``.
+        """
         payload = self._payload_with_encoded_size(MAX_GATEWAY_REQUEST_BYTES + 1)
 
         with pytest.raises(ValidationError, match="too large"):
             SimulationRequest(**payload)
 
     def test_simulation_request_accepts_typed_telemetry_envelope(self):
-        """
-        Given a telemetry envelope
-        When creating a SimulationRequest
-        Then the envelope is validated and preserved.
-        """
+        """Given a telemetry envelope, a SimulationRequest validates and keeps it."""
         request = SimulationRequest(
             country="us",
             _telemetry={
@@ -343,11 +307,7 @@ class TestJobSubmitResponse:
     """Tests for JobSubmitResponse model."""
 
     def test_job_submit_response_creates_with_all_fields(self):
-        """
-        Given all required fields
-        When creating a JobSubmitResponse
-        Then the model is created correctly.
-        """
+        """Given all required fields, a JobSubmitResponse is created correctly."""
         # Given
         data = {
             "job_id": "fc-abc123",
@@ -385,10 +345,11 @@ class TestJobStatusResponse:
     """Tests for JobStatusResponse model."""
 
     def test_job_status_response_rejects_an_unstructured_result(self):
-        """
-        Given a completed job with a result that does not match the macro schema
-        When creating a JobStatusResponse
-        Then validation fails instead of silently accepting an opaque mapping.
+        """Reject a completed result that does not match the macro output schema.
+
+        Given a completed job with such a result, when creating a
+        JobStatusResponse, then validation fails instead of silently accepting
+        an opaque mapping.
         """
         with pytest.raises(ValidationError):
             JobStatusResponse(
@@ -397,11 +358,7 @@ class TestJobStatusResponse:
             )
 
     def test_job_status_response_running_without_result(self):
-        """
-        Given a running job
-        When creating a JobStatusResponse
-        Then result and error are None.
-        """
+        """Given a running job, a JobStatusResponse has no result and no error."""
         # When
         response = JobStatusResponse(status="running")
 
@@ -411,11 +368,7 @@ class TestJobStatusResponse:
         assert response.error is None
 
     def test_job_status_response_failed_with_error(self):
-        """
-        Given a failed job with error message
-        When creating a JobStatusResponse
-        Then the error is captured.
-        """
+        """Given a failed job with a message, a JobStatusResponse captures the error."""
         # Given
         error_msg = "Simulation timed out"
 

@@ -78,8 +78,11 @@ def test_build_child_simulation_request_removes_batch_only_fields():
 
 
 def test_build_child_simulation_request_pins_children_monolithic():
-    """A national budget-window child must not fan out again (years x 21
-    containers); enabling nested segmentation is a deliberate follow-up."""
+    """A national budget-window child must not fan out again.
+
+    Fanning out would cost years x 21 containers; enabling nested
+    segmentation is a deliberate follow-up.
+    """
     _, payload = _build_parent_payload()
     context = build_batch_context(payload, batch_job_id="parent-123")
 

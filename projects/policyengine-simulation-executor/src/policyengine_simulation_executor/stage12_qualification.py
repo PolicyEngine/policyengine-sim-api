@@ -35,13 +35,20 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 from policyengine_simulation_executor.stage12_parity import (
     NumericalTolerance,
-    ParityMismatch,
+    ParityMismatchError,
     compare_aggregate_reports,
     compare_simulation_frames,
 )
 from policyengine_simulation_executor.stage12_runtime import (
     SimulationCalculation,
+    build_aggregate_report,
+    build_segment_inputs,
+    calculate_segment,
+    calculate_simulation_frames,
+    merge_segment_results,
+    should_segment_simulation,
     simulation_input_sha256,
+    stage12_region_groups_for_model,
 )
 from policyengine_simulation_executor.stage12_runtime.aggregation import (
     validate_uk_local_authority_metadata,
@@ -88,22 +95,12 @@ def _run_stage12_simulation_for_qualification(
     monolithic_runner: SingleSimulationRunner | None = None,
 ) -> SimulationCalculation:
     """Exercise the segmented calculation and merge without Modal transport."""
-
-    from policyengine_simulation_executor.stage12_runtime import (
-        build_segment_inputs,
-        calculate_segment,
-        calculate_simulation_frames,
-        merge_segment_results,
-        should_segment_simulation,
-        stage12_region_groups_for_model,
-    )
-
     run_monolithic = monolithic_runner or calculate_simulation_frames
     if not should_segment_simulation(simulation):
         return _calculation(run_monolithic(simulation))
     selected_groups = groups
     if selected_groups is None:
-        from policyengine_simulation_executor.simulation_runtime import (
+        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # loads the v1 runtime only when the groups come from the installed model
             _country_module,
         )
 
@@ -122,7 +119,6 @@ def _run_stage12_simulation_for_qualification(
 
 def _local_qualification_runtime() -> ObservabilityRuntime:
     """Create a local runtime that cannot send qualification data remotely."""
-
     return ObservabilityRuntime(
         ObservabilityConfig(
             service=ServiceIdentity(
@@ -146,7 +142,6 @@ def _validate_matching_input(
     report: ReportExecutionInput,
 ) -> None:
     """Reject a qualification that does not compare the same calculation."""
-
     baseline = report.baseline
     reform = report.reform
     bundle = baseline.bundle
@@ -174,15 +169,19 @@ def _validate_matching_input(
         if field == "spm" and expected_value is None and actual_value is None:
             continue
         if actual_value != expected_value:
-            raise ParityMismatch("normalized_input_mismatch", field)
+            error_code = "normalized_input_mismatch"
+            raise ParityMismatchError(error_code, field)
     if existing_request.get("data") not in accepted_dataset_values:
-        raise ParityMismatch("dataset_provenance_mismatch", "data")
+        error_code = "dataset_provenance_mismatch"
+        raise ParityMismatchError(error_code, "data")
     population = baseline.population
     if population.kind != "dataset":
-        raise ParityMismatch("population_kind_mismatch", "population.kind")
+        error_code = "population_kind_mismatch"
+        raise ParityMismatchError(error_code, "population.kind")
     if population.artifact.uri != bundle.dataset.uri:
-        raise ParityMismatch(
-            "dataset_provenance_mismatch",
+        error_code = "dataset_provenance_mismatch"
+        raise ParityMismatchError(
+            error_code,
             "population.artifact.uri",
         )
 
@@ -193,23 +192,27 @@ def _existing_frames(
     side: Literal["baseline", "reform"],
 ) -> dict[str, pd.DataFrame]:
     if not isinstance(microdata, Mapping):
-        raise ParityMismatch("missing_existing_microdata", "report._microdata")
+        error_code = "missing_existing_microdata"
+        raise ParityMismatchError(error_code, "report._microdata")
     raw_side = microdata.get(side)
     raw_dtypes = microdata.get("dtypes")
     side_dtypes = raw_dtypes.get(side) if isinstance(raw_dtypes, Mapping) else None
     if not isinstance(raw_side, Mapping) or not isinstance(side_dtypes, Mapping):
-        raise ParityMismatch("invalid_existing_microdata", f"report._microdata.{side}")
+        error_code = "invalid_existing_microdata"
+        raise ParityMismatchError(error_code, f"report._microdata.{side}")
     frames: dict[str, pd.DataFrame] = {}
     for entity, columns in raw_side.items():
         entity_dtypes = side_dtypes.get(entity)
         if not isinstance(entity, str) or not isinstance(columns, dict):
-            raise ParityMismatch(
-                "invalid_existing_microdata",
+            error_code = "invalid_existing_microdata"
+            raise ParityMismatchError(
+                error_code,
                 f"report._microdata.{side}",
             )
         if not isinstance(entity_dtypes, dict):
-            raise ParityMismatch(
-                "invalid_existing_dtypes",
+            error_code = "invalid_existing_dtypes"
+            raise ParityMismatchError(
+                error_code,
                 f"report._microdata.dtypes.{side}.{entity}",
             )
         frames[entity] = rebuild_entity_frame(columns, entity_dtypes)
@@ -264,7 +267,6 @@ def qualify_report_parity(
     aggregate_tolerances: Mapping[str, NumericalTolerance] | None = None,
 ) -> Stage12ParityReceipt:
     """Run both implementations and fail on every unexplained difference."""
-
     report = ReportExecutionInput.model_validate(report_payload)
     _validate_matching_input(existing_request, report)
     output_plan = resolve_report_output_plan(report)
@@ -273,25 +275,21 @@ def qualify_report_parity(
 
     local_runtime: ObservabilityRuntime | None = None
     if existing_runner is None:
-        from policyengine_simulation_executor.simulation_runtime import (
+        from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # default runner, bound only when none is injected
             run_simulation_impl,
         )
 
-        local_runtime = _local_qualification_runtime()
+        qualification_runtime = _local_qualification_runtime()
+        local_runtime = qualification_runtime
 
         def run_existing(request: dict[str, Any]) -> Mapping[str, Any]:
-            assert local_runtime is not None
-            return run_simulation_impl(request, runtime=local_runtime)
+            return run_simulation_impl(request, runtime=qualification_runtime)
 
         existing_runner = run_existing
     default_stage12_runner = single_simulation_runner is None
     if single_simulation_runner is None:
         single_simulation_runner = _run_stage12_simulation_for_qualification
     if aggregate_builder is None:
-        from policyengine_simulation_executor.stage12_runtime import (
-            build_aggregate_report,
-        )
-
         aggregate_builder = build_aggregate_report
 
     request_with_microdata = dict(existing_request)
@@ -307,13 +305,15 @@ def qualify_report_parity(
 
     bundle = report.baseline.bundle
     if existing_result.get("model_version") != bundle.country_package_version:
-        raise ParityMismatch(
-            "country_package_provenance_mismatch",
+        error_code = "country_package_provenance_mismatch"
+        raise ParityMismatchError(
+            error_code,
             "report.model_version",
         )
     if existing_result.get("data_version") != bundle.dataset.artifact_revision:
-        raise ParityMismatch(
-            "dataset_provenance_mismatch",
+        error_code = "dataset_provenance_mismatch"
+        raise ParityMismatchError(
+            error_code,
             "report.data_version",
         )
 
@@ -358,7 +358,8 @@ def qualify_report_parity(
     )
     v2_result = v2_report.get("result")
     if not isinstance(v2_result, Mapping):
-        raise ParityMismatch("invalid_v2_aggregate", "report.result")
+        error_code = "invalid_v2_aggregate"
+        raise ParityMismatchError(error_code, "report.result")
     compare_aggregate_reports(
         existing_result,
         v2_result,
