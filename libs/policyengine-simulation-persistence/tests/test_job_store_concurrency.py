@@ -266,3 +266,35 @@ def test_concurrent_identical_submissions_create_one_job(migrated_database) -> N
     assert len({submission.job.id for submission in submissions}) == 1
     with store.engine.connect() as connection:
         assert connection.execute(select(func.count()).select_from(jobs)).scalar() == 1
+
+
+def test_concurrent_report_collectors_write_exactly_one_report_result(
+    migrated_database,
+) -> None:
+    from policyengine_simulation_persistence.reports import (
+        ReportKind,
+        report_results,
+    )
+    from report_support import economy_aggregate
+
+    store = runtime_store(migrated_database)
+    for case in range(3):
+        job = running_job(store, {"case": case})
+
+        outcomes = _race(
+            lambda index, job_id=job.id: store.complete_report(
+                job_id,
+                report_kind=ReportKind.ECONOMY,
+                aggregate=economy_aggregate(model_version=f"collector-{index}"),
+                aggregate_schema_version=1,
+            )
+        )
+
+        assert outcomes.count(True) == 1
+        with store.engine.connect() as connection:
+            stored = connection.execute(
+                select(report_results.c.model_version).where(
+                    report_results.c.job_id == job.id
+                )
+            ).all()
+        assert stored == [(f"collector-{outcomes.index(True)}",)]

@@ -13,6 +13,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_entry.simulation_jobs import (
     CallRunning,
     CollectionQueueError,
@@ -27,6 +28,11 @@ from policyengine_simulation_persistence.jobs import (
     JobStatus,
     Submission,
     result_sha256,
+)
+from policyengine_simulation_persistence.reports import (
+    ReportKind,
+    ReportResultRecord,
+    report_result_values,
 )
 from pydantic import BaseModel, ConfigDict
 
@@ -52,6 +58,14 @@ HOUSEHOLD_KIND = JobKind(
 )
 
 
+ECONOMY_REPORT_KIND = JobKind(
+    name="economy_report",
+    result_model=SingleYearMacroOutput,
+    result_schema_version=1,
+    report_kind=ReportKind.ECONOMY,
+)
+
+
 class SteppingClock:
     """A clock the test moves forward explicitly."""
 
@@ -72,6 +86,7 @@ class InMemoryJobStore:
         self.clock = clock
         self.jobs: dict[UUID, JobRecord] = {}
         self.results: dict[UUID, JobResultRecord] = {}
+        self.report_results: dict[UUID, ReportResultRecord] = {}
         self.lock = threading.Lock()
         self.calls: list[str] = []
 
@@ -203,6 +218,46 @@ class InMemoryJobStore:
                 created_at=self.clock(),
             )
             return True
+
+    def complete_report(
+        self,
+        job_id,
+        *,
+        report_kind,
+        aggregate,
+        aggregate_schema_version,
+        artifacts=(),
+    ):
+        self.calls.append("complete_report")
+        values = report_result_values(
+            report_kind=report_kind,
+            aggregate=aggregate,
+            aggregate_schema_version=aggregate_schema_version,
+            artifacts=artifacts,
+        )
+        with self.lock:
+            finished = self._transition(
+                job_id,
+                {JobStatus.RUNNING},
+                status=JobStatus.SUCCEEDED,
+                completed_at=self.clock(),
+            )
+            if finished is None:
+                return False
+            self.report_results[job_id] = ReportResultRecord(
+                job_id=job_id,
+                created_at=self.clock(),
+                **{
+                    **values,
+                    "report_kind": report_kind,
+                    "artifacts": tuple(artifacts),
+                },
+            )
+            return True
+
+    def get_report_result(self, job_id):
+        self.calls.append("get_report_result")
+        return self.report_results.get(job_id)
 
     def fail(self, job_id, *, error_code, error_message):
         self.calls.append("fail")

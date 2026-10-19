@@ -44,6 +44,11 @@ from policyengine_simulation_persistence.jobs import (
     input_sha256,
     utc_now,
 )
+from policyengine_simulation_persistence.reports import (
+    ReportKind,
+    ReportResultRecord,
+    UnsupportedReportAggregateError,
+)
 from pydantic import BaseModel, ValidationError
 
 if TYPE_CHECKING:
@@ -79,13 +84,18 @@ def collection_delay_seconds(attempts: int) -> int:
 class JobKind:
     """A kind of calculation the job store can collect.
 
-    Step 2 registers the household calculation and report kinds; until then no
-    kind is registered and nothing submits jobs.
+    A report kind (``report_kind`` set) stores its result in
+    ``simulation.report_results``, validated by the aggregate model registered
+    for that report kind and ``result_schema_version``; any other kind stores
+    it in ``simulation.job_results``. Step 2 registers the household
+    calculation and report kinds; until then no kind is registered and nothing
+    submits jobs.
     """
 
     name: str
     result_model: type[BaseModel]
     result_schema_version: int
+    report_kind: ReportKind | None = None
 
 
 # The job kinds production collects, by name.
@@ -198,6 +208,10 @@ class JobStoreOperations(Protocol):
         """Return a succeeded job's result."""
         ...
 
+    def get_report_result(self, job_id: UUID) -> ReportResultRecord | None:
+        """Return a succeeded report job's result."""
+        ...
+
     def record_check(self, job_id: UUID) -> int | None:
         """Count one check of a running job."""
         ...
@@ -206,6 +220,17 @@ class JobStoreOperations(Protocol):
         self, job_id: UUID, *, result: dict[str, Any], result_schema_version: int
     ) -> bool:
         """Store a running job's result."""
+        ...
+
+    def complete_report(
+        self,
+        job_id: UUID,
+        *,
+        report_kind: ReportKind,
+        aggregate: object,
+        aggregate_schema_version: int,
+    ) -> bool:
+        """Store a running report job's validated aggregate."""
         ...
 
     def fail(self, job_id: UUID, *, error_code: str, error_message: str) -> bool:
@@ -255,7 +280,7 @@ class JobView:
     """A job and, once it succeeded, its stored result."""
 
     job: JobRecord
-    result: JobResultRecord | None
+    result: JobResultRecord | ReportResultRecord | None
 
 
 @dataclass
@@ -383,6 +408,8 @@ class SimulationJobService:
                 "unknown_job_kind",
                 f"No collector is registered for job kind {job.kind!r}.",
             )
+        if kind.report_kind is not None:
+            return await self._complete_report(job, kind, output)
         try:
             result = kind.result_model.model_validate(output).model_dump(mode="json")
         except ValidationError as error:
@@ -401,6 +428,34 @@ class SimulationJobService:
             result=result,
             result_schema_version=kind.result_schema_version,
         )
+        if not stored:
+            return await self._finished_elsewhere(job.id)
+        return CollectionReport(CollectionOutcome.SUCCEEDED, JobStatus.SUCCEEDED)
+
+    async def _complete_report(
+        self, job: JobRecord, kind: JobKind, output: object
+    ) -> CollectionReport:
+        try:
+            stored = await asyncio.to_thread(
+                lambda: self.store.complete_report(
+                    job.id,
+                    report_kind=kind.report_kind,
+                    aggregate=output,
+                    aggregate_schema_version=kind.result_schema_version,
+                )
+            )
+        except ValidationError as error:
+            return await self._fail(
+                job.id,
+                "invalid_result",
+                f"The aggregate failed validation with {error.error_count()} errors.",
+            )
+        except UnsupportedReportAggregateError:
+            return await self._fail(
+                job.id,
+                "invalid_result",
+                "No aggregate model is registered for this report.",
+            )
         if not stored:
             return await self._finished_elsewhere(job.id)
         return CollectionReport(CollectionOutcome.SUCCEEDED, JobStatus.SUCCEEDED)
@@ -479,9 +534,14 @@ class SimulationJobService:
             job = await asyncio.to_thread(self.store.get, job_id)
         if job is None:
             return None
-        result = None
+        result: JobResultRecord | ReportResultRecord | None = None
         if job.status is JobStatus.SUCCEEDED:
-            result = await asyncio.to_thread(self.store.get_result, job.id)
+            kind = self.job_kinds.get(job.kind)
+            reads_report = kind is not None and kind.report_kind is not None
+            result = await asyncio.to_thread(
+                self.store.get_report_result if reads_report else self.store.get_result,
+                job.id,
+            )
         return JobView(job=job, result=result)
 
 

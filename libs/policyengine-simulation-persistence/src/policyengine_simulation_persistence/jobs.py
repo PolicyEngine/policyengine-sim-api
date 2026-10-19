@@ -18,9 +18,7 @@ lease or lock table is needed:
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, fields
-from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -46,10 +44,23 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 
+from policyengine_simulation_persistence.canonical import (
+    canonical_json,
+    result_sha256,
+    utc_now,
+)
+from policyengine_simulation_persistence.reports import (
+    ReportArtifact,
+    ReportKind,
+    ReportResultRecord,
+    report_result_values,
+    report_results,
+)
 from policyengine_simulation_persistence.schema import simulation_metadata
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from datetime import datetime
 
     from sqlalchemy import Connection, Engine, RowMapping
 
@@ -131,16 +142,6 @@ job_results = Table(
 )
 
 
-def _canonical_json(value: object) -> bytes:
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
-
-
 def input_sha256(*, kind: str, policyengine_version: str, request: object) -> str:
     """Return the idempotency hash of one calculation's inputs.
 
@@ -148,7 +149,7 @@ def input_sha256(*, kind: str, policyengine_version: str, request: object) -> st
     as canonical JSON, so the same request under another bundle is another job.
     """
     return hashlib.sha256(
-        _canonical_json(
+        canonical_json(
             {
                 "kind": kind,
                 "policyengine_version": policyengine_version,
@@ -156,16 +157,6 @@ def input_sha256(*, kind: str, policyengine_version: str, request: object) -> st
             }
         )
     ).hexdigest()
-
-
-def result_sha256(result: object) -> str:
-    """Return the SHA-256 of a result as canonical JSON."""
-    return hashlib.sha256(_canonical_json(result)).hexdigest()
-
-
-def utc_now() -> datetime:
-    """Return the current time in UTC."""
-    return datetime.now(UTC)
 
 
 @dataclass(frozen=True)
@@ -383,6 +374,18 @@ class JobStore:
             )
         return None if row is None else JobResultRecord(**row)
 
+    def get_report_result(self, job_id: UUID) -> ReportResultRecord | None:
+        """Return the stored report result of a succeeded report job, or None."""
+        with self.engine.connect() as connection:
+            row = (
+                connection.execute(
+                    select(report_results).where(report_results.c.job_id == job_id)
+                )
+                .mappings()
+                .first()
+            )
+        return None if row is None else ReportResultRecord.from_row(row)
+
     # --- Collection ------------------------------------------------------------
 
     def record_check(self, job_id: UUID) -> int | None:
@@ -400,6 +403,27 @@ class JobStore:
                 .returning(jobs.c.collection_attempts)
             ).scalar()
 
+    def _finish_succeeded(
+        self,
+        connection: Connection,
+        job_id: UUID,
+        now: datetime,
+    ) -> bool:
+        return (
+            connection.execute(
+                update(jobs)
+                .where(jobs.c.id == job_id, jobs.c.status == JobStatus.RUNNING.value)
+                .values(
+                    status=JobStatus.SUCCEEDED.value,
+                    completed_at=now,
+                    last_checked_at=now,
+                    updated_at=now,
+                )
+                .returning(jobs.c.id)
+            ).first()
+            is not None
+        )
+
     def _complete(
         self,
         connection: Connection,
@@ -409,18 +433,7 @@ class JobStore:
         result_schema_version: int,
     ) -> bool:
         now = self._clock()
-        finished = connection.execute(
-            update(jobs)
-            .where(jobs.c.id == job_id, jobs.c.status == JobStatus.RUNNING.value)
-            .values(
-                status=JobStatus.SUCCEEDED.value,
-                completed_at=now,
-                last_checked_at=now,
-                updated_at=now,
-            )
-            .returning(jobs.c.id)
-        ).first()
-        if finished is None:
+        if not self._finish_succeeded(connection, job_id, now):
             return False
         connection.execute(
             insert(job_results).values(
@@ -452,6 +465,37 @@ class JobStore:
                 result=result,
                 result_schema_version=result_schema_version,
             )
+
+    def complete_report(
+        self,
+        job_id: UUID,
+        *,
+        report_kind: ReportKind,
+        aggregate: object,
+        aggregate_schema_version: int,
+        artifacts: tuple[ReportArtifact, ...] = (),
+    ) -> bool:
+        """Store a running report job's aggregate and mark the job succeeded.
+
+        The aggregate is validated by the model registered for its report kind
+        and schema version before anything is written; an invalid aggregate
+        raises and leaves the job running. Return False, writing nothing, when
+        another collector already finished the job.
+        """
+        values = report_result_values(
+            report_kind=report_kind,
+            aggregate=aggregate,
+            aggregate_schema_version=aggregate_schema_version,
+            artifacts=artifacts,
+        )
+        with self.engine.begin() as connection:
+            now = self._clock()
+            if not self._finish_succeeded(connection, job_id, now):
+                return False
+            connection.execute(
+                insert(report_results).values(job_id=job_id, created_at=now, **values)
+            )
+            return True
 
     def _finish_failed(
         self,

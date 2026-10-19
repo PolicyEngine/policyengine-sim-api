@@ -21,6 +21,7 @@ from policyengine_simulation_entry.simulation_jobs import (
 )
 from policyengine_simulation_persistence.jobs import JobStatus, input_sha256
 from simulation_job_support import (
+    ECONOMY_REPORT_KIND,
     HOUSEHOLD_KIND,
     TARGET,
     FakeDispatcher,
@@ -50,15 +51,23 @@ def _service(
         dispatcher=dispatcher or FakeDispatcher(),
         inspector=inspector or FakeInspector(),
         queue=queue or FakeQueue(),
-        job_kinds={HOUSEHOLD_KIND.name: HOUSEHOLD_KIND},
+        job_kinds={
+            HOUSEHOLD_KIND.name: HOUSEHOLD_KIND,
+            ECONOMY_REPORT_KIND.name: ECONOMY_REPORT_KIND,
+        },
         clock=clock,
     )
     return service, store
 
 
-async def _submit(service, request=REQUEST, submitted_by="api-v1@clients"):
+async def _submit(
+    service,
+    request=REQUEST,
+    submitted_by="api-v1@clients",
+    kind=HOUSEHOLD_KIND.name,
+):
     return await service.submit(
-        kind=HOUSEHOLD_KIND.name,
+        kind=kind,
         request_payload=request,
         policyengine_version="6.7.5",
         submitted_by=submitted_by,
@@ -402,3 +411,42 @@ def test_an_unfinished_job_reads_without_a_result():
 
     assert view.job.status is JobStatus.RUNNING
     assert view.result is None
+
+
+# --- Report jobs ------------------------------------------------------------------
+
+
+def _economy_aggregate(**overrides):
+    from copy import deepcopy
+
+    from report_aggregate_support import ECONOMY_AGGREGATE
+
+    return deepcopy(ECONOMY_AGGREGATE) | overrides
+
+
+def test_a_report_job_result_goes_to_the_report_results():
+    inspector = FakeInspector(CallSucceeded(_economy_aggregate()))
+    service, store = _service(inspector=inspector)
+    job = asyncio.run(_submit(service, kind=ECONOMY_REPORT_KIND.name))
+
+    report = asyncio.run(service.collect(job.id))
+
+    assert report.outcome is CollectionOutcome.SUCCEEDED
+    assert store.get_result(job.id) is None
+    stored = store.get_report_result(job.id)
+    assert stored.aggregate_schema_version == 1
+    assert stored.budgetary_impact == 70.0
+    view = asyncio.run(service.find(str(job.id)))
+    assert view.result is stored
+
+
+def test_an_invalid_report_aggregate_fails_the_job():
+    inspector = FakeInspector(CallSucceeded(_economy_aggregate(budget=None)))
+    service, store = _service(inspector=inspector)
+    job = asyncio.run(_submit(service, kind=ECONOMY_REPORT_KIND.name))
+
+    report = asyncio.run(service.collect(job.id))
+
+    assert report.outcome is CollectionOutcome.FAILED
+    assert store.get(job.id).error_code == "invalid_result"
+    assert store.get_report_result(job.id) is None

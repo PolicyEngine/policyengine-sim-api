@@ -44,6 +44,7 @@ from policyengine_simulation_observability.observability import (
 )
 from policyengine_simulation_persistence import HEAD_REVISION
 from policyengine_simulation_persistence.jobs import JobStore
+from policyengine_simulation_persistence.reports import ReportResultRecord
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from starlette.datastructures import MutableHeaders
 
@@ -685,6 +686,16 @@ def create_app(
             )
             raise HTTPException(status_code=403) from error
 
+    def stored_result(view: JobView) -> JsonObject | None:
+        if isinstance(view.result, ReportResultRecord):
+            return view.result.aggregate
+        return None if view.result is None else view.result.result
+
+    def stored_result_sha256(view: JobView) -> str | None:
+        if isinstance(view.result, ReportResultRecord):
+            return view.result.aggregate_sha256
+        return None if view.result is None else view.result.result_sha256
+
     def job_status_payload(view: JobView) -> SimulationJobStatusResponse:
         job = view.job
         return SimulationJobStatusResponse(
@@ -701,8 +712,8 @@ def create_app(
                 if job.error_code is not None
                 else None
             ),
-            result=None if view.result is None else view.result.result,
-            result_sha256=None if view.result is None else view.result.result_sha256,
+            result=stored_result(view),
+            result_sha256=stored_result_sha256(view),
         )
 
     # Simulation job store (API v2 migration, Step 1). These routes are not in

@@ -23,6 +23,7 @@ from policyengine_simulation_entry.simulation_jobs import (
 )
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 from simulation_job_support import (
+    ECONOMY_REPORT_KIND,
     HOUSEHOLD_KIND,
     TARGET,
     FakeDispatcher,
@@ -57,16 +58,19 @@ def _service(inspector=None, queue=None):
         dispatcher=FakeDispatcher(),
         inspector=inspector or FakeInspector(CallRunning()),
         queue=queue or FakeQueue(),
-        job_kinds={HOUSEHOLD_KIND.name: HOUSEHOLD_KIND},
+        job_kinds={
+            HOUSEHOLD_KIND.name: HOUSEHOLD_KIND,
+            ECONOMY_REPORT_KIND.name: ECONOMY_REPORT_KIND,
+        },
         clock=clock,
     )
     return service, store, clock
 
 
-def _running_job(service):
+def _running_job(service, kind=HOUSEHOLD_KIND.name):
     return asyncio.run(
         service.submit(
-            kind=HOUSEHOLD_KIND.name,
+            kind=kind,
             request_payload={"household": {}},
             policyengine_version="6.7.5",
             submitted_by="api-v1@clients",
@@ -261,3 +265,21 @@ def test_job_routes_stay_out_of_the_openapi_document():
     ]
 
     assert not [path for path in paths if "simulation-jobs" in path]
+
+
+def test_a_report_job_reads_its_aggregate_from_the_report_results():
+    from report_aggregate_support import ECONOMY_AGGREGATE
+
+    service, store, _ = _service(
+        inspector=FakeInspector(CallSucceeded(ECONOMY_AGGREGATE))
+    )
+    job = _running_job(service, kind=ECONOMY_REPORT_KIND.name)
+    asyncio.run(service.collect(job.id))
+
+    with _client(service) as client:
+        body = client.get(f"/simulation-jobs/{job.id}").json()
+
+    stored = store.get_report_result(job.id)
+    assert body["status"] == "succeeded"
+    assert body["result"] == stored.aggregate
+    assert body["result_sha256"] == stored.aggregate_sha256

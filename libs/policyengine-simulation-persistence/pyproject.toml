@@ -8,7 +8,10 @@ authors = [
 license = {file = "../../LICENSE"}
 requires-python = ">=3.13,<3.14"
 dependencies = [
+    # Report aggregates are validated by the contract's Pydantic models.
+    "policyengine-simulation-contract",
     "psycopg[binary]>=3.2,<4",
+    "pydantic>=2,<3",
     "sqlalchemy>=2,<3",
 ]
 
@@ -32,6 +35,10 @@ build-backend = "hatchling.build"
 sources = ["src"]
 only-include = ["src/policyengine_simulation_persistence"]
 packages = ["src/policyengine_simulation_persistence"]
+
+[tool.uv.sources]
+policyengine-simulation-contract = { path = "../policyengine-simulation-contract", editable = true }
+policyengine-simulation-observability = { path = "../policyengine-simulation-observability", editable = true }
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

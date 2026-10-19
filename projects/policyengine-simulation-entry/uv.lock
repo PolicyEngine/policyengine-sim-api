@@ -977,7 +977,9 @@ name = "policyengine-simulation-persistence"
 version = "0.1.0"
 source = { editable = "../../libs/policyengine-simulation-persistence" }
 dependencies = [
+    { name = "policyengine-simulation-contract" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
     { name = "sqlalchemy" },
 ]
 
@@ -985,7 +987,9 @@ dependencies = [
 requires-dist = [
     { name = "alembic", marker = "extra == 'migrations'", specifier = ">=1.16,<2" },
     { name = "alembic", marker = "extra == 'test'", specifier = ">=1.16,<2" },
+    { name = "policyengine-simulation-contract", editable = "../../libs/policyengine-simulation-contract" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },
+    { name = "pydantic", specifier = ">=2,<3" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.3.4" },
     { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.1.1" },
     { name = "pyyaml", marker = "extra == 'test'", specifier = ">=6.0.2" },

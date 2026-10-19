@@ -62,6 +62,30 @@ Scheduler sweep re-enqueues running jobs nobody has checked for five minutes
 and fails jobs whose dispatch stalled for ten. Status reads use only these
 tables (`sim.persistence.status-reads-never-advance-work`).
 
+## Report tables
+
+`simulation.reports` records economy and household reports (`kind`). A report
+migrated from API v1 keeps the v1 ID in `legacy_report_id` (unique) and starts
+`not_started` with no job. Once a job is attached the report is `submitted`,
+and its progress is that job's status, so the report and job never disagree; a
+check constraint ties the status to the presence of `job_id`.
+
+`simulation.report_results` holds one aggregate per finished report job,
+keyed by the job, so reports with identical inputs (one shared job) share one
+stored result. `JobStore.complete_report` validates the aggregate with the
+Pydantic model registered for its report kind and schema version in
+`REPORT_AGGREGATE_MODELS` (economy, version 1: the contract's
+`SingleYearMacroOutput`) before writing anything, then stores it as JSONB with
+`aggregate_schema_version`, `aggregate_sha256`, summary columns (budget
+impacts, households, baseline net income, model and data versions) and
+`artifacts`, a JSON array of validated `ReportArtifact` references. It
+finishes the job in the same transaction and, like every job write, only
+while the job is running.
+
+A job kind with `report_kind` set stores its result here; other kinds use
+`job_results`. No report job kind is registered and nothing creates report
+rows yet; household aggregates get a model when their contract exists.
+
 ## Database roles
 
 | Role | Used by | Privileges |
