@@ -776,6 +776,108 @@ def test_single_worker_honors_explicit_segmentation_opt_out() -> None:
     assert segmented_calls == []
 
 
+def test_single_worker_refuses_a_simulation_that_is_no_longer_active() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation).model_copy(
+        update={"status": ComparisonRunLifecycleStatus.FAILED}
+    )
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(
+        RuntimeError, match=r"^Stage 12 simulation is no longer active$"
+    ):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=artifacts,
+                calculator=lambda _: pytest.fail("a finished simulation ran again"),
+            ),
+        )
+
+    assert artifacts.input_writes == []
+
+
+def test_single_worker_stops_when_another_writer_claimed_the_simulation() -> None:
+    class ClaimLosingStore(FakeStore):
+        def replace_simulation_if_status(self, record, *, expected_status):
+            return self.children[record.simulation_execution_id], False
+
+    store = ClaimLosingStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(RuntimeError, match=r"^Stage 12 simulation was cancelled$"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=artifacts,
+                calculator=lambda _: pytest.fail("an unclaimed simulation ran"),
+            ),
+        )
+
+    assert artifacts.input_writes == []
+
+
+def test_single_worker_treats_a_failed_cancellation_check_as_not_cancelled(
+    caplog,
+) -> None:
+    class StatusReadFailingStore(FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.fail_reads = False
+
+        def get_simulation(self, simulation_execution_id):
+            if self.fail_reads:
+                msg = "status read contains sensitive details"
+                raise ConnectionError(msg)
+            return super().get_simulation(simulation_execution_id)
+
+    store = StatusReadFailingStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    checks = []
+
+    def segmented_calculator(_value, cancellation_requested):
+        store.fail_reads = True
+        checks.append(cancellation_requested())
+        store.fail_reads = False
+        return SimulationCalculation(frames=_frames())
+
+    with caplog.at_level(
+        logging.WARNING,
+        logger="policyengine_simulation_executor.stage12_runtime.simulation",
+    ):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                segmented_calculator=segmented_calculator,
+            ),
+        )
+
+    assert checks == [False]
+    assert (
+        f"Stage 12 cancellation check failed for "
+        f"{simulation.simulation_execution_id} (ConnectionError)"
+    ) in caplog.text
+    assert "sensitive" not in caplog.text
+    assert (
+        store.children[simulation.simulation_execution_id].status
+        is ComparisonRunLifecycleStatus.SUCCEEDED
+    )
+
+
 def test_single_worker_retains_detached_calculation_provenance() -> None:
     store = FakeStore()
     simulation = _planned_simulation(SimulationRole.BASELINE)
