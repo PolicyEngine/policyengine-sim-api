@@ -13,7 +13,9 @@ does. See docs/engineering/skills/typing-only-imports.md.
 The resolution helpers are a copy of those in the executor's
 tests/test_runtime_evaluated_annotations.py, because the two projects share no
 package that test helpers could live in; keep the copies the same. The
-executor's copy checks the project libraries.
+executor's copy checks the project libraries installed with the executor; this
+copy also checks the simulation persistence library, which only the
+entrypoint installs.
 """
 
 from __future__ import annotations
@@ -37,7 +39,11 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
-CHECKED_PACKAGES = ("policyengine_simulation_entry",)
+CHECKED_PACKAGES = (
+    "policyengine_simulation_entry",
+    # Only the entrypoint installs it (sim.persistence.executor-independent).
+    "policyengine_simulation_persistence",
+)
 
 # What a module-level name is bound to: the qualified name an import gives it,
 # a class statement in the same module, or None when ruff cannot resolve it (an
@@ -300,6 +306,21 @@ def test_every_model_is_runtime_evaluated_for_ruff() -> None:
         "base path named to runtime-evaluated-base-classes in ruff.toml, or "
         "import the base from a path listed there:\n" + "\n".join(missing)
     )
+
+
+def test_the_persistence_library_models_are_checked() -> None:
+    """The entrypoint installs the persistence library and the executor never does.
+
+    So this suite is the only one that can check the library's models.
+    """
+    checked_models = [
+        module_class.qualified_name for module_class, _ in _model_classes()
+    ]
+
+    assert any(
+        model_name.startswith("policyengine_simulation_persistence.")
+        for model_name in checked_models
+    ), "the persistence library's Pydantic models are not checked"
 
 
 def test_every_model_resolves_its_annotations() -> None:

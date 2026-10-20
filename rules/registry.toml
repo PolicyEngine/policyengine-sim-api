@@ -1054,6 +1054,7 @@ nodes = [
   "projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py::test_same_module_base_in_a_package_is_named_after_its_file",
   "projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py::test_every_model_is_runtime_evaluated_for_ruff",
   "projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py::test_every_model_resolves_its_annotations",
+  "projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py::test_the_persistence_library_models_are_checked",
   "projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py::test_bases_resolve_as_ruff_resolves_them",
   "projects/policyengine-simulation-entry/tests/test_runtime_evaluated_annotations.py::test_same_module_base_in_a_package_is_named_after_its_file",
 ]

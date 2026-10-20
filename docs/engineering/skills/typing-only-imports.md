@@ -81,7 +81,8 @@ misses breaks the model at runtime.
   with it (`policyengine_fastapi`, `policyengine_simulation_contract`,
   `policyengine_simulation_observability` and
   `policyengine_stage12_persistence`);
-- the entrypoint's, over `policyengine_simulation_entry`.
+- the entrypoint's, over `policyengine_simulation_entry` and
+  `policyengine_simulation_persistence`, which only the entrypoint installs.
 
 Each imports every module of its packages and checks every Pydantic model a
 module-level class statement defines:
