@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
@@ -88,6 +88,7 @@ from .simulation import descriptor_from_record, simulation_input_sha256
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
 
     import pandas as pd
     from policyengine_observability import ObservabilityRuntime
@@ -369,13 +370,42 @@ def _cancel_returned_simulations(
             )
 
 
+class _ChildFailureHandler(Protocol):
+    """Report a failed child call and return the failure its report records.
+
+    The Stage 12 path reads and records the child's row; a returned report
+    uses the ``ReportExecutionError`` its child raised.
+    """
+
+    def __call__(
+        self,
+        *,
+        error: Exception,
+        simulation: PlannedSimulationExecutionInput,
+    ) -> Stage12FailureDetail:
+        """Return the report's failure for ``simulation``'s failed call."""
+        ...
+
+
+class _ChildCanceller(Protocol):
+    """Stop the started, unfinished children with the given roles.
+
+    ``detail`` is the cancellation a Stage 12 child's row records; a returned
+    report's children have no row to record it on.
+    """
+
+    def __call__(self, *, roles: set[str], detail: Stage12FailureDetail) -> None:
+        """Stop each child named in ``roles``."""
+        ...
+
+
 def _observe_simulations(
     *,
     calls: dict[str, ChildCall],
     simulations: dict[str, PlannedSimulationExecutionInput],
     descriptors: dict[str, SimulationArtifactDescriptor],
-    child_failure_detail: Callable[..., Stage12FailureDetail],
-    cancel_simulations: Callable[..., None],
+    child_failure_detail: _ChildFailureHandler,
+    cancel_simulations: _ChildCanceller,
     runtime: ObservabilityRuntime | None,
     progress: StageProgress,
     wait_stage_name: str,
@@ -386,9 +416,8 @@ def _observe_simulations(
 ) -> None:
     """Wait for every started child within the shared window, or stop them all.
 
-    ``child_failure_detail(error=, simulation=)`` reports a failed child and
-    returns the report's failure; ``cancel_simulations(roles=, detail=)``
-    stops the children still running.
+    ``child_failure_detail`` reports a failed child and returns the report's
+    failure; ``cancel_simulations`` stops the children still running.
     """
     pending = set(calls)
     poll_interval = SIMULATION_POLL_INITIAL_SECONDS
@@ -685,7 +714,7 @@ def _read_simulation_outputs(
     output_plan: Stage12OutputPlan,
     descriptors: dict[str, SimulationArtifactDescriptor],
     artifact_storage: Stage12ArtifactStore,
-    stage_span: StageScope,
+    stage_span: Callable[[Stage], AbstractContextManager[object]],
 ) -> _SimulationOutputs:
     """Read both children's artifacts and check they form this report's pair.
 
