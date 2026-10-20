@@ -145,9 +145,15 @@ def test_native_state_only_worker_requires_geography_and_explicit_national_works
         policy=None,
         region_code="us",
     )
-    with pytest.raises(ValueError) as error:  # noqa: PT011  # the typed code is asserted below; the message depends on which installed layer rejects the missing county
+    # The message depends on which installed layer rejects the missing
+    # county, so the check matches the typed code instead.
+    with pytest.raises(
+        ValueError,
+        check=lambda raised_error: (
+            spm_error_detail(raised_error).code == "SPM_GEOGRAPHY_REQUIRED"
+        ),
+    ):
         simulation.run()
-    assert spm_error_detail(error.value).code == "SPM_GEOGRAPHY_REQUIRED"
     national = _build_simulation(
         {**params, "spm": {"geography_kind": "national"}},
         dataset=native_dataset,

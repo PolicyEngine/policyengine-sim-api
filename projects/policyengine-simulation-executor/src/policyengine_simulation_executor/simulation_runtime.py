@@ -119,57 +119,62 @@ def setup_gcp_credentials(
     """
     previous = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
     creds_file = None
-    try:
-        credential_span = (
-            runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.CREDENTIAL_SETUP))
-            if runtime is not None
-            else contextlib.nullcontext()
-        )
-        with credential_span:
-            # Log available GCP-related env vars for debugging.
-            gcp_vars = {
-                k: v[:50] + "..." if len(v) > 50 else v
-                for k, v in os.environ.items()
-                if "GOOGLE" in k or "GCP" in k or "CREDENTIAL" in k
-            }
-            logger.info("GCP-related env vars: %s", list(gcp_vars.keys()))
+    with contextlib.ExitStack() as credentials_file_stack:
+        try:
+            credential_span = (
+                runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.CREDENTIAL_SETUP))
+                if runtime is not None
+                else contextlib.nullcontext()
+            )
+            with credential_span:
+                # Log available GCP-related env vars for debugging.
+                gcp_vars = {
+                    k: v[:50] + "..." if len(v) > 50 else v
+                    for k, v in os.environ.items()
+                    if "GOOGLE" in k or "GCP" in k or "CREDENTIAL" in k
+                }
+                logger.info("GCP-related env vars: %s", list(gcp_vars.keys()))
 
-            if previous:
-                logger.info("GOOGLE_APPLICATION_CREDENTIALS already set")
-            else:
-                creds_json = (
-                    os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-                    or os.environ.get("GCP_CREDENTIALS_JSON")
-                    or os.environ.get("GOOGLE_CREDENTIALS")
-                    or os.environ.get("SERVICE_ACCOUNT_JSON")
-                )
-
-                if not creds_json:
-                    logger.warning("No GCP credentials found in environment variables")
+                if previous:
+                    logger.info("GOOGLE_APPLICATION_CREDENTIALS already set")
                 else:
-                    normalized = _normalize_credentials_blob(creds_json)
-                    # ``NamedTemporaryFile(delete=True)`` removes the file when
-                    # the context exits. We restore any prior value of
-                    # ``GOOGLE_APPLICATION_CREDENTIALS`` so a retry in the same
-                    # container doesn't silently pick up a stale path.
-                    creds_file = tempfile.NamedTemporaryFile(  # noqa: SIM115  # stays open across the yield; the finally block closes, and so deletes, it
-                        mode="w",
-                        suffix=".json",
-                        delete=True,
+                    creds_json = (
+                        os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+                        or os.environ.get("GCP_CREDENTIALS_JSON")
+                        or os.environ.get("GOOGLE_CREDENTIALS")
+                        or os.environ.get("SERVICE_ACCOUNT_JSON")
                     )
-                    creds_file.write(normalized)
-                    creds_file.flush()
-                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_file.name
-                    logger.info("GCP credentials written to %s", creds_file.name)
 
-        yield
-    finally:
-        if creds_file is not None:
-            if previous is None:
-                os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
-            else:
-                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = previous
-            creds_file.close()
+                    if not creds_json:
+                        logger.warning(
+                            "No GCP credentials found in environment variables"
+                        )
+                    else:
+                        normalized = _normalize_credentials_blob(creds_json)
+                        # The exit stack keeps the file open across the yield,
+                        # and closing it (``delete=True``) removes the file.
+                        # The finally block first restores any prior value of
+                        # ``GOOGLE_APPLICATION_CREDENTIALS`` so a retry in the same
+                        # container doesn't silently pick up a stale path.
+                        creds_file = credentials_file_stack.enter_context(
+                            tempfile.NamedTemporaryFile(
+                                mode="w",
+                                suffix=".json",
+                                delete=True,
+                            )
+                        )
+                        creds_file.write(normalized)
+                        creds_file.flush()
+                        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_file.name
+                        logger.info("GCP credentials written to %s", creds_file.name)
+
+            yield
+        finally:
+            if creds_file is not None:
+                if previous is None:
+                    os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
+                else:
+                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = previous
 
 
 def run_simulation_impl(
