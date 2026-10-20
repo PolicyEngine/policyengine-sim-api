@@ -11,6 +11,7 @@ from policyengine_simulation_contract.spm import (
     SPMCapability,
     SPMInputError,
     SPMProvenance,
+    SPMRouteVersions,
     SPMRuntimeVersions,
     SPMSelection,
     build_spm_comparison_provenance,
@@ -202,8 +203,10 @@ def normalize_runtime_spm(params: dict[str, Any]) -> dict[str, Any] | None:
         country,
         params.get("spm"),
         capability=runtime_spm_capability() if country == "us" else None,
-        policyengine_version=bundle.policyengine_version,
-        model_version=bundle.model_version,
+        route_versions=SPMRouteVersions(
+            policyengine_version=bundle.policyengine_version,
+            model_version=bundle.model_version,
+        ),
     )
     if selection is not None:
         canonical = json.dumps(selection, sort_keys=True, separators=(",", ":"))

@@ -17,6 +17,7 @@ from policyengine_simulation_contract.gateway_models import (
 from policyengine_simulation_contract.spm import (
     SPMCapability,
     SPMInputError,
+    SPMRouteVersions,
     SPMSelection,
     combine_spm_results,
     resolve_spm_selection,
@@ -144,8 +145,9 @@ def test_unknown_bundle_fails_closed_and_historical_uk_remain():
                 country,
                 None,
                 capability=None,
-                policyengine_version=version,
-                model_version=model,
+                route_versions=SPMRouteVersions(
+                    policyengine_version=version, model_version=model
+                ),
             )
             is None
         )
@@ -155,16 +157,18 @@ def test_unknown_bundle_fails_closed_and_historical_uk_remain():
                 "us",
                 selection,
                 capability=None,
-                policyengine_version="future-test",
-                model_version="test",
+                route_versions=SPMRouteVersions(
+                    policyengine_version="future-test", model_version="test"
+                ),
             )
     assert (
         resolve_spm_selection(
             "us",
             {},
             capability=CAPABILITY,
-            policyengine_version="test-only",
-            model_version="test",
+            route_versions=SPMRouteVersions(
+                policyengine_version="test-only", model_version="test"
+            ),
         )
         == SELECTION
     )
@@ -173,8 +177,9 @@ def test_unknown_bundle_fails_closed_and_historical_uk_remain():
             "us",
             {"forecast_content_sha256": "b" * 64},
             capability=CAPABILITY,
-            policyengine_version="test-only",
-            model_version="test",
+            route_versions=SPMRouteVersions(
+                policyengine_version="test-only", model_version="test"
+            ),
         )
 
 
@@ -200,8 +205,9 @@ def test_partial_selection_survives_ordinary_nested_json(kind, area):
         "us",
         wire["spm"],
         capability=capability,
-        policyengine_version="test",
-        model_version="test",
+        route_versions=SPMRouteVersions(
+            policyengine_version="test", model_version="test"
+        ),
     )
     assert resolved == {**capability["defaults"], **partial}
     assert SPMSelection.model_validate(resolved).model_dump() == resolved
@@ -210,8 +216,9 @@ def test_partial_selection_survives_ordinary_nested_json(kind, area):
         "us",
         json.loads(SPMSelection(**explicit).model_dump_json()),
         capability=capability,
-        policyengine_version="test",
-        model_version="test",
+        route_versions=SPMRouteVersions(
+            policyengine_version="test", model_version="test"
+        ),
     ) == {**capability["defaults"], **explicit, "geography_id": None}
 
 
@@ -222,8 +229,9 @@ def test_historical_allowance_does_not_certify_other_models():
                 "us",
                 None,
                 capability=None,
-                policyengine_version=version,
-                model_version=model,
+                route_versions=SPMRouteVersions(
+                    policyengine_version=version, model_version=model
+                ),
             )
 
 

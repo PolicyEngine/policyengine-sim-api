@@ -50,6 +50,7 @@ from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_contract.spm import (
     SPMCapability,
     SPMInputError,
+    SPMRouteVersions,
     SPMSelection,
     resolve_spm_selection,
     spm_error_detail,
@@ -698,9 +699,11 @@ def _resolve_request_spm(
         request.country,
         request.spm,
         capability=bundle.spm,
-        policyengine_version=bundle.policyengine_version,
-        model_version=_certified_model_version(request.country, route),
-        route_provenance=route.route_provenance,
+        route_versions=SPMRouteVersions(
+            policyengine_version=bundle.policyengine_version,
+            model_version=_certified_model_version(request.country, route),
+            route_provenance=route.route_provenance,
+        ),
     )
     if selection is not None:
         request.spm = SPMSelection.model_validate(selection)

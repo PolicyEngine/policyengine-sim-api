@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal, Self
 
@@ -508,16 +509,33 @@ def _numeric_release_version(version: str | None) -> tuple[int, ...] | None:
     return tuple(map(int, parts))
 
 
-def resolve_spm_selection(  # noqa: PLR0913  # public contract API: the gateway and executor call it with these keywords
+@dataclass(frozen=True)
+class SPMRouteVersions:
+    """What a worker route states about its versions.
+
+    ``resolve_spm_selection`` reads these only for a route with no SPM
+    capability, to decide whether the route predates canonical SPM.
+    ``policyengine_version`` is the route's policyengine.py release (None
+    for a country-only route), ``model_version`` the country model version
+    it states, and ``route_provenance`` how the route was resolved.
+    """
+
+    policyengine_version: str | None
+    model_version: str | None
+    route_provenance: str | None = None
+
+
+def resolve_spm_selection(
     country: str,
     selection: SPMSelection | Mapping[str, object] | None,
     *,
     capability: SPMCapability | Mapping[str, object] | None,
-    policyengine_version: str | None,
-    model_version: str | None,
-    route_provenance: str | None = None,
+    route_versions: SPMRouteVersions,
 ) -> JsonObject | None:
     """Resolve only certified metadata; unrecognized future bundles fail closed."""
+    policyengine_version = route_versions.policyengine_version
+    model_version = route_versions.model_version
+    route_provenance = route_versions.route_provenance
     if country.lower() != "us":
         if selection is not None:
             error_code = "SPM_SETTINGS_INVALID"
