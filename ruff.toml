@@ -80,6 +80,7 @@ ignore = [
 # at module level.
 banned-module-level-imports = [
     "google.cloud",
+    "google.oauth2",
     "h5py",
     "opentelemetry.exporter.cloud_monitoring",
     "opentelemetry.exporter.cloud_trace",
@@ -90,6 +91,7 @@ banned-module-level-imports = [
     "policyengine.tax_benefit_models",
     "policyengine_simulation_executor.baseline_artifacts",
     "policyengine_simulation_executor.spm",
+    "policyengine_uk",
     "policyengine_us",
     "pythonjsonlogger",
     "spm_calculator",

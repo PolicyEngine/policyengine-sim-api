@@ -266,7 +266,7 @@ def test_builds_its_storage_client_from_the_deployment_credentials(
     monkeypatch, tmp_path, credentials_encoding
 ) -> None:
     from google.cloud import storage
-    from src.modal import stage12_cache_image
+    from google.oauth2 import service_account
 
     manifest, payloads = _manifest()
     _use_deployment(monkeypatch, tmp_path, manifest)
@@ -291,7 +291,7 @@ def test_builds_its_storage_client_from_the_deployment_credentials(
         return _Client(payloads)
 
     monkeypatch.setattr(
-        stage12_cache_image.service_account.Credentials,
+        service_account.Credentials,
         "from_service_account_info",
         from_service_account_info,
     )

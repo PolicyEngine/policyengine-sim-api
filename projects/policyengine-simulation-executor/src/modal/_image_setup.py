@@ -168,7 +168,7 @@ def _service_account_credentials(blob: str) -> "dict[str, Any]":
             raise
     info = json.loads(parsed) if isinstance(parsed, str) else parsed
 
-    from google.oauth2 import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+    from google.oauth2 import (
         service_account,
     )
 
@@ -234,7 +234,7 @@ def snapshot_models() -> None:
     USSystem()
 
     logger.info("Pre-loading UK tax-benefit system...")
-    from policyengine_uk import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
+    from policyengine_uk import (
         CountryTaxBenefitSystem as UKSystem,
     )
 

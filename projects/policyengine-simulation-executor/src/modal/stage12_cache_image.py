@@ -8,8 +8,6 @@ from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from google.oauth2 import service_account
-
 if TYPE_CHECKING:
     from google.cloud.storage import Client
 
@@ -106,6 +104,8 @@ def _storage_client() -> Client:
     if raw_credentials:
         decoded = json.loads(raw_credentials)
         info = json.loads(decoded) if isinstance(decoded, str) else decoded
+        from google.oauth2 import service_account
+
         credentials = {
             "credentials": service_account.Credentials.from_service_account_info(info),
             "project": info.get("project_id"),
