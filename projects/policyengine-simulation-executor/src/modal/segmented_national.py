@@ -23,6 +23,7 @@ child) before the parent's Modal timeout would kill it.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from dataclasses import dataclass
@@ -522,10 +523,10 @@ class SegmentedNationalRunner:
 
     @staticmethod
     def _cancel_call(call: modal.FunctionCall) -> None:
-        try:
+        # Best-effort cleanup: a failed cancel must not mask the failure being
+        # raised, and superseded calls are cancelled again later.
+        with contextlib.suppress(Exception):
             call.cancel()
-        except Exception:  # noqa: BLE001, S110  # best-effort cleanup: a failed cancel must not mask the failure being raised, and superseded calls are cancelled again later
-            pass
 
     def _cancel_superseded_children(self) -> None:
         for superseded in self.superseded_children:

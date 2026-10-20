@@ -27,9 +27,11 @@ if auth is required but issuer/audience are missing.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import logging
 import os
+from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -56,6 +58,9 @@ MODAL_ENVIRONMENT_ENV = "MODAL_ENVIRONMENT"
 
 
 _bearer_scheme = HTTPBearer(auto_error=False)
+BearerCredentials = Annotated[
+    HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)
+]
 
 
 def _auth_disabled() -> bool:
@@ -177,7 +182,8 @@ def enforce_production_auth_guard(runtime: ObservabilityRuntime) -> None:
         "roll back immediately."
     )
     logger.critical(banner)
-    try:
+    # pragma: no cover - observability must never block startup
+    with contextlib.suppress(Exception):
         runtime.event(
             "gateway_auth_disabled_bypass_active",
             severity="CRITICAL",
@@ -186,8 +192,6 @@ def enforce_production_auth_guard(runtime: ObservabilityRuntime) -> None:
                 "ack_value_present": True,
             },
         )
-    except Exception:  # noqa: BLE001, S110  # pragma: no cover - observability must never block startup
-        pass
 
 
 def enforce_auth_configured_guard() -> None:
@@ -226,7 +230,7 @@ def enforce_auth_configured_guard() -> None:
 
 def require_auth(
     request: Request,
-    token: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    token: BearerCredentials,
 ) -> dict | None:
     """FastAPI dependency gating an endpoint behind a bearer JWT.
 
@@ -264,12 +268,12 @@ def require_auth(
 
     try:
         decoder = _get_decoder()
-    except RuntimeError:
+    except RuntimeError as error:
         logger.exception("Gateway auth misconfigured")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Gateway authentication is not configured.",
-        )
+        ) from error
 
     try:
         return decoder(token)

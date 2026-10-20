@@ -10,11 +10,59 @@ from policyengine_simulation_executor.national_partition import (
 # 50 states + DC as they appear in region codes.
 ALL_STATE_CODES = {
     f"state/{s}"
-    for s in (
-        "al ak az ar ca co ct de dc fl ga hi id il in ia ks ky la me md ma "
-        "mi mn ms mo mt ne nv nh nj nm ny nc nd oh ok or pa ri sc sd tn tx "
-        "ut vt va wa wv wi wy"
-    ).split()
+    for s in [
+        "al",
+        "ak",
+        "az",
+        "ar",
+        "ca",
+        "co",
+        "ct",
+        "de",
+        "dc",
+        "fl",
+        "ga",
+        "hi",
+        "id",
+        "il",
+        "in",
+        "ia",
+        "ks",
+        "ky",
+        "la",
+        "me",
+        "md",
+        "ma",
+        "mi",
+        "mn",
+        "ms",
+        "mo",
+        "mt",
+        "ne",
+        "nv",
+        "nh",
+        "nj",
+        "nm",
+        "ny",
+        "nc",
+        "nd",
+        "oh",
+        "ok",
+        "or",
+        "pa",
+        "ri",
+        "sc",
+        "sd",
+        "tn",
+        "tx",
+        "ut",
+        "vt",
+        "va",
+        "wa",
+        "wv",
+        "wi",
+        "wy",
+    ]
 }
 
 

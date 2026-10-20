@@ -13,6 +13,7 @@ import os
 import uuid
 from collections.abc import Iterable
 from copy import deepcopy
+from pathlib import Path
 from typing import NotRequired, TypedDict
 
 import modal
@@ -1308,12 +1309,12 @@ def main() -> None:
             )
         _report(f"Routing publication finalization: {outcome}")
         if args.github_output:
-            with open(args.github_output, "a") as handle:
+            with Path(args.github_output).open("a") as handle:
                 handle.write(f"outcome={outcome}\n")
         return
 
     if args.record_plan or args.complete_plan:
-        with open(args.record_plan or args.complete_plan) as handle:
+        with Path(args.record_plan or args.complete_plan).open() as handle:
             plan = json.load(handle)
         operation = record_routing_plan if args.record_plan else complete_routing_plan
         operation(environment=args.environment, plan=plan)
@@ -1324,7 +1325,7 @@ def main() -> None:
         return
 
     if args.apply_plan:
-        with open(args.apply_plan) as handle:
+        with Path(args.apply_plan).open() as handle:
             plan = json.load(handle)
         apply_routing_plan(
             environment=args.environment,
@@ -1339,7 +1340,7 @@ def main() -> None:
     if args.restore_plan:
         plans = []
         for path in args.restore_plan:
-            with open(path) as handle:
+            with Path(path).open() as handle:
                 plans.append(json.load(handle))
         outcome = restore_routing_plans(
             environment=args.environment,
@@ -1402,7 +1403,7 @@ def main() -> None:
             publication_id=args.publication_id,
         )
         if args.plan_out:
-            with open(args.plan_out, "w") as handle:
+            with Path(args.plan_out).open("w") as handle:
                 json.dump(plan, handle, indent=2, sort_keys=True)
         _report(f"before_sha256={plan['before_sha256']}")
         _report(f"after_sha256={plan['after_sha256']}")

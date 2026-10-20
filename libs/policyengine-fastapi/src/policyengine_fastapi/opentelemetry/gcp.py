@@ -36,7 +36,7 @@ class AddGcpProjectToTraceFilter(logging.Filter):
         """Qualify the record's ``otelTraceID``, if set, then apply the base filter."""
         if not hasattr(record, "otelTraceID"):
             return super().filter(record)
-        record.otelTraceID = f"projects/{self.project}/traces/{record.otelTraceID}"  # type: ignore
+        record.otelTraceID = f"projects/{self.project}/traces/{record.otelTraceID}"  # type: ignore[attr-defined]
         return super().filter(record)
 
 

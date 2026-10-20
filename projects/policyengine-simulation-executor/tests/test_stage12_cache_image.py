@@ -103,5 +103,5 @@ def test_rejects_foreign_or_corrupt_cache(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("STAGE12_BUNDLE_MANIFEST_SHA256", "b" * 64)
     corrupt_path = manifest["artifacts"][0]["path"]
     payloads[corrupt_path] = b"corrupt"
-    with pytest.raises(RuntimeError, match="size differs|digest differs"):
+    with pytest.raises(RuntimeError, match=r"size differs|digest differs"):
         fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))

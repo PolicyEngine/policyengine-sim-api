@@ -23,19 +23,19 @@ ensure_project_root_on_path()
 class NoOpObservabilityRuntime:
     """Minimal explicit runtime used by executor unit tests."""
 
-    def span(self, *args, **kwargs):
+    def span(self, *_args, **_kwargs):
         return nullcontext()
 
-    def operation(self, *args, **kwargs):
+    def operation(self, *_args, **_kwargs):
         return nullcontext()
 
-    def set_context(self, **attributes):
+    def set_context(self, **_attributes):
         return None
 
-    def event(self, *args, **kwargs):
+    def event(self, *_args, **_kwargs):
         return None
 
-    def record_exception(self, *args, **kwargs):
+    def record_exception(self, *_args, **_kwargs):
         return None
 
     def capture_context(self):

@@ -1,10 +1,12 @@
 # Rule families are enabled one themed group per PR, each fixing everything it
 # finds (no ratchet), until the select list is "ALL". See
 # docs/engineering/skills/rules-registry.md and rules/registry.toml.
-# There is no root pyproject.toml, so files outside the projects and libs would
-# be treated as Python 3.9. scripts/rules supports Python 3.11+ (and is shared
-# byte-for-byte with policyengine-api, which targets 3.11).
-per-file-target-version = { "scripts/**" = "py311" }
+# There is no root pyproject.toml, and ruff doesn't read the projects' own
+# requires-python, so a file not listed here is linted with ruff's default
+# target version, whatever its project requires. scripts/rules supports
+# Python 3.11+ (and is shared byte-for-byte with policyengine-api, which
+# targets 3.11). The executor requires Python 3.13.
+per-file-target-version = { "scripts/**" = "py311", "projects/policyengine-simulation-executor/**" = "py313" }
 # Directories that are not regular packages on purpose, so they have no
 # __init__.py: standalone scripts, the implicit namespace package that holds
 # scripts.rules, and proof fixtures. Ruff resolves modules as if each listed
@@ -37,6 +39,8 @@ select = [
     "DTZ", "ERA", "EXE", "FIX", "G", "LOG", "S", "T20", "TD",
     # Group 7: structure and imports.
     "A", "E", "FAST", "INP", "N", "PLC", "SLF", "TID253",
+    # Group 8a: arguments, idioms and pytest style.
+    "ARG", "ASYNC", "B", "C4", "FBT", "PD", "PERF", "PGH", "PLW", "PT", "PTH", "RUF", "SIM",
 ]
 # Mutually exclusive pydocstyle pairs: keep D211 (no blank line before a class
 # docstring) and D212 (summary on the first line).
@@ -52,19 +56,20 @@ ignore = ["D203", "D213"]
 # live in directories that aren't packages, and import inside a test (often
 # after patching the environment). They also run repository scripts and use
 # fake credentials, temporary paths, naive datetimes, pickle and exec on
-# purpose, and may import the lazily loaded packages at module level. Every
-# other rule applies to tests.
+# purpose, may import the lazily loaded packages at module level, and may
+# leave arguments unused in fakes and stubs that mirror a real signature.
+# Every other rule applies to tests.
 "**/tests/**" = [
-    "ANN", "D1", "DTZ001", "DTZ007", "INP001", "PLC0415", "PLR2004",
-    "S101", "S102", "S105", "S106", "S108", "S301", "S603", "S607", "SLF001",
-    "TID253",
+    "ANN", "ARG001", "ARG002", "ARG005", "D1", "DTZ001", "DTZ007", "INP001",
+    "PLC0415", "PLR2004", "S101", "S102", "S105", "S106", "S108", "S301",
+    "S603", "S607", "SLF001", "TID253",
 ]
 # The deployed-service test suite (pytest, run against a live candidate) gets
 # the same test exemptions.
 "**/authenticated_tests/**" = [
-    "ANN", "D1", "DTZ001", "DTZ007", "INP001", "PLC0415", "PLR2004",
-    "S101", "S102", "S105", "S106", "S108", "S301", "S603", "S607", "SLF001",
-    "TID253",
+    "ANN", "ARG001", "ARG002", "ARG005", "D1", "DTZ001", "DTZ007", "INP001",
+    "PLC0415", "PLR2004", "S101", "S102", "S105", "S106", "S108", "S301",
+    "S603", "S607", "SLF001", "TID253",
 ]
 # CI/CD scripts report on stdout.
 ".github/**" = ["T201"]
@@ -76,6 +81,9 @@ ignore = ["D203", "D213"]
 # sentinel opens URLs from its arguments. The Modal utilities run with
 # python -m from a directory that isn't a package.
 "projects/*/src/{modal/utils/*,policyengine_simulation_entry/generate_openapi,policyengine_simulation_entry/stage12_infrastructure,policyengine_simulation_gateway/generate_openapi}.py" = ["INP001", "S310", "T201"]
+# The shared rules tool needs only the standard library, so its tests use
+# unittest on purpose; pytest-style rules don't apply to them.
+"scripts/rules/tests/**" = ["PT"]
 
 [lint.flake8-tidy-imports]
 # Heavy or optional packages that load only inside the function that needs

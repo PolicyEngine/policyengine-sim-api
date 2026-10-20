@@ -3,9 +3,8 @@
 import os
 import subprocess
 import sys
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
@@ -106,6 +105,7 @@ def _run_python_snippet(
         env=env,
         capture_output=True,
         text=True,
+        check=False,
     )
 
 

@@ -21,7 +21,9 @@ TEST_RUNTIME = NoOpObservabilityRuntime()
 def _bare_country_module():
     """Return a country module whose model has no loadable region registry."""
     return SimpleNamespace(
-        model=SimpleNamespace(get_region=lambda code: None, region_registry=None)
+        model=SimpleNamespace(
+            get_region=lambda _region_code: None, region_registry=None
+        )
     )
 
 
@@ -232,17 +234,18 @@ def _twenty_calls(**kwargs):
 
 @pytest.fixture
 def bare_country(monkeypatch):
-    monkeypatch.setattr(sr, "_country_module", lambda c: _bare_country_module())
+    monkeypatch.setattr(sr, "_country_module", lambda _country: _bare_country_module())
 
 
 class TestSegmentedNationalRunner:
-    def test__spawns_one_child_per_group_into_the_segment_pool(
-        self, monkeypatch, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__spawns_one_child_per_group_into_the_segment_pool(self, monkeypatch):
         fake = FakeModal(_twenty_calls())
         runner = _runner(fake)
         monkeypatch.setattr(
-            runner, "_reduce", lambda results, country_module: {"ok": results}
+            runner,
+            "_reduce",
+            lambda results, country_module: {"ok": results},
         )
 
         result = runner.run()
@@ -266,9 +269,8 @@ class TestSegmentedNationalRunner:
         )
         assert result == {"ok": [{"child": i} for i in range(20)]}
 
-    def test__collects_out_of_order_completions_in_group_order(
-        self, monkeypatch, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__collects_out_of_order_completions_in_group_order(self, monkeypatch):
         calls = [
             FakeCall({"child": i}, polls_until_ready=(19 - i) % 3) for i in range(20)
         ]
@@ -276,9 +278,8 @@ class TestSegmentedNationalRunner:
         monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
         assert runner.run() == [{"child": i} for i in range(20)]
 
-    def test__child_failure_fails_fast_and_cancels_the_rest(
-        self, monkeypatch, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__child_failure_fails_fast_and_cancels_the_rest(self, monkeypatch):
         calls = _twenty_calls(polls_until_ready=5)
         calls[7] = FakeCall(None, error=ValueError("boom"))
         runner = _runner(FakeModal(calls))
@@ -288,7 +289,8 @@ class TestSegmentedNationalRunner:
             runner.run()
         assert all(c.cancelled for c in calls if c.error is None)
 
-    def test__one_transient_poll_error_is_tolerated(self, monkeypatch, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__one_transient_poll_error_is_tolerated(self, monkeypatch):
         # A single control-plane blip on one handle must not kill the job.
         calls = _twenty_calls()
         calls[3] = FakeCall({"child": 3}, errors_once=1)
@@ -296,9 +298,8 @@ class TestSegmentedNationalRunner:
         monkeypatch.setattr(runner, "_reduce", lambda results, country_module: results)
         assert runner.run() == [{"child": i} for i in range(20)]
 
-    def test__spawn_failure_cancels_already_spawned_children(
-        self, monkeypatch, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__spawn_failure_cancels_already_spawned_children(self, monkeypatch):
         calls = _twenty_calls(polls_until_ready=100)
         fake = FakeModal(calls, fail_spawn_at=15)
         runner = _runner(fake)
@@ -308,24 +309,23 @@ class TestSegmentedNationalRunner:
             runner.run()
         assert all(c.cancelled for c in calls[:15])
 
-    def test__uncovered_registry_states_ride_in_the_last_group(
-        self, monkeypatch, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__uncovered_registry_states_ride_in_the_last_group(self, monkeypatch):
         partition_codes = [
             code for group in US_NATIONAL_REGION_GROUPS for code in group
         ]
         registry = SimpleNamespace(
             regions=[
                 SimpleNamespace(code=code, region_type="state")
-                for code in partition_codes + ["state/pr"]
+                for code in [*partition_codes, "state/pr"]
             ]
         )
         country_module = SimpleNamespace(
             model=SimpleNamespace(
-                get_region=lambda code: None, region_registry=registry
+                get_region=lambda _region_code: None, region_registry=registry
             )
         )
-        monkeypatch.setattr(sr, "_country_module", lambda c: country_module)
+        monkeypatch.setattr(sr, "_country_module", lambda _country: country_module)
 
         fake = FakeModal([FakeCall({"child": i}) for i in range(20)])
         runner = _runner(fake)
@@ -348,7 +348,9 @@ class TestSegmentedNationalRunner:
             return {"budget": {}}
 
         monkeypatch.setattr(sn, "build_national_output", fake_build_national_output)
-        monkeypatch.setattr(sr, "_country_module", lambda c: _bare_country_module())
+        monkeypatch.setattr(
+            sr, "_country_module", lambda _country: _bare_country_module()
+        )
 
         params = {
             **NATIONAL,
@@ -412,7 +414,7 @@ def _stuck_call(clock):
     )
 
 
-def _crashing_call(clock):
+def _crashing_call(_clock):
     """Return a child that fails outright (takes a clock to match ``_stuck_call``)."""
     return FakeCall(None, error=ValueError("child crashed"))
 
@@ -424,7 +426,8 @@ def _calls_with_stuck_child(clock, respawned_call, **sibling_options):
 
 
 class TestSegmentedNationalChildDeadline:
-    def test__overdue_child_is_cancelled_and_respawned_once(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__overdue_child_is_cancelled_and_respawned_once(self):
         clock = ManualClock()
         respawned_call = FakeCall({"child": "respawned"})
         calls = _calls_with_stuck_child(clock, respawned_call)
@@ -451,7 +454,8 @@ class TestSegmentedNationalChildDeadline:
         # deadline, not later; the respawn finished without moving the clock.
         assert clock() == sn.CHILD_DEADLINE_SECONDS
 
-    def test__respawned_child_that_is_also_overdue_fails_the_run(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__respawned_child_that_is_also_overdue_fails_the_run(self):
         clock = ManualClock()
         calls = _calls_with_stuck_child(clock, _stuck_call(clock))
         runner = _runner(FakeModal(calls), clock=clock)
@@ -466,7 +470,8 @@ class TestSegmentedNationalChildDeadline:
         assert calls[STUCK_GROUP_INDEX].cancelled
         assert calls[-1].cancelled
 
-    def test__respawned_child_failure_names_the_respawn(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__respawned_child_failure_names_the_respawn(self):
         clock = ManualClock()
         failing_respawn = FakeCall(None, error=ValueError("child crashed"))
         calls = _calls_with_stuck_child(clock, failing_respawn)
@@ -479,7 +484,8 @@ class TestSegmentedNationalChildDeadline:
             runner.run()
         assert calls[STUCK_GROUP_INDEX].cancelled
 
-    def test__failed_respawn_spawn_cancels_every_child(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__failed_respawn_spawn_cancels_every_child(self):
         clock = ManualClock()
         runtime = RecordingRuntime()
         calls = _calls_with_stuck_child(
@@ -500,7 +506,8 @@ class TestSegmentedNationalChildDeadline:
             for update in runtime.context_updates
         )
 
-    def test__late_result_from_the_superseded_child_is_ignored(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__late_result_from_the_superseded_child_is_ignored(self):
         clock = ManualClock()
         # The original's next poll after its deadline would return a result.
         late_original = FakeCall(
@@ -526,8 +533,9 @@ class TestSegmentedNationalChildDeadline:
         [_crashing_call, _stuck_call],
         ids=["respawn_fails", "respawn_also_overdue"],
     )
+    @pytest.mark.usefixtures("bare_country")
     def test__superseded_child_whose_cancel_failed_is_cancelled_on_a_later_failure(
-        self, bare_country, respawned_call_factory
+        self, respawned_call_factory
     ):
         clock = ManualClock()
         calls = _calls_with_stuck_child(clock, respawned_call_factory(clock))
@@ -544,9 +552,8 @@ class TestSegmentedNationalChildDeadline:
         assert superseded_original.cancelled
         assert superseded_original.poll_count == POLLS_TO_REACH_DEADLINE
 
-    def test__superseded_child_whose_cancel_failed_is_cancelled_after_collection(
-        self, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__superseded_child_whose_cancel_failed_is_cancelled_after_collection(self):
         clock = ManualClock()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
         superseded_original = calls[STUCK_GROUP_INDEX]
@@ -560,7 +567,8 @@ class TestSegmentedNationalChildDeadline:
         assert superseded_original.cancel_attempts == 2
         assert superseded_original.cancelled
 
-    def test__no_respawn_when_parent_budget_cannot_fit_a_retry(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__no_respawn_when_parent_budget_cannot_fit_a_retry(self):
         clock = ManualClock()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
         fake = FakeModal(calls)
@@ -579,9 +587,8 @@ class TestSegmentedNationalChildDeadline:
         assert len(fake.spawned_payloads) == 20
         assert calls[STUCK_GROUP_INDEX].cancelled
 
-    def test__respawn_deadline_is_clamped_to_the_remaining_parent_budget(
-        self, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__respawn_deadline_is_clamped_to_the_remaining_parent_budget(self):
         clock = ManualClock()
         runtime = RecordingRuntime()
         calls = _calls_with_stuck_child(clock, _stuck_call(clock))
@@ -603,9 +610,8 @@ class TestSegmentedNationalChildDeadline:
         assert timeout_event["attributes"]["deadline_seconds"] == 600
         assert not runtime.events_named("segmented_national_budget_exhausted")
 
-    def test__exhausted_parent_budget_cancels_children_before_modal_timeout(
-        self, bare_country
-    ):
+    @pytest.mark.usefixtures("bare_country")
+    def test__exhausted_parent_budget_cancels_children_before_modal_timeout(self):
         clock = ManualClock()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
         fake = FakeModal(calls)
@@ -627,7 +633,8 @@ class TestSegmentedNationalChildDeadline:
         assert calls[STUCK_GROUP_INDEX].cancelled
         assert len(fake.spawned_payloads) == 20
 
-    def test__respawn_is_recorded_in_telemetry(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__respawn_is_recorded_in_telemetry(self):
         clock = ManualClock()
         runtime = RecordingRuntime()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
@@ -646,7 +653,11 @@ class TestSegmentedNationalChildDeadline:
         assert {"segmented_child_retry_count": 1} in runtime.context_updates
 
     @pytest.mark.parametrize(
-        "parent_budget_seconds,expected_attempt,expected_remaining_budget_seconds",
+        (
+            "parent_budget_seconds",
+            "expected_attempt",
+            "expected_remaining_budget_seconds",
+        ),
         # The first budget fits both attempts with 600 s to spare; the second
         # leaves too little after the first attempt for a respawn.
         [
@@ -655,9 +666,9 @@ class TestSegmentedNationalChildDeadline:
         ],
         ids=["respawn_also_overdue", "no_budget_for_a_respawn"],
     )
+    @pytest.mark.usefixtures("bare_country")
     def test__child_timeout_is_recorded_in_telemetry(
         self,
-        bare_country,
         parent_budget_seconds,
         expected_attempt,
         expected_remaining_budget_seconds,
@@ -688,7 +699,8 @@ class TestSegmentedNationalChildDeadline:
             }
         ]
 
-    def test__exhausted_parent_budget_is_recorded_in_telemetry(self, bare_country):
+    @pytest.mark.usefixtures("bare_country")
+    def test__exhausted_parent_budget_is_recorded_in_telemetry(self):
         clock = ManualClock()
         runtime = RecordingRuntime()
         calls = _calls_with_stuck_child(clock, FakeCall({"child": "respawned"}))
@@ -741,11 +753,11 @@ class TestDispatchRunSimulation:
             return {"segmented": True}
 
         monkeypatch.setattr(sn, "run_segmented_national_impl", fake_segmented)
-        monkeypatch.setattr(executor_spm, "normalize_runtime_spm", lambda params: None)
+        monkeypatch.setattr(executor_spm, "normalize_runtime_spm", lambda _params: None)
         monkeypatch.setattr(
             sr,
             "run_simulation_impl",
-            lambda params, **kwargs: pytest.fail("monolithic path must not run"),
+            lambda _params, **_kwargs: pytest.fail("monolithic path must not run"),
         )
         result = sn.dispatch_run_simulation(
             dict(NATIONAL), app_name="app-x", runtime=TEST_RUNTIME
@@ -765,11 +777,11 @@ class TestDispatchRunSimulation:
         monkeypatch.setattr(
             sn,
             "run_segmented_national_impl",
-            lambda *a, **k: pytest.fail("segmented path must not run"),
+            lambda *_args, **_kwargs: pytest.fail("segmented path must not run"),
         )
-        monkeypatch.setattr(executor_spm, "normalize_runtime_spm", lambda params: None)
+        monkeypatch.setattr(executor_spm, "normalize_runtime_spm", lambda _params: None)
         monkeypatch.setattr(
-            sr, "run_simulation_impl", lambda params, **kwargs: {"monolithic": True}
+            sr, "run_simulation_impl", lambda _params, **_kwargs: {"monolithic": True}
         )
         assert sn.dispatch_run_simulation(
             params, app_name="app-x", runtime=TEST_RUNTIME
@@ -838,14 +850,13 @@ def stub_reduce(monkeypatch):
     The reduce itself is covered by test_segmented_national_reduce.
     """
     monkeypatch.setattr(
-        sn, "build_national_output", lambda children, **kwargs: {"budget": {}}
+        sn, "build_national_output", lambda _children, **_kwargs: {"budget": {}}
     )
 
 
 class TestSegmentedNationalSPM:
-    def test__child_receipts_combine_into_one_national_receipt(
-        self, bare_country, stub_reduce
-    ):
+    @pytest.mark.usefixtures("bare_country", "stub_reduce")
+    def test__child_receipts_combine_into_one_national_receipt(self):
         fake = FakeModal([FakeCall(_spm_child(i)) for i in range(20)])
         runner = _runner(fake, params={**NATIONAL, "spm": SPM_SELECTION})
 
@@ -865,7 +876,7 @@ class TestSegmentedNationalSPM:
         assert output["budget"] == {}
 
     @pytest.mark.parametrize(
-        "rogue,reason",
+        ("rogue", "reason"),
         [
             (
                 _spm_child(7, selection={**SPM_SELECTION, "scenario": "zero_real"}),
@@ -875,9 +886,8 @@ class TestSegmentedNationalSPM:
             (_spm_child_missing(7, "county_vintage"), "complete resolved"),
         ],
     )
-    def test__child_receipt_disagreeing_with_the_request_is_typed(
-        self, bare_country, stub_reduce, rogue, reason
-    ):
+    @pytest.mark.usefixtures("bare_country", "stub_reduce")
+    def test__child_receipt_disagreeing_with_the_request_is_typed(self, rogue, reason):
         # One segment computed something other than what was requested:
         # fail with the public typed code, never publish a mixed national
         # result whose receipt does not describe every segment.
@@ -889,7 +899,8 @@ class TestSegmentedNationalSPM:
             runner.run()
         assert error.value.code == "SPM_CONFIGURATION_UNAVAILABLE"
 
-    def test__unrequested_child_receipt_is_typed(self, bare_country, stub_reduce):
+    @pytest.mark.usefixtures("bare_country", "stub_reduce")
+    def test__unrequested_child_receipt_is_typed(self):
         # A historical request must not inherit a child's stray receipt.
         calls = [FakeCall({"child": i}) for i in range(20)]
         calls[3] = FakeCall(_spm_child(3))
@@ -898,7 +909,8 @@ class TestSegmentedNationalSPM:
         with pytest.raises(SPMInputError, match="Unexpected SPM receipt"):
             runner.run()
 
-    def test__a_run_without_spm_adds_no_receipt_keys(self, bare_country, stub_reduce):
+    @pytest.mark.usefixtures("bare_country", "stub_reduce")
+    def test__a_run_without_spm_adds_no_receipt_keys(self):
         runner = _runner(FakeModal([FakeCall({"child": i}) for i in range(20)]))
         assert runner.run() == {"budget": {}}
 
@@ -908,7 +920,7 @@ class TestDispatchResolvesSPM:
         # Children and the parent's receipt check must both see the
         # worker-resolved selection, not the caller's partial one.
         monkeypatch.setattr(
-            executor_spm, "normalize_runtime_spm", lambda params: SPM_SELECTION
+            executor_spm, "normalize_runtime_spm", lambda _params: SPM_SELECTION
         )
         seen = {}
 
@@ -930,7 +942,7 @@ class TestDispatchResolvesSPM:
     def test__typed_spm_error_spawns_nothing(self, monkeypatch):
         # Resolution failures are cheap only if they happen before 20
         # children are spawned.
-        def unavailable(params):
+        def unavailable(_params):
             error_code = "SPM_GEOGRAPHY_REQUIRED"
             raise SPMInputError(error_code, "County required")
 
@@ -938,12 +950,12 @@ class TestDispatchResolvesSPM:
         monkeypatch.setattr(
             sn,
             "run_segmented_national_impl",
-            lambda *a, **k: pytest.fail("segmented path must not run"),
+            lambda *_args, **_kwargs: pytest.fail("segmented path must not run"),
         )
         monkeypatch.setattr(
             sr,
             "run_simulation_impl",
-            lambda params, **kwargs: pytest.fail("monolithic path must not run"),
+            lambda _params, **_kwargs: pytest.fail("monolithic path must not run"),
         )
 
         with pytest.raises(SPMInputError) as error:

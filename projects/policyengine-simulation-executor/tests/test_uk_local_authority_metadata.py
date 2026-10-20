@@ -141,7 +141,7 @@ def _national_dataset() -> SimpleNamespace:
     )
 
 
-def _routes_area_regions(monkeypatch, routed: bool) -> None:
+def _routes_area_regions(monkeypatch, *, routed: bool) -> None:
     monkeypatch.setattr(
         "policyengine_simulation_executor.uk_local_authority_metadata."
         "uk_area_regions_routed",
@@ -153,7 +153,7 @@ def _routes_area_regions(monkeypatch, routed: bool) -> None:
 def test_dataset_detector_requires_codes_unless_area_regions_are_routed(
     monkeypatch, region_code: str | None
 ) -> None:
-    _routes_area_regions(monkeypatch, False)
+    _routes_area_regions(monkeypatch, routed=False)
 
     with pytest.raises(ValueError, match="contains no la_code_oa column"):
         detect_uk_local_authority_metadata(
@@ -164,7 +164,7 @@ def test_dataset_detector_requires_codes_unless_area_regions_are_routed(
 def test_dataset_detector_accepts_a_national_run_when_area_regions_are_routed(
     monkeypatch,
 ) -> None:
-    _routes_area_regions(monkeypatch, True)
+    _routes_area_regions(monkeypatch, routed=True)
 
     assert (
         detect_uk_local_authority_metadata("uk", _national_dataset(), region_code="uk")
@@ -178,7 +178,7 @@ def test_dataset_detector_accepts_a_national_run_when_area_regions_are_routed(
 def test_dataset_detector_requires_codes_for_area_runs_even_when_routed(
     monkeypatch, region_code: str
 ) -> None:
-    _routes_area_regions(monkeypatch, True)
+    _routes_area_regions(monkeypatch, routed=True)
 
     with pytest.raises(ValueError, match="contains no la_code_oa column"):
         detect_uk_local_authority_metadata(
@@ -195,11 +195,11 @@ def test_dataset_detector_requires_codes_for_area_runs_even_when_routed(
     ],
 )
 def test_area_regions_count_as_routed_only_when_both_have_a_dataset(
-    monkeypatch, region_types: tuple[str, ...], routed: bool
+    monkeypatch, region_types: tuple[str, ...], *, routed: bool
 ) -> None:
     monkeypatch.setattr(
         "policyengine.provenance.manifest.get_release_manifest",
-        lambda country: SimpleNamespace(
+        lambda _country: SimpleNamespace(
             region_datasets={region_type: object() for region_type in region_types}
         ),
     )

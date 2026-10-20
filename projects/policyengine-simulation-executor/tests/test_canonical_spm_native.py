@@ -42,7 +42,9 @@ def test_worker_baseline_reform_national_local_cache_and_receipts(
         "data": str(tmp_path / "native.h5"),
         "spm": {"geography_kind": "national"},
     }
-    dataset_selection = DatasetSelection("native", str(tmp_path / "native.h5"), False)
+    dataset_selection = DatasetSelection(
+        "native", str(tmp_path / "native.h5"), is_default=False
+    )
     baseline = _build_simulation(
         params,
         dataset=native_dataset,
@@ -133,7 +135,9 @@ def test_native_state_only_worker_requires_geography_and_explicit_national_works
         "time_period": "2024",
         "data": "test-only-custom-data",
     }
-    dataset_selection = DatasetSelection("native", "test-only-custom-data", False)
+    dataset_selection = DatasetSelection(
+        "native", "test-only-custom-data", is_default=False
+    )
     simulation = _build_simulation(
         params,
         dataset=native_dataset,
@@ -141,9 +145,15 @@ def test_native_state_only_worker_requires_geography_and_explicit_national_works
         policy=None,
         region_code="us",
     )
-    with pytest.raises(ValueError) as error:
+    # The message depends on which installed layer rejects the missing
+    # county, so the check matches the typed code instead.
+    with pytest.raises(
+        ValueError,
+        check=lambda raised_error: (
+            spm_error_detail(raised_error).code == "SPM_GEOGRAPHY_REQUIRED"
+        ),
+    ):
         simulation.run()
-    assert spm_error_detail(error.value).code == "SPM_GEOGRAPHY_REQUIRED"
     national = _build_simulation(
         {**params, "spm": {"geography_kind": "national"}},
         dataset=native_dataset,

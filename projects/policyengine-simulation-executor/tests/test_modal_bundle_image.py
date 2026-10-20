@@ -1,8 +1,8 @@
 import importlib
 import sys
+import tomllib
 from pathlib import Path
 
-import tomllib
 from fixtures.fake_modal import install_fake_modal
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_package_version,
@@ -166,7 +166,7 @@ def test_modal_image_fetches_artifacts_between_env_and_local_source(monkeypatch)
     manifest = _fake_manifest()
 
     class FakeStore:
-        def __init__(self, bucket_name=None, **kwargs):
+        def __init__(self, bucket_name=None, **_kwargs):
             self.bucket_name = bucket_name
 
         def read_manifest(self, digest):

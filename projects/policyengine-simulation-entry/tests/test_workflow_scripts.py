@@ -253,7 +253,7 @@ def test_commit_and_push_fails_when_the_push_fails(fakes, tmp_path):
     assert github_output(output) == {}
 
 
-def test_create_pr_opens_the_update_pr(fakes, tmp_path):
+def test_create_pr_opens_the_update_pr(fakes):
     fakes.add("gh")
 
     result = run_script(
@@ -281,7 +281,7 @@ def test_create_pr_opens_the_update_pr(fakes, tmp_path):
     ]
 
 
-def test_create_pr_fails_when_gh_fails(fakes, tmp_path):
+def test_create_pr_fails_when_gh_fails(fakes):
     fakes.add("gh", "exit 1\n")
 
     result = run_script(
@@ -291,7 +291,7 @@ def test_create_pr_fails_when_gh_fails(fakes, tmp_path):
     assert result.returncode == 1
 
 
-def test_create_pr_requires_the_repository(fakes, tmp_path):
+def test_create_pr_requires_the_repository(fakes):
     fakes.add("gh")
     env = fakes.env()
     env.pop("GITHUB_REPOSITORY", None)

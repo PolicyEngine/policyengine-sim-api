@@ -72,7 +72,7 @@ def test_validate_hf_dataset_uri_uses_runtime_credential(monkeypatch):
     dataset_uri = "hf://policyengine/private-data/dataset.h5@release"
     seen = {}
 
-    def fake_fetch(repo_id, revision, token):
+    def fake_fetch(_repo_id, _revision, token):
         seen["token"] = token
         return {"siblings": [{"rfilename": "dataset.h5"}]}
 
@@ -89,7 +89,7 @@ def test_validate_hf_dataset_uri_ignores_non_runtime_credential_names(monkeypatc
     dataset_uri = "hf://policyengine/private-data/dataset.h5@release"
     seen = {}
 
-    def fake_fetch(repo_id, revision, token):
+    def fake_fetch(_repo_id, _revision, token):
         seen["token"] = token
         return {"siblings": [{"rfilename": "dataset.h5"}]}
 
@@ -106,7 +106,9 @@ def test_validate_hf_dataset_uri_rejects_revision_missing_artifact(monkeypatch):
     monkeypatch.setattr(
         hf_dataset,
         "_fetch_hf_dataset_revision",
-        lambda repo_id, revision, token: {"siblings": [{"rfilename": "other_file.h5"}]},
+        lambda _repo_id, _revision, _token: {
+            "siblings": [{"rfilename": "other_file.h5"}]
+        },
     )
 
     with pytest.raises(

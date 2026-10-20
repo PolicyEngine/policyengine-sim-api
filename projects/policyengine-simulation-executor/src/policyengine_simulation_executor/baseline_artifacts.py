@@ -220,7 +220,7 @@ class ArtifactBaselineSimulation(StageReportingSimulation):
         )
         self._record_outcome(OUTCOME_INCOMPLETE)
         if selection is not None:
-            setattr(self, "spm", requested_spm)
+            self.spm = requested_spm
         self.run()
         self.save()
         # Replace the in-process cache entry so this request's second

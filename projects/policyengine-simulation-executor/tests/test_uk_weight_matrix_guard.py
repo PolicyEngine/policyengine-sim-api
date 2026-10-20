@@ -45,7 +45,7 @@ def _bundle(monkeypatch, *, matrix_revision: str = "1.56.16") -> None:
     )
     monkeypatch.setattr(
         "policyengine.provenance.manifest.get_release_manifest",
-        lambda country: manifest,
+        lambda _country: manifest,
     )
 
 
@@ -60,7 +60,7 @@ def _assets(monkeypatch, tmp_path, *, households: int = 3, certified_dir=None):
     monkeypatch.setenv("POLICYENGINE_UK_GEOGRAPHY_DATA_DIR", str(tmp_path))
     calls: list = []
 
-    def materialize(country, dataset, *, data_dir, **kwargs):
+    def materialize(country, dataset, *, data_dir, **_kwargs):
         target = Path(certified_dir or data_dir) / _MATRIX
         _write_matrix(target, households)
         calls.append((country, dataset, Path(data_dir)))
@@ -103,7 +103,7 @@ def test_fallback_regions_never_download_the_bucket_matrix() -> None:
 def test_guard_ignores_regions_without_weight_matrices(monkeypatch, strategy) -> None:
     monkeypatch.setattr(
         "policyengine.provenance.manifest.get_release_manifest",
-        lambda country: pytest.fail("no weight matrix should be resolved"),
+        lambda _country: pytest.fail("no weight matrix should be resolved"),
     )
 
     sr._require_certified_uk_weight_matrix(strategy, _dataset(3), _SELECTION)
@@ -151,7 +151,7 @@ def test_guard_rejects_a_copy_that_shadows_the_certified_matrix(
     _assets(monkeypatch, tmp_path, certified_dir=tmp_path / "certified")
     _write_matrix(tmp_path / _MATRIX, households=3)
 
-    with pytest.raises(ValueError, match="would read .*, not the parliamentary"):
+    with pytest.raises(ValueError, match=r"would read .*, not the parliamentary"):
         sr._require_certified_uk_weight_matrix(_STRATEGY, _dataset(3), _SELECTION)
 
 

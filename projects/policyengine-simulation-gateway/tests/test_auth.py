@@ -55,7 +55,7 @@ def unauthenticated_client(monkeypatch) -> TestClient:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
 
-    monkeypatch.setattr(auth_module, "_get_decoder", lambda: FailingDecoder())
+    monkeypatch.setattr(auth_module, "_get_decoder", FailingDecoder)
     monkeypatch.delenv(auth_module.GATEWAY_AUTH_DISABLED_ENV, raising=False)
     monkeypatch.setenv(auth_module.GATEWAY_AUTH_REQUIRED_ENV, "1")
     monkeypatch.setenv(auth_module.GATEWAY_AUTH_ISSUER_ENV, "https://issuer.example/")
@@ -64,7 +64,7 @@ def unauthenticated_client(monkeypatch) -> TestClient:
     return TestClient(create_gateway_app(authenticate=False))
 
 
-@pytest.mark.parametrize("method,path,body", GATED_REQUESTS)
+@pytest.mark.parametrize(("method", "path", "body"), GATED_REQUESTS)
 def test__given_no_bearer_token__then_gated_endpoint_returns_403(
     unauthenticated_client, method, path, body
 ):
@@ -134,7 +134,7 @@ def test__given_partial_auth_config__then_dependency_raises_503(monkeypatch):
     assert exc_info.value.status_code == 503
 
 
-def test__given_health_endpoint__then_auth_not_required(monkeypatch):
+def test__given_health_endpoint__then_auth_not_required():
     """Health/ping/versions endpoints remain public by design."""
     from policyengine_simulation_gateway.testing import create_gateway_app
 

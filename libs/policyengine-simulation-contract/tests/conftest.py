@@ -33,7 +33,7 @@ def mock_modal(monkeypatch):
 
     class MockModalDict:
         @staticmethod
-        def from_name(name: str, create_if_missing: bool = False):
+        def from_name(name: str, *, create_if_missing: bool = False):
             if create_if_missing and name not in mock_dicts:
                 mock_dicts[name] = {}
             if name not in mock_dicts:

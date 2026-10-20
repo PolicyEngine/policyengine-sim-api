@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Run the app inside the exit handler and flush observability on shutdown."""
     async with app_exit.lifespan():
         try:

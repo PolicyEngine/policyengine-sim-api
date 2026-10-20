@@ -22,7 +22,7 @@ def _region_with(strategy):
 
 def _country_module(regions: dict):
     module = MagicMock()
-    module.model.get_region.side_effect = lambda code: regions.get(code)
+    module.model.get_region.side_effect = regions.get
     return module
 
 

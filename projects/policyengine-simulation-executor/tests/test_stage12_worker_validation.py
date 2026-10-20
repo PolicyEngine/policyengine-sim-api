@@ -121,7 +121,7 @@ def test_uk_validation_loads_packaged_local_authority_resources() -> None:
         dataset_path_resolver=lambda _: "/installed/enhanced_frs_2024_25.h5",
         dataset_check=lambda *_: None,
         calculation_check=lambda _: None,
-        local_authority_resource_check=lambda path: checks.append(path),
+        local_authority_resource_check=checks.append,
     )
 
     assert result["validated"] is True
@@ -247,7 +247,7 @@ def _uk_household_hdf(tmp_path, columns: dict[str, list]) -> str:
 
 @pytest.mark.parametrize("routed", [False, True])
 def test_uk_dataset_check_validates_codes_whenever_present(
-    monkeypatch, tmp_path, routed: bool
+    monkeypatch, tmp_path, *, routed: bool
 ) -> None:
     from policyengine_simulation_executor.stage12_worker_validation import (
         _check_uk_local_authority_dataset,

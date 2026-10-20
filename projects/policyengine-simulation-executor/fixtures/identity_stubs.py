@@ -65,25 +65,25 @@ def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     )
 
     monkeypatch.setattr(
-        release_bundle, "get_country_release_bundle", lambda country: state.bundle
+        release_bundle, "get_country_release_bundle", lambda _country: state.bundle
     )
     monkeypatch.setattr(
-        release_bundle, "_receipt_dataset", lambda country: state.receipt_entry
+        release_bundle, "_receipt_dataset", lambda _country: state.receipt_entry
     )
     monkeypatch.setattr(
         manifest_module,
         "resolve_dataset_reference",
-        lambda country, dataset: f"hf://org/repo/{dataset}.h5@rev-abc",
+        lambda _country, dataset: f"hf://org/repo/{dataset}.h5@rev-abc",
     )
     monkeypatch.setattr(
         manifest_module,
         "dataset_logical_name",
-        lambda reference: state.bundle.default_dataset,
+        lambda _reference: state.bundle.default_dataset,
     )
     monkeypatch.setattr(
         manifest_module,
         "get_release_manifest",
-        lambda country: SimpleNamespace(
+        lambda _country: SimpleNamespace(
             certification=SimpleNamespace(data_build_fingerprint="fp-123")
         ),
     )

@@ -68,7 +68,7 @@ def test_extract_annual_impact_rejects_malformed_child_result():
         ValueError,
         match=(
             "Malformed budget-window child result: "
-            "missing numeric budget.tax_revenue_impact"
+            r"missing numeric budget\.tax_revenue_impact"
         ),
     ):
         extract_annual_impact(

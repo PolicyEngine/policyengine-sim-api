@@ -154,7 +154,7 @@ class ConnectionOpener(Protocol):
 def open_connection_once(
     connect: Callable[[], Connection],
     *,
-    operation_name: str,
+    operation_name: str,  # noqa: ARG001  # the ConnectionOpener protocol passes it by keyword
 ) -> Connection:
     """Open a connection once, so a refused connection fails the operation."""
     return connect()

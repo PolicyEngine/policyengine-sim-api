@@ -108,18 +108,16 @@ class TestFetchArtifacts:
             target = data_folder / artifact["filename"]
             assert target.read_bytes() == f"bytes-{artifact['digest']}".encode()
 
-    def test_missing_store_object_fails_before_any_download(
-        self, fake_client, data_folder
-    ):
+    @pytest.mark.usefixtures("data_folder")
+    def test_missing_store_object_fails_before_any_download(self, fake_client):
         missing_path = _manifest()["artifacts"][1]["path"]
         del fake_client.objects[missing_path]
         with pytest.raises(RuntimeError, match=missing_path):
             fetch_artifacts("test-bucket", _manifest(), client=fake_client)
         assert fake_client.downloads == []
 
-    def test_unresolved_manifest_fails_with_the_digest_env_var_named(
-        self, fake_client, data_folder
-    ):
+    @pytest.mark.usefixtures("data_folder")
+    def test_unresolved_manifest_fails_with_the_digest_env_var_named(self, fake_client):
         with pytest.raises(RuntimeError, match="POLICYENGINE_MANIFEST_DIGEST"):
             fetch_artifacts("test-bucket", None, client=fake_client)
         assert fake_client.downloads == []
@@ -134,23 +132,22 @@ class TestFetchArtifacts:
 
 
 class TestFreshnessGate:
-    def test_rejects_a_policyengine_version_mismatch(
-        self, monkeypatch, fake_client, data_folder
-    ):
+    @pytest.mark.usefixtures("data_folder")
+    def test_rejects_a_policyengine_version_mismatch(self, monkeypatch, fake_client):
         monkeypatch.setenv("POLICYENGINE_VERSION", "4.99.0")
         with pytest.raises(RuntimeError, match=r"4\.99\.0.*4\.22\.0"):
             fetch_artifacts("test-bucket", _manifest(), client=fake_client)
         assert fake_client.downloads == []
 
-    def test_rejects_a_model_version_mismatch(
-        self, monkeypatch, fake_client, data_folder
-    ):
+    @pytest.mark.usefixtures("data_folder")
+    def test_rejects_a_model_version_mismatch(self, monkeypatch, fake_client):
         monkeypatch.setenv("POLICYENGINE_US_VERSION", "9.9.9")
         with pytest.raises(RuntimeError, match="POLICYENGINE_US_VERSION"):
             fetch_artifacts("test-bucket", _manifest(), client=fake_client)
 
+    @pytest.mark.usefixtures("data_folder")
     def test_rejects_an_installed_data_version_mismatch(
-        self, monkeypatch, tmp_path, fake_client, data_folder
+        self, monkeypatch, tmp_path, fake_client
     ):
         receipt_file = tmp_path / "bundle-receipt.json"
         receipt_file.write_text('{"datasets": [{"country": "us", "version": "9.9.9"}]}')
@@ -158,8 +155,9 @@ class TestFreshnessGate:
         with pytest.raises(RuntimeError, match=r"9\.9\.9.*1\.2\.3"):
             fetch_artifacts("test-bucket", _manifest(), client=fake_client)
 
+    @pytest.mark.usefixtures("data_folder")
     def test_passes_when_the_installed_data_version_matches(
-        self, monkeypatch, tmp_path, fake_client, data_folder
+        self, monkeypatch, tmp_path, fake_client
     ):
         receipt_file = tmp_path / "bundle-receipt.json"
         receipt_file.write_text('{"datasets": [{"country": "us", "version": "1.2.3"}]}')
@@ -167,8 +165,9 @@ class TestFreshnessGate:
         fetch_artifacts("test-bucket", _manifest(), client=fake_client)
         assert len(fake_client.downloads) == 2
 
+    @pytest.mark.usefixtures("data_folder")
     def test_proceeds_without_an_installed_receipt_file(
-        self, monkeypatch, tmp_path, fake_client, data_folder
+        self, monkeypatch, tmp_path, fake_client
     ):
         """Lenient by design: local fault-drill runs have no bundle receipt file."""
         monkeypatch.setenv(
@@ -207,8 +206,9 @@ class TestCredentialShim:
         monkeypatch.setattr(storage, "Client", fake_client_factory)
         return recorder
 
+    @pytest.mark.usefixtures("data_folder")
     def test_builds_in_memory_credentials_from_the_secret_blob(
-        self, monkeypatch, fake_client, data_folder, patched_google
+        self, monkeypatch, fake_client, patched_google
     ):
         monkeypatch.setenv(
             "GOOGLE_APPLICATION_CREDENTIALS_JSON",
@@ -225,9 +225,8 @@ class TestCredentialShim:
         ]
         assert len(fake_client.downloads) == 2
 
-    def test_unwraps_the_double_encoded_blob(
-        self, monkeypatch, fake_client, data_folder, patched_google
-    ):
+    @pytest.mark.usefixtures("fake_client", "data_folder")
+    def test_unwraps_the_double_encoded_blob(self, monkeypatch, patched_google):
         clean = json.dumps({"type": "service_account", "project_id": "pe-test"})
         monkeypatch.setenv(
             "GOOGLE_APPLICATION_CREDENTIALS_JSON", clean.replace('"', '\\"')
@@ -239,8 +238,9 @@ class TestCredentialShim:
             {"type": "service_account", "project_id": "pe-test"}
         ]
 
+    @pytest.mark.usefixtures("fake_client", "data_folder")
     def test_falls_back_to_ambient_adc_without_a_blob(
-        self, monkeypatch, fake_client, data_folder, patched_google
+        self, monkeypatch, patched_google
     ):
         monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", raising=False)
 
