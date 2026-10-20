@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 42 | 2 | 0 | 15 | 59 |
+| mechanical | 43 | 2 | 0 | 15 | 60 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 44 of 59 rules.
+**Blocking:** 45 of 60 rules.
 
 ## Gaps
 
@@ -77,14 +77,20 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 | Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sim.boundaries.gateway-executor-decoupled` | The gateway and executor never import each other; they communicate only through the models and state helpers in policyengine-simulation-contract. | mechanical | doc-only | no | nothing | — | — |
+| `sim.boundaries.sqlalchemy-and-alembic-only` | Code connects to databases only through SQLAlchemy engines and connections, never by importing a database driver directly, and runtime code never changes the schema, which changes only through Alembic migrations. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py` | `pr.yml:test` | yes |
 | `sim.boundaries.unit-tests-need-no-services` | Unit tests never require real network credentials, Modal, Hugging Face, GCP or deployed services; those seams are mocked. | mechanical | doc-only | no | nothing | — | — |
 
 ```mermaid
 flowchart LR
   r_sim_boundaries_gateway_executor_decoupled("sim.boundaries.gateway-executor-decoupled (doc-only)")
   gap_unenforced>"not enforced"]
+  r_sim_boundaries_sqlalchemy_and_alembic_only("sim.boundaries.sqlalchemy-and-alembic-only (enforced)")
+  e_pytest_projects_policyengine_simulation_entry_tests_test_database_access_boundaries_py["pytest projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py"]
+  j_CI_pr_yml_test["CI pr.yml:test"]
   r_sim_boundaries_unit_tests_need_no_services("sim.boundaries.unit-tests-need-no-services (doc-only)")
   r_sim_boundaries_gateway_executor_decoupled -.-> gap_unenforced
+  r_sim_boundaries_sqlalchemy_and_alembic_only --> e_pytest_projects_policyengine_simulation_entry_tests_test_database_access_boundaries_py
+  e_pytest_projects_policyengine_simulation_entry_tests_test_database_access_boundaries_py --> j_CI_pr_yml_test
   r_sim_boundaries_unit_tests_need_no_services -.-> gap_unenforced
 ```
 

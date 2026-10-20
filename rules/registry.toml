@@ -101,6 +101,32 @@ autofix = false
 [rule.enforcer]
 kind = "none"
 
+[[rule]]
+id = "sim.boundaries.sqlalchemy-and-alembic-only"
+category = "boundaries"
+statement = "Code connects to databases only through SQLAlchemy engines and connections, never by importing a database driver directly, and runtime code never changes the schema, which changes only through Alembic migrations."
+rationale = "docs/engineering/skills/database-access.md#rules"
+scope = ["projects/*/src/**/*.py", "libs/*/src/**/*.py", ".github/scripts/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_database_access_boundaries.py::test_source_code_uses_sqlalchemy_and_never_changes_the_schema",
+  "tests/test_database_access_boundaries.py::test_every_source_directory_is_scanned",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.boundaries.sqlalchemy-and-alembic-only/bad_database_store.py"
+good_fixture = "rules/fixtures/sim.boundaries.sqlalchemy-and-alembic-only/good_database_store.py"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_database_access_boundaries.py::test_rule_proof_sqlalchemy_and_alembic_only"
+
 # --- Stage 12 persistence --------------------------------------------------
 
 [[rule]]

@@ -22,6 +22,9 @@ When changing code that aggregates simulation microdata (the output builders,
 the national reduce, Stage 12 aggregation, or anything that reads
 `output_dataset.data`), read `docs/engineering/skills/microdata-weights.md`.
 
+Before adding code that connects to a database, declares tables, or changes a
+database schema, read `docs/engineering/skills/database-access.md`.
+
 When adding or changing a GitHub Actions workflow step or a script under
 `.github/scripts/`, read `docs/engineering/skills/ci-workflows.md`.
 
@@ -97,6 +100,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 ### Service and package boundaries
 
 - `sim.boundaries.gateway-executor-decoupled`: The gateway and executor never import each other; they communicate only through the models and state helpers in policyengine-simulation-contract. (doc-only, not checked: follow it yourself)
+- `sim.boundaries.sqlalchemy-and-alembic-only`: Code connects to databases only through SQLAlchemy engines and connections, never by importing a database driver directly, and runtime code never changes the schema, which changes only through Alembic migrations. (blocking: pytest `projects/policyengine-simulation-entry/tests/test_database_access_boundaries.py`)
 - `sim.boundaries.unit-tests-need-no-services`: Unit tests never require real network credentials, Modal, Hugging Face, GCP or deployed services; those seams are mocked. (doc-only, not checked: follow it yourself)
 
 ### Stage 12 persistence
