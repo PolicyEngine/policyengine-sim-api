@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Apply the simulation schema's Alembic chain, then require the database to be
 # at the chain's head. Run from libs/policyengine-simulation-persistence, whose
 # locked environment (with the migrations extra) provides Alembic.
