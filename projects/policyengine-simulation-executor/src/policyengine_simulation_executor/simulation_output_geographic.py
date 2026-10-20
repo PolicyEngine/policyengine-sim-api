@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
-import pandas as pd
 from policyengine.data.uk_geography_assets import (
     CONSTITUENCY_ASSET_SPEC,
 )
@@ -21,9 +20,11 @@ from policyengine_simulation_executor.simulation_output_common import (
     _output_model_dump,
     _output_module_function,
     _try_compute_output,
+    _unweighted_household_frame,
 )
 
 if TYPE_CHECKING:
+    import pandas as pd
     from policyengine.core import Simulation
     from policyengine.data.uk_geography_assets import UKGeographyAssetSpec
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
@@ -235,10 +236,6 @@ def build_congressional_district_impact(
     return _try_compute_output("congressional district impacts", compute_and_format)
 
 
-def _output_household(simulation: Simulation) -> pd.DataFrame:
-    return pd.DataFrame(simulation.output_dataset.data.household)
-
-
 def _require_uk_area_column(
     household: pd.DataFrame, column: str, breakdown: str
 ) -> None:
@@ -268,7 +265,7 @@ def build_uk_constituency_impact(
     if country != "uk":
         return None
     _require_uk_area_column(
-        _output_household(baseline), "constituency_code_oa", "constituency"
+        baseline.output_dataset.data.household, "constituency_code_oa", "constituency"
     )
 
     lookup_csv_path = _required_uk_geography_lookup_csv_path(CONSTITUENCY_ASSET_SPEC)
@@ -302,7 +299,7 @@ def build_uk_local_authority_impact(
     if country != "uk":
         return None
 
-    baseline_household = _output_household(baseline)
+    baseline_household = _unweighted_household_frame(baseline)
     _require_uk_area_column(baseline_household, "la_code_oa", "local-authority")
     if uk_local_authority_metadata is None:
         msg = "UK local-authority boundary metadata is required"
@@ -316,7 +313,7 @@ def build_uk_local_authority_impact(
         load_uk_local_authority_resources,
     )
 
-    reform_household = _output_household(reform)
+    reform_household = _unweighted_household_frame(reform)
     numeric_records = compute_longwise_uk_geography_impacts(
         baseline_household=baseline_household,
         reform_household=reform_household,
