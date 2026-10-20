@@ -40,7 +40,9 @@ jobs:
       entrypoint_revision_prefix: s-
       entrypoint_min_instances: 0
       entrypoint_max_instances: 2
-      promote_entrypoint: false
+      # Staging's stable URL must serve the tested revision, because callers
+      # such as the Public API's staging service use that URL.
+      promote_entrypoint: true
       run_full_integration: true
       deploy_existing_stack: true
       deploy_stage12_v2: true

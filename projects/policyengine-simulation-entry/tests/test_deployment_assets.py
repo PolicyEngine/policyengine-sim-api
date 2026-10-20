@@ -339,8 +339,8 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert "deployment_environment: staging" in deploy_workflow
     assert "deployment_environment: production" in deploy_workflow
     assert deploy_workflow.count("deploy_existing_stack: true") == 2
-    assert "promote_entrypoint: false" in deploy_workflow
-    assert "promote_entrypoint: true" in deploy_workflow
+    assert deploy_workflow.count("promote_entrypoint: true") == 2
+    assert "promote_entrypoint: false" not in deploy_workflow
     assert "entrypoint_environment" not in deploy_workflow
     assert "entrypoint_environment" not in reusable_workflow
     assert "entrypoint_public_url" not in deploy_workflow
@@ -645,6 +645,31 @@ def test_revision_tags_fit_existing_cloud_run_service_names():
             # Reserve seven digits for the monotonically increasing workflow
             # run number while satisfying Cloud Run's service-plus-tag limit.
             assert len(service) + len(f"{prefix}9999999") <= 46
+
+
+@pytest.mark.parametrize(
+    ("workflow_path", "staging_job_name"),
+    [
+        (DEPLOY_WORKFLOW, "beta"),
+        (STAGE12_DEPLOY_WORKFLOW, "deploy-stage12-staging"),
+    ],
+)
+def test_staging_deployments_promote_the_tested_entrypoint_revision(
+    workflow_path, staging_job_name
+):
+    """Staging's stable URL serves the revision that passed staging's tests.
+
+    Callers such as the Public API's staging service and the job store's
+    Cloud Tasks and Cloud Scheduler calls use the stable URL, so a staging
+    deployment that left traffic on an older revision would leave them testing
+    a different build.
+    """
+    staging_inputs = _workflow_jobs(workflow_path)[staging_job_name]["with"]
+
+    assert (
+        staging_inputs["entrypoint_service"] == "policyengine-simulation-entry-staging"
+    )
+    assert staging_inputs["promote_entrypoint"] is True
 
 
 def test_entrypoint_container_uses_requested_target_platform():

@@ -92,12 +92,17 @@ time:
 3. publish routing only after all three service jobs pass;
 4. run generated-client and live authentication tests through the complete
    three-service request path; and
-5. begin the `prod` deployment only after every `beta` deployment and
-   qualification job succeeds;
-6. assign stable production traffic to the exact tested entrypoint revision
-   after the complete production suite passes; and
-7. verify the stable endpoint, restoring its previous revision if immediate
-   post-promotion checks fail.
+5. assign the environment's stable traffic to the exact tested entrypoint
+   revision after that environment's suite passes, in `beta` as in `prod`;
+6. verify the stable endpoint, restoring its previous revision if immediate
+   post-promotion checks fail; and
+7. begin the `prod` deployment only after every `beta` deployment,
+   qualification and promotion job succeeds.
+
+Staging's stable URL therefore always serves the revision that passed the
+staging suite, so any caller of that URL, such as the Public API's staging
+service or the job store's Cloud Tasks and Cloud Scheduler calls, reaches the
+same build.
 
 A successful push-triggered full-stack deployment publishes the API client from
 the exact deployed commit.

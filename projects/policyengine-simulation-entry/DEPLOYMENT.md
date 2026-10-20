@@ -39,11 +39,15 @@ currently serving revision remains unchanged during qualification.
 
 ## Promotion and rollback
 
-After the complete production suite passes, the workflow verifies that the
-exact tested revision belongs to the production service and is ready. It also
+Both environments promote. After an environment's complete suite passes, the
+workflow verifies that the exact tested revision belongs to that
+environment's service and is ready. It also
 checks that stable traffic still points to the revision recorded before
 deployment. If those guards pass, it assigns all stable service traffic to the
-tested production revision.
+tested revision. `beta` promotes before `prod` starts, so any caller of the
+staging stable URL, such as the Public API's staging service or the job
+store's Cloud Tasks and Cloud Scheduler calls, reaches the build the staging
+suite tested.
 
 The workflow then checks the stable generated Cloud Run URL. It uses the
 runtime revision header to prove that the stable URL reaches the exact revision
@@ -82,9 +86,8 @@ The deployment workflow passes each environment's
 unset or empty variable deploys `0`, which records callers that lack a route's
 permission but lets them through. `1` rejects those callers with 403. Any other
 value fails the deployment before Cloud Run changes. A new value takes effect
-at the next entrypoint deployment. In `prod` that deployment is promoted to
-stable traffic. `beta` never promotes its candidate revision, so a `beta` value
-applies only to the tagged candidate that the deployment tests call. The route
+at the next entrypoint deployment, which both `beta` and `prod` promote to
+stable traffic once their tests pass. The route
 permissions are listed in `README.md`.
 
 ### Auth0 prerequisites
