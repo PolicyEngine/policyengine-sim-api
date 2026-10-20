@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, Self
+from typing import TYPE_CHECKING, Any, Protocol, Self, override
 
 from .config import ObservabilityConfig
 
@@ -78,7 +78,7 @@ class Observability(Protocol):
 
 
 @dataclass
-class NoOpObservability:
+class NoOpObservability(Observability):
     """Observability that drops everything; returned even when emission is enabled."""
 
     config: ObservabilityConfig = field(default_factory=ObservabilityConfig.disabled)
@@ -105,7 +105,8 @@ class NoOpObservability:
     def record_artifact_manifest(self, manifest: TracerArtifactManifest) -> None:
         """Discard the manifest."""
 
-    def span(self, name: str, attributes: Mapping[str, Any] | None = None) -> NoOpSpan:  # noqa: ARG002  # implements the Observability protocol's span()
+    @override
+    def span(self, name: str, attributes: Mapping[str, Any] | None = None) -> NoOpSpan:
         """Return a span that records nothing."""
         return NoOpSpan()
 

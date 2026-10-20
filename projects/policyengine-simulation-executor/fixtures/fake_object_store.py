@@ -12,14 +12,19 @@ class InMemoryObjectStore:
     def __init__(self) -> None:
         """Start with no stored objects."""
         self.objects: dict[str, bytes] = {}
+        self.content_types: dict[str, str] = {}
 
-    def upload_bytes(self, path: str, payload: bytes, *, content_type: str) -> bool:  # noqa: ARG002  # mirrors ArtifactStore.upload_bytes, which callers pass content_type= by keyword
-        """Store ``payload`` at ``path`` and report whether this call created it."""
+    def upload_bytes(self, path: str, payload: bytes, *, content_type: str) -> bool:
+        """Store ``payload`` and its content type at ``path``.
+
+        Report whether this call created the object.
+        """
         # The real store uploads with ``if_generation_match=0``: an existing
         # object is left in place and the call reports that it created nothing.
         if path in self.objects:
             return False
         self.objects[path] = payload
+        self.content_types[path] = content_type
         return True
 
     def read_bytes(self, path: str) -> bytes | None:

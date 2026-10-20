@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -10,8 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
-    from types import ModuleType
+    from collections.abc import Iterator
 
 GATEWAY_MODEL_MODULE = "policyengine_simulation_contract.gateway_models"
 GATEWAY_ENDPOINTS_MODULE = "policyengine_simulation_gateway.endpoints"
@@ -31,6 +29,7 @@ class GatewayImportModuleNames:
     """Module names involved in the gateway model import boundary."""
 
     endpoints: str = GATEWAY_ENDPOINTS_MODULE
+    models: str = GATEWAY_MODEL_MODULE
     fastapi: str = FASTAPI_MODULE
 
 
@@ -60,15 +59,3 @@ def isolated_gateway_model_import_modules() -> Iterator[None]:
                 if module is not None
             }
         )
-
-
-@pytest.fixture
-def import_gateway_models(
-    isolated_gateway_model_import_modules: None,  # noqa: ARG001  # requested for its side effect; usefixtures has no effect on fixtures
-) -> Callable[[], ModuleType]:
-    """Import gateway models from a clean module state."""
-
-    def import_models() -> ModuleType:
-        return importlib.import_module(GATEWAY_MODEL_MODULE)
-
-    return import_models

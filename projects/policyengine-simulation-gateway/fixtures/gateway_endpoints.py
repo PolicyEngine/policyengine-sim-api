@@ -259,10 +259,15 @@ class MockFunctionCall:
         ).model_dump(mode="json")
         self.error = None
         self.running = False
+        self.requested_timeouts: list[int] = []
         self.__class__.registry[object_id] = self
 
-    def get(self, timeout: int = 0) -> object:  # noqa: ARG002  # mirrors modal.FunctionCall.get
-        """Return the result; raise TimeoutError while running, or the set error."""
+    def get(self, timeout: int = 0) -> object:
+        """Record ``timeout``, then return the result.
+
+        Raise TimeoutError while running, or the set error.
+        """
+        self.requested_timeouts.append(timeout)
         if self.running:
             raise TimeoutError
         if self.error is not None:
