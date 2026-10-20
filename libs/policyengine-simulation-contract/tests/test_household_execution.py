@@ -117,6 +117,31 @@ def test_household_document_keeps_the_public_api_situation_shape() -> None:
     assert document.has_axes
 
 
+GROUPS_BEFORE_PEOPLE = {
+    "households": US_SITUATION["households"],
+    "people": US_SITUATION["people"],
+    "tax_units": US_SITUATION["tax_units"],
+    "axes": US_SITUATION["axes"],
+}
+
+
+@pytest.mark.parametrize("situation", [US_SITUATION, GROUPS_BEFORE_PEOPLE])
+def test_households_serialize_their_keys_in_the_callers_order(situation) -> None:
+    # The Public API walks a household in the order its caller sent it, so
+    # unrecognized inputs and warnings are listed in that order.
+    document = HouseholdDocument.model_validate(situation)
+    request = _request(household=situation)
+    transported = HouseholdExecutionRequest.model_validate(
+        json.loads(request.model_dump_json())
+    )
+    calculated = CalculatedHousehold.model_validate(situation)
+
+    assert list(document.to_situation()) == list(situation)
+    assert list(json.loads(document.model_dump_json())) == list(situation)
+    assert list(transported.household.to_situation()) == list(situation)
+    assert list(calculated.to_situation()) == list(situation)
+
+
 def test_household_without_axes_never_gains_an_axes_key() -> None:
     situation = {key: value for key, value in US_SITUATION.items() if key != "axes"}
 

@@ -31,6 +31,7 @@ Wire models:
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
 from uuid import UUID
 
@@ -40,6 +41,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    PrivateAttr,
     TypeAdapter,
     field_validator,
     model_serializer,
@@ -53,7 +55,7 @@ from policyengine_simulation_contract.spm import (
 )
 
 if TYPE_CHECKING:
-    from pydantic import SerializerFunctionWrapHandler
+    from pydantic import ModelWrapValidatorHandler, SerializerFunctionWrapHandler
 
 HOUSEHOLD_CONTRACT_SCHEMA_VERSION = 1
 # Size limits. The entity and value limits match the Public API's stored v2
@@ -269,11 +271,30 @@ Axes = Annotated[
 
 
 class _SituationModel(BaseModel):
-    """Situation-shaped household: ``people``, group collections and ``axes``."""
+    """Situation-shaped household: ``people``, group collections and ``axes``.
+
+    It serializes its top-level keys in the order the caller gave them. The
+    Public API walks a household in that order, so the order of unrecognized
+    inputs, warnings and calculated values depends on it.
+    """
 
     model_config = ConfigDict(extra="allow", allow_inf_nan=False, frozen=True)
 
     axes: Axes = None
+    # The caller's top-level keys, in order. Pydantic itself would dump the
+    # declared fields (``axes`` and ``people``) before the group collections.
+    _key_order: tuple[str, ...] = PrivateAttr(default=())
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def remember_key_order(
+        cls, data: object, handler: ModelWrapValidatorHandler[Self]
+    ) -> Self:
+        """Record the order of the caller's top-level keys for serialization."""
+        situation = handler(data)
+        if isinstance(data, Mapping):
+            situation._key_order = tuple(str(key) for key in data)  # noqa: SLF001  # set on the instance this validator just built
+        return situation
 
     @model_validator(mode="after")
     def limit_collections(self) -> Self:
@@ -287,11 +308,16 @@ class _SituationModel(BaseModel):
     def serialize_situation(
         self, handler: SerializerFunctionWrapHandler
     ) -> dict[str, Any]:
-        """Leave out ``axes`` when there are none, so the shape matches the input."""
+        """Return the caller's keys in the caller's order, without ``axes`` if none.
+
+        Keys the caller did not give follow, in Pydantic's order.
+        """
         dumped: dict[str, Any] = handler(self)
         if self.axes is None:
             dumped.pop("axes", None)
-        return dumped
+        ordered = {key: dumped[key] for key in self._key_order if key in dumped}
+        ordered.update(dumped)
+        return ordered
 
     @property
     def has_axes(self) -> bool:
