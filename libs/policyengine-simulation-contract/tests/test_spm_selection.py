@@ -4,6 +4,7 @@ import pytest
 from policyengine_simulation_contract.gateway_models import SimulationRequest
 from policyengine_simulation_contract.spm import (
     SPMInputError,
+    SPMRouteVersions,
     SPMSelection,
     resolve_spm_selection,
 )
@@ -21,8 +22,9 @@ def resolve(selection, *, kind="metro", area="35620"):
                 "geography_id": area,
             },
         },
-        policyengine_version="5.3.0",
-        model_version="1.824.7",
+        route_versions=SPMRouteVersions(
+            policyengine_version="5.3.0", model_version="1.824.7"
+        ),
     )
 
 
@@ -74,9 +76,11 @@ def test_legacy_allowance_requires_route_provenance_and_historical_model(
 ):
     kwargs = {
         "capability": None,
-        "policyengine_version": wrapper,
-        "model_version": model,
-        "route_provenance": provenance,
+        "route_versions": SPMRouteVersions(
+            policyengine_version=wrapper,
+            model_version=model,
+            route_provenance=provenance,
+        ),
     }
     if accepted:
         assert resolve_spm_selection("us", None, **kwargs) is None
@@ -106,8 +110,9 @@ def test_pinned_pre_canonical_wrapper_is_historical_without_a_stated_model(
             "us",
             None,
             capability=None,
-            policyengine_version=wrapper,
-            model_version=model,
+            route_versions=SPMRouteVersions(
+                policyengine_version=wrapper, model_version=model
+            ),
         )
         is None
     )
@@ -133,8 +138,9 @@ def test_unpinned_or_contradicted_wrapper_is_not_historical(wrapper, model):
             "us",
             None,
             capability=None,
-            policyengine_version=wrapper,
-            model_version=model,
+            route_versions=SPMRouteVersions(
+                policyengine_version=wrapper, model_version=model
+            ),
         )
     assert error.value.code == "SPM_CONFIGURATION_UNAVAILABLE"
 
@@ -202,3 +208,63 @@ class TestSerializerPreservesExplicitNulls:
         assert SPMSelection(geography_kind="national").model_dump(mode="json") == {
             "geography_kind": "national"
         }
+
+
+@pytest.mark.parametrize("country", ["uk", "UK"])
+def test_non_us_countries_take_no_spm_settings(country):
+    assert (
+        resolve_spm_selection(
+            country,
+            None,
+            capability=None,
+            route_versions=SPMRouteVersions(
+                policyengine_version="5.3.0", model_version="1.824.7"
+            ),
+        )
+        is None
+    )
+    with pytest.raises(SPMInputError) as error:
+        resolve_spm_selection(
+            country,
+            {},
+            capability=None,
+            route_versions=SPMRouteVersions(
+                policyengine_version="5.3.0", model_version="1.824.7"
+            ),
+        )
+    assert error.value.code == "SPM_SETTINGS_INVALID"
+    assert str(error.value) == "SPM settings are supported only for the US"
+
+
+@pytest.mark.parametrize(
+    ("wrapper", "historical"),
+    [
+        ("5.1.9", True),
+        ("4.10.0", True),
+        ("5.2.0", False),
+        ("5.2.1", False),
+        ("5.1", False),
+        ("5.1.9.0", False),
+        ("5.1.x", False),
+        ("v5.1.9", False),
+    ],
+)
+def test_wrappers_before_5_2_0_are_historical(wrapper, historical):
+    """Three numeric parts below 5.2.0 are historical whatever the model says."""
+
+    def resolve_unpinned():
+        return resolve_spm_selection(
+            "us",
+            None,
+            capability=None,
+            route_versions=SPMRouteVersions(
+                policyengine_version=wrapper, model_version="9.9.9"
+            ),
+        )
+
+    if historical:
+        assert resolve_unpinned() is None
+    else:
+        with pytest.raises(SPMInputError) as error:
+            resolve_unpinned()
+        assert error.value.code == "SPM_CONFIGURATION_UNAVAILABLE"

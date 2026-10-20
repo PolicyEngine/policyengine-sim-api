@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 from policyengine_simulation_contract.stage12_execution import SimulationRole
 from policyengine_simulation_executor.stage12_runtime import (
+    SegmentRunnerSeams,
     SimulationCalculation,
     Stage12CancellationError,
     Stage12ExecutionError,
@@ -122,11 +123,13 @@ def _runner(*, errors: dict[int, list[Exception]] | None = None):
         simulation,
         app_name="stage12-app",
         runtime=cast("ObservabilityRuntime", runtime),
-        modal_module=SimpleNamespace(Function=FunctionLookup),
-        groups=US_REGION_GROUPS,
-        sleep=sleeps.append,
-        poll_interval_seconds=0.5,
-        poll_interval_max_seconds=2.0,
+        seams=SegmentRunnerSeams(
+            modal_module=SimpleNamespace(Function=FunctionLookup),
+            groups=US_REGION_GROUPS,
+            sleep=sleeps.append,
+            poll_interval_seconds=0.5,
+            poll_interval_max_seconds=2.0,
+        ),
     )
     return runner, function, runtime, sleeps
 

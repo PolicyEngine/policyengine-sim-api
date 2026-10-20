@@ -309,11 +309,6 @@ def run_single_simulation_us(
     observability_context: dict | None = None,
 ) -> dict:
     """Calculate one planned US simulation and return its artifact descriptor."""
-    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        run_segmented_simulation,
-        run_single_simulation,
-    )
-
     runtime = init_process_observability(
         service_name="policyengine-stage12-us-worker",
         service_role="stage12_simulation_worker",
@@ -325,7 +320,7 @@ def run_single_simulation_us(
         simulation: PlannedSimulationExecutionInput,
         cancellation_requested: Callable[[], bool],
     ) -> SimulationCalculation:
-        return run_segmented_simulation(
+        return stage12_runtime.run_segmented_simulation(
             simulation,
             app_name=APP_NAME,
             runtime=runtime,
@@ -343,12 +338,14 @@ def run_single_simulation_us(
             },
             remote_context=propagated,
         ):
-            result = run_single_simulation(
+            result = stage12_runtime.run_single_simulation(
                 payload,
                 context,
                 required_country="us",
-                segmented_calculator=segmented_calculator,
-                runtime=runtime,
+                dependencies=stage12_runtime.SimulationWorkerDependencies(
+                    segmented_calculator=segmented_calculator,
+                    runtime=runtime,
+                ),
             )
         if result is None:
             msg = "Stage 12 US simulation returned no result"
@@ -374,10 +371,6 @@ def run_single_simulation_uk(
     observability_context: dict | None = None,
 ) -> dict:
     """Calculate one planned UK simulation and return its artifact descriptor."""
-    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        run_single_simulation,
-    )
-
     runtime = init_process_observability(
         service_name="policyengine-stage12-uk-worker",
         service_role="stage12_simulation_worker",
@@ -395,11 +388,13 @@ def run_single_simulation_uk(
             },
             remote_context=propagated,
         ):
-            result = run_single_simulation(
+            result = stage12_runtime.run_single_simulation(
                 payload,
                 context,
                 required_country="uk",
-                runtime=runtime,
+                dependencies=stage12_runtime.SimulationWorkerDependencies(
+                    runtime=runtime
+                ),
             )
         if result is None:
             msg = "Stage 12 UK simulation returned no result"
@@ -433,10 +428,6 @@ def coordinate_report(
     result is compared with that production job's. A report another
     invocation already claimed returns a ``deduplicated`` marker instead.
     """
-    from policyengine_simulation_executor.stage12_runtime import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
-        coordinate_report as run_report_coordinator,
-    )
-
     coordinator_invocation_id = modal.current_function_call_id()
     if coordinator_invocation_id is None:
         msg = "Modal coordinator invocation identifier is unavailable"
@@ -467,13 +458,15 @@ def coordinate_report(
             },
             remote_context=propagated,
         ):
-            result = run_report_coordinator(
+            result = stage12_runtime.coordinate_report(
                 payload,
                 context,
                 parent,
-                application_name=APP_NAME,
-                coordinator_invocation_id=coordinator_invocation_id,
-                runtime=runtime,
+                invocation=stage12_runtime.CoordinatorInvocation(
+                    application_name=APP_NAME,
+                    invocation_id=coordinator_invocation_id,
+                ),
+                dependencies=stage12_runtime.CoordinatorDependencies(runtime=runtime),
             )
         if result is None:
             msg = "Stage 12 report coordinator returned no result"

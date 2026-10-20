@@ -1,6 +1,7 @@
 """Unit tests for the segmented-national fan-out runner (C5/C6 + review fixes)."""
 
 import ast
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,10 +10,15 @@ from conftest import NoOpObservabilityRuntime
 from policyengine_simulation_contract.spm import SPMInputError
 from policyengine_simulation_executor import simulation_runtime as sr
 from policyengine_simulation_executor import spm as executor_spm
+from policyengine_simulation_executor.job_progress import (
+    NULL_JOB_PROGRESS,
+    NullJobProgressReporter,
+)
 from policyengine_simulation_executor.national_partition import (
     US_NATIONAL_REGION_GROUPS,
 )
 from src.modal import segmented_national as sn
+from src.modal.fanout import PollBackoff
 
 NATIONAL = {"country": "us", "scope": "macro", "time_period": "2026"}
 TEST_RUNTIME = NoOpObservabilityRuntime()
@@ -142,7 +148,10 @@ class TestBuildGroupChildPayload:
 
 
 class FakeCall:
-    """A FunctionCall whose result resolves after N polls (or raises)."""
+    """A FunctionCall whose result resolves after N polls (or raises).
+
+    Setting ``cancel_failures`` makes that many cancels fail first.
+    """
 
     def __init__(
         self,
@@ -151,14 +160,13 @@ class FakeCall:
         error=None,
         errors_once=0,
         before_each_poll=None,
-        cancel_failures=0,
     ):
         self.result = result
         self.polls_until_ready = polls_until_ready
         self.error = error
         self.errors_once = errors_once
         self.before_each_poll = before_each_poll
-        self.cancel_failures = cancel_failures
+        self.cancel_failures = 0
         self.cancelled = False
         self.cancel_attempts = 0
         self.poll_count = 0
@@ -216,15 +224,20 @@ class FakeModal:
         return self._calls[len(self.spawned_payloads) - 1]
 
 
-def _runner(fake_modal, params=None, runtime=TEST_RUNTIME, **runner_options):
+def _runner(fake_modal, params=None, runtime=TEST_RUNTIME, **timing_options):
     return sn.SegmentedNationalRunner(
         params or dict(NATIONAL),
         app_name="policyengine-simulation-py-test",
-        runtime=runtime,
+        reporting=sn.SegmentedRunReporting(runtime),
         modal_module=fake_modal,
-        poll_interval_seconds=0.001,
-        poll_interval_max_seconds=0.002,
-        **runner_options,
+        timing=sn.SegmentedRunTiming(
+            poll_backoff=PollBackoff(
+                initial_seconds=0.001,
+                maximum_seconds=0.002,
+                factor=sn.POLL_INTERVAL_BACKOFF_FACTOR,
+            ),
+            **timing_options,
+        ),
     )
 
 
@@ -342,9 +355,10 @@ class TestSegmentedNationalRunner:
     def test__reduce_receives_clean_params_and_all_children(self, monkeypatch):
         captured = {}
 
-        def fake_build_national_output(child_results, **kwargs):
+        def fake_build_national_output(child_results, inputs, *, runtime):
             captured["children"] = child_results
-            captured.update(kwargs)
+            captured["runtime"] = runtime
+            captured.update(vars(inputs))
             return {"budget": {}}
 
         monkeypatch.setattr(sn, "build_national_output", fake_build_national_output)
@@ -423,6 +437,83 @@ def _calls_with_stuck_child(clock, respawned_call, **sibling_options):
     calls = _twenty_calls(**sibling_options)
     calls[STUCK_GROUP_INDEX] = _stuck_call(clock)
     return [*calls, respawned_call]
+
+
+class TestSegmentedNationalRunnerTiming:
+    def test__runner_defaults_to_the_deployed_poll_deadline_and_budget(self):
+        runner = sn.SegmentedNationalRunner(
+            dict(NATIONAL),
+            app_name="policyengine-simulation-py-test",
+            reporting=sn.SegmentedRunReporting(TEST_RUNTIME),
+            modal_module=FakeModal([]),
+        )
+
+        assert runner.poll_interval_initial_seconds == sn.POLL_INTERVAL_INITIAL_SECONDS
+        assert runner.poll_interval_max_seconds == sn.POLL_INTERVAL_MAX_SECONDS
+        assert runner.poll_interval_backoff_factor == sn.POLL_INTERVAL_BACKOFF_FACTOR
+        assert runner.child_deadline_seconds == sn.CHILD_DEADLINE_SECONDS
+        assert runner.parent_budget_seconds == (
+            sn.PARENT_FUNCTION_TIMEOUT_SECONDS - sn.PARENT_COMPLETION_MARGIN_SECONDS
+        )
+        assert runner.clock is time.monotonic
+        assert runner.budget_ends_at == (
+            runner.started_at + runner.parent_budget_seconds
+        )
+
+    def test__runner_takes_the_given_deadline_budget_and_clock(self):
+        clock = ManualClock()
+        clock.advance(50)
+        runner = _runner(
+            FakeModal([]),
+            child_deadline_seconds=600,
+            parent_budget_seconds=900,
+            clock=clock,
+        )
+
+        assert runner.poll_interval_initial_seconds == 0.001
+        assert runner.poll_interval_max_seconds == 0.002
+        assert runner.child_deadline_seconds == 600
+        assert runner.parent_budget_seconds == 900
+        assert runner.clock is clock
+        assert runner.started_at == 50
+        assert runner.budget_ends_at == 950
+
+
+class TestSegmentedNationalRunnerReporting:
+    def test__runner_reports_to_its_runtime_and_no_job_progress_by_default(self):
+        runner = sn.SegmentedNationalRunner(
+            dict(NATIONAL),
+            app_name="policyengine-simulation-py-test",
+            reporting=sn.SegmentedRunReporting(TEST_RUNTIME),
+            modal_module=FakeModal([]),
+        )
+
+        assert runner.runtime is TEST_RUNTIME
+        assert runner.progress is NULL_JOB_PROGRESS
+
+    def test__impl_gives_the_runner_its_runtime_and_job_progress(self, monkeypatch):
+        runtime = NoOpObservabilityRuntime()
+        progress = NullJobProgressReporter()
+        reported_to = {}
+
+        def record_reporting(runner):
+            reported_to["runtime"] = runner.runtime
+            reported_to["progress"] = runner.progress
+            return {"ok": True}
+
+        monkeypatch.setattr(sn, "modal", FakeModal([]))
+        monkeypatch.setattr(sn.SegmentedNationalRunner, "run", record_reporting)
+
+        result = sn.run_segmented_national_impl(
+            dict(NATIONAL),
+            app_name="policyengine-simulation-py-test",
+            runtime=runtime,
+            progress=progress,
+        )
+
+        assert result == {"ok": True}
+        assert reported_to["runtime"] is runtime
+        assert reported_to["progress"] is progress
 
 
 class TestSegmentedNationalChildDeadline:
@@ -850,7 +941,9 @@ def stub_reduce(monkeypatch):
     The reduce itself is covered by test_segmented_national_reduce.
     """
     monkeypatch.setattr(
-        sn, "build_national_output", lambda _children, **_kwargs: {"budget": {}}
+        sn,
+        "build_national_output",
+        lambda _children, _inputs, **_kwargs: {"budget": {}},
     )
 
 

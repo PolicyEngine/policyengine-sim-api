@@ -282,7 +282,10 @@ class TestRunPrecompute:
     def _run(self, functions, *, force=False):
         lines = []
         digest = precompute.run_precompute(
-            "bucket-x", force=force, echo=lines.append, **functions
+            "bucket-x",
+            force=force,
+            functions=precompute.PrecomputeFunctions(**functions),
+            echo=lines.append,
         )
         return digest, lines
 
@@ -384,6 +387,7 @@ class TestWriterReaderContract:
     def test_precompute_identity_equals_runtime_id(self):
         from policyengine_simulation_executor import simulation_runtime as sr
         from policyengine_simulation_executor.baseline_artifacts import (
+            BaselineIdentityRequest,
             deterministic_baseline_id,
         )
 
@@ -398,13 +402,15 @@ class TestWriterReaderContract:
             params, region_resolution=resolution
         )
         reader_id = deterministic_baseline_id(
-            params,
-            country="us",
-            dataset_is_default=dataset_selection.is_default,
-            policy=None,
-            region_code=resolution.code,
-            scoping_strategy=resolution.scoping_strategy,
-            year=2026,
+            BaselineIdentityRequest(
+                params,
+                country="us",
+                dataset_is_default=dataset_selection.is_default,
+                policy=None,
+                region_code=resolution.code,
+                scoping_strategy=resolution.scoping_strategy,
+                year=2026,
+            )
         )
         assert writer_identity.simulation_id == reader_id
         assert writer_identity.store_path.endswith(f"/{writer_identity.storage_id}.h5")
@@ -949,133 +955,120 @@ class TestVerifyDeterminismImpl:
     It is the pipeline's only correctness check.
     """
 
-    def _run(
-        self,
-        monkeypatch,
-        tmp_path,
-        loaded,
-        recomputed,
-        *,
-        outcome="hit",
-        on_disk=True,
-    ):
-        downloads = []
-        captured = []
+    @pytest.fixture
+    def run_verification(self, monkeypatch, tmp_path):
+        """Run the determinism gate on stubbed loaded and recomputed frames."""
 
-        class FakeStore:
-            def download_file(self, path, local_path):
-                downloads.append(path)
-                Path(local_path).write_bytes(b"artifact")
+        def verify(loaded, recomputed, *, outcome="hit", on_disk=True):
+            downloads = []
+            captured = []
 
-        class FakeBaseline:
-            id = "bl1-verify"
-            dataset = "dataset"
-            tax_benefit_model_version = "model-version"
-            scoping_strategy = "scoping"
-            extra_variables: ClassVar[dict[str, int]] = {"extra": 1}
-            artifact_outcome = None
+            class FakeStore:
+                def download_file(self, path, local_path):
+                    downloads.append(path)
+                    Path(local_path).write_bytes(b"artifact")
 
-            def ensure(self):
-                self.artifact_outcome = outcome
-                self.output_dataset = SimpleNamespace(
-                    data=SimpleNamespace(entity_data=loaded)
-                )
+            class FakeBaseline:
+                id = "bl1-verify"
+                dataset = "dataset"
+                tax_benefit_model_version = "model-version"
+                scoping_strategy = "scoping"
+                extra_variables: ClassVar[dict[str, int]] = {"extra": 1}
+                artifact_outcome = None
 
-        class FakeFresh:
-            def __init__(self, **kwargs):
-                captured.append(kwargs)
+                def ensure(self):
+                    self.artifact_outcome = outcome
+                    self.output_dataset = SimpleNamespace(
+                        data=SimpleNamespace(entity_data=loaded)
+                    )
 
-            def run(self):
-                self.output_dataset = SimpleNamespace(
-                    data=SimpleNamespace(entity_data=recomputed)
-                )
+            class FakeFresh:
+                def __init__(self, **kwargs):
+                    captured.append(kwargs)
 
-        monkeypatch.setattr(
-            precompute,
-            "_prepare_cohort_baseline",
-            lambda _bucket, _expected: (FakeStore(), tmp_path, FakeBaseline()),
-        )
-        monkeypatch.setattr("policyengine.core.Simulation", FakeFresh)
-        if on_disk:
-            (tmp_path / "bl1-verify.h5").write_bytes(b"artifact")
-        entry = BaselinePlanEntry(
-            year=2026,
-            group=["state/ca"],
-            region="state/ca",
-            digest="d",
-            path="baselines/us/d/bl1-verify.h5",
-            simulation_id="bl1-verify",
-            exists=True,
-        )
-        verdict = precompute.verify_determinism_impl("bucket-x", entry)
-        return verdict, downloads, captured
+                def run(self):
+                    self.output_dataset = SimpleNamespace(
+                        data=SimpleNamespace(entity_data=recomputed)
+                    )
+
+            monkeypatch.setattr(
+                precompute,
+                "_prepare_cohort_baseline",
+                lambda _bucket, _expected: (FakeStore(), tmp_path, FakeBaseline()),
+            )
+            monkeypatch.setattr("policyengine.core.Simulation", FakeFresh)
+            if on_disk:
+                (tmp_path / "bl1-verify.h5").write_bytes(b"artifact")
+            entry = BaselinePlanEntry(
+                year=2026,
+                group=["state/ca"],
+                region="state/ca",
+                digest="d",
+                path="baselines/us/d/bl1-verify.h5",
+                simulation_id="bl1-verify",
+                exists=True,
+            )
+            verdict = precompute.verify_determinism_impl("bucket-x", entry)
+            return verdict, downloads, captured
+
+        return verify
 
     def _frames(self, age=(30.0, 40.0)):
         return {"person": pd.DataFrame({"age": list(age)})}
 
-    def test_identical_frames_pass(self, monkeypatch, tmp_path):
-        verdict, downloads, _ = self._run(
-            monkeypatch, tmp_path, self._frames(), self._frames()
-        )
+    def test_identical_frames_pass(self, run_verification):
+        verdict, downloads, _ = run_verification(self._frames(), self._frames())
         assert verdict.equal is True
         assert verdict.differences == []
         assert downloads == []
 
-    def test_value_difference_fails(self, monkeypatch, tmp_path):
-        verdict, _, _ = self._run(
-            monkeypatch, tmp_path, self._frames(), self._frames(age=(30.0, 41.0))
-        )
+    def test_value_difference_fails(self, run_verification):
+        verdict, _, _ = run_verification(self._frames(), self._frames(age=(30.0, 41.0)))
         assert verdict.equal is False
         assert verdict.differences == ["person.age: values differ"]
 
-    def test_dtype_difference_fails(self, monkeypatch, tmp_path):
+    def test_dtype_difference_fails(self, run_verification):
         left = {"person": pd.DataFrame({"age": pd.array([30, 40], dtype="int64")})}
         right = {"person": pd.DataFrame({"age": pd.array([30.0, 40.0])})}
-        verdict, _, _ = self._run(monkeypatch, tmp_path, left, right)
+        verdict, _, _ = run_verification(left, right)
         assert verdict.equal is False
         assert verdict.differences == ["person.age: dtype differs"]
 
-    def test_column_asymmetry_fails(self, monkeypatch, tmp_path):
+    def test_column_asymmetry_fails(self, run_verification):
         right = {"person": pd.DataFrame({"age": [30.0, 40.0], "income": [1.0, 2.0]})}
-        verdict, _, _ = self._run(monkeypatch, tmp_path, self._frames(), right)
+        verdict, _, _ = run_verification(self._frames(), right)
         assert verdict.equal is False
         assert verdict.differences == ["person.income: only on one side"]
 
-    def test_missing_entity_fails(self, monkeypatch, tmp_path):
-        verdict, _, _ = self._run(monkeypatch, tmp_path, self._frames(), {})
+    def test_missing_entity_fails(self, run_verification):
+        verdict, _, _ = run_verification(self._frames(), {})
         assert verdict.equal is False
         assert verdict.differences == ["person: missing on one side"]
 
-    def test_differences_are_truncated_but_verdict_stays_false(
-        self, monkeypatch, tmp_path
-    ):
+    def test_differences_are_truncated_but_verdict_stays_false(self, run_verification):
         left = {"person": pd.DataFrame({f"c{i}": [1.0] for i in range(60)})}
         right = {"person": pd.DataFrame({f"c{i}": [2.0] for i in range(60)})}
-        verdict, _, _ = self._run(monkeypatch, tmp_path, left, right)
+        verdict, _, _ = run_verification(left, right)
         assert verdict.equal is False
         assert len(verdict.differences) == 50
 
-    def test_unloadable_artifact_fails_loudly(self, monkeypatch, tmp_path):
+    def test_unloadable_artifact_fails_loudly(self, run_verification):
         with pytest.raises(RuntimeError, match="could not load the artifact"):
-            self._run(
-                monkeypatch,
-                tmp_path,
+            run_verification(
                 self._frames(),
                 self._frames(),
                 outcome="incomplete",
             )
 
-    def test_absent_artifact_is_downloaded_first(self, monkeypatch, tmp_path):
-        verdict, downloads, _ = self._run(
-            monkeypatch, tmp_path, self._frames(), self._frames(), on_disk=False
+    def test_absent_artifact_is_downloaded_first(self, run_verification):
+        verdict, downloads, _ = run_verification(
+            self._frames(), self._frames(), on_disk=False
         )
         assert downloads == ["baselines/us/d/bl1-verify.h5"]
         assert verdict.equal is True
 
-    def test_fresh_run_reuses_the_baseline_inputs(self, monkeypatch, tmp_path):
-        _, _, captured = self._run(
-            monkeypatch, tmp_path, self._frames(), self._frames()
-        )
+    def test_fresh_run_reuses_the_baseline_inputs(self, run_verification):
+        _, _, captured = run_verification(self._frames(), self._frames())
         assert captured == [
             {
                 "dataset": "dataset",

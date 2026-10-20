@@ -128,6 +128,10 @@ def redacted_failure_detail(
     )
 
 
+# A date-range period is a start and an end date joined by a dot.
+_DATE_RANGE_PART_COUNT = 2
+
+
 def validate_policy_periods(policy: Mapping[str, Any]) -> None:
     """Require effective dates in the wire formats emitted by the frontend."""
     for parameter, value in policy.items():
@@ -136,10 +140,10 @@ def validate_policy_periods(policy: Mapping[str, Any]) -> None:
         for raw_period in value:
             period = str(raw_period)
             parts = period.split(".")
-            if len(parts) not in {1, 2}:
+            if len(parts) not in {1, _DATE_RANGE_PART_COUNT}:
                 _raise_invalid_period(parameter, period)
             parsed = [_parse_period_date(parameter, period, part) for part in parts]
-            if len(parsed) == 2 and parsed[1] < parsed[0]:
+            if len(parsed) == _DATE_RANGE_PART_COUNT and parsed[1] < parsed[0]:
                 _raise_invalid_period(parameter, period)
 
 

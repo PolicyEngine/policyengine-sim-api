@@ -11,6 +11,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Lock
@@ -80,7 +81,12 @@ from policyengine_simulation_executor.stage12_artifacts import (
     serialize_simulation_frames,
 )
 from policyengine_simulation_executor.stage12_runtime import (
+    CoordinatorDependencies,
+    CoordinatorInvocation,
+    RetainedSimulationOutput,
+    SegmentRunnerSeams,
     SimulationCalculation,
+    SimulationWorkerDependencies,
     Stage12SegmentRunner,
     _build_spm_result,
     build_aggregate_report,
@@ -238,9 +244,16 @@ def _aggregate_payload(result=None) -> dict:
     ).model_dump(mode="json")
 
 
-def coordinate_report(*args, **kwargs):
-    kwargs.setdefault("output_plan_resolver", lambda _: _output_plan())
-    return coordinate_report_impl(*args, **kwargs)
+def coordinate_report(*payloads, application_name, coordinator_invocation_id, **seams):
+    seams.setdefault("output_plan_resolver", lambda _: _output_plan())
+    return coordinate_report_impl(
+        *payloads,
+        invocation=CoordinatorInvocation(
+            application_name=application_name,
+            invocation_id=coordinator_invocation_id,
+        ),
+        dependencies=CoordinatorDependencies(**seams),
+    )
 
 
 class RecordingRuntime:
@@ -579,9 +592,9 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
         received["load_country_module"] = country_module
         return dataset
 
-    def build_simulation(_params, *, dataset, dataset_selection, **_kwargs):
-        received["build_dataset"] = dataset
-        received["build_selection"] = dataset_selection
+    def build_simulation(_params, *, resolved, **_kwargs):
+        received["build_dataset"] = resolved.dataset
+        received["build_selection"] = resolved.dataset_selection
         return Model()
 
     monkeypatch.setattr(
@@ -694,9 +707,11 @@ def test_single_worker_accepts_one_policy_and_persists_one_artifact() -> None:
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        store=store,
-        artifacts=artifacts,
-        calculator=lambda _: _frames(),
+        dependencies=SimulationWorkerDependencies(
+            store=store,
+            artifacts=artifacts,
+            calculator=lambda _: _frames(),
+        ),
     )
 
     assert result["role"] == "baseline"
@@ -723,10 +738,12 @@ def test_single_worker_routes_eligible_us_calculation_to_segment_runner() -> Non
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        store=store,
-        artifacts=FakeArtifacts(),
-        calculator=lambda _: pytest.fail("monolithic calculator was selected"),
-        segmented_calculator=segmented_calculator,
+        dependencies=SimulationWorkerDependencies(
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=lambda _: pytest.fail("monolithic calculator was selected"),
+            segmented_calculator=segmented_calculator,
+        ),
     )
 
     assert received == [simulation]
@@ -748,13 +765,117 @@ def test_single_worker_honors_explicit_segmentation_opt_out() -> None:
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        store=store,
-        artifacts=FakeArtifacts(),
-        calculator=lambda _: _frames(),
-        segmented_calculator=unexpected_segmented,
+        dependencies=SimulationWorkerDependencies(
+            store=store,
+            artifacts=FakeArtifacts(),
+            calculator=lambda _: _frames(),
+            segmented_calculator=unexpected_segmented,
+        ),
     )
 
     assert segmented_calls == []
+
+
+def test_single_worker_refuses_a_simulation_that_is_no_longer_active() -> None:
+    store = FakeStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation).model_copy(
+        update={"status": ComparisonRunLifecycleStatus.FAILED}
+    )
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(
+        RuntimeError, match=r"^Stage 12 simulation is no longer active$"
+    ):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=artifacts,
+                calculator=lambda _: pytest.fail("a finished simulation ran again"),
+            ),
+        )
+
+    assert artifacts.input_writes == []
+
+
+def test_single_worker_stops_when_another_writer_claimed_the_simulation() -> None:
+    class ClaimLosingStore(FakeStore):
+        def replace_simulation_if_status(self, record, *, expected_status):
+            return self.children[record.simulation_execution_id], False
+
+    store = ClaimLosingStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    artifacts = FakeArtifacts()
+
+    with pytest.raises(RuntimeError, match=r"^Stage 12 simulation was cancelled$"):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=artifacts,
+                calculator=lambda _: pytest.fail("an unclaimed simulation ran"),
+            ),
+        )
+
+    assert artifacts.input_writes == []
+
+
+def test_single_worker_treats_a_failed_cancellation_check_as_not_cancelled(
+    caplog,
+) -> None:
+    class StatusReadFailingStore(FakeStore):
+        def __init__(self):
+            super().__init__()
+            self.fail_reads = False
+
+        def get_simulation(self, simulation_execution_id):
+            if self.fail_reads:
+                msg = "status read contains sensitive details"
+                raise ConnectionError(msg)
+            return super().get_simulation(simulation_execution_id)
+
+    store = StatusReadFailingStore()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+    checks = []
+
+    def segmented_calculator(_value, cancellation_requested):
+        store.fail_reads = True
+        checks.append(cancellation_requested())
+        store.fail_reads = False
+        return SimulationCalculation(frames=_frames())
+
+    with caplog.at_level(
+        logging.WARNING,
+        logger="policyengine_simulation_executor.stage12_runtime.simulation",
+    ):
+        run_single_simulation(
+            simulation.model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            required_country="us",
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                segmented_calculator=segmented_calculator,
+            ),
+        )
+
+    assert checks == [False]
+    assert (
+        f"Stage 12 cancellation check failed for "
+        f"{simulation.simulation_execution_id} (ConnectionError)"
+    ) in caplog.text
+    assert "sensitive" not in caplog.text
+    assert (
+        store.children[simulation.simulation_execution_id].status
+        is ComparisonRunLifecycleStatus.SUCCEEDED
+    )
 
 
 def test_single_worker_retains_detached_calculation_provenance() -> None:
@@ -768,11 +889,13 @@ def test_single_worker_retains_detached_calculation_provenance() -> None:
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        store=store,
-        artifacts=artifacts,
-        calculator=lambda _: SimulationCalculation(
-            frames=_frames(),
-            calculation_provenance=provenance,
+        dependencies=SimulationWorkerDependencies(
+            store=store,
+            artifacts=artifacts,
+            calculator=lambda _: SimulationCalculation(
+                frames=_frames(),
+                calculation_provenance=provenance,
+            ),
         ),
     )
 
@@ -798,9 +921,11 @@ def test_single_worker_exposes_only_a_bounded_failure() -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+            ),
         )
 
     assert "country package calculation failed" not in str(error.value)
@@ -828,10 +953,12 @@ def test_single_worker_persists_and_records_a_redacted_cause() -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
-            runtime=runtime,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+                runtime=runtime,
+            ),
         )
 
     child = store.children[simulation.simulation_execution_id]
@@ -859,9 +986,11 @@ def test_single_worker_names_the_failing_artifact_write_stage() -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FailingSimulationArtifacts(),
-            calculator=lambda _: _frames(),
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FailingSimulationArtifacts(),
+                calculator=lambda _: _frames(),
+            ),
         )
 
     assert _failure_cause(
@@ -885,9 +1014,11 @@ def test_single_worker_preserves_typed_failure_values() -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+            ),
         )
 
     child = store.children[simulation.simulation_execution_id]
@@ -909,9 +1040,11 @@ def test_single_worker_rejects_bare_year_policy_period_before_calculation() -> N
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=lambda _: pytest.fail("calculation must not start"),
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=lambda _: pytest.fail("calculation must not start"),
+            ),
         )
 
     child = store.children[simulation.simulation_execution_id]
@@ -978,9 +1111,11 @@ def test_single_worker_builds_its_store_with_the_worker_runtime(monkeypatch) -> 
         simulation.model_dump(mode="json"),
         _context().model_dump(mode="json"),
         required_country="us",
-        artifacts=FakeArtifacts(),
-        calculator=lambda _: _frames(),
-        runtime=runtime,
+        dependencies=SimulationWorkerDependencies(
+            artifacts=FakeArtifacts(),
+            calculator=lambda _: _frames(),
+            runtime=runtime,
+        ),
     )
 
     # The runtime store reports each connection retry through this runtime.
@@ -1012,10 +1147,12 @@ def test_single_worker_reports_failure_before_an_unwritable_failure_record() -> 
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
-            runtime=TelemetryRecordingRuntime(ordered_events),
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+                runtime=TelemetryRecordingRuntime(ordered_events),
+            ),
         )
 
     original_report, failure_write, persistence_report = ordered_events
@@ -1070,10 +1207,12 @@ def test_late_simulation_success_does_not_overwrite_parent_cancellation() -> Non
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=lambda _: pytest.fail("monolithic calculator was selected"),
-            segmented_calculator=segmented_calculator,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=lambda _: pytest.fail("monolithic calculator was selected"),
+                segmented_calculator=segmented_calculator,
+            ),
         )
 
     child = store.children[simulation.simulation_execution_id]
@@ -1093,9 +1232,11 @@ def test_single_worker_rejects_frames_that_do_not_satisfy_the_output_plan() -> N
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=lambda _: frames,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=lambda _: frames,
+            ),
         )
 
     assert store.children[simulation.simulation_execution_id].status is (
@@ -1188,10 +1329,12 @@ def test_aggregate_stand_ins_preserve_policy_and_cliff_options(monkeypatch) -> N
 
     result = build_aggregate_report(
         report=report,
-        baseline_frames=frames,
-        reform_frames=frames,
-        baseline_descriptor=artifacts.add_simulation(report.baseline),
-        reform_descriptor=artifacts.add_simulation(report.reform),
+        baseline=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.baseline)
+        ),
+        reform=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.reform)
+        ),
     )
 
     assert result["result"] == {"captured": True}
@@ -1248,10 +1391,12 @@ def test_aggregate_stand_ins_keep_bounded_policy_end_dates(monkeypatch) -> None:
 
     build_aggregate_report(
         report=report,
-        baseline_frames=frames,
-        reform_frames=frames,
-        baseline_descriptor=artifacts.add_simulation(report.baseline),
-        reform_descriptor=artifacts.add_simulation(report.reform),
+        baseline=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.baseline)
+        ),
+        reform=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.reform)
+        ),
     )
 
     for role, stop in (("baseline", "2026-12-31"), ("reform", "2027-12-31")):
@@ -1324,10 +1469,12 @@ def test_uk_aggregate_without_spm_provenance_is_written(monkeypatch) -> None:
 
     aggregate = build_aggregate_report(
         report=report,
-        baseline_frames=uk_frames,
-        reform_frames=uk_frames,
-        baseline_descriptor=artifacts.add_simulation(report.baseline),
-        reform_descriptor=artifacts.add_simulation(report.reform),
+        baseline=RetainedSimulationOutput(
+            uk_frames, artifacts.add_simulation(report.baseline)
+        ),
+        reform=RetainedSimulationOutput(
+            uk_frames, artifacts.add_simulation(report.reform)
+        ),
     )
     assert aggregate["result"]["spm_provenance"] is None
 
@@ -1340,6 +1487,89 @@ def test_uk_aggregate_without_spm_provenance_is_written(monkeypatch) -> None:
     assert json.loads(stored_aggregate)["result"]["spm_provenance"] is None
 
 
+def test_aggregate_report_wraps_builder_output_with_report_provenance(
+    monkeypatch,
+) -> None:
+    from policyengine_simulation_executor import simulation_output_builder
+
+    report = _report()
+    report = report.model_copy(
+        update={"reform": report.reform.model_copy(update={"policy": {}})}
+    )
+    entities = ("person", "marital_unit", "family", "spm_unit", "tax_unit")
+
+    def frames(income):
+        return {
+            **{entity: pd.DataFrame({f"{entity}_id": [1]}) for entity in entities},
+            "household": pd.DataFrame(
+                {"household_id": [1], "household_net_income": [income]}
+            ),
+        }
+
+    observed = {}
+
+    class CapturingBuilder:
+        def __init__(self, **values):
+            observed.update(values)
+
+        def serialize(self):
+            return {"budget": {"budgetary_impact": 1.0}}
+
+    monkeypatch.setattr(
+        simulation_output_builder, "SimulationOutputBuilder", CapturingBuilder
+    )
+    artifacts = FakeArtifacts()
+
+    result = build_aggregate_report(
+        report=report,
+        baseline=RetainedSimulationOutput(
+            frames(100.0), artifacts.add_simulation(report.baseline)
+        ),
+        reform=RetainedSimulationOutput(
+            frames(120.0), artifacts.add_simulation(report.reform)
+        ),
+        uk_local_authority_metadata=None,
+    )
+
+    assert result == {
+        "contract_version": 1,
+        "aggregate_schema_version": 1,
+        "evaluation_id": str(EVALUATION_ID),
+        "requested_aggregates": [item.value for item in report.requested_aggregates],
+        "bundle": report.baseline.bundle.model_dump(mode="json"),
+        "result": {"budget": {"budgetary_impact": 1.0}},
+    }
+    assert list(observed) == [
+        "country",
+        "simulation_params",
+        "country_module",
+        "dataset",
+        "baseline",
+        "reform",
+        "resolved_data_version",
+        "resolved_region_code",
+        "uk_local_authority_metadata",
+    ]
+    assert observed["country"] == "us"
+    assert observed["simulation_params"] == {
+        "country": "us",
+        "scope": "macro",
+        "data": report.baseline.bundle.dataset.uri,
+        "data_version": report.baseline.bundle.dataset.artifact_revision,
+        "time_period": str(report.baseline.year),
+        "region": report.baseline.geography.region,
+    }
+    assert observed["dataset"] is observed["baseline"].output_dataset
+    for role, income in (("baseline", 100.0), ("reform", 120.0)):
+        household = observed[role].output_dataset.data.household
+        assert household["household_net_income"].tolist() == [income]
+    assert observed["resolved_data_version"] == (
+        report.baseline.bundle.dataset.artifact_revision
+    )
+    assert observed["resolved_region_code"] == report.baseline.geography.region
+    assert observed["uk_local_authority_metadata"] is None
+
+
 def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:
     payload = _planned_simulation(SimulationRole.BASELINE).model_dump(mode="json")
     payload["baseline"] = {}
@@ -1350,9 +1580,11 @@ def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:
             payload,
             _context().model_dump(mode="json"),
             required_country="us",
-            store=FakeStore(),
-            artifacts=FakeArtifacts(),
-            calculator=lambda _: _frames(),
+            dependencies=SimulationWorkerDependencies(
+                store=FakeStore(),
+                artifacts=FakeArtifacts(),
+                calculator=lambda _: _frames(),
+            ),
         )
 
 
@@ -1395,22 +1627,30 @@ class ImmediateCall:
         self.cancel_count += 1
 
 
+@dataclass(frozen=True)
+class InjectedChildFaults:
+    """Faults a ConcurrentInvoker injects into the child simulations it runs."""
+
+    fail_role: str | None = None
+    incompatible: bool = False
+    wrong_plan_digest: bool = False
+    missing_column: bool = False
+
+
 class ConcurrentInvoker:
     def __init__(
         self,
         artifacts,
         *,
-        fail_role=None,
-        incompatible=False,
-        wrong_plan_digest=False,
-        missing_column=False,
+        faults: InjectedChildFaults | None = None,
         production_result=None,
     ):
+        faults = faults or InjectedChildFaults()
         self.artifacts = artifacts
-        self.fail_role = fail_role
-        self.incompatible = incompatible
-        self.wrong_plan_digest = wrong_plan_digest
-        self.missing_column = missing_column
+        self.fail_role = faults.fail_role
+        self.incompatible = faults.incompatible
+        self.wrong_plan_digest = faults.wrong_plan_digest
+        self.missing_column = faults.missing_column
         self.executor = ThreadPoolExecutor(max_workers=2)
         self.intervals = {}
         self.events = []
@@ -1419,11 +1659,11 @@ class ConcurrentInvoker:
         self.production_wait_timeouts = []
         self.output_plans = []
 
-    def spawn(self, *, simulation, environment, **_):
-        parsed = PlannedSimulationExecutionInput.model_validate(simulation)
+    def spawn(self, request):
+        parsed = PlannedSimulationExecutionInput.model_validate(request.simulation)
         role = parsed.role.value
         self.events.append(f"spawn:{role}")
-        self.environments.append(environment)
+        self.environments.append(request.environment)
         self.output_plans.append(parsed.output_plan)
 
         return self._submit(parsed, role)
@@ -1505,13 +1745,17 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
         _report().model_dump(mode="json"),
         context.model_dump(mode="json"),
         parent.model_dump(mode="json"),
-        application_name=context.modal_application,
-        coordinator_invocation_id="coordinator-1",
-        store=store,
-        artifacts=artifacts,
-        invoker=invoker,
-        aggregator=aggregate,
-        output_plan_resolver=resolver,
+        invocation=CoordinatorInvocation(
+            application_name=context.modal_application,
+            invocation_id="coordinator-1",
+        ),
+        dependencies=CoordinatorDependencies(
+            store=store,
+            artifacts=artifacts,
+            invoker=invoker,
+            aggregator=aggregate,
+            output_plan_resolver=resolver,
+        ),
     )
 
     assert invoker.events == ["spawn:baseline", "spawn:reform"]
@@ -1524,10 +1768,10 @@ def test_coordinator_starts_both_children_before_waiting_and_aggregates() -> Non
     assert result["artifact"]["uri"] == (
         f"gs://private/{context.artifact_prefix}/reports/aggregate.json"
     )
-    assert observed["baseline_frames"]["household"][
+    assert observed["baseline"].frames["household"][
         "household_net_income"
     ].tolist() == [100.0]
-    assert observed["reform_frames"]["household"]["household_net_income"].tolist() == [
+    assert observed["reform"].frames["household"]["household_net_income"].tolist() == [
         120.0
     ]
     assert observed["uk_local_authority_metadata"] is None
@@ -1845,7 +2089,9 @@ def test_repeated_submission_does_not_retry_failed_comparison() -> None:
 def test_coordinator_never_writes_partial_aggregate_when_a_child_fails() -> None:
     store = FakeStore()
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts, fail_role="reform")
+    invoker = ConcurrentInvoker(
+        artifacts, faults=InjectedChildFaults(fail_role="reform")
+    )
 
     with pytest.raises(
         RuntimeError, match="Stage 12 report coordination failed"
@@ -1936,8 +2182,10 @@ def test_coordinator_observes_one_role_failure_while_the_peer_is_pending(
     failed_call = FailedCall()
 
     class ConcurrentFailureInvoker:
-        def spawn(self, *, simulation, **_):
-            role = PlannedSimulationExecutionInput.model_validate(simulation).role
+        def spawn(self, request):
+            role = PlannedSimulationExecutionInput.model_validate(
+                request.simulation
+            ).role
             return failed_call if role.value == failed_role else baseline_call
 
         def restore(self, invocation_id):
@@ -1979,8 +2227,10 @@ def test_dispatch_failure_cancels_an_already_started_peer() -> None:
     baseline_call = TimeoutCall("call-baseline")
 
     class DispatchFailureInvoker:
-        def spawn(self, *, simulation, **_):
-            role = PlannedSimulationExecutionInput.model_validate(simulation).role
+        def spawn(self, request):
+            role = PlannedSimulationExecutionInput.model_validate(
+                request.simulation
+            ).role
             if role is SimulationRole.REFORM:
                 msg = "dispatch contains sensitive details"
                 raise ConnectionError(msg)
@@ -2038,8 +2288,8 @@ def test_coordinator_propagates_an_already_persisted_child_failure() -> None:
             raise RuntimeError(msg)
 
     class PersistedFailureInvoker:
-        def spawn(self, *, simulation, **_):
-            parsed = PlannedSimulationExecutionInput.model_validate(simulation)
+        def spawn(self, request):
+            parsed = PlannedSimulationExecutionInput.model_validate(request.simulation)
             if parsed.role is SimulationRole.REFORM:
                 return PersistedFailureCall()
             descriptor = artifacts.add_simulation(parsed, _frames(100.0))
@@ -2073,8 +2323,12 @@ def test_coordinator_propagates_an_already_persisted_child_failure() -> None:
 @pytest.mark.parametrize(
     "invoker",
     [
-        lambda artifacts: ConcurrentInvoker(artifacts, wrong_plan_digest=True),
-        lambda artifacts: ConcurrentInvoker(artifacts, missing_column=True),
+        lambda artifacts: ConcurrentInvoker(
+            artifacts, faults=InjectedChildFaults(wrong_plan_digest=True)
+        ),
+        lambda artifacts: ConcurrentInvoker(
+            artifacts, faults=InjectedChildFaults(missing_column=True)
+        ),
     ],
 )
 def test_coordinator_rejects_artifacts_that_do_not_satisfy_the_shared_plan(
@@ -2168,8 +2422,8 @@ class WorkerRecordedFailureInvoker:
         self.store = store
         self.worker_summary = worker_summary
 
-    def spawn(self, *, simulation, **_):
-        planned = PlannedSimulationExecutionInput.model_validate(simulation)
+    def spawn(self, request):
+        planned = PlannedSimulationExecutionInput.model_validate(request.simulation)
         if planned.role is SimulationRole.BASELINE:
             return WorkerRecordedFailureCall(
                 "call-baseline",
@@ -2509,7 +2763,9 @@ def test_coordinator_reports_a_child_failure_once_when_its_record_is_unwritable(
             coordinator_invocation_id="coordinator-1",
             store=store,
             artifacts=artifacts,
-            invoker=ConcurrentInvoker(artifacts, fail_role="baseline"),
+            invoker=ConcurrentInvoker(
+                artifacts, faults=InjectedChildFaults(fail_role="baseline")
+            ),
             aggregator=lambda **_: _aggregate_payload({"must": "not run"}),
             runtime=TelemetryRecordingRuntime(ordered_events),
         )
@@ -2543,8 +2799,10 @@ class RefusingDispatchInvoker:
         self.dispatch_error = dispatch_error
         self.events = []
 
-    def spawn(self, *, simulation, **_):
-        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
+    def spawn(self, request):
+        role = PlannedSimulationExecutionInput.model_validate(
+            request.simulation
+        ).role.value
         self.events.append(f"spawn:{role}")
         raise self.dispatch_error
 
@@ -2642,7 +2900,9 @@ def test_coordinator_records_a_redacted_dispatch_failure_cause() -> None:
 def test_coordinator_rejects_incompatible_row_identity() -> None:
     store = FakeStore()
     artifacts = FakeArtifacts()
-    invoker = ConcurrentInvoker(artifacts, incompatible=True)
+    invoker = ConcurrentInvoker(
+        artifacts, faults=InjectedChildFaults(incompatible=True)
+    )
 
     with pytest.raises(RuntimeError, match="Stage 12 report coordination failed"):
         coordinate_report(
@@ -2741,8 +3001,10 @@ class TimeoutInvoker:
     def __init__(self):
         self.events = []
 
-    def spawn(self, *, simulation, **_):
-        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
+    def spawn(self, request):
+        role = PlannedSimulationExecutionInput.model_validate(
+            request.simulation
+        ).role.value
         self.events.append(f"spawn:{role}")
         return TimeoutCall(f"call-{role}")
 
@@ -2850,25 +3112,32 @@ class StartupWriteError(Exception):
     """A coordinator persistence failure after a child may have started."""
 
 
+@dataclass(frozen=True)
+class ChildCallScript:
+    """What a scripted child call does when probed or cancelled.
+
+    It returns ``result`` or raises ``wait_error`` once probed (``during_wait``
+    runs first), and raises ``cancel_error`` when cancelled; with none set, it
+    keeps running.
+    """
+
+    result: object = None
+    wait_error: Exception | None = None
+    cancel_error: Exception | None = None
+    during_wait: object = None
+
+
 class ScriptedChildCall:
     """A started child that keeps running unless the test scripts an outcome."""
 
-    def __init__(
-        self,
-        object_id,
-        *,
-        clock=None,
-        result=None,
-        wait_error=None,
-        cancel_error=None,
-        during_wait=None,
-    ):
+    def __init__(self, object_id, *, clock=None, script=None):
+        script = script or ChildCallScript()
         self.object_id = object_id
         self.clock = clock
-        self.result = result
-        self.wait_error = wait_error
-        self.cancel_error = cancel_error
-        self.during_wait = during_wait
+        self.result = script.result
+        self.wait_error = script.wait_error
+        self.cancel_error = script.cancel_error
+        self.during_wait = script.during_wait
         self.probed_at = []
         self.cancel_count = 0
 
@@ -2909,8 +3178,10 @@ class ScriptedChildInvoker:
         self.events = []
         self.calls = {}
 
-    def spawn(self, *, simulation, **_):
-        role = PlannedSimulationExecutionInput.model_validate(simulation).role.value
+    def spawn(self, request):
+        role = PlannedSimulationExecutionInput.model_validate(
+            request.simulation
+        ).role.value
         self.events.append(f"spawn:{role}")
         return self._call(role)
 
@@ -2923,10 +3194,12 @@ class ScriptedChildInvoker:
         call = ScriptedChildCall(
             f"call-{role}",
             clock=self.clock,
-            result=self.results.get(role),
-            wait_error=self.wait_errors.get(role),
-            cancel_error=self.cancel_errors.get(role),
-            during_wait=self.during_wait.get(role),
+            script=ChildCallScript(
+                result=self.results.get(role),
+                wait_error=self.wait_errors.get(role),
+                cancel_error=self.cancel_errors.get(role),
+                during_wait=self.during_wait.get(role),
+            ),
         )
         self.calls[role] = call
         return call
@@ -3509,13 +3782,13 @@ def test_failed_child_state_error_does_not_replace_the_child_failure(
 
 
 class ReformDispatchFailureInvoker(ScriptedChildInvoker):
-    def spawn(self, *, simulation, **values):
-        role = PlannedSimulationExecutionInput.model_validate(simulation).role
+    def spawn(self, request):
+        role = PlannedSimulationExecutionInput.model_validate(request.simulation).role
         if role is SimulationRole.REFORM:
             self.events.append("spawn:reform")
             msg = "dispatch contains sensitive details"
             raise ConnectionError(msg)
-        return super().spawn(simulation=simulation, **values)
+        return super().spawn(request)
 
 
 @pytest.mark.parametrize("failing_operation", ["read", "write"])
@@ -3586,10 +3859,12 @@ def _fail_simulation_calculation(runtime):
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=fail,
-            runtime=runtime,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=fail,
+                runtime=runtime,
+            ),
         )
     return calculation_error, store.children[BASELINE_ID].error_summary
 
@@ -3703,7 +3978,9 @@ def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
             # The first segment fails on every probe; the others keep running.
             return ScriptedChildCall(
                 f"segment-{segment_index}",
-                wait_error=segment_error if segment_index == 0 else None,
+                script=ChildCallScript(
+                    wait_error=segment_error if segment_index == 0 else None
+                ),
             )
 
     class SegmentFunctionLookup:
@@ -3716,10 +3993,12 @@ def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
             value,
             app_name="stage12-app",
             runtime=runtime,
-            modal_module=SimpleNamespace(Function=SegmentFunctionLookup),
-            groups=US_REGION_GROUPS,
-            sleep=lambda _seconds: None,
             cancellation_requested=cancellation_requested,
+            seams=SegmentRunnerSeams(
+                modal_module=SimpleNamespace(Function=SegmentFunctionLookup),
+                groups=US_REGION_GROUPS,
+                sleep=lambda _seconds: None,
+            ),
         ).run()
 
     with (
@@ -3730,11 +4009,13 @@ def test_a_segment_failure_is_reported_exactly_once(caplog) -> None:
             simulation.model_dump(mode="json"),
             _context().model_dump(mode="json"),
             required_country="us",
-            store=store,
-            artifacts=FakeArtifacts(),
-            calculator=lambda _: pytest.fail("monolithic calculator was selected"),
-            segmented_calculator=segmented_calculator,
-            runtime=runtime,
+            dependencies=SimulationWorkerDependencies(
+                store=store,
+                artifacts=FakeArtifacts(),
+                calculator=lambda _: pytest.fail("monolithic calculator was selected"),
+                segmented_calculator=segmented_calculator,
+                runtime=runtime,
+            ),
         )
 
     child = store.children[BASELINE_ID]

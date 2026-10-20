@@ -10,7 +10,7 @@ import sys
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import tomllib
 
@@ -201,6 +201,56 @@ def latest_version(package: str) -> None:
     _write_result(version)
 
 
+def _package_version(packages: Mapping[str, Any], name: str) -> str:
+    version = _mapping(packages.get(name)).get("version")
+    if not isinstance(version, str) or not version:
+        msg = f"Bundle has no version for {name}"
+        raise SystemExit(msg)
+    return version
+
+
+def _data_release_version(release: Mapping[str, Any], country: str) -> str:
+    version = release.get("version") or _mapping(release.get("data_package")).get(
+        "version"
+    )
+    if not isinstance(version, str) or not version:
+        msg = f"Bundle has no data release version for {country}"
+        raise SystemExit(msg)
+    return version
+
+
+def _data_package_version(release: Mapping[str, Any]) -> str:
+    version = _mapping(release.get("data_package")).get("version")
+    return version if isinstance(version, str) else ""
+
+
+def _dataset_sha256(release: Mapping[str, Any], country: str) -> str:
+    """Return the default dataset's digest, preferring the certified artifact's."""
+    default = release.get("default_dataset")
+    certified = _mapping(release.get("certified_data_artifact"))
+    if certified.get("dataset") == default and certified.get("sha256"):
+        value = certified["sha256"]
+    else:
+        reference = _mapping(_mapping(release.get("datasets")).get(default))
+        value = reference.get("sha256") or ""
+    digest = str(value).strip().lower()
+    if digest and not re.fullmatch(r"[0-9a-f]{64}", digest):
+        msg = f"Bundle records a malformed {country} dataset SHA-256"
+        raise SystemExit(msg)
+    return digest
+
+
+def _certificate_sha256(release: object) -> str:
+    # Receipt-v1 certificate digest; older wrappers lack the helper.
+    try:
+        from policyengine.provenance.receipt import (
+            certificate_sha256 as digest,
+        )
+    except ImportError:
+        return ""
+    return digest(release) if isinstance(release, Mapping) else ""
+
+
 def bundle_versions() -> None:
     """Print the package and data versions selected by PolicyEngine.py."""
     from policyengine.bundle import (
@@ -210,67 +260,20 @@ def bundle_versions() -> None:
     bundle = _mapping(get_current_bundle())
     packages = _mapping(bundle.get("packages"))
     data_releases = _mapping(bundle.get("data_releases"))
-
-    def package_version(name: str) -> str:
-        version = _mapping(packages.get(name)).get("version")
-        if not isinstance(version, str) or not version:
-            msg = f"Bundle has no version for {name}"
-            raise SystemExit(msg)
-        return version
-
-    def data_release_version(country: str) -> str:
-        release = _mapping(data_releases.get(country))
-        version = release.get("version") or _mapping(release.get("data_package")).get(
-            "version"
-        )
-        if not isinstance(version, str) or not version:
-            msg = f"Bundle has no data release version for {country}"
-            raise SystemExit(msg)
-        return version
-
-    def data_package_version(country: str) -> str:
-        release = _mapping(data_releases.get(country))
-        version = _mapping(release.get("data_package")).get("version")
-        return version if isinstance(version, str) else ""
-
-    def dataset_sha256(country: str) -> str:
-        release = _mapping(data_releases.get(country))
-        default = release.get("default_dataset")
-        certified = _mapping(release.get("certified_data_artifact"))
-        if certified.get("dataset") == default and certified.get("sha256"):
-            value = certified["sha256"]
-        else:
-            reference = _mapping(_mapping(release.get("datasets")).get(default))
-            value = reference.get("sha256") or ""
-        digest = str(value).strip().lower()
-        if digest and not re.fullmatch(r"[0-9a-f]{64}", digest):
-            msg = f"Bundle records a malformed {country} dataset SHA-256"
-            raise SystemExit(msg)
-        return digest
-
-    def certificate_sha256(country: str) -> str:
-        # Receipt-v1 certificate digest; older wrappers lack the helper.
-        try:
-            from policyengine.provenance.receipt import (
-                certificate_sha256 as digest,
-            )
-        except ImportError:
-            return ""
-        release = data_releases.get(country)
-        return digest(release) if isinstance(release, Mapping) else ""
-
+    us_release = _mapping(data_releases.get("us"))
+    uk_release = _mapping(data_releases.get("uk"))
     outputs = {
-        "policyengine_version": package_version("policyengine"),
-        "policyengine_core_version": package_version("policyengine-core"),
-        "spm_calculator_version": package_version("spm-calculator"),
-        "us_version": package_version("policyengine-us"),
-        "us_data_version": data_release_version("us"),
-        "uk_version": package_version("policyengine-uk"),
-        "uk_data_version": data_release_version("uk"),
-        "uk_data_package_version": data_package_version("uk"),
-        "us_dataset_sha256": dataset_sha256("us"),
-        "uk_dataset_sha256": dataset_sha256("uk"),
-        "uk_certificate_sha256": certificate_sha256("uk"),
+        "policyengine_version": _package_version(packages, "policyengine"),
+        "policyengine_core_version": _package_version(packages, "policyengine-core"),
+        "spm_calculator_version": _package_version(packages, "spm-calculator"),
+        "us_version": _package_version(packages, "policyengine-us"),
+        "us_data_version": _data_release_version(us_release, "us"),
+        "uk_version": _package_version(packages, "policyengine-uk"),
+        "uk_data_version": _data_release_version(uk_release, "uk"),
+        "uk_data_package_version": _data_package_version(uk_release),
+        "us_dataset_sha256": _dataset_sha256(us_release, "us"),
+        "uk_dataset_sha256": _dataset_sha256(uk_release, "uk"),
+        "uk_certificate_sha256": _certificate_sha256(data_releases.get("uk")),
     }
     for name, version in outputs.items():
         _write_result(f"{name}={version}")
@@ -293,25 +296,30 @@ OPTIONAL_INSTALLED_CHECKS = frozenset({"certificate_sha256"})
 PROMOTABLE_VERDICTS = frozenset({"qualified", "needs_review"})
 
 
-def verify_dispatch() -> None:
-    """Check a policyengine-release payload against the installed bundle.
+class _DispatchComparison(NamedTuple):
+    """What comparing a dispatch with the installed bundle found.
 
-    Reads the dispatch ``client_payload`` JSON from ``RELEASE_PAYLOAD`` and
-    ``bundle-versions`` output from stdin. A payload without ``bundle.uk``
-    (older releases, manual runs) is accepted. A field the payload names
-    must equal the installed bundle's, and an installed bundle that cannot
-    report it is a mismatch, except for the certificate digest, which older
-    wrappers cannot compute. A qualification that says the pair was not
-    promotable is refused. ``dispatch_verified`` is true only when at least
-    one field was compared. Prints digests for the PR body.
+    ``mismatches`` lists the fields that disagree; ``compared`` counts the
+    fields both the dispatch and the installed bundle stated.
     """
-    raw = os.environ.get("RELEASE_PAYLOAD", "").strip()
-    payload = json.loads(raw) if raw and raw != "null" else {}
+
+    mismatches: list[str]
+    compared: int
+
+
+def _installed_fields(bundle_output: str) -> dict[str, str]:
+    """Read ``bundle-versions`` output: one ``key=value`` line per field."""
     installed = {}
-    for line in sys.stdin.read().splitlines():
+    for line in bundle_output.splitlines():
         key, _, value = line.partition("=")
         if key:
             installed[key.strip()] = value.strip()
+    return installed
+
+
+def _require_dispatched_wrapper(
+    payload: Mapping[str, Any], installed: Mapping[str, str]
+) -> None:
     if payload.get("version") and payload["version"] != installed.get(
         "policyengine_version"
     ):
@@ -320,7 +328,12 @@ def verify_dispatch() -> None:
             f"{installed.get('policyengine_version')} is installed."
         )
         raise SystemExit(msg)
-    expected = _mapping(_mapping(payload.get("bundle")).get("uk"))
+
+
+def _compare_dispatch_bundle(
+    expected: Mapping[str, Any], installed: Mapping[str, str]
+) -> _DispatchComparison:
+    """Compare each field the dispatch names with the installed bundle's value."""
     mismatches = []
     compared = 0
     for payload_key, installed_key in DISPATCH_CHECKS:
@@ -341,11 +354,11 @@ def verify_dispatch() -> None:
             claimed_text = claimed_text.lower()
         if claimed_text != actual:
             mismatches.append(f"{payload_key}: dispatch {claimed}, installed {actual}")
-    if mismatches:
-        raise SystemExit(
-            "The release dispatch names a different UK bundle from the installed "
-            "wheel: " + "; ".join(mismatches)
-        )
+    return _DispatchComparison(mismatches, compared)
+
+
+def _promotable_qualification(payload: Mapping[str, Any]) -> tuple[str, str]:
+    """Return the UK verdict and receipt digest, refusing malformed or rejected ones."""
     qualification = _mapping(_mapping(payload.get("qualification")).get("uk"))
     verdict = qualification.get("verdict") or ""
     receipt_sha256 = qualification.get("receipt_sha256") or ""
@@ -362,7 +375,35 @@ def verify_dispatch() -> None:
     ):
         msg = f"The release dispatch says the UK pair was not promotable ({verdict})"
         raise SystemExit(msg)
-    _write_result(f"dispatch_verified={'true' if compared else 'false'}")
+    return verdict, receipt_sha256
+
+
+def verify_dispatch() -> None:
+    """Check a policyengine-release payload against the installed bundle.
+
+    Reads the dispatch ``client_payload`` JSON from ``RELEASE_PAYLOAD`` and
+    ``bundle-versions`` output from stdin. A payload without ``bundle.uk``
+    (older releases, manual runs) is accepted. A field the payload names
+    must equal the installed bundle's, and an installed bundle that cannot
+    report it is a mismatch, except for the certificate digest, which older
+    wrappers cannot compute. A qualification that says the pair was not
+    promotable is refused. ``dispatch_verified`` is true only when at least
+    one field was compared. Prints digests for the PR body.
+    """
+    raw = os.environ.get("RELEASE_PAYLOAD", "").strip()
+    payload = json.loads(raw) if raw and raw != "null" else {}
+    installed = _installed_fields(sys.stdin.read())
+    _require_dispatched_wrapper(payload, installed)
+    comparison = _compare_dispatch_bundle(
+        _mapping(_mapping(payload.get("bundle")).get("uk")), installed
+    )
+    if comparison.mismatches:
+        raise SystemExit(
+            "The release dispatch names a different UK bundle from the installed "
+            "wheel: " + "; ".join(comparison.mismatches)
+        )
+    verdict, receipt_sha256 = _promotable_qualification(payload)
+    _write_result(f"dispatch_verified={'true' if comparison.compared else 'false'}")
     _write_result(f"uk_qualification_verdict={verdict}")
     _write_result(f"uk_qualification_receipt_sha256={receipt_sha256}")
 

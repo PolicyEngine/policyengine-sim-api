@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from hashlib import sha256
 from importlib import import_module
 from pathlib import Path
@@ -19,6 +20,7 @@ from policyengine_simulation_executor.simulation_runtime import (
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.stage12_cache.models import CacheManifest
 from policyengine_simulation_executor.stage12_cache.precompute import (
+    PRECOMPUTE_YEARS,
     _scoped_planned_simulation,
 )
 from policyengine_simulation_executor.stage12_runtime.partition import (
@@ -139,6 +141,12 @@ def _check_uk_local_authority_dataset(dataset_path: str) -> None:
     detect_uk_local_authority_metadata_from_hdf(dataset_path)
 
 
+# The installed cache holds one dataset per precomputed year and one baseline
+# per US region group per year; the deploy check probes the first year.
+STAGE12_CACHE_ARTIFACT_COUNT = len(PRECOMPUTE_YEARS) * (1 + len(US_REGION_GROUPS))
+STAGE12_CACHE_PROBE_YEAR = PRECOMPUTE_YEARS[0]
+
+
 def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
     """Validate the baked manifest and require one real baseline cache hit."""
     data_folder = Path(resolve_data_folder())
@@ -148,21 +156,21 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
         msg = "installed Stage 12 cache manifest digest differs"
         raise RuntimeError(msg)
     manifest = CacheManifest.model_validate_json(payload)
-    if manifest.years != (2026, 2027, 2025):
+    if manifest.years != PRECOMPUTE_YEARS:
         msg = "installed Stage 12 cache years differ"
         raise RuntimeError(msg)
-    if len(manifest.artifacts) != 63:
+    if len(manifest.artifacts) != STAGE12_CACHE_ARTIFACT_COUNT:
         msg = "installed Stage 12 cache artifact count differs"
         raise RuntimeError(msg)
     probe = next(
         item
         for item in manifest.artifacts
-        if item.type == "baseline" and item.year == 2026
+        if item.type == "baseline" and item.year == STAGE12_CACHE_PROBE_YEAR
     )
     probe_path = data_folder / probe.filename
     _check_dataset_access(str(probe_path), probe.content_sha256)
     calculation = calculate_simulation_frames(
-        _scoped_planned_simulation(2026, US_REGION_GROUPS[0])
+        _scoped_planned_simulation(STAGE12_CACHE_PROBE_YEAR, US_REGION_GROUPS[0])
     )
     if calculation.cache_outcome != "hit":
         msg = "deployed Stage 12 cache probe did not load a cache hit"
@@ -171,10 +179,32 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
         "manifest_sha256": expected_manifest_sha256,
         "partition_sha256": manifest.partition_sha256,
         "years": list(manifest.years),
-        "segment_count": 20,
+        "segment_count": len(US_REGION_GROUPS),
         "dataset_count": sum(item.type == "dataset" for item in manifest.artifacts),
         "baseline_count": sum(item.type == "baseline" for item in manifest.artifacts),
     }
+
+
+@dataclass(frozen=True)
+class WorkerValidationSeams:
+    """What worker validation reads and runs; the defaults inspect this worker.
+
+    ``environment`` defaults to the process environment. The checks default
+    to the installed dataset path, a streamed digest of that dataset, a
+    non-serving household calculation, the UK local-authority resources and
+    the installed Stage 12 cache.
+    """
+
+    environment: Mapping[str, str] | None = None
+    dataset_path_resolver: Callable[[CountryId], str | None] = (
+        _resolve_installed_dataset_path
+    )
+    dataset_check: Callable[[str, str], None] = _check_dataset_access
+    calculation_check: Callable[[CountryId], None] = _run_non_serving_calculation
+    local_authority_resource_check: Callable[[str], None] = (
+        _check_uk_local_authority_dataset
+    )
+    cache_check: Callable[[str], dict[str, Any]] = _check_installed_cache
 
 
 def validate_country_worker(
@@ -182,18 +212,11 @@ def validate_country_worker(
     country: CountryId,
     expected_bundle_manifest_sha256: str,
     expected_cache_manifest_sha256: str | None = None,
-    environment: Mapping[str, str] | None = None,
-    dataset_path_resolver: Callable[[CountryId], str | None] = (
-        _resolve_installed_dataset_path
-    ),
-    dataset_check: Callable[[str, str], None] = _check_dataset_access,
-    calculation_check: Callable[[CountryId], None] = _run_non_serving_calculation,
-    local_authority_resource_check: Callable[[str], None] = (
-        _check_uk_local_authority_dataset
-    ),
-    cache_check: Callable[[str], dict[str, Any]] = _check_installed_cache,
+    seams: WorkerValidationSeams | None = None,
 ) -> dict[str, Any]:
     """Validate imports, installed bundle, secrets, data, and calculation."""
+    seams = seams or WorkerValidationSeams()
+    environment = seams.environment
     runtime_environment = environment if environment is not None else os.environ
     _require_secret_environment(runtime_environment)
     # Import the same typed persistence package and coordinator modules loaded
@@ -212,7 +235,7 @@ def validate_country_worker(
         msg = f"installed PolicyEngine.py bundle does not support {country!r}"
         raise RuntimeError(msg) from None
     import_module(f"policyengine.tax_benefit_models.{country}")
-    installed_dataset_path = dataset_path_resolver(country)
+    installed_dataset_path = seams.dataset_path_resolver(country)
     if installed_dataset_path is None:
         msg = f"installed certified dataset is unavailable for {country!r}"
         raise RuntimeError(msg)
@@ -221,13 +244,13 @@ def validate_country_worker(
         for dataset in country_bundle.datasets
         if dataset.identity == country_bundle.default_dataset
     )
-    dataset_check(installed_dataset_path, selected_dataset.sha256)
+    seams.dataset_check(installed_dataset_path, selected_dataset.sha256)
     if country == "uk":
-        local_authority_resource_check(installed_dataset_path)
-    calculation_check(country)
+        seams.local_authority_resource_check(installed_dataset_path)
+    seams.calculation_check(country)
     cache = None
     if country == "us" and expected_cache_manifest_sha256:
-        cache = cache_check(expected_cache_manifest_sha256)
+        cache = seams.cache_check(expected_cache_manifest_sha256)
     return {
         "validated": True,
         "country": country,

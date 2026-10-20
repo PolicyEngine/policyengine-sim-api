@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import nullcontext
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -31,18 +32,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ComparisonServices:
+    """The coordinator's store, artifacts, invoker and telemetry a comparison uses."""
+
+    store: ComparisonStore
+    artifacts: Stage12ArtifactStore
+    invoker: ChildInvoker
+    runtime: ObservabilityRuntime | None = None
+    stage_plan: StagePlan | None = None
+
+
 def compare_completed_report(
     *,
     parent: ComparisonReportRecord,
     aggregate: dict[str, Any],
     context: Stage12InvocationContext,
-    store: ComparisonStore,
-    artifacts: Stage12ArtifactStore,
-    invoker: ChildInvoker,
-    runtime: ObservabilityRuntime | None = None,
-    stage_plan: StagePlan | None = None,
+    services: ComparisonServices,
 ) -> None:
     """Persist an isolated production/Stage 12 comparison after aggregation."""
+    store = services.store
+    runtime = services.runtime
+    stage_plan = services.stage_plan
     production_job_id = context.production_function_call_id
     if production_job_id is None:
         return
@@ -68,7 +79,7 @@ def compare_completed_report(
                     }
                 )
             )
-            production_result = invoker.restore(production_job_id).get(
+            production_result = services.invoker.restore(production_job_id).get(
                 timeout=PRODUCTION_RESULT_WAIT_TIMEOUT_SECONDS
             )
             comparison = compare_results(
@@ -77,7 +88,7 @@ def compare_completed_report(
                 production_result=production_result,
                 stage12_result=aggregate.get("result"),
             )
-            comparison_artifact = artifacts.write_comparison(
+            comparison_artifact = services.artifacts.write_comparison(
                 prefix=context.artifact_prefix,
                 payload=comparison.model_dump(mode="json"),
             )

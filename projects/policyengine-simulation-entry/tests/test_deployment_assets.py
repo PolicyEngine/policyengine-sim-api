@@ -310,12 +310,9 @@ def test_stage12_runtime_uses_typed_dml_without_raw_sql_or_schema_changes() -> N
     assert "create_all(" not in sources
 
 
-def test_deployment_uses_gcloud_workflow_without_terraform():
-    deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
-    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
-    stage12_workflow = STAGE12_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
-    cloud_run_deploy_script = CLOUD_RUN_DEPLOY_SCRIPT.read_text(encoding="utf-8")
-
+def _assert_gcloud_deployment_jobs(
+    reusable_workflow: str, cloud_run_deploy_script: str
+) -> None:
     assert "deploy-cloud-run-simulation-entry.sh" in reusable_workflow
     assert "gcloud run deploy" in cloud_run_deploy_script
     assert "set-cloud-run-simulation-entry-revision.sh" in reusable_workflow
@@ -332,6 +329,11 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
         "needs: [prepare, deploy_entrypoint, deploy_gateway, deploy_executor]"
         in reusable_workflow
     )
+
+
+def _assert_beta_then_prod_release(
+    deploy_workflow: str, reusable_workflow: str
+) -> None:
     assert "needs: beta" in deploy_workflow
     assert deploy_workflow.index("beta:") < deploy_workflow.index("prod:")
     assert "release_environment: beta" in deploy_workflow
@@ -347,6 +349,9 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
     assert "entrypoint_public_url" not in reusable_workflow
     assert "SIMULATION_ENTRYPOINT_PUBLIC_URL" not in reusable_workflow
     assert "staging.simulation.api.policyengine.org" not in deploy_workflow
+
+
+def _assert_deployment_environment_settings(reusable_workflow: str) -> None:
     assert (
         # Sentinel, restore and final routing acknowledgement use secrets too.
         reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 15
@@ -367,6 +372,31 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
         reusable_workflow.count("vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME") == 1
     )
     assert "simulation-entry-old-gateway-client-secret" not in reusable_workflow
+
+
+def _assert_stage12_deploy_targets(stage12_workflow: str) -> None:
+    assert "deploy-stage12-staging:" in stage12_workflow
+    assert "deploy-stage12-production:" in stage12_workflow
+    assert stage12_workflow.count("deploy_existing_stack: false") == 2
+    assert stage12_workflow.count("deploy_stage12_v2: true") == 2
+    assert "release_environment: beta" in stage12_workflow
+    assert "deployment_environment: staging" in stage12_workflow
+    assert "modal_environment: staging" in stage12_workflow
+    assert "release_environment: prod" in stage12_workflow
+    assert "deployment_environment: production" in stage12_workflow
+    assert "modal_environment: main" in stage12_workflow
+    assert "DEPLOY_STAGE12_PRODUCTION" in stage12_workflow
+
+
+def test_deployment_uses_gcloud_workflow_without_terraform():
+    deploy_workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    reusable_workflow = REUSABLE_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    stage12_workflow = STAGE12_DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    cloud_run_deploy_script = CLOUD_RUN_DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    _assert_gcloud_deployment_jobs(reusable_workflow, cloud_run_deploy_script)
+    _assert_beta_then_prod_release(deploy_workflow, reusable_workflow)
+    _assert_deployment_environment_settings(reusable_workflow)
     assert AUTHENTICATED_TESTS.joinpath("test_deployed_auth.py").is_file()
     assert not list(
         (REPOSITORY_ROOT / "projects" / "policyengine-simulation-entry" / "infra").glob(
@@ -379,17 +409,7 @@ def test_deployment_uses_gcloud_workflow_without_terraform():
         / "scripts"
         / "configure-cloud-run-simulation-entry-domains.sh"
     ).exists()
-    assert "deploy-stage12-staging:" in stage12_workflow
-    assert "deploy-stage12-production:" in stage12_workflow
-    assert stage12_workflow.count("deploy_existing_stack: false") == 2
-    assert stage12_workflow.count("deploy_stage12_v2: true") == 2
-    assert "release_environment: beta" in stage12_workflow
-    assert "deployment_environment: staging" in stage12_workflow
-    assert "modal_environment: staging" in stage12_workflow
-    assert "release_environment: prod" in stage12_workflow
-    assert "deployment_environment: production" in stage12_workflow
-    assert "modal_environment: main" in stage12_workflow
-    assert "DEPLOY_STAGE12_PRODUCTION" in stage12_workflow
+    _assert_stage12_deploy_targets(stage12_workflow)
 
 
 def test_cloud_run_deployment_does_not_interpolate_github_values_in_shell():
@@ -963,7 +983,8 @@ def _gh_equal(left, right) -> bool:
     return _gh_number(left) == _gh_number(right)
 
 
-def _gh_eval(expression: str, context: dict, *, job_if: bool = False):
+def _gh_tokens(expression: str) -> list[str]:
+    """Split an expression into tokens, dropping its ``${{`` and ``}}``."""
     tokens = []
     position = 0
     text = expression.strip()
@@ -972,77 +993,106 @@ def _gh_eval(expression: str, context: dict, *, job_if: bool = False):
         assert match, text[position:]
         tokens.append(match.group(1))
         position = match.end()
-    tokens = [token for token in tokens if token not in ("${{", "}}")]
-    if job_if and not any(
+    return [token for token in tokens if token not in ("${{", "}}")]
+
+
+def _gh_calls_a_status_function(tokens: list[str]) -> bool:
+    return any(
         token in _STATUS_FUNCTIONS and tokens[index + 1 : index + 2] == ["("]
         for index, token in enumerate(tokens)
-    ):
-        tokens = ["success", "(", ")", "&&", "(", *tokens, ")"]
-    results = [job.get("result") for job in (context.get("needs") or {}).values()]
+    )
 
-    def status(name):
-        cancelled = bool(context.get("cancelled"))
+
+def _gh_truthy(value) -> bool:
+    return value not in (None, False, "", 0)
+
+
+class _GitHubExpression:
+    """A recursive-descent evaluation of one tokenized expression in a context.
+
+    Each ``_parse_*`` method reads from a token index and returns the value
+    it read and the index after it, from the loosest operator (``||``) to the
+    tightest (``!``, parentheses and operands).
+    """
+
+    def __init__(self, tokens: list[str], context: dict) -> None:
+        self.tokens = tokens
+        self.context = context
+        self.results = [
+            job.get("result") for job in (context.get("needs") or {}).values()
+        ]
+
+    def evaluate(self):
+        value, index = self._parse_or(0)
+        assert index == len(self.tokens), self.tokens[index:]
+        return value
+
+    def _next_is(self, index: int, operators: tuple[str, ...]) -> bool:
+        return index < len(self.tokens) and self.tokens[index] in operators
+
+    def _status(self, name: str) -> bool:
+        cancelled = bool(self.context.get("cancelled"))
         if name == "always":
             return True
         if name == "cancelled":
             return cancelled
         if name == "failure":
-            return "failure" in results
-        return not cancelled and all(result == "success" for result in results)
+            return "failure" in self.results
+        return not cancelled and all(result == "success" for result in self.results)
 
-    def truthy(value):
-        return value not in (None, False, "", 0)
-
-    def lookup(path):
+    def _lookup(self, path: str):
         if path in ("true", "false"):
             return path == "true"
-        value = context
+        value = self.context
         for part in path.split("."):
             value = value.get(part) if isinstance(value, dict) else None
         return value
 
-    def parse_or(index):
-        left, index = parse_and(index)
-        while index < len(tokens) and tokens[index] == "||":
-            right, index = parse_and(index + 1)
-            left = left if truthy(left) else right
+    def _parse_or(self, index: int):
+        left, index = self._parse_and(index)
+        while self._next_is(index, ("||",)):
+            right, index = self._parse_and(index + 1)
+            left = left if _gh_truthy(left) else right
         return left, index
 
-    def parse_and(index):
-        left, index = parse_compare(index)
-        while index < len(tokens) and tokens[index] == "&&":
-            right, index = parse_compare(index + 1)
-            left = right if truthy(left) else left
+    def _parse_and(self, index: int):
+        left, index = self._parse_compare(index)
+        while self._next_is(index, ("&&",)):
+            right, index = self._parse_compare(index + 1)
+            left = right if _gh_truthy(left) else left
         return left, index
 
-    def parse_compare(index):
-        left, index = parse_unary(index)
-        while index < len(tokens) and tokens[index] in ("==", "!="):
-            operator = tokens[index]
-            right, index = parse_unary(index + 1)
+    def _parse_compare(self, index: int):
+        left, index = self._parse_unary(index)
+        while self._next_is(index, ("==", "!=")):
+            operator = self.tokens[index]
+            right, index = self._parse_unary(index + 1)
             equal = _gh_equal(left, right)
             left = equal if operator == "==" else not equal
         return left, index
 
-    def parse_unary(index):
-        if tokens[index] == "!":
-            value, index = parse_unary(index + 1)
-            return not truthy(value), index
-        if tokens[index] == "(":
-            value, index = parse_or(index + 1)
-            assert tokens[index] == ")"
+    def _parse_unary(self, index: int):
+        symbol = self.tokens[index]
+        if symbol == "!":
+            value, index = self._parse_unary(index + 1)
+            return not _gh_truthy(value), index
+        if symbol == "(":
+            value, index = self._parse_or(index + 1)
+            assert self.tokens[index] == ")"
             return value, index + 1
-        token = tokens[index]
-        if token.startswith("'"):
-            return token[1:-1], index + 1
-        if tokens[index + 1 : index + 3] == ["(", ")"]:
-            assert token in _STATUS_FUNCTIONS, token
-            return status(token), index + 3
-        return lookup(token), index + 1
+        if symbol.startswith("'"):
+            return symbol[1:-1], index + 1
+        if self.tokens[index + 1 : index + 3] == ["(", ")"]:
+            assert symbol in _STATUS_FUNCTIONS, symbol
+            return self._status(symbol), index + 3
+        return self._lookup(symbol), index + 1
 
-    value, index = parse_or(0)
-    assert index == len(tokens), tokens[index:]
-    return value
+
+def _gh_eval(expression: str, context: dict, *, job_if: bool = False):
+    tokens = _gh_tokens(expression)
+    if job_if and not _gh_calls_a_status_function(tokens):
+        tokens = ["success", "(", ")", "&&", "(", *tokens, ")"]
+    return _GitHubExpression(tokens, context).evaluate()
 
 
 def test_the_expression_evaluator_follows_github_semantics():
@@ -1055,6 +1105,46 @@ def test_the_expression_evaluator_follows_github_semantics():
     assert not _gh_eval("${{ inputs.flag }}", context, job_if=True)
     assert _gh_eval("${{ always() && inputs.flag }}", context, job_if=True)
     assert not _gh_eval("${{ !cancelled() }}", {**context, "cancelled": True})
+
+
+def test_the_expression_evaluator_returns_operands_and_job_statuses():
+    context = {
+        "inputs": {"name": "beta", "empty": "", "zero": 0, "flag": False},
+        "needs": {"a": {"result": "success"}, "b": {"result": "skipped"}},
+        "steps": "not-a-mapping",
+    }
+    # || and && return one of their operands, as GitHub does, not a boolean.
+    assert _gh_eval("${{ inputs.empty || 'fallback' }}", context) == "fallback"
+    assert _gh_eval("${{ inputs.name || 'fallback' }}", context) == "beta"
+    assert _gh_eval("${{ inputs.name && inputs.zero }}", context) == 0
+    assert _gh_eval("${{ inputs.flag && inputs.name }}", context) is False
+    assert _gh_eval("${{ inputs.name != 'BETA' }}", context) is False
+    assert _gh_eval("${{ !(inputs.empty || inputs.zero) }}", context) is True
+    assert _gh_eval("${{ steps.x.outputs }}", context) is None
+    assert _gh_eval("${{ inputs.missing.deeper }}", context) is None
+    assert _gh_eval("false", context) is False
+    # success() needs every needed job to succeed; failure() needs one failure.
+    assert _gh_eval("${{ success() }}", context) is False
+    assert _gh_eval("${{ failure() }}", context) is False
+    assert _gh_eval("${{ success() }}", {}) is True
+    assert _gh_eval("${{ success() }}", {"cancelled": True}) is False
+    assert _gh_eval("${{ cancelled() }}", {"cancelled": True}) is True
+    # Any status function in a job if replaces the implicit success().
+    assert _gh_eval("${{ inputs.name == 'beta' }}", context, job_if=True) is False
+    assert (
+        _gh_eval("${{ inputs.name == 'beta' || failure() }}", context, job_if=True)
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "expression",
+    ["${{ unknown() }}", "${{ inputs.name inputs.name }}", "${{ inputs.name @ }}"],
+    ids=["unknown-function", "trailing-token", "unknown-character"],
+)
+def test_the_expression_evaluator_refuses_what_it_cannot_read(expression):
+    with pytest.raises(AssertionError):
+        _gh_eval(expression, {"inputs": {"name": "beta"}})
 
 
 def _routing_context(**overrides):

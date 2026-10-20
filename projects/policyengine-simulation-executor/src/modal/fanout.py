@@ -10,6 +10,7 @@ orchestrator but forwarded by the other).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -34,6 +35,19 @@ def build_child_payload(
     if isinstance(telemetry, dict):
         payload["_telemetry"] = telemetry
     return payload
+
+
+@dataclass(frozen=True)
+class PollBackoff:
+    """How a parent job spaces its polls of child calls that are still running.
+
+    Sleeps start at ``initial_seconds`` and grow by ``factor``, up to
+    ``maximum_seconds``, while no child finishes.
+    """
+
+    initial_seconds: float
+    maximum_seconds: float
+    factor: float
 
 
 def next_backoff(current: float, *, factor: float, maximum: float) -> float:

@@ -1,7 +1,15 @@
 """Independent Stage 12 simulation execution and report coordination."""
 
-from .aggregation import build_aggregate_report, build_spm_result
-from .coordination import coordinate_report
+from .aggregation import (
+    RetainedSimulationOutput,
+    build_aggregate_report,
+    build_spm_result,
+)
+from .coordination import (
+    CoordinatorDependencies,
+    CoordinatorInvocation,
+    coordinate_report,
+)
 from .failures import (
     Stage12CancellationError,
     Stage12ExecutionError,
@@ -10,7 +18,11 @@ from .failures import (
     redacted_failure_detail,
     validate_policy_periods,
 )
-from .fanout import Stage12SegmentRunner, run_segmented_simulation
+from .fanout import (
+    SegmentRunnerSeams,
+    Stage12SegmentRunner,
+    run_segmented_simulation,
+)
 from .partition import (
     should_segment_simulation,
     stage12_region_groups,
@@ -24,6 +36,7 @@ from .segmentation import (
 )
 from .simulation import (
     SimulationCalculation,
+    SimulationWorkerDependencies,
     build_stage12_simulation,
     calculate_simulation_frames,
     run_single_simulation,
@@ -35,7 +48,12 @@ from .simulation import (
 _build_spm_result = build_spm_result
 
 __all__ = [
+    "CoordinatorDependencies",
+    "CoordinatorInvocation",
+    "RetainedSimulationOutput",
+    "SegmentRunnerSeams",
     "SimulationCalculation",
+    "SimulationWorkerDependencies",
     "Stage12CancellationError",
     "Stage12ExecutionError",
     "Stage12FailureDetail",

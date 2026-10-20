@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import modal
@@ -14,7 +15,7 @@ from policyengine_simulation_observability.stages import (
 
 from policyengine_simulation_executor.simulation_runtime import _country_module
 
-from .failure_recording import report_failure
+from .failure_recording import FailureSite, report_failure
 from .failures import Stage12CancellationError, Stage12ExecutionError
 from .partition import stage12_region_groups_for_model
 from .segmentation import build_segment_inputs, merge_segment_results
@@ -36,6 +37,9 @@ SEGMENT_FUNCTION_NAME = "run_single_simulation_segment_us"
 POLL_INTERVAL_INITIAL_SECONDS = 0.5
 POLL_INTERVAL_MAX_SECONDS = 8.0
 POLL_INTERVAL_BACKOFF_FACTOR = 2.0
+# A segment's poll may fail this many times in a row before its failure is
+# reported; a timeout between failures resets the count.
+CONSECUTIVE_POLL_ERROR_LIMIT = 2
 
 
 def _require_call(call: modal.FunctionCall | None) -> modal.FunctionCall:
@@ -50,6 +54,23 @@ def _next_backoff(current: float, *, maximum: float) -> float:
     return min(current * POLL_INTERVAL_BACKOFF_FACTOR, maximum)
 
 
+@dataclass(frozen=True)
+class SegmentRunnerSeams:
+    """What the segment runner looks up and how it waits; defaults are deployed.
+
+    ``modal_module`` looks up the segment function, ``groups`` replaces the
+    region groups read from the installed model, and polls start
+    ``poll_interval_seconds`` apart and back off to
+    ``poll_interval_max_seconds``, waiting with ``sleep``.
+    """
+
+    modal_module: ModuleType = modal
+    groups: Sequence[Sequence[str]] | None = None
+    sleep: Callable[[float], None] = time.sleep
+    poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS
+    poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS
+
+
 class Stage12SegmentRunner:
     """Start, collect, and merge the 20 parts of one logical simulation."""
 
@@ -59,26 +80,26 @@ class Stage12SegmentRunner:
         *,
         app_name: str,
         runtime: ObservabilityRuntime,
-        modal_module: ModuleType = modal,
-        groups: Sequence[Sequence[str]] | None = None,
-        sleep: Callable[[float], None] = time.sleep,
-        poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
-        poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
         cancellation_requested: Callable[[], bool] | None = None,
+        seams: SegmentRunnerSeams | None = None,
     ) -> None:
         """Look up the segment function deployed in ``app_name``.
 
-        ``groups`` replaces the region groups read from the installed model,
-        and ``cancellation_requested`` is checked between polls.
+        ``cancellation_requested`` is checked between polls.
         """
+        seams = seams or SegmentRunnerSeams()
         self.simulation = simulation
         self.runtime = runtime
-        self.sleep = sleep
-        self.poll_interval_initial_seconds = poll_interval_seconds
-        self.poll_interval_max_seconds = poll_interval_max_seconds
+        self.sleep = seams.sleep
+        self.poll_interval_initial_seconds = seams.poll_interval_seconds
+        self.poll_interval_max_seconds = seams.poll_interval_max_seconds
         self.cancellation_requested = cancellation_requested or (lambda: False)
-        self.groups = [list(group) for group in groups] if groups is not None else None
-        self.child_function = modal_module.Function.from_name(
+        self.groups = (
+            [list(group) for group in seams.groups]
+            if seams.groups is not None
+            else None
+        )
+        self.child_function = seams.modal_module.Function.from_name(
             app_name,
             SEGMENT_FUNCTION_NAME,
         )
@@ -166,7 +187,7 @@ class Stage12SegmentRunner:
                 except Exception as error:  # noqa: BLE001  # a segment's remote failure can be any exception type; it is retried once, then reported
                     attempts = poll_errors.get(index, 0) + 1
                     poll_errors[index] = attempts
-                    if attempts < 2:
+                    if attempts < CONSECUTIVE_POLL_ERROR_LIMIT:
                         logger.warning(
                             "Stage 12 segment %d poll failed once; retrying (%s)",
                             segment_index,
@@ -175,18 +196,20 @@ class Stage12SegmentRunner:
                         continue
                     detail = report_failure(
                         error,
+                        FailureSite(
+                            scope="segment_call",
+                            default_code="segment_execution_failed",
+                            attributes={
+                                "simulation_role": self.simulation.role.value,
+                                "evaluation_id": str(self.simulation.evaluation_id),
+                                "simulation_execution_id": str(
+                                    self.simulation.simulation_execution_id
+                                ),
+                                "segment_index": segment_index,
+                            },
+                            segment_index=segment_index,
+                        ),
                         runtime=self.runtime,
-                        failure_scope="segment_call",
-                        default_code="segment_execution_failed",
-                        attributes={
-                            "simulation_role": self.simulation.role.value,
-                            "evaluation_id": str(self.simulation.evaluation_id),
-                            "simulation_execution_id": str(
-                                self.simulation.simulation_execution_id
-                            ),
-                            "segment_index": segment_index,
-                        },
-                        segment_index=segment_index,
                     )
                     self._cancel_all(handles)
                     raise Stage12ExecutionError(detail) from None

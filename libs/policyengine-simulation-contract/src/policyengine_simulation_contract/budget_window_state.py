@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import modal
@@ -49,12 +50,19 @@ def _touch(state: BudgetWindowBatchState) -> BudgetWindowBatchState:
     return state
 
 
+@dataclass(frozen=True)
+class BatchRoute:
+    """Where a budget-window batch runs: its reported version and its Modal app."""
+
+    version: str
+    app_name: str
+
+
 def create_initial_batch_state(
     *,
     batch_job_id: str,
     request: BudgetWindowBatchRequest,
-    resolved_version: str,
-    resolved_app_name: str,
+    route: BatchRoute,
     bundle: PolicyEngineBundle,
     observability_id: str | None = None,
 ) -> BudgetWindowBatchState:
@@ -71,9 +79,9 @@ def create_initial_batch_state(
         status="submitted",
         country=request.country,
         region=request.region,
-        version=resolved_version,
+        version=route.version,
         target=request.target,
-        resolved_app_name=resolved_app_name,
+        resolved_app_name=route.app_name,
         policyengine_bundle=bundle,
         start_year=request.start_year,
         window_size=request.window_size,

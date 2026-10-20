@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -121,6 +122,7 @@ def _cohort_resolution(
 def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
     """Identity via the executor's own resolution path (writer==reader)."""
     from policyengine_simulation_executor.baseline_artifacts import (
+        BaselineIdentityRequest,
         qualifying_baseline_identity,
     )
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
@@ -130,13 +132,15 @@ def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
     params, _, resolution = _cohort_resolution(year, group)
     dataset_selection = _resolve_dataset_selection(params, region_resolution=resolution)
     identity = qualifying_baseline_identity(
-        params,
-        country=PRECOMPUTE_COUNTRY,
-        dataset_is_default=dataset_selection.is_default,
-        policy=None,
-        region_code=resolution.code,
-        scoping_strategy=resolution.scoping_strategy,
-        year=year,
+        BaselineIdentityRequest(
+            params,
+            country=PRECOMPUTE_COUNTRY,
+            dataset_is_default=dataset_selection.is_default,
+            policy=None,
+            region_code=resolution.code,
+            scoping_strategy=resolution.scoping_strategy,
+            year=year,
+        )
     )
     if identity is None:
         msg = (
@@ -330,8 +334,7 @@ def _prepare_cohort_baseline(
         dataset=dataset,
         dataset_selection=dataset_selection,
         policy=None,
-        scoping_strategy=resolution.scoping_strategy,
-        region_code=resolution.code,
+        region=resolution,
     )
     if baseline.id != expected.simulation_id:
         msg = (
@@ -475,20 +478,27 @@ def publish_manifest_impl(bucket: str, plan: PrecomputePlan) -> str:
     return ArtifactStore(bucket).write_manifest(manifest.canonical_payload())
 
 
+@dataclass(frozen=True)
+class PrecomputeFunctions:
+    """The five Modal function handles the precompute orchestration calls."""
+
+    plan_artifacts: RemoteFunction
+    build_dataset: RemoteFunction
+    compute_baseline: RemoteFunction
+    verify_determinism: RemoteFunction
+    publish_manifest: RemoteFunction
+
+
 def run_precompute(
     bucket: str,
     *,
     force: bool,
-    plan_artifacts: RemoteFunction,
-    build_dataset: RemoteFunction,
-    compute_baseline: RemoteFunction,
-    verify_determinism: RemoteFunction,
-    publish_manifest: RemoteFunction,
+    functions: PrecomputeFunctions,
     echo: Callable[[str], None] = print,
 ) -> str:
     """Orchestrate the local entrypoint: plan, spawn misses, gate, publish.
 
-    Takes the five Modal function handles as parameters (each offering
+    Takes the five Modal function handles as ``functions`` (each offering
     ``.remote``/``.spawn``) so the flow is testable with plain fakes.
     Everything crossing a handle is a plain dict (Modal's serialization
     boundary); it is validated back into models immediately on return.
@@ -498,7 +508,7 @@ def run_precompute(
     parses.
     """
     echo(f"Planning against gs://{bucket} (force={force})")
-    plan = PrecomputePlan.model_validate(plan_artifacts.remote(bucket))
+    plan = PrecomputePlan.model_validate(functions.plan_artifacts.remote(bucket))
     work = select_work(plan, force=force)
     echo(
         f"Plan: {len(plan.datasets)} datasets ({len(work.datasets)} to "
@@ -507,7 +517,8 @@ def run_precompute(
     )
 
     dataset_handles = [
-        build_dataset.spawn(bucket, entry.model_dump()) for entry in work.datasets
+        functions.build_dataset.spawn(bucket, entry.model_dump())
+        for entry in work.datasets
     ]
     for handle in dataset_handles:
         result = DatasetBuildResult.model_validate(handle.get())
@@ -518,7 +529,8 @@ def run_precompute(
         )
 
     baseline_handles = [
-        compute_baseline.spawn(bucket, entry.model_dump()) for entry in work.baselines
+        functions.compute_baseline.spawn(bucket, entry.model_dump())
+        for entry in work.baselines
     ]
     for handle in baseline_handles:
         result = BaselineComputeResult.model_validate(handle.get())
@@ -532,7 +544,7 @@ def run_precompute(
         probe = work.baselines[0]
         echo(f"Determinism gate: recomputing year={probe.year} group={probe.group}")
         verdict = DeterminismVerdict.model_validate(
-            verify_determinism.remote(bucket, probe.model_dump())
+            functions.verify_determinism.remote(bucket, probe.model_dump())
         )
         if not verdict.equal:
             raise SystemExit(
@@ -540,6 +552,6 @@ def run_precompute(
             )
         echo("Determinism gate passed")
 
-    manifest_digest = publish_manifest.remote(bucket, plan.model_dump())
+    manifest_digest = functions.publish_manifest.remote(bucket, plan.model_dump())
     echo(manifest_digest_line(manifest_digest))
     return manifest_digest

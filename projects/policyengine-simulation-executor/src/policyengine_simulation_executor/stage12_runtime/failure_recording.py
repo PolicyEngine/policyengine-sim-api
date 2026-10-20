@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,14 +19,26 @@ from .failures import Stage12FailureDetail, redacted_failure_detail
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class FailureSite:
+    """Where a failure was caught, for its report and its persisted detail.
+
+    ``scope`` names the failure in telemetry, ``default_code`` is the error
+    code an unexpected error records, and ``attributes`` and
+    ``segment_index`` identify what was running.
+    """
+
+    scope: str
+    default_code: str
+    attributes: Mapping[str, object] | None = None
+    segment_index: int | None = None
+
+
 def report_failure(
     error: Exception,
+    site: FailureSite,
     *,
     runtime: ObservabilityRuntime | None,
-    failure_scope: str,
-    default_code: str,
-    attributes: Mapping[str, object] | None = None,
-    segment_index: int | None = None,
     progress: StageProgress | None = None,
 ) -> Stage12FailureDetail:
     """Report a failure once and return the safe detail to persist for it.
@@ -38,8 +51,8 @@ def report_failure(
     """
     detail = redacted_failure_detail(
         error,
-        default_code=default_code,
-        segment_index=segment_index,
+        default_code=site.default_code,
+        segment_index=site.segment_index,
         progress=progress,
     )
     correlation = (
@@ -50,8 +63,8 @@ def report_failure(
     report_original_failure(
         error,
         runtime=runtime,
-        failure_scope=failure_scope,
-        attributes={**(attributes or {}), **correlation},
+        failure_scope=site.scope,
+        attributes={**(site.attributes or {}), **correlation},
     )
     return detail
 

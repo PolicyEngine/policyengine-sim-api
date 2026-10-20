@@ -446,20 +446,22 @@ def test_deploy_workflow_checks_stage12_results_with_the_tested_script():
 
 
 @pytest.mark.parametrize(
-    ("requested", "configuration", "deployment", "publication", "passes"),
+    ("requested", "results", "passes"),
     [
-        ("true", "success", "success", "success", True),
-        ("true", "success", "success", "failure", False),
-        ("true", "success", "skipped", "skipped", False),
-        ("true", "skipped", "skipped", "skipped", False),
-        ("false", "skipped", "skipped", "skipped", True),
-        ("false", "success", "skipped", "skipped", False),
-        ("false", "skipped", "skipped", "failure", False),
+        ("true", ("success", "success", "success"), True),
+        ("true", ("success", "success", "failure"), False),
+        ("true", ("success", "skipped", "skipped"), False),
+        ("true", ("skipped", "skipped", "skipped"), False),
+        ("false", ("skipped", "skipped", "skipped"), True),
+        ("false", ("success", "skipped", "skipped"), False),
+        ("false", ("skipped", "skipped", "failure"), False),
     ],
 )
 def test_stage12_ready_requires_all_or_none_of_the_v2_jobs(
-    fakes, requested, configuration, deployment, publication, passes
+    fakes, requested, results, passes
 ):
+    configuration, deployment, publication = results
+
     result = run_script(
         STAGE12_READY,
         env=fakes.env(

@@ -225,10 +225,10 @@ def test_local_entrypoint_wires_bucket_force_and_handles(
 
     captured = {}
 
-    def fake_run_precompute(bucket, *, force, **handles):
+    def fake_run_precompute(bucket, *, force, functions):
         captured["bucket"] = bucket
         captured["force"] = force
-        captured["handles"] = handles
+        captured["handles"] = vars(functions)
         return "digest"
 
     monkeypatch.setattr(

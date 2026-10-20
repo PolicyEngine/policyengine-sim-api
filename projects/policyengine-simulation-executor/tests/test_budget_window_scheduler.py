@@ -217,39 +217,40 @@ class MockFunction:
         return call
 
 
+class PropagatingRuntime:
+    def __init__(self):
+        self.context: dict = {}
+
+    def span(self, *_args, **_kwargs):
+        return nullcontext()
+
+    @contextmanager
+    def operation(self, *_args, remote_context=None, **_kwargs):
+        previous = self.context
+        self.context = dict(remote_context or {})
+        try:
+            yield
+        finally:
+            self.context = previous
+
+    def capture_context(self):
+        return dict(self.context)
+
+    def set_context(self, **attributes):
+        self.context.update(attributes)
+
+    def event(self, *_args, **_kwargs):
+        return None
+
+    def record_exception(self, *_args, **_kwargs):
+        return None
+
+
 @pytest.fixture
 def budget_window_semi_integration_client(
     monkeypatch,
 ) -> tuple[TestClient, SemiIntegrationRuntime]:
     runtime = SemiIntegrationRuntime()
-
-    class PropagatingRuntime:
-        def __init__(self):
-            self.context: dict = {}
-
-        def span(self, *_args, **_kwargs):
-            return nullcontext()
-
-        @contextmanager
-        def operation(self, *_args, remote_context=None, **_kwargs):
-            previous = self.context
-            self.context = dict(remote_context or {})
-            try:
-                yield
-            finally:
-                self.context = previous
-
-        def capture_context(self):
-            return dict(self.context)
-
-        def set_context(self, **attributes):
-            self.context.update(attributes)
-
-        def event(self, *_args, **_kwargs):
-            return None
-
-        def record_exception(self, *_args, **_kwargs):
-            return None
 
     runtime.observability = PropagatingRuntime()
     runtime.dicts["simulation-api-us-versions"] = {

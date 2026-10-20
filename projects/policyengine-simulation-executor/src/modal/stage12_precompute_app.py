@@ -16,6 +16,7 @@ from policyengine_simulation_executor.stage12_cache.models import (
     PrecomputePlan,
 )
 from policyengine_simulation_executor.stage12_cache.precompute import (
+    CachePrecomputeFunctions,
     build_dataset_impl,
     compute_baseline_impl,
     plan_artifacts_impl,
@@ -145,9 +146,11 @@ def main() -> None:
     """Build any missing cache files, check determinism and publish the manifest."""
     run_precompute(
         resolve_cache_bucket(),
-        plan_artifacts=plan_artifacts,
-        build_dataset=build_dataset,
-        compute_baseline=compute_baseline,
-        verify_determinism=verify_determinism,
-        publish_manifest=publish_manifest,
+        functions=CachePrecomputeFunctions(
+            plan_artifacts=plan_artifacts,
+            build_dataset=build_dataset,
+            compute_baseline=compute_baseline,
+            verify_determinism=verify_determinism,
+            publish_manifest=publish_manifest,
+        ),
     )

@@ -21,6 +21,7 @@ which is what makes it safe to ship before any artifacts exist.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from policyengine.core.scoping_strategy import RegionGroupStrategy
@@ -47,15 +48,44 @@ OUTCOME_INCOMPLETE = "incomplete"
 OUTCOME_MISS = "miss"
 
 
+@dataclass(frozen=True)
+class BaselineIdentityRequest:
+    """The request facts that decide whether a baseline has a deterministic id.
+
+    ``region_code`` is the normalized region (None when unresolved) and
+    ``scoping_strategy`` narrows the simulation to it (None for a whole
+    dataset, as a national run is).
+    """
+
+    params: dict[str, Any]
+    country: str
+    dataset_is_default: bool
+    policy: object
+    region_code: str | None
+    scoping_strategy: ScopingStrategy | None
+    year: int
+
+
+def _artifact_scope(
+    request: BaselineIdentityRequest,
+) -> tuple[str, str | None] | None:
+    """Return the artifact's region label and scope key, or None if unsupported.
+
+    Supported scopes are an unscoped national run and a region group.
+    """
+    if request.region_code is None:
+        return None
+    if request.scoping_strategy is None:
+        if request.region_code != request.country.lower():
+            return None
+        return artifact_keys.NATIONAL_REGION, None
+    if isinstance(request.scoping_strategy, RegionGroupStrategy):
+        return request.region_code, request.scoping_strategy.cache_key
+    return None
+
+
 def qualifying_baseline_identity(
-    params: dict[str, Any],
-    *,
-    country: str,
-    dataset_is_default: bool,
-    policy: object,
-    region_code: str | None,
-    scoping_strategy: ScopingStrategy | None,
-    year: int,
+    request: BaselineIdentityRequest,
 ) -> artifact_keys.BaselineArtifactIdentity | None:
     """Full artifact identity for a qualifying baseline, else None.
 
@@ -75,44 +105,28 @@ def qualifying_baseline_identity(
     reader cannot disagree by construction. Identity-collection errors
     propagate: the writer must fail loudly on them.
     """
-    if policy is not None:
+    params = request.params
+    if request.policy is not None:
         return None
     if str(params.get("scope") or "").lower() != "macro":
         return None
-    if not dataset_is_default:
+    if not request.dataset_is_default:
         return None
-    if region_code is None:
+    scope = _artifact_scope(request)
+    if scope is None:
         return None
-
-    country = country.lower()
-    if scoping_strategy is None:
-        if region_code != country:
-            return None
-        region, scope_key = artifact_keys.NATIONAL_REGION, None
-    elif isinstance(scoping_strategy, RegionGroupStrategy):
-        region, scope_key = region_code, scoping_strategy.cache_key
-    else:
-        return None
+    region, scope_key = scope
 
     return artifact_keys.collect_baseline_identity(
-        country,
-        year,
+        request.country.lower(),
+        request.year,
         region=region,
         scope_key=scope_key,
         **({"spm": params["spm"]} if params.get("spm") is not None else {}),
     )
 
 
-def deterministic_baseline_id(
-    params: dict[str, Any],
-    *,
-    country: str,
-    dataset_is_default: bool,
-    policy: object,
-    region_code: str | None,
-    scoping_strategy: ScopingStrategy | None,
-    year: int,
-) -> str | None:
+def deterministic_baseline_id(request: BaselineIdentityRequest) -> str | None:
     """Return the deterministic simulation id for a qualifying baseline, else None.
 
     This is the runtime reader's wrapper around ``qualifying_baseline_identity``.
@@ -122,22 +136,14 @@ def deterministic_baseline_id(
     errors still propagate, since they mean the request itself is invalid.
     """
     try:
-        identity = qualifying_baseline_identity(
-            params,
-            country=country,
-            dataset_is_default=dataset_is_default,
-            policy=policy,
-            region_code=region_code,
-            scoping_strategy=scoping_strategy,
-            year=year,
-        )
+        identity = qualifying_baseline_identity(request)
     except Exception as exc:
         if spm_error_detail(exc):
             raise
         logger.warning(
             "Could not collect baseline artifact identity for %s; "
             "using a random simulation id",
-            country,
+            request.country,
             exc_info=True,
         )
         return None

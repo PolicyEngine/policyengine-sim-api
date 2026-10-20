@@ -115,10 +115,13 @@ fail the guard yet.
 
 ## Baselines
 
-- **Ruff is never ratcheted.** Adopting a ruff rule family is one standalone PR
-  that changes the select list and fixes every resulting violation. Don't use
-  `--add-noqa`. A finding that is kept gets an inline `# noqa: CODE  # reason`,
-  except in the files below.
+- **Ruff is never ratcheted.** `ruff.toml` selects `ALL`, so every ruff rule
+  applies except the four listed in `ignore` (two formatter conflicts and one
+  of each mutually exclusive docstring pair) and the registered
+  [file-level exceptions](#file-level-exceptions). When a ruff upgrade adds
+  rules, the upgrade PR fixes every new violation. Don't use `--add-noqa`.
+  Outside the files that allow file-level exceptions, a justified exception is
+  an inline `# noqa: CODE  # reason`.
 - Other enforcers (mypy, Pyright, Import Linter, custom guards) may start
   `ratcheted` with a baseline file of tolerated violations. Baselines may only
   shrink: the guard compares counts against the base branch.

@@ -60,6 +60,12 @@ logger = logging.getLogger(__name__)
 os.environ.setdefault("POLICYENGINE_SKIP_COUNTRY_IMPORTS", "1")
 
 DEFAULT_YEAR = 2026
+# Credential-adjacent environment values are cut to this many characters.
+_ENV_VALUE_PREVIEW_CHARS = 50
+# A policy period key is one date or a ``start.stop`` pair of dates.
+_DATE_RANGE_PART_COUNT = 2
+# A bare two-letter US region is a state code, such as "ca".
+_US_STATE_CODE_LENGTH = 2
 
 
 @dataclass(frozen=True)
@@ -129,7 +135,9 @@ def setup_gcp_credentials(
             with credential_span:
                 # Log available GCP-related env vars for debugging.
                 gcp_vars = {
-                    k: v[:50] + "..." if len(v) > 50 else v
+                    k: v[:_ENV_VALUE_PREVIEW_CHARS] + "..."
+                    if len(v) > _ENV_VALUE_PREVIEW_CHARS
+                    else v
                     for k, v in os.environ.items()
                     if "GOOGLE" in k or "GCP" in k or "CREDENTIAL" in k
                 }
@@ -226,7 +234,7 @@ def _parse_policy_period_dates(text: str) -> tuple[datetime, datetime | None]:
     # unpadded months and days ("2027-4-6"); accept what it accepted.
     dates = [datetime.strptime(part, "%Y-%m-%d") for part in parts]  # noqa: DTZ007  # naive like policyengine.py's own period parsing; its ParameterValue dates are naive
     start = dates[0]
-    stop = dates[1] if len(dates) == 2 else None
+    stop = dates[1] if len(dates) == _DATE_RANGE_PART_COUNT else None
     if stop is not None and stop < start:
         raise ValueError
     return start, stop
@@ -327,7 +335,7 @@ def _normalise_region_code(country: str, region: object) -> str:
         return raw.lower()
 
     if "/" not in raw:
-        if country == "us" and len(raw) == 2:
+        if country == "us" and len(raw) == _US_STATE_CODE_LENGTH:
             return f"state/{raw.lower()}"
         if country == "uk":
             return f"country/{raw.lower().replace(' ', '_')}"
@@ -744,11 +752,11 @@ def _build_simulation(
     dataset: Dataset,
     dataset_selection: DatasetSelection,
     policy: dict[str, Any] | None,
-    scoping_strategy: ScopingStrategy | None = None,
-    region_code: str | None = None,
+    region: RegionResolution,
 ) -> Simulation:
     from policyengine_simulation_executor.baseline_artifacts import (
         ArtifactBaselineSimulation,
+        BaselineIdentityRequest,
         deterministic_baseline_id,
     )
     from policyengine_simulation_executor.spm import (
@@ -766,14 +774,17 @@ def _build_simulation(
     policy = _compile_interval_policy(
         policy, country_module=country_module, year=_parse_year(params)
     )
+    scoping_strategy = region.scoping_strategy
     simulation_id = deterministic_baseline_id(
-        params,
-        country=country,
-        dataset_is_default=dataset_selection.is_default,
-        policy=policy,
-        region_code=region_code,
-        scoping_strategy=scoping_strategy,
-        year=_parse_year(params),
+        BaselineIdentityRequest(
+            params,
+            country=country,
+            dataset_is_default=dataset_selection.is_default,
+            policy=policy,
+            region_code=region.code,
+            scoping_strategy=scoping_strategy,
+            year=_parse_year(params),
+        )
     )
     if simulation_id is not None:
         # Deterministic id: ensure() loads a precomputed baseline artifact
@@ -880,8 +891,7 @@ def _run_simulation_impl_core(
             dataset=dataset,
             dataset_selection=dataset_selection,
             policy=baseline_policy,
-            scoping_strategy=region_resolution.scoping_strategy,
-            region_code=region_resolution.code,
+            region=region_resolution,
         )
     with runtime.span(
         ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_BUILD),
@@ -892,8 +902,7 @@ def _run_simulation_impl_core(
             dataset=dataset,
             dataset_selection=dataset_selection,
             policy=reform_policy,
-            scoping_strategy=region_resolution.scoping_strategy,
-            region_code=region_resolution.code,
+            region=region_resolution,
         )
 
     _report_calculation_start(baseline, progress, JobStage.BASELINE)

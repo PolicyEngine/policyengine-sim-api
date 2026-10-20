@@ -138,6 +138,27 @@ def _cached_worker(version: str = "5.2.0") -> V2WorkerVersion:
     )
 
 
+def test_v2_application_name_allows_exactly_64_characters() -> None:
+    version = "5." + "1" * 33
+
+    assert len(v2_application_name(version)) == 64
+    with pytest.raises(
+        ValueError, match=r"^v2 Modal application name exceeds 64 characters$"
+    ):
+        v2_application_name(version + "1")
+
+
+@pytest.mark.parametrize("version", ["", ".5.2.0", "5.2.0 ", "5/2"])
+def test_v2_application_name_rejects_versions_a_modal_name_cannot_hold(
+    version: str,
+) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"^PolicyEngine\.py version cannot form a Modal application name$",
+    ):
+        v2_application_name(version)
+
+
 def test_publish_writes_one_complete_v2_document_per_key() -> None:
     store = FakeStore()
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import contextmanager
 
 import pytest
 from policyengine_simulation_contract.spm import SPMComparisonProvenance
@@ -13,9 +14,15 @@ from policyengine_simulation_executor.stage12_runtime.failure_causes import (
     MAX_REDACTED_MESSAGE_LENGTH,
     Stage12FailureCause,
     StageProgress,
+    StageTracking,
     failure_summary,
     record_failure_cause,
     redact_failure_message,
+    tracked_stage,
+)
+from policyengine_simulation_observability.stages import (
+    STAGE12_CANONICAL_REPORT_STAGES,
+    Stage,
 )
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -472,3 +479,60 @@ def _progress_in(stage_name: str) -> StageProgress:
     with pytest.raises(RuntimeError), progress.stage(stage_name):
         raise RuntimeError(msg)
     return progress
+
+
+class ScopeRecordingRuntime:
+    def __init__(self) -> None:
+        self.scopes: list[tuple[str, str, object]] = []
+
+    @contextmanager
+    def span(self, name, *, attributes=None):
+        self.scopes.append(("span", name, attributes))
+        yield
+
+    @contextmanager
+    def operation(self, name, *, attributes=None):
+        self.scopes.append(("operation", name, attributes))
+        yield
+
+
+@pytest.mark.parametrize(
+    ("operation", "scope_kind"), [(False, "span"), (True, "operation")]
+)
+def test_tracked_stage_scopes_and_records_the_stage_with_its_role(
+    operation, scope_kind
+) -> None:
+    runtime = ScopeRecordingRuntime()
+    progress = StageProgress(role="baseline")
+    attributes = {"simulation_role": "reform"}
+
+    with tracked_stage(
+        Stage.STAGE12_CHILD_WAIT,
+        attributes,
+        tracking=StageTracking(STAGE12_CANONICAL_REPORT_STAGES, progress, runtime),
+        operation=operation,
+    ):
+        assert progress.stage_name == "stage12_child_wait"
+        assert progress.stage_role == "reform"
+        assert not progress.stage_finished
+
+    assert runtime.scopes == [(scope_kind, "stage12_child_wait", attributes)]
+    assert progress.stage_finished
+
+
+def test_tracked_stage_without_a_runtime_still_records_the_failing_stage() -> None:
+    progress = StageProgress(role="baseline")
+    msg = "wait failed"
+
+    with (
+        pytest.raises(RuntimeError, match=msg),
+        tracked_stage(
+            Stage.STAGE12_CHILD_WAIT,
+            tracking=StageTracking(STAGE12_CANONICAL_REPORT_STAGES, progress, None),
+        ),
+    ):
+        raise RuntimeError(msg)
+
+    assert progress.stage_name == "stage12_child_wait"
+    assert progress.stage_role == "baseline"
+    assert not progress.stage_finished

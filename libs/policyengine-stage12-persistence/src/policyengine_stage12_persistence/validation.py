@@ -44,36 +44,39 @@ class Stage12RuntimeAccessError(RuntimeError):
 
 def _require_column_type(expected: object, actual: object, *, column: str) -> None:
     if isinstance(expected, ENUM):
-        if not isinstance(actual, ENUM):
-            msg = f"{column} has an unexpected type"
-            raise Stage12RuntimeAccessError(msg)
-        if expected.name != actual.name or tuple(expected.enums) != tuple(actual.enums):
-            msg = f"{column} has an unexpected enum"
-            raise Stage12RuntimeAccessError(msg)
+        _require_enum_type(expected, actual, column=column)
         return
-    if isinstance(expected, UUID):
-        if not isinstance(actual, UUID):
-            msg = f"{column} has an unexpected type"
-            raise Stage12RuntimeAccessError(msg)
-        return
-    if isinstance(expected, JSON):
-        if not isinstance(actual, JSON):
-            msg = f"{column} has an unexpected type"
-            raise Stage12RuntimeAccessError(msg)
-        return
-    if isinstance(expected, DateTime):
-        if not isinstance(actual, DateTime) or not actual.timezone:
-            msg = f"{column} has an unexpected type"
-            raise Stage12RuntimeAccessError(msg)
-        return
-    if isinstance(expected, String):
-        if not isinstance(actual, String) or expected.length != actual.length:
-            msg = f"{column} has an unexpected type"
-            raise Stage12RuntimeAccessError(msg)
-        return
-    if isinstance(expected, Integer) and not isinstance(actual, Integer):
+    if not _column_type_matches(expected, actual):
         msg = f"{column} has an unexpected type"
         raise Stage12RuntimeAccessError(msg)
+
+
+def _require_enum_type(expected: ENUM, actual: object, *, column: str) -> None:
+    """Require a live enum with the declared name and values in order."""
+    if not isinstance(actual, ENUM):
+        msg = f"{column} has an unexpected type"
+        raise Stage12RuntimeAccessError(msg)
+    if expected.name != actual.name or tuple(expected.enums) != tuple(actual.enums):
+        msg = f"{column} has an unexpected enum"
+        raise Stage12RuntimeAccessError(msg)
+
+
+def _column_type_matches(expected: object, actual: object) -> bool:
+    """Return whether a live non-enum column type satisfies the declared one.
+
+    Declared types this module does not check always match.
+    """
+    if isinstance(expected, UUID):
+        return isinstance(actual, UUID)
+    if isinstance(expected, JSON):
+        return isinstance(actual, JSON)
+    if isinstance(expected, DateTime):
+        return isinstance(actual, DateTime) and bool(actual.timezone)
+    if isinstance(expected, String):
+        return isinstance(actual, String) and expected.length == actual.length
+    if isinstance(expected, Integer):
+        return isinstance(actual, Integer)
+    return True
 
 
 def _validate_table_schema(

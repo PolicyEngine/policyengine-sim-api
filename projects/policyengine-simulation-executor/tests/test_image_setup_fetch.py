@@ -10,6 +10,7 @@ add_local_python_source).
 
 import ast
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -249,6 +250,27 @@ class TestCredentialShim:
         assert patched_google.infos == []
         assert patched_google.client_calls == [{}]
 
+    @pytest.mark.usefixtures("fake_client", "data_folder")
+    def test_unwraps_an_outer_quoted_blob(self, monkeypatch, patched_google):
+        clean = json.dumps({"type": "service_account", "project_id": "pe-test"})
+        monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", json.dumps(clean))
+
+        fetch_artifacts("test-bucket", _manifest())
+
+        assert patched_google.infos == [
+            {"type": "service_account", "project_id": "pe-test"}
+        ]
+
+    @pytest.mark.usefixtures("fake_client", "data_folder")
+    def test_rejects_a_blob_that_is_not_json(self, monkeypatch, patched_google):
+        monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS_JSON", "not-json")
+
+        with pytest.raises(json.JSONDecodeError):
+            fetch_artifacts("test-bucket", _manifest())
+
+        assert patched_google.infos == []
+        assert patched_google.client_calls == []
+
 
 def test_fetch_never_writes_credentials_to_disk():
     """The credential shim must never materialize the key as a file.
@@ -259,12 +281,18 @@ def test_fetch_never_writes_credentials_to_disk():
     assert "tempfile" not in source
 
 
+def _top_level_module_names(node: ast.Import | ast.ImportFrom) -> list[str]:
+    if isinstance(node, ast.ImportFrom):
+        return [(node.module or "").split(".")[0]]
+    return [alias.name.split(".")[0] for alias in node.names]
+
+
 def test_image_setup_module_stays_self_contained():
     """The image setup module must not import the executor package at all.
 
-    The fetch layer runs before add_local_python_source, so the module must
-    have no module-level imports and must never import the executor package,
-    even lazily inside a function body.
+    The fetch layer runs before add_local_python_source, so the module may
+    import only standard-library modules at module level and must never
+    import the executor package, even lazily inside a function body.
     """
     source = Path(image_setup.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -272,7 +300,13 @@ def test_image_setup_module_stays_self_contained():
     module_level_imports = [
         node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))
     ]
-    assert module_level_imports == []
+    non_standard_library_modules = [
+        module_name
+        for node in module_level_imports
+        for module_name in _top_level_module_names(node)
+        if module_name not in sys.stdlib_module_names
+    ]
+    assert non_standard_library_modules == []
 
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
@@ -282,3 +316,140 @@ def test_image_setup_module_stays_self_contained():
         if isinstance(node, ast.Import):
             for alias in node.names:
                 assert not alias.name.startswith("policyengine_simulation_executor")
+
+
+class TestCharacterization:
+    """Pin the remaining fetch branches before the function is split up."""
+
+    @pytest.mark.usefixtures("data_folder")
+    @pytest.mark.parametrize(
+        "receipt_text",
+        [
+            "not json",
+            "[]",
+            '{"datasets": ["not-an-entry"]}',
+            '{"datasets": [{"country": "uk", "version": "9.9.9"}]}',
+            '{"datasets": [{"country": "us"}]}',
+        ],
+    )
+    def test_unusable_receipts_skip_the_data_version_check_with_a_warning(
+        self, monkeypatch, tmp_path, fake_client, caplog, receipt_text
+    ):
+        import logging
+
+        receipt_file = tmp_path / "bundle-receipt.json"
+        receipt_file.write_text(receipt_text)
+        monkeypatch.setenv("POLICYENGINE_BUNDLE_RECEIPT", str(receipt_file))
+
+        with caplog.at_level(logging.INFO):
+            fetch_artifacts("test-bucket", _manifest(), client=fake_client)
+
+        assert len(fake_client.downloads) == 2
+        warnings = [
+            record.getMessage()
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+        ]
+        assert warnings == [
+            "No installed bundle receipt entry for us; "
+            "skipping the data-version freshness check"
+        ]
+
+    @pytest.mark.usefixtures("data_folder")
+    @pytest.mark.parametrize(
+        ("versions", "passes"),
+        [(["9.9.9", "1.2.3"], True), (["1.2.3", "9.9.9"], False)],
+    )
+    def test_the_last_receipt_entry_for_the_country_wins(
+        self, monkeypatch, tmp_path, fake_client, versions, passes
+    ):
+        receipt_file = tmp_path / "bundle-receipt.json"
+        receipt_file.write_text(
+            json.dumps(
+                {
+                    "datasets": [
+                        {"country": "us", "version": version} for version in versions
+                    ]
+                }
+            )
+        )
+        monkeypatch.setenv("POLICYENGINE_BUNDLE_RECEIPT", str(receipt_file))
+
+        if passes:
+            fetch_artifacts("test-bucket", _manifest(), client=fake_client)
+            assert len(fake_client.downloads) == 2
+        else:
+            with pytest.raises(RuntimeError) as error:
+                fetch_artifacts("test-bucket", _manifest(), client=fake_client)
+            assert str(error.value) == (
+                "Stale artifact manifest: installed us data version is '9.9.9' "
+                "but the manifest was computed for '1.2.3'. Re-run the "
+                "precompute for the current version-set."
+            )
+
+    def test_stale_policyengine_version_message(self, monkeypatch, fake_client):
+        monkeypatch.setenv("POLICYENGINE_VERSION", "4.99.0")
+        monkeypatch.setenv("POLICYENGINE_US_VERSION", "9.9.9")
+
+        with pytest.raises(RuntimeError) as error:
+            fetch_artifacts("test-bucket", _manifest(), client=fake_client)
+
+        assert str(error.value) == (
+            "Stale artifact manifest: the image has POLICYENGINE_VERSION='4.99.0' "
+            "but the manifest was computed for '4.22.0'. Re-run the precompute "
+            "for the current version-set."
+        )
+
+    @pytest.mark.usefixtures("data_folder")
+    def test_a_download_that_writes_nothing_fails_while_logging_it(self, fake_client):
+        class SilentBlob(FakeBlob):
+            def download_to_filename(self, filename):
+                self.store.downloads.append((self.path, Path(filename).name))
+
+        fake_client.bucket = lambda _name: SimpleNamespace(
+            blob=lambda path: SilentBlob(fake_client, path)
+        )
+
+        with pytest.raises(FileNotFoundError):
+            fetch_artifacts("test-bucket", _manifest(), client=fake_client)
+
+        assert fake_client.downloads == [
+            ("datasets/us/d1/populace_year_2026.h5", "populace_year_2026.h5")
+        ]
+
+    def test_files_missing_after_every_download_fail_the_build(
+        self, fake_client, data_folder
+    ):
+        class ReplacingBlob(FakeBlob):
+            def download_to_filename(self, filename):
+                for existing in data_folder.iterdir():
+                    existing.unlink()
+                super().download_to_filename(filename)
+
+        fake_client.bucket = lambda _name: SimpleNamespace(
+            blob=lambda path: ReplacingBlob(fake_client, path)
+        )
+
+        with pytest.raises(RuntimeError) as error:
+            fetch_artifacts("test-bucket", _manifest(), client=fake_client)
+
+        missing = str(data_folder / "populace_year_2026.h5")
+        assert str(error.value) == (
+            f"Artifact fetch did not produce expected files: [{missing!r}]"
+        )
+
+    @pytest.mark.usefixtures("data_folder")
+    def test_logs_each_fetched_artifact(self, fake_client, caplog):
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            fetch_artifacts("test-bucket", _manifest(), client=fake_client)
+
+        fetched = [
+            record.getMessage()
+            for record in caplog.records
+            if record.getMessage().startswith("Fetched ")
+        ]
+        assert len(fetched) == 2
+        assert fetched[0].endswith("populace_year_2026.h5 (0.0 MB)")
+        assert fetched[1].endswith("bl1-aaaa.h5 (0.0 MB)")

@@ -699,7 +699,7 @@ class TestStage12CachePrecompute:
         uv_path.write_text(
             "#!/bin/bash\n"
             'printf \'%s\\n\' "$*" >> "$UV_FAKE_LOG"\n'
-            'printf \'%s\\n\' "$UV_FAKE_OUTPUT"\n',
+            "printf '%s\\n' \"$UV_FAKE_OUTPUT\"\n",
             encoding="utf-8",
         )
         uv_path.chmod(0o755)

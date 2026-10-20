@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, uuid5
@@ -64,9 +65,10 @@ from .models import (
 from .store import Stage12CacheStore
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
     import modal
+    import pandas as pd
 
 PRECOMPUTE_YEARS = (2026, 2027, 2025)
 MANIFEST_DIGEST_PREFIX = "STAGE12_CACHE_MANIFEST_DIGEST="
@@ -340,6 +342,27 @@ def compute_baseline_impl(
     )
 
 
+def _frame_differences(
+    cached: Mapping[str, pd.DataFrame], fresh: Mapping[str, pd.DataFrame]
+) -> list[str]:
+    """Describe every entity and column where two sets of frames differ, in order."""
+    differences = []
+    for entity in sorted(set(cached) | set(fresh)):
+        left = cached.get(entity)
+        right = fresh.get(entity)
+        if left is None or right is None:
+            differences.append(f"{entity}: missing on one side")
+            continue
+        for column in sorted(set(left) | set(right)):
+            if column not in left or column not in right:
+                differences.append(f"{entity}.{column}: only on one side")
+            elif str(left[column].dtype) != str(right[column].dtype):
+                differences.append(f"{entity}.{column}: dtype differs")
+            elif not left[column].equals(right[column]):
+                differences.append(f"{entity}.{column}: values differ")
+    return differences
+
+
 def verify_determinism_impl(
     bucket: str, plan: PrecomputePlan, expected: BaselinePlanEntry
 ) -> DeterminismVerdict:
@@ -362,22 +385,8 @@ def verify_determinism_impl(
             f"(cache outcome {cached_calculation.cache_outcome})"
         )
         raise RuntimeError(msg)
-    cached = cached_calculation.frames
     fresh = stage12_simulation.calculate_simulation_frames(reform).frames
-    differences = []
-    for entity in sorted(set(cached) | set(fresh)):
-        left = cached.get(entity)
-        right = fresh.get(entity)
-        if left is None or right is None:
-            differences.append(f"{entity}: missing on one side")
-            continue
-        for column in sorted(set(left) | set(right)):
-            if column not in left or column not in right:
-                differences.append(f"{entity}.{column}: only on one side")
-            elif str(left[column].dtype) != str(right[column].dtype):
-                differences.append(f"{entity}.{column}: dtype differs")
-            elif not left[column].equals(right[column]):
-                differences.append(f"{entity}.{column}: values differ")
+    differences = _frame_differences(cached_calculation.frames, fresh)
     if not differences:
         store.write_json(
             determinism_record_path(plan.baselines),
@@ -441,14 +450,21 @@ def publish_manifest_impl(bucket: str, plan: PrecomputePlan) -> str:
     return store.write_manifest(build_manifest(plan, store).canonical_payload())
 
 
+@dataclass(frozen=True)
+class CachePrecomputeFunctions:
+    """The five Modal function handles the cache precompute orchestration calls."""
+
+    plan_artifacts: modal.Function
+    build_dataset: modal.Function
+    compute_baseline: modal.Function
+    verify_determinism: modal.Function
+    publish_manifest: modal.Function
+
+
 def run_precompute(
     bucket: str,
     *,
-    plan_artifacts: modal.Function,
-    build_dataset: modal.Function,
-    compute_baseline: modal.Function,
-    verify_determinism: modal.Function,
-    publish_manifest: modal.Function,
+    functions: CachePrecomputeFunctions,
     echo: Callable[[str], None] = print,
 ) -> str:
     """Build the missing cache files, check determinism, publish the manifest.
@@ -457,15 +473,17 @@ def run_precompute(
     Modal calls. Prints the manifest digest through ``echo`` and returns it.
     Exits with ``SystemExit`` when the determinism check fails.
     """
-    plan = PrecomputePlan.model_validate(plan_artifacts.remote(bucket))
+    plan = PrecomputePlan.model_validate(functions.plan_artifacts.remote(bucket))
     work = select_work(plan)
     dataset_calls = [
-        build_dataset.spawn(bucket, entry.model_dump()) for entry in work.datasets
+        functions.build_dataset.spawn(bucket, entry.model_dump())
+        for entry in work.datasets
     ]
     for call in dataset_calls:
         DatasetBuildResult.model_validate(call.get())
     baseline_calls = [
-        compute_baseline.spawn(bucket, entry.model_dump()) for entry in work.baselines
+        functions.compute_baseline.spawn(bucket, entry.model_dump())
+        for entry in work.baselines
     ]
     for call in baseline_calls:
         BaselineBuildResult.model_validate(call.get())
@@ -475,14 +493,16 @@ def run_precompute(
     if work.baselines or not plan.determinism_verified:
         probe = work.baselines[0] if work.baselines else plan.baselines[0]
         verdict = DeterminismVerdict.model_validate(
-            verify_determinism.remote(bucket, plan.model_dump(), probe.model_dump())
+            functions.verify_determinism.remote(
+                bucket, plan.model_dump(), probe.model_dump()
+            )
         )
         if not verdict.equal:
             raise SystemExit(
                 "Stage 12 cache determinism validation failed: "
                 + "; ".join(verdict.differences)
             )
-    digest = publish_manifest.remote(bucket, plan.model_dump())
+    digest = functions.publish_manifest.remote(bucket, plan.model_dump())
     if not isinstance(digest, str) or not digest:
         msg = "Stage 12 cache manifest publisher returned no digest"
         raise RuntimeError(msg)

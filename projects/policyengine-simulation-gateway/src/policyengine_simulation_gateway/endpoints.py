@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.budget_window_state import (
+    BatchRoute,
     build_batch_status_response,
     create_initial_batch_state,
     get_batch_job_seed,
@@ -49,6 +50,7 @@ from policyengine_simulation_contract.json_types import JsonObject
 from policyengine_simulation_contract.spm import (
     SPMCapability,
     SPMInputError,
+    SPMRouteVersions,
     SPMSelection,
     resolve_spm_selection,
     spm_error_detail,
@@ -411,37 +413,66 @@ def _resolve_from_active_state(
     policyengine_version: str | None,
 ) -> RouteResolution:
     if policyengine_version is not None:
-        resolution = _resolve_policyengine_route(
+        return _resolve_pinned_policyengine_route(
             state,
+            country=country,
+            version=version,
             policyengine_version=policyengine_version,
         )
-        if version is not None:
-            _validate_legacy_version_matches_bundle(
-                country=country,
-                requested_version=version,
-                manifest=resolution.bundle_manifest,
-            )
-        return resolution
-
     if version is None:
-        latest_policyengine = _routing_state_latest(state, "policyengine")
-        if latest_policyengine is not None:
-            return _resolve_policyengine_route(
-                state,
-                policyengine_version=latest_policyengine,
-            )
-        latest_country_version = _routing_state_latest(state, country)
-        if latest_country_version is not None:
-            country_resolution = _resolve_country_route(
-                state,
-                country=country,
-                version=latest_country_version,
-            )
-            if country_resolution is not None:
-                return country_resolution
-        msg = "Routing state does not define a latest route"
-        raise ValueError(msg)
+        return _resolve_latest_route(state, country=country)
+    return _resolve_requested_version_route(state, country=country, version=version)
 
+
+def _resolve_pinned_policyengine_route(
+    state: dict,
+    *,
+    country: str,
+    version: str | None,
+    policyengine_version: str,
+) -> RouteResolution:
+    """Route to an explicit wrapper version, checking any requested model version."""
+    resolution = _resolve_policyengine_route(
+        state,
+        policyengine_version=policyengine_version,
+    )
+    if version is not None:
+        _validate_legacy_version_matches_bundle(
+            country=country,
+            requested_version=version,
+            manifest=resolution.bundle_manifest,
+        )
+    return resolution
+
+
+def _resolve_latest_route(state: dict, *, country: str) -> RouteResolution:
+    """Route to the latest wrapper version, else the latest country model."""
+    latest_policyengine = _routing_state_latest(state, "policyengine")
+    if latest_policyengine is not None:
+        return _resolve_policyengine_route(
+            state,
+            policyengine_version=latest_policyengine,
+        )
+    latest_country_version = _routing_state_latest(state, country)
+    if latest_country_version is not None:
+        country_resolution = _resolve_country_route(
+            state,
+            country=country,
+            version=latest_country_version,
+        )
+        if country_resolution is not None:
+            return country_resolution
+    msg = "Routing state does not define a latest route"
+    raise ValueError(msg)
+
+
+def _resolve_requested_version_route(
+    state: dict,
+    *,
+    country: str,
+    version: str,
+) -> RouteResolution:
+    """Route ``version`` as a country model or wrapper version, refusing ambiguity."""
     country_resolution = _resolve_country_route(
         state,
         country=country,
@@ -668,9 +699,11 @@ def _resolve_request_spm(
         request.country,
         request.spm,
         capability=bundle.spm,
-        policyengine_version=bundle.policyengine_version,
-        model_version=_certified_model_version(request.country, route),
-        route_provenance=route.route_provenance,
+        route_versions=SPMRouteVersions(
+            policyengine_version=bundle.policyengine_version,
+            model_version=_certified_model_version(request.country, route),
+            route_provenance=route.route_provenance,
+        ),
     )
     if selection is not None:
         request.spm = SPMSelection.model_validate(selection)
@@ -1041,8 +1074,7 @@ async def submit_budget_window_batch(
     seed_state = create_initial_batch_state(
         batch_job_id=batch_job_id,
         request=request,
-        resolved_version=route.response_version,
-        resolved_app_name=route.app_name,
+        route=BatchRoute(version=route.response_version, app_name=route.app_name),
         bundle=bundle,
         observability_id=observability_id,
     )

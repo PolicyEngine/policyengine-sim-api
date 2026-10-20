@@ -127,7 +127,6 @@ def init_simulation_observability(
     service_role: str,
     platform: Platform,
     environment: str,
-    service_version: str | None = None,
 ) -> ObservabilityRuntime:
     """Build the service's observability runtime and instrument ``app`` with it.
 
@@ -138,7 +137,6 @@ def init_simulation_observability(
         service_role=service_role,
         platform=platform,
         environment=environment,
-        service_version=service_version,
     )
     return instrument_fastapi(app, runtime)
 

@@ -6,6 +6,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_contract.budget_window_state import (
+    BatchRoute,
     build_batch_status_response,
     create_initial_batch_state,
     get_batch_job_seed,
@@ -30,6 +31,7 @@ from src.modal.budget_window_results import (
     build_budget_window_result,
     extract_annual_impact,
 )
+from src.modal.fanout import PollBackoff
 
 import modal
 
@@ -56,6 +58,11 @@ POLL_INTERVAL_BACKOFF_FACTOR = 2.0
 # Retained for backward compatibility with callers that imported the original
 # constant; new code should use the initial/max pair above.
 POLL_INTERVAL_SECONDS = POLL_INTERVAL_INITIAL_SECONDS
+DEFAULT_POLL_BACKOFF = PollBackoff(
+    initial_seconds=POLL_INTERVAL_INITIAL_SECONDS,
+    maximum_seconds=POLL_INTERVAL_MAX_SECONDS,
+    factor=POLL_INTERVAL_BACKOFF_FACTOR,
+)
 
 
 def serialize_batch_status(
@@ -82,8 +89,9 @@ def load_or_create_batch_state(
         state = create_initial_batch_state(
             batch_job_id=context.batch_job_id,
             request=context.request,
-            resolved_version=context.resolved_version,
-            resolved_app_name=context.resolved_app_name,
+            route=BatchRoute(
+                version=context.resolved_version, app_name=context.resolved_app_name
+            ),
             bundle=context.bundle,
         )
         with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)):
@@ -100,9 +108,7 @@ class BudgetWindowBatchRunner:
         *,
         runtime: ObservabilityRuntime,
         modal_module: ModuleType | None = None,
-        poll_interval_seconds: float = POLL_INTERVAL_INITIAL_SECONDS,
-        poll_interval_max_seconds: float = POLL_INTERVAL_MAX_SECONDS,
-        poll_interval_backoff_factor: float = POLL_INTERVAL_BACKOFF_FACTOR,
+        poll_backoff: PollBackoff = DEFAULT_POLL_BACKOFF,
     ) -> None:
         """Load or seed the batch state and resolve a lazy child-function handle.
 
@@ -112,11 +118,11 @@ class BudgetWindowBatchRunner:
         self.context = context
         self.runtime = runtime
         self.modal = modal if modal_module is None else modal_module
-        self.poll_interval_initial_seconds = poll_interval_seconds
-        self.poll_interval_max_seconds = poll_interval_max_seconds
-        self.poll_interval_backoff_factor = poll_interval_backoff_factor
+        self.poll_interval_initial_seconds = poll_backoff.initial_seconds
+        self.poll_interval_max_seconds = poll_backoff.maximum_seconds
+        self.poll_interval_backoff_factor = poll_backoff.factor
         # Kept for tests that still read this attribute.
-        self.poll_interval_seconds = poll_interval_seconds
+        self.poll_interval_seconds = poll_backoff.initial_seconds
         self.runtime.set_context(
             batch_job_id=context.batch_job_id,
             resolved_app_name=context.resolved_app_name,
