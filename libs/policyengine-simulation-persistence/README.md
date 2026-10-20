@@ -65,10 +65,11 @@ tables (`sim.persistence.status-reads-never-advance-work`).
 ## Report tables
 
 `simulation.reports` records economy and household reports (`kind`). A report
-migrated from API v1 keeps the v1 ID in `legacy_report_id` (unique) and starts
-`not_started` with no job. Once a job is attached the report is `submitted`,
-and its progress is that job's status, so the report and job never disagree; a
-check constraint ties the status to the presence of `job_id`.
+migrated from the Public API keeps its v1 report ID in `legacy_report_id`
+(unique) and starts `not_started` with no job. Once a job is attached the
+report is `submitted`, and its progress is that job's status, so the report
+and job never disagree; a check constraint ties the status to the presence of
+`job_id`.
 
 `simulation.report_results` holds one aggregate per finished report job,
 keyed by the job, so reports with identical inputs (one shared job) share one

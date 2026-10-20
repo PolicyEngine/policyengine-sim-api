@@ -1,7 +1,7 @@
 """Report tables: ``simulation.reports`` and ``simulation.report_results``.
 
 A report is an economy or household comparison a user can save. A report row
-created by the one-time migration from API v1 keeps its v1 ID in
+created by the one-time migration from the Public API keeps its v1 report ID in
 ``legacy_report_id`` and starts ``not_started``, with no job. Once a job is
 attached the report is ``submitted``, and its progress is that job's status,
 so the two never disagree.

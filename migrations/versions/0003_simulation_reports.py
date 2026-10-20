@@ -1,7 +1,7 @@
 """Add the report tables: simulation.reports and simulation.report_results.
 
 A report row records an economy or household report. A row migrated from
-API v1 keeps the v1 report ID in ``legacy_report_id`` and starts
+the Public API keeps the v1 report ID in ``legacy_report_id`` and starts
 ``not_started`` with no job; once a job is attached the report is
 ``submitted`` and its progress is that job's status. ``report_results`` holds
 one aggregate per finished report job, validated by a Pydantic model and
