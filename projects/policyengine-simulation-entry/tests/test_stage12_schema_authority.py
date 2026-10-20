@@ -1,20 +1,21 @@
-"""Keep Stage 12 database schema ownership outside simulation runtimes."""
+"""Keep Stage 12 database schema ownership outside simulation runtimes.
+
+DDL_PATTERN is shared with sim.boundaries.sqlalchemy-and-alembic-only, which
+matches it against the string literals of every source directory; see
+database_access_support.py.
+"""
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+
+from database_access_support import DDL_PATTERN
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_SOURCE_ROOTS = (
     REPOSITORY_ROOT / "libs/policyengine-stage12-persistence/src",
     REPOSITORY_ROOT / "projects/policyengine-simulation-entry/src",
     REPOSITORY_ROOT / "projects/policyengine-simulation-executor/src",
-)
-DDL_PATTERN = re.compile(
-    r"\b(?:CREATE|ALTER|DROP|TRUNCATE)\s+"
-    r"(?:TABLE|TYPE|SCHEMA|DATABASE)\b|\bcreate_all\s*\(",
-    flags=re.IGNORECASE,
 )
 
 
