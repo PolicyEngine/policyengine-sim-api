@@ -132,7 +132,7 @@ id = "sim.persistence.migration-cycle"
 category = "persistence"
 statement = "On a fresh PostgreSQL, the simulation chain upgrades to its head, passes alembic check, downgrades to base and upgrades again, run by a non-superuser migrator, and the runtime role can read the revision but cannot change the schema."
 rationale = "libs/policyengine-simulation-persistence/README.md#tests"
-scope = ["migrations/versions/*.py", "libs/policyengine-simulation-persistence/src/**/*.py"]
+scope = ["migrations/env.py", "migrations/versions/*.py", "libs/policyengine-simulation-persistence/src/**/*.py"]
 tier = "mechanical"
 status = "enforced"
 autofix = false
@@ -141,6 +141,7 @@ kind = "pytest"
 project = "libs/policyengine-simulation-persistence"
 nodes = [
   "tests/test_migration_cycle.py::test_upgrade_check_downgrade_upgrade_cycle",
+  "tests/test_migration_cycle.py::test_alembic_check_run_on_its_own_finds_no_differences",
   "tests/test_migration_cycle.py::test_the_version_table_lives_only_in_the_simulation_schema",
   "tests/test_migration_cycle.py::test_the_runtime_role_reads_the_revision_but_cannot_change_the_schema",
 ]

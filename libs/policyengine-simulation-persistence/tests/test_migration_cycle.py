@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 from alembic import command
-from migration_support import MIGRATOR_ROLE, alembic_config
+from migration_support import ALEMBIC_CONFIG_PATH, MIGRATOR_ROLE, alembic_config
 from policyengine_simulation_persistence import (
     HEAD_REVISION,
     SIMULATION_SCHEMA,
@@ -39,6 +42,28 @@ def test_upgrade_check_downgrade_upgrade_cycle(disposable_database) -> None:
     command.upgrade(config, "head")
     assert _revision(disposable_database.migrator_url) == HEAD_REVISION
     command.check(config)
+
+
+def test_alembic_check_run_on_its_own_finds_no_differences(
+    disposable_database,
+) -> None:
+    """Run ``alembic check`` in a new process, as the command line does.
+
+    Inside the test session other test modules import the table definitions,
+    so an in-process check passes even when the migration environment does not
+    import them. A new process sees only what the environment imports.
+    """
+    command.upgrade(alembic_config(), "head")
+
+    check = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_CONFIG_PATH), "check"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert check.returncode == 0, check.stdout + check.stderr
 
 
 def test_the_version_table_lives_only_in_the_simulation_schema(

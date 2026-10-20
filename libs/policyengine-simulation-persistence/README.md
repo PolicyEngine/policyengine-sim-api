@@ -90,11 +90,14 @@ reads them.
 
 ## Adding a revision
 
-1. Change the tables in `src/policyengine_simulation_persistence/`.
+1. Change the tables in `src/policyengine_simulation_persistence/`. A new
+   module that defines tables must also be imported by `migrations/env.py`,
+   because the schema comparison sees only tables whose module was imported.
 2. Add a revision under `migrations/versions/` whose `down_revision` is the
    current head, and set `HEAD_REVISION` in `schema.py` to its revision ID.
 3. Run the tests against a disposable PostgreSQL server (below). They run the
-   chain's upgrade, `alembic check`, downgrade and upgrade cycle.
+   chain's upgrade, `alembic check`, downgrade and upgrade cycle, and run
+   `alembic check` again in a separate process, as the command line does.
 
 Only one migration PR in this chain may be open at a time; a second one rebases
 onto the new head after the first merges.
