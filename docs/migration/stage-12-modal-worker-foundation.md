@@ -414,6 +414,35 @@ not satisfy the requested output plan is recalculated. Each region-group log
 records whether it loaded a complete file, recalculated an incomplete file, or
 computed because no file existed.
 
+## v2 household functions
+
+The versioned v2 application also defines one household function for each
+country in the PolicyEngine.py bundle, named `calculate_household_{country}`
+(currently `calculate_household_us` and `calculate_household_uk`). Each call
+calculates one household, in the Public API's situation shape, under one or
+more policies, and returns a `HouseholdExecutionResult` or a typed
+`HouseholdExecutionFailure` from
+`policyengine_simulation_contract.household_execution`. A function refuses a
+request for another country or for another bundle. Nothing calls these
+functions until the Simulation Entrypoint has household routes.
+
+- Image: the frozen `modal-simulation-image` dependency group and the source
+  packages, without the bundle's datasets or the Stage 12 cache.
+- Secrets: none. Household calculations read no private data, Cloud Storage
+  or database.
+- Limits: 2 CPUs, 4,096 MiB of reserved and 16,384 MiB of maximum memory, a
+  900-second timeout, no retries, and a Modal `max_containers` value of 20.
+
+Deployment validation calls each household function with a one-adult,
+current-law household and requires a successful calculation with the deployed
+bundle and a numeric household net income. The validation record keeps each
+invocation ID, and the manifest publisher records a country's
+`household_callable` only when the record shows that its function was
+validated. A failed household validation fails v2 worker validation like any
+other validation failure: it stops manifest publication and, as described
+under "Release and deployment constraints", prevents promotion of the Cloud Run
+revision.
+
 ## Temporary direct runner endpoint
 
 > **Temporary Stage 12 interface:** The authenticated routes in this section
