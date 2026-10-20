@@ -13,7 +13,7 @@ from policyengine_simulation_persistence import (
     normalized_database_url,
     simulation_metadata,
 )
-from sqlalchemy import create_engine, pool
+from sqlalchemy import create_engine, inspect, pool
 from sqlalchemy.schema import CreateSchema
 
 if TYPE_CHECKING:
@@ -44,10 +44,22 @@ def _include_object(
     return not (type_ == "table" and name == ALEMBIC_VERSION_TABLE)
 
 
+def _ensure_simulation_schema(connection: Connection) -> None:
+    """Create the simulation schema, owned by the migrator, if it is missing.
+
+    PostgreSQL checks CREATE on the database before it checks whether a schema
+    exists, even for CREATE SCHEMA IF NOT EXISTS. Creating the schema only when
+    it is missing lets an operator create it in advance, owned by the migrator,
+    instead of granting the migrator CREATE on the database.
+    """
+    if not inspect(connection).has_schema(SIMULATION_SCHEMA):
+        connection.execute(CreateSchema(SIMULATION_SCHEMA))
+
+
 def _run(connection: Connection) -> None:
     # The version table lives in the simulation schema, so the schema must
-    # exist before Alembic looks for it. The migrator owns it.
-    connection.execute(CreateSchema(SIMULATION_SCHEMA, if_not_exists=True))
+    # exist before Alembic looks for it.
+    _ensure_simulation_schema(connection)
     context.configure(
         connection=connection,
         target_metadata=simulation_metadata,
