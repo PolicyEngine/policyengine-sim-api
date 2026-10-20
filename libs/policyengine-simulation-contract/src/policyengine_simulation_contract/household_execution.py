@@ -454,6 +454,13 @@ class _HouseholdCalculationInputs(StrictHouseholdModel):
     whether the selection came from this request or from a saved household,
     which changes only how an SPM artifact the bundle no longer carries is
     reported.
+
+    To calculate a saved household as the Public API's stored-household
+    route (``GET /{country}/household/{id}/policy/{policy_id}``) does, set
+    ``add_missing_variables``, because that route always adds missing
+    variables; pass the household's saved SPM selection, if it has one, as
+    ``spm``, so it counts as chosen; and set ``spm_selection_source`` to
+    ``"saved_household"``.
     """
 
     country: CountryId
