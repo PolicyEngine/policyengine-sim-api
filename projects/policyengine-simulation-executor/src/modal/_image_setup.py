@@ -6,13 +6,20 @@ The artifact fetch additionally runs BEFORE add_local_python_source,
 so policyengine_simulation_executor is not importable there at all.
 """
 
-# Annotation-only imports sit behind a local TYPE_CHECKING flag (not
-# typing.TYPE_CHECKING) because this module must have no module-level
-# imports; the annotations that use them are therefore quoted.
-TYPE_CHECKING = False
+# Only standard-library modules are imported at module level. Modal imports
+# this module from its mounted source in the image-build step, before the
+# executor package is added to the image, and src/modal/app.py imports it
+# wherever the app loads; any other package loads only inside the function
+# that needs it. Annotation-only imports sit under TYPE_CHECKING, so the
+# annotations that use them are quoted.
+import json
+import logging
+import os
+from pathlib import Path
+from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from pathlib import Path
     from typing import Any
 
     from google.cloud import storage
@@ -28,7 +35,8 @@ def fetch_artifacts(
 
     Runs as an image-build layer between ``.env(VERSION_ENV)`` and
     ``add_local_python_source``, so it must stay self-contained (no
-    imports from this package; everything lazy in-body). The manifest
+    imports from this package; only the standard library at module
+    level, everything else in the function body). The manifest
     rides in the layer args: it is content-addressed, so the layer cache
     busts exactly when the deployed artifact set changes.
 
@@ -40,12 +48,6 @@ def fetch_artifacts(
     ``client`` is a test seam; real builds construct a storage client from
     the layer's GCP secret (or ambient ADC for local drill runs).
     """
-    import logging  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-    import os  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-    from pathlib import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-        Path,
-    )
-
     logging.basicConfig(level=logging.INFO)
 
     if not manifest:
@@ -77,8 +79,6 @@ def _require_manifest_matches_image(manifest: "Mapping[str, Any]") -> None:
     manifest receipt's, and so must the installed data version when the
     bundle receipt records one.
     """
-    import os  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-
     country = str(manifest["country"])
     receipt = manifest["receipt"]
     expected_env = {
@@ -98,8 +98,6 @@ def _require_manifest_matches_image(manifest: "Mapping[str, Any]") -> None:
 
     installed_data_version = _installed_data_version(country)
     if installed_data_version is None:
-        import logging  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-
         # Lenient by design: local drill runs have no bundle receipt file.
         logging.getLogger(__name__).warning(
             "No installed bundle receipt entry for %s; "
@@ -122,12 +120,6 @@ def _installed_data_version(country: str) -> object:
     None also covers a missing or unreadable receipt; the last matching
     receipt entry wins.
     """
-    import json  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-    import os  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-    from pathlib import (  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-        Path,
-    )
-
     receipt_path = os.environ.get("POLICYENGINE_BUNDLE_RECEIPT")
     if not receipt_path or not Path(receipt_path).exists():
         return None
@@ -145,8 +137,6 @@ def _installed_data_version(country: str) -> object:
 
 def _storage_client_from_environment() -> "storage.Client":
     """Build a storage client from the layer's GCP secret, else ambient ADC."""
-    import os  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-
     creds_kwargs = {}
     blob = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS_JSON")
     if blob:
@@ -166,8 +156,6 @@ def _service_account_credentials(blob: str) -> "dict[str, Any]":
     container filesystem is committed into the image, so a credentials file
     would ship inside it.
     """
-    import json  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-
     # The secret payload is sometimes double-encoded (escaped interior
     # quotes, with or without outer quotes) — same unwrap as the runtime's
     # _normalize_credentials_blob.
@@ -200,8 +188,6 @@ def _download_manifest_artifacts(
     Every store object is checked before anything downloads, and every
     expected file is checked after.
     """
-    import logging  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-
     logger = logging.getLogger(__name__)
     missing = [
         artifact["path"]
@@ -237,8 +223,6 @@ def _download_manifest_artifacts(
 
 def snapshot_models() -> None:
     """Pre-load models at image build time for fast cold starts."""
-    import logging  # noqa: PLC0415  # image-build function: this module has no module-level imports by design
-
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 

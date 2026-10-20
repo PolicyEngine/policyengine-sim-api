@@ -10,6 +10,7 @@ add_local_python_source).
 
 import ast
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -280,12 +281,18 @@ def test_fetch_never_writes_credentials_to_disk():
     assert "tempfile" not in source
 
 
+def _top_level_module_names(node: ast.Import | ast.ImportFrom) -> list[str]:
+    if isinstance(node, ast.ImportFrom):
+        return [(node.module or "").split(".")[0]]
+    return [alias.name.split(".")[0] for alias in node.names]
+
+
 def test_image_setup_module_stays_self_contained():
     """The image setup module must not import the executor package at all.
 
-    The fetch layer runs before add_local_python_source, so the module must
-    have no module-level imports and must never import the executor package,
-    even lazily inside a function body.
+    The fetch layer runs before add_local_python_source, so the module may
+    import only standard-library modules at module level and must never
+    import the executor package, even lazily inside a function body.
     """
     source = Path(image_setup.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -293,7 +300,13 @@ def test_image_setup_module_stays_self_contained():
     module_level_imports = [
         node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))
     ]
-    assert module_level_imports == []
+    non_standard_library_modules = [
+        module_name
+        for node in module_level_imports
+        for module_name in _top_level_module_names(node)
+        if module_name not in sys.stdlib_module_names
+    ]
+    assert non_standard_library_modules == []
 
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
