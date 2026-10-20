@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from policyengine_observability import ObservabilityRuntime
 from policyengine_simulation_contract.budget_window_state import (
+    BatchRoute,
     build_batch_status_response,
     create_initial_batch_state,
     get_batch_job_seed,
@@ -1070,8 +1071,7 @@ async def submit_budget_window_batch(
     seed_state = create_initial_batch_state(
         batch_job_id=batch_job_id,
         request=request,
-        resolved_version=route.response_version,
-        resolved_app_name=route.app_name,
+        route=BatchRoute(version=route.response_version, app_name=route.app_name),
         bundle=bundle,
         observability_id=observability_id,
     )

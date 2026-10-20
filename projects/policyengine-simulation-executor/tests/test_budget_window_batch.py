@@ -182,8 +182,9 @@ def _seed_parent_batch(request: BudgetWindowBatchRequest, batch_job_id: str):
     seed = state_module.create_initial_batch_state(
         batch_job_id=batch_job_id,
         request=request,
-        resolved_version="1.500.0",
-        resolved_app_name="policyengine-simulation-py4-10-0",
+        route=state_module.BatchRoute(
+            version="1.500.0", app_name="policyengine-simulation-py4-10-0"
+        ),
         bundle=PolicyEngineBundle(model_version="1.500.0"),
     )
     state_module.put_batch_job_seed(seed)

@@ -6,6 +6,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_contract.budget_window_state import (
+    BatchRoute,
     build_batch_status_response,
     create_initial_batch_state,
     get_batch_job_seed,
@@ -88,8 +89,9 @@ def load_or_create_batch_state(
         state = create_initial_batch_state(
             batch_job_id=context.batch_job_id,
             request=context.request,
-            resolved_version=context.resolved_version,
-            resolved_app_name=context.resolved_app_name,
+            route=BatchRoute(
+                version=context.resolved_version, app_name=context.resolved_app_name
+            ),
             bundle=context.bundle,
         )
         with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)):
