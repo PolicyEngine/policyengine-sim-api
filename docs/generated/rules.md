@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 40 | 1 | 0 | 14 | 55 |
+| mechanical | 41 | 1 | 0 | 14 | 56 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 41 of 55 rules.
+**Blocking:** 42 of 56 rules.
 
 ## Gaps
 
@@ -52,6 +52,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.deploy.routing-publication-journaled`
 - `sim.deploy.shell-scripts-valid`
 - `sim.deploy.smoke-tests-strict`
+- `sim.deploy.staging-promotes-tested-revision`
 - `sim.deploy.traffic-changes-exact`
 - `sim.deploy.workflow-shell-safety`
 - `sim.process.rules-registry`
@@ -140,6 +141,7 @@ flowchart LR
 | `sim.deploy.routing-publication-journaled` | Each routing publication is named by its run, attempt and environment and journaled before it is applied; an always-running finalizer resolves it from the journal with the release-gate outcome, a release reports success only after that finalizer completes, and routing jobs never tolerate a failed command. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.shell-scripts-valid` | Deployment shell scripts have valid shell syntax. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.smoke-tests-strict` | Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
+| `sim.deploy.staging-promotes-tested-revision` | Every staging deployment promotes its tested entrypoint revision to the staging service's stable traffic, as production deployments do, so callers of the staging stable URL reach the build that passed the staging suite. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.traffic-changes-exact` | Traffic changes target an exact, validated revision, are reversible, and refuse to run over an intervening promotion. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.workflow-shell-safety` | Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, and pins secret versions. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 
@@ -165,6 +167,7 @@ flowchart LR
   r_sim_deploy_routing_publication_journaled("sim.deploy.routing-publication-journaled (enforced)")
   r_sim_deploy_shell_scripts_valid("sim.deploy.shell-scripts-valid (enforced)")
   r_sim_deploy_smoke_tests_strict("sim.deploy.smoke-tests-strict (enforced)")
+  r_sim_deploy_staging_promotes_tested_revision("sim.deploy.staging-promotes-tested-revision (enforced)")
   r_sim_deploy_traffic_changes_exact("sim.deploy.traffic-changes-exact (enforced)")
   r_sim_deploy_workflow_shell_safety("sim.deploy.workflow-shell-safety (enforced)")
   r_sim_deploy_container_context_minimal --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
@@ -183,6 +186,7 @@ flowchart LR
   r_sim_deploy_routing_publication_journaled --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_shell_scripts_valid --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_smoke_tests_strict --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
+  r_sim_deploy_staging_promotes_tested_revision --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_traffic_changes_exact --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
   r_sim_deploy_workflow_shell_safety --> e_pytest_projects_policyengine_simulation_entry_tests_test_deployment_assets_py
 ```

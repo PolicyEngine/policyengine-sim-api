@@ -406,6 +406,26 @@ job = "test"
 invocation = "uv run pytest tests/"
 
 [[rule]]
+id = "sim.deploy.staging-promotes-tested-revision"
+category = "deployment"
+statement = "Every staging deployment promotes its tested entrypoint revision to the staging service's stable traffic, as production deployments do, so callers of the staging stable URL reach the build that passed the staging suite."
+rationale = "docs/operations"
+scope = [".github/workflows/*.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_staging_deployments_promote_the_tested_entrypoint_revision",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run pytest tests/"
+
+[[rule]]
 id = "sim.deploy.release-identity-smoke"
 category = "deployment"
 statement = "Deploy gates pass the whole release identity to the entrypoint smoke, which requires every expectation, refuses malformed ones, and rejects a release whose routes, latest pointers, bundle, UK model or UK dataset differ from that identity."
