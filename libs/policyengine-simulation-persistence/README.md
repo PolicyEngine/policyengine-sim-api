@@ -27,7 +27,7 @@ These rules are registered in `rules/registry.toml` and checked by
   removed.
 
 The temporary Stage 12 comparison tables are not part of this schema: they are
-owned and migrated by policyengine-api, and `libs/policyengine-stage12-persistence`
+owned and migrated by the Public API, and `libs/policyengine-stage12-persistence`
 writes them with DML only.
 
 ## Database roles
