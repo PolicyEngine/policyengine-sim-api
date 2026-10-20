@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -97,7 +97,7 @@ def validate_release(
         validated=True,
         application_name=application_name,
         bundle_manifest_sha256=resolved.bundle_manifest_sha256,
-        validated_at=datetime.now(timezone.utc),
+        validated_at=datetime.now(UTC),
         validation_invocation_id=f"stage12-validation-{uuid4()}",
         country_validation_invocation_ids=invocation_ids,
         cache=cache_release,

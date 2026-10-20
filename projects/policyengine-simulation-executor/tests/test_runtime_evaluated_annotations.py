@@ -23,13 +23,13 @@ import importlib
 import importlib.util
 import pkgutil
 import sys
+import tomllib
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pydantic
 import pytest
-import tomllib
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

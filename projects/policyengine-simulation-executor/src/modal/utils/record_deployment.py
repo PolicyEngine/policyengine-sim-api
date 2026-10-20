@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from policyengine_simulation_executor.artifact_store import ArtifactStore
@@ -49,7 +49,7 @@ def build_marker(
         github_run_id=run_id,
         github_run_url=run_url,
         github_sha=env.get("GITHUB_SHA", ""),
-        deployed_at=datetime.now(timezone.utc).isoformat(),
+        deployed_at=datetime.now(UTC).isoformat(),
     )
 
 

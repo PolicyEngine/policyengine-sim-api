@@ -1,10 +1,12 @@
 # Rule families are enabled one themed group per PR, each fixing everything it
 # finds (no ratchet), until the select list is "ALL". See
 # docs/engineering/skills/rules-registry.md and rules/registry.toml.
-# There is no root pyproject.toml, so files outside the projects and libs would
-# be treated as Python 3.9. scripts/rules supports Python 3.11+ (and is shared
-# byte-for-byte with policyengine-api, which targets 3.11).
-per-file-target-version = { "scripts/**" = "py311" }
+# There is no root pyproject.toml, and ruff doesn't read the projects' own
+# requires-python, so a file not listed here is linted with ruff's default
+# target version, whatever its project requires. scripts/rules supports
+# Python 3.11+ (and is shared byte-for-byte with policyengine-api, which
+# targets 3.11). The executor requires Python 3.13.
+per-file-target-version = { "scripts/**" = "py311", "projects/policyengine-simulation-executor/**" = "py313" }
 # Directories that are not regular packages on purpose, so they have no
 # __init__.py: standalone scripts, the implicit namespace package that holds
 # scripts.rules, and proof fixtures. Ruff resolves modules as if each listed

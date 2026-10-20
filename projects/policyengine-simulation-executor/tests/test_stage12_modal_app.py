@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import importlib
 import sys
+import tomllib
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-import tomllib
 from fixtures.fake_modal import install_fake_modal
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_package_version,

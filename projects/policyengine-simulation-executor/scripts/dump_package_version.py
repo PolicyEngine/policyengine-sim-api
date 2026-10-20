@@ -4,9 +4,8 @@ Exits 1, printing nothing, when the lock file or package is missing.
 """
 
 import sys
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 
 def get_package_version_from_lock(
