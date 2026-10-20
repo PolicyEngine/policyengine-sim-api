@@ -182,7 +182,7 @@ def enforce_production_auth_guard(runtime: ObservabilityRuntime) -> None:
         "roll back immediately."
     )
     logger.critical(banner)
-    # Pragma: no cover - observability must never block startup.
+    # pragma: no cover - observability must never block startup
     with contextlib.suppress(Exception):
         runtime.event(
             "gateway_auth_disabled_bypass_active",
