@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 # the schema comparison (alembic check and autogenerate) reads. Import every
 # module that defines tables, or the comparison reports them as removed.
 import policyengine_simulation_persistence.jobs  # noqa: F401  # registers the job tables
+import policyengine_simulation_persistence.reports  # noqa: F401  # registers the report tables
 from alembic import context
 from policyengine_simulation_persistence import (
     ALEMBIC_VERSION_TABLE,
