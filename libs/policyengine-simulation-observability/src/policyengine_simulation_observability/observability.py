@@ -120,14 +120,13 @@ def build_runtime(
     return configure(config)
 
 
-def init_simulation_observability(  # noqa: PLR0913  # public observability API: the entry, gateway and executor apps pass these keyword-only identity arguments
+def init_simulation_observability(
     app: FastAPI,
     *,
     service_name: str,
     service_role: str,
     platform: Platform,
     environment: str,
-    service_version: str | None = None,
 ) -> ObservabilityRuntime:
     """Build the service's observability runtime and instrument ``app`` with it.
 
@@ -138,7 +137,6 @@ def init_simulation_observability(  # noqa: PLR0913  # public observability API:
         service_role=service_role,
         platform=platform,
         environment=environment,
-        service_version=service_version,
     )
     return instrument_fastapi(app, runtime)
 
