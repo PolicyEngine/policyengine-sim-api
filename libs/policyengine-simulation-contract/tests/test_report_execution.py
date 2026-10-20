@@ -476,6 +476,15 @@ def test_result_rejects_repeated_requested_aggregates() -> None:
         )
 
 
+def test_result_rejects_requested_aggregates_that_differ_from_the_output_plan() -> None:
+    # The output plan records the aggregates the report requested, so a result
+    # naming other aggregates contradicts its own plan.
+    with pytest.raises(ValidationError, match="requested aggregates must match"):
+        ReportExecutionResult.model_validate(
+            _result_payload(requested_aggregates=["budget"])
+        )
+
+
 def test_result_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError):
         ReportExecutionResult.model_validate(

@@ -86,7 +86,8 @@ class ReportExecutionResult(StrictContractModel):
     computed from; each follows ``output_plan``, which declares the columns
     the artifacts hold. Both artifacts must belong to this report, carry the
     baseline and reform roles, cover the same rows and use the bundle named in
-    ``provenance``.
+    ``provenance``. ``requested_aggregates`` must equal the aggregates the
+    output plan was built for.
     """
 
     contract_version: Literal[1] = 1
@@ -117,10 +118,16 @@ class ReportExecutionResult(StrictContractModel):
     def require_consistent_result(self) -> ReportExecutionResult:
         """Check the artifacts form this report and the digest fits the aggregate.
 
-        Also require a timezone-aware ``completed_at``.
+        Also require a timezone-aware ``completed_at`` and requested aggregates
+        that match the output plan's.
         """
         if self.completed_at.tzinfo is None:
             msg = "completed_at must include a timezone"
+            raise ValueError(msg)
+        # The coordinator builds the output plan from the report's requested
+        # aggregates, so the two must be the same values in the same order.
+        if self.requested_aggregates != self.output_plan.requirements.aggregates:
+            msg = "requested aggregates must match the output plan's aggregates"
             raise ValueError(msg)
         if self.baseline.role is not SimulationRole.BASELINE:
             msg = "the baseline artifact must use the baseline role"
