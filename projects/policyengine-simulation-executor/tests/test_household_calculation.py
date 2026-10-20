@@ -261,6 +261,30 @@ def test_simulation_build_failures_use_public_api_messages(monkeypatch) -> None:
     assert failed.worker == WORKER
 
 
+def test_unrecognized_inputs_are_listed_in_the_order_the_household_was_sent() -> None:
+    # As the Public API lists them: it walks the household as sent, here with
+    # ``axes`` last, so the axis error follows the person's.
+    household = {
+        "people": {"you": {"age": {"2026": 30}, "not_a_variable": {"2026": 1}}},
+        "households": {"home": {"members": ["you"], "net_income": {"2026": None}}},
+        "axes": [[{"name": "not_an_axis_variable", "count": 2, "min": 0, "max": 1}]],
+    }
+
+    outcome = _calculate_fake(_fake_simulation({}), household)
+
+    assert isinstance(outcome, HouseholdExecutionFailure)
+    assert [error.path for error in outcome.error.input_errors] == [
+        "household.people.you.not_a_variable",
+        "household.axes[0][0].name",
+    ]
+    assert outcome.error.message == (
+        "Unrecognized calculate input(s): Unrecognized household variable "
+        "`not_a_variable` at `household.people.you.not_a_variable`.; "
+        "Unrecognized household axis variable `not_an_axis_variable` at "
+        "`household.axes[0][0].name`."
+    )
+
+
 def test_a_request_for_another_bundle_is_refused() -> None:
     bundle = installed_household_bundle("uk").model_copy(
         update={"policyengine_version": "0.0.1"}
