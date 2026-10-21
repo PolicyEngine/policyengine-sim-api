@@ -51,6 +51,7 @@ from policyengine_simulation_observability.stages import (
     STAGE12_CANONICAL_REPORT_STAGES,
     Stage,
 )
+from pydantic import ValidationError
 from test_stage12_runtime import (
     BASELINE_ID,
     EVALUATION_ID,
@@ -690,3 +691,26 @@ def test_returned_report_rejects_artifacts_that_do_not_follow_the_plan(
     assert "do not satisfy the report output plan" in (
         raised.value.failure.error_summary
     )
+
+
+def test_stage12_report_still_requires_its_parent_record() -> None:
+    # The Modal coordinator's parent argument is optional now; a Stage 12
+    # report without one is rejected before anything is claimed or started.
+    store = FakeStore()
+    invoker = ConcurrentInvoker(FakeArtifacts())
+
+    with pytest.raises(ValidationError):
+        coordinate_report(
+            _report().model_dump(mode="json"),
+            _context().model_dump(mode="json"),
+            None,
+            application_name=_context().modal_application,
+            coordinator_invocation_id="coordinator-1",
+            store=store,
+            artifacts=FakeArtifacts(),
+            invoker=invoker,
+            aggregator=_macro_aggregate,
+        )
+
+    assert store.parent is None
+    assert invoker.events == []

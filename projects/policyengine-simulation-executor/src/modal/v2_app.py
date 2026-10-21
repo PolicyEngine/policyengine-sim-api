@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from policyengine_simulation_contract.stage12_execution import ReportResultDelivery
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_executor import stage12_runtime
 from policyengine_simulation_executor.hf_access_validation import (
@@ -409,6 +410,24 @@ def run_single_simulation_uk(
         runtime.shutdown()
 
 
+def _coordinator_operation_attributes(
+    context: dict,
+    *,
+    returns_to_caller: bool,
+) -> dict[str, str]:
+    """Return the coordinator operation's attributes; a returned report says so."""
+    attributes = {
+        "runner_name": "stage12",
+        "execution_mode": (
+            "shadow" if context.get("production_function_call_id") else "authoritative"
+        ),
+    }
+    if returns_to_caller:
+        # Telemetry tells returned reports apart from Stage 12 runs.
+        attributes["result_delivery"] = ReportResultDelivery.RETURN_TO_CALLER.value
+    return attributes
+
+
 @app.function(
     image=coordinator_image,
     cpu=2.0,
@@ -423,16 +442,26 @@ def run_single_simulation_uk(
 def coordinate_report(
     payload: dict,
     context: dict,
-    parent: dict,
+    parent: dict | None = None,
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    """Run one Stage 12 report: fan out both simulations, aggregate, and persist.
+    """Run one report: fan out both simulations, aggregate, and deliver the result.
 
     A ``production_function_call_id`` in ``context`` marks a shadow run whose
     result is compared with that production job's. A report another
     invocation already claimed returns a ``deduplicated`` marker instead.
+
+    A ``result_delivery`` of ``return_to_caller`` in ``context`` takes no
+    ``parent`` and reads and writes no Stage 12 rows: the report returns a
+    ``ReportExecutionResult`` payload or raises ``ReportExecutionError``.
     """
+    returns_to_caller = (
+        context.get("result_delivery") == ReportResultDelivery.RETURN_TO_CALLER.value
+    )
+    if returns_to_caller and parent is not None:
+        msg = "a report returned to its caller takes no Stage 12 parent record"
+        raise ValueError(msg)
     coordinator_invocation_id = modal.current_function_call_id()
     if coordinator_invocation_id is None:
         msg = "Modal coordinator invocation identifier is unavailable"
@@ -448,31 +477,36 @@ def coordinate_report(
         if context.get("production_function_call_id")
         else STAGE12_CANONICAL_REPORT_STAGES
     )
+    invocation = stage12_runtime.CoordinatorInvocation(
+        application_name=APP_NAME,
+        invocation_id=coordinator_invocation_id,
+    )
+    dependencies = stage12_runtime.CoordinatorDependencies(runtime=runtime)
     try:
         propagated = normalize_observability_context(observability_context)
         result = None
         with runtime.operation(
             stage_plan.name(Stage.STAGE12_COORDINATOR_EXECUTION),
-            attributes={
-                "runner_name": "stage12",
-                "execution_mode": (
-                    "shadow"
-                    if context.get("production_function_call_id")
-                    else "authoritative"
-                ),
-            },
+            attributes=_coordinator_operation_attributes(
+                context, returns_to_caller=returns_to_caller
+            ),
             remote_context=propagated,
         ):
-            result = stage12_runtime.coordinate_report(
-                payload,
-                context,
-                parent,
-                invocation=stage12_runtime.CoordinatorInvocation(
-                    application_name=APP_NAME,
-                    invocation_id=coordinator_invocation_id,
-                ),
-                dependencies=stage12_runtime.CoordinatorDependencies(runtime=runtime),
-            )
+            if returns_to_caller:
+                result = stage12_runtime.coordinate_report_for_caller(
+                    payload,
+                    context,
+                    invocation=invocation,
+                    dependencies=dependencies,
+                )
+            else:
+                result = stage12_runtime.coordinate_report(
+                    payload,
+                    context,
+                    parent,
+                    invocation=invocation,
+                    dependencies=dependencies,
+                )
         if result is None:
             msg = "Stage 12 report coordinator returned no result"
             raise RuntimeError(msg)
