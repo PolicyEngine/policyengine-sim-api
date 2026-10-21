@@ -196,7 +196,9 @@ def test_modal_image_fetches_artifacts_between_env_and_local_source(monkeypatch)
     assert fetch_kwargs["secrets"] == [app.gcp_secret]
     assert fetch_kwargs["cpu"] == 2.0
     assert fetch_kwargs["memory"] == 4096
-    assert fetch_kwargs["timeout"] == 900
+    # Room for the per-state datasets (51 states for each precomputed year)
+    # on top of the national files and baselines.
+    assert fetch_kwargs["timeout"] == 3600
 
     # The fetch layer must stay after the version env (its freshness gate
     # reads the baked versions) and before add_local_python_source (whose

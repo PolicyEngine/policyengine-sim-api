@@ -235,7 +235,9 @@ def build_base_simulation_image() -> modal.Image:
             secrets=[gcp_secret],
             cpu=2.0,
             memory=4096,
-            timeout=900,
+            # The national files and baselines are about 430 MB; the
+            # per-state datasets (51 states for each year) add several GB.
+            timeout=3600,
         )
     )
 
