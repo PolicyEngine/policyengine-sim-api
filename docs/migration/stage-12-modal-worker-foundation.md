@@ -402,9 +402,23 @@ promoted. The publisher therefore writes the whole manifest under the
 `active-with-region-datasets` key, the same manifest without each country
 bundle's `region_datasets` under the `active-with-cache` key, and without cache
 releases either under the `active` key; readers released before each field keep
-reading the key that lacks it. Current readers read the newest key a publish has
-written. Removing the older copies needs a later change, once no deployed or
-rollback revision reads them.
+reading the key that lacks it. Current readers use the
+`active-with-region-datasets` copy only while it, with its region datasets
+removed, equals the manifest under `active-with-cache`; otherwise they read
+`active-with-cache`, falling back to `active` before the first publish that
+writes it. Code released before region datasets republishes only the two older
+keys, so after a rollback the out-of-date region dataset copy stops matching and
+is no longer read. Removing the older copies needs a later change, once no
+deployed or rollback revision reads them.
+
+A rollback to code released before region datasets has one window: the older
+worker is deployed before its publish job runs, and until that publish the
+region dataset copy still matches, so updated entry services keep sending
+regional provenance for state and district runs, which the older worker refuses.
+Only Stage 12 comparison runs fail in that window, never production responses;
+if the older deploy's validation fails, the window lasts until a later publish.
+To avoid it, delete the `active-with-region-datasets` key from the
+`simulation-api-v2-version-manifest` Modal Dict before deploying the older code.
 
 `region_datasets` names the dataset each region type loads. The entry service
 records that dataset as a state or district run's dataset provenance, and the

@@ -338,8 +338,9 @@ def publish_v2_manifest(
         worker=worker,
         force_default=force_default,
     )
-    # Each key holds one entire validated document, and a reader reads only
-    # one key, so no reader observes a partial update assembled from several.
+    # Each key holds one entire validated document, and a reader uses one
+    # whole document (the region dataset copy only while it matches the cache
+    # copy), so no reader observes a partial update assembled from several.
     store[REGION_DATASETS_MANIFEST_KEY] = next_manifest.model_dump(mode="json")
     store[ACTIVE_MANIFEST_KEY] = pre_region_datasets_manifest_payload(next_manifest)
     store[PRE_CACHE_MANIFEST_KEY] = pre_cache_manifest_payload(next_manifest)
