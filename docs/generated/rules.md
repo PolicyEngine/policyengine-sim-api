@@ -69,7 +69,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.microdata.weight-stripping-confined`: 1 remaining in `rules/baselines/sim-microdata-weight-stripping.txt`
 - `sim.quality.pyright-apis-integ`: 4 remaining in `rules/baselines/pyright-apis-integ.txt`
 - `sim.quality.pyright-executor`: 178 remaining in `rules/baselines/pyright-executor.txt`
-- `sim.quality.pyright-gateway`: 2 remaining in `rules/baselines/pyright-gateway.txt`
+- `sim.quality.pyright-gateway`: 0 remaining in `rules/baselines/pyright-gateway.txt`
 
 ### Exceptions and review dates
 

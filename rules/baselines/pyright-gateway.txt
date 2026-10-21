@@ -7,5 +7,3 @@
 # occur with
 #   python -m scripts.rules pyright projects/policyengine-simulation-gateway --write-baseline
 # then set the rule's [rule.baseline] count in rules/registry.toml to match.
-projects/policyengine-simulation-gateway/src/policyengine_simulation_gateway/smoke_app.py :: reportAttributeAccessIssue :: Cannot access attribute "methods" for class "BaseRoute"
-projects/policyengine-simulation-gateway/src/policyengine_simulation_gateway/smoke_app.py :: reportAttributeAccessIssue :: Cannot access attribute "path" for class "BaseRoute"
