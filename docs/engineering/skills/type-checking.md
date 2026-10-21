@@ -44,8 +44,14 @@ The check:
   dependencies;
 - checks the paths in the package's `[tool.pyright] include`. Without an
   `include`, Pyright would check the whole directory, tests included. The rules
-  guard fails when a package a Pyright rule lists has none, or is missing from
-  the `pyright` job's matrix.
+  guard fails when a package a Pyright rule lists has none, has a
+  `pyrightconfig.json` (which Pyright would read instead), is listed by another
+  Pyright rule, or is missing from the `pyright` job's matrix.
+
+Other `[tool.pyright]` settings can weaken the check without failing anything,
+for example `ignore`, a lower `typeCheckingMode` or a rule set to `"none"`.
+`pyproject.toml` files aren't code-owned, so review a change to them as you
+would a rule change.
 
 ### Why one pinned version
 
@@ -86,12 +92,14 @@ After fixing errors:
 2. set the rule's `[rule.baseline] count` in `rules/registry.toml` to the
    number of entries left.
 
-What stops a baseline growing is the rules guard: it fails when the count
-doesn't match the file, and when the count is higher than on the base branch.
-`--write-baseline` records every current error when the baseline file doesn't
-exist yet, which is how a package is first ratcheted, so deleting a baseline
-and rewriting it would only pass the guard if the count stayed the same, and
-the swap would show in the reviewed diff.
+What stops a baseline growing is the rules guard, which compares counts. It
+fails when the count doesn't match the file, when the count is higher than on
+the base branch, and when an enforced rule becomes ratcheted without a
+`[rule.downgrade] reason`. It doesn't compare entries: a change that fixes one
+error and adds another keeps the count and passes the guard, so code-owner
+review of `rules/` is what catches that. `--write-baseline` refuses an error
+an existing baseline doesn't list, but records every current error when the
+file doesn't exist yet, which is how a package is first ratcheted.
 
 Once a baseline is empty, delete it and make the rule `enforced`.
 
