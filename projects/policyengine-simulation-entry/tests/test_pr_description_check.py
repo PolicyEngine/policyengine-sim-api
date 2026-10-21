@@ -17,7 +17,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 import yaml
-from workflow_script_support import SCRIPTS_DIR, WORKFLOWS_DIR, FakeCommands
+from workflow_script_support import (
+    REPOSITORY_ROOT,
+    SCRIPTS_DIR,
+    WORKFLOWS_DIR,
+    FakeCommands,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,6 +31,9 @@ if TYPE_CHECKING:
 CHECK_SCRIPT = SCRIPTS_DIR / "check_pr_description.py"
 CHECK_WORKFLOW = WORKFLOWS_DIR / "pr-description.yml"
 CHECK_JOB = "pr-description"
+PROOF_FIXTURES = (
+    REPOSITORY_ROOT / "rules" / "fixtures" / "sim.process.pr-tracking-issue"
+)
 REPOSITORY = "PolicyEngine/policyengine-sim-api"
 VALID_BODY = "Fixes #861\n\n## Summary\n\n- Adds a check.\n"
 
@@ -470,3 +478,31 @@ def test_the_check_runs_the_tested_script_with_the_job_token(check_workflow):
     assert len(check_steps) == 1
     assert check_steps[0]["run"] == f"python .github/scripts/{CHECK_SCRIPT.name}"
     assert check_steps[0]["env"] == {"GH_TOKEN": "${{ github.token }}"}
+
+
+# --- Proof ----------------------------------------------------------------
+
+
+def test_rule_proof_pr_tracking_issue(fakes):
+    """The check rejects PR #616's first line, "Fixes #615.", and accepts it fixed.
+
+    Both fixtures are pull_request event payloads; the fake gh answers that
+    #615 is an open issue in this repository.
+    """
+    results = {
+        fixture: _run_script(
+            fakes.env(
+                GITHUB_EVENT_PATH=str(PROOF_FIXTURES / f"{fixture}_event.json"),
+                GITHUB_REPOSITORY=REPOSITORY,
+                **_gh_answers(_issue(615)),
+            )
+        )
+        for fixture in ("bad", "good")
+    }
+
+    assert results["bad"].returncode == 1
+    assert 'The first line is "Fixes #615."' in _error_annotation(results["bad"])
+    assert results["good"].returncode == 0, results["good"].stdout
+    assert fakes.calls("gh") == [
+        ["gh", "api", "repos/PolicyEngine/policyengine-sim-api/issues/615"]
+    ]
