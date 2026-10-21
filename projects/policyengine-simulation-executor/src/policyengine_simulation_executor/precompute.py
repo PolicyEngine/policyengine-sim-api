@@ -481,24 +481,40 @@ def _checked_state_targets(
     return {entry.region: targets[entry.region] for entry in expected}
 
 
-def _require_districts_within_their_states(household: MicroDataFrame) -> None:
-    """Refuse a dataset whose district codes name a different state.
+def _registered_district_geoids(country_module: ModuleType) -> set[int]:
+    """Return the district codes the US congressional-district regions filter on."""
+    return {
+        int(region.scoping_strategy.variable_value)
+        for region in country_module.model.region_registry.get_by_type(
+            "congressional_district"
+        )
+    }
+
+
+def _require_districts_within_their_states(
+    household: MicroDataFrame, district_geoids: set[int]
+) -> None:
+    """Refuse a dataset in which a household sits in another state's district.
 
     District requests read their state's file and filter it by
     ``congressional_district_geoid`` (state FIPS times 100 plus the district
-    number). A household whose district code names another state would be
-    missing from that district's results, so the build stops instead. Both
-    columns are labels; nothing here is weighted.
+    number). A household whose code names a district of another state would
+    be missing from that district's results, so the build stops instead. A
+    code that names no district, such as an unassigned 0, matches no district
+    request on either path and changes no result. Both columns are labels;
+    nothing here is weighted.
     """
     if "congressional_district_geoid" not in household.columns:
         return
-    outside = (household["congressional_district_geoid"] // 100) != household[
-        "state_fips"
-    ]
-    if outside.any():
+    district = household["congressional_district_geoid"]
+    in_another_state = district.isin(district_geoids) & (
+        (district // 100) != household["state_fips"]
+    )
+    if in_another_state.any():
         msg = (
-            "Some households have a congressional district code outside their "
-            "state; their state's file would not match the district's results"
+            "Some households have a congressional district code that names "
+            "another state's district; their state's file would not match "
+            "that district's results"
         )
         raise RuntimeError(msg)
 
@@ -557,7 +573,9 @@ def build_state_datasets_impl(
     if stamp is None:
         msg = f"The prepared year file {source.filepath} has no year-file stamp"
         raise RuntimeError(msg)
-    _require_districts_within_their_states(source.data.household)
+    _require_districts_within_their_states(
+        source.data.household, _registered_district_geoids(country_module)
+    )
 
     store = ArtifactStore(bucket)
     results = []

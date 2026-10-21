@@ -1130,12 +1130,28 @@ class TestBuildStateDatasetsImpl:
                 datasets=datasets, years=years, data_folder=data_folder
             )
 
+        districts = [
+            SimpleNamespace(
+                scoping_strategy=RowFilterStrategy(
+                    variable_name="congressional_district_geoid",
+                    variable_value=geoid,
+                )
+            )
+            for geoid in (4901, 4902, 4903, 4904, 5600)
+        ]
         monkeypatch.setattr(
             sr,
             "_country_module",
             lambda _country: SimpleNamespace(
                 ensure_datasets=fake_ensure_datasets,
                 load_datasets=us_module.load_datasets,
+                model=SimpleNamespace(
+                    region_registry=SimpleNamespace(
+                        get_by_type=lambda kind: (
+                            districts if kind == "congressional_district" else []
+                        )
+                    )
+                ),
             ),
         )
         state.sources = sources
@@ -1310,6 +1326,17 @@ class TestBuildStateDatasetsImpl:
         with pytest.raises(RuntimeError, match="congressional district"):
             self._build(state_build, self._both_states(state_build))
         assert state_build.uploads == []
+
+    def test_a_household_without_a_district_code_does_not_stop_the_build(
+        self, state_build
+    ):
+        state_build.entity_frames = state_build.sources.source_entity_frames(
+            wyoming_district_geoid=0
+        )
+
+        results = self._build(state_build, self._both_states(state_build))
+
+        assert [result.state_code for result in results] == ["UT", "WY"]
 
     def test_refuses_a_state_with_no_households(self, state_build):
         from policyengine.core.scoping_strategy import RowFilterStrategy
