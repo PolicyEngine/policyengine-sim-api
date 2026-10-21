@@ -39,6 +39,7 @@ from policyengine_simulation_executor.release_bundle import (
 )
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
+    UKAreaSimulations,
 )
 
 if TYPE_CHECKING:
@@ -353,6 +354,40 @@ def _normalise_region_code(country: str, region: object) -> str:
     return f"{prefix}/{value}"
 
 
+def _uk_area_regions_routed() -> bool:
+    from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
+        uk_area_regions_routed,
+    )
+
+    return uk_area_regions_routed()
+
+
+def _registry_uk_area_region_code(country_module: ModuleType, region_code: str) -> str:
+    """Spell a UK constituency or local authority as the region registry keys it.
+
+    When the bundle routes UK area regions, policyengine.py's registry holds
+    every constituency and local authority under its GSS code, labelled with
+    its name. A request may name the area instead, as policyengine-api's
+    ``constituency/{name}`` does, or write the code in lower case; both map to
+    the registry's code. Any other value is returned unchanged, so an area
+    outside the registry, such as one of the 17 districts replaced in April
+    2023, stays unsupported.
+    """
+    from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
+        UK_AREA_REGION_TYPES,
+    )
+
+    region_type, _, value = region_code.partition("/")
+    if region_type not in UK_AREA_REGION_TYPES or not _uk_area_regions_routed():
+        return region_code
+    requested = value.casefold()
+    for region in country_module.model.region_registry.get_by_type(region_type):
+        code = region.code.partition("/")[2]
+        if requested in {code.casefold(), region.label.casefold()}:
+            return region.code
+    return region_code
+
+
 def _build_uk_weight_replacement_region(region_code: str) -> Region | None:
     if "/" not in region_code:
         return None
@@ -576,8 +611,10 @@ def _resolve_region(
             dataset_reference=_resolve_dataset_reference(country),
         )
 
+    if country == "uk":
+        region_code = _registry_uk_area_region_code(country_module, region_code)
     region = country_module.model.get_region(region_code)
-    if region is None and country == "uk":
+    if region is None and country == "uk" and not _uk_area_regions_routed():
         region = _build_uk_weight_replacement_region(region_code)
     if region is None:
         msg = f"Unsupported {country.upper()} region: {region_code}"
@@ -813,6 +850,72 @@ def _report_calculation_start(
     simulation.on_first_ensure(lambda: progress.enter(stage))
 
 
+def _uk_area_simulations(
+    params: dict[str, Any],
+    *,
+    runtime: ObservabilityRuntime,
+    country_module: ModuleType,
+    region: RegionResolution,
+    policies: tuple[dict[str, Any] | None, dict[str, Any] | None],
+) -> UKAreaSimulations:
+    """Build the UK area breakdowns' baseline and reform on the routed dataset.
+
+    A UK national or nation-level run may load a dataset without area codes
+    only when the bundle routes constituency and local-authority regions to
+    another dataset. Its two area breakdowns then come from this pair: the
+    run's baseline and reform policies and its nation filter, applied to the
+    routed dataset, whose area codes are checked as it loads. The national
+    figures still come from the run's own pair.
+    """
+    from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
+        detect_uk_area_dataset_metadata,
+        routed_uk_area_dataset_name,
+    )
+
+    area_role = {"dataset_role": "uk_area"}
+    with runtime.span(
+        ANNUAL_IMPACT_STAGES.name(Stage.DATASET_RESOLUTION), attributes=area_role
+    ):
+        selection = _resolve_dataset_selection(
+            params,
+            region_resolution=RegionResolution(
+                code=region.code, dataset_reference=routed_uk_area_dataset_name()
+            ),
+        )
+    with runtime.span(
+        ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD), attributes=area_role
+    ):
+        dataset = _load_dataset(
+            params, selection=selection, country_module=country_module
+        )
+    local_authority_metadata = detect_uk_area_dataset_metadata(
+        dataset, dataset_name=selection.name
+    )
+    simulations = []
+    for kind, policy in zip(
+        ("uk_area_baseline", "uk_area_reform"), policies, strict=True
+    ):
+        with runtime.span(
+            ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_BUILD),
+            attributes={"simulation_kind": kind},
+        ):
+            simulations.append(
+                _build_simulation(
+                    params,
+                    dataset=dataset,
+                    dataset_selection=selection,
+                    policy=policy,
+                    region=region,
+                )
+            )
+    baseline, reform = simulations
+    return UKAreaSimulations(
+        baseline=baseline,
+        reform=reform,
+        local_authority_metadata=local_authority_metadata,
+    )
+
+
 def _run_simulation_impl_core(
     params: dict,
     *,
@@ -908,6 +1011,20 @@ def _run_simulation_impl_core(
     _report_calculation_start(baseline, progress, JobStage.BASELINE)
     _report_calculation_start(reform, progress, JobStage.REFORM)
 
+    # Detection returns None for a UK dataset only when it carries no area
+    # codes and the bundle routes area regions to another dataset.
+    uk_area_simulations = (
+        _uk_area_simulations(
+            simulation_params,
+            runtime=runtime,
+            country_module=country_module,
+            region=region_resolution,
+            policies=(baseline_policy, reform_policy),
+        )
+        if country == "uk" and uk_local_authority_metadata is None
+        else None
+    )
+
     logger.info("Calculating economic impact")
     builder = SimulationOutputBuilder(
         country=country,
@@ -920,6 +1037,7 @@ def _run_simulation_impl_core(
         resolved_region_code=region_resolution.code,
         runtime=runtime,
         uk_local_authority_metadata=uk_local_authority_metadata,
+        uk_area_simulations=uk_area_simulations,
         progress=progress,
     )
     output = builder.serialize()

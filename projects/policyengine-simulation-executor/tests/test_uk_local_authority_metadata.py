@@ -10,10 +10,13 @@ from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
 )
 from policyengine_simulation_executor.uk_local_authority_metadata import (
+    detect_uk_area_dataset_metadata,
     detect_uk_local_authority_boundary_version,
     detect_uk_local_authority_metadata,
     detect_uk_local_authority_metadata_from_hdf,
     load_uk_local_authority_resources,
+    routed_uk_area_dataset_name,
+    uk_area_hdf_dataset_path,
     uk_area_regions_routed,
     uk_hdf_household_has_local_authority_codes,
 )
@@ -205,6 +208,156 @@ def test_area_regions_count_as_routed_only_when_both_have_a_dataset(
     )
 
     assert uk_area_regions_routed() is routed
+
+
+_NATIONAL_FILE = "microcosm_uk_2024_25.h5"
+_LOCAL_AREA_FILE = "microcosm_uk_2024_25_dense.h5"
+
+
+def _bundle_routes(monkeypatch, region_datasets: dict[str, str]) -> None:
+    """Install a UK manifest routing each region type to a bundle file."""
+    monkeypatch.setattr(
+        "policyengine.provenance.manifest.get_release_manifest",
+        lambda _country: SimpleNamespace(
+            region_datasets={
+                region_type: SimpleNamespace(path_template=path)
+                for region_type, path in region_datasets.items()
+            },
+            datasets={
+                "microcosm_uk_2024_25": SimpleNamespace(path=_NATIONAL_FILE),
+                "microcosm_uk_2024_25_dense": SimpleNamespace(path=_LOCAL_AREA_FILE),
+            },
+        ),
+    )
+
+
+def _routes_both_area_types_to(monkeypatch, path: str) -> None:
+    _bundle_routes(
+        monkeypatch,
+        {
+            "national": _NATIONAL_FILE,
+            "constituency": path,
+            "local_authority": path,
+        },
+    )
+
+
+def test_routed_area_dataset_is_the_one_both_area_types_name(monkeypatch) -> None:
+    _routes_both_area_types_to(monkeypatch, _LOCAL_AREA_FILE)
+
+    assert routed_uk_area_dataset_name() == "microcosm_uk_2024_25_dense"
+
+
+def test_routed_area_dataset_must_serve_both_area_types(monkeypatch) -> None:
+    _bundle_routes(
+        monkeypatch,
+        {"constituency": _LOCAL_AREA_FILE, "local_authority": _NATIONAL_FILE},
+    )
+
+    with pytest.raises(ValueError, match="to different datasets"):
+        routed_uk_area_dataset_name()
+
+
+@pytest.mark.parametrize(
+    "region_datasets",
+    [
+        {"constituency": _LOCAL_AREA_FILE},
+        {"constituency": _LOCAL_AREA_FILE, "local_authority": "uncertified.h5"},
+    ],
+)
+def test_routed_area_dataset_must_be_a_certified_bundle_dataset(
+    monkeypatch, region_datasets: dict[str, str]
+) -> None:
+    _bundle_routes(monkeypatch, region_datasets)
+
+    with pytest.raises(
+        ValueError, match="routes local_authority regions to no certified dataset"
+    ):
+        routed_uk_area_dataset_name()
+
+
+def _area_dataset(**household: list[str]) -> SimpleNamespace:
+    return SimpleNamespace(
+        data=SimpleNamespace(entity_data={"household": pd.DataFrame(household)})
+    )
+
+
+def test_routed_dataset_detection_identifies_the_authority_boundaries() -> None:
+    dataset = _area_dataset(
+        constituency_code_oa=["E14001063", "W07000112"],
+        la_code_oa=["E06000063", "W06000001"],
+    )
+
+    metadata = detect_uk_area_dataset_metadata(dataset, dataset_name="local")
+
+    assert metadata.boundary_version is UKLocalAuthorityBoundaryVersion.LAD23
+
+
+@pytest.mark.parametrize("missing", ["constituency_code_oa", "la_code_oa"])
+def test_routed_dataset_detection_requires_both_area_code_columns(
+    missing: str,
+) -> None:
+    columns = {
+        "constituency_code_oa": ["E14001063"],
+        "la_code_oa": ["E06000063"],
+    }
+    del columns[missing]
+
+    with pytest.raises(
+        ValueError,
+        match=f"'local', which the bundle routes .* has no {missing} column",
+    ):
+        detect_uk_area_dataset_metadata(_area_dataset(**columns), dataset_name="local")
+
+
+def _hdf_household(path, **columns: list[object]) -> str:
+    pd.DataFrame(columns).to_hdf(
+        path, key="household", format="table", data_columns=True
+    )
+    return str(path)
+
+
+def test_area_hdf_dataset_is_the_installed_default_unless_routed_without_codes(
+    monkeypatch, tmp_path
+) -> None:
+    national = _hdf_household(
+        tmp_path / _NATIONAL_FILE, household_id=[1], region=["WALES"]
+    )
+    coded = _hdf_household(
+        tmp_path / "coded.h5", household_id=[1], la_code_oa=["E06000001"]
+    )
+    monkeypatch.setattr(
+        "policyengine.provenance.dataset_materialization.materialize_dataset",
+        lambda *_args, **_kwargs: pytest.fail("no dataset should be downloaded"),
+    )
+
+    _bundle_routes(monkeypatch, {"national": _NATIONAL_FILE})
+    assert uk_area_hdf_dataset_path(national) == national
+
+    _routes_both_area_types_to(monkeypatch, _LOCAL_AREA_FILE)
+    assert uk_area_hdf_dataset_path(coded) == coded
+
+
+def test_area_hdf_dataset_downloads_the_routed_dataset_beside_the_default(
+    monkeypatch, tmp_path
+) -> None:
+    national = _hdf_household(
+        tmp_path / _NATIONAL_FILE, household_id=[1], region=["WALES"]
+    )
+    _routes_both_area_types_to(monkeypatch, _LOCAL_AREA_FILE)
+    downloads: list[tuple[str, str, object]] = []
+
+    def materialize(country, dataset, *, data_dir, **_kwargs):
+        downloads.append((country, dataset, data_dir))
+        return SimpleNamespace(path=str(data_dir / _LOCAL_AREA_FILE))
+
+    monkeypatch.setattr(
+        "policyengine.provenance.dataset_materialization.materialize_dataset",
+        materialize,
+    )
+
+    assert uk_area_hdf_dataset_path(national) == str(tmp_path / _LOCAL_AREA_FILE)
+    assert downloads == [("uk", "microcosm_uk_2024_25_dense", tmp_path)]
 
 
 def test_installed_hdf_detector_reads_local_authority_codes(tmp_path) -> None:

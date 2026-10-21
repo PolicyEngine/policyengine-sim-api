@@ -48,12 +48,31 @@ if TYPE_CHECKING:
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
 
+@dataclass(frozen=True)
+class UKAreaSimulations:
+    """A baseline and reform on the dataset the bundle routes UK area regions to.
+
+    A UK national or nation-level run on a dataset without area codes builds
+    its constituency and local-authority breakdowns from this pair, which has
+    the same policies and nation filter, and from the authority boundaries
+    detected on that dataset.
+    """
+
+    baseline: Any
+    reform: Any
+    local_authority_metadata: UKLocalAuthorityMetadata
+
+
 @dataclass
 class SimulationOutputBuilder:
     """Assemble one year's macro output from a computed baseline and reform.
 
     Each output segment is built inside its own observability span when a
-    ``runtime`` is given.
+    ``runtime`` is given. The UK constituency and local-authority breakdowns
+    come from ``uk_area_simulations`` when it is given, and otherwise from
+    ``baseline`` and ``reform``. ``omit_uk_area_breakdowns`` leaves them out:
+    only Stage 12 sets it, for a routed national report whose stored frames
+    carry no area codes.
     """
 
     country: str
@@ -66,6 +85,8 @@ class SimulationOutputBuilder:
     resolved_region_code: str | None = None
     runtime: ObservabilityRuntime | None = None
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
+    uk_area_simulations: UKAreaSimulations | None = None
+    omit_uk_area_breakdowns: bool = False
     progress: JobProgressReporter = NULL_JOB_PROGRESS
     _analysis: Any = field(default=None, init=False)
 
@@ -257,19 +278,41 @@ class SimulationOutputBuilder:
                 region_code=self.resolved_region_code,
             )
 
+    def _uk_area_breakdown_inputs(
+        self,
+    ) -> tuple[Any, Any, UKLocalAuthorityMetadata | None]:
+        """Return the baseline, reform and boundaries the UK area breakdowns use.
+
+        The impact analysis computes the run's own pair before any breakdown;
+        a separate area pair is computed here, on first use (``ensure()``
+        returns a computed simulation from policyengine.py's cache).
+        """
+        area = self.uk_area_simulations
+        if area is None:
+            return self.baseline, self.reform, self.uk_local_authority_metadata
+        area.baseline.ensure()
+        area.reform.ensure()
+        return area.baseline, area.reform, area.local_authority_metadata
+
     def _build_uk_constituency_impact(self) -> GeographicImpactOutput | None:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_CONSTITUENCY)):
+            if self.omit_uk_area_breakdowns:
+                return None
+            baseline, reform, _ = self._uk_area_breakdown_inputs()
             return simulation_output_geographic.build_uk_constituency_impact(
-                self.country, self.baseline, self.reform
+                self.country, baseline, reform
             )
 
     def _build_uk_local_authority_impact(self) -> GeographicImpactOutput | None:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_LOCAL_AUTHORITY)):
+            if self.omit_uk_area_breakdowns:
+                return None
+            baseline, reform, metadata = self._uk_area_breakdown_inputs()
             return simulation_output_geographic.build_uk_local_authority_impact(
                 self.country,
-                self.baseline,
-                self.reform,
-                uk_local_authority_metadata=self.uk_local_authority_metadata,
+                baseline,
+                reform,
+                uk_local_authority_metadata=metadata,
             )
 
     def _model_version(self) -> str:
