@@ -54,6 +54,21 @@ def test_precompute_image_installs_only_the_us_bundle(monkeypatch) -> None:
     assert "policyengine_stage12_persistence" in local_source[1]
 
 
+def test_precompute_image_refreshes_ca_certificates_before_installing_packages(
+    monkeypatch,
+) -> None:
+    module = _load(monkeypatch)
+    calls = module.precompute_image.calls
+
+    assert calls[0][0] == "debian_slim"
+    assert calls[1] == ("apt_install", ("ca-certificates",))
+    assert calls[2] == (
+        "env",
+        {"GRPC_DEFAULT_SSL_ROOTS_FILE_PATH": "/etc/ssl/certs/ca-certificates.crt"},
+    )
+    assert calls[3][0] == "uv_sync"
+
+
 def test_precompute_app_mounts_only_the_read_only_hugging_face_secret(
     monkeypatch,
 ) -> None:

@@ -41,6 +41,20 @@ OBSERVABILITY_ENV = modal_image_environment()
 # definition is never used there — so short-circuit the path.
 _UV_PROJECT_DIR = str(Path(__file__).resolve().parents[2]) if modal.is_local() else "."
 
+# Modal's debian_slim base is a fixed Debian bookworm image whose
+# ca-certificates package (20230311) still trusts the roots above the
+# compromised eMudhra intermediate CAs, and Modal never refreshes the cached
+# base on its own. apt_install runs apt-get update and apt-get install, which
+# upgrades the package to Debian's newest version. grpcio, used by the Google
+# Cloud and OTLP telemetry exporters, otherwise verifies servers against its
+# own compiled-in CA list, which still trusts those roots in every release
+# through 1.84.0; GRPC_DEFAULT_SSL_ROOTS_FILE_PATH points it at the refreshed
+# operating-system bundle instead.
+OPERATING_SYSTEM_CA_PACKAGE = "ca-certificates"
+GRPC_CA_BUNDLE_ENV = {
+    "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH": "/etc/ssl/certs/ca-certificates.crt",
+}
+
 
 def build_gateway_image() -> modal.Image:
     """Build the gateway's Modal image.
@@ -50,6 +64,7 @@ def build_gateway_image() -> modal.Image:
     """
     return (
         modal.Image.debian_slim(python_version="3.13")
+        .apt_install(OPERATING_SYSTEM_CA_PACKAGE)
         .uv_sync(
             uv_project_dir=_UV_PROJECT_DIR,
             frozen=True,
@@ -62,7 +77,7 @@ def build_gateway_image() -> modal.Image:
             "policyengine_fastapi",
             copy=True,
         )
-        .env(OBSERVABILITY_ENV)
+        .env({**OBSERVABILITY_ENV, **GRPC_CA_BUNDLE_ENV})
     )
 
 

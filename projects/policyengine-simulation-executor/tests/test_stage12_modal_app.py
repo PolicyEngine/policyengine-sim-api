@@ -160,6 +160,25 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
         assert static_runtime_files[3] == {"copy": True}
 
 
+def test_v2_images_refresh_ca_certificates_before_installing_packages(
+    monkeypatch,
+) -> None:
+    module = _load(monkeypatch)
+
+    for image in (
+        module.us_worker_image,
+        module.uk_worker_image,
+        module.coordinator_image,
+    ):
+        assert image.calls[0][0] == "debian_slim"
+        assert image.calls[1] == ("apt_install", ("ca-certificates",))
+        assert image.calls[2] == (
+            "env",
+            {"GRPC_DEFAULT_SSL_ROOTS_FILE_PATH": "/etc/ssl/certs/ca-certificates.crt"},
+        )
+        assert image.calls[3][0] == "uv_sync"
+
+
 def test_v2_image_retains_required_runtime_dependencies() -> None:
     project = tomllib.loads(
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")

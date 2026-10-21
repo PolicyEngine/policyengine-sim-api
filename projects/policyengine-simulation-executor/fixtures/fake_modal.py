@@ -36,6 +36,11 @@ class FakeImage:
         image.calls.append(("debian_slim", python_version))
         return image
 
+    def apt_install(self, *packages: str) -> Self:
+        """Record an ``apt_install`` layer with the package tuple."""
+        self.calls.append(("apt_install", packages))
+        return self
+
     def pip_install(self, *packages: str) -> Self:
         """Record a ``pip_install`` layer with the package tuple."""
         self.calls.append(("pip_install", packages))
