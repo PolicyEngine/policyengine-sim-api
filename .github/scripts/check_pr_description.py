@@ -1,7 +1,16 @@
 """Check that a pull request's description names its tracking issue.
 
 Rule sim.process.pr-tracking-issue: the first line of every pull request's
-description is ``Fixes #ISSUE_NUMBER``.
+description is ``Fixes #ISSUE_NUMBER``, and ISSUE_NUMBER is an open issue, not a
+pull request, in this repository. The "PR description" workflow job runs this
+script; it prints one error annotation and exits 1 when the rule is broken.
+
+Environment:
+  GITHUB_EVENT_PATH  the pull_request event payload, which holds the
+                     description (set by the GitHub Actions runner)
+  GITHUB_REPOSITORY  owner/name of this repository (set by the runner)
+  GH_TOKEN           read by gh, not by this script; the workflow sets it to
+                     the job's github.token, which needs only issues: read
 
 How the first line is read:
 
@@ -18,7 +27,12 @@ How the first line is read:
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import subprocess
+from pathlib import Path
+from urllib.parse import urlsplit
 
 RULE_ID = "sim.process.pr-tracking-issue"
 HOW_TO_FIX = (
@@ -32,6 +46,12 @@ FIXES_LINE = re.compile(r"Fixes #([1-9][0-9]*)")
 LINE_ENDING = re.compile(r"\r\n|\r|\n")
 # How much of a rejected first line a message quotes.
 SHOWN_FIRST_LINE_LENGTH = 80
+# gh api's error for a number GitHub has no issue or pull request for (404),
+# or one whose issue was deleted (410).
+MISSING_ISSUE = re.compile(r"\(HTTP (?:404|410)\)")
+# The path of an issue's repository_url: [api/v3/]repos/<owner>/<name>.
+REPOSITORY_PATH = re.compile(r"(?:.+/)?repos/([^/]+/[^/]+)")
+ANNOTATION_TITLE = "PR description"
 
 
 class DescriptionError(Exception):
@@ -75,3 +95,119 @@ def issue_number_from_description(body: str | None) -> int:
             raise DescriptionError(msg)
     msg = f"The first line is {_shown(first_line)}. {HOW_TO_FIX}"
     raise DescriptionError(msg)
+
+
+def fetch_issue(repository: str, number: int) -> dict[str, object]:
+    """Return GitHub's answer for issue ``number`` in ``repository``, from gh api.
+
+    The issues API also answers for pull requests, and gh follows the redirect
+    GitHub sends for an issue transferred to another repository, so the answer
+    still has to be checked with ``check_issue``.
+    """
+    completed = subprocess.run(
+        ["gh", "api", f"repos/{repository}/issues/{number}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        if MISSING_ISSUE.search(completed.stderr):
+            msg = f"There is no issue #{number} in {repository}. {HOW_TO_FIX}"
+            raise DescriptionError(msg)
+        reported = completed.stderr.strip() or f"exit status {completed.returncode}"
+        msg = (
+            f"Could not look up #{number} in {repository}: {reported}. Re-run this "
+            "job; if it fails again, check the GH_TOKEN the workflow gives it."
+        )
+        raise DescriptionError(msg)
+    try:
+        issue = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        issue = None
+    if not isinstance(issue, dict):
+        msg = f"gh api did not print an issue for #{number}. Re-run this job."
+        raise DescriptionError(msg)
+    return issue
+
+
+def _repository_of(repository_url: object) -> str | None:
+    """Return ``owner/name`` from an issue's ``repository_url``, if it has one."""
+    if not isinstance(repository_url, str):
+        return None
+    match = REPOSITORY_PATH.fullmatch(urlsplit(repository_url).path.strip("/"))
+    return match.group(1) if match else None
+
+
+def check_issue(repository: str, number: int, issue: dict[str, object]) -> None:
+    """Raise ``DescriptionError`` unless ``issue`` is open issue ``number`` here."""
+    issue_repository = _repository_of(issue.get("repository_url"))
+    if issue_repository is None:
+        msg = (
+            f"GitHub's answer for #{number} names no repository, so it can't be "
+            f"confirmed as an issue in {repository}. Re-run this job."
+        )
+        raise DescriptionError(msg)
+    if issue_repository.lower() != repository.lower() or issue.get("number") != number:
+        msg = (
+            f"#{number} is not an issue in {repository}: it moved to "
+            f"{issue_repository}#{issue.get('number')}. {HOW_TO_FIX}"
+        )
+        raise DescriptionError(msg)
+    if issue.get("pull_request") is not None:
+        msg = f"#{number} is a pull request, not an issue. {HOW_TO_FIX}"
+        raise DescriptionError(msg)
+    if issue.get("state") != "open":
+        msg = (
+            f"Issue #{number} is {issue.get('state')}. If this pull request still "
+            "fixes it, reopen it and re-run this job; otherwise open an issue for "
+            f"this work and edit the first line to name it (rule {RULE_ID})."
+        )
+        raise DescriptionError(msg)
+
+
+def _required_environment(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        msg = f"{name} is required"
+        raise SystemExit(msg)
+    return value
+
+
+def _description_from_event(event_path: str) -> str | None:
+    """Return the pull request description in the event payload at ``event_path``."""
+    event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+    pull_request = event.get("pull_request") if isinstance(event, dict) else None
+    if not isinstance(pull_request, dict):
+        msg = (
+            f"The event payload at {event_path} has no pull_request; run this "
+            "check on pull_request events."
+        )
+        raise SystemExit(msg)
+    body = pull_request.get("body")
+    return body if isinstance(body, str) else None
+
+
+def _annotation_text(message: str) -> str:
+    """Escape ``message`` so the runner reads it as one annotation message."""
+    return message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def main() -> int:
+    """Check the pull request in this run's event; return the exit status."""
+    repository = _required_environment("GITHUB_REPOSITORY")
+    description = _description_from_event(_required_environment("GITHUB_EVENT_PATH"))
+    try:
+        number = issue_number_from_description(description)
+        check_issue(repository, number, fetch_issue(repository, number))
+    except DescriptionError as error:
+        print(f"::error title={ANNOTATION_TITLE}::{_annotation_text(str(error))}")
+        return 1
+    print(
+        f"The first line is Fixes #{number}, and #{number} is an open issue in "
+        f"{repository}."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
