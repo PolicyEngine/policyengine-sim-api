@@ -37,6 +37,7 @@ from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
+from policyengine_simulation_executor import simulation_output_geographic
 from policyengine_simulation_executor.job_progress import NULL_JOB_PROGRESS
 from policyengine_simulation_executor.release_bundle import (
     BUNDLE_RECEIPT_FILENAME,
@@ -86,8 +87,6 @@ from policyengine_simulation_executor.simulation_runtime import (
     _load_dataset as _load_selected_dataset,
 )
 from policyengine_simulation_observability.stages import ANNUAL_IMPACT_STAGES, Stage
-
-CONSTITUENCY_CSV_PATH = "/tmp/constituencies_2024.csv"
 
 
 def _params_with_spm(params, selection):
@@ -2475,77 +2474,82 @@ def test_builder_budgetary_impact_propagates_required_calculation_errors(monkeyp
         _simulation_output_builder("us", baseline, reform)._build_budgetary_impact()
 
 
-def test_uk_constituency_impact_uses_policyengine_output_function(monkeypatch):
-    def coded_simulation() -> SimpleNamespace:
-        household = weighted_entity_frame({"constituency_code_oa": ["E14001063"]})
-        return SimpleNamespace(
-            output_dataset=SimpleNamespace(data=SimpleNamespace(household=household))
-        )
+def test_uk_area_impacts_share_one_disclosure_release(monkeypatch):
+    baseline = object()
+    reform = object()
+    disclosure = simulation_output_geographic.UKGeographyDisclosureOutput()
+    computed: list[tuple[str, object, object, int]] = []
+    built: list[tuple[str, object]] = []
 
-    baseline = coded_simulation()
-    reform = coded_simulation()
-    expected = [_constituency_impact_record().model_dump(mode="json")]
+    def compute(country, baseline_simulation, reform_simulation, *, year):
+        computed.append((country, baseline_simulation, reform_simulation, year))
+        return disclosure
 
-    def fake_output_module_function(module_name, name):
-        assert module_name == "constituency_impact"
-        assert name == "compute_uk_constituency_impacts"
+    def build_constituencies(country, value):
+        built.append(("constituency", value))
+        return GeographicImpactOutput.model_validate([])
 
-        def compute(baseline_simulation, reform_simulation, **kwargs):
-            assert baseline_simulation is baseline
-            assert reform_simulation is reform
-            assert kwargs == {
-                "constituency_csv_path": CONSTITUENCY_CSV_PATH,
-                "download_missing_assets": False,
-            }
-            return SimpleNamespace(constituency_results=expected)
-
-        return compute
+    def build_authorities(country, value, **kwargs):
+        built.append(("local_authority", value))
+        return GeographicImpactOutput.model_validate([])
 
     monkeypatch.setattr(
-        "policyengine_simulation_executor.simulation_output_geographic._output_module_function",
-        fake_output_module_function,
+        "policyengine_simulation_executor.simulation_output_geographic."
+        "compute_uk_geography_disclosure_output",
+        compute,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_geographic."
-        "_required_uk_geography_lookup_csv_path",
-        lambda _spec: CONSTITUENCY_CSV_PATH,
+        "build_uk_constituency_impact",
+        build_constituencies,
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_output_geographic."
+        "build_uk_local_authority_impact",
+        build_authorities,
     )
 
-    result = _simulation_output_builder(
-        "uk", baseline, reform
-    )._build_uk_constituency_impact()
-    assert result is not None
-    assert result.model_dump(mode="json") == expected
-    assert (
-        _simulation_output_builder(
-            "us", baseline, reform
-        )._build_uk_constituency_impact()
-        is None
+    builder = _simulation_output_builder("uk", baseline, reform)
+    builder.simulation_params["time_period"] = "2026"
+    builder._build_uk_constituency_impact()
+    builder._build_uk_local_authority_impact()
+
+    # Both levels come from one release, computed once.
+    assert computed == [("uk", baseline, reform, 2026)]
+    assert built == [("constituency", disclosure), ("local_authority", disclosure)]
+
+
+def test_uk_disclosure_is_not_computed_for_other_countries(monkeypatch):
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_output_geographic."
+        "compute_uk_geography_disclosure_output",
+        lambda *_args, **_kwargs: pytest.fail("US runs need no UK disclosure"),
     )
+    builder = _simulation_output_builder("us", object(), object())
+
+    assert builder._build_uk_constituency_impact() is None
+    assert builder._build_uk_local_authority_impact() is None
 
 
 def test_uk_local_authority_impact_receives_detected_boundary_metadata(monkeypatch):
-    baseline = object()
-    reform = object()
     expected = [_local_authority_impact_record().model_dump(mode="json")]
     metadata = UKLocalAuthorityMetadata(
         boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
     )
-    calls: list[tuple[object, object, UKLocalAuthorityMetadata | None]] = []
+    disclosure = simulation_output_geographic.UKGeographyDisclosureOutput()
+    calls: list[tuple[object, UKLocalAuthorityMetadata | None]] = []
 
-    def build(country, baseline_simulation, reform_simulation, **kwargs):
+    def build(country, value, **kwargs):
         if country != "uk":
             return None
-        assert country == "uk"
-        calls.append(
-            (
-                baseline_simulation,
-                reform_simulation,
-                kwargs["uk_local_authority_metadata"],
-            )
-        )
+        calls.append((value, kwargs["uk_local_authority_metadata"]))
         return GeographicImpactOutput.model_validate(expected)
 
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_output_geographic."
+        "compute_uk_geography_disclosure_output",
+        lambda *_args, **_kwargs: disclosure,
+    )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_output_geographic."
         "build_uk_local_authority_impact",
@@ -2554,19 +2558,13 @@ def test_uk_local_authority_impact_receives_detected_boundary_metadata(monkeypat
 
     result = _simulation_output_builder(
         "uk",
-        baseline,
-        reform,
+        object(),
+        object(),
         BuilderOptions(uk_local_authority_metadata=metadata),
     )._build_uk_local_authority_impact()
     assert result is not None
     assert result.model_dump(mode="json") == expected
-    assert calls == [(baseline, reform, metadata)]
-    assert (
-        _simulation_output_builder(
-            "us", baseline, reform
-        )._build_uk_local_authority_impact()
-        is None
-    )
+    assert calls == [(disclosure, metadata)]
 
 
 class _AreaSimulation:
@@ -2587,34 +2585,30 @@ def test_uk_area_breakdowns_use_the_computed_routed_area_pair(monkeypatch):
             boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
         ),
     )
-    calls: list[tuple[str, object, object, object]] = []
+    disclosure = simulation_output_geographic.UKGeographyDisclosureOutput()
+    computed: list[tuple[str, object, object, int]] = []
+    built: list[tuple[str, object, object]] = []
 
-    def constituencies(country, baseline_simulation, reform_simulation):
-        assert country == "uk"
+    def compute(country, baseline_simulation, reform_simulation, *, year):
         assert baseline_simulation.ensured
         assert reform_simulation.ensured
-        calls.append(("constituency", baseline_simulation, reform_simulation, None))
+        computed.append((country, baseline_simulation, reform_simulation, year))
+        return disclosure
+
+    def constituencies(country, value):
+        built.append(("constituency", value, None))
         return GeographicImpactOutput.model_validate(
             [_constituency_impact_record().model_dump(mode="json")]
         )
 
-    def local_authorities(country, baseline_simulation, reform_simulation, **kwargs):
-        assert country == "uk"
-        assert baseline_simulation.ensured
-        assert reform_simulation.ensured
-        calls.append(
-            (
-                "local_authority",
-                baseline_simulation,
-                reform_simulation,
-                kwargs["uk_local_authority_metadata"],
-            )
-        )
+    def local_authorities(country, value, **kwargs):
+        built.append(("local_authority", value, kwargs["uk_local_authority_metadata"]))
         return GeographicImpactOutput.model_validate(
             [_local_authority_impact_record().model_dump(mode="json")]
         )
 
     for name, function in {
+        "compute_uk_geography_disclosure_output": compute,
         "build_uk_constituency_impact": constituencies,
         "build_uk_local_authority_impact": local_authorities,
     }.items():
@@ -2628,22 +2622,24 @@ def test_uk_area_breakdowns_use_the_computed_routed_area_pair(monkeypatch):
         object(),
         BuilderOptions(resolved_region_code="uk", uk_area_simulations=area),
     )
+    builder.simulation_params["time_period"] = "2026"
 
     assert builder._build_uk_constituency_impact() is not None
     assert builder._build_uk_local_authority_impact() is not None
-    assert calls == [
-        ("constituency", area.baseline, area.reform, None),
-        (
-            "local_authority",
-            area.baseline,
-            area.reform,
-            area.local_authority_metadata,
-        ),
+    # One disclosure release over the routed pair serves both levels.
+    assert computed == [("uk", area.baseline, area.reform, 2026)]
+    assert built == [
+        ("constituency", disclosure, None),
+        ("local_authority", disclosure, area.local_authority_metadata),
     ]
 
 
 def test_omitted_uk_area_breakdowns_compute_nothing(monkeypatch):
-    for name in ("build_uk_constituency_impact", "build_uk_local_authority_impact"):
+    for name in (
+        "compute_uk_geography_disclosure_output",
+        "build_uk_constituency_impact",
+        "build_uk_local_authority_impact",
+    ):
         monkeypatch.setattr(
             f"policyengine_simulation_executor.simulation_output_geographic.{name}",
             lambda *_args, **_kwargs: pytest.fail("no area breakdown is built"),

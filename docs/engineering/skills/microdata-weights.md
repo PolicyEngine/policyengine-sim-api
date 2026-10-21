@@ -82,7 +82,6 @@ Each finding needs a decision, recorded in the PR:
 Recorded exceptions are listed in
 `rules/baselines/sim-microdata-weight-stripping.txt`. That list may only
 shrink, so adding one is a deliberate change to the rule's baseline. Today it
-holds one: `_unweighted_household_frame`, the plain household frame the UK
-local-authority breakdown hands policyengine's longwise geography impact. It
-goes once that breakdown hands policyengine the simulations, as the
-constituency and US congressional district breakdowns already do.
+is empty: the last one, `_unweighted_household_frame`, went when the UK
+constituency and local-authority breakdowns moved to policyengine's
+disclosure-controlled geography output, which takes the simulations.

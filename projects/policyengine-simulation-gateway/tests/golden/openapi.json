@@ -1033,6 +1033,65 @@
       },
       "ConstituencyImpactRecord": {
         "properties": {
+          "disclosure_tier": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "reported",
+                  "approximate"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disclosure Tier"
+          },
+          "average_household_income_change_lower": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Household Income Change Lower"
+          },
+          "average_household_income_change_upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Household Income Change Upper"
+          },
+          "relative_household_income_change_lower": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relative Household Income Change Lower"
+          },
+          "relative_household_income_change_upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relative Household Income Change Upper"
+          },
           "constituency_code": {
             "type": "string",
             "title": "Constituency Code"
@@ -1088,7 +1147,7 @@
           "population"
         ],
         "title": "ConstituencyImpactRecord",
-        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income. ``x`` and ``y`` are integer map-rendering coordinates."
+        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income, both rounded to the order of their standard error.\n``population`` is the weighted number of households. ``x`` and ``y`` are\ninteger map-rendering coordinates."
       },
       "DecileOutput": {
         "properties": {
@@ -1180,7 +1239,7 @@
         },
         "type": "array",
         "title": "GeographicImpactOutput",
-        "description": "UK constituency or local-authority impact records."
+        "description": "UK constituency or local-authority impact records.\n\nAreas whose income change disclosure control withholds are left out."
       },
       "HTTPValidationError": {
         "properties": {
@@ -1682,6 +1741,65 @@
       },
       "LocalAuthorityImpactRecord": {
         "properties": {
+          "disclosure_tier": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "reported",
+                  "approximate"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disclosure Tier"
+          },
+          "average_household_income_change_lower": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Household Income Change Lower"
+          },
+          "average_household_income_change_upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Household Income Change Upper"
+          },
+          "relative_household_income_change_lower": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relative Household Income Change Lower"
+          },
+          "relative_household_income_change_upper": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relative Household Income Change Upper"
+          },
           "local_authority_code": {
             "type": "string",
             "title": "Local Authority Code"
