@@ -103,9 +103,19 @@ def normalize_stage12_bundle(
 
 
 def bundle_digest(bundle: Stage12BundleManifest) -> str:
-    """Return the sha256 of the manifest's canonical (key-sorted, compact) JSON."""
+    """Return the sha256 of the manifest's canonical (key-sorted, compact) JSON.
+
+    Each country's ``region_datasets`` is left out. It comes from the same .py
+    bundle, whose version the digest covers, and leaving it out keeps the
+    digest a running v2 application was validated with: a redeploy that adds
+    it replaces the application before the new version manifest is
+    published, and entry services send the digest they read from that
+    manifest.
+    """
     payload = json.dumps(
-        bundle.model_dump(mode="json"),
+        bundle.model_dump(
+            mode="json", exclude={"countries": {"__all__": {"region_datasets"}}}
+        ),
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,

@@ -168,3 +168,26 @@ def test_a_bundle_without_region_datasets_records_none() -> None:
     bundle["data_releases"]["us"].pop("region_datasets")
 
     assert _us(normalize_stage12_bundle(bundle)).region_datasets is None
+
+
+def test_region_datasets_leave_the_bundle_digest_unchanged() -> None:
+    """A worker redeployed with region datasets keeps the digest it had.
+
+    The redeploy replaces the running v2 application before the new version
+    manifest is published, and entry services send the digest they read from
+    that manifest, so a changed digest would refuse every run in between.
+    Region datasets come from the same .py bundle, whose version the digest
+    already covers.
+    """
+    bundle = normalize_stage12_bundle(_bundle())
+    without_region_datasets = bundle.model_copy(
+        update={
+            "countries": tuple(
+                country.model_copy(update={"region_datasets": None})
+                for country in bundle.countries
+            )
+        }
+    )
+
+    assert _us(bundle).region_datasets is not None
+    assert bundle_digest(bundle) == bundle_digest(without_region_datasets)
