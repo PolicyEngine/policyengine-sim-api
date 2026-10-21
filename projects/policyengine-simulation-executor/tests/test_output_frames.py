@@ -3,9 +3,11 @@
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 from microdf import MicroDataFrame
 from policyengine.tax_benefit_models.uk.datasets import UKYearData
 from policyengine_simulation_executor.output_frames import EntityFrames, HouseholdFrame
+from policyengine_simulation_executor.simulation_output_common import _entity_data
 
 
 def _uk_year_data() -> UKYearData:
@@ -36,3 +38,25 @@ def test_missing_output_data_matches_neither_shape():
     assert not isinstance(None, EntityFrames)
     assert not isinstance(None, HouseholdFrame)
     assert not isinstance(SimpleNamespace(person=None), HouseholdFrame)
+
+
+class _SimulationWithoutOutput:
+    """A simulation whose ensure() leaves the output it was given."""
+
+    def __init__(self, output_dataset):
+        self.output_dataset = output_dataset
+
+    def ensure(self):
+        pass
+
+
+@pytest.mark.parametrize(
+    "output_dataset",
+    [None, SimpleNamespace(data=None)],
+    ids=["no output dataset", "no output data"],
+)
+def test_reading_an_entity_frame_without_output_data_raises_type_error(
+    output_dataset,
+):
+    with pytest.raises(TypeError, match="no output data"):
+        _entity_data(_SimulationWithoutOutput(output_dataset), "household")
