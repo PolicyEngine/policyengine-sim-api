@@ -42,6 +42,9 @@ class FakeDict:
     def snapshot(self) -> dict:
         return dict(self._data)
 
+    def hydrate(self):
+        return self
+
 
 @pytest.fixture
 def serialized_workflow(monkeypatch):
@@ -1362,18 +1365,64 @@ def test_routing_writes_refuse_a_routing_store_that_cannot_be_opened(
         assert type(raised.value) is RuntimeError
 
 
+class NotFoundError(Exception):
+    """Named like modal.exception.NotFoundError, which the utility matches by name."""
+
+
+class _LazyMissingDict:
+    """A missing Dict as modal 1.x reports it.
+
+    Dict.from_name returns a handle without contacting Modal; looking the Dict
+    up, or the first read, raises NotFoundError.
+    """
+
+    @staticmethod
+    def from_name(name: str, **lookup_options: object):
+        del lookup_options
+        return _LazyMissingDict.Handle(name)
+
+    class Handle:
+        def __init__(self, name: str):
+            self.name = name
+
+        def hydrate(self):
+            raise NotFoundError(self.name)
+
+        def get(self, key, default=None):
+            raise NotFoundError(self.name)
+
+
+@pytest.mark.parametrize(
+    "missing_dict", [_UnopenableDict, _LazyMissingDict], ids=["eager", "lazy"]
+)
 def test_completing_a_plan_refuses_a_missing_routing_store(
-    monkeypatch, serialized_workflow
+    monkeypatch, serialized_workflow, missing_dict
 ):
-    monkeypatch.setattr(registry, "modal", SimpleNamespace(Dict=_UnopenableDict))
+    monkeypatch.setattr(registry, "modal", SimpleNamespace(Dict=missing_dict))
     original = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
     plan = _plan(monkeypatch, original, ("6.1.0", "1.1.0", "2.2.0"))
 
+    with pytest.raises(RuntimeError, match=registry.UNOPENED_ROUTING_STORE) as raised:
+        registry.complete_routing_plan(environment="staging", plan=plan)
+    assert type(raised.value) is RuntimeError
+
+
+def test_restoring_with_a_lazily_missing_routing_store(
+    monkeypatch, serialized_workflow
+):
+    """With modal 1.x a missing Dict is reported at lookup; restore sees no store."""
+    monkeypatch.setattr(registry, "modal", SimpleNamespace(Dict=_LazyMissingDict))
+    first = _plan(monkeypatch, None, ("6.1.0", "1.1.0", "2.2.0"))
+    assert (
+        registry.restore_routing_plans(environment="staging", plans=[first])
+        == "unchanged"
+    )
+    later = _plan(monkeypatch, first["after"], ("6.2.0", "1.1.0", "2.3.0"))
     with pytest.raises(
         registry.RoutingConflictError,
-        match="no matching unfinished routing publication to complete",
+        match=r"^there is no routing state to restore into$",
     ):
-        registry.complete_routing_plan(environment="staging", plan=plan)
+        registry.restore_routing_plans(environment="staging", plans=[first, later])
 
 
 def test_runner_loss_cannot_be_adopted_by_the_next_release(monkeypatch, patched_modal):
