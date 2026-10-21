@@ -103,7 +103,7 @@ def _certified_us_spm_capability(configured: object) -> SPMCapability:
     ):
         msg = "The installed US model does not support canonical SPM"
         raise ValueError(msg)
-    capability = SPMCapability(defaults=configured)
+    capability = SPMCapability.model_validate({"defaults": configured})
     forecast = _forecast(capability.defaults.forecast_content_sha256)
     forecast.entry(
         forecast.years[0],

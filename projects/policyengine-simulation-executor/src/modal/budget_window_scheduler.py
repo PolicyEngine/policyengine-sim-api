@@ -244,11 +244,15 @@ class BudgetWindowBatchRunner:
         progress_made = False
 
         for simulation_year in list(self.state.running_years):
-            handle = self.resolve_child_handle(simulation_year)
+            call = self.resolve_child_handle(simulation_year).call
+            if call is None:
+                # resolve_child_handle always returns a handle with its call.
+                msg = f"the {simulation_year} child has no call handle"
+                raise RuntimeError(msg)
 
             poll_started = time.perf_counter()
             try:
-                child_result = handle.call.get(timeout=0)
+                child_result = call.get(timeout=0)
             except TimeoutError:
                 continue
             except Exception as exc:  # noqa: BLE001  # call.get re-raises whatever the child worker raised; every failure fails the batch, logged with its traceback by log_and_redact_exception

@@ -115,7 +115,13 @@ def sum_annual_impacts(
         )
         totals["budgetaryImpact"] += _as_decimal(annual_impact.budgetaryImpact)
 
-    return BudgetWindowTotals(**{key: float(value) for key, value in totals.items()})
+    return BudgetWindowTotals(
+        taxRevenueImpact=float(totals["taxRevenueImpact"]),
+        federalTaxRevenueImpact=float(totals["federalTaxRevenueImpact"]),
+        stateTaxRevenueImpact=float(totals["stateTaxRevenueImpact"]),
+        benefitSpendingImpact=float(totals["benefitSpendingImpact"]),
+        budgetaryImpact=float(totals["budgetaryImpact"]),
+    )
 
 
 def build_budget_window_result(

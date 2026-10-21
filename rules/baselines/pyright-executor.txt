@@ -7,7 +7,3 @@
 # occur with
 #   python -m scripts.rules pyright projects/policyengine-simulation-executor --write-baseline
 # then set the rule's [rule.baseline] count in rules/registry.toml to match.
-projects/policyengine-simulation-executor/src/modal/budget_window_results.py :: reportArgumentType :: Argument of type "float" cannot be assigned to parameter "year" of type "Literal['Total']" in function "__init__"
-projects/policyengine-simulation-executor/src/modal/budget_window_scheduler.py :: reportOptionalMemberAccess :: "get" is not a known attribute of "None"
-projects/policyengine-simulation-executor/src/modal/utils/release_sentinel.py :: reportOptionalMemberAccess :: "split" is not a known attribute of "None"
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/spm.py :: reportArgumentType :: Argument of type "object" cannot be assigned to parameter "defaults" of type "SPMSelection" in function "__init__"
