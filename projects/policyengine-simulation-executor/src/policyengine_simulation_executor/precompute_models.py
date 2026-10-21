@@ -166,6 +166,16 @@ class DatasetBuildResult(_StrictModel):
     size_bytes: int
 
 
+class StateDatasetBuildResult(_StrictModel):
+    """Result of one state's dataset build; ``uploaded`` is False if the key existed."""
+
+    year: int
+    state_code: str
+    path: str
+    uploaded: bool
+    size_bytes: int
+
+
 class BaselineComputeResult(_StrictModel):
     """Outcome of one cohort baseline computation and its write-once upload.
 
