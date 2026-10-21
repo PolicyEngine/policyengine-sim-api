@@ -4,13 +4,20 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import date
-from typing import Any, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
+from policyengine_simulation_contract.report_execution import (
+    ReportExecutionError,
+    ReportExecutionFailure,
+)
 from policyengine_simulation_contract.spm import spm_error_detail
 from policyengine_simulation_observability.errors import make_correlation_id
 from pydantic import BaseModel, ConfigDict
 
 from .failure_causes import StageProgress, failure_summary
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 ERROR_CODE_MAX_LENGTH = 64
 ERROR_SUMMARY_MAX_LENGTH = 512
@@ -80,6 +87,24 @@ def failure_detail_from_record(
     return _safe_detail(
         error_code=error_code,
         error_summary=error_summary or "Simulation failed",
+    )
+
+
+def report_execution_error(
+    evaluation_id: UUID,
+    detail: Stage12FailureDetail,
+) -> ReportExecutionError:
+    """Return the typed error that carries ``detail`` to a returned report's caller.
+
+    It holds the error code and summary a Stage 12 row would record for the
+    same failure.
+    """
+    return ReportExecutionError(
+        ReportExecutionFailure(
+            evaluation_id=evaluation_id,
+            error_code=detail.error_code,
+            error_summary=detail.error_summary or "Simulation failed",
+        )
     )
 
 
