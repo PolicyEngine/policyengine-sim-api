@@ -8,7 +8,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 52 | 3 | 0 | 14 | 69 |
+| mechanical | 53 | 2 | 0 | 14 | 69 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
@@ -66,7 +66,6 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 - `sim.ci.multiline-run-is-script`: 13 remaining in `rules/baselines/ci-multiline-run.txt`
 - `sim.microdata.weight-stripping-confined`: 0 remaining in `rules/baselines/sim-microdata-weight-stripping.txt`
-- `sim.quality.pyright-apis-integ`: 0 remaining in `rules/baselines/pyright-apis-integ.txt`
 
 ### Exceptions and review dates
 
@@ -288,7 +287,7 @@ flowchart LR
 | `sim.quality.deployed-tests-ruff-exemptions` | The deployed-service test suite (projects/*/authenticated_tests, pytest run against a live candidate) gets the same ruff exemptions as unit tests (sim.quality.tests-ruff-exemptions); every other ruff rule applies to it. | mechanical | enforced | yes | ruff per-file ignore of ANN, ARG001, ARG002, ARG005, D1, DTZ001, DTZ007, INP001, PLC0415, PLR2004, S101, S102, S105, S106, S108, S301, S603, S607, SLF001, TID253 for `**/authenticated_tests/**` | `pr.yml:lint` | — |
 | `sim.quality.every-package-type-checked` | Every uv package under libs/ and projects/ (a directory with a pyproject.toml) is listed by a Pyright rule, so the pyright CI job type-checks it. | mechanical | enforced | yes | quality guard `pyright-coverage` | `pr.yml:quality-guards` | yes |
 | `sim.quality.every-project-tested` | Every project and library with unit tests runs them in the PR test matrix. | mechanical | doc-only | no | nothing | — | — |
-| `sim.quality.pyright-apis-integ` | The generated-client integration-test project, apis-integ, has no Pyright errors beyond those its baseline lists, and the baseline lists only errors that still occur, so it only shrinks; checked with the pinned Pyright version in the project's own locked environment. | mechanical | ratcheted | yes | pyright in `projects/policyengine-apis-integ` | `pr.yml:pyright` | yes |
+| `sim.quality.pyright-apis-integ` | The generated-client integration-test project, apis-integ, has no Pyright errors, checked with the pinned Pyright version in the project's own locked environment. | mechanical | enforced | yes | pyright in `projects/policyengine-apis-integ` | `pr.yml:pyright` | yes |
 | `sim.quality.pyright-executor` | The simulation executor has no Pyright errors, checked with the pinned Pyright version in the executor's own locked environment. | mechanical | enforced | yes | pyright in `projects/policyengine-simulation-executor` | `pr.yml:pyright` | yes |
 | `sim.quality.pyright-gateway` | The simulation gateway has no Pyright errors, checked with the pinned Pyright version in the gateway's own locked environment. | mechanical | enforced | yes | pyright in `projects/policyengine-simulation-gateway` | `pr.yml:pyright` | yes |
 | `sim.quality.pyright-libraries-and-entry` | The contract, observability, Stage 12 persistence and fastapi libraries and the simulation entry have no Pyright errors, checked with the pinned Pyright version in each package's own locked environment. | mechanical | enforced | yes | pyright in `libs/policyengine-simulation-contract`, `libs/policyengine-simulation-observability`, `libs/policyengine-stage12-persistence`, `libs/policyengine-fastapi`, `projects/policyengine-simulation-entry` | `pr.yml:pyright` | yes |
@@ -315,7 +314,7 @@ flowchart LR
   j_CI_pr_yml_quality_guards["CI pr.yml:quality-guards"]
   r_sim_quality_every_project_tested("sim.quality.every-project-tested (doc-only)")
   gap_unenforced>"not enforced"]
-  r_sim_quality_pyright_apis_integ("sim.quality.pyright-apis-integ (ratcheted)")
+  r_sim_quality_pyright_apis_integ("sim.quality.pyright-apis-integ (enforced)")
   e_pyright_in_projects_policyengine_apis_integ["pyright in projects/policyengine-apis-integ"]
   j_CI_pr_yml_pyright["CI pr.yml:pyright"]
   r_sim_quality_pyright_executor("sim.quality.pyright-executor (enforced)")

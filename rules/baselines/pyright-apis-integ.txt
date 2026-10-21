@@ -1,9 +1,0 @@
-# Tolerated Pyright errors in projects/policyengine-apis-integ.
-# This list may only shrink.
-#
-# Rule sim.quality.pyright-apis-integ. Each entry is
-# <path> :: <Pyright rule> :: <first line of the message>, one line per
-# error, sorted. After fixing errors, remove the entries that no longer
-# occur with
-#   python -m scripts.rules pyright projects/policyengine-apis-integ --write-baseline
-# then set the rule's [rule.baseline] count in rules/registry.toml to match.
