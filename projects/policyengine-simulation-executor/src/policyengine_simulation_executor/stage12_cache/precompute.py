@@ -486,7 +486,7 @@ def _require_districts_within_their_states(
     if "congressional_district_geoid" not in household.columns:
         return
     district = household["congressional_district_geoid"]
-    in_another_state = district.isin(district_geoids) & (
+    in_another_state = district.isin(sorted(district_geoids)) & (
         (district // 100) != household["state_fips"]
     )
     if in_another_state.any():
