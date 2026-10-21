@@ -14,6 +14,10 @@ ALEMBIC_VERSION_TABLE = "alembic_version"
 # The login role the Simulation Entrypoint runtime connects as. Migrations grant
 # it schema usage and table DML; it never owns or changes schema objects.
 RUNTIME_ROLE = "simulation_runtime"
+# The newest revision in migrations/versions. Each migration PR updates it, and
+# tests/test_schema.py fails when it differs from the chain's head. The
+# readiness check reports it next to the database's revision.
+HEAD_REVISION = "0001"
 
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_N_name)s",
