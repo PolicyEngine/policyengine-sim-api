@@ -225,24 +225,18 @@ class TestPyrightProof(unittest.TestCase):
 
     def test_rule_proof_pyright_apis_integ(self) -> None:
         rule_id = "sim.quality.pyright-apis-integ"
-        client_mismatch = (
-            'Argument of type "Client | AuthenticatedClient" cannot be assigned to '
-            'parameter "client" of type "AuthenticatedClient" in function '
-            '"sync_detailed"'
-        )
+        # The integration tests' real errors before their fix: a plain Client
+        # passed to endpoints typed as needing an AuthenticatedClient.
         bad = proof_comparison(rule_id, "bad")
 
         self.assertEqual(
             [(error.path, error.line) for error in bad.new_errors],
-            [(f"{APIS_INTEG_TESTS}/test_calculate.py", 99)],
+            [
+                (f"{APIS_INTEG_TESTS}/conftest.py", 103),
+                (f"{APIS_INTEG_TESTS}/test_calculate.py", 99),
+            ],
         )
-        self.assertEqual(
-            bad.stale_entries,
-            (
-                f"{APIS_INTEG_TESTS}/conftest.py :: reportArgumentType :: "
-                f"{client_mismatch}",
-            ),
-        )
+        self.assertEqual(bad.stale_entries, ())
         self.assertTrue(proof_comparison(rule_id, "good").passed)
 
 
