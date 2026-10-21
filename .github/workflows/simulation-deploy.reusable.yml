@@ -128,7 +128,7 @@ jobs:
         working-directory: projects/policyengine-simulation-executor
         env:
           HUGGING_FACE_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}
-        run: uv run python -m src.modal.utils.validate_hf_access
+        run: uv run --frozen python -m src.modal.utils.validate_hf_access
 
       - name: Synchronize the Modal UK private-data credential
         if: ${{ inputs.deploy_existing_stack || inputs.deploy_stage12_v2 }}
@@ -137,7 +137,7 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           PE_UK_PRIVATE_HF_READ_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}
-        run: uv run modal secret create pe-uk-private-hf-read-token "HUGGING_FACE_TOKEN=${PE_UK_PRIVATE_HF_READ_TOKEN}" --env="${{ inputs.modal_environment }}" --force
+        run: uv run --frozen modal secret create pe-uk-private-hf-read-token "HUGGING_FACE_TOKEN=${PE_UK_PRIVATE_HF_READ_TOKEN}" --env="${{ inputs.modal_environment }}" --force
 
       - name: Synchronize Modal runtime secrets
         if: ${{ inputs.deploy_existing_stack }}
@@ -257,7 +257,7 @@ jobs:
 
       - name: Run entrypoint unit tests
         working-directory: ${{ env.PROJECT_DIR }}
-        run: uv run pytest tests/ -v
+        run: uv run --frozen pytest tests/ -v
 
   deploy_gateway:
     name: Deploy and unit test Modal gateway
@@ -293,11 +293,11 @@ jobs:
           OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ vars.OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL }}
           OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OBSERVABILITY_OTLP_ENDPOINT }}
           POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}
-        run: uv run modal deploy --env="${{ inputs.modal_environment }}" src/policyengine_simulation_gateway/app.py
+        run: uv run --frozen modal deploy --env="${{ inputs.modal_environment }}" src/policyengine_simulation_gateway/app.py
 
       - name: Run gateway unit tests
         working-directory: projects/policyengine-simulation-gateway
-        run: uv run pytest tests/ -v
+        run: uv run --frozen pytest tests/ -v
 
       - name: Resolve gateway URL
         id: url
@@ -367,11 +367,11 @@ jobs:
           OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ vars.OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL }}
           OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OBSERVABILITY_OTLP_ENDPOINT }}
           POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}
-        run: uv run modal deploy --env="${{ inputs.modal_environment }}" src/modal/app.py
+        run: uv run --frozen modal deploy --env="${{ inputs.modal_environment }}" src/modal/app.py
 
       - name: Run executor unit tests
         working-directory: projects/policyengine-simulation-executor
-        run: uv run pytest tests/ -v
+        run: uv run --frozen pytest tests/ -v
 
   update_routing:
     name: Publish routing after all services pass
@@ -429,7 +429,7 @@ jobs:
           if [[ "${FORCE_LATEST}" == "true" ]]; then
             args+=(--force-latest)
           fi
-          uv run python -m src.modal.utils.update_version_registry "${args[@]}" \
+          uv run --frozen python -m src.modal.utils.update_version_registry "${args[@]}" \
             | tee "${RUNNER_TEMP}/routing-plan.out"
           grep -E '^(before_sha256|after_sha256|advances_latest)=' \
             "${RUNNER_TEMP}/routing-plan.out" >> "$GITHUB_OUTPUT"
@@ -441,7 +441,7 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
         run: |
-          uv run python -m src.modal.utils.update_version_registry \
+          uv run --frozen python -m src.modal.utils.update_version_registry \
             --environment "${MODAL_ENVIRONMENT}" \
             --record-plan "${RUNNER_TEMP}/routing-plan/plan.json"
 
@@ -460,7 +460,7 @@ jobs:
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           MODAL_ENVIRONMENT: ${{ inputs.modal_environment }}
         run: |
-          uv run python -m src.modal.utils.update_version_registry \
+          uv run --frozen python -m src.modal.utils.update_version_registry \
             --environment "${MODAL_ENVIRONMENT}" \
             --apply-plan "${RUNNER_TEMP}/routing-plan/plan.json"
 
@@ -491,7 +491,7 @@ jobs:
         env:
           HUGGING_FACE_TOKEN: ${{ secrets.PE_UK_PRIVATE_HF_READ_TOKEN }}
           GCP_CREDENTIALS_JSON: ${{ secrets.GCP_CREDENTIALS_JSON }}
-        run: uv run python -m src.modal.utils.release_sentinel expected --output "${RUNNER_TEMP}/release-sentinel.json"
+        run: uv run --frozen python -m src.modal.utils.release_sentinel expected --output "${RUNNER_TEMP}/release-sentinel.json"
 
       - name: Check the sentinel names this deployment's bundle
         env:
@@ -593,7 +593,7 @@ jobs:
 
       - name: Validate the packaged PolicyEngine.py bundle
         working-directory: projects/policyengine-simulation-executor
-        run: uv run python -m src.modal.utils.extract_stage12_bundle --expect "policyengine_version=${{ needs.prepare.outputs.policyengine_version }}" --expect "countries.us.country_package_version=${{ needs.prepare.outputs.us_version }}" --expect "countries.uk.country_package_version=${{ needs.prepare.outputs.uk_version }}" --output stage12-bundle.json
+        run: uv run --frozen python -m src.modal.utils.extract_stage12_bundle --expect "policyengine_version=${{ needs.prepare.outputs.policyengine_version }}" --expect "countries.us.country_package_version=${{ needs.prepare.outputs.us_version }}" --expect "countries.uk.country_package_version=${{ needs.prepare.outputs.uk_version }}" --output stage12-bundle.json
 
       - name: Select the bundle-derived v2 application name
         id: application
@@ -641,7 +641,7 @@ jobs:
           OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL: ${{ vars.OBSERVABILITY_GOOGLE_SERVICE_ACCOUNT_EMAIL }}
           OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.OBSERVABILITY_OTLP_ENDPOINT }}
           POLICYENGINE_OTEL_GOOGLE_AUDIENCE: ${{ vars.OBSERVABILITY_OTLP_GOOGLE_AUDIENCE }}
-        run: uv run modal deploy --env="${{ inputs.modal_environment }}" src/modal/v2_app.py
+        run: uv run --frozen modal deploy --env="${{ inputs.modal_environment }}" src/modal/v2_app.py
 
       - name: Validate installed bundles, secrets, datasets, and calculations
         id: validation
@@ -688,7 +688,7 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-        run: uv run python -m src.modal.utils.update_v2_version_manifest --environment "${{ inputs.modal_environment }}" --manifest-name simulation-api-v2-version-manifest --validation-file "${RUNNER_TEMP}/stage12-worker-validation/stage12-worker-validation.json"
+        run: uv run --frozen python -m src.modal.utils.update_v2_version_manifest --environment "${{ inputs.modal_environment }}" --manifest-name simulation-api-v2-version-manifest --validation-file "${RUNNER_TEMP}/stage12-worker-validation/stage12-worker-validation.json"
 
   stage12_v2_ready:
     name: Require requested Stage 12 v2 deployment to succeed
@@ -763,7 +763,7 @@ jobs:
           SIMULATION_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
         run: |
           uv sync --frozen
-          uv run python -m src.modal.utils.release_sentinel check \
+          uv run --frozen python -m src.modal.utils.release_sentinel check \
             --base-url "${{ needs.deploy_entrypoint.outputs.candidate_url }}" \
             --expected "${RUNNER_TEMP}/sentinel/release-sentinel.json"
 
@@ -830,7 +830,7 @@ jobs:
 
       - name: Run authenticated deployment tests
         working-directory: projects/policyengine-simulation-entry
-        run: uv run pytest authenticated_tests/ -v
+        run: uv run --frozen pytest authenticated_tests/ -v
 
   promote_entrypoint:
     name: Promote and verify Cloud Run entrypoint
@@ -921,7 +921,7 @@ jobs:
           SIMULATION_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
         run: |
           uv sync --frozen
-          uv run python -m src.modal.utils.release_sentinel check \
+          uv run --frozen python -m src.modal.utils.release_sentinel check \
             --base-url "${STABLE_URL}" \
             --expected "${RUNNER_TEMP}/sentinel/release-sentinel.json"
 
@@ -934,7 +934,7 @@ jobs:
           SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
           SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
           SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS: ${{ vars.SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS }}
-        run: uv run pytest authenticated_tests/ -v
+        run: uv run --frozen pytest authenticated_tests/ -v
 
       - name: Verify configured custom hostname
         if: ${{ env.CUSTOM_URL != '' }}
@@ -950,7 +950,7 @@ jobs:
           SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
           SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
           SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS: ${{ vars.SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS }}
-        run: uv run pytest authenticated_tests/ -v
+        run: uv run --frozen pytest authenticated_tests/ -v
 
       - name: Restore previous revision after failed verification
         if: ${{ failure() && steps.promote.outcome == 'success' }}
@@ -1008,7 +1008,7 @@ jobs:
         run: |
           # Caller workflows serialize this write with every other routing
           # write in the simulation-deploy-main concurrency group.
-          uv run python -m src.modal.utils.update_version_registry \
+          uv run --frozen python -m src.modal.utils.update_version_registry \
             --environment "${MODAL_ENVIRONMENT}" \
             --finalize-publication --publication-run "${PUBLICATION_RUN}" \
             --release-environment "${RELEASE_ENVIRONMENT}" \

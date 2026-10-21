@@ -21,7 +21,7 @@ fi
 # PolicyEngine Core reads the HUGGING_FACE_TOKEN compatibility name in Modal.
 (
     cd "$REPO_ROOT/projects/policyengine-simulation-executor"
-    uv run modal secret create pe-uk-private-hf-read-token \
+    uv run --frozen modal secret create pe-uk-private-hf-read-token \
         "HUGGING_FACE_TOKEN=$PE_UK_PRIVATE_HF_READ_TOKEN" \
         --env="$MODAL_ENV" \
         --force
@@ -30,20 +30,20 @@ fi
 echo "=== Gateway image smoke (env: $MODAL_ENV) ==="
 (
     cd "$REPO_ROOT/projects/policyengine-simulation-gateway"
-    uv run modal run --env="$MODAL_ENV" \
+    uv run --frozen modal run --env="$MODAL_ENV" \
         src/policyengine_simulation_gateway/smoke_app.py
 )
 
 echo "=== Executor image smoke (env: $MODAL_ENV) ==="
 (
     cd "$REPO_ROOT/projects/policyengine-simulation-executor"
-    uv run modal run --env="$MODAL_ENV" src/modal/smoke_app.py
+    uv run --frozen modal run --env="$MODAL_ENV" src/modal/smoke_app.py
 )
 
 echo "=== Stage 12 static runtime file smoke (env: $MODAL_ENV) ==="
 (
     cd "$REPO_ROOT/projects/policyengine-simulation-executor"
-    uv run modal run --env="$MODAL_ENV" \
+    uv run --frozen modal run --env="$MODAL_ENV" \
         src/modal/v2_static_runtime_files_smoke.py
 )
 

@@ -152,7 +152,7 @@ require_secret_accessor \
   "${STAGE12_GCP_CREDENTIALS_SECRET_NAME}" \
   "${STAGE12_DEPLOY_SERVICE_ACCOUNT}"
 
-uv run --project projects/policyengine-simulation-entry \
+uv run --frozen --project projects/policyengine-simulation-entry \
   python -m policyengine_simulation_entry.stage12_infrastructure \
   --database-url-file "${database_url_file}" \
   --expected-role "${expected_role}" \

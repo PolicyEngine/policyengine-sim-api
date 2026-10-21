@@ -280,7 +280,10 @@ def test_update_policyengine_package_updates_only_wrapper_requirements(
     assert "uv lock" in uv_calls
     assert uv_calls.index("run --isolated") < uv_calls.index("uv lock")
     assert "lock --check" in uv_calls
-    assert "run --extra test pytest tests/test_bundle_version_export.py" in uv_calls
+    assert (
+        "run --frozen --extra test pytest tests/test_bundle_version_export.py"
+        in uv_calls
+    )
     assert "checkout -b auto/update-policyengine-4.1.0" in git_log.read_text(
         encoding="utf-8"
     )

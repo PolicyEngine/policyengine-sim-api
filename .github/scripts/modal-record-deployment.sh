@@ -16,6 +16,6 @@ if [ -z "${POLICYENGINE_ARTIFACT_BUCKET:-}" ]; then
 fi
 
 echo "Recording deployment marker for ${ENVIRONMENT} (manifest ${MANIFEST_DIGEST})"
-uv run python -m src.modal.utils.record_deployment \
+uv run --frozen python -m src.modal.utils.record_deployment \
   --environment "$ENVIRONMENT" \
   --manifest-digest "$MANIFEST_DIGEST"

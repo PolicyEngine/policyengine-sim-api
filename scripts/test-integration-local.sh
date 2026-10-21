@@ -37,8 +37,8 @@ check_service "simulation-executor" 8082
 echo ""
 echo "Running integration tests (excluding GCP workflow tests)..."
 cd projects/policyengine-apis-integ
-uv sync --extra test
-uv run pytest tests/ -v -m "not requires_gcp"
+uv sync --frozen --extra test
+uv run --frozen pytest tests/ -v -m "not requires_gcp"
 cd ../..
 
 echo ""

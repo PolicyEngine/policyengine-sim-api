@@ -12,4 +12,4 @@ PROJECT_DIR="${1:-.}"
 
 cd "$PROJECT_DIR"
 
-uv run python -m src.modal.utils.extract_bundle_versions
+uv run --frozen python -m src.modal.utils.extract_bundle_versions

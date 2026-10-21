@@ -11,7 +11,7 @@ modal_environment="${1:?Modal environment is required}"
 
 output_file="$(mktemp)"
 trap 'rm -f "${output_file}"' EXIT
-uv run modal run --env="${modal_environment}" src/modal/stage12_precompute_app.py 2>&1 | tee "${output_file}"
+uv run --frozen modal run --env="${modal_environment}" src/modal/stage12_precompute_app.py 2>&1 | tee "${output_file}"
 digest_line="$(tr -d '\r' <"${output_file}" | grep '^STAGE12_CACHE_MANIFEST_DIGEST=' | tail -n 1 || true)"
 if [[ -z "${digest_line}" ]]; then
   echo "Stage 12 precompute returned no cache manifest digest" >&2

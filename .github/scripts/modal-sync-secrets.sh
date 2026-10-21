@@ -56,7 +56,7 @@ fi
 # environment in both staging and production. Synchronize that exact resource
 # during deployment and stop immediately if the update fails; runtime storage
 # and observability error handling remain independent of this deployment step.
-uv run modal secret create gcp-credentials \
+uv run --frozen modal secret create gcp-credentials \
   "GOOGLE_APPLICATION_CREDENTIALS_JSON=$GCP_CREDENTIALS_JSON" \
   --env="main" \
   --force
@@ -72,7 +72,7 @@ if [ -n "$NORMALIZED_ISSUER" ]; then
   esac
 fi
 
-uv run modal secret create policyengine-gateway-auth \
+uv run --frozen modal secret create policyengine-gateway-auth \
   "GATEWAY_AUTH_ISSUER=$NORMALIZED_ISSUER" \
   "GATEWAY_AUTH_AUDIENCE=${GATEWAY_AUTH_AUDIENCE:-}" \
   "GATEWAY_AUTH_REQUIRED=${GATEWAY_AUTH_REQUIRED:-}" \

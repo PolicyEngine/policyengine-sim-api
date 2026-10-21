@@ -92,7 +92,7 @@ test:
 		libs/policyengine-stage12-persistence \
 		libs/policyengine-fastapi; do \
 		echo "Testing $$proj..."; \
-		(cd "$$proj" && uv sync --extra test && uv run pytest tests/ -v) || exit 1; \
+		(cd "$$proj" && uv sync --frozen --extra test && uv run --frozen pytest tests/ -v) || exit 1; \
 	done
 	@echo "✅ All unit tests passed"
 
@@ -100,7 +100,7 @@ test-service:
 ifndef service
 	@echo "Please specify service: make test-service service=simulation-executor"
 else
-	docker-compose -f deployment/docker-compose.yml run --rm $(service) sh -c "cd /app/projects/policyengine-$(service) && uv run --extra test pytest"
+	docker-compose -f deployment/docker-compose.yml run --rm $(service) sh -c "cd /app/projects/policyengine-$(service) && uv run --frozen --extra test pytest"
 endif
 
 # Integration testing
@@ -108,16 +108,16 @@ test-integration: generate-clients
 	@echo "Running integration tests against local services..."
 	@echo "Make sure services are running with 'make up' first!"
 	@cd projects/policyengine-apis-integ && \
-		uv sync --extra test && \
-		uv run pytest tests/ -v -m "not requires_gcp"
+		uv sync --frozen --extra test && \
+		uv run --frozen pytest tests/ -v -m "not requires_gcp"
 
 test-integration-all: generate-clients
 	@echo "Running all integration tests against local services..."
 	@echo "Make sure services are running with 'make up' first!"
 	@echo "Note: Workflow tests will be skipped without GCP credentials"
 	@cd projects/policyengine-apis-integ && \
-		uv sync --extra test && \
-		uv run pytest tests/ -v
+		uv sync --frozen --extra test && \
+		uv run --frozen pytest tests/ -v
 
 test-integration-with-services:
 	@echo "Starting services and running integration tests..."
@@ -192,7 +192,7 @@ push-pr-branch:
 
 # Integration tests
 integ-test:
-	cd projects/policyengine-apis-integ && uv run pytest
+	cd projects/policyengine-apis-integ && uv run --frozen pytest
 
 # Cleanup
 clean:
