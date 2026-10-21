@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,10 @@ from pathlib import Path
 from scripts.rules.load import load_text
 from scripts.rules.locked_installs import (
     INSTALL_RULE,
+    LOCK_RULE,
+    RELOCK_RULE,
+    REPO_ROOT,
+    TEST_RULE,
     find_violations,
     lock_violations,
     relock_violations,
@@ -238,6 +243,63 @@ removal = "never"
                 "exception for .github/workflows/ci.yml (pip install gone) "
                 "matches no site"
             ],
+        )
+
+
+class TestRepository(unittest.TestCase):
+    def test_every_install_capable_file_is_scanned(self) -> None:
+        listed = subprocess.run(
+            ["git", "ls-files"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        expected = set()
+        for path in listed:
+            name = Path(path).name.lower()
+            if "fixtures" in Path(path).parts:
+                continue
+            text = (REPO_ROOT / path).read_text(encoding="utf-8", errors="replace")
+            if (
+                path.startswith(".github/workflows/")
+                or name.endswith((".sh", ".mk"))
+                or name == "makefile"
+                or ("dockerfile" in name and not name.endswith(".dockerignore"))
+                or "compose" in name
+                or (
+                    name.endswith(".py")
+                    and "tests" not in Path(path).parts
+                    and "modal.Image" in text
+                )
+            ):
+                expected.add(path)
+
+        scanned = scan(REPO_ROOT).scanned
+
+        self.assertEqual(expected - scanned, set())
+        self.assertIn(
+            "projects/policyengine-simulation-gateway/src/"
+            "policyengine_simulation_gateway/app.py",
+            scanned,
+        )
+
+    def test_the_repository_has_no_unregistered_unlocked_install(self) -> None:
+        registry_text = (REPO_ROOT / "rules" / "registry.toml").read_text()
+        registry, problems = load_text(registry_text)
+        self.assertEqual(problems, [])
+
+        violations = find_violations(REPO_ROOT, registry)
+
+        self.assertEqual([str(violation) for violation in violations], [])
+
+    def test_rule_ids_are_registered(self) -> None:
+        registry_text = (REPO_ROOT / "rules" / "registry.toml").read_text()
+        registry, _problems = load_text(registry_text)
+        rule_ids = {rule.id for rule in registry.rules}
+
+        self.assertLessEqual(
+            {LOCK_RULE, INSTALL_RULE, TEST_RULE, RELOCK_RULE}, rule_ids
         )
 
 

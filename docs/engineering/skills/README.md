@@ -11,6 +11,8 @@ Current skills:
 
 - `ci-workflows.md`: one line of code per workflow `run:` block, tested
   workflow scripts, and shellcheck.
+- `dependencies.md`: committed `uv.lock` files, installing and testing from
+  them, the daily relock, and how to register an exception.
 - `database-access.md`: SQLAlchemy-only database connections, schema changes
   only through Alembic migrations, and the guard that checks both.
 - `github-prs.md`: same-repository draft PR workflow, issue linkage, PR head

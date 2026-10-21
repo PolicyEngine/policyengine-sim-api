@@ -40,6 +40,10 @@ id = "quality"
 title = "Code quality and tests"
 
 [[category]]
+id = "dependencies"
+title = "Dependency locking"
+
+[[category]]
 id = "ci"
 title = "CI workflows and scripts"
 
@@ -120,7 +124,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.boundaries.sqlalchemy-and-alembic-only/bad_database_store.py"
 good_fixture = "rules/fixtures/sim.boundaries.sqlalchemy-and-alembic-only/good_database_store.py"
@@ -145,7 +149,7 @@ nodes = ["tests/test_stage12_schema_authority.py::test_simulation_runtimes_conta
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.stage12.no-schema-ddl/bad_stage12_runtime.py"
 good_fixture = "rules/fixtures/sim.stage12.no-schema-ddl/good_stage12_runtime.py"
@@ -168,7 +172,7 @@ nodes = ["tests/test_stage12_schema_authority.py::test_simulation_repository_has
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.stage12.no-production-user-associations"
@@ -186,7 +190,7 @@ nodes = ["tests/test_stage12_schema_authority.py::test_stage12_runtime_cannot_cr
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.stage12.persistence-typed-dml-only"
@@ -204,7 +208,7 @@ nodes = ["tests/test_source_boundaries.py::test_persistence_package_contains_no_
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.stage12.deployment-uses-api-schema"
@@ -225,7 +229,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.stage12.deployment-scope"
@@ -250,7 +254,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.stage12.production-lock-has-db-runtime"
@@ -268,7 +272,7 @@ nodes = ["tests/test_deployment_assets.py::test_production_lock_contains_the_dir
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 # --- Deployment pipeline ---------------------------------------------------
 
@@ -288,7 +292,7 @@ nodes = ["tests/test_deployment_assets.py::test_deployment_scripts_have_valid_sh
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.deploy.gcloud-without-terraform"
@@ -306,7 +310,7 @@ nodes = ["tests/test_deployment_assets.py::test_deployment_uses_gcloud_workflow_
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.deploy.workflow-shell-safety"
@@ -327,7 +331,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.deploy.revision-tags-valid"
@@ -348,7 +352,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.deploy.promotion-order-explicit"
@@ -369,7 +373,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.deploy.smoke-tests-strict"
@@ -392,7 +396,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.deploy.permission-enforcement-wired"
@@ -414,7 +418,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.deploy.traffic-changes-exact"
@@ -435,7 +439,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.deploy.release-identity-smoke"
@@ -474,7 +478,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.deploy.numerical-sentinel-gate"
@@ -495,7 +499,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.deploy.routing-publication-journaled"
@@ -522,7 +526,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.deploy.container-context-minimal"
@@ -543,7 +547,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.deploy.docker-images-build"
@@ -607,7 +611,7 @@ nodes = ["tests/test_openapi_golden.py::test_openapi_spec_matches_golden"]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.contracts.regenerate-clients"
@@ -635,7 +639,7 @@ kind = "workflow-job"
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test-integration"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.contracts.full-integration-beta-only"
@@ -653,7 +657,7 @@ nodes = ["tests/test_deployment_assets.py::test_complete_integration_suite_is_co
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.contracts.clients-publish-deployed-commit"
@@ -671,7 +675,7 @@ nodes = ["tests/test_deployment_assets.py::test_client_publication_checks_out_th
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 # --- Observability ---------------------------------------------------------
 
@@ -753,7 +757,7 @@ nodes = ["tests/test_microdata_weight_boundaries.py::test_weights_are_never_aggr
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.microdata.weights-not-aggregated-as-values/bad_simulation_output_budget.py"
 good_fixture = "rules/fixtures/sim.microdata.weights-not-aggregated-as-values/good_simulation_output_budget.py"
@@ -779,7 +783,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.microdata.weight-stripping-confined/bad_simulation_output_budget.py"
 good_fixture = "rules/fixtures/sim.microdata.weight-stripping-confined/good_simulation_output_budget.py"
@@ -805,7 +809,7 @@ nodes = ["tests/test_microdata_weight_boundaries.py::test_builder_tests_build_en
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.microdata.builder-tests-use-weighted-frames/bad_test_simulation_output_budget.py"
 good_fixture = "rules/fixtures/sim.microdata.builder-tests-use-weighted-frames/good_test_simulation_output_budget.py"
@@ -989,7 +993,7 @@ kind = "workflow-job"
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.quality.every-project-tested"
@@ -1028,7 +1032,7 @@ nodes = [
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.quality.runtime-evaluated-models-resolve/bad_compat_models.py"
 good_fixture = "rules/fixtures/sim.quality.runtime-evaluated-models-resolve/good_compat_models.py"
@@ -1175,6 +1179,132 @@ workflow = ".github/workflows/pr.yml"
 job = "quality-guards"
 invocation = "unittest discover -s scripts/rules/tests"
 
+# --- Dependency locking -----------------------------------------------------
+
+[[rule]]
+id = "sim.dependencies.lock-committed"
+category = "dependencies"
+statement = "Every project directory with a pyproject.toml commits a uv.lock that matches it, and PR CI checks every lock with uv lock --check."
+rationale = "docs/engineering/skills/dependencies.md#we-use-uvlock"
+scope = ["projects/*/pyproject.toml", "libs/*/pyproject.toml", "projects/*/uv.lock", "libs/*/uv.lock"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "locked-installs"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test-integration"
+invocation = "check-uv-locks.sh"
+[rule.proof]
+bad_fixture = "scripts/rules/tests/fixtures/locked_installs/lock_bad"
+good_fixture = "scripts/rules/tests/fixtures/locked_installs/lock_good"
+test = "scripts/rules/tests/test_locked_installs.py::TestLockedInstallsProof::test_rule_proof_lock_committed"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
+[[rule]]
+id = "sim.dependencies.install-from-lock"
+category = "dependencies"
+statement = "Every install of a project's Python dependencies, in workflows and the scripts they run, Makefiles, Dockerfiles, Compose files and Modal image definitions, installs exactly the locked versions (uv sync --frozen, uv run --frozen, Modal uv_sync(frozen=True)); any other install is a registered exception for that one site."
+rationale = "docs/engineering/skills/dependencies.md#we-install-from-uvlock"
+scope = [".github/workflows/*.yml", ".github/scripts/*.sh", "scripts/*.sh", "Makefile", "projects/*/Dockerfile", "projects/*/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "locked-installs"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[rule.proof]
+bad_fixture = "scripts/rules/tests/fixtures/locked_installs/install_bad"
+good_fixture = "scripts/rules/tests/fixtures/locked_installs/install_good"
+test = "scripts/rules/tests/test_locked_installs.py::TestLockedInstallsProof::test_rule_proof_install_from_lock"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
+[[rule.exception]]
+path = ".github/workflows/pr.yml"
+match = "uv tool install ruff==0.15.22"
+category = "pinned-tool"
+reason = "ruff is a repository-wide tool with no project of its own; ruff.toml sits at the root, which has no pyproject.toml or uv.lock, so the lint job installs the exact version ruff.toml is written for."
+
+[[rule.exception]]
+path = ".github/workflows/pr.yml"
+match = "pip install shellcheck-py==0.11.0.1"
+category = "pinned-tool"
+reason = "shellcheck is a binary the ci-scripts guard runs; the quality-guards job has no project environment, so it installs the exact shellcheck-py release."
+
+[[rule.exception]]
+path = ".github/scripts/update-policyengine-package.sh"
+match = "--with ${PACKAGE}==${LATEST}"
+category = "pinned-tool"
+reason = "The bundle updater reads the bundle versions of the PolicyEngine release it is about to lock, in an isolated environment outside any project; the release is pinned exactly and is not in any uv.lock yet."
+
+[[rule]]
+id = "sim.dependencies.test-from-lock"
+category = "dependencies"
+statement = "Every test command (pytest, coverage run, python -m unittest) in workflows, scripts, Makefiles, Dockerfiles and Compose files runs through uv run --frozen, in the project's locked environment; any other test run is a registered exception for that one site."
+rationale = "docs/engineering/skills/dependencies.md#we-test-from-uvlock"
+scope = [".github/workflows/*.yml", ".github/scripts/*.sh", "scripts/*.sh", "Makefile"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "locked-installs"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[rule.proof]
+bad_fixture = "scripts/rules/tests/fixtures/locked_installs/test_bad"
+good_fixture = "scripts/rules/tests/fixtures/locked_installs/test_good"
+test = "scripts/rules/tests/test_locked_installs.py::TestLockedInstallsProof::test_rule_proof_test_from_lock"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
+[[rule.exception]]
+path = ".github/workflows/pr.yml"
+match = "python -m unittest discover -s scripts/rules/tests"
+reason = "The rules tool under scripts/rules uses only the standard library and is not a project: the repository root has no pyproject.toml or uv.lock, so there is no locked environment to run its tests in."
+removal = "scripts/rules gains a pyproject.toml and uv.lock, or a third-party dependency"
+
+[[rule]]
+id = "sim.dependencies.scheduled-relock"
+category = "dependencies"
+statement = "A scheduled workflow relocks every project's uv.lock with upgrades (uv lock --upgrade) and opens or updates a pull request with the result."
+rationale = "docs/engineering/skills/dependencies.md#we-relock-automatically"
+scope = [".github/workflows/update-dependencies.yml", "Makefile"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "locked-installs"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[rule.proof]
+bad_fixture = "scripts/rules/tests/fixtures/locked_installs/relock_bad"
+good_fixture = "scripts/rules/tests/fixtures/locked_installs/relock_good"
+test = "scripts/rules/tests/test_locked_installs.py::TestLockedInstallsProof::test_rule_proof_scheduled_relock"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
 # --- CI workflows and scripts ----------------------------------------------
 
 [[rule]]
@@ -1287,7 +1417,7 @@ nodes = ["tests/test_ci_complete_gate.py::test_pr_workflow_is_gated", "tests/tes
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "ci-complete"

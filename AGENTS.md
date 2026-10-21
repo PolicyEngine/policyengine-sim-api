@@ -140,6 +140,10 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 - `sim.quality.every-project-tested`: Every project and library with unit tests runs them in the PR test matrix. (doc-only, not checked: follow it yourself)
 - `sim.quality.ruff-format-tests`: Test code is formatted with ruff format too; CI currently checks only src directories. (doc-only, not checked: follow it yourself)
 
+### Dependency locking
+
+- Checked: `sim.dependencies.install-from-lock`, `sim.dependencies.lock-committed`, `sim.dependencies.scheduled-relock`, `sim.dependencies.test-from-lock`
+
 ### CI workflows and scripts
 
 - Checked: `sim.ci.multiline-run-is-script`, `sim.ci.shell-scripts-pass-shellcheck`, `sim.ci.workflow-scripts-tested`
