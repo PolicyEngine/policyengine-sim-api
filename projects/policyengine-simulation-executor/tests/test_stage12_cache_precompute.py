@@ -504,6 +504,7 @@ def _state_run_handles(events, plan):
                 "year": year,
                 "state_code": entry["state_code"],
                 "uploaded": entry["state_code"] != "WY",
+                "build_seconds": 12.5 if entry["state_code"] == "WY" else 6.0,
             }
             for entry in entries
         ]
@@ -557,7 +558,7 @@ def test_precompute_waits_for_state_datasets_only_before_publishing() -> None:
     assert first_state_get < events.index("remote:publish")
 
 
-def test_precompute_reports_the_state_dataset_bytes_uploaded() -> None:
+def test_precompute_reports_each_builds_uploads_bytes_and_time() -> None:
     events = []
     lines = []
     handles = _state_run_handles(events, _plan_with_state_datasets())
@@ -568,8 +569,38 @@ def test_precompute_reports_the_state_dataset_bytes_uploaded() -> None:
         echo=lines.append,
     )
 
-    assert "State datasets: 6 built, 3 uploaded, 600 bytes" in lines
+    for year in precompute.PRECOMPUTE_YEARS:
+        assert (
+            f"State datasets {year} {REGIONAL_DATASET}: 2 built, 1 uploaded "
+            "(100 bytes) in 12.5 s"
+        ) in lines
     assert lines[-1] == "STAGE12_CACHE_MANIFEST_DIGEST=manifest-digest"
+
+
+def test_precompute_builds_each_year_and_dataset_in_its_own_call() -> None:
+    events = []
+    plan = _plan_with_state_datasets()
+    other = _state_entry(2026, "ID", exists=False).model_copy(
+        update={"dataset": "populace_other", "folder": "state-datasets/other/ID"}
+    )
+    plan = plan.model_copy(update={"state_datasets": (*plan.state_datasets, other)})
+    handles = _state_run_handles(events, plan)
+
+    precompute.run_precompute(
+        "cache-bucket",
+        functions=precompute.CachePrecomputeFunctions(**handles),
+        echo=lambda _line: None,
+    )
+
+    assert [
+        (call[1], {entry["dataset"] for entry in call[2]})
+        for call in handles["build_state_datasets"].spawn_calls
+    ] == [
+        (2026, {REGIONAL_DATASET}),
+        (2027, {REGIONAL_DATASET}),
+        (2025, {REGIONAL_DATASET}),
+        (2026, {"populace_other"}),
+    ]
 
 
 def test_warm_verified_precompute_skips_builds_and_determinism_check() -> None:
@@ -1075,12 +1106,28 @@ class TestBuildStateDatasetsImpl:
                 datasets=datasets, years=years, data_folder=data_folder
             )
 
+        districts = [
+            SimpleNamespace(
+                scoping_strategy=RowFilterStrategy(
+                    variable_name="congressional_district_geoid",
+                    variable_value=geoid,
+                )
+            )
+            for geoid in (4901, 4902, 4903, 4904, 5600)
+        ]
         monkeypatch.setattr(
             precompute,
             "_country_module",
             lambda _country: SimpleNamespace(
                 ensure_datasets=fake_ensure_datasets,
                 load_datasets=us_module.load_datasets,
+                model=SimpleNamespace(
+                    region_registry=SimpleNamespace(
+                        get_by_type=lambda kind: (
+                            districts if kind == "congressional_district" else []
+                        )
+                    )
+                ),
             ),
         )
         state.identity_for = fake_state_identity
@@ -1171,6 +1218,37 @@ class TestBuildStateDatasetsImpl:
         with pytest.raises(RuntimeError, match="congressional district"):
             self._build(state_build, [self._entry(state_build, "UT")])
         assert state_build.client.objects == {}
+
+    def test_a_household_without_a_district_code_does_not_stop_the_build(
+        self, state_build
+    ):
+        state_build.entity_frames = state_build.sources.source_entity_frames(
+            wyoming_district_geoid=0
+        )
+
+        results = self._build(
+            state_build,
+            [self._entry(state_build, "UT"), self._entry(state_build, "WY")],
+        )
+
+        assert [result.state_code for result in results] == ["UT", "WY"]
+
+    def test_refuses_a_target_without_a_row_filter(self, state_build):
+        from dataclasses import replace
+
+        state_build.targets[0] = replace(state_build.targets[0], scoping_strategy=None)
+
+        with pytest.raises(RuntimeError, match="no row filter"):
+            self._build(state_build, [self._entry(state_build, "UT")])
+        assert state_build.client.objects == {}
+
+    def test_reports_how_long_the_years_build_had_run(self, state_build):
+        results = self._build(
+            state_build,
+            [self._entry(state_build, "UT"), self._entry(state_build, "WY")],
+        )
+
+        assert 0 <= results[0].build_seconds <= results[1].build_seconds
 
     def test_refuses_a_plan_entry_whose_key_differs_in_the_container(self, state_build):
         entry = self._entry(state_build, "UT").model_copy(

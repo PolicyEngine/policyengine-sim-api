@@ -114,11 +114,16 @@ class DatasetBuildResult(CacheObject):
 
 
 class StateDatasetBuildResult(CacheObject):
-    """A built state dataset file and whether this run uploaded it."""
+    """A built state dataset file and whether this run uploaded it.
+
+    ``build_seconds`` is how long the year's build had run when this file was
+    uploaded, so the last result of a build gives its whole duration.
+    """
 
     year: int
     state_code: str
     uploaded: bool
+    build_seconds: float
 
 
 class BaselineBuildResult(CacheObject):

@@ -75,10 +75,12 @@ from .store import Stage12CacheStore
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from types import ModuleType
 
     import modal
     import pandas as pd
     from microdf import MicroDataFrame
+    from policyengine.core.scoping_strategy import RowFilterStrategy
 
 PRECOMPUTE_YEARS = (2026, 2027, 2025)
 MANIFEST_DIGEST_PREFIX = "STAGE12_CACHE_MANIFEST_DIGEST="
@@ -238,7 +240,9 @@ class StateDatasetTarget:
     state_fips: int
     filter_variable: str
     dataset: str
-    scoping_strategy: Any = field(default=None, compare=False, repr=False)
+    scoping_strategy: RowFilterStrategy | None = field(
+        default=None, compare=False, repr=False
+    )
 
 
 def state_dataset_targets() -> tuple[StateDatasetTarget, ...]:
@@ -449,22 +453,38 @@ def _checked_state_targets(
     return {entry.region: targets[entry.region] for entry in expected}
 
 
-def _require_districts_within_their_states(household: MicroDataFrame) -> None:
-    """Refuse a dataset whose district codes name a different state.
+def _registered_district_geoids(country_module: ModuleType) -> set[int]:
+    """Return the district codes the US congressional-district regions filter on."""
+    return {
+        int(region.scoping_strategy.variable_value)
+        for region in country_module.model.region_registry.get_by_type(
+            "congressional_district"
+        )
+    }
+
+
+def _require_districts_within_their_states(
+    household: MicroDataFrame, district_geoids: set[int]
+) -> None:
+    """Refuse a dataset in which a household sits in another state's district.
 
     District requests read their state's file and filter it by
     ``congressional_district_geoid`` (state FIPS times 100 plus the district
-    number). Both columns are labels; nothing here is weighted.
+    number). A code that names no district, such as an unassigned 0, matches
+    no district request and changes no result. Both columns are labels;
+    nothing here is weighted.
     """
     if "congressional_district_geoid" not in household.columns:
         return
-    outside = (household["congressional_district_geoid"] // 100) != household[
-        "state_fips"
-    ]
-    if outside.any():
+    district = household["congressional_district_geoid"]
+    in_another_state = district.isin(district_geoids) & (
+        (district // 100) != household["state_fips"]
+    )
+    if in_another_state.any():
         msg = (
-            "Some households have a congressional district code outside their "
-            "state; their state's file would not match the district's results"
+            "Some households have a congressional district code that names "
+            "another state's district; their state's file would not match "
+            "that district's results"
         )
         raise RuntimeError(msg)
 
@@ -495,6 +515,7 @@ def build_state_datasets_impl(
 
     if not expected:
         return ()
+    started = time.monotonic()
     targets = _checked_state_targets(year, expected)
     dataset = expected[0].dataset
     work_folder = work_folder or Path(
@@ -516,12 +537,18 @@ def build_state_datasets_impl(
     if stamp is None:
         msg = f"The prepared year file {source.filepath} has no year-file stamp"
         raise RuntimeError(msg)
-    _require_districts_within_their_states(source.data.household)
+    _require_districts_within_their_states(
+        source.data.household, _registered_district_geoids(country_module)
+    )
 
     store = Stage12CacheStore(bucket)
     results = []
     for entry in expected:
-        rows = targets[entry.region].scoping_strategy.apply(
+        strategy = targets[entry.region].scoping_strategy
+        if strategy is None:
+            msg = f"{entry.region} has no row filter to build its state file with"
+            raise RuntimeError(msg)
+        rows = strategy.apply(
             entity_data=source.data.entity_data,
             group_entities=US_GROUP_ENTITIES,
             year=year,
@@ -549,6 +576,7 @@ def build_state_datasets_impl(
                 year=year,
                 state_code=entry.state_code,
                 uploaded=uploaded,
+                build_seconds=round(time.monotonic() - started, 1),
             )
         )
     return tuple(results)
@@ -758,12 +786,16 @@ def run_precompute(
         functions.build_dataset.spawn(bucket, entry.model_dump())
         for entry in work.datasets
     ]
-    state_entries_by_year: dict[int, list[dict[str, Any]]] = {}
+    # One build prepares one dataset's year file, so builds are per year and
+    # dataset.
+    state_builds: dict[tuple[int, str], list[dict[str, Any]]] = {}
     for entry in work.state_datasets:
-        state_entries_by_year.setdefault(entry.year, []).append(entry.model_dump())
+        state_builds.setdefault((entry.year, entry.dataset), []).append(
+            entry.model_dump()
+        )
     state_calls = [
-        functions.build_state_datasets.spawn(bucket, year, entries)
-        for year, entries in state_entries_by_year.items()
+        (year, dataset, functions.build_state_datasets.spawn(bucket, year, entries))
+        for (year, dataset), entries in state_builds.items()
     ]
     for call in dataset_calls:
         DatasetBuildResult.model_validate(call.get())
@@ -788,16 +820,16 @@ def run_precompute(
                 "Stage 12 cache determinism validation failed: "
                 + "; ".join(verdict.differences)
             )
-    if state_calls:
-        state_results = [
-            StateDatasetBuildResult.model_validate(result)
-            for call in state_calls
-            for result in call.get()
+    for year, dataset, call in state_calls:
+        results = [
+            StateDatasetBuildResult.model_validate(result) for result in call.get()
         ]
+        uploaded = [result for result in results if result.uploaded]
         echo(
-            f"State datasets: {len(state_results)} built, "
-            f"{sum(result.uploaded for result in state_results)} uploaded, "
-            f"{sum(result.size_bytes for result in state_results)} bytes"
+            f"State datasets {year} {dataset}: {len(results)} built, "
+            f"{len(uploaded)} uploaded "
+            f"({sum(result.size_bytes for result in uploaded)} bytes) in "
+            f"{max((result.build_seconds for result in results), default=0.0)} s"
         )
     digest = functions.publish_manifest.remote(bucket, plan.model_dump())
     if not isinstance(digest, str) or not digest:

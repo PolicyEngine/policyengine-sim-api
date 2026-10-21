@@ -123,6 +123,7 @@ def test_state_dataset_wrapper_validates_entries_in_and_dumps_results_out(
         year=2026,
         state_code="UT",
         uploaded=True,
+        build_seconds=1.0,
     )
     seen = {}
 
