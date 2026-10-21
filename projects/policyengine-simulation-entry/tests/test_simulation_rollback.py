@@ -244,7 +244,7 @@ def test_rollback_verifies_the_whole_restored_identity():
 def _restore_script() -> str:
     restore = _rollback_steps()[_step_index(_rollback_steps(), "--restore-plan")]
     script = restore["run"].split("\nelse\n")[0].split("then\n", 1)[1]
-    return script.replace("uv run python", "printf '%s\\n'")
+    return script.replace("uv run --frozen python", "printf '%s\\n'")
 
 
 def _inventory_job(*, job=None, step=None, conclusion="success", target="prod"):
