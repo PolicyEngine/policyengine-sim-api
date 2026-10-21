@@ -1,7 +1,9 @@
 """Content-addressed identity for precomputed simulation artifacts.
 
-The artifact pipeline caches two artifact types in a shared store: single-year
-dataset files and precomputed baseline simulation outputs. An artifact's key is
+The artifact pipeline caches three artifact types in a shared store: single-year
+dataset files, per-state single-year dataset files (a regional dataset's
+year file filtered to one state's households) and precomputed baseline
+simulation outputs. An artifact's key is
 a sha256 digest over the FULL closure of inputs that determine its bytes, so
 "is it cached?" and "is it stale?" are the same question, answered by key
 equality: same key implies a byte-identical artifact; any input change rotates
@@ -39,6 +41,7 @@ from dataclasses import dataclass
 from typing import Any
 
 DATASET_KEY_SCHEMA = "ds1"
+STATE_DATASET_KEY_SCHEMA = "sds1"
 BASELINE_KEY_SCHEMA = "bl1"
 
 # Length of the digest prefix used in simulation ids and store paths. 16 hex
@@ -107,6 +110,51 @@ def dataset_key(inputs: DatasetKeyInputs) -> str:
 
 
 @dataclass(frozen=True)
+class StateDatasetKeyInputs:
+    """Every input that can change one per-state single-year dataset's bytes.
+
+    The file is the regional dataset's year file (built by a full
+    Microsimulation pass, so model and .py versions matter) filtered to the
+    households whose ``filter_variable`` equals ``state_fips``.
+    ``dataset_uri`` pins the source to its Hugging Face revision and
+    ``source_sha256`` is the bundle's certified hash of that source, which may
+    be None when the bundle has none.
+    """
+
+    country: str
+    dataset: str
+    dataset_uri: str
+    source_sha256: str | None
+    year: int
+    state_code: str
+    state_fips: int
+    filter_variable: str
+    model_version: str
+    policyengine_version: str
+    spm: dict | None = None
+
+
+def state_dataset_key(inputs: StateDatasetKeyInputs) -> str:
+    """Digest identifying one per-state single-year dataset artifact."""
+    return canonical_digest(
+        {
+            "schema": STATE_DATASET_KEY_SCHEMA,
+            "spm": inputs.spm,
+            "country": inputs.country.lower(),
+            "dataset": inputs.dataset,
+            "dataset_uri": inputs.dataset_uri,
+            "source_sha256": inputs.source_sha256,
+            "year": int(inputs.year),
+            "state_code": inputs.state_code.upper(),
+            "state_fips": int(inputs.state_fips),
+            "filter_variable": inputs.filter_variable,
+            "model_version": inputs.model_version,
+            "policyengine_version": inputs.policyengine_version,
+        }
+    )
+
+
+@dataclass(frozen=True)
 class BaselineKeyInputs:
     """Every input that can change one precomputed baseline artifact's bytes.
 
@@ -157,6 +205,7 @@ def baseline_simulation_id(baseline_digest: str) -> str:
 # --- Store layout ---------------------------------------------------------
 #
 # datasets/<country>/<digest>/<stem>_year_<year>.h5
+# state-datasets/<country>/<digest>/<stem>_year_<year>.h5
 # baselines/<country>/<digest>/<id>.h5
 # manifests/<digest>.json
 # deployed/<environment>.json
@@ -183,6 +232,20 @@ def dataset_artifact_path(
     """Return the store key ``datasets/<country>/<digest>/<stem>_year_<year>.h5``."""
     return (
         f"datasets/{country.lower()}/{dataset_digest}/"
+        f"{dataset_artifact_filename(stem, year)}"
+    )
+
+
+def state_dataset_artifact_path(
+    country: str, state_dataset_digest: str, stem: str, year: int
+) -> str:
+    """Return the store key ``state-datasets/<country>/<digest>/<stem>_year_<year>.h5``.
+
+    Every state's file has the same basename, the one the runtime's
+    ``ensure_datasets`` resolves; the image keeps them apart by folder.
+    """
+    return (
+        f"state-datasets/{country.lower()}/{state_dataset_digest}/"
         f"{dataset_artifact_filename(stem, year)}"
     )
 
@@ -253,6 +316,55 @@ class DatasetArtifactIdentity:
     def store_path(self) -> str:
         """Store key of this dataset artifact."""
         return dataset_artifact_path(self.country, self.digest, self.stem, self.year)
+
+
+@dataclass(frozen=True)
+class StateDatasetArtifactIdentity:
+    """Everything needed to key and name one per-state single-year dataset."""
+
+    country: str
+    dataset: str
+    dataset_uri: str
+    source_sha256: str | None
+    stem: str
+    year: int
+    state_code: str
+    state_fips: int
+    filter_variable: str
+    model_version: str
+    policyengine_version: str
+    spm: dict | None = None
+
+    @property
+    def digest(self) -> str:
+        """Content key over every input that can change this file's bytes."""
+        return state_dataset_key(
+            StateDatasetKeyInputs(
+                country=self.country,
+                dataset=self.dataset,
+                dataset_uri=self.dataset_uri,
+                source_sha256=self.source_sha256,
+                year=self.year,
+                state_code=self.state_code,
+                state_fips=self.state_fips,
+                filter_variable=self.filter_variable,
+                model_version=self.model_version,
+                policyengine_version=self.policyengine_version,
+                spm=self.spm,
+            )
+        )
+
+    @property
+    def filename(self) -> str:
+        """Basename the runtime resolves inside the state's folder."""
+        return dataset_artifact_filename(self.stem, self.year)
+
+    @property
+    def store_path(self) -> str:
+        """Store key of this per-state dataset artifact."""
+        return state_dataset_artifact_path(
+            self.country, self.digest, self.stem, self.year
+        )
 
 
 @dataclass(frozen=True)
@@ -374,6 +486,66 @@ def collect_dataset_identity(country: str, year: int) -> DatasetArtifactIdentity
         data_build_fingerprint=_certification_fingerprint(bundle.country),
         model_version=bundle.model_version,
         policyengine_version=bundle.policyengine_version,
+    )
+
+
+def _release_dataset_sha256(country: str, dataset: str) -> str | None:
+    """Certified SHA-256 of a bundle dataset, from the .py release manifest."""
+    from policyengine.provenance.manifest import (
+        get_release_manifest,
+    )
+
+    reference = getattr(get_release_manifest(country), "datasets", {}).get(dataset)
+    digest = getattr(reference, "sha256", None)
+    return digest.lower() if isinstance(digest, str) and digest else None
+
+
+def collect_state_dataset_identity(  # noqa: PLR0913  # one keyword per input of the per-state key
+    country: str,
+    year: int,
+    *,
+    dataset: str,
+    state_code: str,
+    state_fips: int,
+    filter_variable: str,
+) -> StateDatasetArtifactIdentity:
+    """Identity of one state's year file filtered from a bundle dataset.
+
+    ``dataset`` names a non-default bundle dataset, such as the regional
+    dataset state regions load. Versions and the revision-pinned URI come from
+    the release bundle, the source hash from the .py release manifest, and the
+    stem through the same manifest helpers the runtime lookup uses.
+    """
+    from policyengine.provenance.manifest import (
+        dataset_logical_name,
+        resolve_dataset_reference,
+    )
+
+    from policyengine_simulation_executor.release_bundle import (  # noqa: PLC0415  # identity seam: resolved per call so tests can patch release_bundle
+        get_country_release_bundle,
+    )
+    from policyengine_simulation_executor.spm import (
+        normalize_runtime_spm,
+    )
+
+    bundle = get_country_release_bundle(country)
+    dataset_uri = bundle.dataset_uris.get(dataset)
+    if dataset_uri is None:
+        msg = f"Dataset {dataset!r} is not in the {country} release bundle"
+        raise ValueError(msg)
+    return StateDatasetArtifactIdentity(
+        country=bundle.country,
+        dataset=dataset,
+        dataset_uri=dataset_uri,
+        source_sha256=_release_dataset_sha256(bundle.country, dataset),
+        stem=dataset_logical_name(resolve_dataset_reference(bundle.country, dataset)),
+        year=int(year),
+        state_code=state_code.upper(),
+        state_fips=int(state_fips),
+        filter_variable=filter_variable,
+        model_version=bundle.model_version,
+        policyengine_version=bundle.policyengine_version,
+        spm=normalize_runtime_spm({"country": country, "time_period": year}),
     )
 
 

@@ -27,9 +27,11 @@ if TYPE_CHECKING:
 def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     """Stub the identity seams with the canonical synthetic version-set.
 
-    Returns mutable bundle, receipt, and SPM-capability state, plus a handle
-    to the installed capability resolver for tests that intentionally exercise
-    the installed release.
+    Returns mutable bundle, receipt, release-manifest dataset and
+    SPM-capability state, plus a handle to the installed capability resolver
+    for tests that intentionally exercise the installed release. The bundle
+    has one non-default dataset, ``populace_cps_local``, for the per-state
+    dataset identities.
     """
     # This module imports ``get_release_manifest`` by value while constructing
     # country models. Import it before replacing the manifest module's function
@@ -51,8 +53,12 @@ def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         default_dataset="populace_cps",
         dataset_uris={
             "populace_cps": "hf://org/repo/populace_cps.h5@rev-abc",
+            "populace_cps_local": "hf://org/repo/populace_cps_local.h5@rev-local",
         },
     )
+    release_datasets = {
+        "populace_cps_local": SimpleNamespace(sha256="c0ffee00" * 8),
+    }
     receipt_entry = {
         "country": "us",
         "version": "1.2.3",
@@ -61,6 +67,7 @@ def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     state = SimpleNamespace(
         bundle=bundle,
         receipt_entry=receipt_entry,
+        release_datasets=release_datasets,
         spm_capability=None,
     )
 
@@ -78,13 +85,14 @@ def install_identity_stubs(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     monkeypatch.setattr(
         manifest_module,
         "dataset_logical_name",
-        lambda _reference: state.bundle.default_dataset,
+        lambda reference: reference.rsplit("/", 1)[-1].split(".h5", 1)[0],
     )
     monkeypatch.setattr(
         manifest_module,
         "get_release_manifest",
         lambda _country: SimpleNamespace(
-            certification=SimpleNamespace(data_build_fingerprint="fp-123")
+            certification=SimpleNamespace(data_build_fingerprint="fp-123"),
+            datasets=state.release_datasets,
         ),
     )
 
