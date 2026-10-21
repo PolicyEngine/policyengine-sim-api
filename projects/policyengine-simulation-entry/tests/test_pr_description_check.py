@@ -16,13 +16,16 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
-from workflow_script_support import SCRIPTS_DIR, FakeCommands
+import yaml
+from workflow_script_support import SCRIPTS_DIR, WORKFLOWS_DIR, FakeCommands
 
 if TYPE_CHECKING:
     from pathlib import Path
     from types import ModuleType
 
 CHECK_SCRIPT = SCRIPTS_DIR / "check_pr_description.py"
+CHECK_WORKFLOW = WORKFLOWS_DIR / "pr-description.yml"
+CHECK_JOB = "pr-description"
 REPOSITORY = "PolicyEngine/policyengine-sim-api"
 VALID_BODY = "Fixes #861\n\n## Summary\n\n- Adds a check.\n"
 
@@ -412,3 +415,58 @@ def test_the_check_requires_a_pull_request_event(fakes, tmp_path):
     assert result.returncode == 1
     assert "has no pull_request" in result.stderr
     assert fakes.calls("gh") == []
+
+
+# --- The workflow job -----------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def check_workflow() -> dict:
+    return yaml.safe_load(CHECK_WORKFLOW.read_text(encoding="utf-8"))
+
+
+def test_the_check_runs_on_every_event_that_can_change_the_description(
+    check_workflow,
+):
+    # PyYAML reads the key "on" as True.
+    triggers = check_workflow.get("on", check_workflow.get(True))
+
+    # No branches or paths filter: every pull request is checked, whatever it
+    # targets and whatever it changes.
+    assert triggers == {
+        "pull_request": {"types": ["opened", "edited", "reopened", "synchronize"]}
+    }
+
+
+def test_the_check_runs_on_every_pull_request_in_a_stack(check_workflow):
+    """Unlike pr.yml's jobs, this one has no condition and needs no other job."""
+    assert list(check_workflow["jobs"]) == [CHECK_JOB]
+    job = check_workflow["jobs"][CHECK_JOB]
+
+    assert job["name"] == "PR description"
+    assert "if" not in job
+    assert "needs" not in job
+
+
+def test_the_check_can_only_read(check_workflow):
+    assert check_workflow["permissions"] == {
+        "contents": "read",
+        "issues": "read",
+        "pull-requests": "read",
+    }
+    assert "permissions" not in check_workflow["jobs"][CHECK_JOB]
+
+
+def test_the_check_runs_the_tested_script_with_the_job_token(check_workflow):
+    steps = check_workflow["jobs"][CHECK_JOB]["steps"]
+    checkout = next(
+        step for step in steps if step.get("uses", "").startswith("actions/checkout@")
+    )
+    check_steps = [step for step in steps if CHECK_SCRIPT.name in step.get("run", "")]
+
+    assert checkout["with"]["sparse-checkout"] == (
+        f".github/scripts/{CHECK_SCRIPT.name}"
+    )
+    assert len(check_steps) == 1
+    assert check_steps[0]["run"] == f"python .github/scripts/{CHECK_SCRIPT.name}"
+    assert check_steps[0]["env"] == {"GH_TOKEN": "${{ github.token }}"}
