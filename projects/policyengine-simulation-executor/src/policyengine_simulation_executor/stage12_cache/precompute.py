@@ -406,11 +406,12 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
 
 def _checked_state_targets(
     year: int, expected: Sequence[StateDatasetPlanEntry]
-) -> dict[str, StateDatasetTarget]:
-    """Return each planned state's target, after re-deriving its key here.
+) -> dict[str, RowFilterStrategy]:
+    """Return each planned state's row filter, after re-deriving its key here.
 
     Raises ``RuntimeError`` when the installed bundle gives another identity
-    than the plan, so nothing is built under a key that does not describe it.
+    than the plan, so nothing is built under a key that does not describe it,
+    and when a state has no row filter, before anything is prepared.
     """
     resolved = load_stage12_bundle()
     targets = {target.region: target for target in state_dataset_targets()}
@@ -425,6 +426,9 @@ def _checked_state_targets(
         target = targets.get(entry.region)
         if target is None:
             msg = f"No state dataset target for {entry.region} in this container"
+            raise RuntimeError(msg)
+        if target.scoping_strategy is None:
+            msg = f"{entry.region} has no row filter to build its state file with"
             raise RuntimeError(msg)
         identity = collect_state_dataset_identity(
             resolved,
@@ -450,7 +454,12 @@ def _checked_state_targets(
     if len(datasets) > 1:
         msg = f"One state dataset build covers one dataset, not {sorted(datasets)}"
         raise ValueError(msg)
-    return {entry.region: targets[entry.region] for entry in expected}
+    strategies = {}
+    for entry in expected:
+        strategy = targets[entry.region].scoping_strategy
+        if strategy is not None:
+            strategies[entry.region] = strategy
+    return strategies
 
 
 def _registered_district_geoids(country_module: ModuleType) -> set[int]:
@@ -516,7 +525,7 @@ def build_state_datasets_impl(
     if not expected:
         return ()
     started = time.monotonic()
-    targets = _checked_state_targets(year, expected)
+    strategies = _checked_state_targets(year, expected)
     dataset = expected[0].dataset
     work_folder = work_folder or Path(
         tempfile.mkdtemp(prefix="policyengine-stage12-state-datasets-")
@@ -544,11 +553,7 @@ def build_state_datasets_impl(
     store = Stage12CacheStore(bucket)
     results = []
     for entry in expected:
-        strategy = targets[entry.region].scoping_strategy
-        if strategy is None:
-            msg = f"{entry.region} has no row filter to build its state file with"
-            raise RuntimeError(msg)
-        rows = strategy.apply(
+        rows = strategies[entry.region].apply(
             entity_data=source.data.entity_data,
             group_entities=US_GROUP_ENTITIES,
             year=year,
@@ -775,8 +780,8 @@ def run_precompute(
 
     Missing datasets are built first, then missing baselines, in parallel
     Modal calls. Missing state datasets are built alongside both, one call per
-    year, and waited for only before the manifest is published, so the
-    baselines never wait for them. Prints the manifest digest through
+    year and dataset, and waited for only before the manifest is published, so
+    the baselines never wait for them. Prints the manifest digest through
     ``echo`` and returns it. Exits with ``SystemExit`` when the determinism
     check fails.
     """

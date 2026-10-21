@@ -1241,6 +1241,7 @@ class TestBuildStateDatasetsImpl:
         with pytest.raises(RuntimeError, match="no row filter"):
             self._build(state_build, [self._entry(state_build, "UT")])
         assert state_build.client.objects == {}
+        assert state_build.ensure_calls == []
 
     def test_reports_how_long_the_years_build_had_run(self, state_build):
         results = self._build(
