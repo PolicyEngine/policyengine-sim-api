@@ -1,4 +1,0 @@
-# Proof fixture: the baseline lists exactly the errors in pyright.json.
-projects/policyengine-simulation-gateway/src/policyengine_simulation_gateway/endpoints.py :: reportPossiblyUnboundVariable :: "route" is possibly unbound
-projects/policyengine-simulation-gateway/src/policyengine_simulation_gateway/endpoints.py :: reportPossiblyUnboundVariable :: "route" is possibly unbound
-projects/policyengine-simulation-gateway/src/policyengine_simulation_gateway/endpoints.py :: reportPossiblyUnboundVariable :: "payload" is possibly unbound
