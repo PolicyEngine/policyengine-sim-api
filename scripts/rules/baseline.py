@@ -72,7 +72,11 @@ def check_baselines(
                 )
             )
         weaker = (Status.ADVISORY, Status.DOC_ONLY)
-        if old.status in (Status.ENFORCED, Status.RATCHETED) and new.status in weaker:
+        # A ratcheted rule tolerates its baseline, so ratcheting an enforced
+        # rule weakens it too, with whatever count its new baseline starts at.
+        if (
+            old.status in (Status.ENFORCED, Status.RATCHETED) and new.status in weaker
+        ) or (old.status is Status.ENFORCED and new.status is Status.RATCHETED):
             if new.downgrade_reason:
                 notes.append(
                     f"rule {new.id} downgraded to {new.status}: {new.downgrade_reason}"

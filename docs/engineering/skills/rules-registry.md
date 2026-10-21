@@ -58,7 +58,7 @@ gap is visible, rather than leaving it out.
 | `[rule.proof]` | Optional; see "Proof". |
 | `[rule.baseline]` | Only for `ratcheted` rules: `file` listing tolerated violations, and their `count`. |
 | `[[rule.exception]]` | Temporary carve-out: `path`, `reason`, `expires`. |
-| `[rule.downgrade]` | Required `reason` when a rule moves from enforced/ratcheted to advisory/doc-only. |
+| `[rule.downgrade]` | Required `reason` when a rule moves from enforced/ratcheted to advisory/doc-only, or from enforced to ratcheted. |
 
 `blocking` is derived, never declared: a rule blocks merges when its status is
 `enforced` or `ratcheted` and its tier is not `judgment`.
@@ -126,8 +126,8 @@ fail the guard yet.
 - Other enforcers (mypy, Pyright, Import Linter, custom guards) may start
   `ratcheted` with a baseline file of tolerated violations. Baselines may only
   shrink: the guard compares counts against the base branch.
-- Moving a rule from enforced/ratcheted to advisory/doc-only needs an explicit
-  `[rule.downgrade] reason`.
+- Moving a rule from enforced/ratcheted to advisory/doc-only, or from enforced
+  to ratcheted, needs an explicit `[rule.downgrade] reason`.
 
 ## File-level exceptions
 

@@ -782,6 +782,31 @@ class BaselineTest(unittest.TestCase):
         assert with_reason is not None
         self.assertEqual(check_baselines(with_reason, base)[0], [])
 
+    def test_ratcheting_an_enforced_rule_needs_reason(self) -> None:
+        ratcheted = RATCHETED_RULE.format(count=50)
+        enforced = ratcheted.replace(
+            'status = "ratcheted"', 'status = "enforced"'
+        ).split("[rule.baseline]")[0]
+        base = self.registry(enforced)
+        current = self.registry(ratcheted)
+
+        violations = check_baselines(current, base)[0]
+        self.assertEqual(
+            [str(violation) for violation in violations],
+            [
+                "[ex.layers.ratcheted] baseline: status weakened from enforced to "
+                'ratcheted. Fix: add [rule.downgrade] reason = "..." so the '
+                "downgrade is explicit and reviewable."
+            ],
+        )
+        with_reason = self.registry(
+            ratcheted.replace(
+                "[rule.baseline]",
+                '[rule.downgrade]\nreason = "a Pyright upgrade"\n[rule.baseline]',
+            )
+        )
+        self.assertEqual(check_baselines(with_reason, base)[0], [])
+
     def test_compares_against_git_base_ref(self) -> None:
         with Repo(with_rule(RATCHETED_RULE.format(count=1)), render=False) as repo:
             repo.write("rules/baselines/ratcheted.txt", "pkg/routes.py\n")
