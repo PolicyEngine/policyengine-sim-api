@@ -6,5 +6,5 @@
 
 set -euo pipefail
 
-name="$(uv run python -c 'from policyengine_simulation_contract.stage12_manifest import v2_application_name; from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle; print(v2_application_name(load_stage12_bundle().bundle.policyengine_version))')"
+name="$(uv run --frozen python -c 'from policyengine_simulation_contract.stage12_manifest import v2_application_name; from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle; print(v2_application_name(load_stage12_bundle().bundle.policyengine_version))')"
 echo "name=${name}" >> "$GITHUB_OUTPUT"

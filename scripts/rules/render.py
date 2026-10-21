@@ -7,9 +7,10 @@ date) so the guard can regenerate it and compare.
 from __future__ import annotations
 
 import re
+from datetime import date
 from pathlib import Path
 
-from scripts.rules.model import Kind, Registry, Rule, Status, Tier
+from scripts.rules.model import Kind, Registry, Rule, RuleException, Status, Tier
 
 RULES_MD = Path("docs/generated/rules.md")
 AGENTS_MD = Path("AGENTS.md")
@@ -23,6 +24,24 @@ AGENTS_COLLAPSE_AT = 60
 
 def _cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
+
+
+def _describe_exception(exception: RuleException) -> str:
+    """Say which site an exception covers, why, and when it ends."""
+    site = f"`{exception.path}`"
+    if exception.match:
+        site += f" (`{exception.match}`)"
+    if exception.category:
+        site += f" [{exception.category}]"
+    if exception.expires != date.max:
+        site += f" until {exception.expires}"
+    ends = []
+    if exception.issue is not None:
+        ends.append(f"tracked in #{exception.issue}")
+    if exception.removal:
+        ends.append(f"remove when {exception.removal}")
+    ending = f"; {'; '.join(ends)}" if ends else ""
+    return f"exception for {site}{ending} ({exception.reason})"
 
 
 def _ordered(registry: Registry) -> list[tuple[str, str, list[Rule]]]:
@@ -193,9 +212,7 @@ def render_rules_md(registry: Registry) -> str:
         ],
     )
     dated = [f"- `{r.id}`: review by {r.review_by}" for r in rules if r.review_by] + [
-        f"- `{r.id}`: exception for `{e.path}` until {e.expires} ({e.reason})"
-        for r in rules
-        for e in r.exceptions
+        f"- `{r.id}`: {_describe_exception(e)}" for r in rules for e in r.exceptions
     ]
     section("Exceptions and review dates", sorted(dated))
 

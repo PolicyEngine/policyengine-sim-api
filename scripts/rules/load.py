@@ -296,6 +296,11 @@ def _baseline(
     return None
 
 
+def _optional_text(entry: dict[str, Any], key: str) -> str:
+    value = entry.get(key, "")
+    return value if isinstance(value, str) else ""
+
+
 def _exceptions(
     c: _Collector, rule_id: str | None, raw: dict[str, Any], label: str
 ) -> tuple[RuleException, ...]:
@@ -311,14 +316,33 @@ def _exceptions(
             )
             continue
         c.unknown_keys(
-            rule_id, entry, {"path", "reason", "expires"}, f"{label}.exception"
+            rule_id,
+            entry,
+            {"path", "reason", "expires", "match", "category", "removal", "issue"},
+            f"{label}.exception",
         )
-        expires = c.day(rule_id, entry.get("expires"), f"{label}.exception.expires")
+        expires = (
+            c.day(rule_id, entry["expires"], f"{label}.exception.expires")
+            if "expires" in entry
+            else None
+        )
+        issue = entry.get("issue")
+        if issue is not None and (not isinstance(issue, int) or issue <= 0):
+            c.add(
+                rule_id,
+                f"{label}.exception.issue must be a positive issue number",
+                "write issue = <number>",
+            )
+            issue = None
         exceptions.append(
             RuleException(
                 c.string(rule_id, entry, "path", f"{label}.exception"),
                 c.string(rule_id, entry, "reason", f"{label}.exception"),
                 expires or date.max,
+                match=_optional_text(entry, "match"),
+                category=_optional_text(entry, "category"),
+                removal=_optional_text(entry, "removal"),
+                issue=issue,
             )
         )
     return tuple(exceptions)

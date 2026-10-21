@@ -26,7 +26,7 @@ if [ -z "${GITHUB_OUTPUT:-}" ]; then
   exit 1
 fi
 
-RUN_COMMAND=(uv run modal run --env="$MODAL_ENV" src/modal/precompute_app.py)
+RUN_COMMAND=(uv run --frozen modal run --env="$MODAL_ENV" src/modal/precompute_app.py)
 if [[ "$FORCE" == "true" || "$FORCE" == "1" ]]; then
     RUN_COMMAND+=(--force)
 fi

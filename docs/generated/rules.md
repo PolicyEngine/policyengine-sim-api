@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 45 | 5 | 0 | 15 | 65 |
+| mechanical | 49 | 5 | 0 | 15 | 69 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 50 of 65 rules.
+**Blocking:** 54 of 69 rules.
 
 ## Gaps
 
@@ -73,7 +73,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 ### Exceptions and review dates
 
-- None.
+- `sim.dependencies.install-from-lock`: exception for `.github/scripts/update-policyengine-package.sh` (`--with ${PACKAGE}==${LATEST}`) [pinned-tool] (The bundle updater reads the bundle versions of the PolicyEngine release it is about to lock, in an isolated environment outside any project; the release is pinned exactly and is not in any uv.lock yet.)
+- `sim.dependencies.install-from-lock`: exception for `.github/workflows/pr.yml` (`pip install shellcheck-py==0.11.0.1`) [pinned-tool] (shellcheck is a binary the ci-scripts guard runs; the quality-guards job has no project environment, so it installs the exact shellcheck-py release.)
+- `sim.dependencies.install-from-lock`: exception for `.github/workflows/pr.yml` (`uv tool install ruff==0.15.22`) [pinned-tool] (ruff is a repository-wide tool with no project of its own; ruff.toml sits at the root, which has no pyproject.toml or uv.lock, so the lint job installs the exact version ruff.toml is written for.)
+- `sim.dependencies.install-from-lock`: exception for `Makefile` (`uv tool run ruff@$(RUFF_VERSION)`) [pinned-tool] (make format and make check run the ruff release pr.yml pins (RUFF_VERSION is read from its uv tool install ruff==<version>), outside any project, so local results match the lint job.)
+- `sim.dependencies.test-from-lock`: exception for `.github/workflows/pr.yml` (`python -m unittest discover -s scripts/rules/tests`); remove when scripts/rules gains a pyproject.toml and uv.lock, or a third-party dependency (The rules tool under scripts/rules uses only the standard library and is not a project: the repository root has no pyproject.toml or uv.lock, so there is no locked environment to run its tests in.)
 
 ## Service and package boundaries
 
@@ -371,6 +375,32 @@ flowchart LR
   e_ruff_per_file_ignore_of_ANN__ARG001__ARG002__ARG005__D1__DTZ001__DTZ007__INP001__PLC0415__PLR2004__S101__S102__S105__S106__S108__S301__S603__S607__SLF001__TID253_for____tests___ --> j_CI_pr_yml_lint
   r_sim_quality_unittest_ruff_exemptions --> e_ruff_per_file_ignore_of_PT_for_scripts_rules_tests___
   e_ruff_per_file_ignore_of_PT_for_scripts_rules_tests___ --> j_CI_pr_yml_lint
+```
+
+## Dependency locking
+
+| Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `sim.dependencies.install-from-lock` | Every install of a project's Python dependencies, in workflows and the scripts they run, Makefiles, Dockerfiles, Compose files and Modal image definitions, installs exactly the locked versions (uv sync --frozen, uv run --frozen, Modal uv_sync(frozen=True)); any other install is a registered exception for that one site. | mechanical | enforced | yes | quality guard `locked-installs` | `pr.yml:quality-guards` | yes |
+| `sim.dependencies.lock-committed` | Every project directory with a pyproject.toml commits a uv.lock that matches it, and PR CI checks every lock with uv lock --check. | mechanical | enforced | yes | quality guard `locked-installs` | `pr.yml:quality-guards`, `pr.yml:test-integration` | yes |
+| `sim.dependencies.scheduled-relock` | A scheduled workflow relocks every project's uv.lock with upgrades (uv lock --upgrade) and opens or updates a pull request with the result. | mechanical | enforced | yes | quality guard `locked-installs` | `pr.yml:quality-guards` | yes |
+| `sim.dependencies.test-from-lock` | Every test command (pytest, coverage run, python -m unittest) in workflows, scripts, Makefiles, Dockerfiles and Compose files runs through uv run --frozen, in the project's locked environment; any other test run is a registered exception for that one site. | mechanical | enforced | yes | quality guard `locked-installs` | `pr.yml:quality-guards` | yes |
+
+```mermaid
+flowchart LR
+  r_sim_dependencies_install_from_lock("sim.dependencies.install-from-lock (enforced)")
+  e_quality_guard_locked_installs["quality guard locked-installs"]
+  j_CI_pr_yml_quality_guards["CI pr.yml:quality-guards"]
+  r_sim_dependencies_lock_committed("sim.dependencies.lock-committed (enforced)")
+  j_CI_pr_yml_test_integration["CI pr.yml:test-integration"]
+  r_sim_dependencies_scheduled_relock("sim.dependencies.scheduled-relock (enforced)")
+  r_sim_dependencies_test_from_lock("sim.dependencies.test-from-lock (enforced)")
+  r_sim_dependencies_install_from_lock --> e_quality_guard_locked_installs
+  e_quality_guard_locked_installs --> j_CI_pr_yml_quality_guards
+  r_sim_dependencies_lock_committed --> e_quality_guard_locked_installs
+  e_quality_guard_locked_installs --> j_CI_pr_yml_test_integration
+  r_sim_dependencies_scheduled_relock --> e_quality_guard_locked_installs
+  r_sim_dependencies_test_from_lock --> e_quality_guard_locked_installs
 ```
 
 ## CI workflows and scripts

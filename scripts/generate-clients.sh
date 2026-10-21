@@ -17,13 +17,13 @@ generate_client() {
     cd "${PROJECT_DIR}"
 
     # Install build dependencies if not already installed
-    uv sync --extra build
+    uv sync --frozen --extra build
 
     # The permanent Cloud Run Simulation Entrypoint owns the public schema.
     if [ "$SERVICE" = "simulation" ]; then
-        uv run python -m policyengine_simulation_entry.generate_openapi
+        uv run --frozen python -m policyengine_simulation_entry.generate_openapi
     else
-        uv run python -m policyengine_api_${SERVICE//-/_}.generate_openapi
+        uv run --frozen python -m policyengine_api_${SERVICE//-/_}.generate_openapi
     fi
 
     # Check if OpenAPI spec was created
@@ -38,13 +38,13 @@ generate_client() {
 
     # Use config file if it exists (for package name override)
     if [ -f "openapi-python-client.yaml" ]; then
-        uv run openapi-python-client generate \
+        uv run --frozen openapi-python-client generate \
             --path artifacts/openapi.json \
             --output-path artifacts/clients/python \
             --config openapi-python-client.yaml \
             --overwrite
     else
-        uv run openapi-python-client generate \
+        uv run --frozen openapi-python-client generate \
             --path artifacts/openapi.json \
             --output-path artifacts/clients/python \
             --overwrite

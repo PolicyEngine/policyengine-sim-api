@@ -143,7 +143,7 @@ jobs:
               echo "Deployment run ${DEPLOY_RUN_ID} kept no ${TARGET} routing plan." >&2
               exit 1
             fi
-            uv run python -m src.modal.utils.update_version_registry \
+            uv run --frozen python -m src.modal.utils.update_version_registry \
               --environment "${MODAL_ENVIRONMENT}" \
               --restore-plan "${plans[@]}"
           else
@@ -151,7 +151,7 @@ jobs:
             if [[ -n "${EXPECTED_LATEST}" ]]; then
               args+=(--expected-latest "${EXPECTED_LATEST}")
             fi
-            uv run python -m src.modal.utils.update_version_registry "${args[@]}"
+            uv run --frozen python -m src.modal.utils.update_version_registry "${args[@]}"
           fi
 
       - name: Resolve the unfinished routing publication
@@ -161,9 +161,9 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
-          uv run python -m src.modal.utils.update_version_registry \
+          uv run --frozen python -m src.modal.utils.update_version_registry \
             --environment "${MODAL_ENVIRONMENT}" --print-pending-plan
-          uv run python -m src.modal.utils.update_version_registry \
+          uv run --frozen python -m src.modal.utils.update_version_registry \
             --environment "${MODAL_ENVIRONMENT}" --finalize-publication \
             --release-environment "${TARGET}" --gates-passed false
 
@@ -175,7 +175,7 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         run: |
-          uv run python -m src.modal.utils.update_version_registry \
+          uv run --frozen python -m src.modal.utils.update_version_registry \
             --environment "${MODAL_ENVIRONMENT}" --print-identity \
             | grep -E '^(policyengine_version|app_name|uk_model_version|uk_dataset_sha256)=' \
             | tee -a "$GITHUB_OUTPUT"

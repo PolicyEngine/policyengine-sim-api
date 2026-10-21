@@ -164,13 +164,17 @@ def _foreground_commands(line: str) -> list[list[str]]:
 def _assert_supported_prefix(command: list[str], index: int) -> None:
     prefix = command[:index]
     if command[index] == REGISTRY_COMMAND:
-        assert prefix in (["uv", "run", "python", "-m"], ["python", "-m"]), (
-            f"Unsupported routing shell prefix: {prefix}"
-        )
+        assert prefix in (
+            ["uv", "run", "--frozen", "python", "-m"],
+            ["uv", "run", "python", "-m"],
+            ["python", "-m"],
+        ), f"Unsupported routing shell prefix: {prefix}"
     else:
-        assert prefix in (["uv", "run", "python"], ["python"]), (
-            f"Unsupported routing shell prefix: {prefix}"
-        )
+        assert prefix in (
+            ["uv", "run", "--frozen", "python"],
+            ["uv", "run", "python"],
+            ["python"],
+        ), f"Unsupported routing shell prefix: {prefix}"
 
 
 def _expand_arrays(tokens: list[str], arrays: dict[str, list[str]]) -> tuple[str, ...]:

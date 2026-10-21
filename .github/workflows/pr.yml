@@ -69,11 +69,11 @@ jobs:
 
     - name: Install dependencies
       working-directory: ${{ matrix.project }}
-      run: uv sync --extra test
+      run: uv sync --frozen --extra test
 
     - name: Run tests
       working-directory: ${{ matrix.project }}
-      run: uv run pytest tests/ -v
+      run: uv run --frozen pytest tests/ -v
 
   lint:
     name: Lint
@@ -97,10 +97,10 @@ jobs:
       run: uv tool install ruff==0.15.22
 
     - name: Run ruff format check
-      run: uv run ruff format --check projects/*/src libs/*/src
+      run: uv run --frozen ruff format --check projects/*/src libs/*/src
 
     - name: Run ruff check
-      run: uv run ruff check .
+      run: uv run --frozen ruff check .
 
   quality-guards:
     name: Quality guards
@@ -228,17 +228,22 @@ jobs:
       run: |
         ./scripts/generate-clients.sh
 
+    # After the clients exist: policyengine-apis-integ depends on the generated
+    # client by path, so its lock can only be checked once it is generated.
+    - name: Check every uv.lock matches its pyproject.toml
+      run: .github/scripts/check-uv-locks.sh
+
     - name: Start services
       run: .github/scripts/start-local-services.sh deployment/docker-compose.yml
 
     - name: Install integration test dependencies
       working-directory: projects/policyengine-apis-integ
-      run: uv sync --extra test
+      run: uv sync --frozen --extra test
 
     - name: Run integration tests (local services only)
       working-directory: projects/policyengine-apis-integ
       # Run tests against local Docker services only (not Modal staging)
-      run: uv run pytest tests/ -v -m "not requires_gcp and not beta_only"
+      run: uv run --frozen pytest tests/ -v -m "not requires_gcp and not beta_only"
 
     - name: Show service logs on failure
       if: failure()

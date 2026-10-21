@@ -179,7 +179,7 @@ class TestModalImageSmoke:
         assert result.returncode == 0, result.stderr
         calls = uv_calls_log.read_text(encoding="utf-8").splitlines()
         assert calls[0] == (
-            "run modal secret create pe-uk-private-hf-read-token "
+            "run --frozen modal secret create pe-uk-private-hf-read-token "
             f"HUGGING_FACE_TOKEN={FAKE_HF_TOKEN} --env=staging --force"
         )
         assert len(calls) == 4
@@ -403,9 +403,9 @@ class TestModalSyncSecrets:
 
         assert result.returncode == 0, result.stderr
         calls = uv_calls_log.read_text()
-        assert "run modal secret create gcp-credentials" in calls
+        assert "run --frozen modal secret create gcp-credentials" in calls
         assert "--env=main --force" in calls
-        assert "run modal secret create policyengine-gateway-auth" in calls
+        assert "run --frozen modal secret create policyengine-gateway-auth" in calls
         assert "GATEWAY_AUTH_ISSUER=https://tenant.auth0.com/" in calls
         assert (
             "GATEWAY_AUTH_AUDIENCE=https://simulation-api-beta.policyengine.org"
@@ -450,7 +450,7 @@ class TestModalSyncSecrets:
 
         assert result.returncode != 0
         calls = uv_calls_log.read_text()
-        assert "run modal secret create gcp-credentials" in calls
+        assert "run --frozen modal secret create gcp-credentials" in calls
         assert "--env=main --force" in calls
 
 
@@ -556,7 +556,10 @@ class TestModalPrecompute:
 
         assert result.returncode == 0, result.stderr
         run_call = next(call for call in calls if "modal run" in call)
-        assert "run modal run --env=staging src/modal/precompute_app.py" in run_call
+        assert (
+            "run --frozen modal run --env=staging src/modal/precompute_app.py"
+            in run_call
+        )
         assert "--force" not in run_call
         assert "manifest_digest=abc123" in github_out
 
@@ -741,7 +744,8 @@ class TestStage12CachePrecompute:
 
         assert result.returncode == 0, result.stderr
         assert (
-            "run modal run --env=staging src/modal/stage12_precompute_app.py" in calls
+            "run --frozen modal run --env=staging src/modal/stage12_precompute_app.py"
+            in calls
         )
         assert "--force" not in calls
         assert emitted == f"manifest_digest={digest}\n"
@@ -754,7 +758,7 @@ class TestStage12CachePrecompute:
 
         assert result.returncode != 0
         assert calls.strip() == (
-            "run modal run --env=staging src/modal/stage12_precompute_app.py"
+            "run --frozen modal run --env=staging src/modal/stage12_precompute_app.py"
         )
         assert emitted == ""
 
@@ -847,7 +851,7 @@ class TestModalRecordDeployment:
 
         assert result.returncode == 0, result.stderr
         assert calls == [
-            "run python -m src.modal.utils.record_deployment "
+            "run --frozen python -m src.modal.utils.record_deployment "
             "--environment beta --manifest-digest digest-abc"
         ]
 
@@ -1010,7 +1014,7 @@ class TestSimulationRunIntegTests:
 
         assert result.returncode == 0, f"Script failed: {result.stderr}"
         log = uv_calls_log.read_text()
-        assert "run pytest tests/simulation/ -v -m not beta_only" in log
+        assert "run --frozen pytest tests/simulation/ -v -m not beta_only" in log
         assert "base=https://example.com" in log
         assert "us=1.690.7" in log
         assert "uk=2.88.20" in log

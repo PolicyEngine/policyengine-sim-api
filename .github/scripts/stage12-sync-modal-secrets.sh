@@ -43,11 +43,11 @@ jq -n \
   '{GOOGLE_APPLICATION_CREDENTIALS_JSON: $credentials}' \
   >"${credentials_modal_file}"
 
-uv run modal secret create stage12-evaluation-runtime \
+uv run --frozen modal secret create stage12-evaluation-runtime \
   --from-json "${runtime_modal_file}" \
   --env "${modal_environment}" \
   --force
-uv run modal secret create stage12-evaluation-gcp-credentials \
+uv run --frozen modal secret create stage12-evaluation-gcp-credentials \
   --from-json "${credentials_modal_file}" \
   --env "${modal_environment}" \
   --force
