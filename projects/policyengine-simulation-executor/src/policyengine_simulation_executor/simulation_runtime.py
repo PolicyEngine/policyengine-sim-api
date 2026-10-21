@@ -133,7 +133,7 @@ def setup_gcp_credentials(
     with contextlib.ExitStack() as credentials_file_stack:
         try:
             credential_span = (
-                runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.CREDENTIAL_SETUP))
+                scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.CREDENTIAL_SETUP))
                 if runtime is not None
                 else contextlib.nullcontext()
             )
@@ -789,6 +789,11 @@ def _build_simulation(
     policy: dict[str, Any] | None,
     region: RegionResolution,
 ) -> StageReportingSimulation:
+    """Build a simulation that reports when its calculation starts.
+
+    A run with a deterministic baseline id gets an ArtifactBaselineSimulation,
+    which is a StageReportingSimulation that can load a precomputed baseline.
+    """
     from policyengine_simulation_executor.baseline_artifacts import (
         ArtifactBaselineSimulation,
         BaselineIdentityRequest,
