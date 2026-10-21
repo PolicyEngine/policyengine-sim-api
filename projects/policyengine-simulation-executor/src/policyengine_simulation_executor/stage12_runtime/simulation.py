@@ -19,6 +19,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonRunLifecycleStatus,
     ComparisonSimulationRecord,
     PlannedSimulationExecutionInput,
+    ReportResultDelivery,
     RowIdentity,
     SimulationArtifactDescriptor,
     SimulationExecutionInput,
@@ -53,6 +54,7 @@ from .failures import (
     Stage12CancellationError,
     Stage12ExecutionError,
     Stage12FailureDetail,
+    report_execution_error,
     validate_policy_periods,
 )
 from .output_planning import apply_output_plan, validate_output_frames
@@ -485,6 +487,59 @@ class SimulationWorkerDependencies:
     runtime: ObservabilityRuntime | None = None
 
 
+@dataclass(frozen=True)
+class _SimulationRun:
+    """One planned simulation with its context, artifact store, seams and progress.
+
+    ``progress`` records the stage the run is in, so a failure names it.
+    """
+
+    simulation: PlannedSimulationExecutionInput
+    context: Stage12InvocationContext
+    artifact_storage: Stage12ArtifactStore
+    dependencies: SimulationWorkerDependencies
+    progress: StageProgress
+
+    def calculate_and_store(
+        self,
+        cancellation_requested: Callable[[], bool],
+    ) -> SimulationArtifactDescriptor:
+        """Check the policy, store the input, calculate, and store the output artifact.
+
+        An eligible US simulation goes to the segmented calculator, which
+        checks ``cancellation_requested`` while it waits for its segments.
+        """
+        simulation = self.simulation
+        stage_span = partial(
+            tracked_stage,
+            tracking=StageTracking(
+                STAGE12_SIMULATION_STAGES, self.progress, self.dependencies.runtime
+            ),
+        )
+        validate_policy_periods(simulation.policy)
+        with stage_span(Stage.STAGE12_INPUT_WRITE):
+            self.artifact_storage.write_input(
+                prefix=self.context.artifact_prefix,
+                simulation=simulation,
+            )
+        calculation = _calculate(
+            simulation,
+            self.dependencies,
+            progress=self.progress,
+            stage_span=stage_span,
+            cancellation_requested=cancellation_requested,
+        )
+        validate_output_frames(calculation.frames, simulation.output_plan)
+        with stage_span(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE):
+            return self.artifact_storage.write_simulation(
+                prefix=self.context.artifact_prefix,
+                simulation=simulation,
+                frames=calculation.frames,
+                calculation_provenance=calculation.calculation_provenance,
+                uk_local_authority_metadata=calculation.uk_local_authority_metadata,
+            )
+
+
 def run_single_simulation(
     payload: object,
     context_payload: object,
@@ -497,12 +552,27 @@ def run_single_simulation(
     A child already marked succeeded returns its stored descriptor without
     recalculating. A failure after the run is marked running marks it FAILED
     and raises a ``RuntimeError`` that carries no calculation detail.
+
+    When the context's ``result_delivery`` returns the report to its caller,
+    no Stage 12 row is read or written and ``store`` is not used; a failure
+    raises ``ReportExecutionError`` with its redacted detail instead (see
+    ``_run_simulation_for_caller``).
     """
     dependencies = dependencies or SimulationWorkerDependencies()
     runtime = dependencies.runtime
     simulation = PlannedSimulationExecutionInput.model_validate(payload)
     context = Stage12InvocationContext.model_validate(context_payload)
     _require_context(simulation, context, required_country=required_country)
+    if context.result_delivery is ReportResultDelivery.RETURN_TO_CALLER:
+        return _run_simulation_for_caller(
+            _SimulationRun(
+                simulation=simulation,
+                context=context,
+                artifact_storage=dependencies.artifacts or artifact_store(),
+                dependencies=dependencies,
+                progress=StageProgress(role=simulation.role.value),
+            )
+        )
     persistence = dependencies.store or runtime_store(runtime)
     artifact_storage = dependencies.artifacts or artifact_store()
     child = persistence.get_simulation(simulation.simulation_execution_id)
@@ -510,34 +580,15 @@ def run_single_simulation(
         return descriptor_from_record(child, simulation).model_dump(mode="json")
     running = _claim_simulation(persistence, child)
     cancellation_requested = _cancellation_check(persistence, simulation)
-    progress = StageProgress(role=simulation.role.value)
-    stage_span = partial(
-        tracked_stage,
-        tracking=StageTracking(STAGE12_SIMULATION_STAGES, progress, runtime),
+    run = _SimulationRun(
+        simulation=simulation,
+        context=context,
+        artifact_storage=artifact_storage,
+        dependencies=dependencies,
+        progress=StageProgress(role=simulation.role.value),
     )
     try:
-        validate_policy_periods(simulation.policy)
-        with stage_span(Stage.STAGE12_INPUT_WRITE):
-            artifact_storage.write_input(
-                prefix=context.artifact_prefix,
-                simulation=simulation,
-            )
-        calculation = _calculate(
-            simulation,
-            dependencies,
-            progress=progress,
-            stage_span=stage_span,
-            cancellation_requested=cancellation_requested,
-        )
-        validate_output_frames(calculation.frames, simulation.output_plan)
-        with stage_span(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE):
-            descriptor = artifact_storage.write_simulation(
-                prefix=context.artifact_prefix,
-                simulation=simulation,
-                frames=calculation.frames,
-                calculation_provenance=calculation.calculation_provenance,
-                uk_local_authority_metadata=calculation.uk_local_authority_metadata,
-            )
+        descriptor = run.calculate_and_store(cancellation_requested)
         _record_success(persistence, running, descriptor)
         return descriptor.model_dump(mode="json")
     except Stage12CancellationError:
@@ -551,10 +602,39 @@ def run_single_simulation(
             simulation,
             persistence=persistence,
             runtime=runtime,
-            progress=progress,
+            progress=run.progress,
         )
         msg = "Stage 12 simulation execution failed"
         raise RuntimeError(msg) from None
+
+
+def _never_cancelled() -> bool:
+    """Report no cancellation: nothing records one for a returned simulation."""
+    return False
+
+
+def _run_simulation_for_caller(run: _SimulationRun) -> dict[str, Any]:
+    """Calculate one simulation of a report returned to its caller.
+
+    No Stage 12 row is read or written. The simulation is always calculated:
+    no record can carry a cancellation, so the coordinator stops this call
+    through Modal instead. A failure is reported once, recorded as the
+    operation's cause, and raised as ``ReportExecutionError`` with the
+    redacted detail a Stage 12 row would record.
+    """
+    runtime = run.dependencies.runtime
+    try:
+        descriptor = run.calculate_and_store(_never_cancelled)
+    except Exception as error:  # noqa: BLE001  # every calculation failure reaches the caller as a typed error with its redacted detail
+        detail = _simulation_failure_detail(
+            error,
+            run.simulation,
+            runtime=runtime,
+            progress=run.progress,
+        )
+        record_failure_cause(runtime, error, detail.error_summary)
+        raise report_execution_error(run.simulation.evaluation_id, detail) from None
+    return descriptor.model_dump(mode="json")
 
 
 def _claim_simulation(
@@ -669,6 +749,34 @@ def _record_success(
     _require_completion_recorded(replaced=replaced)
 
 
+def _simulation_failure_detail(
+    error: Exception,
+    simulation: PlannedSimulationExecutionInput,
+    *,
+    runtime: ObservabilityRuntime | None,
+    progress: StageProgress,
+) -> Stage12FailureDetail:
+    """Report a calculation failure once and return its redacted detail."""
+    if isinstance(error, Stage12ExecutionError):
+        # A segmented calculation reports its segment failure where it
+        # occurs, before raising this error.
+        return error.detail
+    return report_failure(
+        error,
+        FailureSite(
+            scope="simulation_execution",
+            default_code="simulation_execution_failed",
+            attributes={
+                "simulation_role": simulation.role.value,
+                "evaluation_id": str(simulation.evaluation_id),
+                "simulation_execution_id": str(simulation.simulation_execution_id),
+            },
+        ),
+        runtime=runtime,
+        progress=progress,
+    )
+
+
 def _record_failure(
     error: Exception,
     simulation: PlannedSimulationExecutionInput,
@@ -678,25 +786,12 @@ def _record_failure(
     progress: StageProgress,
 ) -> None:
     """Report a calculation failure once, then record it if still running."""
-    if isinstance(error, Stage12ExecutionError):
-        # A segmented calculation reports its segment failure where it
-        # occurs, before raising this error.
-        detail = error.detail
-    else:
-        detail = report_failure(
-            error,
-            FailureSite(
-                scope="simulation_execution",
-                default_code="simulation_execution_failed",
-                attributes={
-                    "simulation_role": simulation.role.value,
-                    "evaluation_id": str(simulation.evaluation_id),
-                    "simulation_execution_id": str(simulation.simulation_execution_id),
-                },
-            ),
-            runtime=runtime,
-            progress=progress,
-        )
+    detail = _simulation_failure_detail(
+        error,
+        simulation,
+        runtime=runtime,
+        progress=progress,
+    )
     record_failure_cause(runtime, error, detail.error_summary)
     failed_at = datetime.now(UTC)
     persist_failure_record(
