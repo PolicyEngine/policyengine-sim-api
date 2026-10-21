@@ -9,12 +9,11 @@ package.
 Every uv package is type-checked with Pyright on every pull request, by the
 `pyright` job in `.github/workflows/pr.yml`:
 
-- `sim.quality.pyright-libraries-and-entry`, `sim.quality.pyright-gateway` and
-  `sim.quality.pyright-executor`: the contract, observability, Stage 12
-  persistence and fastapi libraries, the simulation entry, the gateway and the
-  executor have no Pyright errors.
-- `sim.quality.pyright-apis-integ`: the integration tests may have only the
-  errors their baseline lists (see [Baselines](#baselines)).
+- `sim.quality.pyright-libraries-and-entry`, `sim.quality.pyright-gateway`,
+  `sim.quality.pyright-executor` and `sim.quality.pyright-apis-integ`: the
+  contract, observability, Stage 12 persistence and fastapi libraries, the
+  simulation entry, the gateway, the executor and the generated-client
+  integration tests have no Pyright errors.
 - `sim.quality.every-package-type-checked`: a Pyright rule lists every uv
   package under `libs/` and `projects/`. When you add a package, give it a
   `[tool.pyright] include`, add it to a Pyright rule's `enforcer.projects`, and
@@ -72,7 +71,9 @@ the errors the new version reports.
 
 ## Baselines
 
-A ratcheted package's baseline, `rules/baselines/pyright-<package>.txt`, lists
+No package has a Pyright baseline now. If a Pyright upgrade or a new package
+brings errors that can't be fixed in the same pull request, a package's rule
+can be ratcheted: its baseline, `rules/baselines/pyright-<package>.txt`, lists
 the errors it may still have, one line per error, sorted:
 
 ```text
