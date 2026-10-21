@@ -72,6 +72,7 @@ if TYPE_CHECKING:
 
     from microdf import MicroDataFrame
     from policyengine.core import Simulation
+    from policyengine.core.scoping_strategy import RowFilterStrategy
 
     from policyengine_simulation_executor.artifact_store import ArtifactStore
     from policyengine_simulation_executor.simulation_runtime import RegionResolution
@@ -179,7 +180,9 @@ class StateDatasetTarget:
     state_fips: int
     filter_variable: str
     dataset: str
-    scoping_strategy: Any = field(default=None, compare=False, repr=False)
+    scoping_strategy: RowFilterStrategy | None = field(
+        default=None, compare=False, repr=False
+    )
 
 
 def state_dataset_targets() -> list[StateDatasetTarget]:
@@ -581,7 +584,11 @@ def build_state_datasets_impl(
     store = ArtifactStore(bucket)
     results = []
     for entry in expected:
-        rows = targets[entry.region].scoping_strategy.apply(
+        strategy = targets[entry.region].scoping_strategy
+        if strategy is None:
+            msg = f"{entry.region} has no row filter to build its state file with"
+            raise RuntimeError(msg)
+        rows = strategy.apply(
             entity_data=source.data.entity_data,
             group_entities=US_GROUP_ENTITIES,
             year=year,

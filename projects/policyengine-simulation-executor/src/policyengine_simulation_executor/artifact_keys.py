@@ -212,8 +212,9 @@ def baseline_simulation_id(baseline_digest: str) -> str:
 #
 # The filename inside a dataset object's path is EXACTLY the name the
 # runtime's ensure_datasets existence check resolves — the fetch layer
-# downloads objects to POLICYENGINE_DATA_FOLDER under their basenames, so
-# the object basename IS the runtime filename contract.
+# downloads each object under its basename, into POLICYENGINE_DATA_FOLDER or,
+# for a per-state dataset, into its state's folder there, so the object
+# basename IS the runtime filename contract.
 
 
 def dataset_artifact_filename(stem: str, year: int) -> str:

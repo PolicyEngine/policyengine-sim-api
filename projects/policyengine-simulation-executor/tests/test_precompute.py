@@ -1374,6 +1374,15 @@ class TestBuildStateDatasetsImpl:
 
         assert [result.state_code for result in results] == ["UT", "WY"]
 
+    def test_refuses_a_target_without_a_row_filter(self, state_build):
+        from dataclasses import replace
+
+        state_build.targets[0] = replace(state_build.targets[0], scoping_strategy=None)
+
+        with pytest.raises(RuntimeError, match="no row filter"):
+            self._build(state_build, self._both_states(state_build))
+        assert state_build.uploads == []
+
     def test_refuses_a_state_with_no_households(self, state_build):
         from policyengine.core.scoping_strategy import RowFilterStrategy
 
