@@ -329,6 +329,38 @@ def _resolve_mypy(rule: Rule, root: Path) -> list[Violation]:
     return []
 
 
+def _resolve_pyright(rule: Rule, root: Path) -> list[Violation]:
+    """Check that each package exists and says in pyproject.toml what Pyright checks."""
+    violations = []
+    for project in rule.enforcer.get("projects", []):
+        if not (root / project).is_dir():
+            violations.append(
+                _v(rule, f"project {project} does not exist", "fix enforcer.projects")
+            )
+            continue
+        if (root / project / "pyrightconfig.json").exists():
+            violations.append(
+                _v(
+                    rule,
+                    f"{project} has a pyrightconfig.json, which Pyright reads instead "
+                    "of its [tool.pyright]",
+                    "move its settings into [tool.pyright] in the package's "
+                    "pyproject.toml",
+                )
+            )
+        pyproject = _toml(root / project / "pyproject.toml")
+        if not pyproject.get("tool", {}).get("pyright", {}).get("include"):
+            violations.append(
+                _v(
+                    rule,
+                    f"{project}/pyproject.toml has no [tool.pyright] include",
+                    "list the paths Pyright checks in the package's "
+                    "[tool.pyright] include",
+                )
+            )
+    return violations
+
+
 def _resolve_file_field(field_name: str) -> Callable[[Rule, Path], list[Violation]]:
     def resolve(rule: Rule, root: Path) -> list[Violation]:
         value = rule.enforcer.get(field_name)
@@ -368,7 +400,7 @@ RESOLVERS: dict[Kind, Callable[[Rule, Path], list[Violation]]] = {
     Kind.QUALITY_GUARD: _resolve_quality_guard,
     Kind.RUFF: _resolve_ruff,
     Kind.MYPY: _resolve_mypy,
-    Kind.PYRIGHT: _resolve_file_field("config"),
+    Kind.PYRIGHT: _resolve_pyright,
     Kind.IMPORT_LINTER: _resolve_file_field("config"),
     Kind.WORKFLOW_JOB: _resolve_workflow_job,
     Kind.DOCS_GUARD: _resolve_file_field("doc"),
@@ -436,6 +468,9 @@ def resolve_ci(rule: Rule, root: Path) -> list[Violation]:
                 project=rule.enforcer.get("project"),
             )
             violations += _test_coverage(required, ref.invocation, job, root)
+        if job is not None and rule.enforcer.kind is Kind.PYRIGHT:
+            for project in rule.enforcer.get("projects", []):
+                violations += _matrix_violations(rule.id, "ci", project, job)
     return violations
 
 
@@ -526,17 +561,24 @@ def _test_coverage(
                         "add it to what the job runs, or move the test",
                     )
                 )
-    if (
-        required.project
-        and job.matrix
-        and not any(required.project in values for values in job.matrix.values())
-    ):
-        violations.append(
-            Violation(
-                required.rule_id,
-                required.check,
-                f"project {required.project} is not in the matrix of job '{job.id}'",
-                "add the project to the job matrix",
-            )
+    if required.project:
+        violations += _matrix_violations(
+            required.rule_id, required.check, required.project, job
         )
     return violations
+
+
+def _matrix_violations(
+    rule_id: str, check: str, project: str, job: JobBlock
+) -> list[Violation]:
+    """Report ``project`` when the job has a matrix that doesn't list it."""
+    if not job.matrix or any(project in values for values in job.matrix.values()):
+        return []
+    return [
+        Violation(
+            rule_id,
+            check,
+            f"project {project} is not in the matrix of job '{job.id}'",
+            "add the project to the job matrix",
+        )
+    ]

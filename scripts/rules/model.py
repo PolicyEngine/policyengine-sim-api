@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -68,13 +69,21 @@ _ENFORCER_DESCRIPTIONS: dict[Kind, Callable[[Mapping[str, Any]], str]] = {
     Kind.RUFF: _describe_ruff,
     Kind.MYPY: lambda _fields: "mypy",
     Kind.WORKFLOW_JOB: lambda _fields: "CI job",
-    Kind.PYRIGHT: lambda fields: f"{Kind.PYRIGHT.value} `{fields.get('config', '')}`",
+    Kind.PYRIGHT: lambda fields: (
+        f"{Kind.PYRIGHT.value} in "
+        + ", ".join(f"`{project}`" for project in fields.get("projects", []))
+    ),
     Kind.IMPORT_LINTER: (
         lambda fields: f"{Kind.IMPORT_LINTER.value} `{fields.get('config', '')}`"
     ),
     Kind.DOCS_GUARD: lambda fields: f"docs guard on `{fields.get('doc', '')}`",
     Kind.LLM_REVIEW: lambda fields: f"LLM review with `{fields.get('prompt', '')}`",
 }
+
+
+def normalized_package(package: str) -> str:
+    """Return a package directory in one spelling, so ./libs/x and libs/x match."""
+    return os.path.normpath(package).replace(os.sep, "/")
 
 
 @dataclass(frozen=True)

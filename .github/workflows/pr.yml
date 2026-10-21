@@ -16,7 +16,7 @@ jobs:
     # every job passed. See docs/engineering/skills/github-prs.md.
     name: CI complete
     if: ${{ always() }}
-    needs: [test, lint, quality-guards, docker-build, test-integration]
+    needs: [test, lint, pyright, quality-guards, docker-build, test-integration]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -119,6 +119,9 @@ jobs:
       with:
         python-version: '3.13'
 
+    - name: Install uv (the Pyright check's tests run the pinned Pyright)
+      uses: astral-sh/setup-uv@v8.1.0
+
     - name: Test the rules registry tool
       run: python -m unittest discover -s scripts/rules/tests -t .
 
@@ -127,6 +130,53 @@ jobs:
 
     - name: Run quality guards
       run: python scripts/run_quality_guards.py
+
+  pyright:
+    name: Pyright
+    # Full CI runs only on the lowest unmerged pull request in a stack.
+    if: ${{ !github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Each package passes or fails on its own; report every one.
+      fail-fast: false
+      matrix:
+        # Each entry is a uv package, type-checked in its own locked
+        # environment with the Pyright version pinned in
+        # scripts/rules/pyright.py. The Pyright rules in rules/registry.toml
+        # list the same packages, and the rules guard fails when one is
+        # missing here.
+        package:
+          - libs/policyengine-simulation-contract
+          - libs/policyengine-simulation-observability
+          - libs/policyengine-stage12-persistence
+          - libs/policyengine-fastapi
+          - projects/policyengine-simulation-entry
+          - projects/policyengine-simulation-gateway
+          - projects/policyengine-simulation-executor
+          - projects/policyengine-apis-integ
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v8.1.0
+      with:
+        enable-cache: true
+
+    - name: Generate API clients
+      # apis-integ installs the generated client from its output directory.
+      if: matrix.package == 'projects/policyengine-apis-integ'
+      run: ./scripts/generate-clients.sh
+
+    - name: Run Pyright in the package's locked environment
+      env:
+        PACKAGE: ${{ matrix.package }}
+      run: python -m scripts.rules pyright --sync "$PACKAGE"
 
   docker-build:
     name: Docker build
