@@ -1,4 +1,0 @@
-# Proof fixture: the baseline lists exactly the errors in pyright.json.
-projects/policyengine-simulation-executor/src/modal/app.py :: reportAttributeAccessIssue :: "App" is not a known attribute of module "modal"
-projects/policyengine-simulation-executor/src/modal/app.py :: reportAttributeAccessIssue :: "Secret" is not a known attribute of module "modal"
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "metadata" is possibly unbound
