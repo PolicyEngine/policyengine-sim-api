@@ -18,6 +18,7 @@ from pydantic import ValidationError
 _WORKER_FUNCTIONS = (
     "plan_artifacts",
     "build_dataset",
+    "build_state_datasets",
     "compute_baseline",
     "verify_determinism",
     "publish_manifest",
@@ -84,6 +85,56 @@ def test_dataset_builder_gets_dataset_build_scale_resources(precompute_module):
     kwargs = _function_kwargs(precompute_module, "build_dataset")
     assert kwargs["cpu"] == 8.0
     assert kwargs["memory"] == 65536
+
+
+def test_state_dataset_builder_has_room_for_the_regional_year_file(
+    precompute_module,
+):
+    kwargs = _function_kwargs(precompute_module, "build_state_datasets")
+    assert kwargs["cpu"] == 8.0
+    # Preparing the regional dataset's full-country year file has used about
+    # 51 GB; the 51 filtered copies need room on top of that.
+    assert kwargs["memory"] == 98304
+    assert kwargs["timeout"] == 2 * 60 * 60
+
+
+def test_state_dataset_wrapper_validates_entries_in_and_dumps_results_out(
+    precompute_module, monkeypatch
+):
+    from policyengine_simulation_executor import precompute as lib
+    from policyengine_simulation_executor.precompute_models import (
+        StateDatasetBuildResult,
+        StateDatasetPlanEntry,
+    )
+
+    entry = StateDatasetPlanEntry(
+        year=2026,
+        state_code="UT",
+        region="state/ut",
+        dataset="populace_local",
+        digest="sd1",
+        path="state-datasets/us/sd1/populace_local_year_2026.h5",
+        filename="populace_local_year_2026.h5",
+        folder="state-datasets/populace_local/UT",
+        exists=False,
+    )
+    result = StateDatasetBuildResult(
+        year=2026, state_code="UT", path=entry.path, uploaded=True, size_bytes=5
+    )
+    seen = {}
+
+    def fake_build_state_datasets(bucket, year, expected):
+        seen["call"] = (bucket, year, expected)
+        return [result]
+
+    monkeypatch.setattr(lib, "build_state_datasets_impl", fake_build_state_datasets)
+
+    assert precompute_module.build_state_datasets(
+        "bucket-x", 2026, [entry.model_dump()]
+    ) == [result.model_dump()]
+    assert seen["call"] == ("bucket-x", 2026, [entry])
+    with pytest.raises(ValidationError):
+        precompute_module.build_state_datasets("bucket-x", 2026, [{"year": 2026}])
 
 
 def test_image_includes_local_source(precompute_module):
@@ -242,6 +293,7 @@ def test_local_entrypoint_wires_bucket_force_and_handles(
     assert captured["handles"] == {
         "plan_artifacts": precompute_module.plan_artifacts,
         "build_dataset": precompute_module.build_dataset,
+        "build_state_datasets": precompute_module.build_state_datasets,
         "compute_baseline": precompute_module.compute_baseline,
         "verify_determinism": precompute_module.verify_determinism,
         "publish_manifest": precompute_module.publish_manifest,

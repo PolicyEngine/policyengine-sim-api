@@ -10,9 +10,10 @@ thin decorated wrappers, library implementations). Run as a `modal run`
 
 Wave 1 builds the single-year US datasets (one container per year), wave 2
 computes the 20 per-cohort national baselines per year (one container per
-cohort, sized like the production ``run_simulation_segment`` workers). See
-the library module for the idempotency, ``--force``, and determinism-gate
-semantics.
+cohort, sized like the production ``run_simulation_segment`` workers).
+Alongside both waves, one container per year filters the regional dataset
+that state regions load into one year file per state. See the library module
+for the idempotency, ``--force``, and determinism-gate semantics.
 """
 
 from __future__ import annotations
@@ -84,6 +85,35 @@ def build_dataset(bucket: str, expected: dict) -> dict:
     return build_dataset_impl(
         bucket, DatasetPlanEntry.model_validate(expected)
     ).model_dump()
+
+
+@app.function(
+    image=precompute_image,
+    cpu=8.0,
+    # Preparing the regional dataset's full-country year file has used about
+    # 51 GB; the 51 filtered copies need room on top of that.
+    memory=98304,
+    timeout=2 * 60 * 60,
+    secrets=_worker_secrets,
+)
+def build_state_datasets(bucket: str, year: int, expected: list[dict]) -> list[dict]:
+    """Build and upload one year's per-state datasets.
+
+    Raises if a state's key resolved in this container differs from the
+    planned one, so planner/worker drift cannot upload under the wrong key.
+    """
+    from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        build_state_datasets_impl,
+    )
+    from policyengine_simulation_executor.precompute_models import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        StateDatasetPlanEntry,
+    )
+
+    entries = [StateDatasetPlanEntry.model_validate(entry) for entry in expected]
+    return [
+        result.model_dump()
+        for result in build_state_datasets_impl(bucket, year, entries)
+    ]
 
 
 @app.function(
@@ -164,6 +194,7 @@ def main(*, force: bool = False) -> None:
         functions=PrecomputeFunctions(
             plan_artifacts=plan_artifacts,
             build_dataset=build_dataset,
+            build_state_datasets=build_state_datasets,
             compute_baseline=compute_baseline,
             verify_determinism=verify_determinism,
             publish_manifest=publish_manifest,

@@ -309,6 +309,45 @@ def _baseline_result(year):
     }
 
 
+class RecordingFunction:
+    """A Modal handle fake that logs, in one shared list, when it is used.
+
+    ``results`` maps the spawned year to the result returned. The year is the
+    second argument itself (a state build) or that plan entry's ``year``.
+    """
+
+    def __init__(self, name, log, results):
+        self.name = name
+        self.log = log
+        self.results = results
+        self.spawn_calls = []
+
+    def spawn(self, *args):
+        self.spawn_calls.append(args)
+        year = args[1] if isinstance(args[1], int) else args[1]["year"]
+        self.log.append(("spawn", self.name, year))
+        log, name, result = self.log, self.name, self.results[year]
+
+        class Handle:
+            def get(self):
+                log.append(("get", name, year))
+                return result
+
+        return Handle()
+
+
+def _state_build_result(year, state_code, *, uploaded=True, size_bytes=100):
+    return {
+        "year": year,
+        "state_code": state_code,
+        "path": (
+            f"state-datasets/us/sd-{year}-{state_code}/populace_local_year_{year}.h5"
+        ),
+        "uploaded": uploaded,
+        "size_bytes": size_bytes,
+    }
+
+
 class TestRunPrecompute:
     def _functions(self, verify_result=None):
         return {
@@ -316,6 +355,7 @@ class TestRunPrecompute:
             "build_dataset": FakeFunction(
                 results_by_year={2027: _dataset_result(2027)}
             ),
+            "build_state_datasets": RecordingFunction("build_state_datasets", [], {}),
             "compute_baseline": FakeFunction(
                 results_by_year={2027: _baseline_result(2027)}
             ),
@@ -385,6 +425,65 @@ class TestRunPrecompute:
         with pytest.raises(SystemExit, match="values differ"):
             self._run(functions)
         assert functions["publish_manifest"].remote_calls == []
+
+    def _state_run(self, *, uploaded_wyoming=True):
+        log = []
+        functions = self._functions()
+        functions["plan_artifacts"] = FakeFunction(
+            result=_plan_with_state_datasets().model_dump()
+        )
+        functions["build_state_datasets"] = RecordingFunction(
+            "build_state_datasets",
+            log,
+            {
+                2026: [
+                    _state_build_result(2026, "WY", uploaded=uploaded_wyoming),
+                ],
+                2027: [_state_build_result(2027, "UT", size_bytes=250)],
+            },
+        )
+        functions["compute_baseline"] = RecordingFunction(
+            "compute_baseline", log, {2027: _baseline_result(2027)}
+        )
+        publish = functions["publish_manifest"]
+
+        def publish_remote(*args):
+            log.append(("remote", "publish_manifest", None))
+            return FakeFunction.remote(publish, *args)
+
+        publish.remote = publish_remote
+        digest, lines = self._run(functions)
+        return functions, log, digest, lines
+
+    def test_spawns_one_state_build_per_year_with_its_missing_entries(self):
+        functions, _log, _digest, _lines = self._state_run()
+
+        plan = _plan_with_state_datasets()
+        assert functions["build_state_datasets"].spawn_calls == [
+            ("bucket-x", 2026, [plan.state_datasets[1].model_dump()]),
+            ("bucket-x", 2027, [plan.state_datasets[2].model_dump()]),
+        ]
+
+    def test_waits_for_state_builds_only_before_publishing(self):
+        _functions, log, _digest, _lines = self._state_run()
+
+        first_state_get = log.index(("get", "build_state_datasets", 2026))
+        assert log.index(("spawn", "build_state_datasets", 2026)) < log.index(
+            ("spawn", "compute_baseline", 2027)
+        )
+        assert log.index(("get", "compute_baseline", 2027)) < first_state_get
+        assert first_state_get < log.index(("remote", "publish_manifest", None))
+
+    def test_reports_the_state_dataset_bytes_uploaded(self):
+        _functions, _log, _digest, lines = self._state_run(uploaded_wyoming=False)
+
+        assert "State datasets: 2 built, 1 uploaded, 350 bytes" in lines
+        assert lines[-1] == "MANIFEST_DIGEST=digest-123"
+
+    def test_a_run_without_state_datasets_spawns_no_state_build(self):
+        functions = self._functions()
+        self._run(functions)
+        assert functions["build_state_datasets"].spawn_calls == []
 
     def test_malformed_worker_result_fails_loudly(self):
         functions = self._functions()

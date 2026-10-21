@@ -760,10 +760,11 @@ def publish_manifest_impl(bucket: str, plan: PrecomputePlan) -> str:
 
 @dataclass(frozen=True)
 class PrecomputeFunctions:
-    """The five Modal function handles the precompute orchestration calls."""
+    """The six Modal function handles the precompute orchestration calls."""
 
     plan_artifacts: RemoteFunction
     build_dataset: RemoteFunction
+    build_state_datasets: RemoteFunction
     compute_baseline: RemoteFunction
     verify_determinism: RemoteFunction
     publish_manifest: RemoteFunction
@@ -778,8 +779,11 @@ def run_precompute(
 ) -> str:
     """Orchestrate the local entrypoint: plan, spawn misses, gate, publish.
 
-    Takes the five Modal function handles as ``functions`` (each offering
+    Takes the six Modal function handles as ``functions`` (each offering
     ``.remote``/``.spawn``) so the flow is testable with plain fakes.
+    Per-state dataset builds (one container per year) start with the dataset
+    builds and are waited for only before the manifest is published, so the
+    baselines never wait for them.
     Everything crossing a handle is a plain dict (Modal's serialization
     boundary); it is validated back into models immediately on return.
     The determinism gate runs only when baselines were actually computed
@@ -792,13 +796,21 @@ def run_precompute(
     work = select_work(plan, force=force)
     echo(
         f"Plan: {len(plan.datasets)} datasets ({len(work.datasets)} to "
-        f"build), {len(plan.baselines)} baselines "
+        f"build), {len(plan.state_datasets)} state datasets "
+        f"({len(work.state_datasets)} to build), {len(plan.baselines)} baselines "
         f"({len(work.baselines)} to compute)"
     )
 
     dataset_handles = [
         functions.build_dataset.spawn(bucket, entry.model_dump())
         for entry in work.datasets
+    ]
+    state_entries_by_year: dict[int, list[dict]] = {}
+    for entry in work.state_datasets:
+        state_entries_by_year.setdefault(entry.year, []).append(entry.model_dump())
+    state_handles = [
+        functions.build_state_datasets.spawn(bucket, year, entries)
+        for year, entries in state_entries_by_year.items()
     ]
     for handle in dataset_handles:
         result = DatasetBuildResult.model_validate(handle.get())
@@ -831,6 +843,18 @@ def run_precompute(
                 "Determinism gate FAILED: " + "; ".join(verdict.differences)
             )
         echo("Determinism gate passed")
+
+    if state_handles:
+        state_results = [
+            StateDatasetBuildResult.model_validate(result)
+            for handle in state_handles
+            for result in handle.get()
+        ]
+        echo(
+            f"State datasets: {len(state_results)} built, "
+            f"{sum(result.uploaded for result in state_results)} uploaded, "
+            f"{sum(result.size_bytes for result in state_results)} bytes"
+        )
 
     manifest_digest = functions.publish_manifest.remote(bucket, plan.model_dump())
     echo(manifest_digest_line(manifest_digest))
