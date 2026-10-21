@@ -52,7 +52,7 @@ add `_observability_context` to it.
 
 At the receiving function, validate the separate argument with
 `normalize_observability_context` and pass the result to
-`runtime.operation(..., remote_context=context)`. The operation scope must
+`scopes.operation(runtime, ..., remote_context=context)`. The operation scope must
 cover the worker call. Child dispatches made inside that scope call
 `runtime.capture_context()` again and pass the resulting context through their
 own keyword-only argument.
@@ -79,10 +79,12 @@ All span names for supported run configurations are defined in
 appropriate `StagePlan` and call `plan.name(Stage.VALUE)`. Do not add span name
 string literals in services or workers.
 
-Open a span with `scopes.span(runtime, plan.name(Stage.VALUE))` from
-`policyengine_simulation_observability.scopes` rather than `runtime.span(...)`.
-It returns the same scope, typed so that Pyright knows an exception raised in
-the block propagates; see `docs/engineering/skills/type-checking.md`.
+Open a span with `scopes.span(runtime, plan.name(Stage.VALUE))`, and an
+operation with `scopes.operation(runtime, ...)`, from
+`policyengine_simulation_observability.scopes` rather than `runtime.span(...)`
+or `runtime.operation(...)`. Each returns the runtime's own scope, typed so
+that Pyright knows an exception raised in the block propagates; see
+`docs/engineering/skills/type-checking.md`.
 
 When adding a run configuration or runtime stage:
 
