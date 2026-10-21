@@ -155,10 +155,39 @@ jobs:
           GATEWAY_AUTH_REQUIRED: ${{ vars.GATEWAY_AUTH_REQUIRED }}
         run: ../../.github/scripts/modal-sync-secrets.sh "${{ inputs.modal_environment }}"
 
+  migrate_simulation_database:
+    # Applies the simulation schema's Alembic chain before the entrypoint
+    # candidate deploys. The previous revision keeps serving meanwhile, so
+    # every migration must work with the release before it.
+    name: Migrate the simulation database schema
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.release_environment }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.13.6"
+
+      - name: Install migration dependencies
+        working-directory: libs/policyengine-simulation-persistence
+        run: uv sync --frozen --extra migrations
+
+      - name: Apply simulation schema migrations
+        working-directory: libs/policyengine-simulation-persistence
+        env:
+          SIMULATION_MIGRATION_DATABASE_URL: ${{ secrets.SIMULATION_MIGRATION_DATABASE_URL }}
+        run: ../../.github/scripts/migrate-simulation-database.sh
+
   deploy_entrypoint:
     name: Deploy and unit test Cloud Run entrypoint
-    if: ${{ always() && needs.prepare.result == 'success' && ((inputs.deploy_stage12_v2 && needs.configure_stage12_v2.result == 'success') || (!inputs.deploy_stage12_v2 && needs.configure_stage12_v2.result == 'skipped')) }}
-    needs: [prepare, configure_stage12_v2]
+    if: ${{ always() && needs.prepare.result == 'success' && needs.migrate_simulation_database.result == 'success' && ((inputs.deploy_stage12_v2 && needs.configure_stage12_v2.result == 'success') || (!inputs.deploy_stage12_v2 && needs.configure_stage12_v2.result == 'skipped')) }}
+    needs: [prepare, configure_stage12_v2, migrate_simulation_database]
     runs-on: ubuntu-latest
     environment: ${{ inputs.release_environment }}
     permissions:
@@ -241,6 +270,7 @@ jobs:
           OLD_GATEWAY_AUTH_AUDIENCE_VALUE: ${{ secrets.OLD_GATEWAY_AUTH_AUDIENCE }}
           OLD_GATEWAY_AUTH_CLIENT_ID_VALUE: ${{ secrets.OLD_GATEWAY_AUTH_CLIENT_ID }}
           OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME: ${{ vars.OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME }}
+          SIMULATION_DATABASE_URL_SECRET_NAME: ${{ vars.SIMULATION_DATABASE_URL_SECRET_NAME }}
           STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}
           STAGE12_ARTIFACT_BUCKET_VALUE: ${{ vars.STAGE12_ARTIFACT_BUCKET }}
           STAGE12_DATABASE_URL_SECRET_NAME: ${{ vars.STAGE12_DATABASE_URL_SECRET_NAME }}
@@ -764,6 +794,8 @@ jobs:
           EXPECTED_UK_DATASET_SHA256: ${{ inputs.deploy_existing_stack && needs.prepare.outputs.uk_dataset_sha256 || '' }}
           # Latest must route to this release only when it should advance it.
           EXPECTED_LATEST: ${{ inputs.deploy_existing_stack && needs.update_routing.outputs.advances_latest == 'true' && 'true' || '' }}
+          # The candidate reaches its own database at the migrated revision.
+          REQUIRE_CURRENT_SIMULATION_DATABASE_REVISION: "true"
         run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.deploy_entrypoint.outputs.revision }}"
 
       - name: Download the numerical release sentinel

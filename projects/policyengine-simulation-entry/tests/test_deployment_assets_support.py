@@ -128,7 +128,8 @@ def write_fake_smoke_curl(tmp_path: Path, revisions: list[str]) -> tuple[Path, P
                 printf '{"status":"healthy"}' > "${body_file}"
                 ;;
               */ready)
-                printf '{"status":"ready"}'
+                ready_body='{"status":"ready"}'
+                printf '%s' "${FAKE_CURL_READY:-${ready_body}}"
                 ;;
               */versions)
                 versions='{}'

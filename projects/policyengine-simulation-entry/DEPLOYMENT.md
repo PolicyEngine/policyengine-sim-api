@@ -22,6 +22,31 @@ Credential values belong in the cloud secret store. They must not be committed
 to the repository or stored as plain GitHub variables. The deployment workflow
 receives only the configuration needed to reference those protected resources.
 
+## Simulation database
+
+The Simulation Entrypoint owns the `simulation` schema in the Postgres database
+that holds the Public API's v2 tables. Before the entrypoint candidate deploys
+in each environment, the `migrate_simulation_database` job applies the
+schema's Alembic chain (`migrations/`) with the migrator role. It is the only
+job that receives `SIMULATION_MIGRATION_DATABASE_URL`, a GitHub environment
+secret in `beta` and `prod`, passed in that step's `env:` alone. If the
+migration fails, the entrypoint is not deployed.
+
+The entrypoint itself connects as the runtime role. The deploy step resolves
+the Secret Manager secret named by the `SIMULATION_DATABASE_URL_SECRET_NAME`
+environment variable to its newest enabled version and mounts that version as
+`SIMULATION_DATABASE_URL`. Only the entrypoint's runtime service account may
+read it. Modal never receives either URL.
+
+`GET /ready` reports the database's applied revision next to the revision the
+image expects, under `simulation_database`. The database does not change the
+readiness status, because no old-gateway or Stage 12 route uses it. The
+candidate smoke check requires the two revisions to match, which shows that the
+runtime secret reached the revision and the migration ran; the stable and
+rollback checks do not, because an older image may run against a newer schema.
+The ownership rules and roles are described in
+`libs/policyengine-simulation-persistence/README.md`.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`
