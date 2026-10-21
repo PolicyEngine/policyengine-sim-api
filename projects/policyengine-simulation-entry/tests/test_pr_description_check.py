@@ -1,22 +1,46 @@
 """Tests for .github/scripts/check_pr_description.py.
 
 Rule sim.process.pr-tracking-issue: the first line of every pull request's
-description is ``Fixes #ISSUE_NUMBER``. These tests load the script in this
-process to check how it reads a description.
+description is ``Fixes #ISSUE_NUMBER``, naming an open issue in this
+repository. Tests of how the script reads a description load it in this
+process; tests of the issue lookup run it as the workflow does, with a fake
+``gh`` first on PATH, so no test reaches GitHub.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
-from workflow_script_support import SCRIPTS_DIR
+from workflow_script_support import SCRIPTS_DIR, FakeCommands
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from types import ModuleType
 
 CHECK_SCRIPT = SCRIPTS_DIR / "check_pr_description.py"
+REPOSITORY = "PolicyEngine/policyengine-sim-api"
+VALID_BODY = "Fixes #861\n\n## Summary\n\n- Adds a check.\n"
+
+# Prints FAKE_GH_STDOUT, and FAKE_GH_STDERR on stderr, then exits with
+# FAKE_GH_EXIT, as gh api does with GitHub's answer.
+FAKE_GH = """\
+printf '%s' "${FAKE_GH_STDOUT:-}"
+if [[ -n "${FAKE_GH_STDERR:-}" ]]; then
+  printf '%s\\n' "$FAKE_GH_STDERR" >&2
+fi
+exit "${FAKE_GH_EXIT:-0}"
+"""
+# What gh api prints for a number GitHub has no issue or pull request for.
+NOT_FOUND_STDOUT = (
+    '{"message":"Not Found","documentation_url":'
+    '"https://docs.github.com/rest/issues/issues#get-an-issue","status":"404"}'
+)
+NOT_FOUND_STDERR = "gh: Not Found (HTTP 404)"
 
 
 @pytest.fixture(scope="module")
@@ -141,3 +165,250 @@ def test_a_long_first_line_is_shortened_in_the_message(check_module):
 
     assert 'The first line is "Draft, stacked on #743.' in message
     assert first_line not in message
+
+
+# --- The issue lookup -----------------------------------------------------
+
+
+@pytest.fixture
+def fakes(tmp_path: Path) -> FakeCommands:
+    commands = FakeCommands.create(tmp_path)
+    commands.add("gh", FAKE_GH)
+    return commands
+
+
+def _issue(
+    number: int = 861, *, state: str = "open", repository: str = REPOSITORY, **fields
+) -> dict:
+    """Return the fields gh api prints for an issue, with ``fields`` added."""
+    return {
+        "number": number,
+        "state": state,
+        "repository_url": f"https://api.github.com/repos/{repository}",
+        "html_url": f"https://github.com/{repository}/issues/{number}",
+        **fields,
+    }
+
+
+def _write_event(tmp_path: Path, event: dict) -> Path:
+    event_path = tmp_path / "event.json"
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    return event_path
+
+
+def _pull_request_event(body: str | None) -> dict:
+    return {"action": "edited", "number": 862, "pull_request": {"body": body}}
+
+
+def _run_check(
+    fakes: FakeCommands, tmp_path: Path, body: str | None = VALID_BODY, **env: str
+) -> subprocess.CompletedProcess[str]:
+    """Run the check on a pull request event whose description is ``body``."""
+    event_path = _write_event(tmp_path, _pull_request_event(body))
+    return _run_script(
+        fakes.env(
+            GITHUB_EVENT_PATH=str(event_path), GITHUB_REPOSITORY=REPOSITORY, **env
+        )
+    )
+
+
+def _run_script(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(CHECK_SCRIPT)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+
+def _gh_answers(issue: dict) -> dict[str, str]:
+    """Environment for the fake gh to print ``issue`` and succeed."""
+    return {"FAKE_GH_STDOUT": json.dumps(issue)}
+
+
+def _error_annotation(result: subprocess.CompletedProcess[str]) -> str:
+    """Return the one workflow error annotation the check printed."""
+    annotations = [
+        output_line
+        for output_line in result.stdout.splitlines()
+        if output_line.startswith("::error")
+    ]
+    assert len(annotations) == 1, result.stdout
+    return annotations[0]
+
+
+def test_a_description_naming_an_open_issue_in_this_repository_passes(fakes, tmp_path):
+    result = _run_check(fakes, tmp_path, **_gh_answers(_issue()))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert fakes.calls("gh") == [
+        ["gh", "api", "repos/PolicyEngine/policyengine-sim-api/issues/861"]
+    ]
+    assert result.stdout == (
+        "The first line is Fixes #861, and #861 is an open issue in "
+        "PolicyEngine/policyengine-sim-api.\n"
+    )
+
+
+def test_a_rejected_description_is_reported_without_asking_github(fakes, tmp_path):
+    result = _run_check(fakes, tmp_path, "## Summary\n\nFixes #861\n")
+
+    assert result.returncode == 1
+    assert "Fixes #861 is on line 3" in _error_annotation(result)
+    assert fakes.calls("gh") == []
+
+
+def test_a_null_description_in_the_event_fails(fakes, tmp_path):
+    result = _run_check(fakes, tmp_path, None)
+
+    assert result.returncode == 1
+    assert "The description is empty." in _error_annotation(result)
+    assert fakes.calls("gh") == []
+
+
+def test_a_crlf_description_from_the_event_passes(fakes, tmp_path):
+    result = _run_check(
+        fakes, tmp_path, "Fixes #861\r\n\r\n## Summary\r\n", **_gh_answers(_issue())
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_a_closed_issue_fails(fakes, tmp_path):
+    result = _run_check(fakes, tmp_path, **_gh_answers(_issue(state="closed")))
+
+    assert result.returncode == 1
+    annotation = _error_annotation(result)
+    assert "Issue #861 is closed." in annotation
+    assert "reopen it and re-run this job" in annotation
+
+
+def test_a_pull_request_number_fails(fakes, tmp_path):
+    pull_request = _issue(
+        857,
+        pull_request={
+            "url": f"https://api.github.com/repos/{REPOSITORY}/pulls/857",
+        },
+    )
+
+    result = _run_check(fakes, tmp_path, "Fixes #857\n", **_gh_answers(pull_request))
+
+    assert result.returncode == 1
+    assert "#857 is a pull request, not an issue." in _error_annotation(result)
+
+
+def test_a_missing_issue_fails(fakes, tmp_path):
+    result = _run_check(
+        fakes,
+        tmp_path,
+        "Fixes #999999\n",
+        FAKE_GH_STDOUT=NOT_FOUND_STDOUT,
+        FAKE_GH_STDERR=NOT_FOUND_STDERR,
+        FAKE_GH_EXIT="1",
+    )
+
+    assert result.returncode == 1
+    assert (
+        "There is no issue #999999 in PolicyEngine/policyengine-sim-api."
+        in _error_annotation(result)
+    )
+
+
+def test_an_issue_moved_to_another_repository_fails(fakes, tmp_path):
+    # Issue #154 was transferred to policyengine.py, where it is #115; gh api
+    # follows GitHub's redirect and prints the moved issue.
+    moved_issue = _issue(115, state="closed", repository="PolicyEngine/policyengine.py")
+
+    result = _run_check(fakes, tmp_path, "Fixes #154\n", **_gh_answers(moved_issue))
+
+    assert result.returncode == 1
+    annotation = _error_annotation(result)
+    assert (
+        "#154 is not an issue in PolicyEngine/policyengine-sim-api: it moved to "
+        "PolicyEngine/policyengine.py#115."
+    ) in annotation
+
+
+def test_an_issue_in_a_repository_whose_name_differs_only_in_case_passes(
+    fakes, tmp_path
+):
+    issue = _issue(repository="policyengine/PolicyEngine-Sim-API")
+
+    result = _run_check(fakes, tmp_path, **_gh_answers(issue))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "repository_url",
+    [None, "", "https://api.github.com/orgs/PolicyEngine", "not a URL"],
+)
+def test_an_answer_that_names_no_repository_fails(fakes, tmp_path, repository_url):
+    issue = _issue()
+    issue["repository_url"] = repository_url
+
+    result = _run_check(fakes, tmp_path, **_gh_answers(issue))
+
+    assert result.returncode == 1
+    assert "GitHub's answer for #861 names no repository" in _error_annotation(result)
+
+
+def test_a_failed_lookup_fails_with_what_gh_reported(fakes, tmp_path):
+    result = _run_check(
+        fakes,
+        tmp_path,
+        FAKE_GH_STDERR="gh: Bad credentials (HTTP 401)",
+        FAKE_GH_EXIT="1",
+    )
+
+    assert result.returncode == 1
+    annotation = _error_annotation(result)
+    assert "Could not look up #861 in PolicyEngine/policyengine-sim-api" in annotation
+    assert "gh: Bad credentials (HTTP 401)" in annotation
+
+
+@pytest.mark.parametrize("gh_stdout", ["not JSON", "[]"])
+def test_an_answer_that_is_not_an_issue_object_fails(fakes, tmp_path, gh_stdout):
+    result = _run_check(fakes, tmp_path, FAKE_GH_STDOUT=gh_stdout)
+
+    assert result.returncode == 1
+    assert "gh api did not print an issue for #861" in _error_annotation(result)
+
+
+def test_messages_stay_on_one_annotation_line(fakes, tmp_path):
+    result = _run_check(
+        fakes,
+        tmp_path,
+        FAKE_GH_STDERR="first problem\nsecond problem 100%",
+        FAKE_GH_EXIT="1",
+    )
+
+    assert result.returncode == 1
+    assert result.stdout.count("\n") == 1
+    assert "first problem%0Asecond problem 100%25" in _error_annotation(result)
+
+
+@pytest.mark.parametrize("variable", ["GITHUB_EVENT_PATH", "GITHUB_REPOSITORY"])
+def test_the_check_requires_its_environment(fakes, tmp_path, variable):
+    event_path = _write_event(tmp_path, _pull_request_event(VALID_BODY))
+    env = fakes.env(GITHUB_EVENT_PATH=str(event_path), GITHUB_REPOSITORY=REPOSITORY)
+    del env[variable]
+
+    result = _run_script(env)
+
+    assert result.returncode == 1
+    assert f"{variable} is required" in result.stderr
+    assert fakes.calls("gh") == []
+
+
+def test_the_check_requires_a_pull_request_event(fakes, tmp_path):
+    event_path = _write_event(tmp_path, {"ref": "refs/heads/main"})
+
+    result = _run_script(
+        fakes.env(GITHUB_EVENT_PATH=str(event_path), GITHUB_REPOSITORY=REPOSITORY)
+    )
+
+    assert result.returncode == 1
+    assert "has no pull_request" in result.stderr
+    assert fakes.calls("gh") == []
