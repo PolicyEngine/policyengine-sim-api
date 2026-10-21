@@ -203,3 +203,57 @@ def test_a_dataset_sharing_the_default_path_does_not_replace_the_default() -> No
     us = _us(normalize_stage12_bundle(bundle))
 
     assert us.dataset_for_region_type("national") == us.default_dataset
+
+
+def test_the_bundle_digest_of_a_fixed_bundle_is_pinned() -> None:
+    """Any change to what the digest covers is deliberate.
+
+    A changed digest refuses comparison runs while a redeployed v2 application
+    waits for its version manifest, and rebuilds the Stage 12 cache, so a new
+    bundle field must not reach it by accident. The pinned value is the one
+    the code before region datasets gives the same bundle.
+    """
+    from policyengine_simulation_contract.stage12_bundle import (
+        Stage12BundleManifest,
+        Stage12CountryBundle,
+        Stage12Dataset,
+        Stage12RegionDataset,
+    )
+
+    dataset = Stage12Dataset(
+        identity="populace_us_2024",
+        uri="hf://policyengine/populace-us/populace_us_2024.h5@revision",
+        artifact_revision="revision",
+        sha256="a" * 64,
+        repo_type="dataset",
+    )
+    bundle = Stage12BundleManifest(
+        policyengine_version="6.7.5",
+        policyengine_requirement="policyengine==6.7.5",
+        core_package_version="3.33.0",
+        core_package_requirement="policyengine-core==3.33.0",
+        countries=(
+            Stage12CountryBundle(
+                country="us",
+                country_package_name="policyengine-us",
+                country_package_version="2.2.1",
+                country_package_requirement="policyengine-us==2.2.1",
+                data_package_name="populace-us",
+                data_package_version="1.0.0",
+                data_release_version="revision",
+                data_artifact_revision="revision",
+                default_dataset=dataset.identity,
+                default_dataset_uri=dataset.uri,
+                datasets=(dataset,),
+                region_datasets=(
+                    Stage12RegionDataset(
+                        region_type="national", dataset=dataset.identity
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    assert bundle_digest(bundle) == (
+        "47f3f7c69ea3b99005ffee585092074862bf4f55a91a95511f12924a79aac71c"
+    )
