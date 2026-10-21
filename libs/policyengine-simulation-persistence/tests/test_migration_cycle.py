@@ -19,7 +19,7 @@ from policyengine_simulation_persistence import (
     SIMULATION_SCHEMA,
     create_simulation_engine,
 )
-from simulation_support import economy_simulation, simulation_store
+from report_support import economy_pair, economy_report, report_store
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
@@ -210,12 +210,12 @@ def test_the_chain_needs_references_on_the_public_api_tables(
     assert applied_revision(disposable_database.migrator_url) is None
 
 
-@pytest.mark.parametrize("table_name", ["simulations"])
+@pytest.mark.parametrize("table_name", ["simulations", "reports"])
 def test_the_runtime_role_cannot_change_or_delete_a_definition(
     migrated_database, public_api_rows, table_name
 ) -> None:
-    store = simulation_store(migrated_database)
-    store.create(economy_simulation(public_api_rows))
+    baseline, reform = economy_pair(migrated_database, public_api_rows)
+    report_store(migrated_database).create(economy_report(baseline, reform))
     engine = create_simulation_engine(migrated_database.runtime_url)
     try:
         for statement in (

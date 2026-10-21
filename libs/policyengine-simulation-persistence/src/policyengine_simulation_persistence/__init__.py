@@ -9,6 +9,12 @@ from policyengine_simulation_persistence.engine import (
     normalized_database_url,
     read_schema_revision,
 )
+from policyengine_simulation_persistence.reports import (
+    NewReport,
+    ReportKind,
+    ReportRecord,
+    ReportStore,
+)
 from policyengine_simulation_persistence.schema import (
     ALEMBIC_VERSION_TABLE,
     HEAD_REVISION,
@@ -28,7 +34,11 @@ __all__ = [
     "HEAD_REVISION",
     "RUNTIME_ROLE",
     "SIMULATION_SCHEMA",
+    "NewReport",
     "NewSimulation",
+    "ReportKind",
+    "ReportRecord",
+    "ReportStore",
     "SimulationKind",
     "SimulationRecord",
     "SimulationStore",
