@@ -25,7 +25,7 @@ Every uv package is type-checked with Pyright on every pull request, by the
 From the repository root:
 
 ```bash
-make check                                   # ruff, then Pyright in every package
+make check                                   # CI's ruff, then Pyright in every package
 python -m scripts.rules pyright --sync projects/policyengine-simulation-gateway
 python -m scripts.rules pyright --list-packages
 ```

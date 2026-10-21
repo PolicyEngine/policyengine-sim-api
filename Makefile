@@ -1,5 +1,5 @@
 # Simplified Makefile using docker-compose
-.PHONY: help dev up down build test clean logs format check push-pr-branch
+.PHONY: help dev up down build test clean logs format check require-ruff-version push-pr-branch
 
 # Load environment variables if .env exists
 ifneq (,$(wildcard deployment/.env))
@@ -36,6 +36,12 @@ help:
 	@echo "  make push-pr-branch   - Push current branch to origin for a PR"
 	@echo ""
 	@echo "Deployment is automated via GitHub Actions to Cloud Run and Modal; there is no manual deploy target."
+
+# CI's ruff, read from the lint job's `uv tool install ruff==<version>` step in
+# .github/workflows/pr.yml so the two can't drift. A ruff found on PATH may be
+# another version, which selects different rules under select = ["ALL"].
+RUFF_VERSION := $(shell sed -n 's/.*uv tool install ruff==\([0-9][0-9.]*\).*/\1/p' .github/workflows/pr.yml)
+RUFF := uv tool run ruff@$(RUFF_VERSION)
 
 # Development commands
 dev:
@@ -138,29 +144,35 @@ update:
 	@echo "✅ All dependencies updated"
 
 # Code quality
-format:
-	@echo "Formatting code with ruff..."
+format: require-ruff-version
+	@echo "Formatting code with ruff $(RUFF_VERSION)..."
 	@for dir in projects/*/src libs/*/src; do \
 		if [ -d "$$dir" ]; then \
 			echo "Formatting $$dir..."; \
-			uv run ruff format $$dir; \
+			$(RUFF) format $$dir; \
 		fi \
 	done
 
 # Pyright runs in each package's own locked environment, with the version CI
 # pins; apis-integ needs the generated client. See
 # docs/engineering/skills/type-checking.md.
-check: generate-clients
-	@echo "Running code quality checks..."
+check: require-ruff-version generate-clients
+	@echo "Running code quality checks (ruff $(RUFF_VERSION))..."
 	@status=0; \
 	for dir in projects/*/src libs/*/src; do \
 		if [ -d "$$dir" ]; then \
 			echo "Checking $$dir..."; \
-			uv run ruff check $$dir || status=1; \
+			$(RUFF) check $$dir || status=1; \
 		fi \
 	done; \
 	python3 -m scripts.rules pyright --sync || status=1; \
 	exit $$status
+
+require-ruff-version:
+	@if [ -z "$(RUFF_VERSION)" ]; then \
+		echo "Could not read the ruff version from .github/workflows/pr.yml (uv tool install ruff==<version>)"; \
+		exit 1; \
+	fi
 
 push-pr-branch:
 	@BRANCH=$$(git branch --show-current); \
