@@ -309,13 +309,17 @@ def test_a_pull_request_number_fails(fakes, tmp_path):
     assert "#857 is a pull request, not an issue." in _error_annotation(result)
 
 
-def test_a_missing_issue_fails(fakes, tmp_path):
+@pytest.mark.parametrize(
+    "gh_error",
+    [NOT_FOUND_STDERR, "gh: This issue was deleted (HTTP 410)"],
+)
+def test_a_missing_issue_fails(fakes, tmp_path, gh_error):
     result = _run_check(
         fakes,
         tmp_path,
         "Fixes #999999\n",
         FAKE_GH_STDOUT=NOT_FOUND_STDOUT,
-        FAKE_GH_STDERR=NOT_FOUND_STDERR,
+        FAKE_GH_STDERR=gh_error,
         FAKE_GH_EXIT="1",
     )
 

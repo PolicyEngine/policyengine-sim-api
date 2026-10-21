@@ -461,6 +461,19 @@ def test_create_pr_replaces_an_earlier_fixes_line_on_the_open_update_pr(
     assert descriptions == f"Fixes #870\n{rest}\n"
 
 
+def test_create_pr_replaces_a_fixes_line_that_is_the_whole_description(fakes, tmp_path):
+    result, descriptions = _create_pr(
+        fakes,
+        tmp_path,
+        FAKE_OPEN_PR="900",
+        FAKE_OPEN_PR_BODY="Fixes #860",
+        FAKE_OPEN_ISSUES="870\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert descriptions == "Fixes #870\n"
+
+
 def test_create_pr_leaves_an_open_update_pr_that_names_the_tracking_issue(
     fakes, tmp_path
 ):
