@@ -223,6 +223,17 @@ def test_only_us_worker_image_fetches_stage12_cache(monkeypatch) -> None:
     assert not any(call[0] == "run_function" for call in module.coordinator_image.calls)
 
 
+def test_stage12_cache_fetch_has_room_for_the_state_datasets(monkeypatch) -> None:
+    module = _load(monkeypatch)
+
+    (fetch,) = [
+        call for call in module.us_worker_image.calls if call[0] == "run_function"
+    ]
+    # The 63 national files plus a file per state for each precomputed year,
+    # downloaded and hashed one after another; the main path allows the same.
+    assert fetch[2]["timeout"] == 3600
+
+
 def test_v2_app_declares_validation_workers_and_non_http_coordinator(
     monkeypatch,
 ) -> None:
