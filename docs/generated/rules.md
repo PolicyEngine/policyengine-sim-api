@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 44 | 5 | 0 | 15 | 64 |
+| mechanical | 45 | 5 | 0 | 15 | 65 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 49 of 64 rules.
+**Blocking:** 50 of 65 rules.
 
 ## Gaps
 
@@ -285,6 +285,7 @@ flowchart LR
 | `sim.quality.ci-cd-scripts-ruff-exemptions` | CI/CD scripts under .github may print their output (T201); every other ruff rule applies to them. | mechanical | enforced | yes | ruff per-file ignore of T201 for `.github/**` | `pr.yml:lint` | — |
 | `sim.quality.command-line-scripts-ruff-exemptions` | Command-line scripts under a scripts directory may print their output (T201), run other programs (S603, S607) and use today's date (DTZ011); every other ruff rule applies to them. | mechanical | enforced | yes | ruff per-file ignore of DTZ011, S603, S607, T201 for `**/scripts/**` | `pr.yml:lint` | — |
 | `sim.quality.deployed-tests-ruff-exemptions` | The deployed-service test suite (projects/*/authenticated_tests, pytest run against a live candidate) gets the same ruff exemptions as unit tests (sim.quality.tests-ruff-exemptions); every other ruff rule applies to it. | mechanical | enforced | yes | ruff per-file ignore of ANN, ARG001, ARG002, ARG005, D1, DTZ001, DTZ007, INP001, PLC0415, PLR2004, S101, S102, S105, S106, S108, S301, S603, S607, SLF001, TID253 for `**/authenticated_tests/**` | `pr.yml:lint` | — |
+| `sim.quality.every-package-type-checked` | Every uv package under libs/ and projects/ (a directory with a pyproject.toml) is listed by a Pyright rule, so the pyright CI job type-checks it. | mechanical | enforced | yes | quality guard `pyright-coverage` | `pr.yml:quality-guards` | yes |
 | `sim.quality.every-project-tested` | Every project and library with unit tests runs them in the PR test matrix. | mechanical | doc-only | no | nothing | — | — |
 | `sim.quality.pyright-apis-integ` | The generated-client integration-test project, apis-integ, has no Pyright errors beyond those its baseline lists, and the baseline lists only errors that still occur, so it only shrinks; checked with the pinned Pyright version in the project's own locked environment. | mechanical | ratcheted | yes | pyright in `projects/policyengine-apis-integ` | `pr.yml:pyright` | yes |
 | `sim.quality.pyright-executor` | The simulation executor has no Pyright errors beyond those its baseline lists, and the baseline lists only errors that still occur, so it only shrinks; checked with the pinned Pyright version in the executor's own locked environment. | mechanical | ratcheted | yes | pyright in `projects/policyengine-simulation-executor` | `pr.yml:pyright` | yes |
@@ -308,6 +309,9 @@ flowchart LR
   e_ruff_per_file_ignore_of_DTZ011__S603__S607__T201_for____scripts___["ruff per-file ignore of DTZ011, S603, S607, T201 for **/scripts/**"]
   r_sim_quality_deployed_tests_ruff_exemptions("sim.quality.deployed-tests-ruff-exemptions (enforced)")
   e_ruff_per_file_ignore_of_ANN__ARG001__ARG002__ARG005__D1__DTZ001__DTZ007__INP001__PLC0415__PLR2004__S101__S102__S105__S106__S108__S301__S603__S607__SLF001__TID253_for____authenticated_tests___["ruff per-file ignore of ANN, ARG001, ARG002, ARG005, D1, DTZ001, DTZ007, INP001, PLC0415, PLR2004, S101, S102, S105, S106, S108, S301, S603, S607, SLF001, TID253 for **/authenticated_tests/**"]
+  r_sim_quality_every_package_type_checked("sim.quality.every-package-type-checked (enforced)")
+  e_quality_guard_pyright_coverage["quality guard pyright-coverage"]
+  j_CI_pr_yml_quality_guards["CI pr.yml:quality-guards"]
   r_sim_quality_every_project_tested("sim.quality.every-project-tested (doc-only)")
   gap_unenforced>"not enforced"]
   r_sim_quality_pyright_apis_integ("sim.quality.pyright-apis-integ (ratcheted)")
@@ -341,6 +345,8 @@ flowchart LR
   e_ruff_per_file_ignore_of_DTZ011__S603__S607__T201_for____scripts___ --> j_CI_pr_yml_lint
   r_sim_quality_deployed_tests_ruff_exemptions --> e_ruff_per_file_ignore_of_ANN__ARG001__ARG002__ARG005__D1__DTZ001__DTZ007__INP001__PLC0415__PLR2004__S101__S102__S105__S106__S108__S301__S603__S607__SLF001__TID253_for____authenticated_tests___
   e_ruff_per_file_ignore_of_ANN__ARG001__ARG002__ARG005__D1__DTZ001__DTZ007__INP001__PLC0415__PLR2004__S101__S102__S105__S106__S108__S301__S603__S607__SLF001__TID253_for____authenticated_tests___ --> j_CI_pr_yml_lint
+  r_sim_quality_every_package_type_checked --> e_quality_guard_pyright_coverage
+  e_quality_guard_pyright_coverage --> j_CI_pr_yml_quality_guards
   r_sim_quality_every_project_tested -.-> gap_unenforced
   r_sim_quality_pyright_apis_integ --> e_pyright_in_projects_policyengine_apis_integ
   e_pyright_in_projects_policyengine_apis_integ --> j_CI_pr_yml_pyright

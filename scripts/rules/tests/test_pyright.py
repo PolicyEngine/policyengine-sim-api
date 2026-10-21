@@ -12,15 +12,18 @@ from pathlib import Path
 from unittest import mock
 
 from scripts.rules.cli import main
+from scripts.rules.load import load_text
 from scripts.rules.pyright import (
     PYRIGHT_VERSION,
     Comparison,
     PyrightError,
     PyrightRunError,
+    check_coverage,
     compare,
     errors_in_report,
     read_baseline,
     run_pyright,
+    unlisted_packages,
 )
 from scripts.rules.tests.support import REGISTRY, Repo
 
@@ -237,6 +240,64 @@ class TestPyrightProof(unittest.TestCase):
             ),
         )
         self.assertTrue(proof_comparison(rule_id, "good").passed)
+
+
+def unlisted_in_fixture(fixture: str) -> list[str]:
+    """Return the packages no Pyright rule lists in a coverage proof fixture."""
+    fixture_dir = FIXTURES / "sim.quality.every-package-type-checked" / fixture
+    registry, problems = load_text((fixture_dir / "registry.toml").read_text())
+    assert registry is not None, problems
+    return unlisted_packages(registry, fixture_dir)
+
+
+COVERAGE_RULE = """
+[[rule]]
+id = "ex.quality.every-package-type-checked"
+category = "quality"
+statement = "Every package is listed by a Pyright rule."
+rationale = "docs/guide.md"
+scope = ["libs/*/pyproject.toml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "pyright-coverage"
+"""
+
+
+class CoverageTest(unittest.TestCase):
+    """Every uv package is listed by a Pyright rule."""
+
+    def test_the_guard_names_each_unlisted_package_and_the_fix(self) -> None:
+        with Repo(
+            {
+                "rules/registry.toml": REGISTRY + PYRIGHT_RULES + COVERAGE_RULE,
+                "libs/alpha/pyproject.toml": "",
+                "projects/service/pyproject.toml": "",
+                "projects/added/pyproject.toml": "",
+            },
+            render=False,
+        ) as repo:
+            self.assertEqual(
+                check_coverage(repo.root),
+                [
+                    "[ex.quality.every-package-type-checked] pyright-coverage: "
+                    "package projects/added has no Pyright rule, so CI doesn't "
+                    "type-check it. Fix: add it to a Pyright rule's "
+                    "enforcer.projects in rules/registry.toml and to the pyright "
+                    "job's matrix in .github/workflows/pr.yml."
+                ],
+            )
+
+
+class TestCoverageProof(unittest.TestCase):
+    """Proof: the coverage guard rejects an unlisted package, accepts full lists."""
+
+    def test_rule_proof_every_package_type_checked(self) -> None:
+        # A directory holding only a lock file is not a package.
+        self.assertEqual(unlisted_in_fixture("bad"), ["libs/beta"])
+        self.assertEqual(unlisted_in_fixture("good"), [])
 
 
 class ErrorsInReportTest(unittest.TestCase):

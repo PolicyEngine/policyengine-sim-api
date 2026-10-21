@@ -136,7 +136,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Code quality and tests
 
-- Checked: `sim.quality.ci-cd-scripts-ruff-exemptions`, `sim.quality.command-line-scripts-ruff-exemptions`, `sim.quality.deployed-tests-ruff-exemptions`, `sim.quality.pyright-apis-integ`, `sim.quality.pyright-executor`, `sim.quality.pyright-gateway`, `sim.quality.pyright-libraries-and-entry`, `sim.quality.ruff-format-src`, `sim.quality.ruff-lint`, `sim.quality.runtime-evaluated-models-resolve`, `sim.quality.src-programs-ruff-exemptions`, `sim.quality.tests-pass`, `sim.quality.tests-ruff-exemptions`, `sim.quality.unittest-ruff-exemptions`
+- Checked: `sim.quality.ci-cd-scripts-ruff-exemptions`, `sim.quality.command-line-scripts-ruff-exemptions`, `sim.quality.deployed-tests-ruff-exemptions`, `sim.quality.every-package-type-checked`, `sim.quality.pyright-apis-integ`, `sim.quality.pyright-executor`, `sim.quality.pyright-gateway`, `sim.quality.pyright-libraries-and-entry`, `sim.quality.ruff-format-src`, `sim.quality.ruff-lint`, `sim.quality.runtime-evaluated-models-resolve`, `sim.quality.src-programs-ruff-exemptions`, `sim.quality.tests-pass`, `sim.quality.tests-ruff-exemptions`, `sim.quality.unittest-ruff-exemptions`
 - `sim.quality.every-project-tested`: Every project and library with unit tests runs them in the PR test matrix. (doc-only, not checked: follow it yourself)
 - `sim.quality.ruff-format-tests`: Test code is formatted with ruff format too; CI currently checks only src directories. (doc-only, not checked: follow it yourself)
 

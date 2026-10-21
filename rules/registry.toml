@@ -1035,6 +1035,30 @@ good_fixture = "rules/fixtures/sim.quality.runtime-evaluated-models-resolve/good
 test = "projects/policyengine-simulation-executor/tests/test_runtime_evaluated_annotations.py::test_rule_proof_runtime_evaluated_models_resolve"
 
 [[rule]]
+id = "sim.quality.every-package-type-checked"
+category = "quality"
+statement = "Every uv package under libs/ and projects/ (a directory with a pyproject.toml) is listed by a Pyright rule, so the pyright CI job type-checks it."
+rationale = "docs/engineering/skills/type-checking.md#rules"
+scope = ["libs/*/pyproject.toml", "projects/*/pyproject.toml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "pyright-coverage"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.quality.every-package-type-checked/bad"
+good_fixture = "rules/fixtures/sim.quality.every-package-type-checked/good"
+test = "scripts/rules/tests/test_pyright.py::TestCoverageProof::test_rule_proof_every_package_type_checked"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
+[[rule]]
 id = "sim.quality.pyright-libraries-and-entry"
 category = "quality"
 statement = "The contract, observability, Stage 12 persistence and fastapi libraries and the simulation entry have no Pyright errors, checked with the pinned Pyright version in each package's own locked environment."

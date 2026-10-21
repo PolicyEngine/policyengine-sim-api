@@ -15,6 +15,10 @@ Every uv package is type-checked with Pyright on every pull request, by the
 - `sim.quality.pyright-gateway`, `sim.quality.pyright-executor` and
   `sim.quality.pyright-apis-integ`: these packages may have only the errors
   their baselines list (see [Baselines](#baselines)).
+- `sim.quality.every-package-type-checked`: a Pyright rule lists every uv
+  package under `libs/` and `projects/`. When you add a package, give it a
+  `[tool.pyright] include`, add it to a Pyright rule's `enforcer.projects`, and
+  add it to the `pyright` job's matrix.
 
 ## Running the check
 
