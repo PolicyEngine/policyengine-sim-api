@@ -1,38 +1,43 @@
 #!/usr/bin/env bash
 
-# Commit generated dependency changes and update the reusable PR branch.
+# Commit the regenerated clients and upgraded locks on the update branch, which
+# the prepare step rebuilt from main, and replace the remote update branch.
+#
+# The push replaces the remote branch only while it still points at the commit
+# the prepare step recorded (--force-with-lease), so a push made during the run
+# is not lost silently. Without a remote branch, a plain push creates it.
+#
+# Environment:
+#   GITHUB_OUTPUT  receives branch_pushed=true or branch_pushed=false
+#   REMOTE_HEAD    the prepare step's remote_head output: the remote update
+#                  branch's commit, or empty when the branch does not exist
 
 set -euo pipefail
 
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is required}"
-: "${HAS_OPEN_PR:?HAS_OPEN_PR is required}"
 
-if [[ "${HAS_OPEN_PR}" != "true" && "${HAS_OPEN_PR}" != "false" ]]; then
-  echo "HAS_OPEN_PR must be either true or false" >&2
+branch="update-dependencies"
+remote_head="${REMOTE_HEAD:-}"
+if [[ -n "${remote_head}" && ! "${remote_head}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "REMOTE_HEAD must be empty or a full commit hash: ${remote_head}" >&2
   exit 1
 fi
 
-changes_detected=false
+branch_pushed=false
 if [[ -z "$(git status --porcelain)" ]]; then
   echo "No changes detected"
 else
   echo "Changes detected"
   git add --all
   git commit -m "Update dependencies ($(date -u +%Y-%m-%d))"
-  changes_detected=true
-fi
 
-branch_pushed=false
-if [[ "${HAS_OPEN_PR}" == "true" ]]; then
-  commits_to_push="$(git rev-list --count origin/update-dependencies..HEAD)"
-  if [[ "${commits_to_push}" -gt 0 ]]; then
-    git push origin HEAD:update-dependencies
-    branch_pushed=true
+  if [[ -n "${remote_head}" ]]; then
+    git push \
+      --force-with-lease="refs/heads/${branch}:${remote_head}" \
+      origin "HEAD:refs/heads/${branch}"
+  else
+    git push origin "HEAD:refs/heads/${branch}"
   fi
-elif [[ "${changes_detected}" == "true" ]]; then
-  # No open PR owns this branch, so replacing a stale remote branch cannot
-  # rewrite active review history.
-  git push --force-with-lease origin HEAD:update-dependencies
   branch_pushed=true
 fi
 

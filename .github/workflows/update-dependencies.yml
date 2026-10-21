@@ -43,10 +43,10 @@ jobs:
         with:
           python-version: "3.13"
 
+      # Rebuilds update-dependencies from main on every run, and records the
+      # commit the remote branch points at for the push step's lease.
       - name: Prepare update branch
         id: branch
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: .github/scripts/dependency-update-prepare-branch.sh
       
       - name: Generate API clients
@@ -58,7 +58,7 @@ jobs:
       - name: Commit and push update
         id: push
         env:
-          HAS_OPEN_PR: ${{ steps.branch.outputs.has_open_pr }}
+          REMOTE_HEAD: ${{ steps.branch.outputs.remote_head }}
         run: .github/scripts/dependency-update-commit-and-push.sh
 
       # Opens the update PR, or, when one is open, makes sure the first line
