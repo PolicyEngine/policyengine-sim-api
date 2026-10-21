@@ -172,3 +172,22 @@ def test_guard_rejects_a_year_the_matrix_does_not_cover(monkeypatch, tmp_path) -
 
     with pytest.raises(ValueError, match=r"has no weights for 2026 \(it covers 2025\)"):
         sr._require_certified_uk_weight_matrix(_STRATEGY, _dataset(3, 2026), _SELECTION)
+
+
+@pytest.mark.parametrize(
+    "unloaded_data",
+    [None, SimpleNamespace(tables={})],
+    ids=["no-data", "no-entity-data"],
+)
+def test_guard_rejects_a_dataset_with_no_entity_data(
+    monkeypatch, tmp_path, unloaded_data
+) -> None:
+    _bundle(monkeypatch)
+    _assets(monkeypatch, tmp_path)
+    dataset = SimpleNamespace(year=2025, data=unloaded_data)
+
+    with pytest.raises(
+        TypeError,
+        match=r"the 'enhanced_frs_2024_25' dataset has no entity data loaded",
+    ):
+        sr._require_certified_uk_weight_matrix(_STRATEGY, dataset, _SELECTION)
