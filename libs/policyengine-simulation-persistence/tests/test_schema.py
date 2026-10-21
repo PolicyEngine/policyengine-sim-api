@@ -116,4 +116,4 @@ def test_importing_the_package_registers_every_table() -> None:
         importlib.import_module(f"policyengine_simulation_persistence.{module.name}")
 
     assert set(simulation_metadata.tables) == package_tables
-    assert "simulation.simulations" in package_tables
+    assert {"simulation.simulations", "simulation.reports"} <= package_tables

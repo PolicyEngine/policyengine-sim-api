@@ -8,6 +8,24 @@ The temporary Stage 12 comparison tables are not part of this schema: they are
 owned and migrated by the Public API, and `libs/policyengine-stage12-persistence`
 writes them with DML only.
 
+## Tables
+
+| Table | Holds |
+| --- | --- |
+| `simulations` | What to run, independent of model versions: kind (`economy` or `household`), country, policy (null for current law), dynamic, and either a household or a region code (`state/ca`) with an optional dataset name (null means the region's default dataset in each catalog version) |
+| `reports` | Which two simulations a report compares (an economy report needs a reform; a household report may have only a baseline), both of the report's own country and kind, with its year and options |
+
+Both are definitions: the runtime role may read and insert them but not update
+or delete them. Rows migrated from the Public API's v1 database keep their v1
+IDs in the unique `legacy_simulation_id` and `legacy_report_id` columns, and
+the stores' `create_migrated` methods return the existing row when the same v1
+ID is migrated again.
+
+Foreign keys into the Public API's tables in the same database (`policies` and
+`households`, each together with its country, and `dynamics`) are
+`ON DELETE RESTRICT`. Creating them needs `REFERENCES` on those tables for the
+migrator role; the runtime role needs no privilege on them.
+
 ## Ownership rules
 
 These rules are registered in `rules/registry.toml` and checked by
