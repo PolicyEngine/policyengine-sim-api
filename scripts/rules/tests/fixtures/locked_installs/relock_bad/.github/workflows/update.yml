@@ -1,0 +1,10 @@
+name: Update
+on:
+  schedule:
+    - cron: "0 15 * * *"
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - run: make update
+      - run: gh pr create --fill

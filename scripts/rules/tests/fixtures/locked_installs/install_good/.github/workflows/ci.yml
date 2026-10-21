@@ -1,0 +1,8 @@
+name: CI
+on: pull_request
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: uv sync --frozen --extra test
+      - run: uv run --frozen pytest tests/

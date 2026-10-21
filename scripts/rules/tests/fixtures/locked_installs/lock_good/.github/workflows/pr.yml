@@ -1,0 +1,7 @@
+name: PR
+on: pull_request
+jobs:
+  locks:
+    runs-on: ubuntu-latest
+    steps:
+      - run: .github/scripts/check-uv-locks.sh
