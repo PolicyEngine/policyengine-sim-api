@@ -449,3 +449,31 @@ def test_a_country_bundle_gives_the_dataset_a_region_code_loads() -> None:
     assert us.dataset_for_region("us") == "populace_us_2024"
     assert us.dataset_for_region("place/UT-67000") is None
     assert uk.dataset_for_region("country/scotland") is None
+
+
+def test_a_region_dataset_copy_left_behind_by_an_older_publish_is_not_read() -> None:
+    """After a rollback, older code republishes only the keys it knows."""
+    store = FakeStore()
+    publish_v2_manifest(store=store, worker=_regional_worker("5.2.0"))
+    stale = store.values[REGION_DATASETS_MANIFEST_KEY]
+    # A publish by code released before region datasets: it writes the two
+    # older keys only, leaving the region dataset copy as it was.
+    older = publish_v2_manifest(store=FakeStore(), worker=_cached_worker("5.3.0"))
+    store.values[ACTIVE_MANIFEST_KEY] = pre_region_datasets_manifest_payload(older)
+    store.values[PRE_CACHE_MANIFEST_KEY] = pre_cache_manifest_payload(older)
+
+    loaded = V2ManifestLoader(store).load()
+
+    assert loaded.default_version == "5.3.0"
+    assert store.values[REGION_DATASETS_MANIFEST_KEY] == stale
+
+
+def test_a_publish_after_a_rollback_keeps_the_versions_the_older_code_added() -> None:
+    store = FakeStore()
+    publish_v2_manifest(store=store, worker=_regional_worker("5.2.0"))
+    older = publish_v2_manifest(store=FakeStore(), worker=_cached_worker("5.3.0"))
+    store.values[ACTIVE_MANIFEST_KEY] = pre_region_datasets_manifest_payload(older)
+
+    manifest = publish_v2_manifest(store=store, worker=_regional_worker("5.4.0"))
+
+    assert sorted(manifest.versions) == ["5.3.0", "5.4.0"]

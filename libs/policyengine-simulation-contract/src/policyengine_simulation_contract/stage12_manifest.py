@@ -255,18 +255,36 @@ def pre_cache_manifest_payload(manifest: V2VersionManifest) -> dict[str, object]
     )
 
 
+def _is_current_region_dataset_copy(value: object, cache_copy: object) -> bool:
+    """Return whether ``value`` is the copy the last publish wrote with ``cache_copy``.
+
+    Code released before region datasets publishes only the older keys, for
+    example after a rollback, which leaves an out-of-date region dataset copy
+    behind. A current copy, with its region datasets removed, is exactly the
+    manifest under ``active-with-cache``.
+    """
+    if value is None:
+        return False
+    if cache_copy is None:
+        return True
+    try:
+        manifest = V2VersionManifest.model_validate(value)
+    except (TypeError, ValueError):
+        return False
+    return pre_region_datasets_manifest_payload(manifest) == cache_copy
+
+
 def _current_manifest(store: V2ManifestStore) -> object:
-    # The newest key a publish has written yet: each older key holds the same
+    # The newest key the last publish wrote: each older key holds the same
     # manifest without the fields its readers do not accept.
-    for key in (
-        REGION_DATASETS_MANIFEST_KEY,
-        ACTIVE_MANIFEST_KEY,
-        PRE_CACHE_MANIFEST_KEY,
-    ):
-        current = store.get(key)
-        if current is not None:
-            return current
-    return None
+    cache_copy = store.get(ACTIVE_MANIFEST_KEY)
+    region_dataset_copy = store.get(REGION_DATASETS_MANIFEST_KEY)
+    if _is_current_region_dataset_copy(region_dataset_copy, cache_copy):
+        return region_dataset_copy
+    if cache_copy is not None:
+        return cache_copy
+    # Until the first publish that writes the cache copy.
+    return store.get(PRE_CACHE_MANIFEST_KEY)
 
 
 def build_next_v2_manifest(
