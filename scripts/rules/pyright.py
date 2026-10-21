@@ -32,7 +32,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from scripts.rules.load import load_registry
-from scripts.rules.model import Kind, Registry, Rule, Status, Violation
+from scripts.rules.model import (
+    Kind,
+    Registry,
+    Rule,
+    Status,
+    Violation,
+    normalized_package,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -255,15 +262,10 @@ def run_pyright(package_dir: Path) -> dict[str, Any]:
     return report
 
 
-def _normalized(package: str) -> str:
-    """Return a package directory as the registry writes it."""
-    return Path(os.path.normpath(package)).as_posix()
-
-
 def listed_packages(registry: Registry) -> list[str]:
     """Return every package a Pyright rule lists, in registry order."""
     return [
-        _normalized(project)
+        normalized_package(project)
         for rule in registry.rules
         if rule.enforcer.kind is Kind.PYRIGHT
         for project in rule.enforcer.get("projects", [])
@@ -273,7 +275,7 @@ def listed_packages(registry: Registry) -> list[str]:
 def ratcheted_packages(registry: Registry) -> list[str]:
     """Return every package a ratcheted Pyright rule lists, in registry order."""
     return [
-        _normalized(project)
+        normalized_package(project)
         for rule in registry.rules
         if rule.enforcer.kind is Kind.PYRIGHT
         and rule.status is Status.RATCHETED
@@ -325,7 +327,9 @@ def rule_for(registry: Registry, package: str) -> Rule | None:
     """Return the Pyright rule whose enforcer lists ``package``, if any."""
     for rule in registry.rules:
         projects = rule.enforcer.get("projects", [])
-        if rule.enforcer.kind is Kind.PYRIGHT and package in map(_normalized, projects):
+        if rule.enforcer.kind is Kind.PYRIGHT and package in map(
+            normalized_package, projects
+        ):
             return rule
     return None
 
@@ -464,7 +468,7 @@ def check_package(
     With ``write_baseline``, rewrite a ratcheted rule's baseline as the errors
     that occur now, refusing when one of them is new.
     """
-    package = _normalized(package)
+    package = normalized_package(package)
     rule = rule_for(registry, package)
     if rule is None:
         return False, [

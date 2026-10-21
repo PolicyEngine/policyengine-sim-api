@@ -6,7 +6,15 @@ import re
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
-from scripts.rules.model import Kind, Registry, Rule, Status, Tier, Violation
+from scripts.rules.model import (
+    Kind,
+    Registry,
+    Rule,
+    Status,
+    Tier,
+    Violation,
+    normalized_package,
+)
 from scripts.rules.resolve import PROOF_CI_FIELDS, node_exists
 
 if TYPE_CHECKING:
@@ -492,7 +500,7 @@ def _pyright_projects_listed_twice(registry: Registry) -> list[Violation]:
         if rule.enforcer.kind is not Kind.PYRIGHT:
             continue
         for project in rule.enforcer.get("projects", []):
-            name = str(project).rstrip("/")
+            name = normalized_package(str(project))
             if name in owners:
                 violations.append(
                     _schema_violation(

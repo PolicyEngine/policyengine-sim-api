@@ -547,6 +547,22 @@ class PyrightRuleTest(unittest.TestCase):
                 "by ex.quality.pyright",
             )
 
+    def test_a_package_written_differently_is_still_the_same_package(self) -> None:
+        second_rule = PYRIGHT_RULE.replace(
+            'id = "ex.quality.pyright"', 'id = "ex.quality.pyright-again"'
+        ).replace(
+            'projects = ["libs/alpha", "projects/beta"]', 'projects = ["./libs/alpha"]'
+        )
+        with Repo(pyright_files(), render=False) as repo:
+            repo.write(
+                "rules/registry.toml", repo.read("rules/registry.toml") + second_rule
+            )
+            self.assert_violation(
+                repo,
+                "[ex.quality.pyright-again] schema: project libs/alpha is also listed "
+                "by ex.quality.pyright",
+            )
+
     def test_package_may_not_have_a_pyrightconfig_json(self) -> None:
         with Repo(pyright_files(), render=False) as repo:
             repo.write(
