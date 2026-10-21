@@ -73,7 +73,8 @@ the errors the new version reports.
 
 No package has a Pyright baseline now. If a Pyright upgrade or a new package
 brings errors that can't be fixed in the same pull request, a package's rule
-can be ratcheted: its baseline, `rules/baselines/pyright-<package>.txt`, lists
+can be ratcheted, which for an enforced rule needs a `[rule.downgrade] reason`
+in the registry. Its baseline, `rules/baselines/pyright-<package>.txt`, lists
 the errors it may still have, one line per error, sorted:
 
 ```text
