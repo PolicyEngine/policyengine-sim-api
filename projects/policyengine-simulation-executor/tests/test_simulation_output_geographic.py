@@ -488,7 +488,7 @@ def test_findings_are_resolved_by_withholding_published_cells() -> None:
     )
 
     public = simulation_output_geographic._resolved_public_table(
-        impact, AREAS, year=2026
+        impact, AREAS, year=2026, inside={}
     )
 
     assert public is not None
@@ -521,10 +521,52 @@ def test_reference_cells_are_never_withheld_and_publish_nothing(caplog) -> None:
 
     with caplog.at_level("WARNING"):
         public = simulation_output_geographic._resolved_public_table(
-            impact, AREAS, year=2026
+            impact, AREAS, year=2026, inside={}
         )
 
     assert public is None
     assert all(level != "region" for level, _, _ in impact.release.withheld)
     assert "recoverable_parent" in caplog.text
     assert "E12000002" not in caplog.text
+
+
+def test_uk_areas_inside_follow_the_household_area_pairs() -> None:
+    baseline, _ = _uk_disclosure_simulations()
+    household = baseline.output_dataset.data.household
+
+    inside = simulation_output_geographic._uk_areas_inside(household)
+
+    # Every seat lies in one local authority; no authority lies in one seat.
+    assert inside[("constituency", "local_authority")] == {
+        CUMBERLAND: ("E14000001", "E14000002"),
+        WESTMORLAND: ("E14000003", "E14000004", "E14000005", THIN, NEGATIVE),
+    }
+    assert inside[("local_authority", "constituency")] == {}
+
+
+def test_a_withheld_area_summed_by_public_areas_inside_withholds_them() -> None:
+    # Orkney and Shetland is the sum of two local authorities. If the seat is
+    # withheld, the two authorities inside it must be withheld too.
+    inside = {("local_authority", "constituency"): {"S1": ("L1", "L2")}}
+    impact = _FakeImpact(
+        [
+            _finding(
+                code="recoverable_parent",
+                level="local_authority",
+                group="S1",
+                group_level="constituency",
+            )
+        ],
+        clears_after={("local_authority", "L1"), ("local_authority", "L2")},
+    )
+
+    public = simulation_output_geographic._resolved_public_table(
+        impact, AREAS, year=2026, inside=inside
+    )
+
+    assert public is not None
+    assert {
+        (level, code)
+        for level, code, outcome in impact.release.withheld
+        if outcome == "average_change"
+    } == {("local_authority", "L1"), ("local_authority", "L2")}

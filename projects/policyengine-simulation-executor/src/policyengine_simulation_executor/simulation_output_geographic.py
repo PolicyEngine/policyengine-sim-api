@@ -21,6 +21,7 @@ from policyengine.disclosure.schema import (
     FAMILY_CHANGE,
     FAMILY_GAINING,
     FAMILY_LOSING,
+    RECOVERABLE_PARENT,
     RELATIVE_CHANGE,
     REPORTED,
     UNCHECKED_OVERLAP,
@@ -382,6 +383,49 @@ def _uk_area_household_counts(household: pd.DataFrame, column: str) -> dict[str,
     return {code: count for code, count in by_code.items() if count > 0}
 
 
+# For each pair of overlapping published levels (inner, outer): the inner
+# areas that lie wholly inside each outer area, as the release reads them.
+_UKAreasInside = Mapping[tuple[str, str], Mapping[str, tuple[str, ...]]]
+
+
+def _uk_areas_inside(household: pd.DataFrame) -> _UKAreasInside:
+    """Return, for each level, the areas of the other level wholly inside each area.
+
+    An inner area lies wholly inside an outer one when every weighted
+    household of it has that outer area, as the disclosure release decides.
+    A containment finding without a suggested cell names only the outer area,
+    and these are the cells that resolve it.
+    """
+    (first, first_column), (second, second_column) = UK_DISCLOSURE_AREA_COLUMNS.items()
+    counts = household.groupby([first_column, second_column], dropna=False)[
+        "household_net_income"
+    ].count()
+    pairs: set[tuple[str, str]] = set()
+    for (first_raw, second_raw), count in counts.items():
+        if float(cast("float", count)) > 0:
+            pairs.add(
+                (_normalised_area_code(first_raw), _normalised_area_code(second_raw))
+            )
+    inside: dict[tuple[str, str], dict[str, tuple[str, ...]]] = {}
+    for inner_level, outer_level, inner_at, outer_at in (
+        (first, second, 0, 1),
+        (second, first, 1, 0),
+    ):
+        outers: dict[str, set[str]] = {}
+        for pair in pairs:
+            if pair[inner_at] != UNASSIGNED:
+                outers.setdefault(pair[inner_at], set()).add(pair[outer_at])
+        by_outer: dict[str, list[str]] = {}
+        for inner, met in outers.items():
+            outer = next(iter(met)) if len(met) == 1 else UNASSIGNED
+            if outer != UNASSIGNED:
+                by_outer.setdefault(outer, []).append(inner)
+        inside[(inner_level, outer_level)] = {
+            outer: tuple(sorted(inners)) for outer, inners in by_outer.items()
+        }
+    return inside
+
+
 def _withhold_unpublished_families(
     impact: UKGeographyDisclosure,
     area_codes: Mapping[str, Mapping[str, float]],
@@ -407,14 +451,17 @@ def _withhold_unpublished_families(
 
 
 def _cells_resolving_findings(
-    impact: UKGeographyDisclosure, published_levels: tuple[str, ...]
+    impact: UKGeographyDisclosure,
+    published_levels: tuple[str, ...],
+    inside: _UKAreasInside,
 ) -> set[tuple[str, str, str, str, int]]:
     """Return the published cells to withhold for the blocking findings.
 
-    A finding names a cell to withhold, or else the group it is about. Only
-    cells of published levels are withheld: regions and the nation are
-    references whose numbers are public elsewhere, so withholding them here
-    would only hide the risk.
+    A finding names a cell to withhold, or else the group it is about. When a
+    withheld area is the sum of the public areas of the other level inside
+    it, those areas are withheld. Only cells of published levels are
+    withheld: regions and the nation are references whose numbers are public
+    elsewhere, so withholding them here would only hide the risk.
     """
     cells: set[tuple[str, str, str, str, int]] = set()
     for finding in impact.findings or []:
@@ -425,26 +472,19 @@ def _cells_resolving_findings(
         outcome = _FAMILY_OUTCOME.get(finding.family)
         if outcome is None:
             continue
+        key = (outcome, finding.reform, finding.year)
         if finding.suggested and finding.level in published_levels:
-            cells.add(
-                (
-                    finding.level,
-                    finding.suggested,
-                    outcome,
-                    finding.reform,
-                    finding.year,
-                )
+            cells.add((finding.level, finding.suggested, *key))
+        elif not finding.group or finding.group_level not in published_levels:
+            continue
+        elif finding.code == RECOVERABLE_PARENT and finding.level in published_levels:
+            members = inside.get((finding.level, finding.group_level), {})
+            cells.update(
+                (finding.level, member, *key)
+                for member in members.get(finding.group, ())
             )
-        elif finding.group and finding.group_level in published_levels:
-            cells.add(
-                (
-                    finding.group_level,
-                    finding.group,
-                    outcome,
-                    finding.reform,
-                    finding.year,
-                )
-            )
+        else:
+            cells.add((finding.group_level, finding.group, *key))
     return cells
 
 
@@ -453,6 +493,7 @@ def _resolved_public_table(
     area_codes: Mapping[str, Mapping[str, float]],
     *,
     year: int,
+    inside: _UKAreasInside,
 ) -> PublicTable | None:
     """Withhold cells until no finding blocks, and return the public table.
 
@@ -466,7 +507,7 @@ def _resolved_public_table(
     for _ in range(UK_DISCLOSURE_MAX_ROUNDS):
         if public is not None:
             return public
-        cells = _cells_resolving_findings(impact, published_levels) - withheld
+        cells = _cells_resolving_findings(impact, published_levels, inside) - withheld
         if not cells:
             break
         for level, code, outcome, reform, cell_year in sorted(cells):
@@ -587,7 +628,9 @@ def compute_uk_geography_disclosure_output(
         # other differences between them stay unchecked.
         acknowledge=(UNCHECKED_OVERLAP,),
     )
-    public = _resolved_public_table(impact, area_codes, year=year)
+    public = _resolved_public_table(
+        impact, area_codes, year=year, inside=_uk_areas_inside(household)
+    )
     if public is None:
         return UKGeographyDisclosureOutput()
     return UKGeographyDisclosureOutput(
