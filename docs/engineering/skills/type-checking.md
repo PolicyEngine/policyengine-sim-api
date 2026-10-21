@@ -10,8 +10,8 @@ Every uv package is type-checked with Pyright on every pull request, by the
 `pyright` job in `.github/workflows/pr.yml`:
 
 - `sim.quality.pyright-libraries-and-entry`: the contract, observability,
-  Stage 12 persistence and fastapi libraries and the simulation entry have no
-  Pyright errors.
+  simulation persistence, Stage 12 persistence and fastapi libraries and the
+  simulation entry have no Pyright errors.
 - `sim.quality.pyright-gateway`, `sim.quality.pyright-executor` and
   `sim.quality.pyright-apis-integ`: these packages may have only the errors
   their baselines list (see [Baselines](#baselines)).

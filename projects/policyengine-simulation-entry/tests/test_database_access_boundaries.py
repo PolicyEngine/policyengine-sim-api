@@ -34,6 +34,7 @@ REQUIRED_SOURCE_DIRECTORIES = (
     "libs/policyengine-fastapi/src",
     "libs/policyengine-simulation-contract/src",
     "libs/policyengine-simulation-observability/src",
+    "libs/policyengine-simulation-persistence/src",
     "libs/policyengine-stage12-persistence/src",
     ".github/scripts",
 )
