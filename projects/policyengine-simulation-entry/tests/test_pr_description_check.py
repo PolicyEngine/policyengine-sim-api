@@ -446,13 +446,19 @@ def test_the_check_runs_on_every_event_that_can_change_the_description(
     }
 
 
-def test_the_check_runs_on_every_pull_request_in_a_stack(check_workflow):
-    """Unlike pr.yml's jobs, this one has no condition and needs no other job."""
+def test_the_check_runs_on_every_open_pull_request_including_stacked_ones(
+    check_workflow,
+):
+    """Unlike pr.yml's jobs, this one has no stack condition and needs no job.
+
+    It skips closed pull requests: editing a merged pull request's description
+    would otherwise fail the check, because merging closed its issue.
+    """
     assert list(check_workflow["jobs"]) == [CHECK_JOB]
     job = check_workflow["jobs"][CHECK_JOB]
 
     assert job["name"] == "PR description"
-    assert "if" not in job
+    assert job["if"] == "${{ github.event.pull_request.state == 'open' }}"
     assert "needs" not in job
 
 
