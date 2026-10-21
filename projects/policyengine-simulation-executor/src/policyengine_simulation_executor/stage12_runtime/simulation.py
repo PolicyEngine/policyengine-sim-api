@@ -236,7 +236,11 @@ def calculate_simulation_frames(
         _require_certified_uk_weight_matrix,
         _resolve_dataset_selection,
         _resolve_region,
+        resolve_data_folder,
         setup_gcp_credentials,
+    )
+    from policyengine_simulation_executor.stage12_cache import (  # noqa: PLC0415  # resolved per call so tests can patch the baked-folder lookup
+        state_datasets,
     )
 
     with (
@@ -261,6 +265,13 @@ def calculate_simulation_frames(
                 params,
                 selection=dataset_selection,
                 country_module=country_module,
+                data_folder=state_datasets.baked_state_data_folder(
+                    country=country,
+                    selection=dataset_selection,
+                    state_code=region.state_code,
+                    year=simulation.year,
+                    data_folder=resolve_data_folder(),
+                ),
             )
         uk_local_authority_metadata = detect_uk_local_authority_metadata(
             country,

@@ -10,7 +10,14 @@ that folder finds the state's file where it would look for the full one.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from policyengine_simulation_executor.simulation_runtime import DatasetSelection
+
+logger = logging.getLogger(__name__)
 
 STATE_DATASETS_DIRECTORY = "state-datasets"
 
@@ -47,3 +54,39 @@ def year_file_reuse_problem(path: str | Path, dataset: str) -> str | None:
     if problem is not None:
         return problem
     return year_file_problem(path, _expected_legacy_spm_profile(dataset))
+
+
+def baked_state_data_folder(
+    *,
+    country: str,
+    selection: DatasetSelection,
+    state_code: str | None,
+    year: int,
+    data_folder: str,
+) -> str | None:
+    """Return the baked folder a US state or district calculation should load.
+
+    A calculation qualifies when it loads a non-default dataset for a US
+    state (a district passes its state's code) and the image holds that
+    state's year file for ``year``, which must also pass .py's reuse checks:
+    otherwise ``ensure_datasets`` would rebuild the full regional dataset
+    inside the baked folder. Returns None in every other case, and the
+    calculation prepares the dataset as before.
+    """
+    if country.lower() != "us" or not state_code or selection.is_default:
+        return None
+    from policyengine.provenance.manifest import (
+        dataset_logical_name,
+        resolve_dataset_reference,
+    )
+
+    folder = state_dataset_folder(data_folder, selection.name, state_code)
+    stem = dataset_logical_name(resolve_dataset_reference("us", selection.name))
+    year_file = Path(folder) / f"{stem}_year_{year}.h5"
+    if not year_file.is_file():
+        return None
+    problem = year_file_reuse_problem(year_file, selection.name)
+    if problem is not None:
+        logger.warning("Not reading the baked state file %s: %s", year_file, problem)
+        return None
+    return folder
