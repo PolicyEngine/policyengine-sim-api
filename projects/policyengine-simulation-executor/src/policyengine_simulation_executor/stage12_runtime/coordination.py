@@ -20,6 +20,7 @@ from policyengine_simulation_contract.stage12_execution import (
     ComparisonSimulationRecord,
     PlannedSimulationExecutionInput,
     ReportExecutionInput,
+    ReportResultDelivery,
     ResultComparisonStatus,
     SimulationArtifactDescriptor,
     SimulationRole,
@@ -498,6 +499,18 @@ def _require_artifact_digest(
         raise ValueError(mismatch_message)
 
 
+def _child_context_payload(context: Stage12InvocationContext) -> dict[str, Any]:
+    """Return the dispatch context a child simulation receives.
+
+    A Stage 12 child receives exactly the fields it received before
+    ``result_delivery`` existed. A child of a report returned to its caller
+    receives the field, so that it reads and writes no Stage 12 rows either.
+    """
+    if context.result_delivery is ReportResultDelivery.STAGE12_DATABASE:
+        return context.model_dump(mode="json", exclude={"result_delivery"})
+    return context.model_dump(mode="json")
+
+
 @dataclass(frozen=True)
 class CoordinatorInvocation:
     """The deployed coordinator call running a report: its Modal app and call ID."""
@@ -736,7 +749,7 @@ class _ReportCoordination:
                         function_name=self.context.simulation_callable,
                         environment=self.context.modal_environment,
                         simulation=simulation.model_dump(mode="json"),
-                        context=self.context.model_dump(mode="json"),
+                        context=_child_context_payload(self.context),
                         observability_context=child_observability_context,
                     )
                 )
