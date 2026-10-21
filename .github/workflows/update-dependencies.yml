@@ -63,9 +63,10 @@ jobs:
 
       # Opens the update PR, or, when one is open, makes sure the first line
       # of its description names the tracking issue (rule
-      # sim.process.pr-tracking-issue).
+      # sim.process.pr-tracking-issue). It runs whenever the update changed
+      # files on main, including when the branch already held them.
       - name: Open or update the pull request
-        if: steps.push.outputs.branch_pushed == 'true'
+        if: steps.push.outputs.changes_detected == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: .github/scripts/dependency-update-create-pr.sh
