@@ -30,7 +30,10 @@ markers = [
 policyengine_api_simulation_client = { path = "../policyengine-simulation-entry/artifacts/clients/python" }
 
 [tool.pyright]
-#The generated clients do not do the "public export" convention
+# The pr.yml pyright job checks these paths: python -m scripts.rules pyright.
+# The project has no src directory: its code is the integration tests.
+include = ["policyengine_api_full_integ", "tests"]
+# The generated clients do not do the "public export" convention
 reportPrivateImportUsage = "none"
 
 [dependency-groups]

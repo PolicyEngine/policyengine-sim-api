@@ -49,4 +49,5 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 
 [tool.pyright]
+# The pr.yml pyright job checks these paths: python -m scripts.rules pyright.
 include = ["src"]

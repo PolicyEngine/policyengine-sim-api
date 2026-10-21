@@ -39,3 +39,7 @@ pythonpath = [
   "src"
 ]
 addopts = "--cov=policyengine_fastapi --cov-report=term-missing --cov-fail-under=30"
+
+[tool.pyright]
+# The pr.yml pyright job checks these paths: python -m scripts.rules pyright.
+include = ["src"]

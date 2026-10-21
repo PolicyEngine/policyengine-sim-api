@@ -93,3 +93,7 @@ addopts = "-m 'not integration'"
 markers = [
   "integration: runs against a real (ephemeral) Modal deployment",
 ]
+
+[tool.pyright]
+# The pr.yml pyright job checks these paths: python -m scripts.rules pyright.
+include = ["src"]
