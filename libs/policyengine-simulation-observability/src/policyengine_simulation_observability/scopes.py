@@ -1,4 +1,4 @@
-"""The observability runtime's span scope, typed as never suppressing an exception.
+"""The observability runtime's scopes, typed as never suppressing an exception.
 
 policyengine-observability annotates its scope managers' ``__exit__`` as
 returning ``bool``, although it always returns ``False``. A type checker reads a
@@ -7,9 +7,10 @@ its block", so after ``with runtime.span(...)`` Pyright reports every variable
 the block assigned as possibly unbound, and a function that returns from inside
 the block as missing a return.
 
-``span`` returns the runtime's own scope unchanged, typed as a context manager
-whose ``__exit__`` returns ``bool | None``: the type ``contextlib.contextmanager``
-scopes have, which type checkers don't treat as suppressing exceptions.
+``span`` and ``operation`` return the runtime's own scope unchanged, typed as a
+context manager whose ``__exit__`` returns ``bool | None``: the type
+``contextlib.contextmanager`` scopes have, which type checkers don't treat as
+suppressing exceptions.
 """
 
 from __future__ import annotations
@@ -35,3 +36,19 @@ def span(
     the block, and lets that exception propagate.
     """
     return runtime.span(name, attributes=attributes)
+
+
+def operation(
+    runtime: ObservabilityRuntime,
+    name: str,
+    *,
+    attributes: Mapping[str, Any] | None = None,
+    remote_context: Mapping[str, Any] | None = None,
+) -> AbstractContextManager[object]:
+    """Return ``runtime.operation(name, ...)`` with these attributes and context.
+
+    The scope times its block as an operation, continuing the trace in
+    ``remote_context`` when there is one, records an exception raised in the
+    block, and lets that exception propagate.
+    """
+    return runtime.operation(name, attributes=attributes, remote_context=remote_context)

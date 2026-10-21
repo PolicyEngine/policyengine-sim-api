@@ -1,4 +1,4 @@
-"""Tests for the typed span scope of the observability runtime."""
+"""Tests for the typed span and operation scopes of the observability runtime."""
 
 from contextlib import nullcontext
 
@@ -8,14 +8,19 @@ from policyengine_simulation_observability.observability import build_runtime
 
 
 class RecordingRuntime:
-    """Records the spans it is asked to open, and enters each with a marker."""
+    """Records the scopes it is asked to open, and enters each with a marker."""
 
     def __init__(self) -> None:
         self.opened_spans: list[tuple[str, object]] = []
+        self.opened_operations: list[tuple[str, object, object]] = []
 
     def span(self, name, *, attributes=None):
         self.opened_spans.append((name, attributes))
         return nullcontext("entered span state")
+
+    def operation(self, name, *, attributes=None, remote_context=None):
+        self.opened_operations.append((name, attributes, remote_context))
+        return nullcontext("entered operation state")
 
 
 @pytest.fixture
@@ -61,3 +66,38 @@ def test_span_lets_an_exception_raised_inside_it_propagate(runtime):
         scopes.span(runtime, "simulation.parse"),
     ):
         raise ValueError(message)
+
+
+def test_operation_opens_the_runtime_operation_with_its_context():
+    recording_runtime = RecordingRuntime()
+
+    with scopes.operation(
+        recording_runtime,
+        "simulation.execution",
+        attributes={"country": "us"},
+        remote_context={"traceparent": "00-trace"},
+    ) as entered_state:
+        assert recording_runtime.opened_operations == [
+            ("simulation.execution", {"country": "us"}, {"traceparent": "00-trace"})
+        ]
+
+    assert entered_state == "entered operation state"
+
+
+def test_operation_defaults_to_no_attributes_or_remote_context():
+    recording_runtime = RecordingRuntime()
+
+    with scopes.operation(recording_runtime, "simulation.execution"):
+        pass
+
+    assert recording_runtime.opened_operations == [("simulation.execution", None, None)]
+
+
+def test_operation_lets_an_exception_raised_inside_it_propagate(runtime):
+    message = "simulation failed"
+
+    with (
+        pytest.raises(RuntimeError, match=message),
+        scopes.operation(runtime, "simulation.execution"),
+    ):
+        raise RuntimeError(message)
