@@ -448,6 +448,7 @@ def test_precompute_finishes_dataset_wave_before_baseline_wave() -> None:
         functions=precompute.CachePrecomputeFunctions(
             plan_artifacts=planner,
             build_dataset=dataset,
+            build_state_datasets=_Function(lambda *_: [], events, "state"),
             compute_baseline=baseline,
             verify_determinism=verify,
             publish_manifest=publish,
@@ -470,6 +471,107 @@ def test_precompute_finishes_dataset_wave_before_baseline_wave() -> None:
     assert lines[-1] == "STAGE12_CACHE_MANIFEST_DIGEST=manifest-digest"
 
 
+def _state_run_handles(events, plan):
+    def baseline_result(_bucket, entry):
+        return {
+            "path": entry["path"],
+            "content_sha256": "e" * 64,
+            "size_bytes": 1,
+            "year": entry["year"],
+            "segment_index": entry["segment_index"],
+            "simulation_id": entry["simulation_id"],
+            "cache_outcome": "miss",
+            "uploaded": True,
+            "compute_seconds": 1.0,
+        }
+
+    def dataset_result(_bucket, entry):
+        return {
+            "path": entry["path"],
+            "content_sha256": "d" * 64,
+            "size_bytes": 1,
+            "year": entry["year"],
+            "uploaded": True,
+            "build_seconds": 1.0,
+        }
+
+    def state_results(_bucket, year, entries):
+        return [
+            {
+                "path": entry["path"],
+                "content_sha256": "c" * 64,
+                "size_bytes": 100,
+                "year": year,
+                "state_code": entry["state_code"],
+                "uploaded": entry["state_code"] != "WY",
+            }
+            for entry in entries
+        ]
+
+    return {
+        "plan_artifacts": _Function(lambda _: plan.model_dump(), events, "plan"),
+        "build_dataset": _Function(dataset_result, events, "dataset"),
+        "build_state_datasets": _Function(state_results, events, "state"),
+        "compute_baseline": _Function(baseline_result, events, "baseline"),
+        "verify_determinism": _Function(
+            lambda *_: {"equal": True, "differences": []}, events, "verify"
+        ),
+        "publish_manifest": _Function(lambda *_: "manifest-digest", events, "publish"),
+    }
+
+
+def test_precompute_builds_each_year_of_state_datasets_in_one_call() -> None:
+    events = []
+    plan = _plan_with_state_datasets()
+    handles = _state_run_handles(events, plan)
+
+    precompute.run_precompute(
+        "cache-bucket",
+        functions=precompute.CachePrecomputeFunctions(**handles),
+        echo=lambda _line: None,
+    )
+
+    assert handles["build_state_datasets"].spawn_calls == [
+        (
+            "cache-bucket",
+            year,
+            [entry.model_dump() for entry in plan.state_datasets if entry.year == year],
+        )
+        for year in precompute.PRECOMPUTE_YEARS
+    ]
+
+
+def test_precompute_waits_for_state_datasets_only_before_publishing() -> None:
+    events = []
+    handles = _state_run_handles(events, _plan_with_state_datasets())
+
+    precompute.run_precompute(
+        "cache-bucket",
+        functions=precompute.CachePrecomputeFunctions(**handles),
+        echo=lambda _line: None,
+    )
+
+    first_state_get = events.index("get:state")
+    assert events.index("spawn:state") < events.index("spawn:baseline")
+    assert events.index("remote:verify") < first_state_get
+    assert first_state_get < events.index("remote:publish")
+
+
+def test_precompute_reports_the_state_dataset_bytes_uploaded() -> None:
+    events = []
+    lines = []
+    handles = _state_run_handles(events, _plan_with_state_datasets())
+
+    precompute.run_precompute(
+        "cache-bucket",
+        functions=precompute.CachePrecomputeFunctions(**handles),
+        echo=lines.append,
+    )
+
+    assert "State datasets: 6 built, 3 uploaded, 600 bytes" in lines
+    assert lines[-1] == "STAGE12_CACHE_MANIFEST_DIGEST=manifest-digest"
+
+
 def test_warm_verified_precompute_skips_builds_and_determinism_check() -> None:
     events = []
     plan = _plan(exists=True)
@@ -485,6 +587,7 @@ def test_warm_verified_precompute_skips_builds_and_determinism_check() -> None:
         functions=precompute.CachePrecomputeFunctions(
             plan_artifacts=planner,
             build_dataset=unused,
+            build_state_datasets=unused,
             compute_baseline=unused,
             verify_determinism=verify,
             publish_manifest=publish,
@@ -539,6 +642,7 @@ def test_failed_determinism_validation_prevents_manifest_publication() -> None:
             functions=precompute.CachePrecomputeFunctions(
                 plan_artifacts=planner,
                 build_dataset=dataset,
+                build_state_datasets=dataset,
                 compute_baseline=baseline,
                 verify_determinism=verify,
                 publish_manifest=publish,
@@ -590,6 +694,7 @@ def test_a_run_with_no_new_baselines_still_checks_unverified_ones(
             functions=precompute.CachePrecomputeFunctions(
                 plan_artifacts=planner,
                 build_dataset=unused,
+                build_state_datasets=unused,
                 compute_baseline=unused,
                 verify_determinism=verify,
                 publish_manifest=publish,

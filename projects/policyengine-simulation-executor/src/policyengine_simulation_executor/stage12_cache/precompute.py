@@ -706,10 +706,11 @@ def publish_manifest_impl(bucket: str, plan: PrecomputePlan) -> str:
 
 @dataclass(frozen=True)
 class CachePrecomputeFunctions:
-    """The five Modal function handles the cache precompute orchestration calls."""
+    """The six Modal function handles the cache precompute orchestration calls."""
 
     plan_artifacts: modal.Function
     build_dataset: modal.Function
+    build_state_datasets: modal.Function
     compute_baseline: modal.Function
     verify_determinism: modal.Function
     publish_manifest: modal.Function
@@ -724,14 +725,24 @@ def run_precompute(
     """Build the missing cache files, check determinism, publish the manifest.
 
     Missing datasets are built first, then missing baselines, in parallel
-    Modal calls. Prints the manifest digest through ``echo`` and returns it.
-    Exits with ``SystemExit`` when the determinism check fails.
+    Modal calls. Missing state datasets are built alongside both, one call per
+    year, and waited for only before the manifest is published, so the
+    baselines never wait for them. Prints the manifest digest through
+    ``echo`` and returns it. Exits with ``SystemExit`` when the determinism
+    check fails.
     """
     plan = PrecomputePlan.model_validate(functions.plan_artifacts.remote(bucket))
     work = select_work(plan)
     dataset_calls = [
         functions.build_dataset.spawn(bucket, entry.model_dump())
         for entry in work.datasets
+    ]
+    state_entries_by_year: dict[int, list[dict[str, Any]]] = {}
+    for entry in work.state_datasets:
+        state_entries_by_year.setdefault(entry.year, []).append(entry.model_dump())
+    state_calls = [
+        functions.build_state_datasets.spawn(bucket, year, entries)
+        for year, entries in state_entries_by_year.items()
     ]
     for call in dataset_calls:
         DatasetBuildResult.model_validate(call.get())
@@ -756,6 +767,17 @@ def run_precompute(
                 "Stage 12 cache determinism validation failed: "
                 + "; ".join(verdict.differences)
             )
+    if state_calls:
+        state_results = [
+            StateDatasetBuildResult.model_validate(result)
+            for call in state_calls
+            for result in call.get()
+        ]
+        echo(
+            f"State datasets: {len(state_results)} built, "
+            f"{sum(result.uploaded for result in state_results)} uploaded, "
+            f"{sum(result.size_bytes for result in state_results)} bytes"
+        )
     digest = functions.publish_manifest.remote(bucket, plan.model_dump())
     if not isinstance(digest, str) or not digest:
         msg = "Stage 12 cache manifest publisher returned no digest"

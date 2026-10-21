@@ -21,6 +21,7 @@ def test_precompute_app_declares_independent_worker_resources(monkeypatch) -> No
     assert set(functions) == {
         "plan_artifacts",
         "build_dataset",
+        "build_state_datasets",
         "compute_baseline",
         "verify_determinism",
         "publish_manifest",
@@ -28,6 +29,11 @@ def test_precompute_app_declares_independent_worker_resources(monkeypatch) -> No
     assert functions["build_dataset"]["cpu"] == 8.0
     assert functions["build_dataset"]["memory"] == 65536
     assert functions["build_dataset"]["timeout"] == 7200
+    assert functions["build_state_datasets"]["cpu"] == 8.0
+    # Preparing the regional dataset's full-country year file has used about
+    # 51 GB; the 51 filtered copies need room on top of that.
+    assert functions["build_state_datasets"]["memory"] == 98304
+    assert functions["build_state_datasets"]["timeout"] == 7200
     assert functions["compute_baseline"]["cpu"] == 8.0
     assert functions["compute_baseline"]["memory"] == 32768
     assert functions["compute_baseline"]["timeout"] == 3600
@@ -86,3 +92,49 @@ def test_precompute_app_mounts_only_the_read_only_hugging_face_secret(
     assert bundle_install[2]["secrets"] == [read_only_secret]
     for function_name, declaration in module.app.function_calls:
         assert declaration["secrets"] == [gcp_secret, read_only_secret], function_name
+
+
+def test_state_dataset_wrapper_validates_entries_in_and_dumps_results_out(
+    monkeypatch,
+) -> None:
+    import pytest
+    from policyengine_simulation_executor.stage12_cache.models import (
+        StateDatasetBuildResult,
+        StateDatasetPlanEntry,
+    )
+    from pydantic import ValidationError
+
+    module = _load(monkeypatch)
+    entry = StateDatasetPlanEntry(
+        year=2026,
+        state_code="UT",
+        region="state/ut",
+        dataset="populace_us_2024_acs_local",
+        digest="s1",
+        path="state-datasets/us/s1/populace_us_2024_acs_local_year_2026.h5",
+        filename="populace_us_2024_acs_local_year_2026.h5",
+        folder="state-datasets/populace_us_2024_acs_local/UT",
+        exists=False,
+    )
+    result = StateDatasetBuildResult(
+        path=entry.path,
+        content_sha256="c" * 64,
+        size_bytes=5,
+        year=2026,
+        state_code="UT",
+        uploaded=True,
+    )
+    seen = {}
+
+    def fake_build(bucket, year, expected):
+        seen["call"] = (bucket, year, expected)
+        return (result,)
+
+    monkeypatch.setattr(module, "build_state_datasets_impl", fake_build)
+
+    assert module.build_state_datasets("cache-bucket", 2026, [entry.model_dump()]) == [
+        result.model_dump()
+    ]
+    assert seen["call"] == ("cache-bucket", 2026, (entry,))
+    with pytest.raises(ValidationError):
+        module.build_state_datasets("cache-bucket", 2026, [{"year": 2026}])
