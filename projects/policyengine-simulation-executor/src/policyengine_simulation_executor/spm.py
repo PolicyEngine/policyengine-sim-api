@@ -34,6 +34,15 @@ def _forecast(expected_sha256: str | None) -> SPMForecast:
     return load_forecast(expected_sha256=expected_sha256)
 
 
+def certified_spm_forecast(expected_sha256: str) -> SPMForecast:
+    """Return the packaged SPM forecast whose content has ``expected_sha256``.
+
+    Loaded once per process and digest; raises when the packaged forecast has
+    another digest.
+    """
+    return _forecast(expected_sha256)
+
+
 @lru_cache(maxsize=1)
 def runtime_spm_capability() -> SPMCapability | None:
     """Return the installed image's certified SPM capability.
