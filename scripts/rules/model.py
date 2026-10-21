@@ -211,11 +211,22 @@ class Baseline:
 
 @dataclass(frozen=True)
 class RuleException:
-    """A temporary carve-out of ``path`` from a rule; the guard fails once expired."""
+    """A carve-out of ``path`` from a rule; the guard fails once expired.
+
+    ``match`` narrows the carve-out to one site in the file (a substring of the
+    command or call), ``category`` names a class of allowed site (for example
+    ``pinned-tool``), ``removal`` says when the exception can go, and ``issue``
+    is the tracking issue for a dated exception. Guards that need these fields
+    check them; the registry loader only reads them.
+    """
 
     path: str
     reason: str
     expires: date
+    match: str = ""
+    category: str = ""
+    removal: str = ""
+    issue: int | None = None
 
 
 @dataclass(frozen=True)
