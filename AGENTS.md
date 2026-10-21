@@ -83,7 +83,9 @@ same-repository draft PR.
 - API integration tests live in `projects/policyengine-apis-integ`.
 - PR CI runs simulation unit tests, Ruff format and lint checks, Pyright for
   every package, quality guards (including the rules registry), Docker build,
-  and local integration tests.
+  and local integration tests. A separate `PR description` job checks that
+  every open PR's description starts with `Fixes #ISSUE_NUMBER` for an open
+  issue in this repository.
 - There is currently no repository-wide changelog fragment requirement.
 
 ## Safety Boundaries
