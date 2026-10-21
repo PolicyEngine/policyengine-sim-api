@@ -338,6 +338,16 @@ def _resolve_pyright(rule: Rule, root: Path) -> list[Violation]:
                 _v(rule, f"project {project} does not exist", "fix enforcer.projects")
             )
             continue
+        if (root / project / "pyrightconfig.json").exists():
+            violations.append(
+                _v(
+                    rule,
+                    f"{project} has a pyrightconfig.json, which Pyright reads instead "
+                    "of its [tool.pyright]",
+                    "move its settings into [tool.pyright] in the package's "
+                    "pyproject.toml",
+                )
+            )
         pyproject = _toml(root / project / "pyproject.toml")
         if not pyproject.get("tool", {}).get("pyright", {}).get("include"):
             violations.append(

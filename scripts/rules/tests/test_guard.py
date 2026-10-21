@@ -531,6 +531,33 @@ class PyrightRuleTest(unittest.TestCase):
                 repo, "project projects/beta is not in the matrix of job 'pyright'"
             )
 
+    def test_package_may_belong_to_only_one_pyright_rule(self) -> None:
+        second_rule = PYRIGHT_RULE.replace(
+            'id = "ex.quality.pyright"', 'id = "ex.quality.pyright-again"'
+        ).replace(
+            'projects = ["libs/alpha", "projects/beta"]', 'projects = ["libs/alpha"]'
+        )
+        with Repo(pyright_files(), render=False) as repo:
+            repo.write(
+                "rules/registry.toml", repo.read("rules/registry.toml") + second_rule
+            )
+            self.assert_violation(
+                repo,
+                "[ex.quality.pyright-again] schema: project libs/alpha is also listed "
+                "by ex.quality.pyright",
+            )
+
+    def test_package_may_not_have_a_pyrightconfig_json(self) -> None:
+        with Repo(pyright_files(), render=False) as repo:
+            repo.write(
+                "projects/beta/pyrightconfig.json", '{"typeCheckingMode": "off"}'
+            )
+            self.assert_violation(
+                repo,
+                "projects/beta has a pyrightconfig.json, which Pyright reads instead "
+                "of its [tool.pyright]",
+            )
+
 
 class HiddenRuleTest(unittest.TestCase):
     def assert_violation(self, repo: Repo, fragment: str) -> None:

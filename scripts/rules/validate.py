@@ -480,6 +480,32 @@ def _validate_rule(
     ]
 
 
+def _pyright_projects_listed_twice(registry: Registry) -> list[Violation]:
+    """Report each package a second Pyright rule lists.
+
+    The Pyright check holds a package to the first rule that lists it, so a
+    second listing would be silently ignored.
+    """
+    owners: dict[str, str] = {}
+    violations = []
+    for rule in registry.rules:
+        if rule.enforcer.kind is not Kind.PYRIGHT:
+            continue
+        for project in rule.enforcer.get("projects", []):
+            name = str(project).rstrip("/")
+            if name in owners:
+                violations.append(
+                    _schema_violation(
+                        rule,
+                        f"project {name} is also listed by {owners[name]}",
+                        "list each package in one Pyright rule",
+                    )
+                )
+            else:
+                owners[name] = rule.id
+    return violations
+
+
 def validate(registry: Registry, root: Path, today: date) -> list[Violation]:
     """Check the registry's fields and file references against the tree at ``root``.
 
@@ -493,4 +519,5 @@ def validate(registry: Registry, root: Path, today: date) -> list[Violation]:
     ]
     for rule in registry.rules:
         violations.extend(_validate_rule(rule, root, category_ids, today))
+    violations.extend(_pyright_projects_listed_twice(registry))
     return violations
