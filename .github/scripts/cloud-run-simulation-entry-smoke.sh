@@ -25,6 +25,12 @@ previous_revision="${3:-}"
 #   and model.
 # This is the identity the gateway reports from the routing registry; the
 # numerical release sentinel checks what the worker computes.
+# REQUIRE_CURRENT_SIMULATION_DATABASE_REVISION=true (candidate checks only):
+# /ready must report the entrypoint's own database reachable and at the
+# migration revision the image expects, which shows that the runtime secret
+# reached the revision and that the migration job ran. Stable and rollback
+# checks leave it unset, because an older image may face a newer schema.
+require_database_revision="${REQUIRE_CURRENT_SIMULATION_DATABASE_REVISION:-}"
 expected_identity="${EXPECTED_IDENTITY:-none}"
 expected_policyengine_version="${EXPECTED_POLICYENGINE_VERSION:-}"
 expected_app_name="${EXPECTED_APP_NAME:-}"
@@ -36,6 +42,14 @@ case "${expected_identity}" in
   required | none) ;;
   *)
     printf 'EXPECTED_IDENTITY must be required or none, not %s\n' "${expected_identity}" >&2
+    exit 2
+    ;;
+esac
+case "${require_database_revision}" in
+  "" | true) ;;
+  *)
+    printf 'REQUIRE_CURRENT_SIMULATION_DATABASE_REVISION must be true or empty, not %s\n' \
+      "${require_database_revision}" >&2
     exit 2
     ;;
 esac
@@ -131,8 +145,18 @@ while true; do
   attempt=$((attempt + 1))
 done
 
-curl --fail --silent --show-error "${base_url}/ready" |
-  jq -e '.status == "ready"' >/dev/null
+ready_body="$(curl --fail --silent --show-error "${base_url}/ready")"
+jq -e '.status == "ready"' <<<"${ready_body}" >/dev/null
+if [ "${require_database_revision}" = "true" ] &&
+  ! jq -e '
+    .simulation_database.reachable == true
+    and (.simulation_database.revision | type == "string")
+    and .simulation_database.revision == .simulation_database.expected_revision
+  ' <<<"${ready_body}" >/dev/null; then
+  printf '%s: the simulation database is not at the expected revision: %s\n' \
+    "${base_url}" "$(jq -c '.simulation_database' <<<"${ready_body}")" >&2
+  exit 1
+fi
 curl --fail --silent --show-error "${base_url}/versions" --output "${versions_body}"
 jq -e 'type == "object"' "${versions_body}" >/dev/null
 
