@@ -205,8 +205,19 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
     if calculation.cache_outcome != "hit":
         msg = "deployed Stage 12 cache probe did not load a cache hit"
         raise RuntimeError(msg)
+    return _cache_release_summary(manifest, expected_manifest_sha256)
+
+
+def _cache_release_summary(
+    manifest: CacheManifest, manifest_sha256: str
+) -> dict[str, Any]:
+    """Return the cache release a worker reports, in ``Stage12CacheRelease`` form.
+
+    Only national datasets and baselines are counted: the release model pins
+    those counts and forbids other fields, so state datasets are not reported.
+    """
     return {
-        "manifest_sha256": expected_manifest_sha256,
+        "manifest_sha256": manifest_sha256,
         "partition_sha256": manifest.partition_sha256,
         "years": list(manifest.years),
         "segment_count": len(US_REGION_GROUPS),

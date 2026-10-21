@@ -854,6 +854,39 @@ def test_installed_bundle_accepts_the_dataset_a_region_loads(
     worker._require_installed_bundle(_simulation_for(region, provenance()))
 
 
+def test_uk_regions_keep_the_default_dataset_when_the_bundle_names_region_types(
+    monkeypatch,
+) -> None:
+    from policyengine_simulation_contract.stage12_bundle import Stage12RegionDataset
+    from policyengine_simulation_executor.stage12_runtime import simulation as worker
+
+    resolved = _installed_bundle_with_regions()
+    us = resolved.bundle.countries[0]
+    uk = us.model_copy(
+        update={
+            "country": "uk",
+            "region_datasets": (
+                Stage12RegionDataset(
+                    region_type="national", dataset=us.default_dataset
+                ),
+            ),
+        }
+    )
+    resolved = resolved.model_copy(
+        update={"bundle": resolved.bundle.model_copy(update={"countries": (us, uk)})}
+    )
+    monkeypatch.setattr(worker, "load_stage12_bundle", lambda: resolved)
+    simulation = _simulation_for("us", _bundle()).model_copy(
+        update={"geography": GeographySelection(country="uk", region="country/wales")}
+    )
+
+    worker._require_installed_bundle(simulation)
+    with pytest.raises(RuntimeError, match="differs from the installed bundle"):
+        worker._require_installed_bundle(
+            simulation.model_copy(update={"bundle": _regional_provenance()})
+        )
+
+
 @pytest.mark.parametrize(
     ("region", "dataset"),
     [

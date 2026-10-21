@@ -459,7 +459,7 @@ def _installed_manifest(*, state_codes=("UT", "WY")):
             "schema": "stage12-mf1",
             "country": "us",
             "years": list(PRECOMPUTE_YEARS),
-            "partition_sha256": "p" * 64,
+            "partition_sha256": "d" * 64,
             "bundle": {
                 "bundle_manifest_sha256": "b" * 64,
                 "policyengine_version": "5.2.0",
@@ -519,3 +519,18 @@ def test_expected_state_file_count_follows_the_installed_bundle(monkeypatch) -> 
     monkeypatch.setattr(precompute, "state_dataset_targets", lambda: ("UT", "WY"))
 
     assert module.expected_state_dataset_count() == 2 * len(precompute.PRECOMPUTE_YEARS)
+
+
+def test_the_reported_cache_release_still_matches_its_contract_with_state_files(
+    tmp_path,
+) -> None:
+    from policyengine_simulation_contract.stage12_manifest import Stage12CacheRelease
+    from policyengine_simulation_executor import stage12_worker_validation as module
+
+    manifest = _installed_manifest()
+
+    summary = module._cache_release_summary(manifest, "c" * 64)
+
+    release = Stage12CacheRelease.model_validate(summary)
+    assert release.dataset_count == 3
+    assert release.baseline_count == 60
