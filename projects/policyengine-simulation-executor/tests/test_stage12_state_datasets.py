@@ -224,3 +224,15 @@ def test_default_datasets_and_other_regions_read_nothing_baked(tmp_path):
     assert _lookup(tmp_path, default) is None
     assert _lookup(tmp_path, _regional_selection(), state_code=None) is None
     assert _lookup(tmp_path, _regional_selection(), country="uk") is None
+
+
+def test_a_renamed_dotpy_reuse_check_falls_back_to_on_demand_loading(
+    monkeypatch, tmp_path
+):
+    """A .py upgrade moving the private SPM profile helper must not fail runs."""
+    from policyengine.tax_benefit_models.us import datasets as us_datasets
+
+    _bake_utah(tmp_path)
+    monkeypatch.delattr(us_datasets, "_expected_legacy_spm_profile")
+
+    assert _lookup(tmp_path, _regional_selection()) is None

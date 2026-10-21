@@ -85,7 +85,17 @@ def baked_state_data_folder(
     year_file = Path(folder) / f"{stem}_year_{year}.h5"
     if not year_file.is_file():
         return None
-    problem = year_file_reuse_problem(year_file, selection.name)
+    try:
+        problem = year_file_reuse_problem(year_file, selection.name)
+    except ImportError:
+        # The reuse checks read private .py helpers. If an upgrade moves one,
+        # the calculation prepares its dataset instead of failing.
+        logger.warning(
+            "Not reading the baked state file %s: .py's year-file reuse "
+            "checks could not be imported",
+            year_file,
+        )
+        return None
     if problem is not None:
         logger.warning("Not reading the baked state file %s: %s", year_file, problem)
         return None
