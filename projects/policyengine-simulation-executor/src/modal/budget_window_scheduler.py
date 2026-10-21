@@ -104,6 +104,19 @@ def load_or_create_batch_state(
     return state
 
 
+def _child_call(handle: ChildSimulationHandle) -> modal.FunctionCall[Any]:
+    """Return the child's Modal call, raising if the handle has none.
+
+    resolve_child_handle always returns a handle with its call. The poll calls
+    this inside its try, so a missing call would fail the batch like any other
+    poll error.
+    """
+    if handle.call is None:
+        msg = f"the {handle.simulation_year} child has no call handle"
+        raise RuntimeError(msg)
+    return handle.call
+
+
 class BudgetWindowBatchRunner:
     """Runs a parent budget-window batch job to completion."""
 
@@ -244,15 +257,11 @@ class BudgetWindowBatchRunner:
         progress_made = False
 
         for simulation_year in list(self.state.running_years):
-            call = self.resolve_child_handle(simulation_year).call
-            if call is None:
-                # resolve_child_handle always returns a handle with its call.
-                msg = f"the {simulation_year} child has no call handle"
-                raise RuntimeError(msg)
+            handle = self.resolve_child_handle(simulation_year)
 
             poll_started = time.perf_counter()
             try:
-                child_result = call.get(timeout=0)
+                child_result = _child_call(handle).get(timeout=0)
             except TimeoutError:
                 continue
             except Exception as exc:  # noqa: BLE001  # call.get re-raises whatever the child worker raised; every failure fails the batch, logged with its traceback by log_and_redact_exception
