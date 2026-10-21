@@ -27,6 +27,7 @@
       - Ran the full PR workflow and the Modal image smoke only on the lowest unmerged pull request in a stack, behind a new CI complete gate job that fails on the others
     fixed:
       - Stopped trusting the compromised eMudhra (emSign) intermediate CA certificates; every lockfile now pins certifi 2026.10.19, which drops emSign ECC Root CA - G3, every Modal image upgrades Debian's ca-certificates package right after its base layer, and the Modal images and the Cloud Run entrypoint image set GRPC_DEFAULT_SSL_ROOTS_FILE_PATH so grpcio verifies servers against the operating-system CA bundle instead of the CA list compiled into it
+      - Rebuilt the daily dependency update's branch from main on every run and replaced the remote branch with a lease, instead of merging main into the open update PR's branch, which mixed two uv.lock resolutions into locks uv could not parse; the push is skipped when the branch already holds the update, and the open update PR is reused with a rewritten description
       - Preserved bounded reform stop dates in UK and US simulations while retaining current-law baseline artifact reuse
       - Resolved PolicyEngine-managed regional datasets using bundled data versions instead of release-manifest commit hashes when loading from GCS
       - Added a Modal app-release bundle backfill for missing data artifact revisions

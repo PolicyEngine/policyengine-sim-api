@@ -324,6 +324,15 @@ case "$1 $2" in
 esac
 """
 UPDATE_PR_SUMMARY = (
+    "Automated daily dependency update by "
+    "`.github/workflows/update-dependencies.yml`. It regenerates the API "
+    "clients, then runs `make update`, which runs `uv lock --upgrade` in every "
+    "project. CI on this pull request tests the upgraded versions.\n\n"
+    "Each run rebuilds `update-dependencies` from `main` and replaces it, so "
+    "commits pushed to this branch by hand are lost on the next run."
+)
+# The summary of update PRs opened before each run rebuilt the branch.
+APPENDING_UPDATE_PR_SUMMARY = (
     "Automated daily dependency updates. Subsequent runs append commits to "
     "this branch while the pull request remains open."
 )
@@ -344,9 +353,9 @@ OPEN_UPDATE_PR_LOOKUP = [
     "--state",
     "open",
     "--json",
-    "number",
+    "number,isCrossRepository",
     "--jq",
-    ".[0].number // empty",
+    "map(select(.isCrossRepository | not)) | .[0].number // empty",
 ]
 OPEN_TRACKING_ISSUE_LOOKUP = [
     "gh",
@@ -456,8 +465,10 @@ def test_create_pr_fails_when_the_issue_lookup_fails(fakes, tmp_path):
     assert descriptions == ""
 
 
-def test_create_pr_puts_the_tracking_issue_first_on_an_open_update_pr(fakes, tmp_path):
-    """An update PR opened before the rule, such as #583, gets a Fixes line."""
+def test_create_pr_reuses_the_open_update_pr_and_rewrites_its_description(
+    fakes, tmp_path
+):
+    """An update PR opened before the rule, such as #583, is kept and rewritten."""
     result, descriptions = _create_pr(
         fakes,
         tmp_path,
@@ -493,41 +504,42 @@ def test_create_pr_puts_the_tracking_issue_first_on_an_open_update_pr(fakes, tmp
             "-",
         ],
     ]
-    assert descriptions == f"Fixes #870\n\n{LEGACY_UPDATE_PR_BODY}\n"
+    assert descriptions == f"Fixes #870\n\n{UPDATE_PR_SUMMARY}\n"
 
 
 @pytest.mark.parametrize("line_ending", ["\n", "\r\n"])
-def test_create_pr_replaces_an_earlier_fixes_line_on_the_open_update_pr(
+def test_create_pr_names_the_open_issue_instead_of_a_closed_one(
     fakes, tmp_path, line_ending
 ):
     """An open update PR whose issue was closed names the open one instead."""
-    rest = f"{line_ending}{UPDATE_PR_SUMMARY}"
     result, descriptions = _create_pr(
         fakes,
         tmp_path,
         FAKE_OPEN_PR="900",
-        FAKE_OPEN_PR_BODY=f"Fixes #860 {line_ending}{rest}",
+        FAKE_OPEN_PR_BODY=f"Fixes #860{line_ending}{line_ending}{UPDATE_PR_SUMMARY}",
         FAKE_OPEN_ISSUES="870\n",
     )
 
     assert result.returncode == 0, result.stderr
-    assert descriptions == f"Fixes #870\n{rest}\n"
+    assert descriptions == f"Fixes #870\n\n{UPDATE_PR_SUMMARY}\n"
 
 
-def test_create_pr_replaces_a_fixes_line_that_is_the_whole_description(fakes, tmp_path):
+def test_create_pr_rewrites_a_description_that_says_runs_append_commits(
+    fakes, tmp_path
+):
     result, descriptions = _create_pr(
         fakes,
         tmp_path,
         FAKE_OPEN_PR="900",
-        FAKE_OPEN_PR_BODY="Fixes #860",
+        FAKE_OPEN_PR_BODY=f"Fixes #870\n\n{APPENDING_UPDATE_PR_SUMMARY}",
         FAKE_OPEN_ISSUES="870\n",
     )
 
     assert result.returncode == 0, result.stderr
-    assert descriptions == "Fixes #870\n"
+    assert descriptions == f"Fixes #870\n\n{UPDATE_PR_SUMMARY}\n"
 
 
-def test_create_pr_leaves_an_open_update_pr_that_names_the_tracking_issue(
+def test_create_pr_leaves_an_open_update_pr_with_the_current_description(
     fakes, tmp_path
 ):
     result, descriptions = _create_pr(
