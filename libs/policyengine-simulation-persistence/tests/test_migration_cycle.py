@@ -19,6 +19,7 @@ from policyengine_simulation_persistence import (
     SIMULATION_SCHEMA,
     create_simulation_engine,
 )
+from simulation_support import economy_simulation, simulation_store
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
@@ -196,3 +197,35 @@ def test_a_migration_waiting_for_a_lock_gives_up_instead_of_blocking(
     finally:
         holder.dispose()
     assert waited < 30
+
+
+@pytest.mark.parametrize("references_granted", [False])
+def test_the_chain_needs_references_on_the_public_api_tables(
+    disposable_database,
+) -> None:
+    """Without the operator's REFERENCES grant, no foreign key can be created."""
+    with pytest.raises(ProgrammingError, match="permission denied for table"):
+        command.upgrade(alembic_config(), "head")
+
+    assert applied_revision(disposable_database.migrator_url) is None
+
+
+@pytest.mark.parametrize("table_name", ["simulations"])
+def test_the_runtime_role_cannot_change_or_delete_a_definition(
+    migrated_database, public_api_rows, table_name
+) -> None:
+    store = simulation_store(migrated_database)
+    store.create(economy_simulation(public_api_rows))
+    engine = create_simulation_engine(migrated_database.runtime_url)
+    try:
+        for statement in (
+            f"UPDATE simulation.{table_name} SET created_at = now()",  # noqa: S608  # fixed table names
+            f"DELETE FROM simulation.{table_name}",  # noqa: S608  # fixed table names
+        ):
+            with (
+                pytest.raises(ProgrammingError, match="permission denied"),
+                engine.begin() as connection,
+            ):
+                connection.execute(text(statement))
+    finally:
+        engine.dispose()
