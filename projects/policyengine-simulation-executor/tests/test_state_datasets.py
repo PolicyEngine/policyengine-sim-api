@@ -1,5 +1,6 @@
 """The main path's baked per-state datasets: their folders and the runtime lookup."""
 
+import contextlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -64,14 +65,6 @@ def _lookup(baked, selection, *, state_code="UT", year=2026, country="us"):
 
 def test_a_state_reads_its_baked_folder(baked_utah, regional_selection):
     assert _lookup(baked_utah, regional_selection) == str(baked_utah.folder)
-
-
-def test_a_district_reads_its_state_folder(baked_utah, regional_selection):
-    # A district resolves to its state's two-letter code, so it shares the
-    # state's file and keeps applying its own district filter at run time.
-    assert _lookup(baked_utah, regional_selection, state_code="UT") == str(
-        baked_utah.folder
-    )
 
 
 def test_a_year_without_a_baked_file_reads_nothing_baked(
@@ -143,3 +136,57 @@ def test_the_default_dataset_reads_nothing_baked(baked_utah):
 def test_a_region_without_a_state_reads_nothing_baked(baked_utah, regional_selection):
     assert _lookup(baked_utah, regional_selection, state_code=None) is None
     assert _lookup(baked_utah, regional_selection, country="uk") is None
+
+
+def test_a_district_request_loads_its_states_baked_file(
+    monkeypatch, baked_utah, regional_selection
+):
+    """A district resolves to its state's code and reads the state's file."""
+    from policyengine.core.scoping_strategy import RowFilterStrategy
+    from policyengine_simulation_executor import simulation_runtime
+
+    district = SimpleNamespace(
+        dataset_path=regional_selection.uri,
+        scoping_strategy=RowFilterStrategy(
+            variable_name="congressional_district_geoid", variable_value=4901
+        ),
+        parent_code="state/ut",
+        state_code="UT",
+    )
+    country_module = SimpleNamespace(
+        model=SimpleNamespace(
+            version="2.2.1",
+            get_region={"congressional_district/UT-01": district}.get,
+        )
+    )
+    loads = []
+
+    class _StoppedAfterLoadingError(Exception):
+        pass
+
+    def load_dataset(_params, *, country_module, selection, data_folder=None):
+        loads.append(data_folder)
+        raise _StoppedAfterLoadingError
+
+    monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", baked_utah.data_folder)
+    monkeypatch.setattr(
+        simulation_runtime, "_country_module", lambda _country: country_module
+    )
+    monkeypatch.setattr(simulation_runtime, "_load_dataset", load_dataset)
+
+    with pytest.raises(_StoppedAfterLoadingError):
+        simulation_runtime._run_simulation_impl_core(
+            {
+                "country": "us",
+                "region": "congressional_district/UT-01",
+                "time_period": 2026,
+                "baseline": {},
+                "reform": {},
+            },
+            runtime=SimpleNamespace(
+                span=lambda *_args, **_kwargs: contextlib.nullcontext(),
+                set_context=lambda **_attributes: None,
+            ),
+        )
+
+    assert loads == [str(baked_utah.folder)]

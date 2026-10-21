@@ -1310,29 +1310,23 @@ class TestBuildStateDatasetsImpl:
         (dataset,) = loaded.values()
         assert sorted(dataset.data.household["household_id"]) == [1, 2]
 
-    def test_filtering_a_state_file_again_keeps_the_same_rows(self, state_build):
-        from policyengine.tax_benefit_models.us import load_datasets
+    def test_each_state_file_holds_exactly_the_rows_its_filter_keeps(self, state_build):
         from policyengine.tax_benefit_models.us.model import US_GROUP_ENTITIES
 
-        self._build(state_build, self._both_states(state_build))
-        utah_target = state_build.targets[0]
-        utah_folder = state_build.uploads[0][1].parent
-        (state_file,) = load_datasets(
-            datasets=[state_build.sources.REGIONAL_DATASET],
-            years=[self.YEAR],
-            data_folder=str(utah_folder),
-        ).values()
+        entries = self._both_states(state_build)
+        self._build(state_build, entries)
+        stored = dict(state_build.uploads)
 
-        filtered_again = utah_target.scoping_strategy.apply(
-            entity_data=state_file.data.entity_data,
-            group_entities=US_GROUP_ENTITIES,
-            year=self.YEAR,
-        )
-
-        for entity, frame in state_file.data.entity_data.items():
-            assert list(filtered_again[entity][f"{entity}_id"]) == list(
-                frame[f"{entity}_id"]
+        for target, entry in zip(state_build.targets, entries, strict=True):
+            expected = target.scoping_strategy.apply(
+                entity_data=state_build.sources.source_entity_frames(),
+                group_entities=US_GROUP_ENTITIES,
+                year=self.YEAR,
             )
+            for entity, frame in expected.items():
+                assert state_build.sources.stored_ids(stored[entry.path], entity) == [
+                    int(value) for value in frame[f"{entity}_id"]
+                ], (target.state_code, entity)
 
     def test_prepares_the_full_country_year_file_once(self, state_build):
         self._build(state_build, self._both_states(state_build))
