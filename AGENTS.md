@@ -124,7 +124,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Simulation persistence
 
-- Checked: `sim.persistence.executor-independent`, `sim.persistence.migration-cycle`, `sim.persistence.no-modal-database-credentials`, `sim.persistence.one-migration-chain`
+- Checked: `sim.persistence.executor-independent`, `sim.persistence.migrate-before-entrypoint`, `sim.persistence.migration-cycle`, `sim.persistence.no-modal-database-credentials`, `sim.persistence.one-migration-chain`
 
 ### Deployment pipeline
 

@@ -46,6 +46,17 @@ by it: the environment creates the schema only when it is missing, because
 PostgreSQL checks `CREATE` on the database even for
 `CREATE SCHEMA IF NOT EXISTS`.
 
+## Deployment
+
+On every deployment, the migration job (`migrate_simulation_database` in
+`.github/workflows/simulation-deploy.reusable.yml`) runs
+`alembic upgrade head` before the Simulation Entrypoint's candidate revision is
+deployed (`sim.persistence.migrate-before-entrypoint`). It is the only job that
+receives `SIMULATION_MIGRATION_DATABASE_URL`. If it fails, the entrypoint is not
+deployed. The Simulation Entrypoint's readiness check (`GET /ready`) reports
+the database's revision next to `HEAD_REVISION`, the revision its image
+expects, and the candidate check requires the two to match.
+
 ## Connections
 
 `create_simulation_engine` builds the runtime engine from the canonical

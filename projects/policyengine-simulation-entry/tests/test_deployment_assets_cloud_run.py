@@ -39,7 +39,7 @@ def test_cloud_run_deployment_does_not_interpolate_github_values_in_shell():
     assert ":latest" not in deployment_script
 
 
-def _cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
+def cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
     """Return a complete deployment environment backed by a fake gcloud."""
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -114,11 +114,14 @@ def _cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
         "STAGE12_DATABASE_URL_SECRET_NAME": "stage12-staging-database-url",
         "MODAL_TOKEN_ID_SECRET_NAME": "modal-token-id",
         "MODAL_TOKEN_SECRET_SECRET_NAME": "modal-token-secret",
+        "SIMULATION_DATABASE_URL_SECRET_NAME": (
+            "simulation-staging-runtime-database-url"
+        ),
     }
 
 
 def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_path):
-    command_environment = _cloud_run_deploy_environment(tmp_path)
+    command_environment = cloud_run_deploy_environment(tmp_path)
     arguments_capture = Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"])
     env_capture = Path(command_environment["GCLOUD_ENV_FILE_CAPTURE"])
 
@@ -152,6 +155,7 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
     secrets_argument = arguments[arguments.index("--set-secrets") + 1]
     assert secrets_argument == (
         "OLD_GATEWAY_AUTH_CLIENT_SECRET=old-client-secret:3,"
+        "SIMULATION_DATABASE_URL=simulation-staging-runtime-database-url:3,"
         "MODAL_TOKEN_ID=modal-token-id:3,"
         "MODAL_TOKEN_SECRET=modal-token-secret:3,"
         "STAGE12_DATABASE_URL=stage12-staging-database-url:3"
@@ -169,7 +173,7 @@ def test_cloud_run_deployment_defaults_permission_enforcement_to_log_only(
     configured,
     expected,
 ):
-    command_environment = _cloud_run_deploy_environment(tmp_path)
+    command_environment = cloud_run_deploy_environment(tmp_path)
     if configured is not None:
         command_environment["SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"] = (
             configured
@@ -192,7 +196,7 @@ def test_cloud_run_deployment_rejects_invalid_permission_enforcement(
     tmp_path,
     configured,
 ):
-    command_environment = _cloud_run_deploy_environment(tmp_path)
+    command_environment = cloud_run_deploy_environment(tmp_path)
     command_environment["SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE"] = configured
 
     result = subprocess.run(
