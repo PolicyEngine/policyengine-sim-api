@@ -444,6 +444,94 @@ class ProofCiTest(unittest.TestCase):
             )
 
 
+PYRIGHT_WORKFLOW = """
+jobs:
+  pyright:
+    strategy:
+      matrix:
+        package:
+          - libs/alpha
+          - projects/beta
+    steps:
+      - run: python -m scripts.rules pyright "$PACKAGE"
+"""
+
+PYRIGHT_RULE = """
+[[rule]]
+id = "ex.quality.pyright"
+category = "quality"
+statement = "The packages have no Pyright errors."
+rationale = "docs/guide.md"
+scope = ["libs/alpha/src/*.py", "projects/beta/src/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pyright"
+projects = ["libs/alpha", "projects/beta"]
+[[rule.ci]]
+workflow = ".github/workflows/pyright.yml"
+job = "pyright"
+invocation = "scripts.rules pyright"
+"""
+
+PYRIGHT_SETTINGS = '[project]\nname = "package"\n\n[tool.pyright]\ninclude = ["src"]\n'
+
+
+def pyright_files() -> dict[str, str]:
+    """Return a repository whose Pyright rule checks two packages in a matrix job."""
+    return {
+        ".github/workflows/pyright.yml": PYRIGHT_WORKFLOW,
+        "libs/alpha/pyproject.toml": PYRIGHT_SETTINGS,
+        "libs/alpha/src/alpha.py": "",
+        "projects/beta/pyproject.toml": PYRIGHT_SETTINGS,
+        "projects/beta/src/beta.py": "",
+        **with_rule(PYRIGHT_RULE),
+    }
+
+
+class PyrightRuleTest(unittest.TestCase):
+    """A Pyright rule names the packages it checks; the guard holds CI to them."""
+
+    def assert_violation(self, repo: Repo, fragment: str) -> None:
+        messages = repo.messages()
+        self.assertTrue(any(fragment in m for m in messages), messages)
+
+    def test_packages_that_declare_their_checks_in_the_matrix_pass(self) -> None:
+        with Repo(pyright_files()) as repo:
+            self.assertEqual(repo.messages(), [])
+
+    def test_rule_must_name_its_packages(self) -> None:
+        with Repo(pyright_files(), render=False) as repo:
+            repo.edit(
+                "rules/registry.toml",
+                'projects = ["libs/alpha", "projects/beta"]',
+                "projects = []",
+            )
+            self.assert_violation(repo, "pyright enforcer names no projects")
+
+    def test_package_must_exist(self) -> None:
+        with Repo(pyright_files(), render=False) as repo:
+            repo.edit("rules/registry.toml", '"projects/beta"]', '"projects/gamma"]')
+            self.assert_violation(repo, "project projects/gamma does not exist")
+
+    def test_package_must_declare_what_pyright_checks(self) -> None:
+        with Repo(pyright_files(), render=False) as repo:
+            repo.write("libs/alpha/pyproject.toml", '[project]\nname = "alpha"\n')
+            self.assert_violation(
+                repo, "libs/alpha/pyproject.toml has no [tool.pyright] include"
+            )
+
+    def test_package_must_be_in_the_job_matrix(self) -> None:
+        with Repo(pyright_files(), render=False) as repo:
+            repo.edit(
+                ".github/workflows/pyright.yml", "          - projects/beta\n", ""
+            )
+            self.assert_violation(
+                repo, "project projects/beta is not in the matrix of job 'pyright'"
+            )
+
+
 class HiddenRuleTest(unittest.TestCase):
     def assert_violation(self, repo: Repo, fragment: str) -> None:
         messages = repo.messages()

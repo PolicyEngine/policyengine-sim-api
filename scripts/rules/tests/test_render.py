@@ -96,10 +96,10 @@ class EnforcerDescriptionTest(unittest.TestCase):
             (Kind.WORKFLOW_JOB, {"step": "Build"}, "CI job"),
             (
                 Kind.PYRIGHT,
-                {"config": "pyrightconfig.json"},
-                "pyright `pyrightconfig.json`",
+                {"projects": ["libs/alpha", "projects/beta"]},
+                "pyright in `libs/alpha`, `projects/beta`",
             ),
-            (Kind.PYRIGHT, {}, "pyright ``"),
+            (Kind.PYRIGHT, {}, "pyright in "),
             (
                 Kind.IMPORT_LINTER,
                 {"config": ".importlinter"},

@@ -20,7 +20,7 @@ KIND_FIELDS: dict[Kind, tuple[dict[str, type], dict[str, type]]] = {
     Kind.QUALITY_GUARD: ({"name": str}, {"runner": str}),
     Kind.RUFF: ({"mode": str}, {"codes": list, "pattern": str, "config": str}),
     Kind.MYPY: ({"paths": list}, {"config": str}),
-    Kind.PYRIGHT: ({"config": str}, {"project": str}),
+    Kind.PYRIGHT: ({"projects": list}, {}),
     Kind.IMPORT_LINTER: ({"config": str, "contract": str}, {}),
     Kind.WORKFLOW_JOB: ({}, {"step": str}),
     Kind.DOCS_GUARD: ({"doc": str, "marker": str}, {}),
@@ -113,6 +113,15 @@ def _validate_enforcer(rule: Rule) -> list[Violation]:
                 "schema",
                 "pytest enforcer has no nodes",
                 "list at least one test node",
+            )
+        )
+    if kind is Kind.PYRIGHT and not fields.get("projects"):
+        violations.append(
+            Violation(
+                rule.id,
+                "schema",
+                "pyright enforcer names no projects",
+                "list the package directories Pyright checks",
             )
         )
     if kind is Kind.RUFF:

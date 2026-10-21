@@ -68,7 +68,10 @@ _ENFORCER_DESCRIPTIONS: dict[Kind, Callable[[Mapping[str, Any]], str]] = {
     Kind.RUFF: _describe_ruff,
     Kind.MYPY: lambda _fields: "mypy",
     Kind.WORKFLOW_JOB: lambda _fields: "CI job",
-    Kind.PYRIGHT: lambda fields: f"{Kind.PYRIGHT.value} `{fields.get('config', '')}`",
+    Kind.PYRIGHT: lambda fields: (
+        f"{Kind.PYRIGHT.value} in "
+        + ", ".join(f"`{project}`" for project in fields.get("projects", []))
+    ),
     Kind.IMPORT_LINTER: (
         lambda fields: f"{Kind.IMPORT_LINTER.value} `{fields.get('config', '')}`"
     ),

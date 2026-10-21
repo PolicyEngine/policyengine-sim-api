@@ -72,7 +72,8 @@ gap is visible, rather than leaving it out.
 | `ruff` | `mode` = `format`, `lint` (with `codes`) or `per-file-ignore` (with `pattern`, `codes`) | Codes are selected / the ignore entry exists and covers only [files allowed file-level exceptions](#file-level-exceptions) |
 | `mypy` | `paths` | Each path is in `[tool.mypy].files` |
 | `workflow-job` | optional `step` | The CI job exists (the job itself is the check) |
-| `pyright`, `import-linter` | `config` (+ `contract` for Import Linter) | The config file exists |
+| `pyright` | `projects`: the package directories it checks | Each package exists, lists what Pyright checks in its `pyproject.toml` `[tool.pyright] include`, and is in the CI job's matrix |
+| `import-linter` | `config`, `contract` | The config file exists |
 | `docs-guard` | `doc`, `marker` | The doc exists |
 | `llm-review` | `prompt`, `model` | The prompt exists; judgment tier only |
 | `none` | | Nothing; only for `doc-only` and `advisory` rules |
