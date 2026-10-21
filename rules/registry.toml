@@ -787,7 +787,7 @@ project = "projects/policyengine-simulation-executor"
 test = "tests/test_microdata_weight_boundaries.py::test_rule_proof_weight_stripping_confined"
 [rule.baseline]
 file = "rules/baselines/sim-microdata-weight-stripping.txt"
-count = 1
+count = 0
 
 [[rule]]
 id = "sim.microdata.builder-tests-use-weighted-frames"

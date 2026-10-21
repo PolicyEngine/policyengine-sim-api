@@ -27,8 +27,16 @@ if TYPE_CHECKING:
     import pandas as pd
     from policyengine_simulation_contract.stage12_bundle import CountryId
 
+# Input-dataset columns the UK constituency and local-authority breakdowns
+# read: the area codes, the region the disclosure check nests them in, and the
+# survey household each row was copied from, by which it counts support.
 UK_GEOGRAPHIC_DATASET_VARIABLES: dict[str, tuple[str, ...]] = {
-    "household": ("constituency_code_oa", "la_code_oa"),
+    "household": (
+        "constituency_code_oa",
+        "la_code_oa",
+        "region_code_oa",
+        "source_household_id",
+    ),
 }
 
 

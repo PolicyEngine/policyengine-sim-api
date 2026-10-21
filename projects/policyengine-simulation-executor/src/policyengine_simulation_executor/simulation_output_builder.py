@@ -68,6 +68,7 @@ class SimulationOutputBuilder:
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
     progress: JobProgressReporter = NULL_JOB_PROGRESS
     _analysis: Any = field(default=None, init=False)
+    _uk_geography_disclosure: Any = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         """Normalize ``country`` to lower case."""
@@ -257,18 +258,53 @@ class SimulationOutputBuilder:
                 region_code=self.resolved_region_code,
             )
 
+    def _uk_geography_disclosure_output(
+        self,
+    ) -> simulation_output_geographic.UKGeographyDisclosureOutput | None:
+        """Return UK area changes under disclosure control, computed once.
+
+        Constituencies and local authorities go through one release, so the
+        disclosure check sees both. None for other countries.
+        """
+        if self.country != "uk":
+            return None
+        if self._uk_geography_disclosure is None:
+            self._uk_geography_disclosure = (
+                simulation_output_geographic.compute_uk_geography_disclosure_output(
+                    self.country,
+                    self.baseline,
+                    self.reform,
+                    year=self._simulation_year(),
+                )
+            )
+        return self._uk_geography_disclosure
+
+    def _simulation_year(self) -> int:
+        """Return the simulated year, which labels the disclosure release."""
+        for value in (
+            self.simulation_params.get("time_period"),
+            self.simulation_params.get("year"),
+            getattr(self.dataset, "year", None),
+        ):
+            if value is None:
+                continue
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+        return 0
+
     def _build_uk_constituency_impact(self) -> GeographicImpactOutput | None:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_CONSTITUENCY)):
             return simulation_output_geographic.build_uk_constituency_impact(
-                self.country, self.baseline, self.reform
+                self.country, self._uk_geography_disclosure_output()
             )
 
     def _build_uk_local_authority_impact(self) -> GeographicImpactOutput | None:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_LOCAL_AUTHORITY)):
             return simulation_output_geographic.build_uk_local_authority_impact(
                 self.country,
-                self.baseline,
-                self.reform,
+                self._uk_geography_disclosure_output(),
                 uk_local_authority_metadata=self.uk_local_authority_metadata,
             )
 

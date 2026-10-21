@@ -148,6 +148,8 @@ def test_uk_plan_uses_uk_defaults_without_us_budget_variables() -> None:
     assert _dataset_variables(plan, "household") == {
         "constituency_code_oa",
         "la_code_oa",
+        "region_code_oa",
+        "source_household_id",
     }
     assert _dataset_variables(plan, "household").issubset(_variables(plan, "household"))
 
@@ -256,7 +258,10 @@ def test_apply_and_validate_output_plan_reject_missing_materialized_columns() ->
         validate_output_frames(frames, plan)
 
 
-@pytest.mark.parametrize("missing", ["constituency_code_oa", "la_code_oa"])
+@pytest.mark.parametrize(
+    "missing",
+    ["constituency_code_oa", "la_code_oa", "region_code_oa", "source_household_id"],
+)
 def test_uk_output_validation_requires_geographic_dataset_columns(
     missing: str,
 ) -> None:
