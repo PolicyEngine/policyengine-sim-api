@@ -1,0 +1,6 @@
+# Proof fixture: a Modal project that depends only on the contract library.
+[project]
+name = "policyengine-simulation-executor"
+dependencies = [
+    "policyengine-simulation-contract",
+]
