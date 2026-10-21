@@ -69,6 +69,9 @@ def test_complete_packaged_bundle_selects_every_worker_dependency_and_dataset() 
         lambda bundle: bundle["data_releases"]["us"]["certified_data_artifact"].update(
             {"sha256": "0" * 64}
         ),
+        lambda bundle: bundle["data_releases"]["us"]["region_datasets"].update(
+            {"state": {"path_template": "no_such_dataset.h5"}}
+        ),
     ],
     ids=[
         "missing-data-releases",
@@ -78,6 +81,7 @@ def test_complete_packaged_bundle_selects_every_worker_dependency_and_dataset() 
         "dataset-uri-revision-mismatch",
         "malformed-dataset-digest",
         "certified-artifact-mismatch",
+        "region-dataset-names-no-dataset",
     ],
 )
 def test_missing_or_internally_inconsistent_bundle_values_fail_closed(mutate) -> None:
@@ -130,3 +134,37 @@ def test_only_bundle_schema_version_2_is_supported(schema_version) -> None:
         Stage12BundleError, match=r"^PolicyEngine\.py bundle schema_version must be 2$"
     ):
         normalize_stage12_bundle(bundle)
+
+
+def _us(bundle):
+    return next(country for country in bundle.countries if country.country == "us")
+
+
+def test_the_installed_bundle_names_the_dataset_each_us_region_type_loads() -> None:
+    us = _us(normalize_stage12_bundle(_bundle()))
+
+    assert us.dataset_for_region_type("national") == "populace_us_2024"
+    assert us.dataset_for_region_type("state") == "populace_us_2024_acs_local"
+    assert (
+        us.dataset_for_region_type("congressional_district")
+        == "populace_us_2024_acs_local"
+    )
+
+
+def test_a_per_region_file_pattern_names_no_single_dataset() -> None:
+    bundle = _bundle()
+    bundle["data_releases"]["us"]["region_datasets"]["state"] = {
+        "path_template": "states/{state_code}.h5"
+    }
+
+    us = _us(normalize_stage12_bundle(bundle))
+
+    assert any(item.region_type == "state" for item in us.region_datasets)
+    assert us.dataset_for_region_type("state") is None
+
+
+def test_a_bundle_without_region_datasets_records_none() -> None:
+    bundle = _bundle()
+    bundle["data_releases"]["us"].pop("region_datasets")
+
+    assert _us(normalize_stage12_bundle(bundle)).region_datasets is None

@@ -10,10 +10,12 @@ from policyengine_simulation_contract.stage12_bundle import (
     Stage12BundleManifest,
     Stage12CountryBundle,
     Stage12Dataset,
+    Stage12RegionDataset,
 )
 from policyengine_simulation_contract.stage12_manifest import (
     ACTIVE_MANIFEST_KEY,
     PRE_CACHE_MANIFEST_KEY,
+    REGION_DATASETS_MANIFEST_KEY,
     V1_ROUTING_STATE_NAME,
     V2_VERSION_MANIFEST_NAME,
     Stage12CacheRelease,
@@ -24,6 +26,7 @@ from policyengine_simulation_contract.stage12_manifest import (
     assert_separate_manifest_names,
     manifest_digest,
     pre_cache_manifest_payload,
+    pre_region_datasets_manifest_payload,
     publish_v2_manifest,
     v2_application_name,
     validate_manifest_has_no_credentials,
@@ -159,13 +162,39 @@ def test_v2_application_name_rejects_versions_a_modal_name_cannot_hold(
         v2_application_name(version)
 
 
+def _regional_worker(version: str = "5.2.0") -> V2WorkerVersion:
+    """Return a cached worker whose US bundle names each region type's dataset."""
+    worker = _cached_worker(version)
+    countries = tuple(
+        country.model_copy(
+            update={
+                "region_datasets": (
+                    Stage12RegionDataset(
+                        region_type="national", dataset=country.default_dataset
+                    ),
+                    Stage12RegionDataset(
+                        region_type="state", dataset=f"{country.default_dataset}_local"
+                    ),
+                )
+            }
+        )
+        if country.country == "us"
+        else country
+        for country in worker.bundle.countries
+    )
+    return worker.model_copy(
+        update={"bundle": worker.bundle.model_copy(update={"countries": countries})}
+    )
+
+
 def test_publish_writes_one_complete_v2_document_per_key() -> None:
     store = FakeStore()
 
-    manifest = publish_v2_manifest(store=store, worker=_cached_worker())
+    manifest = publish_v2_manifest(store=store, worker=_regional_worker())
 
     assert store.writes == [
-        (ACTIVE_MANIFEST_KEY, manifest.model_dump(mode="json")),
+        (REGION_DATASETS_MANIFEST_KEY, manifest.model_dump(mode="json")),
+        (ACTIVE_MANIFEST_KEY, pre_region_datasets_manifest_payload(manifest)),
         (PRE_CACHE_MANIFEST_KEY, pre_cache_manifest_payload(manifest)),
     ]
     assert manifest.default_version == "5.2.0"
@@ -203,6 +232,75 @@ def test_readers_released_before_the_cache_get_only_fields_they_accept() -> None
         "validated_at",
         "validation_invocation_id",
     }
+
+
+# The fields of a country bundle before region datasets. Readers released
+# before them forbid any other field, so adding one would stop them loading.
+_COUNTRY_BUNDLE_FIELDS_BEFORE_REGION_DATASETS = {
+    "country",
+    "country_package_name",
+    "country_package_version",
+    "country_package_requirement",
+    "data_package_name",
+    "data_package_version",
+    "data_release_version",
+    "data_artifact_revision",
+    "default_dataset",
+    "default_dataset_uri",
+    "datasets",
+}
+
+
+@pytest.mark.parametrize("key", [ACTIVE_MANIFEST_KEY, PRE_CACHE_MANIFEST_KEY])
+def test_readers_released_before_region_datasets_get_only_fields_they_accept(
+    key: str,
+) -> None:
+    store = FakeStore()
+    publish_v2_manifest(store=store, worker=_regional_worker())
+
+    worker = store.values[key]["versions"]["5.2.0"]
+    for country in worker["bundle"]["countries"]:
+        assert set(country) == _COUNTRY_BUNDLE_FIELDS_BEFORE_REGION_DATASETS
+
+
+def test_the_region_dataset_key_keeps_region_datasets_and_cache() -> None:
+    store = FakeStore()
+    publish_v2_manifest(store=store, worker=_regional_worker())
+
+    loaded = V2ManifestLoader(store).load().versions["5.2.0"]
+    us = next(country for country in loaded.bundle.countries if country.country == "us")
+    assert us.dataset_for_region_type("state") == "populace_us_2024_local"
+    assert us.dataset_for_region_type("national") == "populace_us_2024"
+    assert us.dataset_for_region_type("congressional_district") is None
+    assert loaded.cache is not None
+
+
+def test_a_bundle_published_before_region_datasets_has_none() -> None:
+    worker = _cached_worker()
+    us = next(country for country in worker.bundle.countries if country.country == "us")
+
+    assert us.region_datasets is None
+    assert us.dataset_for_region_type("state") is None
+
+
+def test_first_publish_with_region_datasets_keeps_versions_from_the_cache_key() -> None:
+    earlier = _cached_worker("5.1.0").model_dump(mode="json")
+    store = FakeStore(
+        {
+            ACTIVE_MANIFEST_KEY: {
+                "schema_version": 1,
+                "generation": "5.1.0:earlier",
+                "default_version": "5.1.0",
+                "versions": {"5.1.0": earlier},
+            }
+        }
+    )
+    assert V2ManifestLoader(store).load().default_version == "5.1.0"
+
+    manifest = publish_v2_manifest(store=store, worker=_regional_worker())
+
+    assert sorted(manifest.versions) == ["5.1.0", "5.2.0"]
+    assert V2ManifestLoader(store).load() == manifest
 
 
 def test_first_publish_with_cache_keeps_versions_from_the_pre_cache_key() -> None:

@@ -31,8 +31,23 @@ class Stage12Dataset(StrictBundleModel):
     repo_type: NonEmptyText
 
 
+class Stage12RegionDataset(StrictBundleModel):
+    """The dataset one type of region loads, such as ``state`` or ``national``.
+
+    ``dataset`` is a dataset identity in the country's bundle, or None when the
+    bundle gives a per-region file pattern instead of one dataset.
+    """
+
+    region_type: NonEmptyText
+    dataset: NonEmptyText | None
+
+
 class Stage12CountryBundle(StrictBundleModel):
-    """One country's pinned model package, data release and datasets within a bundle."""
+    """One country's pinned model package, data release and datasets within a bundle.
+
+    ``region_datasets`` names the dataset each type of region loads. It is None
+    in bundles published before it existed.
+    """
 
     country: CountryId
     country_package_name: NonEmptyText
@@ -45,6 +60,14 @@ class Stage12CountryBundle(StrictBundleModel):
     default_dataset: NonEmptyText
     default_dataset_uri: NonEmptyText
     datasets: tuple[Stage12Dataset, ...]
+    region_datasets: tuple[Stage12RegionDataset, ...] | None = None
+
+    def dataset_for_region_type(self, region_type: str) -> str | None:
+        """Return the dataset identity ``region_type`` regions load, or None."""
+        for item in self.region_datasets or ():
+            if item.region_type == region_type:
+                return item.dataset
+        return None
 
 
 class Stage12BundleManifest(StrictBundleModel):

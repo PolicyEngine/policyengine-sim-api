@@ -21,9 +21,14 @@ from policyengine_simulation_contract.stage12_bundle import (
 
 V1_ROUTING_STATE_NAME = "simulation-api-routing-state"
 V2_VERSION_MANIFEST_NAME = "simulation-api-v2-version-manifest"
+# The complete manifest, including each country bundle's region datasets.
+REGION_DATASETS_MANIFEST_KEY = "active-with-region-datasets"
+# Readers released before region datasets forbid unknown fields, so they keep
+# reading this key, which holds the same manifest without them.
 ACTIVE_MANIFEST_KEY = "active-with-cache"
 # Readers released before Stage 12 cache releases forbid unknown fields, so
-# they keep reading this key, which holds the same manifest without them.
+# they keep reading this key, which holds the same manifest without them or
+# region datasets.
 PRE_CACHE_MANIFEST_KEY = "active"
 V2_APPLICATION_PREFIX = "policyengine-simulation-v2-py"
 V1_APPLICATION_PREFIX = "policyengine-simulation-py"
@@ -219,20 +224,49 @@ def _is_newer(candidate: str, current: str | None) -> bool:
         return False
 
 
+_REGION_DATASETS_FIELD = {
+    "bundle": {"countries": {"__all__": {"region_datasets"}}},
+}
+
+
+def pre_region_datasets_manifest_payload(
+    manifest: V2VersionManifest,
+) -> dict[str, object]:
+    """Return the manifest as readers released before region datasets accept it."""
+    return manifest.model_dump(
+        mode="json",
+        exclude={"versions": {"__all__": _REGION_DATASETS_FIELD}},
+    )
+
+
 def pre_cache_manifest_payload(manifest: V2VersionManifest) -> dict[str, object]:
     """Return the manifest as readers released before cache releases accept it."""
     return manifest.model_dump(
         mode="json",
-        exclude={"versions": {"__all__": {"cache": True, "validation": {"cache"}}}},
+        exclude={
+            "versions": {
+                "__all__": {
+                    "cache": True,
+                    "validation": {"cache"},
+                    **_REGION_DATASETS_FIELD,
+                }
+            }
+        },
     )
 
 
 def _current_manifest(store: V2ManifestStore) -> object:
-    current = store.get(ACTIVE_MANIFEST_KEY)
-    if current is None:
-        # Until the first publish that writes both keys.
-        current = store.get(PRE_CACHE_MANIFEST_KEY)
-    return current
+    # The newest key a publish has written yet: each older key holds the same
+    # manifest without the fields its readers do not accept.
+    for key in (
+        REGION_DATASETS_MANIFEST_KEY,
+        ACTIVE_MANIFEST_KEY,
+        PRE_CACHE_MANIFEST_KEY,
+    ):
+        current = store.get(key)
+        if current is not None:
+            return current
+    return None
 
 
 def build_next_v2_manifest(
@@ -288,7 +322,8 @@ def publish_v2_manifest(
     )
     # Each key holds one entire validated document, and a reader reads only
     # one key, so no reader observes a partial update assembled from several.
-    store[ACTIVE_MANIFEST_KEY] = next_manifest.model_dump(mode="json")
+    store[REGION_DATASETS_MANIFEST_KEY] = next_manifest.model_dump(mode="json")
+    store[ACTIVE_MANIFEST_KEY] = pre_region_datasets_manifest_payload(next_manifest)
     store[PRE_CACHE_MANIFEST_KEY] = pre_cache_manifest_payload(next_manifest)
     return next_manifest
 
