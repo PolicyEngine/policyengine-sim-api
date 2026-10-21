@@ -30,7 +30,7 @@ help:
 	@echo "Maintenance:"
 	@echo "  make build            - Build Docker images"
 	@echo "  make format           - Format code with ruff"
-	@echo "  make check            - ruff check + Pyright in each package"
+	@echo "  make check            - CI's ruff checks + Pyright in each package"
 	@echo "  make update           - uv lock --upgrade across packages"
 	@echo "  make clean            - Remove caches and stop containers"
 	@echo "  make push-pr-branch   - Push current branch to origin for a PR"
@@ -40,7 +40,7 @@ help:
 # CI's ruff, read from the lint job's `uv tool install ruff==<version>` step in
 # .github/workflows/pr.yml so the two can't drift. A ruff found on PATH may be
 # another version, which selects different rules under select = ["ALL"].
-RUFF_VERSION := $(shell sed -n 's/.*uv tool install ruff==\([0-9][0-9.]*\).*/\1/p' .github/workflows/pr.yml)
+RUFF_VERSION := $(shell sed -n 's/.*uv tool install ruff==\([0-9][0-9.]*\).*/\1/p' .github/workflows/pr.yml | head -n 1)
 RUFF := uv tool run ruff@$(RUFF_VERSION)
 
 # Development commands
@@ -156,15 +156,13 @@ format: require-ruff-version
 # Pyright runs in each package's own locked environment, with the version CI
 # pins; apis-integ needs the generated client. See
 # docs/engineering/skills/type-checking.md.
+# The ruff commands are the lint job's, so a passing make check means the job
+# passes too.
 check: require-ruff-version generate-clients
 	@echo "Running code quality checks (ruff $(RUFF_VERSION))..."
 	@status=0; \
-	for dir in projects/*/src libs/*/src; do \
-		if [ -d "$$dir" ]; then \
-			echo "Checking $$dir..."; \
-			$(RUFF) check $$dir || status=1; \
-		fi \
-	done; \
+	$(RUFF) format --check projects/*/src libs/*/src || status=1; \
+	$(RUFF) check . || status=1; \
 	python3 -m scripts.rules pyright --sync || status=1; \
 	exit $$status
 
