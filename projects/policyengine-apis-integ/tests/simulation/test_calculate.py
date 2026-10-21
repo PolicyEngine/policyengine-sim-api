@@ -13,10 +13,6 @@ from typing import Protocol, TypeGuard, cast
 
 import pytest
 from policyengine_api_simulation_client import AuthenticatedClient, Client
-from policyengine_api_simulation_client.api.default import (
-    get_job_status_jobs_job_id_get,
-    submit_simulation_simulate_economy_comparison_post,
-)
 from policyengine_api_simulation_client.models import (
     JobStage,
     JobStatusResponse,
@@ -25,6 +21,7 @@ from policyengine_api_simulation_client.models import (
     SimulationRequest,
 )
 
+from . import endpoint_calls
 from .polling import poll_retry_delay_seconds
 
 _REQUIRED_ECONOMY_RESULT_SECTIONS = {"budget", "poverty", "inequality"}
@@ -96,9 +93,7 @@ def poll_for_completion(
     deadline = time.monotonic() + max_wait_seconds
 
     while time.monotonic() < deadline:
-        response = get_job_status_jobs_job_id_get.sync_detailed(
-            job_id=job_id, client=client
-        )
+        response = endpoint_calls.job_status(client, job_id)
 
         if bodies is not None and response.status_code in {
             HTTPStatus.OK,
@@ -177,10 +172,7 @@ def submit_simulation_request(
     client: Client | AuthenticatedClient,
     request: SimulationRequest,
 ) -> JobSubmitResponse:
-    response = submit_simulation_simulate_economy_comparison_post.sync_detailed(
-        client=client,
-        body=request,
-    )
+    response = endpoint_calls.submit_simulation(client, request)
     assert response.status_code == HTTPStatus.OK, (
         f"Simulation submit failed with status {response.status_code}: "
         f"{response.content!r}"
@@ -433,7 +425,7 @@ def _poll_with_responses(
     sleep_seconds: list[float] = []
 
     def get_status(
-        *, job_id: str, client: Client | AuthenticatedClient
+        client: Client | AuthenticatedClient, job_id: str
     ) -> _StubJobStatusHttpResponse:
         del job_id, client
         return next(response_iterator)
@@ -441,11 +433,7 @@ def _poll_with_responses(
     def record_sleep(seconds: float) -> None:
         sleep_seconds.append(seconds)
 
-    monkeypatch.setattr(
-        get_job_status_jobs_job_id_get,
-        "sync_detailed",
-        get_status,
-    )
+    monkeypatch.setattr(endpoint_calls, "job_status", get_status)
     monkeypatch.setattr(time, "sleep", record_sleep)
     result = poll_for_completion(
         cast("Client", object()),
@@ -554,9 +542,7 @@ def test_poll_for_completion_records_running_and_complete_bodies(
         ]
     )
     monkeypatch.setattr(
-        get_job_status_jobs_job_id_get,
-        "sync_detailed",
-        lambda *, job_id, client: next(response_iterator),
+        endpoint_calls, "job_status", lambda client, job_id: next(response_iterator)
     )
     monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 

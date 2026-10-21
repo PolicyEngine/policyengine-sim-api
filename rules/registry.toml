@@ -1164,7 +1164,7 @@ job = "pyright"
 invocation = "python -m scripts.rules pyright"
 [rule.baseline]
 file = "rules/baselines/pyright-apis-integ.txt"
-count = 4
+count = 0
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.quality.pyright-apis-integ/bad"
 good_fixture = "rules/fixtures/sim.quality.pyright-apis-integ/good"
