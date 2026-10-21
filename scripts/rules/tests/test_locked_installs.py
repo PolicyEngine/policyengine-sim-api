@@ -183,6 +183,37 @@ class TestCommandClassification(unittest.TestCase):
 
         self.assertEqual((installs, tests), ([], []))
 
+    def test_workflow_sites_are_reported_on_their_own_line(self) -> None:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        workflow = root / ".github" / "workflows" / "ci.yml"
+        workflow.parent.mkdir(parents=True)
+        workflow.write_text(
+            "name: CI\n"
+            "on: pull_request\n"
+            "jobs:\n"
+            "  first:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: uv run python one.py\n"
+            "  second:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: |\n"
+            "          echo start\n"
+            "          uv run python two.py\n",
+            encoding="utf-8",
+        )
+
+        findings = scan(root)
+
+        self.assertEqual(
+            [str(site) for site in findings.unlocked_installs],
+            [
+                ".github/workflows/ci.yml:7: uv run python one.py",
+                ".github/workflows/ci.yml:13: uv run python two.py",
+            ],
+        )
+
 
 class TestExceptions(unittest.TestCase):
     def test_an_exception_allows_only_the_site_it_names(self) -> None:
@@ -209,7 +240,7 @@ reason = "no site and no end"
         self.assertIn("exception for .github/workflows/ci.yml names no site", messages)
         self.assertIn(
             "exception for .github/workflows/ci.yml has no removal condition "
-            "and no tracking issue",
+            "and no review date with a tracking issue",
             messages,
         )
 
@@ -253,6 +284,37 @@ category = "pinned-tool"
 reason = "example"
 """
         self.assertEqual(violation_messages(root, exceptions), [])
+
+    def test_a_tool_at_a_moving_version_is_not_a_pinned_tool(self) -> None:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (root / "Makefile").write_text("RUFF := uv tool run ruff@latest\n")
+        exceptions = """
+[[rule.exception]]
+path = "Makefile"
+match = "uv tool run ruff@latest"
+category = "pinned-tool"
+reason = "example"
+"""
+        self.assertEqual(
+            violation_messages(root, exceptions),
+            ["pinned-tool exception for Makefile does not pin an exact version"],
+        )
+
+    def test_an_issue_without_a_review_date_is_not_an_end(self) -> None:
+        exceptions = """
+[[rule.exception]]
+path = "Dockerfile"
+match = "pip install policyengine"
+reason = "example"
+issue = 1
+"""
+        messages = violation_messages(FIXTURES / "install_bad", exceptions)
+
+        self.assertIn(
+            "exception for Dockerfile has no removal condition and no review "
+            "date with a tracking issue",
+            messages,
+        )
 
     def test_an_exception_that_matches_no_site_is_stale(self) -> None:
         exceptions = """

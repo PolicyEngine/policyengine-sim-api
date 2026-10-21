@@ -18,6 +18,7 @@ import fnmatch
 import re
 import subprocess
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -41,7 +42,12 @@ PR_WORKFLOW = ".github/workflows/pr.yml"
 
 _LOCKED_FLAG = re.compile(r"(?<![\w-])--(frozen|locked)(?![\w-])")
 _UNLOCKED_RUN_FLAG = re.compile(r"(?<![\w-])--(with|with-requirements|no-project)\b")
-_PINNED = re.compile(r"[\w${}.\[\],-]+(==|@)[\w.${}()-]+")
+# An exact pin: name==version or name@version, where the version is a release
+# number or a variable that holds one (such as $(RUFF_VERSION)), never a moving
+# name like latest.
+_PINNED = re.compile(
+    r"[\w${}.\[\],-]+(?:==|@)(?:\d[\w.+-]*|\$\{\w+\}|\$\(\w+\))(?![\w${}()-])"
+)
 _UNLOCKED_INSTALLS = (
     ("uv pip", re.compile(r"\buv\s+pip\s+(install|sync)\b")),
     ("uv tool", re.compile(r"\buv\s+tool\s+(install|run)\b")),
@@ -191,25 +197,43 @@ def _commands(text: str) -> list[tuple[int, str]]:
     return commands
 
 
-def _line_of(text: str, command: str) -> int:
-    """Return the first line of ``text`` holding the start of ``command``."""
-    words = command.split()[:3]
-    for number, line in enumerate(text.splitlines(), start=1):
-        if all(word in line for word in words):
-            return number
-    return 1
+def _workflow_commands(text: str) -> list[tuple[int, str]]:
+    """Return each workflow run-block command with the file line it is on.
+
+    Run blocks are found in file order: each block starts on the first line,
+    after the previous block's start, that holds the block's first line.
+    """
+    jobs, _problems = parse_jobs(text)
+    lines = text.splitlines()
+    commands = []
+    cursor = 0
+    for job in jobs.values():
+        for block in job.run_blocks:
+            block_lines = block.text.splitlines()
+            first = next((line.strip() for line in block_lines if line.strip()), "")
+            start = next(
+                (
+                    index
+                    for index in range(cursor, len(lines))
+                    if first and first in lines[index]
+                ),
+                cursor,
+            )
+            cursor = start + 1
+            offset = next(
+                (index for index, line in enumerate(block_lines) if line.strip()), 0
+            )
+            commands.extend(
+                (start + 1 + number - 1 - offset, command)
+                for number, command in _commands(block.text)
+            )
+    return commands
 
 
 def _shell_text(kind: str, text: str) -> list[tuple[int, str]]:
     """Return the shell code a file runs, with the line it starts on."""
     if kind == "workflow":
-        jobs, _problems = parse_jobs(text)
-        return [
-            (_line_of(text, command), command)
-            for job in jobs.values()
-            for block in job.run_blocks
-            for _, command in _commands(block.text)
-        ]
+        return _workflow_commands(text)
     if kind == "dockerfile":
         return [
             (number, command)
@@ -332,13 +356,17 @@ def _exception_problems(rule_id: str, exception: RuleException) -> list[Violatio
                 f"use category = '{PINNED_TOOL}' or leave it out",
             )
         )
-    elif not exception.removal and exception.issue is None:
+    elif not exception.removal and (
+        exception.issue is None or exception.expires == date.max
+    ):
         problems.append(
             Violation(
                 rule_id,
                 "locked-installs",
-                f"{where} has no removal condition and no tracking issue",
-                "add removal = the condition for removing it, or expires and issue",
+                f"{where} has no removal condition and no review date with a "
+                "tracking issue",
+                "add removal = the condition for removing it, or both expires "
+                "and issue",
             )
         )
     return problems
