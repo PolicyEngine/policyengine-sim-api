@@ -326,7 +326,9 @@ def _datasets_named(report) -> set[tuple[str, str, str, str, str]]:
     }
 
 
-@pytest.mark.parametrize("region", ["state/ut", "ut", "congressional_district/UT-01"])
+@pytest.mark.parametrize(
+    "region", ["state/ut", "State/UT", "ut", " ut ", "congressional_district/UT-01"]
+)
 def test_state_and_district_requests_name_the_regional_dataset(region) -> None:
     from stage12_fixtures import (
         REGIONAL_DATASET,

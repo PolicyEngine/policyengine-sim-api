@@ -10,6 +10,30 @@ NonEmptyText = Annotated[str, Field(min_length=1)]
 Sha256Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 CountryId = Literal["us", "uk"]
 SUPPORTED_COUNTRIES: tuple[CountryId, ...] = ("us", "uk")
+# A bare two-letter US region is a state code, such as "ut".
+_US_STATE_CODE_LENGTH = 2
+
+
+def region_type_of(country: str, region: str | None) -> str | None:
+    """Return the region type a requested region code names, as bundles key it.
+
+    Codes are read as the simulation runtime normalises them: surrounding
+    whitespace is ignored and the country itself, or no region, is
+    ``national``. A bare two-letter US code is a state and a bare UK name is
+    a UK country. Otherwise the type is the part before the first slash, in
+    lower case: ``State/UT`` is ``state`` and ``congressional_district/UT-01``
+    is ``congressional_district``. None means the code names no region type.
+    """
+    raw = (region or "").strip()
+    if not raw or raw.lower() == country:
+        return "national"
+    if "/" in raw:
+        return raw.split("/", 1)[0].lower()
+    if country == "us" and len(raw) == _US_STATE_CODE_LENGTH:
+        return "state"
+    if country == "uk" and raw.lower() not in SUPPORTED_COUNTRIES:
+        return "country"
+    return None
 
 
 class StrictBundleModel(BaseModel):
@@ -62,12 +86,16 @@ class Stage12CountryBundle(StrictBundleModel):
     datasets: tuple[Stage12Dataset, ...]
     region_datasets: tuple[Stage12RegionDataset, ...] | None = None
 
-    def dataset_for_region_type(self, region_type: str) -> str | None:
+    def dataset_for_region_type(self, region_type: str | None) -> str | None:
         """Return the dataset identity ``region_type`` regions load, or None."""
         for item in self.region_datasets or ():
             if item.region_type == region_type:
                 return item.dataset
         return None
+
+    def dataset_for_region(self, region: str | None) -> str | None:
+        """Return the dataset identity a requested region code loads, or None."""
+        return self.dataset_for_region_type(region_type_of(self.country, region))
 
 
 class Stage12BundleManifest(StrictBundleModel):

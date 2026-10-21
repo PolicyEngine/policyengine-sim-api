@@ -11,6 +11,7 @@ from policyengine_simulation_contract.stage12_bundle import (
     Stage12CountryBundle,
     Stage12Dataset,
     Stage12RegionDataset,
+    region_type_of,
 )
 from policyengine_simulation_contract.stage12_manifest import (
     ACTIVE_MANIFEST_KEY,
@@ -411,3 +412,40 @@ def test_storage_names_must_be_distinct() -> None:
     )
     with pytest.raises(ValueError, match="different"):
         assert_separate_manifest_names(v1_name="same", v2_name="same")
+
+
+@pytest.mark.parametrize(
+    ("country", "region", "region_type"),
+    [
+        ("us", None, "national"),
+        ("us", "", "national"),
+        ("us", " US ", "national"),
+        ("us", "state/ut", "state"),
+        ("us", "State/UT", "state"),
+        ("us", "ut", "state"),
+        ("us", " ut ", "state"),
+        ("us", "congressional_district/ut-01", "congressional_district"),
+        ("us", "CONGRESSIONAL_DISTRICT/UT-01", "congressional_district"),
+        ("us", "place/UT-67000", "place"),
+        ("us", "utah", None),
+        ("uk", "uk", "national"),
+        ("uk", "country/scotland", "country"),
+        ("uk", "scotland", "country"),
+        ("uk", "constituency/Aldershot", "constituency"),
+    ],
+)
+def test_region_type_reads_codes_as_the_runtime_normalises_them(
+    country: str, region: str | None, region_type: str | None
+) -> None:
+    assert region_type_of(country, region) == region_type
+
+
+def test_a_country_bundle_gives_the_dataset_a_region_code_loads() -> None:
+    worker = _regional_worker()
+    us = next(country for country in worker.bundle.countries if country.country == "us")
+    uk = next(country for country in worker.bundle.countries if country.country == "uk")
+
+    assert us.dataset_for_region("State/UT") == "populace_us_2024_local"
+    assert us.dataset_for_region("us") == "populace_us_2024"
+    assert us.dataset_for_region("place/UT-67000") is None
+    assert uk.dataset_for_region("country/scotland") is None

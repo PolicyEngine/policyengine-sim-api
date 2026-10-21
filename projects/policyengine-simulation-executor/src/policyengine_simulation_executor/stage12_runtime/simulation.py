@@ -76,9 +76,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# A bare two-letter US region is a state code, such as "ut".
-_US_STATE_CODE_LENGTH = 2
-
 
 @dataclass(frozen=True)
 class SimulationCalculation:
@@ -177,23 +174,6 @@ def _require_context(
         raise ValueError(msg)
 
 
-def _region_type(country: str, region_code: str | None) -> str | None:
-    """Return the bundle region type of a requested region code.
-
-    ``state/ut`` gives ``state`` and ``congressional_district/UT-01`` gives
-    ``congressional_district``; the country itself (or no region) is
-    ``national``, and a bare two-letter US code is a state, as the gateway
-    reads it. None means the code names no region type.
-    """
-    if not region_code or region_code.lower() == country:
-        return "national"
-    if "/" in region_code:
-        return region_code.split("/", 1)[0]
-    if country == "us" and len(region_code) == _US_STATE_CODE_LENGTH:
-        return "state"
-    return None
-
-
 def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
     resolved = load_stage12_bundle()
     if resolved.bundle_manifest_sha256 != simulation.bundle.bundle_manifest_sha256:
@@ -210,9 +190,7 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
     # A region loads the dataset the bundle names for its region type. Entry
     # services released before regional provenance name the default dataset
     # for every region, so the default stays accepted until they are updated.
-    regional = country.dataset_for_region_type(
-        _region_type(simulation.geography.country, simulation.geography.region)
-    )
+    regional = country.dataset_for_region(simulation.geography.region)
     named = simulation.bundle.dataset.identity
     regional_entry = next(
         (item for item in country.datasets if item.identity == regional), None

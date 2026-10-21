@@ -835,6 +835,7 @@ def _simulation_for(region: str, provenance: BundleProvenance):
     ("region", "provenance"),
     [
         ("state/ut", _regional_provenance),
+        ("State/UT", _regional_provenance),
         ("ut", _regional_provenance),
         ("congressional_district/UT-01", _regional_provenance),
         ("us", _bundle),

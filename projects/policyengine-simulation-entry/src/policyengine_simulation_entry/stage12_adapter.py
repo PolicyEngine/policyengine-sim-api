@@ -86,8 +86,6 @@ _ALLOWED_FIELDS = frozenset(
 )
 _AGGREGATES = tuple(ReportAggregate)
 _YEAR_DIGIT_COUNT = 4
-# A bare two-letter US region is a state code, such as "ut".
-_US_STATE_CODE_LENGTH = 2
 
 
 def _skip(reason: ComparisonSkipReason) -> AdaptedComparisonRun:
@@ -171,24 +169,6 @@ def _accepted_dataset_values(selected_dataset: Stage12Dataset) -> set[str | None
     }
 
 
-def _region_type(country: str, region: str) -> str | None:
-    """Return the bundle region type of a requested region code.
-
-    The same reading as the Stage 12 worker's: ``state/ut`` is ``state``,
-    ``congressional_district/UT-01`` is ``congressional_district``, the
-    country itself is ``national``, and a bare two-letter US code is a state,
-    as the gateway reads it. The entry service cannot import the worker's
-    code, so it keeps this copy.
-    """
-    if region.lower() == country:
-        return "national"
-    if "/" in region:
-        return region.split("/", 1)[0]
-    if country == "us" and len(region) == _US_STATE_CODE_LENGTH:
-        return "state"
-    return None
-
-
 def _region_dataset(
     bundle_country: Stage12CountryBundle, region: str
 ) -> Stage12Dataset | None:
@@ -197,9 +177,7 @@ def _region_dataset(
     Workers published before region datasets name none, and their regions
     load the default dataset.
     """
-    identity = bundle_country.dataset_for_region_type(
-        _region_type(bundle_country.country, region)
-    )
+    identity = bundle_country.dataset_for_region(region)
     return next(
         (item for item in bundle_country.datasets if item.identity == identity), None
     )
