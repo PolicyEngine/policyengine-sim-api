@@ -658,6 +658,35 @@ class PyrightCommandTest(FakeUvTestCase):
             ),
         )
 
+    def test_a_new_error_and_a_stale_entry_are_both_reported_with_both_fixes(
+        self,
+    ) -> None:
+        leave_report(
+            self.service,
+            report(
+                route_unbound(self.root, 10),
+                diagnostic(self.root / SERVICE_FILE, 30, '"call" is possibly unbound'),
+            ),
+        )
+
+        status, lines = self.run_pyright_command("projects/service")
+
+        self.assertEqual(status, 1)
+        self.assertEqual(
+            lines[1:],
+            [
+                f"  new error: {SERVICE_FILE}:30:9 - "
+                f'"call" is possibly unbound ({UNBOUND})',
+                f"  no longer occurs: {ROUTE_UNBOUND_ENTRY}",
+                "  Fix: fix each new error; the baseline only shrinks.",
+                "  Fix: remove the entries that no longer occur with "
+                "python -m scripts.rules pyright projects/service "
+                "--write-baseline, then set count under [rule.baseline] "
+                "of ex.quality.pyright-service to the number left.",
+                "pyright: failed",
+            ],
+        )
+
     def test_write_baseline_removes_entries_that_no_longer_occur(self) -> None:
         leave_report(self.service, report(route_unbound(self.root, 10)))
 
@@ -828,6 +857,22 @@ class PyrightCommandTest(FakeUvTestCase):
                     f"--outputjson --pythonpath {self.library}/.venv/bin/python",
                 ],
             ],
+        )
+
+    def test_sync_then_write_baseline(self) -> None:
+        leave_report(self.service, report(route_unbound(self.root, 10)))
+
+        status, _ = self.run_pyright_command(
+            "projects/service", "--sync", "--write-baseline"
+        )
+
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            [call[1].split()[0] for call in self.uv_calls()], ["sync", "tool"]
+        )
+        self.assertEqual(
+            read_baseline(self.root / "rules/baselines/pyright-service.txt"),
+            [ROUTE_UNBOUND_ENTRY],
         )
 
     def test_a_failed_sync_fails_the_package(self) -> None:

@@ -142,8 +142,9 @@ def main(argv: list[str] | None = None) -> int:
         "--write-baseline",
         action="store_true",
         help=(
-            "pyright only: rewrite a ratcheted package's baseline as the errors "
-            "that occur now; it never adds an error"
+            "pyright only: rewrite each ratcheted package's baseline (by default "
+            "every one) as the errors that occur now, refusing an error an "
+            "existing baseline doesn't list"
         ),
     )
     parser.add_argument(

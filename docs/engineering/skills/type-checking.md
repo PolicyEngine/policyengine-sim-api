@@ -80,12 +80,18 @@ commit and the baseline only shrinks.
 
 After fixing errors:
 
-1. run `python -m scripts.rules pyright <package> --write-baseline`, which
-   rewrites the baseline as the errors that occur now. It never adds an error:
-   it refuses when one is new;
+1. run `python -m scripts.rules pyright <package> --write-baseline` (without a
+   package, it does every ratcheted package). It rewrites the baseline as the
+   errors that occur now, and refuses when one of them isn't already listed;
 2. set the rule's `[rule.baseline] count` in `rules/registry.toml` to the
-   number of entries left. The rules guard fails when the count doesn't match
-   the file, or grows compared with the base branch.
+   number of entries left.
+
+What stops a baseline growing is the rules guard: it fails when the count
+doesn't match the file, and when the count is higher than on the base branch.
+`--write-baseline` records every current error when the baseline file doesn't
+exist yet, which is how a package is first ratcheted, so deleting a baseline
+and rewriting it would only pass the guard if the count stayed the same, and
+the swap would show in the reviewed diff.
 
 Once a baseline is empty, delete it and make the rule `enforced`.
 

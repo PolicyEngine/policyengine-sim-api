@@ -415,7 +415,13 @@ def _check_ratcheted(
 
 
 def _write_baseline(check: _PackageCheck, baseline_file: str) -> tuple[bool, list[str]]:
-    """Rewrite the baseline as the errors that occur now; never add one to it."""
+    """Rewrite the baseline as the errors that occur now.
+
+    An existing baseline only loses entries: an error it doesn't list is
+    refused. A missing baseline is written with every error, which is how a
+    package is first ratcheted; the rules guard then rejects a count higher
+    than the base branch's.
+    """
     path = check.root / baseline_file
     if path.is_file():
         comparison = compare(check.errors, read_baseline(path))
