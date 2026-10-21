@@ -121,6 +121,27 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
         ]
 
 
+def test_modal_image_refreshes_ca_certificates_before_installing_packages(
+    monkeypatch,
+):
+    # Modal's cached debian_slim base still trusts the roots above the
+    # compromised eMudhra intermediate CAs; the image must upgrade Debian's CA
+    # store before any download and point grpcio at that store.
+    install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    calls = app.simulation_image.calls
+    assert calls[0][0] == "debian_slim"
+    assert calls[1] == ("apt_install", ("ca-certificates",))
+    assert calls[2] == (
+        "env",
+        {"GRPC_DEFAULT_SSL_ROOTS_FILE_PATH": "/etc/ssl/certs/ca-certificates.crt"},
+    )
+    assert calls[3][0] == "uv_sync"
+
+
 def _fake_manifest():
     """Return a schema-valid store manifest payload.
 

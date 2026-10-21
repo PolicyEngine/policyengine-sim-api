@@ -23,6 +23,10 @@ class FakeImage:
         image.calls.append(("debian_slim", python_version))
         return image
 
+    def apt_install(self, *packages):
+        self.calls.append(("apt_install", packages))
+        return self
+
     def uv_sync(self, uv_project_dir="./", **kwargs):
         self.calls.append(("uv_sync", uv_project_dir, kwargs))
         return self
@@ -144,6 +148,24 @@ def test_gateway_image_has_api_v1_otel_configuration(monkeypatch):
     assert environment["OTEL_TRACES_EXPORTER"] == "otlp"
     assert environment["OTEL_METRICS_EXPORTER"] == "otlp"
     assert "OBSERVABILITY_GOOGLE_WORKLOAD_IDENTITY_PROVIDER" in environment
+
+
+def test_gateway_image_refreshes_ca_certificates_and_points_grpc_at_them(
+    monkeypatch,
+):
+    # Modal's cached debian_slim base still trusts the roots above the
+    # compromised eMudhra intermediate CAs; the image must upgrade Debian's CA
+    # store and make grpcio verify against it instead of its compiled-in list.
+    app = import_gateway_app(monkeypatch)
+    calls = app.gateway_image.calls
+
+    assert calls[0][0] == "debian_slim"
+    assert calls[1] == ("apt_install", ("ca-certificates",))
+    assert calls[2][0] == "uv_sync"
+    environment = next(call[1] for call in calls if call[0] == "env")
+    assert environment["GRPC_DEFAULT_SSL_ROOTS_FILE_PATH"] == (
+        "/etc/ssl/certs/ca-certificates.crt"
+    )
 
 
 def test_app_module_imports_at_container_entrypoint_path(monkeypatch):

@@ -39,6 +39,7 @@ from policyengine_simulation_observability.telemetry import (
 )
 from src.modal._image_setup import fetch_artifacts, snapshot_models
 from src.modal.bundle_data import bundle_data_install_command
+from src.modal.ca_certificates import GRPC_CA_BUNDLE_ENV, OPERATING_SYSTEM_CA_PACKAGE
 from src.modal.logging_redaction import redact_params_for_logging
 from src.modal.static_runtime_files import add_static_runtime_files
 
@@ -192,6 +193,10 @@ def build_runtime_simulation_image() -> modal.Image:
     """
     return (
         modal.Image.debian_slim(python_version="3.13")
+        # Upgrade Debian's CA store before anything is downloaded, and make
+        # grpcio verify servers against it (src/modal/ca_certificates.py).
+        .apt_install(OPERATING_SYSTEM_CA_PACKAGE)
+        .env(GRPC_CA_BUNDLE_ENV)
         # The modal-simulation-image dependency group, installed straight
         # from this project's uv.lock (frozen): image packages match the
         # tested environment and can only change through a relock.

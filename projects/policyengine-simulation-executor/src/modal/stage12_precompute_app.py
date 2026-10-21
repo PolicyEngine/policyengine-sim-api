@@ -26,6 +26,7 @@ from policyengine_simulation_executor.stage12_cache.precompute import (
 )
 from policyengine_simulation_executor.stage12_cache.store import resolve_cache_bucket
 from src.modal.bundle_data import bundle_data_install_command
+from src.modal.ca_certificates import GRPC_CA_BUNDLE_ENV, OPERATING_SYSTEM_CA_PACKAGE
 
 import modal
 
@@ -46,6 +47,10 @@ worker_secrets = [gcp_secret, hf_secret]
 
 precompute_image = (
     modal.Image.debian_slim(python_version="3.13")
+    # Upgrade Debian's CA store before anything is downloaded, and make grpcio
+    # verify servers against it (src/modal/ca_certificates.py).
+    .apt_install(OPERATING_SYSTEM_CA_PACKAGE)
+    .env(GRPC_CA_BUNDLE_ENV)
     .uv_sync(
         uv_project_dir=_UV_PROJECT_DIR,
         frozen=True,
