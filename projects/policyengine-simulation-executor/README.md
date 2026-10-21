@@ -156,6 +156,12 @@ Operational notes:
 - Only pure default requests read the baked folder: any request naming an
   explicit `data` dataset or pinning a `data_version` bypasses it (see
   `_load_dataset` in `simulation_runtime.py`).
+- A US state or congressional-district request whose region loads a
+  non-default dataset reads its state's baked file when the image has one for
+  the requested year and .py's year-file reuse checks accept it (see
+  `state_datasets.baked_state_data_folder`). Otherwise it prepares the full
+  regional dataset during the request, as before. The run records which in
+  its `dataset_source` attribute: `baked_state` or `on_demand`.
 - Known residual, inherited rather than introduced: a data re-release
   under the same revision labels leaves the cached bundle-install layer —
   and therefore the receipt every artifact key derives from — unchanged.

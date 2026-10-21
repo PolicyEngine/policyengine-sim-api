@@ -74,6 +74,7 @@ from policyengine_simulation_executor.simulation_runtime import (
     _resolve_dataset_selection,
     _resolve_region,
     _run_simulation_impl_core,
+    resolve_data_folder,
     run_simulation_impl,
 )
 from policyengine_simulation_executor.simulation_runtime import (
@@ -574,7 +575,7 @@ def test_run_simulation_impl_records_runtime_timings_without_real_calculation(
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
-        lambda _params, country_module, selection: dataset,
+        lambda _params, country_module, selection, data_folder=None: dataset,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
@@ -710,7 +711,7 @@ def test_run_simulation_impl_exports_baseline_artifact_outcome(monkeypatch):
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
-        lambda _params, country_module, selection: dataset,
+        lambda _params, country_module, selection, data_folder=None: dataset,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
@@ -1104,7 +1105,7 @@ def test_run_simulation_impl_core_builds_and_serializes_macro_output(monkeypatch
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
-        lambda _params, country_module, selection: dataset,
+        lambda _params, country_module, selection, data_folder=None: dataset,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",
@@ -1182,7 +1183,7 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
         )
         return baseline_simulation if len(build_calls) == 1 else reform_simulation
 
-    def fake_load_dataset(_params, *, country_module, selection):
+    def fake_load_dataset(_params, *, country_module, selection, data_folder=None):
         load_selections.append(selection)
         return dataset
 
@@ -1232,6 +1233,141 @@ def test_run_simulation_impl_core_passes_region_scoping_to_simulations(monkeypat
     assert build_calls[1][4] is load_selections[0]
 
 
+class _StoppedAfterLoadingError(Exception):
+    """Raised by a stubbed simulation build once the dataset has loaded."""
+
+
+def _load_through_runtime(
+    monkeypatch, *, region_resolution, selection, baked_folder, time_period=2026
+):
+    """Run the annual runtime up to its dataset load and return what it did."""
+    from policyengine_simulation_executor import state_datasets
+
+    load_calls = []
+    lookups = []
+
+    def fake_load_dataset(_params, *, country_module, selection, data_folder=None):
+        load_calls.append({"selection": selection, "data_folder": data_folder})
+        return object()
+
+    def fake_baked_state_data_folder(**kwargs):
+        lookups.append(kwargs)
+        return baked_folder
+
+    def stop_after_loading(*_args, **_kwargs):
+        raise _StoppedAfterLoadingError
+
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._country_module",
+        lambda _country: SimpleNamespace(model=SimpleNamespace(version="2.2.1")),
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._resolve_region",
+        lambda **_kwargs: region_resolution,
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._resolve_dataset_selection",
+        lambda _params, *, region_resolution: selection,
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._load_dataset",
+        fake_load_dataset,
+    )
+    monkeypatch.setattr(
+        state_datasets, "baked_state_data_folder", fake_baked_state_data_folder
+    )
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime._build_simulation",
+        stop_after_loading,
+    )
+    runtime = _TrackingRuntime()
+    with pytest.raises(_StoppedAfterLoadingError):
+        _run_simulation_impl_core(
+            {
+                "country": "us",
+                "region": region_resolution.code,
+                "time_period": time_period,
+                "baseline": {},
+                "reform": {},
+            },
+            runtime=runtime,
+        )
+    return SimpleNamespace(
+        load_calls=load_calls, lookups=lookups, context=dict(runtime.context)
+    )
+
+
+def _regional_selection():
+    return DatasetSelection(
+        name="populace_us_2024_acs_local",
+        uri="hf://policyengine/populace-us/populace_us_2024_acs_local.h5@rev",
+        is_default=False,
+    )
+
+
+def test_runtime_loads_a_state_from_its_baked_folder(monkeypatch):
+    loaded = _load_through_runtime(
+        monkeypatch,
+        region_resolution=RegionResolution(
+            code="state/ut", dataset_reference="ref", state_code="UT"
+        ),
+        selection=_regional_selection(),
+        baked_folder="/opt/policyengine/data/state-datasets/acs/UT",
+    )
+
+    assert loaded.load_calls == [
+        {
+            "selection": _regional_selection(),
+            "data_folder": "/opt/policyengine/data/state-datasets/acs/UT",
+        }
+    ]
+    assert loaded.lookups == [
+        {
+            "country": "us",
+            "selection": _regional_selection(),
+            "state_code": "UT",
+            "year": 2026,
+            "data_folder": resolve_data_folder(),
+        }
+    ]
+    assert loaded.context["dataset_source"] == "baked_state"
+
+
+def test_runtime_prepares_a_state_on_demand_without_a_baked_file(monkeypatch):
+    loaded = _load_through_runtime(
+        monkeypatch,
+        region_resolution=RegionResolution(
+            code="congressional_district/UT-01",
+            dataset_reference="ref",
+            state_code="UT",
+        ),
+        selection=_regional_selection(),
+        baked_folder=None,
+        time_period=2028,
+    )
+
+    assert loaded.load_calls[0]["data_folder"] is None
+    assert loaded.lookups[0]["year"] == 2028
+    assert loaded.context["dataset_source"] == "on_demand"
+
+
+def test_runtime_loads_a_national_run_from_the_default_folder(monkeypatch):
+    bundle = get_country_release_bundle("us")
+    loaded = _load_through_runtime(
+        monkeypatch,
+        region_resolution=RegionResolution(code="us"),
+        selection=DatasetSelection(
+            name=bundle.default_dataset,
+            uri=bundle.default_dataset_uri,
+            is_default=True,
+        ),
+        baked_folder=None,
+    )
+
+    assert loaded.load_calls[0]["data_folder"] is None
+    assert "dataset_source" not in loaded.context
+
+
 def test_run_simulation_impl_core_passes_detected_uk_boundary_to_builder(monkeypatch):
     dataset = SimpleNamespace(
         data=SimpleNamespace(
@@ -1262,7 +1398,7 @@ def test_run_simulation_impl_core_passes_detected_uk_boundary_to_builder(monkeyp
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._load_dataset",
-        lambda _params, country_module, selection: dataset,
+        lambda _params, country_module, selection, data_folder=None: dataset,
     )
     monkeypatch.setattr(
         "policyengine_simulation_executor.simulation_runtime._build_simulation",

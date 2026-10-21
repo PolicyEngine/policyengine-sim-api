@@ -29,6 +29,7 @@ from policyengine_simulation_observability.stages import (
 )
 from policyengine_simulation_observability.telemetry import split_internal_payload
 
+from policyengine_simulation_executor import state_datasets
 from policyengine_simulation_executor.job_progress import (
     NULL_JOB_PROGRESS,
     JobProgressReporter,
@@ -874,10 +875,26 @@ def _run_simulation_impl_core(
             simulation_params, region_resolution=region_resolution
         )
     with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD)):
+        baked_folder = state_datasets.baked_state_data_folder(
+            country=country,
+            selection=dataset_selection,
+            state_code=region_resolution.state_code,
+            year=_parse_year(simulation_params),
+            data_folder=resolve_data_folder(),
+        )
+        if not dataset_selection.is_default:
+            runtime.set_context(
+                dataset_source=(
+                    state_datasets.BAKED_STATE_DATASET_SOURCE
+                    if baked_folder
+                    else state_datasets.ON_DEMAND_DATASET_SOURCE
+                )
+            )
         dataset = _load_dataset(
             simulation_params,
             selection=dataset_selection,
             country_module=country_module,
+            data_folder=baked_folder,
         )
     from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
         detect_uk_local_authority_metadata,
