@@ -1100,11 +1100,12 @@ invocation = "unittest discover -s scripts/rules/tests"
 [[rule]]
 id = "sim.quality.pyright-libraries-and-entry"
 category = "quality"
-statement = "The contract, observability, Stage 12 persistence and fastapi libraries and the simulation entry have no Pyright errors, checked with the pinned Pyright version in each package's own locked environment."
+statement = "The contract, observability, simulation persistence, Stage 12 persistence and fastapi libraries and the simulation entry have no Pyright errors, checked with the pinned Pyright version in each package's own locked environment."
 rationale = "docs/engineering/skills/type-checking.md#rules"
 scope = [
   "libs/policyengine-simulation-contract/src/**/*.py",
   "libs/policyengine-simulation-observability/src/**/*.py",
+  "libs/policyengine-simulation-persistence/src/**/*.py",
   "libs/policyengine-stage12-persistence/src/**/*.py",
   "libs/policyengine-fastapi/src/**/*.py",
   "projects/policyengine-simulation-entry/src/**/*.py",
@@ -1117,6 +1118,7 @@ kind = "pyright"
 projects = [
   "libs/policyengine-simulation-contract",
   "libs/policyengine-simulation-observability",
+  "libs/policyengine-simulation-persistence",
   "libs/policyengine-stage12-persistence",
   "libs/policyengine-fastapi",
   "projects/policyengine-simulation-entry",

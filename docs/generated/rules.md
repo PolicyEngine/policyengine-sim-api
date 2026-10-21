@@ -315,7 +315,7 @@ flowchart LR
 | `sim.quality.pyright-apis-integ` | The generated-client integration-test project, apis-integ, has no Pyright errors, checked with the pinned Pyright version in the project's own locked environment. | mechanical | enforced | yes | pyright in `projects/policyengine-apis-integ` | `pr.yml:pyright` | yes |
 | `sim.quality.pyright-executor` | The simulation executor has no Pyright errors, checked with the pinned Pyright version in the executor's own locked environment. | mechanical | enforced | yes | pyright in `projects/policyengine-simulation-executor` | `pr.yml:pyright` | yes |
 | `sim.quality.pyright-gateway` | The simulation gateway has no Pyright errors, checked with the pinned Pyright version in the gateway's own locked environment. | mechanical | enforced | yes | pyright in `projects/policyengine-simulation-gateway` | `pr.yml:pyright` | yes |
-| `sim.quality.pyright-libraries-and-entry` | The contract, observability, Stage 12 persistence and fastapi libraries and the simulation entry have no Pyright errors, checked with the pinned Pyright version in each package's own locked environment. | mechanical | enforced | yes | pyright in `libs/policyengine-simulation-contract`, `libs/policyengine-simulation-observability`, `libs/policyengine-stage12-persistence`, `libs/policyengine-fastapi`, `projects/policyengine-simulation-entry` | `pr.yml:pyright` | yes |
+| `sim.quality.pyright-libraries-and-entry` | The contract, observability, simulation persistence, Stage 12 persistence and fastapi libraries and the simulation entry have no Pyright errors, checked with the pinned Pyright version in each package's own locked environment. | mechanical | enforced | yes | pyright in `libs/policyengine-simulation-contract`, `libs/policyengine-simulation-observability`, `libs/policyengine-simulation-persistence`, `libs/policyengine-stage12-persistence`, `libs/policyengine-fastapi`, `projects/policyengine-simulation-entry` | `pr.yml:pyright` | yes |
 | `sim.quality.python-file-length` | No tracked Python file has more than 800 lines, or more than 1,500 lines if it is test code: a file under a tests or fixtures directory, or a conftest.py. | metric | enforced | yes | quality guard `file-length` | `pr.yml:quality-guards` | yes |
 | `sim.quality.ruff-format-src` | Source code under projects/*/src and libs/*/src is formatted with ruff format. | mechanical | enforced | yes | ruff format | `pr.yml:lint` | — |
 | `sim.quality.ruff-format-tests` | Test code is formatted with ruff format too; CI currently checks only src directories. | mechanical | doc-only | no | nothing | — | — |
@@ -348,7 +348,7 @@ flowchart LR
   r_sim_quality_pyright_gateway("sim.quality.pyright-gateway (enforced)")
   e_pyright_in_projects_policyengine_simulation_gateway["pyright in projects/policyengine-simulation-gateway"]
   r_sim_quality_pyright_libraries_and_entry("sim.quality.pyright-libraries-and-entry (enforced)")
-  e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry["pyright in libs/policyengine-simulation-contract, libs/policyengine-simulation-observability, libs/policyengine-stage12-persistence, libs/policyengine-fastapi, projects/policyengine-simulation-entry"]
+  e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_simulation_persistence__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry["pyright in libs/policyengine-simulation-contract, libs/policyengine-simulation-observability, libs/policyengine-simulation-persistence, libs/policyengine-stage12-persistence, libs/policyengine-fastapi, projects/policyengine-simulation-entry"]
   r_sim_quality_python_file_length("sim.quality.python-file-length (enforced)")
   e_quality_guard_file_length["quality guard file-length"]
   r_sim_quality_ruff_format_src("sim.quality.ruff-format-src (enforced)")
@@ -382,8 +382,8 @@ flowchart LR
   e_pyright_in_projects_policyengine_simulation_executor --> j_CI_pr_yml_pyright
   r_sim_quality_pyright_gateway --> e_pyright_in_projects_policyengine_simulation_gateway
   e_pyright_in_projects_policyengine_simulation_gateway --> j_CI_pr_yml_pyright
-  r_sim_quality_pyright_libraries_and_entry --> e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry
-  e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry --> j_CI_pr_yml_pyright
+  r_sim_quality_pyright_libraries_and_entry --> e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_simulation_persistence__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry
+  e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_simulation_persistence__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry --> j_CI_pr_yml_pyright
   r_sim_quality_python_file_length --> e_quality_guard_file_length
   e_quality_guard_file_length --> j_CI_pr_yml_quality_guards
   r_sim_quality_ruff_format_src --> e_ruff_format
