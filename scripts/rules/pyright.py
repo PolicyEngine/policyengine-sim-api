@@ -12,8 +12,9 @@ directory against the interpreter of the package's locked environment
   occurs, so each fix removes its entry and the baseline only shrinks.
 
 A baseline entry is ``<path> :: <Pyright rule> :: <first line of the message>``,
-one line per error and without a line number, so edits elsewhere in a file don't
-change it, and the rule's baseline count is the number of errors it tolerates.
+one line per error, sorted and without a line number, so edits elsewhere in a
+file don't change it, and the rule's baseline count is the number of errors it
+tolerates.
 
 Pyright's messages and checks change between releases, so every package is
 checked with one pinned version, PYRIGHT_VERSION, rather than the version each
@@ -251,11 +252,13 @@ def rule_for(registry: Registry, package: str) -> Rule | None:
 def _baseline_header(rule: Rule, package: str) -> str:
     """Return the comment block that starts a new baseline file."""
     return (
-        f"# Tolerated Pyright errors in {package}. This list may only shrink.\n"
+        f"# Tolerated Pyright errors in {package}.\n"
+        "# This list may only shrink.\n"
         "#\n"
-        f"# Rule {rule.id}. Each entry is <path> :: <Pyright rule> :: <first line\n"
-        "# of the message>, one line per error. After fixing errors, remove the\n"
-        "# entries that no longer occur with\n"
+        f"# Rule {rule.id}. Each entry is\n"
+        "# <path> :: <Pyright rule> :: <first line of the message>, one line per\n"
+        "# error, sorted. After fixing errors, remove the entries that no longer\n"
+        "# occur with\n"
         f"#   python -m scripts.rules pyright {package} --write-baseline\n"
         "# then set the rule's [rule.baseline] count in rules/registry.toml to match.\n"
     )
@@ -350,7 +353,7 @@ def _write_baseline(check: _PackageCheck, baseline_file: str) -> tuple[bool, lis
         header = _existing_header(path)
     else:
         header = _baseline_header(check.rule, check.package)
-    entries = [error.baseline_entry for error in check.errors]
+    entries = sorted(error.baseline_entry for error in check.errors)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(header + "".join(f"{entry}\n" for entry in entries))
     return True, [

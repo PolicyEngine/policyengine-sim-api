@@ -565,6 +565,26 @@ class PyrightCommandTest(FakeUvTestCase):
             baseline.read_text(),
         )
 
+    def test_write_baseline_sorts_its_entries(self) -> None:
+        (self.root / "rules/baselines/pyright-service.txt").unlink()
+        leave_report(
+            self.service,
+            report(
+                route_unbound(self.root, 10),
+                diagnostic(self.root / SERVICE_FILE, 20, '"call" is possibly unbound'),
+            ),
+        )
+
+        self.run_pyright_command("projects/service", "--write-baseline")
+
+        self.assertEqual(
+            read_baseline(self.root / "rules/baselines/pyright-service.txt"),
+            [
+                f'{SERVICE_FILE} :: {UNBOUND} :: "call" is possibly unbound',
+                ROUTE_UNBOUND_ENTRY,
+            ],
+        )
+
     def test_write_baseline_refuses_an_enforced_rule(self) -> None:
         self.assertEqual(
             self.run_pyright_command("libs/alpha", "--write-baseline"),
