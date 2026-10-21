@@ -1896,6 +1896,28 @@ def test_container_context_excludes_local_environments_and_unrelated_projects():
     )
 
 
+def test_container_context_includes_every_local_library_the_entrypoint_installs():
+    ignore_rules = DOCKERIGNORE.read_text(encoding="utf-8").splitlines()
+    pyproject = tomllib.loads(
+        (
+            REPOSITORY_ROOT
+            / "projects"
+            / "policyengine-simulation-entry"
+            / "pyproject.toml"
+        ).read_text(encoding="utf-8")
+    )
+    library_paths = [
+        Path(source["path"]).name
+        for source in pyproject["tool"]["uv"]["sources"].values()
+        if "path" in source
+    ]
+
+    assert library_paths
+    for library in library_paths:
+        assert f"!libs/{library}/" in ignore_rules, library
+        assert f"!libs/{library}/**" in ignore_rules, library
+
+
 def test_production_lock_contains_the_direct_stage12_database_runtime():
     lockfile = tomllib.loads(
         (

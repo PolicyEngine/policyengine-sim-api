@@ -166,7 +166,7 @@ flowchart LR
 
 | Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `sim.deploy.container-context-minimal` | Container builds exclude local environments and unrelated projects, and the entrypoint container builds for the requested target platform. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
+| `sim.deploy.container-context-minimal` | Container builds exclude local environments and unrelated projects but include every local library the entrypoint installs, and the entrypoint container builds for the requested target platform. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.docker-images-build` | The simulation entry and executor Docker images build. | mechanical | enforced | yes | CI job `docker-build` | `pr.yml:docker-build` | — |
 | `sim.deploy.gcloud-without-terraform` | Deployment uses the gcloud-based workflow, not Terraform. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.image-smoke-covers-every-image-lib` | The image smoke path filter includes every library mounted into a Modal image, so a change to any of them runs the smoke. | mechanical | doc-only | no | nothing | — | — |

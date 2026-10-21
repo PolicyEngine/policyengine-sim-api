@@ -24,7 +24,6 @@ from policyengine_simulation_contract.gateway_models import (
     JobSubmitResponse,
     PingRequest,
     PingResponse,
-    ReadinessResponse,
     SimulationErrorResponse,
     SimulationRequest,
     VersionMap,
@@ -44,6 +43,7 @@ from policyengine_simulation_observability.identifiers import (
 from policyengine_simulation_observability.observability import (
     init_simulation_observability,
 )
+from policyengine_simulation_persistence import HEAD_REVISION
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from starlette.datastructures import MutableHeaders
 
@@ -65,9 +65,12 @@ from policyengine_simulation_entry.schemas import (
     BackendTelemetryAttributes,
     BackendTelemetryPayload,
     RequestIdentifiers,
+    SimulationDatabaseReadiness,
+    SimulationEntrypointReadinessResponse,
     TemporaryStage12ReportResponse,
     TemporaryStage12SubmissionResponse,
 )
+from policyengine_simulation_entry.simulation_database import SimulationDatabase
 from policyengine_simulation_entry.stage12_backend import (
     Stage12ComparisonBackend,
     TemporaryStage12DispatchFailed,
@@ -87,6 +90,22 @@ BACKEND_RESPONSE_HEADER = {
 _json_object_adapter = TypeAdapter(JsonObject)
 type ResponseIdentifier = Literal["job_id", "batch_job_id"]
 STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS = 5.0
+SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS = 3.0
+
+
+class SimulationDatabaseConnection(Protocol):
+    """The Simulation Entrypoint's own database, as the routes use it.
+
+    The real implementation is ``SimulationDatabase``; tests inject fakes.
+    """
+
+    async def read_revision(self) -> str | None:
+        """Return the applied migration revision, or None before the first one."""
+        ...
+
+    def dispose(self) -> None:
+        """Close every pooled connection."""
+        ...
 
 
 class ComparisonBackend(Protocol):
@@ -273,12 +292,14 @@ class _EntryRuntime:
         runtime: ObservabilityRuntime,
         backend: SimulationBackend,
         comparison: ComparisonBackend | None,
+        database: SimulationDatabaseConnection | None,
     ) -> None:
         """Keep the dependencies that ``create_app`` resolved."""
         self.settings = settings
         self.runtime = runtime
         self.backend = backend
         self.comparison = comparison
+        self.database = database
 
     def bind_observability_id(self, request: Request, value: object) -> str | None:
         """Bind a normalized observability ID to the request and telemetry context."""
@@ -798,6 +819,34 @@ def _register_simulation_routes(
         )
 
 
+async def _simulation_database_readiness(
+    database: SimulationDatabaseConnection,
+) -> SimulationDatabaseReadiness:
+    """Report the database's applied revision next to the image's."""
+    try:
+        revision = await asyncio.wait_for(
+            database.read_revision(),
+            timeout=SIMULATION_DATABASE_READINESS_TIMEOUT_SECONDS,
+        )
+    # Any failure to reach or read the database is reported, never raised:
+    # the old-gateway routes this check covers do not use it.
+    except Exception as error:  # noqa: BLE001  # reported as unreachable
+        logger.warning(
+            "simulation_database_unreachable",
+            extra={"error_type": type(error).__name__},
+        )
+        return SimulationDatabaseReadiness(
+            reachable=False,
+            revision=None,
+            expected_revision=HEAD_REVISION,
+        )
+    return SimulationDatabaseReadiness(
+        reachable=True,
+        revision=revision,
+        expected_revision=HEAD_REVISION,
+    )
+
+
 def _register_service_routes(app: FastAPI, entry: _EntryRuntime) -> None:
     """Add the public version, health, readiness and ping routes."""
 
@@ -830,14 +879,23 @@ def _register_service_routes(app: FastAPI, entry: _EntryRuntime) -> None:
     async def health() -> HealthResponse:
         return HealthResponse()
 
-    @app.get("/ready", response_model=ReadinessResponse)
+    @app.get("/ready", response_model=SimulationEntrypointReadinessResponse)
     async def ready() -> Response:
-        if await entry.backend.ready():
-            return JSONResponse(ReadinessResponse(status="ready").model_dump())
-        return JSONResponse(
-            ReadinessResponse(status="not_ready").model_dump(),
-            status_code=503,
+        backend_ready = await entry.backend.ready()
+        status = "ready" if backend_ready else "not_ready"
+        status_code = 200 if backend_ready else 503
+        if entry.database is None:
+            # Without a configured database the response keeps its old shape.
+            readiness = SimulationEntrypointReadinessResponse(status=status)
+            return JSONResponse(
+                readiness.model_dump(mode="json", exclude={"simulation_database"}),
+                status_code=status_code,
+            )
+        readiness = SimulationEntrypointReadinessResponse(
+            status=status,
+            simulation_database=await _simulation_database_readiness(entry.database),
         )
+        return JSONResponse(readiness.model_dump(mode="json"), status_code=status_code)
 
     @app.post(
         "/ping",
@@ -857,9 +915,15 @@ def create_app(
     backend: SimulationBackend | None = None,
     auth_dependency: AuthenticationDependency | None = None,
     comparison_backend: ComparisonBackend | None = None,
+    simulation_database: SimulationDatabaseConnection | None = None,
 ) -> FastAPI:
     """Build the app with injectable auth/backend seams for hermetic tests."""
     runtime_settings = settings or Settings.from_env()
+    runtime_database = simulation_database
+    if runtime_database is None and runtime_settings.simulation_database_url:
+        runtime_database = SimulationDatabase.from_url(
+            runtime_settings.simulation_database_url
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -869,6 +933,8 @@ def create_app(
             yield
         finally:
             await runtime_backend.close()
+            if runtime_database is not None:
+                runtime_database.dispose()
             runtime.shutdown()
 
     app = FastAPI(
@@ -907,6 +973,7 @@ def create_app(
         runtime=runtime,
         backend=runtime_backend,
         comparison=runtime_comparison,
+        database=runtime_database,
     )
 
     _install_request_context(app, runtime_settings)
