@@ -53,8 +53,10 @@ from policyengine_simulation_executor.precompute_models import (
     DatasetPlanEntry,
     DeterminismVerdict,
     ManifestArtifact,
+    ManifestEntry,
     PrecomputePlan,
     RemoteFunction,
+    StateDatasetArtifact,
     StateDatasetBuildResult,
     StateDatasetPlanEntry,
     WorkSelection,
@@ -241,8 +243,12 @@ def select_work(plan: PrecomputePlan, *, force: bool) -> WorkSelection:
 
 
 def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
-    """Build the deploy manifest: the receipt and each artifact the image must fetch."""
-    artifacts = [
+    """Build the deploy manifest: the receipt and each artifact the image must fetch.
+
+    Datasets, then baselines, then per-state datasets, each in plan order, so
+    a plan without per-state datasets keeps the manifest it always had.
+    """
+    artifacts: list[ManifestEntry] = [
         ManifestArtifact(
             type="dataset",
             path=entry.path,
@@ -260,6 +266,18 @@ def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
             digest=entry.digest,
         )
         for entry in plan.baselines
+    ]
+    artifacts += [
+        StateDatasetArtifact(
+            type="state_dataset",
+            path=entry.path,
+            filename=entry.filename,
+            folder=entry.folder,
+            state_code=entry.state_code,
+            year=entry.year,
+            digest=entry.digest,
+        )
+        for entry in plan.state_datasets
     ]
     return ArtifactManifest(
         manifest_schema=MANIFEST_SCHEMA,

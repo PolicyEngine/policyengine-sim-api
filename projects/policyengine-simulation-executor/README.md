@@ -82,9 +82,12 @@ durable plan without changing routing.
 ## Baseline artifact pipeline (precompute → store → image fetch)
 
 The precompute app fills a content-addressed GCS store with single-year US
-datasets (2026, 2027, 2025) and the 20 per-cohort national baseline
-simulations per year; the deploy bakes them into the image, and the
-runtime loads baselines instead of computing them. Library logic lives in
+datasets (2026, 2027, 2025), the 20 per-cohort national baseline
+simulations per year, and per-state datasets: for each state region whose
+requests load a dataset other than the bundle default (the ACS-local
+dataset since policyengine 6.7), that dataset's year file filtered to the
+state's households, one file per state and year. The deploy bakes them into
+the image, and the runtime loads baselines instead of computing them. Library logic lives in
 `src/policyengine_simulation_executor/precompute.py` (keys:
 `artifact_keys.py`, store client: `artifact_store.py`); the Modal app
 (`src/modal/precompute_app.py`) is plumbing only.
@@ -103,7 +106,10 @@ The deploy job consumes the precompute job's manifest digest:
 `src/modal/app.py` resolves the manifest from GCS on the deploying
 machine and passes its content as the `fetch_artifacts` image layer's
 args (`src/modal/_image_setup.py`). The layer downloads the full
-artifact set (~430 MB) into `POLICYENGINE_DATA_FOLDER`, sitting between
+artifact set into `POLICYENGINE_DATA_FOLDER`: about 430 MB of national
+datasets and baselines, plus several GB of per-state datasets, each placed
+in `state-datasets/<dataset>/<state>/` under the year file's own name. It
+sits between
 the version env and the source mount — do not reorder. Because the
 manifest is content-addressed and rides in the layer args, Modal's layer
 cache busts exactly when the artifact set changes and never otherwise;

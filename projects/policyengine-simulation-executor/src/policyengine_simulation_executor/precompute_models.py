@@ -20,7 +20,7 @@ digests. A regression test locks the digest of a fixed payload.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -107,13 +107,34 @@ class WorkSelection(_StrictModel):
 
 
 class ManifestArtifact(_StrictModel):
-    """One artifact the deploy image must fetch."""
+    """One artifact the deploy image must fetch into its data folder."""
 
     type: Literal["dataset", "baseline"]
     path: str
     filename: str
     year: int
     digest: str
+
+
+class StateDatasetArtifact(_StrictModel):
+    """One state's year file, which the image fetches into the state's ``folder``.
+
+    Its own model, rather than optional fields on ``ManifestArtifact``, so the
+    dataset and baseline entries keep exactly their published wire shape.
+    """
+
+    type: Literal["state_dataset"]
+    path: str
+    filename: str
+    folder: str
+    state_code: str
+    year: int
+    digest: str
+
+
+ManifestEntry = Annotated[
+    ManifestArtifact | StateDatasetArtifact, Field(discriminator="type")
+]
 
 
 class ArtifactManifest(_StrictModel):
@@ -126,7 +147,7 @@ class ArtifactManifest(_StrictModel):
     manifest_schema: str = Field(alias="schema")
     country: str
     receipt: BundleVersionIdentity
-    artifacts: list[ManifestArtifact]
+    artifacts: list[ManifestEntry]
 
     def canonical_payload(self) -> dict[str, Any]:
         """Return the exact dict that gets digested and stored, keyed by wire alias."""

@@ -203,6 +203,54 @@ class TestPlanning:
             "bl1-bbbb.h5",
         ]
 
+    def test_manifest_lists_state_datasets_after_the_others_in_plan_order(self):
+        plan = _plan_with_state_datasets()
+
+        manifest = precompute.build_manifest(plan)
+
+        assert [artifact.type for artifact in manifest.artifacts] == [
+            "dataset",
+            "dataset",
+            "baseline",
+            "baseline",
+            "state_dataset",
+            "state_dataset",
+            "state_dataset",
+        ]
+        state_artifacts = [
+            artifact.model_dump()
+            for artifact in manifest.artifacts
+            if artifact.type == "state_dataset"
+        ]
+        assert state_artifacts == [
+            {
+                "type": "state_dataset",
+                "path": entry.path,
+                "filename": entry.filename,
+                "folder": entry.folder,
+                "state_code": entry.state_code,
+                "year": entry.year,
+                "digest": entry.digest,
+            }
+            for entry in plan.state_datasets
+        ]
+
+    def test_manifest_with_state_datasets_round_trips_its_wire_shape(self):
+        payload = precompute.build_manifest(
+            _plan_with_state_datasets()
+        ).canonical_payload()
+
+        assert ArtifactManifest.model_validate(payload).canonical_payload() == payload
+
+    def test_a_state_dataset_entry_must_name_its_folder_and_state(self):
+        payload = precompute.build_manifest(
+            _plan_with_state_datasets()
+        ).canonical_payload()
+        del payload["artifacts"][-1]["folder"]
+
+        with pytest.raises(ValidationError):
+            ArtifactManifest.model_validate(payload)
+
     def test_manifest_payload_is_wire_compatible(self):
         """The typed manifest must digest identically to the published dict shape.
 
