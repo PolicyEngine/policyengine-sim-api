@@ -30,7 +30,7 @@ help:
 	@echo "Maintenance:"
 	@echo "  make build            - Build Docker images"
 	@echo "  make format           - Format code with ruff"
-	@echo "  make check            - ruff check + pyright"
+	@echo "  make check            - ruff check + Pyright in each package"
 	@echo "  make update           - uv lock --upgrade across packages"
 	@echo "  make clean            - Remove caches and stop containers"
 	@echo "  make push-pr-branch   - Push current branch to origin for a PR"
@@ -147,15 +147,20 @@ format:
 		fi \
 	done
 
-check:
+# Pyright runs in each package's own locked environment, with the version CI
+# pins; apis-integ needs the generated client. See
+# docs/engineering/skills/type-checking.md.
+check: generate-clients
 	@echo "Running code quality checks..."
-	@for dir in projects/*/src libs/*/src; do \
+	@status=0; \
+	for dir in projects/*/src libs/*/src; do \
 		if [ -d "$$dir" ]; then \
 			echo "Checking $$dir..."; \
-			uv run ruff check $$dir; \
-			uv run pyright $$dir; \
+			uv run ruff check $$dir || status=1; \
 		fi \
-	done
+	done; \
+	python3 -m scripts.rules pyright --sync || status=1; \
+	exit $$status
 
 push-pr-branch:
 	@BRANCH=$$(git branch --show-current); \

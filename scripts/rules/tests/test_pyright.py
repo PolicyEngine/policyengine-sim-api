@@ -90,6 +90,10 @@ SERVICE_BASELINE = (
 FAKE_UV = """#!/bin/sh
 printf '%s|%s|%s\\n' "$(pwd -P)" "$*" "${PYRIGHT_PYTHON_FORCE_VERSION-unset}" \
     >> "$FAKE_UV_CALLS"
+if [ "$1" = "sync" ]; then
+    if [ -f uv-sync-stderr.txt ]; then cat uv-sync-stderr.txt >&2; fi
+    exit "$(cat uv-sync-exit-code.txt 2>/dev/null || echo 0)"
+fi
 cat pyright-report.json 2>/dev/null
 if [ -f pyright-stderr.txt ]; then cat pyright-stderr.txt >&2; fi
 exit "$(cat pyright-exit-code.txt 2>/dev/null || echo 0)"
@@ -729,6 +733,42 @@ class PyrightCommandTest(FakeUvTestCase):
                 "pyright: failed",
             ],
         )
+
+    def test_sync_installs_the_locked_environment_before_checking(self) -> None:
+        status, _ = self.run_pyright_command("libs/alpha", "--sync")
+
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            [call[:2] for call in self.uv_calls()],
+            [
+                [str(self.library), "sync --frozen --all-extras"],
+                [
+                    str(self.library),
+                    f"tool run --from pyright=={PYRIGHT_VERSION} pyright "
+                    f"--outputjson --pythonpath {self.library}/.venv/bin/python",
+                ],
+            ],
+        )
+
+    def test_a_failed_sync_fails_the_package(self) -> None:
+        (self.library / "uv-sync-exit-code.txt").write_text("2")
+        (self.library / "uv-sync-stderr.txt").write_text(
+            "error: The lockfile needs to be updated\n"
+        )
+
+        self.assertEqual(
+            self.run_pyright_command("libs/alpha", "--sync"),
+            (
+                1,
+                [
+                    "libs/alpha: failed, Pyright could not check it: "
+                    "`uv sync --frozen --all-extras` exited with status 2: "
+                    "error: The lockfile needs to be updated",
+                    "pyright: failed",
+                ],
+            ),
+        )
+        self.assertEqual(len(self.uv_calls()), 1)
 
     def test_without_packages_checks_every_package_a_rule_lists(self) -> None:
         status, lines = self.run_pyright_command()

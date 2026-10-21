@@ -47,7 +47,12 @@ def _ci_scripts_command(root: Path, *, write_baselines: bool) -> int:
 
 
 def _pyright_command(
-    root: Path, packages: list[str], *, write_baseline: bool, list_packages: bool
+    root: Path,
+    packages: list[str],
+    *,
+    sync: bool,
+    write_baseline: bool,
+    list_packages: bool,
 ) -> int:
     """Check each package (by default every one a rule lists) against its rule."""
     registry, violations = load_registry(root)
@@ -60,7 +65,7 @@ def _pyright_command(
     failed = False
     for package in packages or pyright.listed_packages(registry):
         passed, lines = pyright.check_package(
-            registry, root, package, write_baseline=write_baseline
+            registry, root, package, sync=sync, write_baseline=write_baseline
         )
         for line in lines:
             _report(line)
@@ -117,6 +122,14 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--sync",
+        action="store_true",
+        help=(
+            "pyright only: run `uv sync --frozen --all-extras` in each package "
+            "before checking it"
+        ),
+    )
+    parser.add_argument(
         "--write-baseline",
         action="store_true",
         help=(
@@ -131,10 +144,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     if args.command != "pyright" and (
-        args.packages or args.write_baseline or args.list_packages
+        args.packages or args.sync or args.write_baseline or args.list_packages
     ):
         parser.error(
-            "packages, --write-baseline and --list-packages apply only to pyright"
+            "packages, --sync, --write-baseline and --list-packages apply only "
+            "to pyright"
         )
     root = args.root.resolve()
 
@@ -144,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         return _pyright_command(
             root,
             args.packages,
+            sync=args.sync,
             write_baseline=args.write_baseline,
             list_packages=args.list_packages,
         )

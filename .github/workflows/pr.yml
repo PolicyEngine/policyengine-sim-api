@@ -170,14 +170,10 @@ jobs:
       if: matrix.package == 'projects/policyengine-apis-integ'
       run: ./scripts/generate-clients.sh
 
-    - name: Install the package's locked environment
-      working-directory: ${{ matrix.package }}
-      run: uv sync --frozen --all-extras
-
-    - name: Run Pyright
+    - name: Run Pyright in the package's locked environment
       env:
         PACKAGE: ${{ matrix.package }}
-      run: python -m scripts.rules pyright "$PACKAGE"
+      run: python -m scripts.rules pyright --sync "$PACKAGE"
 
   docker-build:
     name: Docker build

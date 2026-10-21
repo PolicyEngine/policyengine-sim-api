@@ -18,15 +18,18 @@ Every uv package is type-checked with Pyright on every pull request, by the
 
 ## Running the check
 
-From the repository root, once the package's locked environment exists:
+From the repository root:
 
 ```bash
-(cd projects/policyengine-simulation-gateway && uv sync --frozen --all-extras)
-python -m scripts.rules pyright projects/policyengine-simulation-gateway
+make check                                   # ruff, then Pyright in every package
+python -m scripts.rules pyright --sync projects/policyengine-simulation-gateway
+python -m scripts.rules pyright --list-packages
 ```
 
-apis-integ installs the generated API client, so run
-`./scripts/generate-clients.sh` before syncing it.
+`--sync` first runs `uv sync --frozen --all-extras` in the package; leave it
+out to check the environment as it is. apis-integ installs the generated API
+client, so run `./scripts/generate-clients.sh` before checking it (`make check`
+does).
 
 The check:
 

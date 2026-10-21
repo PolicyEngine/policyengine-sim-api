@@ -3,8 +3,8 @@
 ``python -m scripts.rules pyright <package>`` finds the Pyright rule whose
 enforcer lists the package, then runs the pinned Pyright version in the package
 directory against the interpreter of the package's locked environment
-(``.venv``, created by ``uv sync --frozen --all-extras``). The package's own
-``[tool.pyright]`` settings decide what is checked.
+(``.venv``, created by ``uv sync --frozen --all-extras``, which ``--sync`` runs
+first). The package's own ``[tool.pyright]`` settings decide what is checked.
 
 - A package under an enforced rule may have no errors.
 - A package under a ratcheted rule may have exactly the errors its baseline
@@ -43,6 +43,7 @@ UNNAMED_RULE = "error"
 # Pyright exits with 0 when it finds no errors and 1 when it finds some.
 COMPLETED_EXIT_CODES = (0, 1)
 LOCKED_INTERPRETER = Path(".venv/bin/python")
+SYNC_COMMAND = ("uv", "sync", "--frozen", "--all-extras")
 # Read by the pyright PyPI package: one would run another version, the other
 # silences its advice to upgrade.
 FORCE_VERSION_VARIABLE = "PYRIGHT_PYTHON_FORCE_VERSION"
@@ -159,6 +160,26 @@ def compare(errors: Sequence[PyrightError], baseline: Sequence[str]) -> Comparis
 def _quoted(output: str) -> str:
     """Return the end of ``output`` on one line, for an error message."""
     return " ".join(output.strip()[-QUOTED_OUTPUT_CHARACTERS:].split())
+
+
+def sync_environment(package_dir: Path) -> None:
+    """Create or update the package's locked environment, with every extra.
+
+    Raise PyrightRunError when ``uv sync`` fails.
+    """
+    completed = subprocess.run(
+        [*SYNC_COMMAND],
+        cwd=package_dir.resolve(),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        msg = (
+            f"`{' '.join(SYNC_COMMAND)}` exited with status {completed.returncode}: "
+            f"{_quoted(completed.stderr or completed.stdout)}"
+        )
+        raise PyrightRunError(msg)
 
 
 def run_pyright(package_dir: Path) -> dict[str, Any]:
@@ -364,10 +385,16 @@ def _write_baseline(check: _PackageCheck, baseline_file: str) -> tuple[bool, lis
 
 
 def check_package(
-    registry: Registry, root: Path, package: str, *, write_baseline: bool = False
+    registry: Registry,
+    root: Path,
+    package: str,
+    *,
+    sync: bool = False,
+    write_baseline: bool = False,
 ) -> tuple[bool, list[str]]:
     """Check one package against its Pyright rule; return (passed, output lines).
 
+    With ``sync``, first create or update the package's locked environment.
     With ``write_baseline``, rewrite a ratcheted rule's baseline as the errors
     that occur now, refusing when one of them is new.
     """
@@ -386,6 +413,8 @@ def check_package(
             "  Fix: fix each error instead.",
         ]
     try:
+        if sync:
+            sync_environment(root / package)
         report = run_pyright(root / package)
     except PyrightRunError as error:
         return False, [f"{package}: failed, Pyright could not check it: {error}"]
