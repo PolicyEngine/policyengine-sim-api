@@ -6,6 +6,8 @@ import contextlib
 import io
 import json
 import os
+import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -485,7 +487,8 @@ class RunPyrightTest(FakeUvTestCase):
                 [
                     str(self.package_dir.resolve()),
                     f"tool run --from pyright=={PYRIGHT_VERSION} pyright "
-                    f"--outputjson --pythonpath {interpreter}",
+                    f"--outputjson --pythonpath {interpreter} "
+                    f"--project {self.package_dir.resolve()}",
                     "unset",
                 ]
             ],
@@ -522,6 +525,48 @@ class RunPyrightTest(FakeUvTestCase):
         leave_report(self.package_dir, report(files_analyzed=0))
 
         self.assert_run_fails("Pyright checked no files")
+
+
+class ParentConfigurationTest(unittest.TestCase):
+    """Run the pinned Pyright for real; a parent pyrightconfig.json is not used.
+
+    Started in a package directory without --project, Pyright 1.1.414 also uses
+    a pyrightconfig.json from a parent directory (the repository root, libs/ or
+    projects/) instead of the package's own [tool.pyright].
+    """
+
+    def setUp(self) -> None:
+        if shutil.which("uv") is None:
+            if os.environ.get("GITHUB_ACTIONS"):
+                self.fail("uv must be installed in CI")
+            self.skipTest("uv is not installed")
+
+    def test_a_parent_pyrightconfig_json_does_not_switch_checking_off(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            package_dir = root / "libs" / "alpha"
+            (package_dir / "src").mkdir(parents=True)
+            (package_dir / "pyproject.toml").write_text(
+                '[project]\nname = "alpha"\nversion = "0"\n\n'
+                '[tool.pyright]\ninclude = ["src"]\n'
+            )
+            (package_dir / "src" / "alpha.py").write_text(
+                'def broken() -> int:\n    return "text"\n'
+            )
+            interpreter = package_dir / ".venv" / "bin" / "python"
+            interpreter.parent.mkdir(parents=True)
+            interpreter.symlink_to(sys.executable)
+            for parent in (root, root / "libs"):
+                (parent / "pyrightconfig.json").write_text(
+                    '{"typeCheckingMode": "off"}'
+                )
+
+            errors = errors_in_report(run_pyright(package_dir), root)
+
+        self.assertEqual(
+            [(error.path, error.rule) for error in errors],
+            [("libs/alpha/src/alpha.py", "reportReturnType")],
+        )
 
 
 class PyrightCommandTest(FakeUvTestCase):
@@ -854,7 +899,8 @@ class PyrightCommandTest(FakeUvTestCase):
                 [
                     str(self.library),
                     f"tool run --from pyright=={PYRIGHT_VERSION} pyright "
-                    f"--outputjson --pythonpath {self.library}/.venv/bin/python",
+                    f"--outputjson --pythonpath {self.library}/.venv/bin/python "
+                    f"--project {self.library}",
                 ],
             ],
         )

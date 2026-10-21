@@ -119,6 +119,9 @@ jobs:
       with:
         python-version: '3.13'
 
+    - name: Install uv (the Pyright check's tests run the pinned Pyright)
+      uses: astral-sh/setup-uv@v8.1.0
+
     - name: Test the rules registry tool
       run: python -m unittest discover -s scripts/rules/tests -t .
 

@@ -218,6 +218,10 @@ def run_pyright(package_dir: Path) -> dict[str, Any]:
             "--outputjson",
             "--pythonpath",
             str(interpreter),
+            # Read only the package's own configuration: without --project,
+            # Pyright also uses a pyrightconfig.json from a parent directory.
+            "--project",
+            str(package_dir),
         ],
         cwd=package_dir,
         env=environment,
