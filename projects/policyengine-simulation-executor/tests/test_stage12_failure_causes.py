@@ -491,7 +491,10 @@ class ScopeRecordingRuntime:
         yield
 
     @contextmanager
-    def operation(self, name, *, attributes=None):
+    def operation(self, name, *, attributes=None, remote_context=None):
+        # Mirrors ObservabilityRuntime.operation; a Stage 12 stage continues
+        # no remote trace.
+        assert remote_context is None
         self.scopes.append(("operation", name, attributes))
         yield
 

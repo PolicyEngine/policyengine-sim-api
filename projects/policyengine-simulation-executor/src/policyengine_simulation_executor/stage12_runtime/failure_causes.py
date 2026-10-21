@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from policyengine_simulation_contract.stage12_execution import ErrorSummary
+from policyengine_simulation_observability import scopes
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.exc import StatementError
 
@@ -186,9 +187,9 @@ def tracked_stage(
     if runtime is None:
         scope = nullcontext()
     elif operation:
-        scope = runtime.operation(stage_name, attributes=attributes)
+        scope = scopes.operation(runtime, stage_name, attributes=attributes)
     else:
-        scope = runtime.span(stage_name, attributes=attributes)
+        scope = scopes.span(runtime, stage_name, attributes=attributes)
     with (
         tracking.progress.stage(stage_name, role=_simulation_role(attributes)),
         scope,
