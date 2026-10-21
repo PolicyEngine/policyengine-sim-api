@@ -2320,6 +2320,57 @@ def test_duplicate_coordinator_submission_does_not_start_duplicate_children() ->
     assert duplicate_invoker.events == []
 
 
+class ContextRecordingInvoker(ConcurrentInvoker):
+    """Record the dispatch context each child simulation receives."""
+
+    def __init__(self, artifacts, **options):
+        super().__init__(artifacts, **options)
+        self.child_contexts = []
+
+    def spawn(self, request):
+        self.child_contexts.append(request.context)
+        return super().spawn(request)
+
+
+def test_stage12_children_receive_the_context_without_a_delivery_field() -> None:
+    artifacts = FakeArtifacts()
+    invoker = ContextRecordingInvoker(artifacts)
+
+    coordinate_report(
+        _report().model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        _parent().model_dump(mode="json"),
+        application_name=_context().modal_application,
+        coordinator_invocation_id="coordinator-1",
+        store=FakeStore(),
+        artifacts=artifacts,
+        invoker=invoker,
+        aggregator=lambda **_: _aggregate_payload(),
+    )
+
+    # The Stage 12 worker payload keeps exactly the fields it had before the
+    # delivery field existed.
+    fields_before_the_delivery_field = {
+        "contract_version",
+        "request_id",
+        "environment",
+        "modal_environment",
+        "worker_version",
+        "modal_application",
+        "simulation_callable",
+        "version_manifest_sha256",
+        "bundle_manifest_sha256",
+        "artifact_prefix",
+        "production_function_call_id",
+        "created_at",
+        "retention_expires_at",
+    }
+    assert [set(context) for context in invoker.child_contexts] == [
+        fields_before_the_delivery_field,
+        fields_before_the_delivery_field,
+    ]
+
+
 def test_coordinator_measures_output_and_child_input_planning() -> None:
     store = FakeStore()
     artifacts = FakeArtifacts()
