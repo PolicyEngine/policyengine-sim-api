@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 49 | 5 | 0 | 15 | 69 |
+| mechanical | 50 | 5 | 0 | 14 | 69 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 54 of 69 rules.
+**Blocking:** 55 of 69 rules.
 
 ## Gaps
 
@@ -28,7 +28,6 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.observability.id-is-diagnostic-only`: observability_id has diagnostic meaning only: never use it for idempotency, authorization, database identity, routing or business logic.
 - `sim.observability.registered-stages-only`: Span names come from the stage plans in policyengine_simulation_observability.stages; runtime code never adds span-name string literals.
 - `sim.process.agents-never-bypass`: Agents never bypass branch rules, even with admin credentials: no gh pr merge --admin and no bypass option; a blocked merge is reported to a human.
-- `sim.process.pr-tracking-issue`: Every PR has a tracking issue in this repository, and the first line of its description is Fixes #ISSUE_NUMBER.
 - `sim.process.rule-machinery-code-owned`: Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author.
 - `sim.process.same-repo-draft-prs`: PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks.
 - `sim.quality.every-project-tested`: Every project and library with unit tests runs them in the PR test matrix.
@@ -430,7 +429,7 @@ flowchart LR
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sim.agents.adapters-point-to-agents-md` | CLAUDE.md and .github/copilot-instructions.md only point to AGENTS.md; skills and rules are listed in AGENTS.md alone. | mechanical | enforced | yes | quality guard `rules-registry` | `pr.yml:quality-guards` | yes |
 | `sim.process.agents-never-bypass` | Agents never bypass branch rules, even with admin credentials: no gh pr merge --admin and no bypass option; a blocked merge is reported to a human. | mechanical | doc-only | no | nothing | — | — |
-| `sim.process.pr-tracking-issue` | Every PR has a tracking issue in this repository, and the first line of its description is Fixes #ISSUE_NUMBER. | mechanical | doc-only | no | nothing | — | — |
+| `sim.process.pr-tracking-issue` | The first line of every PR's description is Fixes #ISSUE_NUMBER, naming an open issue, not a pull request, in this repository; automated PRs open or reuse such an issue. | mechanical | enforced | yes | CI job `pr-description` | `pr-description.yml:pr-description` | yes |
 | `sim.process.rule-machinery-code-owned` | Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author. | mechanical | doc-only | no | nothing | — | — |
 | `sim.process.rules-registry` | Every rule is registered in rules/registry.toml, is enforced where it claims to be, and its rendered views are current. | mechanical | enforced | yes | quality guard `rules-registry` | `pr.yml:quality-guards` | **unproven** |
 | `sim.process.same-repo-draft-prs` | PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks. | mechanical | doc-only | no | nothing | — | — |
@@ -443,7 +442,9 @@ flowchart LR
   j_CI_pr_yml_quality_guards["CI pr.yml:quality-guards"]
   r_sim_process_agents_never_bypass("sim.process.agents-never-bypass (doc-only)")
   gap_unenforced>"not enforced"]
-  r_sim_process_pr_tracking_issue("sim.process.pr-tracking-issue (doc-only)")
+  r_sim_process_pr_tracking_issue("sim.process.pr-tracking-issue (enforced)")
+  e_CI_job_pr_description["CI job pr-description"]
+  j_CI_pr_description_yml_pr_description["CI pr-description.yml:pr-description"]
   r_sim_process_rule_machinery_code_owned("sim.process.rule-machinery-code-owned (doc-only)")
   r_sim_process_rules_registry("sim.process.rules-registry (enforced)")
   r_sim_process_same_repo_draft_prs("sim.process.same-repo-draft-prs (doc-only)")
@@ -454,7 +455,8 @@ flowchart LR
   r_sim_agents_adapters_point_to_agents_md --> e_quality_guard_rules_registry
   e_quality_guard_rules_registry --> j_CI_pr_yml_quality_guards
   r_sim_process_agents_never_bypass -.-> gap_unenforced
-  r_sim_process_pr_tracking_issue -.-> gap_unenforced
+  r_sim_process_pr_tracking_issue --> e_CI_job_pr_description
+  e_CI_job_pr_description --> j_CI_pr_description_yml_pr_description
   r_sim_process_rule_machinery_code_owned -.-> gap_unenforced
   r_sim_process_rules_registry --> e_quality_guard_rules_registry
   r_sim_process_same_repo_draft_prs -.-> gap_unenforced

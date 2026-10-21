@@ -1,0 +1,12 @@
+{
+  "action": "opened",
+  "number": 616,
+  "pull_request": {
+    "number": 616,
+    "title": "Return report-shaped US congressional district impacts",
+    "body": "Fixes #615\n\nSummary:\n- Maps congressional district results to canonical district IDs like `AL-01`.\n- Returns district impacts only for US national and state-level reports.\n"
+  },
+  "repository": {
+    "full_name": "PolicyEngine/policyengine-sim-api"
+  }
+}
