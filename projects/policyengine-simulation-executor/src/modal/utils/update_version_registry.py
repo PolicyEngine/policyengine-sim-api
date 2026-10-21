@@ -11,11 +11,11 @@ import hashlib
 import json
 import os
 import uuid
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 import modal
 from packaging.version import InvalidVersion, Version
@@ -66,8 +66,11 @@ class BundleManifestMetadata(TypedDict):
     job_progress: NotRequired[int]
 
 
-class LatestVersions(TypedDict):
-    """The versions that unpinned requests route to, per route kind."""
+class LatestVersions(TypedDict, total=False):
+    """The versions that unpinned requests route to, per route kind.
+
+    A kind has no entry until a release of that kind is routed.
+    """
 
     policyengine: str
     us: str
@@ -89,7 +92,11 @@ class RoutingState(TypedDict):
     generation: str
     latest: LatestVersions
     routes: RouteMaps
-    bundles: dict[str, BundleManifestMetadata]
+    # Each policyengine version's bundle manifest, as publishing writes it
+    # (BundleManifestMetadata). A stored state is read back unvalidated, so
+    # its manifests are only known to be mappings until validate_routing_state
+    # checks them against their routes.
+    bundles: dict[str, Mapping[str, Any]]
 
 
 def _is_newer_version(candidate: str, current: str | None) -> bool:
@@ -456,7 +463,8 @@ def routing_state_digest(state: object) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _json_copy(value: object) -> object:
+def _json_copy[JsonValue](value: JsonValue) -> JsonValue:
+    """Return a deep copy of JSON-safe ``value``; the round trip keeps its shape."""
     return json.loads(json.dumps(value))
 
 
@@ -496,7 +504,7 @@ def plan_routing_publication(
         "after": after,
         "before_sha256": routing_state_digest(before),
         "after_sha256": routing_state_digest(after),
-        "advances_latest": after["latest"]["policyengine"] == policyengine_version,
+        "advances_latest": after["latest"].get("policyengine") == policyengine_version,
     }
 
 
@@ -810,9 +818,12 @@ def finalize_routing_publication(
         msg = "operator recovery requires gates_passed=false"
         raise ValueError(msg)
     store = _routing_store(environment, create_if_missing=False)
+    if store is None:
+        # No routing-state Dict, so nothing was ever published or recorded.
+        return "no-pending"
     pending = _unfinished_publication(store)
     if pending is None:
-        record = store.get(ROUTING_PUBLICATION_KEY) if store is not None else None
+        record = store.get(ROUTING_PUBLICATION_KEY)
         if (
             record is not None
             and publication_run is not None
@@ -1048,8 +1059,9 @@ def _merge_legacy_seed_into_current(
 
     for kind in ("policyengine", "us", "uk"):
         merged["routes"][kind].update(current["routes"][kind])
-        if kind in current["latest"]:
-            merged["latest"][kind] = current["latest"][kind]
+        current_latest = current["latest"].get(kind)
+        if current_latest is not None:
+            merged["latest"][kind] = current_latest
 
     merged["bundles"].update(current["bundles"])
     validate_routing_state(merged)
@@ -1372,7 +1384,7 @@ def _finalize_command(args: argparse.Namespace) -> None:
         raise _UsageError(msg)
     store = _routing_store(args.environment, create_if_missing=False)
     pending = _unfinished_publication(store)
-    if pending is None:
+    if store is None or pending is None:
         _report("No pending routing publication; routing is unchanged.")
     else:
         _report("Pending routing publication:")
@@ -1437,9 +1449,9 @@ def _restore_latest_command(args: argparse.Namespace) -> None:
         expected_latest=args.expected_latest,
     )
     _report(f"Restored routing state in Modal environment: {args.environment}")
-    _report(f"  latest.policyengine: {state['latest']['policyengine']}")
-    _report(f"  latest.us: {state['latest']['us']}")
-    _report(f"  latest.uk: {state['latest']['uk']}")
+    _report(f"  latest.policyengine: {state['latest'].get('policyengine')}")
+    _report(f"  latest.us: {state['latest'].get('us')}")
+    _report(f"  latest.uk: {state['latest'].get('uk')}")
 
 
 def _expected_latest_without_restore(_args: argparse.Namespace) -> None:
@@ -1518,9 +1530,9 @@ def _publish_command(args: argparse.Namespace) -> None:
     )
     _report()
     _report(f"  {ROUTING_STATE_DICT_NAME}[{ROUTING_STATE_ACTIVE_KEY}]: updated")
-    _report(f"  latest.policyengine: {state['latest']['policyengine']}")
-    _report(f"  latest.us: {state['latest']['us']}")
-    _report(f"  latest.uk: {state['latest']['uk']}")
+    _report(f"  latest.policyengine: {state['latest'].get('policyengine')}")
+    _report(f"  latest.us: {state['latest'].get('us')}")
+    _report(f"  latest.uk: {state['latest'].get('uk')}")
     _report()
     _report("Routing state published successfully.")
 
