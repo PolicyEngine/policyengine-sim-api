@@ -311,3 +311,85 @@ def test_adapter_checks_eligibility_in_order(update, reason) -> None:
 
     assert result.skip_reason is reason
     assert result.eligible is (reason is None)
+
+
+def _datasets_named(report) -> set[tuple[str, str, str, str, str]]:
+    return {
+        (
+            simulation.bundle.dataset.identity,
+            simulation.bundle.dataset.uri,
+            simulation.bundle.dataset.artifact_revision,
+            simulation.population.artifact.uri,
+            simulation.population.artifact.content_sha256,
+        )
+        for simulation in (report.baseline, report.reform)
+    }
+
+
+@pytest.mark.parametrize("region", ["state/ut", "ut", "congressional_district/UT-01"])
+def test_state_and_district_requests_name_the_regional_dataset(region) -> None:
+    from stage12_fixtures import (
+        REGIONAL_DATASET,
+        REGIONAL_REVISION,
+        REGIONAL_URI,
+        regional_worker,
+    )
+
+    result = adapt_annual_comparison(
+        {**eligible_payload(), "region": region},
+        evaluation_id=EVALUATION_ID,
+        worker=regional_worker(),
+    )
+
+    assert result.skip_reason is None
+    assert _datasets_named(result.report) == {
+        (REGIONAL_DATASET, REGIONAL_URI, REGIONAL_REVISION, REGIONAL_URI, "c" * 64)
+    }
+    assert result.report.baseline.geography.region == region
+
+
+def test_a_national_request_keeps_the_default_dataset_with_regional_workers() -> None:
+    from stage12_fixtures import regional_worker
+
+    payload = {**eligible_payload(), "include_cliffs": True}
+    payload["spm"] = {"geography_kind": "national"}
+
+    national = adapt_annual_comparison(
+        payload, evaluation_id=EVALUATION_ID, worker=regional_worker()
+    )
+    today = adapt_annual_comparison(
+        payload, evaluation_id=EVALUATION_ID, worker=worker()
+    )
+
+    assert national.report.model_dump(mode="json") == today.report.model_dump(
+        mode="json"
+    )
+
+
+def test_a_worker_without_region_datasets_gets_the_default_dataset() -> None:
+    result = adapt_annual_comparison(
+        {**eligible_payload(), "region": "state/ut"},
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert result.skip_reason is None
+    assert {item[0] for item in _datasets_named(result.report)} == {"populace_us_2024"}
+
+
+def test_a_uk_request_keeps_the_default_dataset_with_regional_workers() -> None:
+    from stage12_fixtures import regional_worker
+
+    result = adapt_annual_comparison(
+        {
+            **eligible_payload(),
+            "country": "uk",
+            "region": "country/scotland",
+            "version": "2.90.2",
+        },
+        evaluation_id=EVALUATION_ID,
+        worker=regional_worker(),
+    )
+
+    assert result.skip_reason is None
+    assert {item[0] for item in _datasets_named(result.report)} == {"populace_uk_2023"}
