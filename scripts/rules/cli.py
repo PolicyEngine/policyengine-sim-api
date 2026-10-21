@@ -1,4 +1,7 @@
-"""Command line: ``python -m scripts.rules {validate,render,guard}``."""
+"""Command line for the rules tool.
+
+``python -m scripts.rules {validate,render,guard,ci-scripts,pyright}``
+"""
 
 from __future__ import annotations
 
@@ -6,7 +9,7 @@ import argparse
 from datetime import date
 from pathlib import Path
 
-from scripts.rules import ci_scripts
+from scripts.rules import ci_scripts, pyright
 from scripts.rules.guard import REPO_ROOT, run_guard
 from scripts.rules.load import load_registry
 from scripts.rules.render import write_outputs
@@ -43,6 +46,29 @@ def _ci_scripts_command(root: Path, *, write_baselines: bool) -> int:
     return 0
 
 
+def _pyright_command(
+    root: Path, packages: list[str], *, write_baseline: bool, list_packages: bool
+) -> int:
+    """Check each package (by default every one a rule lists) against its rule."""
+    registry, violations = load_registry(root)
+    if registry is None:
+        return _print(violations)
+    if list_packages:
+        for package in pyright.listed_packages(registry):
+            _report(package)
+        return 0
+    failed = False
+    for package in packages or pyright.listed_packages(registry):
+        passed, lines = pyright.check_package(
+            registry, root, package, write_baseline=write_baseline
+        )
+        for line in lines:
+            _report(line)
+        failed = failed or not passed
+    _report("pyright: failed" if failed else "pyright: passed")
+    return 1 if failed else 0
+
+
 def _registry_command(command: str, root: Path) -> int:
     """Validate the registry and, for ``render``, write its views once it is valid."""
     clear_caches()
@@ -69,7 +95,13 @@ def main(argv: list[str] | None = None) -> int:
         prog="python -m scripts.rules", description=__doc__
     )
     parser.add_argument(
-        "command", choices=["validate", "render", "guard", "ci-scripts"]
+        "command", choices=["validate", "render", "guard", "ci-scripts", "pyright"]
+    )
+    parser.add_argument(
+        "packages",
+        nargs="*",
+        help="pyright only: package directories to check (default: every one a "
+        "Pyright rule lists)",
     )
     parser.add_argument("--root", type=Path, default=REPO_ROOT, help="repository root")
     parser.add_argument(
@@ -84,11 +116,37 @@ def main(argv: list[str] | None = None) -> int:
             "(when adopting the rule)"
         ),
     )
+    parser.add_argument(
+        "--write-baseline",
+        action="store_true",
+        help=(
+            "pyright only: rewrite a ratcheted package's baseline as the errors "
+            "that occur now; it never adds an error"
+        ),
+    )
+    parser.add_argument(
+        "--list-packages",
+        action="store_true",
+        help="pyright only: print every package a Pyright rule lists",
+    )
     args = parser.parse_args(argv)
+    if args.command != "pyright" and (
+        args.packages or args.write_baseline or args.list_packages
+    ):
+        parser.error(
+            "packages, --write-baseline and --list-packages apply only to pyright"
+        )
     root = args.root.resolve()
 
     if args.command == "ci-scripts":
         return _ci_scripts_command(root, write_baselines=args.write_baselines)
+    if args.command == "pyright":
+        return _pyright_command(
+            root,
+            args.packages,
+            write_baseline=args.write_baseline,
+            list_packages=args.list_packages,
+        )
     if args.command == "guard":
         result = run_guard(root, base_ref=args.base_ref)
         return _print(result.violations, result.notes)
