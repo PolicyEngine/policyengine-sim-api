@@ -722,6 +722,27 @@ def _resolve_dataset_selection(
     raise ValueError(msg)
 
 
+def _selected_dataset_revision(country: str, selection: DatasetSelection) -> str | None:
+    """Return the release revision of the dataset a US state or district run loads.
+
+    Such runs load a non-default dataset (the ACS-local dataset since .py 6.7),
+    so their ``data_version`` names that dataset's revision rather than the
+    default dataset's release. None leaves every other run reporting the
+    release's data version, as before.
+    """
+    if country != "us" or selection.is_default:
+        return None
+    from policyengine.provenance.manifest import (
+        get_release_manifest,
+    )
+
+    reference = getattr(get_release_manifest(country), "datasets", {}).get(
+        selection.name
+    )
+    revision = getattr(reference, "revision", None)
+    return revision if isinstance(revision, str) and revision else None
+
+
 def _load_dataset(
     params: dict[str, Any],
     *,
@@ -948,7 +969,7 @@ def _run_simulation_impl_core(
         dataset=dataset,
         baseline=baseline,
         reform=reform,
-        resolved_data_version=None,
+        resolved_data_version=_selected_dataset_revision(country, dataset_selection),
         resolved_region_code=region_resolution.code,
         runtime=runtime,
         uk_local_authority_metadata=uk_local_authority_metadata,
