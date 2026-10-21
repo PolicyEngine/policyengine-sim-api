@@ -59,12 +59,14 @@ from .models import (
     BaselinePlanEntry,
     CacheBundleIdentity,
     CacheManifest,
+    CacheManifestEntry,
     DatasetBuildResult,
     DatasetPlanEntry,
     DeterminismVerdict,
     ManifestArtifact,
     PrecomputePlan,
     StateDatasetBuildResult,
+    StateDatasetManifestArtifact,
     StateDatasetPlanEntry,
     WorkSelection,
 )
@@ -653,8 +655,12 @@ def verify_determinism_impl(
 
 
 def build_manifest(plan: PrecomputePlan, store: Stage12CacheStore) -> CacheManifest:
-    """List every planned file with the digest and size the bucket reports."""
-    artifacts = []
+    """List every planned file with the digest and size the bucket reports.
+
+    Datasets, then baselines, then state datasets, each in plan order, so a
+    plan without state datasets keeps the manifest it always had.
+    """
+    artifacts: list[CacheManifestEntry] = []
     for entry in plan.datasets:
         stored = store.describe(entry.path)
         artifacts.append(
@@ -675,6 +681,21 @@ def build_manifest(plan: PrecomputePlan, store: Stage12CacheStore) -> CacheManif
                 type="baseline",
                 path=entry.path,
                 filename=entry.filename,
+                year=entry.year,
+                identity_digest=entry.digest,
+                content_sha256=stored.content_sha256,
+                size_bytes=stored.size_bytes,
+            )
+        )
+    for entry in plan.state_datasets:
+        stored = store.describe(entry.path)
+        artifacts.append(
+            StateDatasetManifestArtifact(
+                type="state_dataset",
+                path=entry.path,
+                filename=entry.filename,
+                folder=entry.folder,
+                state_code=entry.state_code,
                 year=entry.year,
                 identity_digest=entry.digest,
                 content_sha256=stored.content_sha256,

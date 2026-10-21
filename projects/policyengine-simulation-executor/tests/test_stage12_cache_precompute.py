@@ -669,6 +669,71 @@ def test_manifest_records_content_hashes_and_sizes() -> None:
     assert all(item.size_bytes == 123 for item in manifest.artifacts)
 
 
+def test_manifest_lists_state_datasets_after_the_others_in_plan_order() -> None:
+    plan = _plan_with_state_datasets(exists=True)
+    store = SimpleNamespace(
+        describe=lambda path: CacheObject(
+            path=path, content_sha256="f" * 64, size_bytes=123
+        )
+    )
+
+    manifest = precompute.build_manifest(plan, store)
+
+    assert len(manifest.artifacts) == 63 + len(plan.state_datasets)
+    state_artifacts = [
+        artifact.model_dump()
+        for artifact in manifest.artifacts
+        if artifact.type == "state_dataset"
+    ]
+    assert state_artifacts == [
+        {
+            "type": "state_dataset",
+            "path": entry.path,
+            "filename": entry.filename,
+            "folder": entry.folder,
+            "state_code": entry.state_code,
+            "year": entry.year,
+            "identity_digest": entry.digest,
+            "content_sha256": "f" * 64,
+            "size_bytes": 123,
+        }
+        for entry in plan.state_datasets
+    ]
+    assert [artifact.type for artifact in manifest.artifacts[:63]] == (
+        ["dataset"] * 3 + ["baseline"] * 60
+    )
+
+
+def test_manifest_without_state_datasets_keeps_its_published_shape() -> None:
+    from policyengine_simulation_executor.stage12_cache.models import CacheManifest
+
+    store = SimpleNamespace(
+        describe=lambda path: CacheObject(
+            path=path, content_sha256="f" * 64, size_bytes=123
+        )
+    )
+    payload = precompute.build_manifest(_plan(exists=True), store).canonical_payload()
+
+    assert all(set(item) != {"folder"} for item in payload["artifacts"])
+    assert all("folder" not in item for item in payload["artifacts"])
+    assert CacheManifest.model_validate(payload).canonical_payload() == payload
+
+
+def test_manifest_with_state_datasets_round_trips_its_wire_shape() -> None:
+    from policyengine_simulation_executor.stage12_cache.models import CacheManifest
+
+    store = SimpleNamespace(
+        describe=lambda path: CacheObject(
+            path=path, content_sha256="f" * 64, size_bytes=123
+        )
+    )
+    payload = precompute.build_manifest(
+        _plan_with_state_datasets(exists=True), store
+    ).canonical_payload()
+
+    assert CacheManifest.model_validate(payload).canonical_payload() == payload
+
+
 @pytest.mark.parametrize("passes", [True, False])
 def test_a_run_with_no_new_baselines_still_checks_unverified_ones(
     *,
