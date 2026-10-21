@@ -32,6 +32,9 @@ def run_budget_window_batch_impl(
     if selection is not None:
         params = {**params, "spm": selection}
     batch_job_id = modal.current_function_call_id()
+    if batch_job_id is None:
+        msg = "run_budget_window_batch must run inside a Modal function call"
+        raise RuntimeError(msg)
     runtime.set_context(batch_job_id=batch_job_id)
     with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_CONTEXT)):
         context = build_batch_context(
