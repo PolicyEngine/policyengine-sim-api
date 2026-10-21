@@ -190,3 +190,14 @@ def test_a_district_request_loads_its_states_baked_file(
         )
 
     assert loads == [str(baked_utah.folder)]
+
+
+def test_a_renamed_dotpy_reuse_check_falls_back_to_on_demand_loading(
+    monkeypatch, baked_utah, regional_selection
+):
+    """A .py upgrade moving the private SPM profile helper must not fail requests."""
+    from policyengine.tax_benefit_models.us import datasets as us_datasets
+
+    monkeypatch.delattr(us_datasets, "_expected_legacy_spm_profile")
+
+    assert _lookup(baked_utah, regional_selection) is None
