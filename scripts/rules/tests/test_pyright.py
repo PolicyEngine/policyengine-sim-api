@@ -25,6 +25,17 @@ from scripts.rules.pyright import (
 from scripts.rules.tests.support import REGISTRY, Repo
 
 ROOT = Path("/repository")
+FIXTURES = Path(__file__).resolve().parents[3] / "rules" / "fixtures"
+ENTRY_BACKEND = (
+    "projects/policyengine-simulation-entry/src/policyengine_simulation_entry/"
+    "stage12_backend.py"
+)
+GATEWAY_ENDPOINTS = (
+    "projects/policyengine-simulation-gateway/src/policyengine_simulation_gateway/"
+    "endpoints.py"
+)
+EXECUTOR_APP = "projects/policyengine-simulation-executor/src/modal/app.py"
+APIS_INTEG_TESTS = "projects/policyengine-apis-integ/tests/simulation"
 SERVICE_FILE = "projects/service/src/service.py"
 LIBRARY_FILE = "libs/alpha/src/alpha.py"
 UNBOUND = "reportPossiblyUnboundVariable"
@@ -133,6 +144,95 @@ def pyright_error(
     path: str, line: int, message: str, rule: str = UNBOUND
 ) -> PyrightError:
     return PyrightError(path=path, line=line, column=9, rule=rule, message=message)
+
+
+def proof_comparison(rule_id: str, fixture: str) -> Comparison:
+    """Compare a proof fixture's recorded Pyright report with its baseline, if any.
+
+    The reports were recorded with the pinned Pyright on main at ceb30e17, with
+    the checkout's path replaced by /repository.
+    """
+    fixture_dir = FIXTURES / rule_id / fixture
+    recorded_report = json.loads((fixture_dir / "pyright.json").read_text())
+    baseline = fixture_dir / "baseline.txt"
+    return compare(
+        errors_in_report(recorded_report, ROOT),
+        read_baseline(baseline) if baseline.exists() else [],
+    )
+
+
+class TestPyrightProof(unittest.TestCase):
+    """Proofs: each Pyright rule's check rejects its bad fixture, accepts its good."""
+
+    def test_rule_proof_pyright_libraries_and_entry(self) -> None:
+        rule_id = "sim.quality.pyright-libraries-and-entry"
+        # The entry's real errors before its fix: invocation_id is assigned
+        # inside a span, which Pyright took to swallow exceptions.
+        bad = proof_comparison(rule_id, "bad")
+
+        invocation_id_unbound = (
+            f'{ENTRY_BACKEND} :: {UNBOUND} :: "invocation_id" is possibly unbound'
+        )
+        self.assertEqual(
+            [(error.line, error.baseline_entry) for error in bad.new_errors],
+            [(550, invocation_id_unbound), (563, invocation_id_unbound)],
+        )
+        self.assertTrue(proof_comparison(rule_id, "good").passed)
+
+    def test_rule_proof_pyright_gateway(self) -> None:
+        rule_id = "sim.quality.pyright-gateway"
+        # The baseline lists one of two "route" errors, and an error that no
+        # longer occurs.
+        bad = proof_comparison(rule_id, "bad")
+
+        self.assertEqual(
+            [(error.line, error.summary) for error in bad.new_errors],
+            [(924, '"route" is possibly unbound')],
+        )
+        self.assertEqual(
+            bad.stale_entries,
+            (f'{GATEWAY_ENDPOINTS} :: {UNBOUND} :: "bundle" is possibly unbound',),
+        )
+        self.assertTrue(proof_comparison(rule_id, "good").passed)
+
+    def test_rule_proof_pyright_executor(self) -> None:
+        rule_id = "sim.quality.pyright-executor"
+        bad = proof_comparison(rule_id, "bad")
+
+        self.assertEqual(
+            [(error.line, error.summary) for error in bad.new_errors],
+            [(123, '"Secret" is not a known attribute of module "modal"')],
+        )
+        self.assertEqual(
+            bad.stale_entries,
+            (
+                f"{EXECUTOR_APP} :: reportAttributeAccessIssue :: "
+                '"Image" is not a known attribute of module "modal"',
+            ),
+        )
+        self.assertTrue(proof_comparison(rule_id, "good").passed)
+
+    def test_rule_proof_pyright_apis_integ(self) -> None:
+        rule_id = "sim.quality.pyright-apis-integ"
+        client_mismatch = (
+            'Argument of type "Client | AuthenticatedClient" cannot be assigned to '
+            'parameter "client" of type "AuthenticatedClient" in function '
+            '"sync_detailed"'
+        )
+        bad = proof_comparison(rule_id, "bad")
+
+        self.assertEqual(
+            [(error.path, error.line) for error in bad.new_errors],
+            [(f"{APIS_INTEG_TESTS}/test_calculate.py", 99)],
+        )
+        self.assertEqual(
+            bad.stale_entries,
+            (
+                f"{APIS_INTEG_TESTS}/conftest.py :: reportArgumentType :: "
+                f"{client_mismatch}",
+            ),
+        )
+        self.assertTrue(proof_comparison(rule_id, "good").passed)
 
 
 class ErrorsInReportTest(unittest.TestCase):

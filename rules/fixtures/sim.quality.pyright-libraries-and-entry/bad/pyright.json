@@ -1,0 +1,43 @@
+{
+  "version": "1.1.414",
+  "generalDiagnostics": [
+    {
+      "file": "/repository/projects/policyengine-simulation-entry/src/policyengine_simulation_entry/stage12_backend.py",
+      "severity": "error",
+      "message": "\"invocation_id\" is possibly unbound",
+      "range": {
+        "start": {
+          "line": 549,
+          "character": 45
+        },
+        "end": {
+          "line": 549,
+          "character": 58
+        }
+      },
+      "rule": "reportPossiblyUnboundVariable"
+    },
+    {
+      "file": "/repository/projects/policyengine-simulation-entry/src/policyengine_simulation_entry/stage12_backend.py",
+      "severity": "error",
+      "message": "\"invocation_id\" is possibly unbound",
+      "range": {
+        "start": {
+          "line": 562,
+          "character": 45
+        },
+        "end": {
+          "line": 562,
+          "character": 58
+        }
+      },
+      "rule": "reportPossiblyUnboundVariable"
+    }
+  ],
+  "summary": {
+    "filesAnalyzed": 10,
+    "errorCount": 2,
+    "warningCount": 0,
+    "informationCount": 0
+  }
+}
