@@ -439,6 +439,13 @@ def build_restored_routing_state(
 ROUTING_PLAN_SCHEMA = "policyengine-simulation.routing-plan/v1"
 
 
+# Raised by a routing write when _routing_store, asked to create the Dict,
+# still returns None.
+UNOPENED_ROUTING_STORE = (
+    "the routing state Modal Dict could not be opened; nothing was written"
+)
+
+
 class RoutingConflictError(RuntimeError):
     """The live routing state is not the one a plan expects."""
 
@@ -617,6 +624,8 @@ def record_routing_plan(*, environment: str, plan: dict) -> None:
     _require_serialized_routing_workflow()
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=True)
+    if store is None:
+        raise RoutingConflictError(UNOPENED_ROUTING_STORE)
     _require_finished_publication(store)
     if (
         routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
@@ -632,7 +641,7 @@ def complete_routing_plan(*, environment: str, plan: dict) -> None:
     _require_serialized_routing_workflow()
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=False)
-    if _unfinished_publication(store) != plan:
+    if store is None or _unfinished_publication(store) != plan:
         msg = "no matching unfinished routing publication to complete"
         raise RoutingConflictError(msg)
     if (
@@ -649,6 +658,8 @@ def apply_routing_plan(*, environment: str, plan: dict) -> None:
     _require_serialized_routing_workflow()
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=True)
+    if store is None:
+        raise RoutingConflictError(UNOPENED_ROUTING_STORE)
     _require_finished_publication(store, allowed_plans=[plan])
     current = store.get(ROUTING_STATE_ACTIVE_KEY)
     if routing_state_digest(current) != plan["before_sha256"]:
