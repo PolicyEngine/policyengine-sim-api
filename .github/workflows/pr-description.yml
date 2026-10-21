@@ -6,8 +6,8 @@ name: PR description
 #
 # A separate workflow from pr.yml, so that editing a description reruns only
 # this check, not the whole of CI. It has no branches or paths filter and no
-# stack condition: it is cheap, so every pull request runs it, including each
-# one in a stack.
+# stack condition: it is cheap, so every open pull request runs it, including
+# each one in a stack.
 
 on:
   pull_request:
@@ -28,6 +28,9 @@ concurrency:
 jobs:
   pr-description:
     name: PR description
+    # GitHub also sends "edited" for closed pull requests. Merging closed the
+    # issue a merged pull request names, so checking one would fail.
+    if: ${{ github.event.pull_request.state == 'open' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
