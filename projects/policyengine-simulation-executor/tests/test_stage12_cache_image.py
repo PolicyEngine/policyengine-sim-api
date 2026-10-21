@@ -308,3 +308,133 @@ def test_builds_its_storage_client_from_the_deployment_credentials(
             {"credentials": "service-account-credentials", "project": "cache-project"}
         ]
     assert len(list(tmp_path.glob("*.h5"))) == 63
+
+
+REGIONAL_DATASET = "populace_us_2024_acs_local"
+
+
+def _state_artifact(year: int, state_code: str, **changes) -> tuple[dict, bytes]:
+    filename = f"{REGIONAL_DATASET}_year_{year}.h5"
+    payload = f"state-{year}-{state_code}".encode()
+    artifact = {
+        "type": "state_dataset",
+        "path": f"state-datasets/us/{year}-{state_code}/{filename}",
+        "filename": filename,
+        "folder": f"state-datasets/{REGIONAL_DATASET}/{state_code}",
+        "state_code": state_code,
+        "year": year,
+        "identity_digest": f"identity-state-{year}-{state_code}",
+        "content_sha256": sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+        **changes,
+    }
+    return artifact, payload
+
+
+def _manifest_with_state_datasets(states=("UT", "WY")) -> tuple[dict, dict]:
+    manifest, payloads = _manifest()
+    for year in (2026, 2027, 2025):
+        for state_code in states:
+            artifact, payload = _state_artifact(year, state_code)
+            manifest["artifacts"].append(artifact)
+            payloads[artifact["path"]] = payload
+    return manifest, payloads
+
+
+def test_places_each_state_file_in_its_state_folder(monkeypatch, tmp_path) -> None:
+    manifest, payloads = _manifest_with_state_datasets()
+    _use_deployment(monkeypatch, tmp_path, manifest)
+
+    fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+
+    state_folder = tmp_path / "state-datasets" / REGIONAL_DATASET
+    for year in (2026, 2027, 2025):
+        for state_code in ("UT", "WY"):
+            stored = state_folder / state_code / f"{REGIONAL_DATASET}_year_{year}.h5"
+            assert stored.read_bytes() == f"state-{year}-{state_code}".encode()
+    assert len(list(tmp_path.glob("*.h5"))) == 63
+
+
+def _drop_one_state_file(manifest: dict) -> None:
+    manifest["artifacts"] = [
+        item
+        for item in manifest["artifacts"]
+        if not (item["type"] == "state_dataset" and item["year"] == 2027)
+        or item["state_code"] != "WY"
+    ]
+
+
+def _add_unknown_type(manifest: dict) -> None:
+    manifest["artifacts"].append({**manifest["artifacts"][0], "type": "mystery"})
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        pytest.param(
+            _drop_one_state_file,
+            "^Stage 12 cache manifest's state datasets differ between years$",
+            id="state-missing-in-one-year",
+        ),
+        pytest.param(
+            _add_unknown_type,
+            "^Stage 12 cache manifest has an unexpected artifact type$",
+            id="unknown-type",
+        ),
+    ],
+)
+def test_rejects_inconsistent_state_datasets_before_downloading(
+    monkeypatch, tmp_path, change, message
+) -> None:
+    manifest, payloads = _manifest_with_state_datasets()
+    change(manifest)
+    _use_deployment(monkeypatch, tmp_path, manifest)
+
+    with pytest.raises(RuntimeError, match=message):
+        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "folder",
+    [
+        "/absolute/UT",
+        "state-datasets/../../escape",
+        "state-datasets/./UT",
+        "state-datasets//UT",
+        "state-datasets\\UT",
+        "",
+        None,
+    ],
+)
+def test_rejects_an_unsafe_state_folder_before_downloading(
+    monkeypatch, tmp_path, folder
+) -> None:
+    manifest, payloads = _manifest_with_state_datasets()
+    manifest["artifacts"][-1]["folder"] = folder
+    _use_deployment(monkeypatch, tmp_path, manifest)
+
+    with pytest.raises(
+        RuntimeError, match=r"^Stage 12 cache artifact metadata is invalid$"
+    ):
+        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_rejects_two_entries_for_one_state_file_before_downloading(
+    monkeypatch, tmp_path
+) -> None:
+    manifest, payloads = _manifest_with_state_datasets()
+    repeated = dict(manifest["artifacts"][-1])
+    manifest["artifacts"].append({**repeated, "path": "state-datasets/us/other/x.h5"})
+    payloads["state-datasets/us/other/x.h5"] = payloads[repeated["path"]]
+    _use_deployment(monkeypatch, tmp_path, manifest)
+
+    with pytest.raises(
+        RuntimeError, match=r"^Stage 12 cache artifact metadata is invalid$"
+    ):
+        fetch_stage12_cache("cache-bucket", manifest, client=_Client(payloads))
+
+    assert list(tmp_path.iterdir()) == []

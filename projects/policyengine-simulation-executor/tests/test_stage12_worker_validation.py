@@ -411,3 +411,111 @@ def test_digest_mismatch_is_checked_before_any_dataset_access() -> None:
         )
 
     assert events == []
+
+
+def _installed_manifest(*, state_codes=("UT", "WY")):
+    from policyengine_simulation_executor.stage12_cache.models import CacheManifest
+    from policyengine_simulation_executor.stage12_cache.precompute import (
+        PRECOMPUTE_YEARS,
+    )
+    from policyengine_simulation_executor.stage12_runtime.partition import (
+        US_REGION_GROUPS,
+    )
+
+    def entry(kind, year, index):
+        return {
+            "type": kind,
+            "path": f"{kind}s/us/{year}-{index}/{kind}-{year}-{index}.h5",
+            "filename": f"{kind}-{year}-{index}.h5",
+            "year": year,
+            "identity_digest": f"{kind}-{year}-{index}",
+            "content_sha256": "f" * 64,
+            "size_bytes": 1,
+        }
+
+    artifacts = [entry("dataset", year, 0) for year in PRECOMPUTE_YEARS]
+    artifacts += [
+        entry("baseline", year, index)
+        for year in PRECOMPUTE_YEARS
+        for index in range(len(US_REGION_GROUPS))
+    ]
+    artifacts += [
+        {
+            "type": "state_dataset",
+            "path": f"state-datasets/us/{year}-{state}/acs_year_{year}.h5",
+            "filename": f"acs_year_{year}.h5",
+            "folder": f"state-datasets/acs/{state}",
+            "state_code": state,
+            "year": year,
+            "identity_digest": f"state-{year}-{state}",
+            "content_sha256": "f" * 64,
+            "size_bytes": 1,
+        }
+        for year in PRECOMPUTE_YEARS
+        for state in state_codes
+    ]
+    return CacheManifest.model_validate(
+        {
+            "schema": "stage12-mf1",
+            "country": "us",
+            "years": list(PRECOMPUTE_YEARS),
+            "partition_sha256": "p" * 64,
+            "bundle": {
+                "bundle_manifest_sha256": "b" * 64,
+                "policyengine_version": "5.2.0",
+                "core_package_version": "3.0.0",
+                "country_package_version": "1.0.0",
+                "data_package_version": "2.0.0",
+                "data_artifact_revision": "revision",
+                "default_dataset": "populace_us_2024",
+            },
+            "artifacts": artifacts,
+        }
+    )
+
+
+def _install_state_files(data_folder, manifest):
+    for item in manifest.artifacts:
+        if item.type == "state_dataset":
+            folder = data_folder / item.folder
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / item.filename).write_bytes(b"h5")
+
+
+def test_installed_cache_accepts_the_expected_state_files(tmp_path) -> None:
+    from policyengine_simulation_executor import stage12_worker_validation as module
+
+    manifest = _installed_manifest()
+    _install_state_files(tmp_path, manifest)
+
+    module._require_installed_artifacts(manifest, tmp_path, state_dataset_count=6)
+
+
+def test_installed_cache_refuses_a_state_file_count_the_bundle_does_not_give(
+    tmp_path,
+) -> None:
+    from policyengine_simulation_executor import stage12_worker_validation as module
+
+    manifest = _installed_manifest(state_codes=("UT",))
+    _install_state_files(tmp_path, manifest)
+
+    with pytest.raises(RuntimeError, match="artifact count differs"):
+        module._require_installed_artifacts(manifest, tmp_path, state_dataset_count=6)
+
+
+def test_installed_cache_refuses_a_missing_state_file(tmp_path) -> None:
+    from policyengine_simulation_executor import stage12_worker_validation as module
+
+    manifest = _installed_manifest()
+
+    with pytest.raises(RuntimeError, match="state dataset file is missing"):
+        module._require_installed_artifacts(manifest, tmp_path, state_dataset_count=6)
+
+
+def test_expected_state_file_count_follows_the_installed_bundle(monkeypatch) -> None:
+    from policyengine_simulation_executor import stage12_worker_validation as module
+    from policyengine_simulation_executor.stage12_cache import precompute
+
+    monkeypatch.setattr(precompute, "state_dataset_targets", lambda: ("UT", "WY"))
+
+    assert module.expected_state_dataset_count() == 2 * len(precompute.PRECOMPUTE_YEARS)

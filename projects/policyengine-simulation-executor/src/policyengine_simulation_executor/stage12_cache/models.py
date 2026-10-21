@@ -154,6 +154,28 @@ class ManifestArtifact(StrictCacheModel):
     size_bytes: int
 
 
+class StateDatasetManifestArtifact(StrictCacheModel):
+    """One state's year file, which the worker image places in its state ``folder``.
+
+    Its own model, so dataset and baseline entries keep their exact wire shape.
+    """
+
+    type: Literal["state_dataset"]
+    path: str
+    filename: str
+    folder: str
+    state_code: str
+    year: int
+    identity_digest: str
+    content_sha256: str
+    size_bytes: int
+
+
+CacheManifestEntry = Annotated[
+    ManifestArtifact | StateDatasetManifestArtifact, Field(discriminator="type")
+]
+
+
 class CacheManifest(StrictCacheModel):
     """The published list of cache files for one bundle and region partition."""
 
@@ -166,7 +188,7 @@ class CacheManifest(StrictCacheModel):
     years: tuple[int, ...]
     partition_sha256: str
     bundle: CacheBundleIdentity
-    artifacts: tuple[ManifestArtifact, ...]
+    artifacts: tuple[CacheManifestEntry, ...]
 
     def canonical_payload(self) -> dict[str, Any]:
         """Return the JSON payload that is hashed and stored, keyed by ``schema``."""
