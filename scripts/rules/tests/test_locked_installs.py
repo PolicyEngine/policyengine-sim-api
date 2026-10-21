@@ -161,6 +161,21 @@ class TestCommandClassification(unittest.TestCase):
         self.assertEqual(installs, ["uv sync  --extra test", "uv run pytest"])
         self.assertEqual(tests, ["uv run pytest"])
 
+    def test_text_tools_and_shell_keywords_do_not_hide_or_invent_installs(
+        self,
+    ) -> None:
+        installs, _tests = self.scan_script(
+            "VERSION := $(shell sed -n 's/.*uv tool install ruff==\\(.*\\)/\\1/p' a)\n"
+            'if [ -z "$V" ]; then echo "uv tool install ruff==<version>"; fi\n'
+            'name="$(uv run python -c pass)"\n'
+            "RUFF := uv tool run ruff@$(VERSION)\n"
+        )
+
+        self.assertEqual(
+            installs,
+            ["name=$(uv run python -c pass)", "RUFF := uv tool run ruff@$(VERSION)"],
+        )
+
     def test_comments_and_echoed_instructions_are_not_commands(self) -> None:
         installs, tests = self.scan_script(
             '# uv sync --extra test\necho "  uv sync"\nprintf "pip install x"\n'
@@ -226,6 +241,18 @@ reason = "example"
             "exact version",
             messages,
         )
+
+    def test_a_tool_pinned_with_an_at_version_is_a_pinned_tool(self) -> None:
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (root / "Makefile").write_text("RUFF := uv tool run ruff@$(VERSION)\n")
+        exceptions = """
+[[rule.exception]]
+path = "Makefile"
+match = "uv tool run ruff@$(VERSION)"
+category = "pinned-tool"
+reason = "example"
+"""
+        self.assertEqual(violation_messages(root, exceptions), [])
 
     def test_an_exception_that_matches_no_site_is_stale(self) -> None:
         exceptions = """

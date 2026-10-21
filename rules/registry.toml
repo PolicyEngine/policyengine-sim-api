@@ -1246,6 +1246,12 @@ category = "pinned-tool"
 reason = "shellcheck is a binary the ci-scripts guard runs; the quality-guards job has no project environment, so it installs the exact shellcheck-py release."
 
 [[rule.exception]]
+path = "Makefile"
+match = "uv tool run ruff@$(RUFF_VERSION)"
+category = "pinned-tool"
+reason = "make format and make check run the ruff release pr.yml pins (RUFF_VERSION is read from its uv tool install ruff==<version>), outside any project, so local results match the lint job."
+
+[[rule.exception]]
 path = ".github/scripts/update-policyengine-package.sh"
 match = "--with ${PACKAGE}==${LATEST}"
 category = "pinned-tool"

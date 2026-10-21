@@ -41,7 +41,7 @@ PR_WORKFLOW = ".github/workflows/pr.yml"
 
 _LOCKED_FLAG = re.compile(r"(?<![\w-])--(frozen|locked)(?![\w-])")
 _UNLOCKED_RUN_FLAG = re.compile(r"(?<![\w-])--(with|with-requirements|no-project)\b")
-_PINNED = re.compile(r"[\w${}.\[\],-]+==[\w.${}-]+")
+_PINNED = re.compile(r"[\w${}.\[\],-]+(==|@)[\w.${}()-]+")
 _UNLOCKED_INSTALLS = (
     ("uv pip", re.compile(r"\buv\s+pip\s+(install|sync)\b")),
     ("uv tool", re.compile(r"\buv\s+tool\s+(install|run)\b")),
@@ -57,8 +57,14 @@ _UV_RUN = re.compile(r"\buv\s+(?:--[\w-]+(?:[= ]\S+)?\s+)*run\b")
 _TEST_COMMAND = re.compile(
     r"(?<![\w.-])pytest(?![\w.-])|\bcoverage\s+run\b|-m\s+unittest\b"
 )
-_ECHO = re.compile(r"^\s*@?(echo|printf)\b")
-_SEPARATORS = re.compile(r"&&|\|\||;|\||\$\(|\(|\)|`")
+# A command that only prints or edits text installs nothing, even when the text
+# names an installer: the first program after any assignment, $(shell or
+# shell keyword decides.
+_TEXT_TOOL = re.compile(
+    r"^\s*@?(?:[\w.-]+\s*[:?]?=\s*)?(?:\$\((?:shell\s+)?)?"
+    r"(?:(?:then|do|else|if|!)\s+)*(echo|printf|sed|grep|awk)\b"
+)
+_SEPARATORS = re.compile(r"&&|\|\||;|\||`")
 _SCRIPT_REFERENCE = re.compile(
     r"(?<![\w/.-])(?:\./)?((?:\.github/)?scripts/[\w./-]+\.sh)"
 )
@@ -180,7 +186,7 @@ def _commands(text: str) -> list[tuple[int, str]]:
     for number, logical in _logical_lines(text):
         for part in _SEPARATORS.split(logical):
             command = part.replace('"', "").replace("'", "").strip()
-            if command and not _ECHO.match(command):
+            if command and not _TEXT_TOOL.match(command):
                 commands.append((number, command))
     return commands
 
