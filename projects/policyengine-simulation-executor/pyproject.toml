@@ -97,3 +97,9 @@ markers = [
 [tool.pyright]
 # The pr.yml pyright job checks these paths: python -m scripts.rules pyright.
 include = ["src"]
+# Without extraPaths, Pyright adds src as an import root, and `import modal`
+# in the Modal app modules under src/modal resolves to that directory instead
+# of the installed modal library. At runtime src is never an import root: the
+# package is installed from src, and the app modules import each other as
+# src.modal.<module> from the project directory.
+extraPaths = []
