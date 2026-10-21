@@ -35,6 +35,25 @@ class DatasetPlanEntry(StrictCacheModel):
     exists: bool
 
 
+class StateDatasetPlanEntry(StrictCacheModel):
+    """One state's planned year file, filtered from a regional dataset.
+
+    ``folder`` is where the worker image places the file, relative to its
+    data folder; every state's file has the same ``filename``. ``exists``
+    records whether the bucket already holds it.
+    """
+
+    year: int
+    state_code: str
+    region: str
+    dataset: str
+    digest: str
+    path: str
+    filename: str
+    folder: str
+    exists: bool
+
+
 class BaselinePlanEntry(StrictCacheModel):
     """One planned baseline for a year and region group.
 
@@ -67,13 +86,15 @@ class PrecomputePlan(StrictCacheModel):
     bundle: CacheBundleIdentity
     partition_sha256: str
     determinism_verified: bool
+    state_datasets: tuple[StateDatasetPlanEntry, ...] = ()
 
 
 class WorkSelection(StrictCacheModel):
-    """The planned datasets and baselines a run still has to build."""
+    """The planned datasets, state datasets and baselines a run still has to build."""
 
     datasets: tuple[DatasetPlanEntry, ...]
     baselines: tuple[BaselinePlanEntry, ...]
+    state_datasets: tuple[StateDatasetPlanEntry, ...] = ()
 
 
 class CacheObject(StrictCacheModel):

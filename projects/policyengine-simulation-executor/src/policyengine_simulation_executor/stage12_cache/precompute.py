@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, uuid5
@@ -26,6 +26,7 @@ from policyengine_simulation_contract.stage12_execution import (
 from policyengine_simulation_executor import simulation_runtime
 from policyengine_simulation_executor.simulation_runtime import (
     _country_module,
+    _resolve_dataset_selection,
     _resolve_region,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
@@ -49,6 +50,7 @@ from .keys import (
     canonical_digest,
     collect_baseline_identity,
     collect_dataset_identity,
+    collect_state_dataset_identity,
 )
 from .models import (
     BaselineBuildResult,
@@ -60,8 +62,10 @@ from .models import (
     DeterminismVerdict,
     ManifestArtifact,
     PrecomputePlan,
+    StateDatasetPlanEntry,
     WorkSelection,
 )
+from .state_datasets import state_dataset_relative_folder
 from .store import Stage12CacheStore
 
 if TYPE_CHECKING:
@@ -213,6 +217,67 @@ def determinism_record_path(baselines: Sequence[BaselinePlanEntry]) -> str:
     return f"determinism/us/{canonical_digest(determinism_record(baselines))}.json"
 
 
+@dataclass(frozen=True)
+class StateDatasetTarget:
+    """A US state whose requests load a non-default dataset, and its row filter.
+
+    Stage 12 bakes this state's rows of ``dataset`` as their own year file:
+    the households whose ``filter_variable`` equals ``state_fips``.
+    ``scoping_strategy`` is the region's own .py strategy, the one a request
+    for the state applies.
+    """
+
+    region: str
+    state_code: str
+    state_fips: int
+    filter_variable: str
+    dataset: str
+    scoping_strategy: Any = field(default=None, compare=False, repr=False)
+
+
+def state_dataset_targets() -> tuple[StateDatasetTarget, ...]:
+    """Return every US state region that loads a non-default dataset, by state code.
+
+    Each state is resolved as a Stage 12 worker resolves a request for it
+    (``_resolve_region`` then ``_resolve_dataset_selection``), so a bundle
+    that sends states back to the default dataset gets no state files.
+    """
+    country_module = _country_module("us")
+    targets = []
+    for region in country_module.model.region_registry.get_by_type("state"):
+        params = {
+            "country": "us",
+            "region": region.code,
+            "time_period": PRECOMPUTE_YEARS[0],
+        }
+        resolution = _resolve_region(
+            country_module=country_module, country="us", params=params
+        )
+        selection = _resolve_dataset_selection(params, region_resolution=resolution)
+        if selection.is_default:
+            continue
+        strategy = resolution.scoping_strategy
+        variable_name = getattr(strategy, "variable_name", None)
+        variable_value = getattr(strategy, "variable_value", None)
+        if not variable_name or variable_value is None or not resolution.state_code:
+            msg = (
+                f"State region {resolution.code} loads {selection.name} but has no "
+                "row filter and state code to build its state file from"
+            )
+            raise RuntimeError(msg)
+        targets.append(
+            StateDatasetTarget(
+                region=resolution.code,
+                state_code=resolution.state_code,
+                state_fips=int(variable_value),
+                filter_variable=variable_name,
+                dataset=selection.name,
+                scoping_strategy=strategy,
+            )
+        )
+    return tuple(sorted(targets, key=lambda target: target.state_code))
+
+
 def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
     """Plan every dataset and baseline file and record which the bucket holds.
 
@@ -221,8 +286,10 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
     """
     resolved = load_stage12_bundle()
     store = Stage12CacheStore(bucket)
+    targets = state_dataset_targets()
     datasets = []
     baselines = []
+    state_datasets = []
     for year in PRECOMPUTE_YEARS:
         dataset = collect_dataset_identity(resolved, country="us", year=year)
         datasets.append(
@@ -251,10 +318,36 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
                     exists=store.exists(identity.store_path),
                 )
             )
+        for target in targets:
+            state_identity = collect_state_dataset_identity(
+                resolved,
+                country="us",
+                year=year,
+                dataset=target.dataset,
+                state_code=target.state_code,
+                state_fips=target.state_fips,
+                filter_variable=target.filter_variable,
+            )
+            state_datasets.append(
+                StateDatasetPlanEntry(
+                    year=year,
+                    state_code=target.state_code,
+                    region=target.region,
+                    dataset=target.dataset,
+                    digest=state_identity.digest,
+                    path=state_identity.store_path,
+                    filename=state_identity.filename,
+                    folder=state_dataset_relative_folder(
+                        target.dataset, target.state_code
+                    ),
+                    exists=store.exists(state_identity.store_path),
+                )
+            )
     return PrecomputePlan(
         years=PRECOMPUTE_YEARS,
         datasets=tuple(datasets),
         baselines=tuple(baselines),
+        state_datasets=tuple(state_datasets),
         bundle=_bundle_identity(),
         partition_sha256=canonical_digest(
             {"groups": [list(group) for group in US_REGION_GROUPS]}
@@ -268,6 +361,9 @@ def select_work(plan: PrecomputePlan) -> WorkSelection:
     return WorkSelection(
         datasets=tuple(entry for entry in plan.datasets if not entry.exists),
         baselines=tuple(entry for entry in plan.baselines if not entry.exists),
+        state_datasets=tuple(
+            entry for entry in plan.state_datasets if not entry.exists
+        ),
     )
 
 
