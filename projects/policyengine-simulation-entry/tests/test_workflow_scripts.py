@@ -228,6 +228,63 @@ def test_commit_and_push_creates_the_branch_with_a_plain_push(fakes, tmp_path):
     ]
 
 
+def test_commit_and_push_skips_the_push_when_the_branch_holds_the_update(
+    fakes, tmp_path
+):
+    """The commit's date differs every day, so the push compares files."""
+    result, output = _commit_and_push(
+        fakes,
+        tmp_path,
+        REMOTE_HEAD=REMOTE_HEAD,
+        FAKE_GIT_STATUS=" M uv.lock\n",
+        FAKE_GIT_DIFF_EXIT="0",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "update-dependencies already holds this update" in result.stdout
+    assert github_output(output) == {
+        "changes_detected": "true",
+        "branch_pushed": "false",
+    }
+    assert fakes.calls("git")[-1] == [
+        "git",
+        "diff",
+        "--quiet",
+        REMOTE_HEAD,
+        "HEAD",
+        "--",
+    ]
+
+
+def test_commit_and_push_reports_a_push_that_changed_the_branch(fakes, tmp_path):
+    result, output = _commit_and_push(
+        fakes, tmp_path, REMOTE_HEAD=REMOTE_HEAD, FAKE_GIT_STATUS=" M uv.lock\n"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert github_output(output) == {
+        "changes_detected": "true",
+        "branch_pushed": "true",
+    }
+    assert ["git", "diff", "--quiet", REMOTE_HEAD, "HEAD", "--"] in fakes.calls("git")
+
+
+@pytest.mark.parametrize("remote_head", [REMOTE_HEAD, ""])
+def test_commit_and_push_does_nothing_when_the_update_changes_nothing(
+    fakes, tmp_path, remote_head
+):
+    """Pushing main's own commit would leave an open update PR with no changes."""
+    result, output = _commit_and_push(fakes, tmp_path, REMOTE_HEAD=remote_head)
+
+    assert result.returncode == 0, result.stderr
+    assert "No changes detected" in result.stdout
+    assert github_output(output) == {
+        "changes_detected": "false",
+        "branch_pushed": "false",
+    }
+    assert fakes.calls("git") == [["git", "status", "--porcelain"]]
+
+
 def test_commit_and_push_rejects_a_remote_head_that_is_not_a_commit(fakes, tmp_path):
     result, output = _commit_and_push(fakes, tmp_path, REMOTE_HEAD="main")
 
@@ -511,17 +568,11 @@ def test_create_pr_requires_the_repository(fakes):
     assert fakes.calls() == []
 
 
-def test_update_dependencies_workflow_updates_the_pr_whenever_it_pushes():
-    """With or without an open update PR, a push runs the create-PR script."""
-    workflow = yaml.safe_load(
-        (WORKFLOWS_DIR / "update-dependencies.yml").read_text(encoding="utf-8")
-    )
-    steps = workflow["jobs"]["update-dependencies"]["steps"]
-    create_pr = next(
-        step for step in steps if step.get("run") == f".github/scripts/{CREATE_PR}"
-    )
+def test_update_dependencies_workflow_updates_the_pr_whenever_files_change():
+    """The PR step runs even when the branch already held the update."""
+    create_pr = _update_dependencies_steps()[f".github/scripts/{CREATE_PR}"]
 
-    assert create_pr["if"] == "steps.push.outputs.branch_pushed == 'true'"
+    assert create_pr["if"] == "steps.push.outputs.changes_detected == 'true'"
     assert create_pr["env"] == {"GH_TOKEN": "${{ steps.app-token.outputs.token }}"}
 
 
