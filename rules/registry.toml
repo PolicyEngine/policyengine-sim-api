@@ -645,9 +645,9 @@ test = "tests/test_release_workflow.py::test_rule_proof_release_commit_deploys_o
 [[rule]]
 id = "sim.deploy.container-context-minimal"
 category = "deployment"
-statement = "Container builds exclude local environments and unrelated projects, and the entrypoint container builds for the requested target platform."
+statement = "Container builds exclude local environments and unrelated projects but include every local library the entrypoint installs, and the entrypoint container builds for the requested target platform."
 rationale = "docs/operations"
-scope = ["projects/policyengine-simulation-entry/Dockerfile"]
+scope = ["projects/policyengine-simulation-entry/Dockerfile", "projects/policyengine-simulation-entry/Dockerfile.dockerignore"]
 tier = "mechanical"
 status = "enforced"
 autofix = false
@@ -656,6 +656,7 @@ kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
   "tests/test_deployment_assets_traffic.py::test_container_context_excludes_local_environments_and_unrelated_projects",
+  "tests/test_deployment_assets_traffic.py::test_container_context_includes_every_local_library_the_entrypoint_installs",
   "tests/test_deployment_assets_cloud_run.py::test_entrypoint_container_uses_requested_target_platform",
 ]
 [[rule.ci]]
