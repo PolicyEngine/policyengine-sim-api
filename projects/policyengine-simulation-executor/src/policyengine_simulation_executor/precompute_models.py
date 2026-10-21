@@ -59,6 +59,24 @@ class DatasetPlanEntry(_StrictModel):
     exists: bool
 
 
+class StateDatasetPlanEntry(_StrictModel):
+    """One state's year file filtered from a regional dataset: identity plus presence.
+
+    ``folder`` is where the image places the file, relative to its data folder;
+    every state's file has the same ``filename``.
+    """
+
+    year: int
+    state_code: str
+    region: str
+    dataset: str
+    digest: str
+    path: str
+    filename: str
+    folder: str
+    exists: bool
+
+
 class BaselinePlanEntry(_StrictModel):
     """One cohort baseline artifact: identity plus store presence."""
 
@@ -77,6 +95,7 @@ class PrecomputePlan(_StrictModel):
     datasets: list[DatasetPlanEntry]
     baselines: list[BaselinePlanEntry]
     receipt: BundleVersionIdentity
+    state_datasets: list[StateDatasetPlanEntry] = Field(default_factory=list)
 
 
 class WorkSelection(_StrictModel):
@@ -84,6 +103,7 @@ class WorkSelection(_StrictModel):
 
     datasets: list[DatasetPlanEntry]
     baselines: list[BaselinePlanEntry]
+    state_datasets: list[StateDatasetPlanEntry] = Field(default_factory=list)
 
 
 class ManifestArtifact(_StrictModel):

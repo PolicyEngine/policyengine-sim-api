@@ -53,7 +53,11 @@ from policyengine_simulation_executor.precompute_models import (
     ManifestArtifact,
     PrecomputePlan,
     RemoteFunction,
+    StateDatasetPlanEntry,
     WorkSelection,
+)
+from policyengine_simulation_executor.state_datasets import (
+    state_dataset_relative_folder,
 )
 
 if TYPE_CHECKING:
@@ -152,11 +156,77 @@ def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
     return identity
 
 
+@dataclass(frozen=True)
+class StateDatasetTarget:
+    """A US state whose requests load a non-default dataset, and its row filter.
+
+    The precompute bakes this state's rows of ``dataset`` as their own year
+    file: the households whose ``filter_variable`` equals ``state_fips``.
+    """
+
+    region: str
+    state_code: str
+    state_fips: int
+    filter_variable: str
+    dataset: str
+
+
+def state_dataset_targets() -> list[StateDatasetTarget]:
+    """Return every US state region that loads a non-default dataset, by state code.
+
+    Each state is resolved exactly as a request for it is (``_resolve_region``
+    then ``_resolve_dataset_selection``), so a bundle that sends states back to
+    the default dataset gets no state files.
+    """
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
+        _country_module,
+        _resolve_dataset_selection,
+        _resolve_region,
+    )
+
+    country_module = _country_module(PRECOMPUTE_COUNTRY)
+    targets = []
+    for region in country_module.model.region_registry.get_by_type("state"):
+        params = {
+            "country": PRECOMPUTE_COUNTRY,
+            "region": region.code,
+            "time_period": PRECOMPUTE_YEARS[0],
+        }
+        resolution = _resolve_region(
+            country_module=country_module, country=PRECOMPUTE_COUNTRY, params=params
+        )
+        selection = _resolve_dataset_selection(params, region_resolution=resolution)
+        if selection.is_default:
+            continue
+        strategy = resolution.scoping_strategy
+        variable_name = getattr(strategy, "variable_name", None)
+        variable_value = getattr(strategy, "variable_value", None)
+        if not variable_name or variable_value is None or not resolution.state_code:
+            msg = (
+                f"State region {resolution.code} loads {selection.name} but has no "
+                "row filter and state code to build its state file from"
+            )
+            raise RuntimeError(msg)
+        targets.append(
+            StateDatasetTarget(
+                region=resolution.code,
+                state_code=resolution.state_code,
+                state_fips=int(variable_value),
+                filter_variable=variable_name,
+                dataset=selection.name,
+            )
+        )
+    return sorted(targets, key=lambda target: target.state_code)
+
+
 def select_work(plan: PrecomputePlan, *, force: bool) -> WorkSelection:
     """Which plan entries need computing."""
     return WorkSelection(
         datasets=[entry for entry in plan.datasets if force or not entry.exists],
         baselines=[entry for entry in plan.baselines if force or not entry.exists],
+        state_datasets=[
+            entry for entry in plan.state_datasets if force or not entry.exists
+        ],
     )
 
 
@@ -193,6 +263,7 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
     """Compute every expected artifact identity and its store presence."""
     from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_keys.collect_dataset_identity
         collect_dataset_identity,
+        collect_state_dataset_identity,
     )
     from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_store.ArtifactStore
         ArtifactStore,
@@ -210,8 +281,10 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
         msg = f"No national partition for {PRECOMPUTE_COUNTRY!r}"
         raise RuntimeError(msg)
 
+    targets = state_dataset_targets()
     datasets: list[DatasetPlanEntry] = []
     baselines: list[BaselinePlanEntry] = []
+    state_datasets: list[StateDatasetPlanEntry] = []
     for year in PRECOMPUTE_YEARS:
         dataset_identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, year)
         datasets.append(
@@ -236,6 +309,30 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
                     exists=store.exists(identity.store_path),
                 )
             )
+        for target in targets:
+            state_identity = collect_state_dataset_identity(
+                PRECOMPUTE_COUNTRY,
+                year,
+                dataset=target.dataset,
+                state_code=target.state_code,
+                state_fips=target.state_fips,
+                filter_variable=target.filter_variable,
+            )
+            state_datasets.append(
+                StateDatasetPlanEntry(
+                    year=year,
+                    state_code=target.state_code,
+                    region=target.region,
+                    dataset=target.dataset,
+                    digest=state_identity.digest,
+                    path=state_identity.store_path,
+                    filename=state_identity.filename,
+                    folder=state_dataset_relative_folder(
+                        target.dataset, target.state_code
+                    ),
+                    exists=store.exists(state_identity.store_path),
+                )
+            )
 
     bundle = get_country_release_bundle(PRECOMPUTE_COUNTRY)
     receipt = BundleVersionIdentity(
@@ -245,7 +342,12 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
         data_artifact_revision=bundle.data_artifact_revision,
         default_dataset=bundle.default_dataset,
     )
-    return PrecomputePlan(datasets=datasets, baselines=baselines, receipt=receipt)
+    return PrecomputePlan(
+        datasets=datasets,
+        baselines=baselines,
+        receipt=receipt,
+        state_datasets=state_datasets,
+    )
 
 
 def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildResult:

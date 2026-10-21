@@ -24,6 +24,7 @@ from policyengine_simulation_executor.precompute_models import (
     BundleVersionIdentity,
     DatasetPlanEntry,
     PrecomputePlan,
+    StateDatasetPlanEntry,
 )
 from pydantic import ValidationError
 
@@ -80,6 +81,33 @@ def _plan() -> PrecomputePlan:
     )
 
 
+def _state_dataset_entry(year: int, state_code: str, *, exists: bool):
+    digest = f"sd-{year}-{state_code}"
+    return StateDatasetPlanEntry(
+        year=year,
+        state_code=state_code,
+        region=f"state/{state_code.lower()}",
+        dataset="populace_local",
+        digest=digest,
+        path=f"state-datasets/us/{digest}/populace_local_year_{year}.h5",
+        filename=f"populace_local_year_{year}.h5",
+        folder=f"state-datasets/populace_local/{state_code}",
+        exists=exists,
+    )
+
+
+def _plan_with_state_datasets() -> PrecomputePlan:
+    return _plan().model_copy(
+        update={
+            "state_datasets": [
+                _state_dataset_entry(2026, "UT", exists=True),
+                _state_dataset_entry(2026, "WY", exists=False),
+                _state_dataset_entry(2027, "UT", exists=False),
+            ]
+        }
+    )
+
+
 class TestSchemas:
     def test_plan_round_trips_through_the_modal_boundary(self):
         plan = _plan()
@@ -125,6 +153,24 @@ class TestPlanning:
         work = precompute.select_work(_plan(), force=True)
         assert len(work.datasets) == 2
         assert len(work.baselines) == 2
+
+    def test_select_work_computes_only_missing_state_datasets(self):
+        work = precompute.select_work(_plan_with_state_datasets(), force=False)
+        assert [(entry.year, entry.state_code) for entry in work.state_datasets] == [
+            (2026, "WY"),
+            (2027, "UT"),
+        ]
+
+    def test_force_selects_every_state_dataset(self):
+        work = precompute.select_work(_plan_with_state_datasets(), force=True)
+        assert len(work.state_datasets) == 3
+
+    def test_a_plan_without_state_datasets_selects_none(self):
+        assert precompute.select_work(_plan(), force=False).state_datasets == []
+
+    def test_plan_with_state_datasets_round_trips_through_the_modal_boundary(self):
+        plan = _plan_with_state_datasets()
+        assert PrecomputePlan.model_validate(plan.model_dump()) == plan
 
     def test_years_are_in_priority_order(self):
         assert precompute.PRECOMPUTE_YEARS == [2026, 2027, 2025]
@@ -496,6 +542,42 @@ class TestPlanArtifactsImpl:
             )
 
         monkeypatch.setattr(precompute, "cohort_identity", fake_cohort_identity)
+        targets = [
+            precompute.StateDatasetTarget(
+                region="state/ut",
+                state_code="UT",
+                state_fips=49,
+                filter_variable="state_fips",
+                dataset="populace_local",
+            ),
+            precompute.StateDatasetTarget(
+                region="state/wy",
+                state_code="WY",
+                state_fips=56,
+                filter_variable="state_fips",
+                dataset="populace_local",
+            ),
+        ]
+        monkeypatch.setattr(precompute, "state_dataset_targets", lambda: list(targets))
+        existing.add("state-datasets/us/sd-2026-UT/populace_local_year_2026.h5")
+
+        def fake_state_identity(
+            _country, year, *, dataset, state_code, state_fips, filter_variable
+        ):
+            assert (state_fips, filter_variable) in {
+                (49, "state_fips"),
+                (56, "state_fips"),
+            }
+            digest = f"sd-{year}-{state_code}"
+            return SimpleNamespace(
+                digest=digest,
+                store_path=f"state-datasets/us/{digest}/{dataset}_year_{year}.h5",
+                filename=f"{dataset}_year_{year}.h5",
+            )
+
+        monkeypatch.setattr(
+            artifact_keys, "collect_state_dataset_identity", fake_state_identity
+        )
         monkeypatch.setattr(
             release_bundle,
             "get_country_release_bundle",
@@ -507,7 +589,47 @@ class TestPlanArtifactsImpl:
                 default_dataset="populace_cps",
             ),
         )
-        return SimpleNamespace(existing=existing)
+        return SimpleNamespace(existing=existing, targets=targets)
+
+    @pytest.mark.usefixtures("planning_stubs")
+    def test_plan_lists_every_state_dataset_year_major_with_presence(self):
+        plan = precompute.plan_artifacts_impl("bucket-x")
+
+        assert [(entry.year, entry.state_code) for entry in plan.state_datasets] == [
+            (2026, "UT"),
+            (2026, "WY"),
+            (2027, "UT"),
+            (2027, "WY"),
+            (2025, "UT"),
+            (2025, "WY"),
+        ]
+        assert [entry.exists for entry in plan.state_datasets] == [
+            True,
+            False,
+            False,
+            False,
+            False,
+            False,
+        ]
+        first = plan.state_datasets[0]
+        assert first.region == "state/ut"
+        assert first.dataset == "populace_local"
+        assert first.digest == "sd-2026-UT"
+        assert first.path == "state-datasets/us/sd-2026-UT/populace_local_year_2026.h5"
+        assert first.filename == "populace_local_year_2026.h5"
+        assert first.folder == "state-datasets/populace_local/UT"
+        work = precompute.select_work(plan, force=False)
+        assert len(work.state_datasets) == 5
+
+    def test_states_on_the_default_dataset_add_no_state_datasets(
+        self, planning_stubs, monkeypatch
+    ):
+        monkeypatch.setattr(precompute, "state_dataset_targets", list)
+
+        plan = precompute.plan_artifacts_impl("bucket-x")
+
+        assert plan.state_datasets == []
+        assert len(plan.datasets) == 3
 
     @pytest.mark.usefixtures("planning_stubs")
     def test_plan_enumerates_years_and_cohorts_with_presence(self):
@@ -562,6 +684,111 @@ class TestPlanArtifactsImpl:
         )
         with pytest.raises(RuntimeError, match="No national partition"):
             precompute.plan_artifacts_impl("bucket-x")
+
+
+def _us_state_region(state_code: str, state_fips: int, dataset_path: str):
+    from policyengine.core.scoping_strategy import RowFilterStrategy
+
+    return SimpleNamespace(
+        code=f"state/{state_code.lower()}",
+        dataset_path=dataset_path,
+        scoping_strategy=RowFilterStrategy(
+            variable_name="state_fips", variable_value=state_fips
+        ),
+        parent_code="us",
+        state_code=state_code,
+    )
+
+
+class TestStateDatasetTargets:
+    """Which states get baked files, resolved the way a request resolves them."""
+
+    @pytest.fixture
+    def regional_bundle(self):
+        from policyengine_simulation_executor.release_bundle import (
+            get_country_release_bundle,
+        )
+
+        bundle = get_country_release_bundle("us")
+        regional = next(
+            name for name in bundle.dataset_uris if name.endswith("_acs_local")
+        )
+        return SimpleNamespace(
+            default_uri=bundle.default_dataset_uri,
+            regional=regional,
+            regional_uri=bundle.dataset_uris[regional],
+        )
+
+    def _install_regions(self, monkeypatch, regions):
+        from policyengine_simulation_executor import simulation_runtime
+
+        by_code = {region.code: region for region in regions}
+        country_module = SimpleNamespace(
+            model=SimpleNamespace(
+                get_region=by_code.get,
+                region_registry=SimpleNamespace(
+                    get_by_type=lambda region_type: (
+                        list(regions) if region_type == "state" else []
+                    )
+                ),
+            )
+        )
+        monkeypatch.setattr(
+            simulation_runtime, "_country_module", lambda _country: country_module
+        )
+
+    def test_targets_states_whose_requests_load_a_regional_dataset(
+        self, monkeypatch, regional_bundle
+    ):
+        self._install_regions(
+            monkeypatch,
+            [
+                _us_state_region("WY", 56, regional_bundle.regional_uri),
+                _us_state_region("UT", 49, regional_bundle.regional_uri),
+            ],
+        )
+
+        targets = precompute.state_dataset_targets()
+
+        assert targets == [
+            precompute.StateDatasetTarget(
+                region="state/ut",
+                state_code="UT",
+                state_fips=49,
+                filter_variable="state_fips",
+                dataset=regional_bundle.regional,
+            ),
+            precompute.StateDatasetTarget(
+                region="state/wy",
+                state_code="WY",
+                state_fips=56,
+                filter_variable="state_fips",
+                dataset=regional_bundle.regional,
+            ),
+        ]
+
+    def test_skips_states_whose_requests_load_the_default_dataset(
+        self, monkeypatch, regional_bundle
+    ):
+        self._install_regions(
+            monkeypatch,
+            [
+                _us_state_region("UT", 49, regional_bundle.default_uri),
+                _us_state_region("WY", 56, regional_bundle.regional_uri),
+            ],
+        )
+
+        assert [target.state_code for target in precompute.state_dataset_targets()] == [
+            "WY"
+        ]
+
+    def test_refuses_a_state_without_a_row_filter(self, monkeypatch, regional_bundle):
+        unfiltered = _us_state_region("UT", 49, regional_bundle.regional_uri)
+        unfiltered.scoping_strategy = None
+        self._install_regions(monkeypatch, [unfiltered])
+
+        with pytest.raises(RuntimeError, match="state/ut"):
+            precompute.state_dataset_targets()
 
 
 class TestCohortIdentityGuard:
