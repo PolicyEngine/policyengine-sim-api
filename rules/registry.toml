@@ -1112,7 +1112,7 @@ job = "pyright"
 invocation = "python -m scripts.rules pyright"
 [rule.baseline]
 file = "rules/baselines/pyright-gateway.txt"
-count = 81
+count = 0
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.quality.pyright-gateway/bad"
 good_fixture = "rules/fixtures/sim.quality.pyright-gateway/good"
