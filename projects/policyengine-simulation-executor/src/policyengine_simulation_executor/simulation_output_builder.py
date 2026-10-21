@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_contract.job_progress import JobStage
+from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     Stage,
@@ -74,7 +75,11 @@ class SimulationOutputBuilder:
         self.country = self.country.lower()
 
     def _span(self, name: str) -> AbstractContextManager[object]:
-        return self.runtime.span(name) if self.runtime is not None else nullcontext()
+        return (
+            scopes.span(self.runtime, name)
+            if self.runtime is not None
+            else nullcontext()
+        )
 
     @property
     def analysis(self) -> object:
