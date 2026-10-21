@@ -73,12 +73,15 @@ class RegionResolution:
     """A request's normalized region code, the dataset to load, and how to scope it.
 
     ``scoping_strategy`` narrows the simulation to the region; None simulates
-    the whole dataset, as a national run does.
+    the whole dataset, as a national run does. ``state_code`` is the two-letter
+    code of the US state a state or congressional-district region lies in, and
+    None for every other region.
     """
 
     code: str
     dataset_reference: str | None = None
     scoping_strategy: Any | None = None
+    state_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -605,6 +608,7 @@ def _resolve_region(
         code=region_code,
         dataset_reference=dataset_reference,
         scoping_strategy=getattr(region, "scoping_strategy", None),
+        state_code=getattr(region, "state_code", None) if country == "us" else None,
     )
 
 
