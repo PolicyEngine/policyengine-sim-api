@@ -417,9 +417,9 @@ invocation = "uv run --frozen pytest tests/"
 [[rule]]
 id = "sim.deploy.workflow-shell-safety"
 category = "deployment"
-statement = "Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, and pins secret versions."
+statement = "Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, pins secret versions, and stops before deploying when any runtime secret cannot be resolved."
 rationale = "docs/operations"
-scope = [".github/workflows/*.yml"]
+scope = [".github/workflows/*.yml", ".github/scripts/deploy-cloud-run-simulation-entry.sh"]
 tier = "mechanical"
 status = "enforced"
 autofix = false
@@ -429,6 +429,7 @@ project = "projects/policyengine-simulation-entry"
 nodes = [
   "tests/test_deployment_assets.py::test_cloud_run_deployment_does_not_interpolate_github_values_in_shell",
   "tests/test_deployment_assets.py::test_cloud_run_deployment_escapes_environment_and_pins_secret_versions",
+  "tests/test_deployment_assets.py::test_cloud_run_deployment_stops_when_a_runtime_secret_cannot_be_resolved",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"

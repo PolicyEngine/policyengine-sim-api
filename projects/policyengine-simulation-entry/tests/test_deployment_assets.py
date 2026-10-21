@@ -559,6 +559,36 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
 
 
 @pytest.mark.parametrize(
+    "secret_name_variable",
+    [
+        "OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME",
+        "SIMULATION_DATABASE_URL_SECRET_NAME",
+        "MODAL_TOKEN_ID_SECRET_NAME",
+        "MODAL_TOKEN_SECRET_SECRET_NAME",
+        "STAGE12_DATABASE_URL_SECRET_NAME",
+    ],
+)
+def test_cloud_run_deployment_stops_when_a_runtime_secret_cannot_be_resolved(
+    tmp_path, secret_name_variable
+):
+    command_environment = _cloud_run_deploy_environment(tmp_path) | {
+        secret_name_variable: "not a secret name"
+    }
+
+    result = subprocess.run(
+        [CLOUD_RUN_DEPLOY_SCRIPT],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=command_environment,
+    )
+
+    assert result.returncode != 0
+    assert "invalid Secret Manager reference" in result.stderr
+    assert not Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"]).exists()
+
+
+@pytest.mark.parametrize(
     ("configured", "expected"),
     [(None, "0"), ("", "0"), ("0", "0"), ("1", "1")],
     ids=["unset", "empty", "log-only", "enforced"],
