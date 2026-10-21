@@ -1487,6 +1487,60 @@ def test_uk_aggregate_without_spm_provenance_is_written(monkeypatch) -> None:
     assert json.loads(stored_aggregate)["result"]["spm_provenance"] is None
 
 
+@pytest.mark.parametrize(
+    ("region", "routed", "omitted"),
+    [
+        ("uk", True, True),
+        ("country/wales", True, True),
+        ("uk", False, False),
+        ("constituency/E14001063", True, False),
+    ],
+)
+def test_uk_aggregate_omits_area_breakdowns_only_for_routed_national_reports(
+    monkeypatch, region: str, *, routed: bool, omitted: bool
+) -> None:
+    from policyengine_simulation_executor import simulation_output_builder
+
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.uk_local_authority_metadata."
+        "uk_area_regions_routed",
+        lambda: routed,
+    )
+    observed = {}
+
+    class CapturingBuilder:
+        def __init__(self, **values):
+            observed.update(values)
+
+        def serialize(self):
+            return {}
+
+    monkeypatch.setattr(
+        simulation_output_builder, "SimulationOutputBuilder", CapturingBuilder
+    )
+    payload = _uk_report().model_dump(mode="json")
+    for role in ("baseline", "reform"):
+        payload[role]["geography"] = {"country": "uk", "region": region}
+    report = ReportExecutionInput.model_validate(payload)
+    frames = {
+        entity: pd.DataFrame({f"{entity}_id": [1]})
+        for entity in ("person", "benunit", "household")
+    }
+    artifacts = FakeArtifacts()
+
+    build_aggregate_report(
+        report=report,
+        baseline=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.baseline)
+        ),
+        reform=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.reform)
+        ),
+    )
+
+    assert observed["omit_uk_area_breakdowns"] is omitted
+
+
 def test_aggregate_report_wraps_builder_output_with_report_provenance(
     monkeypatch,
 ) -> None:
@@ -1549,6 +1603,7 @@ def test_aggregate_report_wraps_builder_output_with_report_provenance(
         "resolved_data_version",
         "resolved_region_code",
         "uk_local_authority_metadata",
+        "omit_uk_area_breakdowns",
     ]
     assert observed["country"] == "us"
     assert observed["simulation_params"] == {
@@ -1568,6 +1623,7 @@ def test_aggregate_report_wraps_builder_output_with_report_provenance(
     )
     assert observed["resolved_region_code"] == report.baseline.geography.region
     assert observed["uk_local_authority_metadata"] is None
+    assert observed["omit_uk_area_breakdowns"] is False
 
 
 def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:

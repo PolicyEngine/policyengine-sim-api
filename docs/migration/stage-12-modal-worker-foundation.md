@@ -217,6 +217,13 @@ the source dataset. UK geographic reports require the household columns
 calculated PolicyEngine variables, but they must be present in each materialized
 artifact; otherwise validation fails before geographic aggregation begins.
 
+The exception is a UK national or nation-level report whose bundle routes
+constituency and local-authority regions to another dataset. Its national
+dataset may carry no area codes, so the plan copies none, and its aggregate
+leaves the constituency and local-authority breakdowns out. The production path
+builds them from a second baseline and reform run on the routed dataset; Stage
+12 has no such run yet.
+
 Aggregation uses the retained output tables without rerunning either model.
 The precomputed baseline and reform simulations retain their original policy
 metadata so PolicyEngine can correctly recognize conditional labor-supply

@@ -23,6 +23,10 @@ from policyengine_simulation_contract.stage12_execution import (
 )
 from policyengine_simulation_observability.stages import Stage
 
+from policyengine_simulation_executor.uk_local_authority_metadata import (
+    uk_area_codes_required,
+)
+
 if TYPE_CHECKING:
     import pandas as pd
     from policyengine_simulation_contract.stage12_bundle import CountryId
@@ -105,12 +109,22 @@ def _include_cliff_impacts(report: ReportExecutionInput) -> bool:
 def _required_dataset_variables(
     *,
     country: CountryId,
+    region: str,
     aggregates: tuple[ReportAggregate, ...],
 ) -> dict[str, tuple[str, ...]]:
-    """Return input-dataset columns copied into the materialized output."""
-    if country == "uk" and ReportAggregate.GEOGRAPHIC in aggregates:
-        return UK_GEOGRAPHIC_DATASET_VARIABLES
-    return {}
+    """Return input-dataset columns copied into the materialized output.
+
+    A UK report's geographic aggregate reads the area codes of its own
+    simulations, except in a national or nation-level report whose bundle
+    routes UK area regions to another dataset. Its national dataset may then
+    carry no area codes, so none are planned, and the aggregate leaves the
+    area breakdowns out (``build_aggregate_report``).
+    """
+    if country != "uk" or ReportAggregate.GEOGRAPHIC not in aggregates:
+        return {}
+    if not uk_area_codes_required(region):
+        return {}
+    return UK_GEOGRAPHIC_DATASET_VARIABLES
 
 
 def _configure_country_outputs(
@@ -171,6 +185,7 @@ def resolve_report_output_plan(
         reform_variables = model.resolve_entity_variables(reform)
         dataset_variables = _required_dataset_variables(
             country=country,
+            region=report.baseline.geography.region,
             aggregates=requirements.aggregates,
         )
         entities = []
