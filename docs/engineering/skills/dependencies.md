@@ -57,10 +57,19 @@ succeed.
 
 ## What the guard reads
 
-Every tracked workflow, composite action, shell script, Makefile, Dockerfile,
-Compose file, and Python module outside tests (for Modal image calls).
-Comments and `echo`/`printf` lines are skipped; backslash continuations are
-joined, and each `&&`, `||`, `;` or `|` segment is read as its own command.
+Every tracked workflow (its `run:` blocks), composite action, shell script,
+Makefile, Dockerfile (its `RUN` instructions), Compose file, and Python module
+outside tests (for Modal image calls). Before matching, the guard:
+
+- skips comment lines;
+- joins backslash continuations;
+- reads each `&&`, `||`, `;`, `|` or backtick segment as its own command;
+- removes every single and double quote, so a `match` is written without the
+  file's quotes (`pip install shellcheck-py==0.11.0.1` for
+  `pip install "shellcheck-py==0.11.0.1"`);
+- skips commands whose first program only prints or edits text: `echo`,
+  `printf`, `sed`, `grep` and `awk`, after any `NAME=`/`NAME :=` assignment,
+  `$(` or `$(shell`, and the shell words `if`, `then`, `do`, `else` and `!`.
 `TestRepository.test_every_install_capable_file_is_scanned` fails if a file of
 one of these kinds is not scanned. Installs that Python code starts through
 `subprocess` are not read.
@@ -80,11 +89,14 @@ removal = "The condition under which the exception is removed."
 ```
 
 A tool installed outside any project and pinned to an exact version
-(`uv tool install ruff==0.15.22`, `pip install "shellcheck-py==0.11.0.1"`) may
-use `category = "pinned-tool"` instead of a removal condition; the guard checks
-that `match` contains the `==` pin.
+(`uv tool install ruff==0.15.22`, `pip install "shellcheck-py==0.11.0.1"`,
+`uv tool run ruff@$(RUFF_VERSION)`) may use `category = "pinned-tool"` instead
+of a removal condition. The guard checks that `match` contains the pin:
+`name==version` or `name@version`, where the version is a release number or a
+variable that holds one, never a moving name such as `latest`.
 
 The guard fails when an exception has no `match`, has neither a removal
-condition nor a tracking issue, or matches no site (a stale exception). The
+condition nor both a review date (`expires`) and a tracking issue (`issue`), or
+matches no site (a stale exception). The
 current exceptions are listed in `docs/generated/rules.md` under "Exceptions
 and review dates".
