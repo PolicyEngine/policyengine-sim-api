@@ -58,6 +58,18 @@ resolve_secret_reference() {
   printf '%s:%s' "${reference}" "${highest_enabled_version}"
 }
 
+runtime_secrets=()
+
+# Resolve one secret per assignment: an array assignment takes its exit status
+# from its last command substitution only, so resolving several secrets in
+# one would let an earlier failure pass unnoticed.
+add_runtime_secret() {
+  local variable_name="$1"
+  local resolved_reference
+  resolved_reference="$(resolve_secret_reference "$2")"
+  runtime_secrets+=("${variable_name}=${resolved_reference}")
+}
+
 required_variables=(
   PROJECT_ID
   REGION
@@ -116,16 +128,11 @@ export SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE="${SIMULATION_ENTRYPOINT_
 [[ "${SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE}" == "0" || "${SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE}" == "1" ]] \
   || fail "SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS_VALUE must be 0 or 1"
 
+add_runtime_secret OLD_GATEWAY_AUTH_CLIENT_SECRET \
+  "${OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME}"
 # The runtime role's URL for the entrypoint's own simulation schema. The
 # migration job, which uses a separate migrator URL, runs before this deploy.
-runtime_secrets=(
-  "OLD_GATEWAY_AUTH_CLIENT_SECRET=$(
-    resolve_secret_reference "${OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME}"
-  )"
-  "SIMULATION_DATABASE_URL=$(
-    resolve_secret_reference "${SIMULATION_DATABASE_URL_SECRET_NAME}"
-  )"
-)
+add_runtime_secret SIMULATION_DATABASE_URL "${SIMULATION_DATABASE_URL_SECRET_NAME}"
 
 if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then
   stage12_variables=(
@@ -144,11 +151,9 @@ if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then
     || fail "STAGE12_ARTIFACT_BUCKET_VALUE is invalid"
   validate_secret_reference "${STAGE12_DATABASE_URL_SECRET_NAME}"
 
-  runtime_secrets+=(
-    "MODAL_TOKEN_ID=$(resolve_secret_reference "${MODAL_TOKEN_ID_SECRET_NAME}")"
-    "MODAL_TOKEN_SECRET=$(resolve_secret_reference "${MODAL_TOKEN_SECRET_SECRET_NAME}")"
-    "STAGE12_DATABASE_URL=$(resolve_secret_reference "${STAGE12_DATABASE_URL_SECRET_NAME}")"
-  )
+  add_runtime_secret MODAL_TOKEN_ID "${MODAL_TOKEN_ID_SECRET_NAME}"
+  add_runtime_secret MODAL_TOKEN_SECRET "${MODAL_TOKEN_SECRET_SECRET_NAME}"
+  add_runtime_secret STAGE12_DATABASE_URL "${STAGE12_DATABASE_URL_SECRET_NAME}"
 fi
 
 runtime_environment_file="${RUNNER_TEMP}/simulation-entry-runtime-environment.yaml"

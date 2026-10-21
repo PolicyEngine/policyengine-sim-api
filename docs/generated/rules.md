@@ -187,7 +187,7 @@ flowchart LR
 | `sim.deploy.shell-scripts-valid` | Deployment shell scripts have valid shell syntax. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.smoke-tests-strict` | Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets.py` | `pr.yml:test` | **unproven** |
 | `sim.deploy.traffic-changes-exact` | Traffic changes target an exact, validated revision, are reversible, and refuse to run over an intervening promotion. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_traffic.py` | `pr.yml:test` | **unproven** |
-| `sim.deploy.workflow-shell-safety` | Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, and pins secret versions. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_cloud_run.py` | `pr.yml:test` | **unproven** |
+| `sim.deploy.workflow-shell-safety` | Cloud Run deployment never interpolates GitHub expressions into shell, escapes environment values, pins secret versions, and stops before deploying when any runtime secret cannot be resolved. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_deployment_assets_cloud_run.py` | `pr.yml:test` | **unproven** |
 
 ```mermaid
 flowchart LR
