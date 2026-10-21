@@ -25,8 +25,9 @@ from policyengine_simulation_executor.release_bundle import (
 )
 from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_metadata_from_hdf,
+    uk_area_hdf_dataset_path,
 )
-from src.modal.app import build_runtime_simulation_image
+from src.modal.app import build_runtime_simulation_image, hf_secret
 from src.modal.static_runtime_files import add_static_runtime_files
 
 import modal
@@ -96,16 +97,23 @@ def _summarize_bundle_status(status: dict) -> dict:
 
 
 def _validate_installed_uk_local_authority_dataset() -> str:
-    """Require the installed UK dataset to match one packaged boundary version."""
+    """Require the UK area results' dataset to match one packaged boundary version.
+
+    That is the installed default, unless it carries no area codes and the
+    bundle routes area regions to another dataset; then the routed dataset is
+    downloaded and checked instead (``uk_area_hdf_dataset_path``).
+    """
     dataset_path = resolve_local_bundle_dataset_path("uk", None)
     if dataset_path is None:
         msg = "installed certified UK dataset is unavailable"
         raise RuntimeError(msg)
-    metadata = detect_uk_local_authority_metadata_from_hdf(dataset_path)
+    metadata = detect_uk_local_authority_metadata_from_hdf(
+        uk_area_hdf_dataset_path(dataset_path)
+    )
     return metadata.boundary_version.value
 
 
-@app.function(image=smoke_image, timeout=600, memory=8192)
+@app.function(image=smoke_image, timeout=600, memory=8192, secrets=[hf_secret])
 def smoke_import_executor() -> dict:
     """Check the installed bundle, then import the workers' lazy request-time modules.
 

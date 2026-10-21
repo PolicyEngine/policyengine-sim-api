@@ -91,27 +91,70 @@ def test_bundle_status_summary_rejects_mismatch_or_incomplete_install(
         summarize_bundle_status(status)
 
 
-def test_uk_dataset_smoke_validates_installed_codes_against_packaged_resources(
+def _uk_area_dataset_smoke(
     monkeypatch,
     smoke_module,
-) -> None:
+    *,
+    installed: str,
+    area_dataset: str,
+    boundary_version: UKLocalAuthorityBoundaryVersion,
+) -> list[str]:
+    """Fake the installed default and the dataset serving UK area results."""
     observed: list[str] = []
-
     monkeypatch.setattr(
         smoke_module,
         "resolve_local_bundle_dataset_path",
-        lambda _country, _requested_data: "/installed/enhanced_frs_2024_25.h5",
+        lambda _country, _requested_data: installed,
+    )
+    monkeypatch.setattr(
+        smoke_module,
+        "uk_area_hdf_dataset_path",
+        lambda path: area_dataset if path == installed else pytest.fail(path),
     )
     monkeypatch.setattr(
         smoke_module,
         "detect_uk_local_authority_metadata_from_hdf",
         lambda path: (
             observed.append(path)
-            or UKLocalAuthorityMetadata(
-                boundary_version=UKLocalAuthorityBoundaryVersion.LAD22
-            )
+            or UKLocalAuthorityMetadata(boundary_version=boundary_version)
         ),
+    )
+    return observed
+
+
+def test_uk_dataset_smoke_validates_installed_codes_against_packaged_resources(
+    monkeypatch,
+    smoke_module,
+) -> None:
+    observed = _uk_area_dataset_smoke(
+        monkeypatch,
+        smoke_module,
+        installed="/installed/enhanced_frs_2024_25.h5",
+        area_dataset="/installed/enhanced_frs_2024_25.h5",
+        boundary_version=UKLocalAuthorityBoundaryVersion.LAD22,
     )
 
     assert smoke_module._validate_installed_uk_local_authority_dataset() == "lad22"
     assert observed == ["/installed/enhanced_frs_2024_25.h5"]
+
+
+def test_uk_dataset_smoke_checks_the_routed_dataset_of_a_national_default(
+    monkeypatch,
+    smoke_module,
+) -> None:
+    observed = _uk_area_dataset_smoke(
+        monkeypatch,
+        smoke_module,
+        installed="/installed/microcosm_uk_2024_25.h5",
+        area_dataset="/installed/microcosm_uk_2024_25_dense.h5",
+        boundary_version=UKLocalAuthorityBoundaryVersion.LAD23,
+    )
+
+    assert smoke_module._validate_installed_uk_local_authority_dataset() == "lad23"
+    assert observed == ["/installed/microcosm_uk_2024_25_dense.h5"]
+
+
+def test_executor_smoke_can_download_a_routed_private_dataset(smoke_module) -> None:
+    functions = dict(smoke_module.app.function_calls)
+
+    assert functions["smoke_import_executor"]["secrets"] == [smoke_module.hf_secret]

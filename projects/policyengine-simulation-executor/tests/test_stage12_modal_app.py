@@ -183,6 +183,10 @@ def test_v2_static_runtime_file_smoke_uses_exact_uk_worker_image(monkeypatch) ->
     assert functions["smoke_stage12_static_runtime_files"]["image"] is (
         module.uk_worker_image
     )
+    # A routed area dataset is private: checking it needs the Hugging Face token.
+    assert functions["smoke_stage12_static_runtime_files"]["secrets"] == [
+        module.hf_secret
+    ]
     monkeypatch.setattr(
         smoke,
         "validate_installed_uk_local_authority_dataset",
@@ -194,6 +198,43 @@ def test_v2_static_runtime_file_smoke_uses_exact_uk_worker_image(monkeypatch) ->
         "lad23_coordinates": 361,
         "installed_dataset_boundary_version": "lad22",
     }
+
+
+def test_v2_static_runtime_file_smoke_checks_the_routed_area_dataset(
+    monkeypatch,
+) -> None:
+    from policyengine_simulation_contract.uk_geography import (
+        UKLocalAuthorityBoundaryVersion,
+        UKLocalAuthorityMetadata,
+    )
+
+    _load(monkeypatch)
+    sys.modules.pop("src.modal.v2_static_runtime_files_smoke", None)
+    smoke = importlib.import_module("src.modal.v2_static_runtime_files_smoke")
+    installed = "/opt/policyengine/stage12-data/microcosm_uk_2024_25.h5"
+    routed = "/opt/policyengine/stage12-data/microcosm_uk_2024_25_dense.h5"
+    checked: list[str] = []
+    monkeypatch.setattr(
+        smoke, "resolve_local_bundle_dataset_path", lambda _country, _data: installed
+    )
+    monkeypatch.setattr(
+        smoke,
+        "uk_area_hdf_dataset_path",
+        lambda path: routed if path == installed else pytest.fail(path),
+    )
+    monkeypatch.setattr(
+        smoke,
+        "detect_uk_local_authority_metadata_from_hdf",
+        lambda path: (
+            checked.append(path)
+            or UKLocalAuthorityMetadata(
+                boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
+            )
+        ),
+    )
+
+    assert smoke.validate_installed_uk_local_authority_dataset() == "lad23"
+    assert checked == [routed]
 
 
 def test_only_us_worker_image_fetches_stage12_cache(monkeypatch) -> None:
