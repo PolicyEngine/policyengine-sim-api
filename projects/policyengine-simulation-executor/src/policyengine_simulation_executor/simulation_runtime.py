@@ -725,15 +725,23 @@ def _load_dataset(
     *,
     selection: DatasetSelection,
     country_module: ModuleType | None = None,
+    data_folder: str | None = None,
 ) -> Dataset:
+    """Load the selected dataset's year file, preparing it if the folder lacks it.
+
+    ``data_folder`` replaces the folder the selection would otherwise use: the
+    image's data folder for the default dataset, or a temporary folder for any
+    other dataset.
+    """
     country = params.get("country", "us").lower()
     year = _parse_year(params)
     country_module = country_module or _country_module(country)
-    data_folder = (
-        resolve_data_folder()
-        if selection.is_default
-        else _nondefault_data_folder(country, selection.name, selection.uri)
-    )
+    if data_folder is None:
+        data_folder = (
+            resolve_data_folder()
+            if selection.is_default
+            else _nondefault_data_folder(country, selection.name, selection.uri)
+        )
 
     start = time.monotonic()
     load_options = {"years": [year], "data_folder": data_folder}

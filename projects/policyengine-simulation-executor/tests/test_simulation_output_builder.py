@@ -1531,6 +1531,67 @@ def test_nondefault_dataset_cache_is_distinct_for_shared_filename_stem():
     assert first != second
 
 
+def test_load_dataset_reads_a_nondefault_dataset_from_the_folder_it_is_given(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path / "image-data"))
+    bundle = get_country_release_bundle("us")
+    nondefault = next(
+        name for name in bundle.dataset_uris if name != bundle.default_dataset
+    )
+    selection = DatasetSelection(
+        name=nondefault, uri=bundle.dataset_uris[nondefault], is_default=False
+    )
+    state_folder = str(tmp_path / "state-datasets" / nondefault / "UT")
+    ensure_calls = []
+
+    def ensure_datasets(**kwargs):
+        ensure_calls.append(kwargs)
+        return {"dataset": SimpleNamespace()}
+
+    _load_selected_dataset(
+        {"country": "us", "time_period": "2026"},
+        selection=selection,
+        country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+        data_folder=state_folder,
+    )
+
+    assert ensure_calls == [
+        {"datasets": [nondefault], "years": [2026], "data_folder": state_folder}
+    ]
+
+
+def test_load_dataset_without_a_folder_keeps_the_temporary_nondefault_folder(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path))
+    bundle = get_country_release_bundle("us")
+    nondefault = next(
+        name for name in bundle.dataset_uris if name != bundle.default_dataset
+    )
+    selection = DatasetSelection(
+        name=nondefault, uri=bundle.dataset_uris[nondefault], is_default=False
+    )
+    ensure_calls = []
+
+    def ensure_datasets(**kwargs):
+        ensure_calls.append(kwargs)
+        return {"dataset": SimpleNamespace()}
+
+    _load_selected_dataset(
+        {"country": "us", "time_period": "2026"},
+        selection=selection,
+        country_module=SimpleNamespace(ensure_datasets=ensure_datasets),
+        data_folder=None,
+    )
+
+    assert ensure_calls[0]["data_folder"] == _nondefault_data_folder(
+        "us", nondefault, bundle.dataset_uris[nondefault]
+    )
+
+
 def test_load_dataset_uses_baked_folder_for_default_requests(
     tmp_path,
     monkeypatch,
