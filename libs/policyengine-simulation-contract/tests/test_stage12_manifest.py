@@ -428,6 +428,8 @@ def test_storage_names_must_be_distinct() -> None:
         ("us", "CONGRESSIONAL_DISTRICT/UT-01", "congressional_district"),
         ("us", "place/UT-67000", "place"),
         ("us", "utah", None),
+        ("us", "uk", None),
+        ("uk", "us", None),
         ("uk", "uk", "national"),
         ("uk", "country/scotland", "country"),
         ("uk", "scotland", "country"),

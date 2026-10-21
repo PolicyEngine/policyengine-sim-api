@@ -27,11 +27,14 @@ def region_type_of(country: str, region: str | None) -> str | None:
     raw = (region or "").strip()
     if not raw or raw.lower() == country:
         return "national"
+    if raw.lower() in SUPPORTED_COUNTRIES:
+        # Another country's code names no region of this one.
+        return None
     if "/" in raw:
         return raw.split("/", 1)[0].lower()
     if country == "us" and len(raw) == _US_STATE_CODE_LENGTH:
         return "state"
-    if country == "uk" and raw.lower() not in SUPPORTED_COUNTRIES:
+    if country == "uk":
         return "country"
     return None
 

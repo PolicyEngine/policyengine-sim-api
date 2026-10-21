@@ -4510,3 +4510,44 @@ def test_exhausted_wait_window_gives_the_children_no_extra_time() -> None:
     assert [len(call.probed_at) for call in invoker.calls.values()] == [1, 1]
     assert [call.cancel_count for call in invoker.calls.values()] == [1, 1]
     assert store.parent.error_code == "simulation_wait_timeout"
+
+
+def _runtime_region_type(country: str, region: str | None) -> str | None:
+    """Return the region type the runtime's own region normalisation implies."""
+    from policyengine_simulation_executor.simulation_runtime import (
+        _normalise_region_code,
+    )
+
+    code = _normalise_region_code(country, region)
+    if code == country:
+        return "national"
+    return code.split("/", 1)[0] if "/" in code else None
+
+
+@pytest.mark.parametrize(
+    ("country", "region"),
+    [
+        ("us", None),
+        ("us", ""),
+        ("us", " US "),
+        ("us", "uk"),
+        ("us", "state/ut"),
+        ("us", "State/UT"),
+        ("us", "ut"),
+        ("us", " ut "),
+        ("us", "congressional_district/ut-01"),
+        ("us", "place/UT-67000"),
+        ("us", "utah"),
+        ("uk", "uk"),
+        ("uk", "us"),
+        ("uk", "country/scotland"),
+        ("uk", "scotland"),
+        ("uk", "Northern Ireland"),
+        ("uk", "constituency/Aldershot"),
+        ("uk", "local_authority/E06000001"),
+    ],
+)
+def test_the_contract_reads_region_codes_as_the_runtime_does(country, region) -> None:
+    from policyengine_simulation_contract.stage12_bundle import region_type_of
+
+    assert region_type_of(country, region) == _runtime_region_type(country, region)
