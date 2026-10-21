@@ -191,3 +191,15 @@ def test_region_datasets_leave_the_bundle_digest_unchanged() -> None:
 
     assert _us(bundle).region_datasets is not None
     assert bundle_digest(bundle) == bundle_digest(without_region_datasets)
+
+
+def test_a_dataset_sharing_the_default_path_does_not_replace_the_default() -> None:
+    bundle = _bundle()
+    release = bundle["data_releases"]["us"]
+    release["datasets"]["a_alias_of_the_default"] = deepcopy(
+        release["datasets"][release["default_dataset"]]
+    )
+
+    us = _us(normalize_stage12_bundle(bundle))
+
+    assert us.dataset_for_region_type("national") == us.default_dataset

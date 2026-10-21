@@ -196,7 +196,10 @@ def normalize_country_bundle(
             dataset.get("sha256"),
             f"data_releases.{country}.datasets.{identity}.sha256",
         )
-        identity_by_path.setdefault(path, identity)
+        # The default dataset owns its path; otherwise the first identity
+        # in sorted order does.
+        if identity == default_dataset or path not in identity_by_path:
+            identity_by_path[path] = identity
         datasets.append(
             Stage12Dataset(
                 identity=identity,
