@@ -376,6 +376,31 @@ job = "test"
 invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
+id = "sim.deploy.staging-promotes-tested-revision"
+category = "deployment"
+statement = "Every staging deployment passes promote_entrypoint: true, as production deployments do, so the staging service's stable URL serves the entrypoint revision that passed the staging tests."
+rationale = "projects/policyengine-simulation-entry/DEPLOYMENT.md#promotion-and-rollback"
+scope = [".github/workflows/*.yml"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "projects/policyengine-simulation-entry"
+nodes = [
+  "tests/test_deployment_assets.py::test_staging_deployments_promote_their_tested_entrypoint_revision",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.deploy.staging-promotes-tested-revision/bad_simulation_deploy.yml"
+good_fixture = "rules/fixtures/sim.deploy.staging-promotes-tested-revision/good_simulation_deploy.yml"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_deployment_assets.py::test_rule_proof_staging_promotes_tested_revision"
+
+[[rule]]
 id = "sim.deploy.smoke-tests-strict"
 category = "deployment"
 statement = "Candidate and stable smoke tests reject a revision mismatch without retrying, and fail if the previous revision does not converge."
