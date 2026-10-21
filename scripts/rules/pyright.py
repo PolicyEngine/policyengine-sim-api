@@ -266,6 +266,18 @@ def listed_packages(registry: Registry) -> list[str]:
     ]
 
 
+def ratcheted_packages(registry: Registry) -> list[str]:
+    """Return every package a ratcheted Pyright rule lists, in registry order."""
+    return [
+        _normalized(project)
+        for rule in registry.rules
+        if rule.enforcer.kind is Kind.PYRIGHT
+        and rule.status is Status.RATCHETED
+        and rule.baseline is not None
+        for project in rule.enforcer.get("projects", [])
+    ]
+
+
 def unlisted_packages(registry: Registry, root: Path) -> list[str]:
     """Return each uv package under ``root`` that no Pyright rule lists."""
     listed = set(listed_packages(registry))

@@ -54,7 +54,11 @@ def _pyright_command(
     write_baseline: bool,
     list_packages: bool,
 ) -> int:
-    """Check each package (by default every one a rule lists) against its rule."""
+    """Check each package against its rule, or rewrite ratcheted baselines.
+
+    Without packages, check every package a Pyright rule lists or, with
+    ``write_baseline``, rewrite the baseline of every ratcheted one.
+    """
     registry, violations = load_registry(root)
     if registry is None:
         return _print(violations)
@@ -63,7 +67,12 @@ def _pyright_command(
             _report(package)
         return 0
     failed = False
-    for package in packages or pyright.listed_packages(registry):
+    default_packages = (
+        pyright.ratcheted_packages(registry)
+        if write_baseline
+        else pyright.listed_packages(registry)
+    )
+    for package in packages or default_packages:
         passed, lines = pyright.check_package(
             registry, root, package, sync=sync, write_baseline=write_baseline
         )

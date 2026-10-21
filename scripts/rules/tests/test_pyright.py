@@ -750,6 +750,25 @@ class PyrightCommandTest(FakeUvTestCase):
             ],
         )
 
+    def test_write_baseline_without_packages_rewrites_each_ratcheted_baseline(
+        self,
+    ) -> None:
+        leave_report(self.service, report(route_unbound(self.root, 10)))
+
+        self.assertEqual(
+            self.run_pyright_command("--write-baseline"),
+            (
+                0,
+                [
+                    "projects/service: wrote rules/baselines/pyright-service.txt "
+                    "with 1 entry; set count = 1 under [rule.baseline] of "
+                    "ex.quality.pyright-service in rules/registry.toml",
+                    "pyright: passed",
+                ],
+            ),
+        )
+        self.assertEqual([Path(call[0]) for call in self.uv_calls()], [self.service])
+
     def test_write_baseline_refuses_an_enforced_rule(self) -> None:
         self.assertEqual(
             self.run_pyright_command("libs/alpha", "--write-baseline"),
