@@ -11,9 +11,10 @@ thin decorated wrappers, library implementations). Run as a `modal run`
 Wave 1 builds the single-year US datasets (one container per year), wave 2
 computes the 20 per-cohort national baselines per year (one container per
 cohort, sized like the production ``run_simulation_segment`` workers).
-Alongside both waves, one container per year filters the regional dataset
-that state regions load into one year file per state. See the library module
-for the idempotency, ``--force``, and determinism-gate semantics.
+Alongside both waves, one container per year and dataset filters the
+regional dataset that state regions load into one year file per state. See
+the library module for the idempotency, ``--force``, and determinism-gate
+semantics.
 """
 
 from __future__ import annotations

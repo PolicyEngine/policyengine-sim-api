@@ -1382,6 +1382,7 @@ class TestBuildStateDatasetsImpl:
         with pytest.raises(RuntimeError, match="no row filter"):
             self._build(state_build, self._both_states(state_build))
         assert state_build.uploads == []
+        assert state_build.ensure_calls == []
 
     def test_refuses_a_state_with_no_households(self, state_build):
         from policyengine.core.scoping_strategy import RowFilterStrategy

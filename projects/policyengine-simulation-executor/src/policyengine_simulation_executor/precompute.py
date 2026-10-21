@@ -432,13 +432,14 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
 
 def _checked_state_targets(
     year: int, expected: list[StateDatasetPlanEntry]
-) -> dict[str, StateDatasetTarget]:
-    """Return each planned state's target, after re-deriving its key in this container.
+) -> dict[str, RowFilterStrategy]:
+    """Return each planned state's row filter, after re-deriving its key here.
 
     The planner and this builder run in different containers; both derive a
     state's key from the installed bundle. A disagreement means they see
     different bundles, so nothing is built rather than uploading a file under
-    a key that does not describe it.
+    a key that does not describe it. A state without a row filter is refused
+    here too, before anything is prepared.
     """
     from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_keys.collect_state_dataset_identity
         collect_state_dataset_identity,
@@ -456,6 +457,9 @@ def _checked_state_targets(
         target = targets.get(entry.region)
         if target is None:
             msg = f"No state dataset target for {entry.region} in this container"
+            raise RuntimeError(msg)
+        if target.scoping_strategy is None:
+            msg = f"{entry.region} has no row filter to build its state file with"
             raise RuntimeError(msg)
         identity = collect_state_dataset_identity(
             PRECOMPUTE_COUNTRY,
@@ -481,7 +485,12 @@ def _checked_state_targets(
     if len(datasets) > 1:
         msg = f"One state dataset build covers one dataset, not {sorted(datasets)}"
         raise ValueError(msg)
-    return {entry.region: targets[entry.region] for entry in expected}
+    strategies = {}
+    for entry in expected:
+        strategy = targets[entry.region].scoping_strategy
+        if strategy is not None:
+            strategies[entry.region] = strategy
+    return strategies
 
 
 def _registered_district_geoids(country_module: ModuleType) -> set[int]:
@@ -556,7 +565,7 @@ def build_state_datasets_impl(
     if not expected:
         return []
     started = time.monotonic()
-    targets = _checked_state_targets(year, expected)
+    strategies = _checked_state_targets(year, expected)
     dataset = expected[0].dataset
     work_folder = work_folder or Path(
         tempfile.mkdtemp(prefix="policyengine-state-datasets-")
@@ -584,11 +593,7 @@ def build_state_datasets_impl(
     store = ArtifactStore(bucket)
     results = []
     for entry in expected:
-        strategy = targets[entry.region].scoping_strategy
-        if strategy is None:
-            msg = f"{entry.region} has no row filter to build its state file with"
-            raise RuntimeError(msg)
-        rows = strategy.apply(
+        rows = strategies[entry.region].apply(
             entity_data=source.data.entity_data,
             group_entities=US_GROUP_ENTITIES,
             year=year,
@@ -826,9 +831,9 @@ def run_precompute(
 
     Takes the six Modal function handles as ``functions`` (each offering
     ``.remote``/``.spawn``) so the flow is testable with plain fakes.
-    Per-state dataset builds (one container per year) start with the dataset
-    builds and are waited for only before the manifest is published, so the
-    baselines never wait for them.
+    Per-state dataset builds (one container per year and dataset) start with
+    the dataset builds and are waited for only before the manifest is
+    published, so the baselines never wait for them.
     Everything crossing a handle is a plain dict (Modal's serialization
     boundary); it is validated back into models immediately on return.
     The determinism gate runs only when baselines were actually computed
