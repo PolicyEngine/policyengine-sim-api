@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import gc
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,10 +64,11 @@ from .models import (
     DeterminismVerdict,
     ManifestArtifact,
     PrecomputePlan,
+    StateDatasetBuildResult,
     StateDatasetPlanEntry,
     WorkSelection,
 )
-from .state_datasets import state_dataset_relative_folder
+from .state_datasets import state_dataset_relative_folder, year_file_reuse_problem
 from .store import Stage12CacheStore
 
 if TYPE_CHECKING:
@@ -73,6 +76,7 @@ if TYPE_CHECKING:
 
     import modal
     import pandas as pd
+    from microdf import MicroDataFrame
 
 PRECOMPUTE_YEARS = (2026, 2027, 2025)
 MANIFEST_DIGEST_PREFIX = "STAGE12_CACHE_MANIFEST_DIGEST="
@@ -392,6 +396,160 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
         uploaded=uploaded,
         build_seconds=round(time.monotonic() - started, 1),
     )
+
+
+def _checked_state_targets(
+    year: int, expected: Sequence[StateDatasetPlanEntry]
+) -> dict[str, StateDatasetTarget]:
+    """Return each planned state's target, after re-deriving its key here.
+
+    Raises ``RuntimeError`` when the installed bundle gives another identity
+    than the plan, so nothing is built under a key that does not describe it.
+    """
+    resolved = load_stage12_bundle()
+    targets = {target.region: target for target in state_dataset_targets()}
+    datasets = set()
+    for entry in expected:
+        if entry.year != year:
+            msg = (
+                f"State dataset entry for {entry.state_code} is for year "
+                f"{entry.year}, not {year}"
+            )
+            raise ValueError(msg)
+        target = targets.get(entry.region)
+        if target is None:
+            msg = f"No state dataset target for {entry.region} in this container"
+            raise RuntimeError(msg)
+        identity = collect_state_dataset_identity(
+            resolved,
+            country="us",
+            year=year,
+            dataset=target.dataset,
+            state_code=target.state_code,
+            state_fips=target.state_fips,
+            filter_variable=target.filter_variable,
+        )
+        folder = state_dataset_relative_folder(target.dataset, target.state_code)
+        if (identity.store_path, identity.filename, folder) != (
+            entry.path,
+            entry.filename,
+            entry.folder,
+        ):
+            msg = (
+                f"planned and runtime Stage 12 state dataset identities differ "
+                f"for {entry.region} {year}"
+            )
+            raise RuntimeError(msg)
+        datasets.add(target.dataset)
+    if len(datasets) > 1:
+        msg = f"One state dataset build covers one dataset, not {sorted(datasets)}"
+        raise ValueError(msg)
+    return {entry.region: targets[entry.region] for entry in expected}
+
+
+def _require_districts_within_their_states(household: MicroDataFrame) -> None:
+    """Refuse a dataset whose district codes name a different state.
+
+    District requests read their state's file and filter it by
+    ``congressional_district_geoid`` (state FIPS times 100 plus the district
+    number). Both columns are labels; nothing here is weighted.
+    """
+    if "congressional_district_geoid" not in household.columns:
+        return
+    outside = (household["congressional_district_geoid"] // 100) != household[
+        "state_fips"
+    ]
+    if outside.any():
+        msg = (
+            "Some households have a congressional district code outside their "
+            "state; their state's file would not match the district's results"
+        )
+        raise RuntimeError(msg)
+
+
+def build_state_datasets_impl(
+    bucket: str,
+    year: int,
+    expected: Sequence[StateDatasetPlanEntry],
+    *,
+    work_folder: Path | None = None,
+) -> tuple[StateDatasetBuildResult, ...]:
+    """Build, check and upload one year's Stage 12 state datasets.
+
+    Has .py prepare the regional dataset's full-country year file once, then
+    for each planned state keeps the rows its region's own scoping strategy
+    keeps, writes them with .py's ``save()``, copies the year-file stamp,
+    confirms that .py's reuse checks accept the file, and uploads it.
+    """
+    from policyengine.tax_benefit_models.us.datasets import (
+        PolicyEngineUSDataset,
+        USYearData,
+    )
+    from policyengine.tax_benefit_models.us.legacy_inputs import (
+        read_year_file_stamp,
+        write_year_file_stamp,
+    )
+    from policyengine.tax_benefit_models.us.model import US_GROUP_ENTITIES
+
+    if not expected:
+        return ()
+    targets = _checked_state_targets(year, expected)
+    dataset = expected[0].dataset
+    work_folder = work_folder or Path(
+        tempfile.mkdtemp(prefix="policyengine-stage12-state-datasets-")
+    )
+    source_folder = str(work_folder / "source")
+    country_module = _country_module("us")
+
+    # Preparing the year file runs a Microsimulation over every state, whose
+    # objects hold reference cycles; release them before filtering 51 copies.
+    country_module.ensure_datasets(
+        datasets=[dataset], years=[year], data_folder=source_folder
+    )
+    gc.collect()
+    (source,) = country_module.load_datasets(
+        datasets=[dataset], years=[year], data_folder=source_folder
+    ).values()
+    stamp = read_year_file_stamp(source.filepath)
+    if stamp is None:
+        msg = f"The prepared year file {source.filepath} has no year-file stamp"
+        raise RuntimeError(msg)
+    _require_districts_within_their_states(source.data.household)
+
+    store = Stage12CacheStore(bucket)
+    results = []
+    for entry in expected:
+        rows = targets[entry.region].scoping_strategy.apply(
+            entity_data=source.data.entity_data,
+            group_entities=US_GROUP_ENTITIES,
+            year=year,
+        )
+        local_file = work_folder / entry.folder / entry.filename
+        PolicyEngineUSDataset(
+            name=f"{dataset}-{entry.state_code.lower()}-year-{year}",
+            description=f"{entry.region} rows of {dataset} for {year}",
+            filepath=str(local_file),
+            year=year,
+            metadata=dict(source.metadata),
+            data=USYearData(**rows),
+        ).save()
+        # save() rewrites the file without the stamp, so stamp it afterwards,
+        # as create_datasets does.
+        write_year_file_stamp(local_file, stamp)
+        problem = year_file_reuse_problem(local_file, dataset)
+        if problem is not None:
+            msg = f"ensure_datasets would not reuse {local_file}: {problem}"
+            raise RuntimeError(msg)
+        uploaded, stored = store.upload_file(entry.path, local_file)
+        results.append(
+            StateDatasetBuildResult(
+                **stored.model_dump(),
+                year=year,
+                state_code=entry.state_code,
+                uploaded=uploaded,
+            )
+        )
+    return tuple(results)
 
 
 def _ensure_dataset_file(bucket: str, year: int) -> None:

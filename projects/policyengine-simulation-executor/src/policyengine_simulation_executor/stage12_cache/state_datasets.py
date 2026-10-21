@@ -23,3 +23,27 @@ def state_dataset_relative_folder(dataset: str, state_code: str) -> str:
 def state_dataset_folder(data_folder: str, dataset: str, state_code: str) -> str:
     """Return the absolute folder of a state's baked year files."""
     return str(Path(data_folder) / state_dataset_relative_folder(dataset, state_code))
+
+
+def year_file_reuse_problem(path: str | Path, dataset: str) -> str | None:
+    """Return why ``ensure_datasets`` would rebuild this year file, or None.
+
+    These are the two checks .py's ``ensure_datasets`` and ``load_datasets``
+    run before reusing a year file of ``dataset``: the year-file stamp and
+    renames record, then the legacy SPM record against the profile this
+    release expects for the dataset.
+    """
+    from policyengine.tax_benefit_models.us.datasets import (
+        _expected_legacy_spm_profile,
+    )
+    from policyengine.tax_benefit_models.us.legacy_inputs import (
+        year_file_stamp_problem,
+    )
+    from policyengine.tax_benefit_models.us.legacy_spm.record import (
+        year_file_problem,
+    )
+
+    problem = year_file_stamp_problem(path)
+    if problem is not None:
+        return problem
+    return year_file_problem(path, _expected_legacy_spm_profile(dataset))

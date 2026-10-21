@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
@@ -127,6 +128,14 @@ class _FakeBlob:
         assert if_generation_match == 0
         if self.path in self.objects:
             raise PreconditionFailed(self.path)
+        self.objects[self.path] = {"payload": payload, "metadata": self.metadata}
+
+    def upload_from_filename(self, filename, *, if_generation_match):
+        assert if_generation_match == 0
+        if self.path in self.objects:
+            raise PreconditionFailed(self.path)
+        with open(filename, "rb") as source:  # noqa: PTH123  # mirrors the GCS client's own file read
+            payload = source.read()
         self.objects[self.path] = {"payload": payload, "metadata": self.metadata}
 
     def download_as_bytes(self) -> bytes:
@@ -828,3 +837,192 @@ def test_planned_baseline_file_is_the_one_the_worker_saves_and_loads(
     # A US simulation always resolves an SPM selection, which .py names.
     assert entry.filename != f"{entry.simulation_id}.h5"
     assert plan.determinism_verified is False
+
+
+class TestBuildStateDatasetsImpl:
+    """Building, checking and uploading one year's Stage 12 state datasets."""
+
+    YEAR = 2026
+
+    @pytest.fixture
+    def state_build(self, monkeypatch, tmp_path):
+        from fixtures import state_dataset_sources as sources
+        from policyengine.core.scoping_strategy import RowFilterStrategy
+        from policyengine.tax_benefit_models import us as us_module
+
+        client = _FakeClient()
+        _use_store(monkeypatch, client)
+        state = SimpleNamespace(
+            client=client,
+            ensure_calls=[],
+            entity_frames=sources.source_entity_frames(),
+            work_folder=tmp_path / "work",
+            sources=sources,
+        )
+
+        def target(state_code, fips):
+            return precompute.StateDatasetTarget(
+                region=f"state/{state_code.lower()}",
+                state_code=state_code,
+                state_fips=fips,
+                filter_variable="state_fips",
+                dataset=sources.REGIONAL_DATASET,
+                scoping_strategy=RowFilterStrategy(
+                    variable_name="state_fips", variable_value=fips
+                ),
+            )
+
+        state.targets = [
+            target("UT", sources.UTAH_FIPS),
+            target("WY", sources.WYOMING_FIPS),
+        ]
+        monkeypatch.setattr(
+            precompute, "state_dataset_targets", lambda: tuple(state.targets)
+        )
+        monkeypatch.setattr(precompute, "load_stage12_bundle", lambda: "resolved")
+
+        def fake_state_identity(resolved, *, country, year, dataset, **state_filter):
+            digest = f"state-{year}-{state_filter['state_code']}"
+            return SimpleNamespace(
+                digest=digest,
+                store_path=f"state-datasets/{country}/{digest}/{dataset}_year_{year}.h5",
+                filename=f"{dataset}_year_{year}.h5",
+            )
+
+        monkeypatch.setattr(
+            precompute, "collect_state_dataset_identity", fake_state_identity
+        )
+
+        def fake_ensure_datasets(*, datasets, years, data_folder):
+            state.ensure_calls.append((datasets, years, data_folder))
+            folder = Path(data_folder)
+            folder.mkdir(parents=True, exist_ok=True)
+            for year in years:
+                sources.write_year_file(
+                    folder, year=year, entity_frames=state.entity_frames
+                )
+            return us_module.load_datasets(
+                datasets=datasets, years=years, data_folder=data_folder
+            )
+
+        monkeypatch.setattr(
+            precompute,
+            "_country_module",
+            lambda _country: SimpleNamespace(
+                ensure_datasets=fake_ensure_datasets,
+                load_datasets=us_module.load_datasets,
+            ),
+        )
+        state.identity_for = fake_state_identity
+        return state
+
+    def _entry(self, state_build, state_code):
+        dataset = state_build.sources.REGIONAL_DATASET
+        identity = state_build.identity_for(
+            "resolved",
+            country="us",
+            year=self.YEAR,
+            dataset=dataset,
+            state_code=state_code,
+        )
+        return StateDatasetPlanEntry(
+            year=self.YEAR,
+            state_code=state_code,
+            region=f"state/{state_code.lower()}",
+            dataset=dataset,
+            digest=identity.digest,
+            path=identity.store_path,
+            filename=identity.filename,
+            folder=f"state-datasets/{dataset}/{state_code}",
+            exists=False,
+        )
+
+    def _build(self, state_build, entries):
+        return precompute.build_state_datasets_impl(
+            "cache-bucket", self.YEAR, entries, work_folder=state_build.work_folder
+        )
+
+    def test_uploads_each_state_file_with_only_its_households(self, state_build):
+        entries = [self._entry(state_build, "UT"), self._entry(state_build, "WY")]
+
+        results = self._build(state_build, entries)
+
+        sources = state_build.sources
+        utah = state_build.work_folder / entries[0].folder / entries[0].filename
+        wyoming = state_build.work_folder / entries[1].folder / entries[1].filename
+        assert sources.stored_ids(utah, "household") == [1, 2]
+        assert sources.stored_ids(utah, "person") == [1, 2, 3]
+        assert sources.stored_weights(utah, "person") == [10.0, 11.0, 20.0]
+        assert sources.stored_ids(wyoming, "household") == [3]
+        assert [result.path for result in results] == [entry.path for entry in entries]
+        assert all(result.uploaded for result in results)
+        assert all(result.size_bytes > 0 for result in results)
+        assert state_build.client.objects[entries[0].path]["payload"] == (
+            utah.read_bytes()
+        )
+
+    def test_dotpy_reuses_a_state_file_without_rebuilding(
+        self, state_build, monkeypatch
+    ):
+        from policyengine.tax_benefit_models.us import datasets as us_datasets
+
+        entry = self._entry(state_build, "UT")
+        self._build(state_build, [entry])
+
+        def refuse_to_rebuild(**_kwargs):
+            msg = "ensure_datasets rebuilt a baked state file"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(us_datasets, "create_datasets", refuse_to_rebuild)
+        (dataset,) = us_datasets.ensure_datasets(
+            datasets=[state_build.sources.REGIONAL_DATASET],
+            years=[self.YEAR],
+            data_folder=str(state_build.work_folder / entry.folder),
+        ).values()
+
+        assert sorted(dataset.data.household["household_id"]) == [1, 2]
+
+    def test_prepares_the_full_country_year_file_once(self, state_build):
+        self._build(
+            state_build,
+            [self._entry(state_build, "UT"), self._entry(state_build, "WY")],
+        )
+
+        assert len(state_build.ensure_calls) == 1
+        datasets, years, _folder = state_build.ensure_calls[0]
+        assert datasets == [state_build.sources.REGIONAL_DATASET]
+        assert years == [self.YEAR]
+
+    def test_refuses_a_district_that_lies_outside_its_state(self, state_build):
+        state_build.entity_frames = state_build.sources.source_entity_frames(
+            wyoming_district_geoid=4903
+        )
+
+        with pytest.raises(RuntimeError, match="congressional district"):
+            self._build(state_build, [self._entry(state_build, "UT")])
+        assert state_build.client.objects == {}
+
+    def test_refuses_a_plan_entry_whose_key_differs_in_the_container(self, state_build):
+        entry = self._entry(state_build, "UT").model_copy(
+            update={"path": "state-datasets/us/other/x.h5"}
+        )
+
+        with pytest.raises(RuntimeError, match="identities differ"):
+            self._build(state_build, [entry])
+        assert state_build.ensure_calls == []
+
+    def test_refuses_a_state_the_container_does_not_target(self, state_build):
+        state_build.targets = state_build.targets[:1]
+
+        with pytest.raises(RuntimeError, match="state/wy"):
+            self._build(state_build, [self._entry(state_build, "WY")])
+        assert state_build.ensure_calls == []
+
+    def test_refuses_entries_for_another_year(self, state_build):
+        with pytest.raises(ValueError, match="2027"):
+            precompute.build_state_datasets_impl(
+                "cache-bucket",
+                2027,
+                [self._entry(state_build, "UT")],
+                work_folder=state_build.work_folder,
+            )
