@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 from policyengine_simulation_contract.spm import spm_error_detail
 
+from policyengine_simulation_executor.output_frames import HouseholdFrame
+
 if TYPE_CHECKING:
     from _typeshed import ConvertibleToFloat
     from policyengine.core import Simulation
@@ -60,6 +62,9 @@ def _output_model_dump(value: object) -> object:
 def _entity_data(simulation: Simulation, entity: str) -> pd.DataFrame:
     if simulation.output_dataset is None or simulation.output_dataset.data is None:
         simulation.ensure()
+    if simulation.output_dataset is None:
+        msg = "ensure() left the simulation without an output dataset"
+        raise RuntimeError(msg)
     return getattr(simulation.output_dataset.data, entity)
 
 
@@ -91,6 +96,11 @@ def _unweighted_household_frame(simulation: Simulation) -> pd.DataFrame:
     shrink. It goes once the breakdown hands policyengine the simulations, as
     the constituency and US congressional district breakdowns already do.
     """
+    if simulation.output_dataset is None or not isinstance(
+        simulation.output_dataset.data, HouseholdFrame
+    ):
+        msg = "the simulation has no household output frame; run it first"
+        raise TypeError(msg)
     return pd.DataFrame(simulation.output_dataset.data.household)
 
 
