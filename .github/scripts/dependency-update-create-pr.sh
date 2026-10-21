@@ -66,7 +66,7 @@ find_or_open_tracking_issue() {
 update_pr_description() {
   printf 'Fixes #%s\n\n' "${ISSUE_NUMBER}"
   cat <<'EOF'
-Automated daily dependency update by `.github/workflows/update-dependencies.yml`. It regenerates the API clients, then runs `make update`, which runs `uv lock --upgrade` in every project. CI on this pull request tests the upgraded versions.
+Automated daily dependency update by `.github/workflows/update-dependencies.yml`. It runs `./scripts/generate-clients.sh` (the generated clients are not committed), then `make update`, which runs `uv lock --upgrade` in every project, so this pull request changes only `uv.lock` files. CI on this pull request tests the upgraded versions.
 
 Each run rebuilds `update-dependencies` from `main` and replaces it, so commits pushed to this branch by hand are lost on the next run.
 EOF
