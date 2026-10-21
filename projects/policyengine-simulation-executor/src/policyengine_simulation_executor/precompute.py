@@ -552,6 +552,7 @@ def build_state_datasets_impl(
 
     if not expected:
         return []
+    started = time.monotonic()
     targets = _checked_state_targets(year, expected)
     dataset = expected[0].dataset
     work_folder = work_folder or Path(
@@ -608,6 +609,7 @@ def build_state_datasets_impl(
                 path=entry.path,
                 uploaded=store.upload_file(entry.path, local_file),
                 size_bytes=local_file.stat().st_size,
+                build_seconds=round(time.monotonic() - started, 1),
             )
         )
     return results
@@ -841,12 +843,16 @@ def run_precompute(
         functions.build_dataset.spawn(bucket, entry.model_dump())
         for entry in work.datasets
     ]
-    state_entries_by_year: dict[int, list[dict]] = {}
+    # One build prepares one dataset's year file, so builds are per year and
+    # dataset.
+    state_builds: dict[tuple[int, str], list[dict]] = {}
     for entry in work.state_datasets:
-        state_entries_by_year.setdefault(entry.year, []).append(entry.model_dump())
+        state_builds.setdefault((entry.year, entry.dataset), []).append(
+            entry.model_dump()
+        )
     state_handles = [
-        functions.build_state_datasets.spawn(bucket, year, entries)
-        for year, entries in state_entries_by_year.items()
+        (year, dataset, functions.build_state_datasets.spawn(bucket, year, entries))
+        for (year, dataset), entries in state_builds.items()
     ]
     for handle in dataset_handles:
         result = DatasetBuildResult.model_validate(handle.get())
@@ -880,16 +886,16 @@ def run_precompute(
             )
         echo("Determinism gate passed")
 
-    if state_handles:
-        state_results = [
-            StateDatasetBuildResult.model_validate(result)
-            for handle in state_handles
-            for result in handle.get()
+    for year, dataset, handle in state_handles:
+        results = [
+            StateDatasetBuildResult.model_validate(result) for result in handle.get()
         ]
+        uploaded = [result for result in results if result.uploaded]
         echo(
-            f"State datasets: {len(state_results)} built, "
-            f"{sum(result.uploaded for result in state_results)} uploaded, "
-            f"{sum(result.size_bytes for result in state_results)} bytes"
+            f"State datasets {year} {dataset}: {len(results)} built, "
+            f"{len(uploaded)} uploaded "
+            f"({sum(result.size_bytes for result in uploaded)} bytes) in "
+            f"{max((result.build_seconds for result in results), default=0.0)} s"
         )
 
     manifest_digest = functions.publish_manifest.remote(bucket, plan.model_dump())

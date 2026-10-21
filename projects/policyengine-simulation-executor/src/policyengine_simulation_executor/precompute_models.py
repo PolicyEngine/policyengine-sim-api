@@ -188,13 +188,18 @@ class DatasetBuildResult(_StrictModel):
 
 
 class StateDatasetBuildResult(_StrictModel):
-    """Result of one state's dataset build; ``uploaded`` is False if the key existed."""
+    """Result of one state's dataset build; ``uploaded`` is False if the key existed.
+
+    ``build_seconds`` is how long the year's build had run when this state's
+    file was uploaded, so the last result of a build gives its whole duration.
+    """
 
     year: int
     state_code: str
     path: str
     uploaded: bool
     size_bytes: int
+    build_seconds: float
 
 
 class BaselineComputeResult(_StrictModel):

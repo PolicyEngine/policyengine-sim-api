@@ -384,7 +384,9 @@ class RecordingFunction:
         return Handle()
 
 
-def _state_build_result(year, state_code, *, uploaded=True, size_bytes=100):
+def _state_build_result(
+    year, state_code, *, uploaded=True, size_bytes=100, build_seconds=30.0
+):
     return {
         "year": year,
         "state_code": state_code,
@@ -393,6 +395,7 @@ def _state_build_result(year, state_code, *, uploaded=True, size_bytes=100):
         ),
         "uploaded": uploaded,
         "size_bytes": size_bytes,
+        "build_seconds": build_seconds,
     }
 
 
@@ -485,7 +488,9 @@ class TestRunPrecompute:
             log,
             {
                 2026: [
-                    _state_build_result(2026, "WY", uploaded=uploaded_wyoming),
+                    _state_build_result(
+                        2026, "WY", uploaded=uploaded_wyoming, build_seconds=40.5
+                    ),
                 ],
                 2027: [_state_build_result(2027, "UT", size_bytes=250)],
             },
@@ -522,11 +527,47 @@ class TestRunPrecompute:
         assert log.index(("get", "compute_baseline", 2027)) < first_state_get
         assert first_state_get < log.index(("remote", "publish_manifest", None))
 
-    def test_reports_the_state_dataset_bytes_uploaded(self):
+    def test_reports_each_builds_uploads_bytes_and_time(self):
         _functions, _log, _digest, lines = self._state_run(uploaded_wyoming=False)
 
-        assert "State datasets: 2 built, 1 uploaded, 350 bytes" in lines
+        assert (
+            "State datasets 2026 populace_local: 1 built, 0 uploaded "
+            "(0 bytes) in 40.5 s"
+        ) in lines
+        assert (
+            "State datasets 2027 populace_local: 1 built, 1 uploaded "
+            "(250 bytes) in 30.0 s"
+        ) in lines
         assert lines[-1] == "MANIFEST_DIGEST=digest-123"
+
+    def test_spawns_one_state_build_per_year_and_dataset(self):
+        log = []
+        functions = self._functions()
+        other = _state_dataset_entry(2026, "ID", exists=False).model_copy(
+            update={"dataset": "populace_other", "folder": "state-datasets/o/ID"}
+        )
+        plan = _plan_with_state_datasets()
+        plan = plan.model_copy(update={"state_datasets": [*plan.state_datasets, other]})
+        functions["plan_artifacts"] = FakeFunction(result=plan.model_dump())
+        functions["build_state_datasets"] = RecordingFunction(
+            "build_state_datasets",
+            log,
+            {
+                2026: [_state_build_result(2026, "WY")],
+                2027: [_state_build_result(2027, "UT")],
+            },
+        )
+
+        self._run(functions)
+
+        assert [
+            (args[1], [entry["dataset"] for entry in args[2]])
+            for args in functions["build_state_datasets"].spawn_calls
+        ] == [
+            (2026, ["populace_local"]),
+            (2027, ["populace_local"]),
+            (2026, ["populace_other"]),
+        ]
 
     def test_a_run_without_state_datasets_spawns_no_state_build(self):
         functions = self._functions()
@@ -1317,6 +1358,7 @@ class TestBuildStateDatasetsImpl:
         assert [result.uploaded for result in results] == [True, False]
         assert [result.path for result in results] == [entry.path for entry in entries]
         assert all(result.size_bytes > 0 for result in results)
+        assert 0 <= results[0].build_seconds <= results[1].build_seconds
 
     def test_refuses_a_district_that_lies_outside_its_state(self, state_build):
         state_build.entity_frames = state_build.sources.source_entity_frames(

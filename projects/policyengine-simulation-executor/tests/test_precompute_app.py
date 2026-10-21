@@ -119,7 +119,12 @@ def test_state_dataset_wrapper_validates_entries_in_and_dumps_results_out(
         exists=False,
     )
     result = StateDatasetBuildResult(
-        year=2026, state_code="UT", path=entry.path, uploaded=True, size_bytes=5
+        year=2026,
+        state_code="UT",
+        path=entry.path,
+        uploaded=True,
+        size_bytes=5,
+        build_seconds=1.0,
     )
     seen = {}
 
