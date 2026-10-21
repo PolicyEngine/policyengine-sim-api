@@ -325,9 +325,11 @@ esac
 """
 UPDATE_PR_SUMMARY = (
     "Automated daily dependency update by "
-    "`.github/workflows/update-dependencies.yml`. It regenerates the API "
-    "clients, then runs `make update`, which runs `uv lock --upgrade` in every "
-    "project. CI on this pull request tests the upgraded versions.\n\n"
+    "`.github/workflows/update-dependencies.yml`. It runs "
+    "`./scripts/generate-clients.sh` (the generated clients are not "
+    "committed), then `make update`, which runs `uv lock --upgrade` in every "
+    "project, so this pull request changes only `uv.lock` files. CI on this "
+    "pull request tests the upgraded versions.\n\n"
     "Each run rebuilds `update-dependencies` from `main` and replaces it, so "
     "commits pushed to this branch by hand are lost on the next run."
 )

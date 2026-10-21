@@ -61,8 +61,8 @@ jobs:
           REMOTE_HEAD: ${{ steps.branch.outputs.remote_head }}
         run: .github/scripts/dependency-update-commit-and-push.sh
 
-      # Opens the update PR, or, when one is open, makes sure the first line
-      # of its description names the tracking issue (rule
+      # Opens the update PR, or, when one is open, replaces its description,
+      # whose first line names the tracking issue (rule
       # sim.process.pr-tracking-issue). It runs whenever the update changed
       # files on main, including when the branch already held them.
       - name: Open or update the pull request
