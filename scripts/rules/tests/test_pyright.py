@@ -918,6 +918,50 @@ class PyrightCommandTest(FakeUvTestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("apply only to pyright", error_output.getvalue())
 
+    def assert_usage_error(self, arguments: list[str], fragment: str) -> None:
+        with (
+            contextlib.redirect_stderr(io.StringIO()) as error_output,
+            self.assertRaises(SystemExit) as raised,
+        ):
+            main([*arguments, "--root", str(self.root)])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn(fragment, error_output.getvalue())
+
+    def test_the_ci_scripts_baseline_flag_is_refused(self) -> None:
+        self.assert_usage_error(
+            ["pyright", "--write-baselines"],
+            "--write-baselines applies only to ci-scripts; pyright takes "
+            "--write-baseline",
+        )
+
+    def test_list_packages_takes_no_other_pyright_options(self) -> None:
+        for arguments in (
+            ["pyright", "--list-packages", "libs/alpha"],
+            ["pyright", "--list-packages", "--sync"],
+            ["pyright", "--list-packages", "--write-baseline"],
+        ):
+            with self.subTest(arguments=arguments):
+                self.assert_usage_error(
+                    arguments, "--list-packages takes no packages or other options"
+                )
+
+    def test_write_baseline_without_a_ratcheted_rule_says_so(self) -> None:
+        self.repo.edit(
+            "rules/registry.toml", 'status = "ratcheted"', 'status = "enforced"'
+        )
+
+        self.assertEqual(
+            self.run_pyright_command("--write-baseline"),
+            (
+                0,
+                [
+                    "No Pyright rule is ratcheted, so there is no baseline to write.",
+                    "pyright: passed",
+                ],
+            ),
+        )
+        self.assertEqual(self.uv_calls(), [])
+
     def test_list_packages_prints_every_package_a_rule_lists(self) -> None:
         self.assertEqual(
             self.run_pyright_command("--list-packages"),

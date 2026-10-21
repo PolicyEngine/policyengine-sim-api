@@ -72,6 +72,8 @@ def _pyright_command(
         if write_baseline
         else pyright.listed_packages(registry)
     )
+    if write_baseline and not packages and not default_packages:
+        _report("No Pyright rule is ratcheted, so there is no baseline to write.")
     for package in packages or default_packages:
         passed, lines = pyright.check_package(
             registry, root, package, sync=sync, write_baseline=write_baseline
@@ -160,6 +162,13 @@ def main(argv: list[str] | None = None) -> int:
             "packages, --sync, --write-baseline and --list-packages apply only "
             "to pyright"
         )
+    if args.command == "pyright" and args.write_baselines:
+        parser.error(
+            "--write-baselines applies only to ci-scripts; pyright takes "
+            "--write-baseline"
+        )
+    if args.list_packages and (args.packages or args.sync or args.write_baseline):
+        parser.error("--list-packages takes no packages or other options")
     root = args.root.resolve()
 
     if args.command == "ci-scripts":
