@@ -285,7 +285,9 @@ def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
         for entry in plan.state_datasets
     ]
     return ArtifactManifest(
-        manifest_schema=MANIFEST_SCHEMA,
+        # The field's alias, which Pydantic accepts (and which its type
+        # checker support knows) at construction.
+        schema=MANIFEST_SCHEMA,
         country=PRECOMPUTE_COUNTRY,
         receipt=plan.receipt,
         artifacts=artifacts,
@@ -761,10 +763,13 @@ def verify_determinism_impl(
     if not artifact_file.exists():
         store.download_file(expected.path, artifact_file)
     baseline.ensure()
-    if baseline.artifact_outcome != OUTCOME_HIT:
+    # A cohort baseline is an ArtifactBaselineSimulation, which records the
+    # outcome; the attribute isn't on the Simulation type it is declared as.
+    outcome = getattr(baseline, "artifact_outcome", None)
+    if outcome != OUTCOME_HIT:
         msg = (
             "Determinism gate could not load the artifact it verifies "
-            f"(outcome={baseline.artifact_outcome})"
+            f"(outcome={outcome})"
         )
         raise RuntimeError(msg)
 

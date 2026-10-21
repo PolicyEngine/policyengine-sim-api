@@ -22,18 +22,20 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final, Protocol, runtime_checkable
 
 from policyengine.core.scoping_strategy import RegionGroupStrategy
 from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
 from pydantic import PrivateAttr
 
 from policyengine_simulation_executor import artifact_keys
+from policyengine_simulation_executor.precompute_models import ArtifactOutcome
 from policyengine_simulation_executor.stage_reporting_simulation import (
     StageReportingSimulation,
 )
 
 if TYPE_CHECKING:
+    from policyengine.core import Simulation
     from policyengine.core.scoping_strategy import ScopingStrategy
 
 logger = logging.getLogger(__name__)
@@ -43,9 +45,23 @@ logger = logging.getLogger(__name__)
 # "incomplete": loaded but missing requested columns or a valid SPM receipt
 # -> recomputed;
 # "miss": no artifact -> computed (today's behavior).
-OUTCOME_HIT = "hit"
-OUTCOME_INCOMPLETE = "incomplete"
-OUTCOME_MISS = "miss"
+OUTCOME_HIT: Final = "hit"
+OUTCOME_INCOMPLETE: Final = "incomplete"
+OUTCOME_MISS: Final = "miss"
+
+
+@runtime_checkable
+class EntityVariableResolver(Protocol):
+    """A model version that lists the output variables a simulation must carry.
+
+    policyengine defines ``resolve_entity_variables`` on
+    MicrosimulationModelVersion, not on the TaxBenefitModelVersion a
+    Simulation declares.
+    """
+
+    def resolve_entity_variables(self, simulation: Simulation) -> dict[str, list[str]]:
+        """Return each entity's required output variables."""
+        ...
 
 
 @dataclass(frozen=True)
@@ -154,10 +170,10 @@ class ArtifactBaselineSimulation(StageReportingSimulation):
     """A Simulation whose ``ensure()`` validates what it loads."""
 
     _computed_this_process: bool = PrivateAttr(default=False)
-    _artifact_outcome: str | None = PrivateAttr(default=None)
+    _artifact_outcome: ArtifactOutcome | None = PrivateAttr(default=None)
 
     @property
-    def artifact_outcome(self) -> str | None:
+    def artifact_outcome(self) -> ArtifactOutcome | None:
         """Set by ``ensure()``; None until then."""
         return self._artifact_outcome
 
@@ -166,7 +182,7 @@ class ArtifactBaselineSimulation(StageReportingSimulation):
         self._computed_this_process = True
         super().run()
 
-    def _record_outcome(self, outcome: str) -> None:
+    def _record_outcome(self, outcome: ArtifactOutcome) -> None:
         """First outcome wins for the life of this instance.
 
         Every request ensures its baseline more than once (the economic
@@ -247,7 +263,11 @@ class ArtifactBaselineSimulation(StageReportingSimulation):
     def _missing_output_columns(self) -> list[tuple[str, str]]:
         data = getattr(self.output_dataset, "data", None)
         frames = getattr(data, "entity_data", None)
-        resolved = self.tax_benefit_model_version.resolve_entity_variables(self)
+        model_version = self.tax_benefit_model_version
+        if not isinstance(model_version, EntityVariableResolver):
+            msg = "the baseline's model version can't list its output variables"
+            raise TypeError(msg)
+        resolved = model_version.resolve_entity_variables(self)
         if not frames:
             return [(entity, "<no output data>") for entity in resolved]
         missing: list[tuple[str, str]] = []

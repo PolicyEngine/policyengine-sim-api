@@ -1143,7 +1143,7 @@ job = "pyright"
 invocation = "python -m scripts.rules pyright"
 [rule.baseline]
 file = "rules/baselines/pyright-executor.txt"
-count = 24
+count = 18
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.quality.pyright-executor/bad"
 good_fixture = "rules/fixtures/sim.quality.pyright-executor/good"
