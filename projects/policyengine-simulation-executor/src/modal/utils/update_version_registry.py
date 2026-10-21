@@ -439,8 +439,9 @@ def build_restored_routing_state(
 ROUTING_PLAN_SCHEMA = "policyengine-simulation.routing-plan/v1"
 
 
-# Raised by a routing write when _routing_store, asked to create the Dict,
-# still returns None.
+# Raised, as a RuntimeError, by a routing write when _routing_store, asked to
+# create the Dict, still returns None. That needs a lookup error: modal's
+# Dict.from_name returns a handle without contacting Modal.
 UNOPENED_ROUTING_STORE = (
     "the routing state Modal Dict could not be opened; nothing was written"
 )
@@ -625,7 +626,7 @@ def record_routing_plan(*, environment: str, plan: dict) -> None:
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=True)
     if store is None:
-        raise RoutingConflictError(UNOPENED_ROUTING_STORE)
+        raise RuntimeError(UNOPENED_ROUTING_STORE)
     _require_finished_publication(store)
     if (
         routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
@@ -659,7 +660,7 @@ def apply_routing_plan(*, environment: str, plan: dict) -> None:
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=True)
     if store is None:
-        raise RoutingConflictError(UNOPENED_ROUTING_STORE)
+        raise RuntimeError(UNOPENED_ROUTING_STORE)
     _require_finished_publication(store, allowed_plans=[plan])
     current = store.get(ROUTING_STATE_ACTIVE_KEY)
     if routing_state_digest(current) != plan["before_sha256"]:

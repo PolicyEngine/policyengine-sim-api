@@ -1348,17 +1348,18 @@ class _UnopenableDict:
 def test_routing_writes_refuse_a_routing_store_that_cannot_be_opened(
     monkeypatch, serialized_workflow
 ):
-    """Recording or applying a plan stops with a conflict, not an AttributeError."""
+    """Recording or applying a plan stops with a RuntimeError, not an AttributeError."""
     monkeypatch.setattr(registry, "modal", SimpleNamespace(Dict=_UnopenableDict))
     original = _publish(monkeypatch, None, "6.0.0", "1.1.0", "2.1.0")
     plan = _plan(monkeypatch, original, ("6.1.0", "1.1.0", "2.2.0"))
 
     for operation in (registry.record_routing_plan, registry.apply_routing_plan):
         with pytest.raises(
-            registry.RoutingConflictError,
-            match="the routing state Modal Dict could not be opened",
-        ):
+            RuntimeError, match="the routing state Modal Dict could not be opened"
+        ) as raised:
             operation(environment="staging", plan=plan)
+        # Not a RoutingConflictError: no plan disagrees with the live state.
+        assert type(raised.value) is RuntimeError
 
 
 def test_completing_a_plan_refuses_a_missing_routing_store(
