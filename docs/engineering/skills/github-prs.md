@@ -46,8 +46,8 @@ human instead.
 In a stack of pull requests, only the lowest unmerged one runs the full PR
 workflow (`.github/workflows/pr.yml`) and the Modal image smoke. The ones above
 it run only the `CI complete` job, which fails and says so, and the
-`PR description` job, which every pull request runs. A stack therefore uses one
-set of runners instead of one per layer.
+`PR description` job, which every open pull request runs. A stack therefore
+uses one set of runners instead of one per layer.
 
 - **`CI complete` is the required check.** It needs every other job in
   `pr.yml`. On a pull request that isn't stacked, or is the lowest unmerged
@@ -68,10 +68,10 @@ set of runners instead of one per layer.
 ## The `Fixes` Line
 
 Rule `sim.process.pr-tracking-issue`. The `PR description` job, in
-`.github/workflows/pr-description.yml`, checks every pull request whenever it is
-opened, reopened or edited and on every push, including each pull request in a
-stack. It reads the description from the event that started the run and fails
-unless:
+`.github/workflows/pr-description.yml`, checks every open pull request whenever
+it is opened, reopened or edited and on every push, including each pull request
+in a stack. It skips closed pull requests. It reads the description from the
+event that started the run and fails unless:
 
 - the first line is exactly `Fixes #ISSUE_NUMBER`;
 - `ISSUE_NUMBER` is an open issue in this repository. A pull request's number,

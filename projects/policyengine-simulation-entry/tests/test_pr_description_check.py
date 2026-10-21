@@ -56,7 +56,7 @@ NOT_FOUND_STDERR = "gh: Not Found (HTTP 404)"
 
 @pytest.fixture(scope="module")
 def check_module() -> ModuleType:
-    """Load the check script in this process, as the workflow runs it."""
+    """Load the check script as a module in this process."""
     spec = importlib.util.spec_from_file_location("check_pr_description", CHECK_SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
