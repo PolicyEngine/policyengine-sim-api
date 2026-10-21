@@ -5,7 +5,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, TypedDict
+from typing import Any
 
 import modal
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -87,13 +87,6 @@ SUPPORTED_ROUTE_KINDS = ("policyengine", "us", "uk")
 _INTERNAL_JOB_METADATA_KEYS = frozenset(
     {"observability_id", "submitted_at", JOB_PROGRESS_CAPABILITY_KEY}
 )
-
-
-class VersionRoutingState(TypedDict, total=False):
-    """Routing-state fields required by the public version endpoints."""
-
-    latest: dict[str, str]
-    routes: dict[str, dict[str, str]]
 
 
 @dataclass(frozen=True)
@@ -1091,7 +1084,8 @@ async def submit_budget_window_batch(
     with scopes.span(runtime, BUDGET_WINDOW_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
         return BudgetWindowBatchSubmitResponse(
             batch_job_id=batch_job_id,
-            status=seed_state.status,
+            # A new batch's seed state is always submitted.
+            status="submitted",
             poll_url=f"/budget-window-jobs/{batch_job_id}",
             country=request.country,
             version=route.response_version,
@@ -1372,7 +1366,11 @@ async def list_versions(request: Request) -> VersionsResponse:
         )
 
 
-def _version_map_from_state(state: VersionRoutingState, kind: str) -> VersionMap:
+def _version_map_from_state(state: dict, kind: str) -> VersionMap:
+    """Return ``kind``'s routes and latest version from the active routing state.
+
+    The state is read from a Modal Dict, so the helpers check each field's type.
+    """
     versions: dict[str, str] = dict(_routing_state_routes(state, kind))
     latest = _routing_state_latest(state, kind)
     if latest is not None:
