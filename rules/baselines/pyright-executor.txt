@@ -37,11 +37,6 @@ projects/policyengine-simulation-executor/src/modal/budget_window_scheduler.py :
 projects/policyengine-simulation-executor/src/modal/budget_window_scheduler.py :: reportPossiblyUnboundVariable :: "state" is possibly unbound
 projects/policyengine-simulation-executor/src/modal/budget_window_scheduler.py :: reportPossiblyUnboundVariable :: "state" is possibly unbound
 projects/policyengine-simulation-executor/src/modal/budget_window_scheduler.py :: reportReturnType :: Function with declared return type "dict[str, Any]" must return value on all code paths
-projects/policyengine-simulation-executor/src/modal/precompute_app.py :: reportArgumentType :: Argument of type "(bucket: str) -> dict[Unknown, Unknown]" cannot be assigned to parameter "plan_artifacts" of type "RemoteFunction" in function "__init__"
-projects/policyengine-simulation-executor/src/modal/precompute_app.py :: reportArgumentType :: Argument of type "(bucket: str, expected: dict[Unknown, Unknown]) -> dict[Unknown, Unknown]" cannot be assigned to parameter "build_dataset" of type "RemoteFunction" in function "__init__"
-projects/policyengine-simulation-executor/src/modal/precompute_app.py :: reportArgumentType :: Argument of type "(bucket: str, expected: dict[Unknown, Unknown]) -> dict[Unknown, Unknown]" cannot be assigned to parameter "compute_baseline" of type "RemoteFunction" in function "__init__"
-projects/policyengine-simulation-executor/src/modal/precompute_app.py :: reportArgumentType :: Argument of type "(bucket: str, expected: dict[Unknown, Unknown]) -> dict[Unknown, Unknown]" cannot be assigned to parameter "verify_determinism" of type "RemoteFunction" in function "__init__"
-projects/policyengine-simulation-executor/src/modal/precompute_app.py :: reportArgumentType :: Argument of type "(bucket: str, plan: dict[Unknown, Unknown]) -> str" cannot be assigned to parameter "publish_manifest" of type "RemoteFunction" in function "__init__"
 projects/policyengine-simulation-executor/src/modal/precompute_app.py :: reportAttributeAccessIssue :: "App" is not a known attribute of module "modal"
 projects/policyengine-simulation-executor/src/modal/segmented_national.py :: reportAttributeAccessIssue :: "Function" is not a known attribute of module "modal"
 projects/policyengine-simulation-executor/src/modal/segmented_national.py :: reportAttributeAccessIssue :: "FunctionCall" is not a known attribute of module "modal"
@@ -109,60 +104,11 @@ projects/policyengine-simulation-executor/src/policyengine_simulation_executor/s
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_output_geographic.py :: reportAttributeAccessIssue :: Cannot access attribute "household" for class "BaseModel"
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_output_geographic.py :: reportOptionalMemberAccess :: "data" is not a known attribute of "None"
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_output_geographic.py :: reportOptionalMemberAccess :: "household" is not a known attribute of "None"
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportArgumentType :: Argument of type "Unbound | Simulation" cannot be assigned to parameter "simulation" of type "StageReportingSimulation" in function "_report_calculation_start"
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportArgumentType :: Argument of type "Unbound | Simulation" cannot be assigned to parameter "simulation" of type "StageReportingSimulation" in function "_report_calculation_start"
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportArgumentType :: Argument of type "str" cannot be assigned to parameter "region_type" of type "RegionType" in function "__init__"
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportAssignmentType :: Type "dict[str, Any] | Policy | None" is not assignable to declared type "dict[str, Any] | None"
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportAttributeAccessIssue :: Cannot access attribute "entity_data" for class "BaseModel"
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportOptionalMemberAccess :: "entity_data" is not a known attribute of "None"
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportOptionalMemberAccess :: "items" is not a known attribute of "None"
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "baseline" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "baseline" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "baseline" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "baseline" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "baseline" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "baseline_policy" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "country_module" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "country_module" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "country_module" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "dataset" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "dataset" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "dataset" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "dataset" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "dataset" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "dataset_selection" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "dataset_selection" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "dataset_selection" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "dataset_selection" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "metadata" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "reform" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "reform" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "reform" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "reform" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "reform_policy" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "region_resolution" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "region_resolution" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "region_resolution" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "region_resolution" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "region_resolution" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "region_resolution" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "region_resolution" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "simulation_params" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "telemetry" is possibly unbound
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "telemetry" is possibly unbound
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/spm.py :: reportArgumentType :: Argument of type "object" cannot be assigned to parameter "defaults" of type "SPMSelection" in function "__init__"
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/stage12_cache/precompute.py :: reportAttributeAccessIssue :: "Function" is not a known attribute of module "modal"
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/stage12_cache/precompute.py :: reportAttributeAccessIssue :: "Function" is not a known attribute of module "modal"

@@ -20,7 +20,7 @@ digests. A regression test locks the digest of a fixed payload.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -59,6 +59,24 @@ class DatasetPlanEntry(_StrictModel):
     exists: bool
 
 
+class StateDatasetPlanEntry(_StrictModel):
+    """One state's year file filtered from a regional dataset: identity plus presence.
+
+    ``folder`` is where the image places the file, relative to its data folder;
+    every state's file has the same ``filename``.
+    """
+
+    year: int
+    state_code: str
+    region: str
+    dataset: str
+    digest: str
+    path: str
+    filename: str
+    folder: str
+    exists: bool
+
+
 class BaselinePlanEntry(_StrictModel):
     """One cohort baseline artifact: identity plus store presence."""
 
@@ -77,6 +95,7 @@ class PrecomputePlan(_StrictModel):
     datasets: list[DatasetPlanEntry]
     baselines: list[BaselinePlanEntry]
     receipt: BundleVersionIdentity
+    state_datasets: list[StateDatasetPlanEntry] = Field(default_factory=list)
 
 
 class WorkSelection(_StrictModel):
@@ -84,16 +103,38 @@ class WorkSelection(_StrictModel):
 
     datasets: list[DatasetPlanEntry]
     baselines: list[BaselinePlanEntry]
+    state_datasets: list[StateDatasetPlanEntry] = Field(default_factory=list)
 
 
 class ManifestArtifact(_StrictModel):
-    """One artifact the deploy image must fetch."""
+    """One artifact the deploy image must fetch into its data folder."""
 
     type: Literal["dataset", "baseline"]
     path: str
     filename: str
     year: int
     digest: str
+
+
+class StateDatasetArtifact(_StrictModel):
+    """One state's year file, which the image fetches into the state's ``folder``.
+
+    Its own model, rather than optional fields on ``ManifestArtifact``, so the
+    dataset and baseline entries keep exactly their published wire shape.
+    """
+
+    type: Literal["state_dataset"]
+    path: str
+    filename: str
+    folder: str
+    state_code: str
+    year: int
+    digest: str
+
+
+ManifestEntry = Annotated[
+    ManifestArtifact | StateDatasetArtifact, Field(discriminator="type")
+]
 
 
 class ArtifactManifest(_StrictModel):
@@ -106,7 +147,7 @@ class ArtifactManifest(_StrictModel):
     manifest_schema: str = Field(alias="schema")
     country: str
     receipt: BundleVersionIdentity
-    artifacts: list[ManifestArtifact]
+    artifacts: list[ManifestEntry]
 
     def canonical_payload(self) -> dict[str, Any]:
         """Return the exact dict that gets digested and stored, keyed by wire alias."""
@@ -144,6 +185,21 @@ class DatasetBuildResult(_StrictModel):
     uploaded: bool
     build_seconds: float
     size_bytes: int
+
+
+class StateDatasetBuildResult(_StrictModel):
+    """Result of one state's dataset build; ``uploaded`` is False if the key existed.
+
+    ``build_seconds`` is how long the year's build had run when this state's
+    file was uploaded, so the last result of a build gives its whole duration.
+    """
+
+    year: int
+    state_code: str
+    path: str
+    uploaded: bool
+    size_bytes: int
+    build_seconds: float
 
 
 class BaselineComputeResult(_StrictModel):

@@ -10,12 +10,16 @@ thin decorated wrappers, library implementations). Run as a `modal run`
 
 Wave 1 builds the single-year US datasets (one container per year), wave 2
 computes the 20 per-cohort national baselines per year (one container per
-cohort, sized like the production ``run_simulation_segment`` workers). See
+cohort, sized like the production ``run_simulation_segment`` workers).
+Alongside both waves, one container per year and dataset filters the
+regional dataset that state regions load into one year file per state. See
 the library module for the idempotency, ``--force``, and determinism-gate
 semantics.
 """
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING, cast
 
 from src.modal.app import (
     build_runtime_simulation_image,
@@ -24,6 +28,9 @@ from src.modal.app import (
 )
 
 import modal
+
+if TYPE_CHECKING:
+    from policyengine_simulation_executor.precompute_models import RemoteFunction
 
 app = modal.App("policyengine-simulation-precompute")
 
@@ -84,6 +91,35 @@ def build_dataset(bucket: str, expected: dict) -> dict:
     return build_dataset_impl(
         bucket, DatasetPlanEntry.model_validate(expected)
     ).model_dump()
+
+
+@app.function(
+    image=precompute_image,
+    cpu=8.0,
+    # Preparing the regional dataset's full-country year file has used about
+    # 51 GB; the 51 filtered copies need room on top of that.
+    memory=98304,
+    timeout=2 * 60 * 60,
+    secrets=_worker_secrets,
+)
+def build_state_datasets(bucket: str, year: int, expected: list[dict]) -> list[dict]:
+    """Build and upload one year's per-state datasets.
+
+    Raises if a state's key resolved in this container differs from the
+    planned one, so planner/worker drift cannot upload under the wrong key.
+    """
+    from policyengine_simulation_executor.precompute import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        build_state_datasets_impl,
+    )
+    from policyengine_simulation_executor.precompute_models import (  # noqa: PLC0415  # Modal function body: loaded in the precompute worker, not at deploy time
+        StateDatasetPlanEntry,
+    )
+
+    entries = [StateDatasetPlanEntry.model_validate(entry) for entry in expected]
+    return [
+        result.model_dump()
+        for result in build_state_datasets_impl(bucket, year, entries)
+    ]
 
 
 @app.function(
@@ -161,11 +197,15 @@ def main(*, force: bool = False) -> None:
     run_precompute(
         resolve_bucket_name(),
         force=force,
+        # Pyright doesn't resolve `modal` here to the Modal package (it reports
+        # `modal.App` as unknown), so it types each decorated function as the
+        # plain function it wraps. At run time each is a Modal function.
         functions=PrecomputeFunctions(
-            plan_artifacts=plan_artifacts,
-            build_dataset=build_dataset,
-            compute_baseline=compute_baseline,
-            verify_determinism=verify_determinism,
-            publish_manifest=publish_manifest,
+            plan_artifacts=cast("RemoteFunction", plan_artifacts),
+            build_dataset=cast("RemoteFunction", build_dataset),
+            build_state_datasets=cast("RemoteFunction", build_state_datasets),
+            compute_baseline=cast("RemoteFunction", compute_baseline),
+            verify_determinism=cast("RemoteFunction", verify_determinism),
+            publish_manifest=cast("RemoteFunction", publish_manifest),
         ),
     )

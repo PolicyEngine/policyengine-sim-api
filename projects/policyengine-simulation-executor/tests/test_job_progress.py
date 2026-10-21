@@ -599,7 +599,7 @@ def test_runtime_reports_baseline_then_reform_when_each_calculation_starts(
     monkeypatch.setattr(
         sr,
         "_load_dataset",
-        lambda _params, *, country_module, selection: object(),
+        lambda _params, *, country_module, selection, data_folder=None: object(),
     )
     monkeypatch.setattr(
         sr, "_build_simulation", lambda *_args, **_kwargs: next(simulations)

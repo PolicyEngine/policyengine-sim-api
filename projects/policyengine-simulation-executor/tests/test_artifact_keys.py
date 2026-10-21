@@ -49,6 +49,23 @@ _BASELINE_KWARGS = {
 
 _BASELINE_GOLDEN = "f9cac05d94509895eb48ea33ea5f72d40eb9b954989df05ca6506009d8dedae2"
 
+_STATE_DATASET_KWARGS = {
+    "country": "us",
+    "dataset": "populace_cps_local",
+    "dataset_uri": "hf://org/repo/populace_cps_local.h5@rev-local",
+    "source_sha256": "c0ffee00" * 8,
+    "year": 2026,
+    "state_code": "UT",
+    "state_fips": 49,
+    "filter_variable": "state_fips",
+    "model_version": "9.9.9",
+    "policyengine_version": "4.22.0",
+}
+
+_STATE_DATASET_GOLDEN = (
+    "e1f1f9f7573eb090ef887967a49314c1cbf0fb20c8021779bf3804b26b24117f"
+)
+
 
 class TestDigests:
     def test_dataset_key_golden(self):
@@ -82,6 +99,27 @@ class TestDigests:
         backward = {"b": {"d": None, "c": 2}, "a": 1}
         assert ak.canonical_digest(forward) == ak.canonical_digest(backward)
 
+    def test_state_dataset_key_golden(self):
+        assert (
+            ak.state_dataset_key(ak.StateDatasetKeyInputs(**_STATE_DATASET_KWARGS))
+            == _STATE_DATASET_GOLDEN
+        )
+
+    @pytest.mark.parametrize("field", sorted(_STATE_DATASET_KWARGS))
+    def test_every_state_dataset_field_perturbs_digest(self, field):
+        replacement = {"year": 2027, "state_fips": 56}.get(field, "other")
+        perturbed = {**_STATE_DATASET_KWARGS, field: replacement}
+        assert (
+            ak.state_dataset_key(ak.StateDatasetKeyInputs(**perturbed))
+            != _STATE_DATASET_GOLDEN
+        )
+
+    def test_state_dataset_spm_selection_is_part_of_the_key(self):
+        with_spm = ak.StateDatasetKeyInputs(
+            **_STATE_DATASET_KWARGS, spm={"forecast": "x"}
+        )
+        assert ak.state_dataset_key(with_spm) != _STATE_DATASET_GOLDEN
+
     def test_simulation_id_shape(self):
         sim_id = ak.baseline_simulation_id(_BASELINE_GOLDEN)
         assert sim_id == "bl1-f9cac05d94509895"
@@ -98,6 +136,12 @@ class TestStoreLayout:
     def test_baseline_path(self):
         path = ak.baseline_artifact_path("us", "b" * 64, "bl1-abc")
         assert path == f"baselines/us/{'b' * 64}/bl1-abc.h5"
+
+    def test_state_dataset_path(self):
+        path = ak.state_dataset_artifact_path(
+            "US", "s" * 64, "populace_cps_local", 2026
+        )
+        assert path == (f"state-datasets/us/{'s' * 64}/populace_cps_local_year_2026.h5")
 
     def test_manifest_and_marker_paths(self):
         assert ak.manifest_path("m" * 64) == f"manifests/{'m' * 64}.json"
@@ -365,3 +409,43 @@ class TestWrapperStorageIdAgreement:
             tax_benefit_model_version=SimpleNamespace(country_code="us"),
         )
         assert wrapper.storage_id == built.storage_id
+
+
+class TestStateDatasetIdentityCollection:
+    def test_collected_identity_matches_golden(self, stub_identity_sources):
+        identity = ak.collect_state_dataset_identity(
+            "us",
+            2026,
+            dataset="populace_cps_local",
+            state_code="UT",
+            state_fips=49,
+            filter_variable="state_fips",
+        )
+
+        assert identity.digest == _STATE_DATASET_GOLDEN
+        assert identity.filename == "populace_cps_local_year_2026.h5"
+        assert identity.store_path == (
+            f"state-datasets/us/{_STATE_DATASET_GOLDEN}/populace_cps_local_year_2026.h5"
+        )
+
+    def test_a_dataset_without_a_certified_sha_is_a_distinct_identity(
+        self, stub_identity_sources
+    ):
+        stub_identity_sources.release_datasets["populace_cps_local"] = SimpleNamespace(
+            sha256=None
+        )
+
+        identity = ak.collect_state_dataset_identity(
+            "us",
+            2026,
+            dataset="populace_cps_local",
+            state_code="UT",
+            state_fips=49,
+            filter_variable="state_fips",
+        )
+
+        assert identity.source_sha256 is None
+        assert identity.digest != _STATE_DATASET_GOLDEN
+
+    def test_the_default_dataset_identity_is_unchanged(self, stub_identity_sources):
+        assert ak.collect_dataset_identity("us", 2026).digest == _DATASET_GOLDEN
