@@ -190,8 +190,8 @@ class TestPyrightProof(unittest.TestCase):
 
     def test_rule_proof_pyright_gateway(self) -> None:
         rule_id = "sim.quality.pyright-gateway"
-        # The gateway's real errors before its fix: variables assigned inside
-        # a span, which Pyright took to swallow exceptions.
+        # Three of the gateway's 81 real errors before its fixes: variables
+        # assigned inside a span, which Pyright took to swallow exceptions.
         bad = proof_comparison(rule_id, "bad")
 
         self.assertEqual(
@@ -207,9 +207,9 @@ class TestPyrightProof(unittest.TestCase):
 
     def test_rule_proof_pyright_executor(self) -> None:
         rule_id = "sim.quality.pyright-executor"
-        # The executor's real errors before its fixes: modal attributes
-        # unknown while src/modal shadowed the library, and a variable
-        # assigned inside a span.
+        # Three of the executor's 178 real errors before its fixes: modal
+        # attributes unknown while src/modal shadowed the library, and a
+        # variable assigned inside a span.
         bad = proof_comparison(rule_id, "bad")
 
         self.assertEqual(
