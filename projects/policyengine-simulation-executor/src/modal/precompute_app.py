@@ -19,6 +19,8 @@ semantics.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, cast
+
 from src.modal.app import (
     build_runtime_simulation_image,
     gcp_secret,
@@ -26,6 +28,9 @@ from src.modal.app import (
 )
 
 import modal
+
+if TYPE_CHECKING:
+    from policyengine_simulation_executor.precompute_models import RemoteFunction
 
 app = modal.App("policyengine-simulation-precompute")
 
@@ -192,12 +197,15 @@ def main(*, force: bool = False) -> None:
     run_precompute(
         resolve_bucket_name(),
         force=force,
+        # Pyright doesn't resolve `modal` here to the Modal package (it reports
+        # `modal.App` as unknown), so it types each decorated function as the
+        # plain function it wraps. At run time each is a Modal function.
         functions=PrecomputeFunctions(
-            plan_artifacts=plan_artifacts,
-            build_dataset=build_dataset,
-            build_state_datasets=build_state_datasets,
-            compute_baseline=compute_baseline,
-            verify_determinism=verify_determinism,
-            publish_manifest=publish_manifest,
+            plan_artifacts=cast("RemoteFunction", plan_artifacts),
+            build_dataset=cast("RemoteFunction", build_dataset),
+            build_state_datasets=cast("RemoteFunction", build_state_datasets),
+            compute_baseline=cast("RemoteFunction", compute_baseline),
+            verify_determinism=cast("RemoteFunction", verify_determinism),
+            publish_manifest=cast("RemoteFunction", publish_manifest),
         ),
     )
