@@ -5,28 +5,62 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 from microdf import MicroDataFrame
+from policyengine.tax_benefit_models.common.model_version import (
+    MicrosimulationModelVersion,
+)
 from policyengine.tax_benefit_models.uk.datasets import UKYearData
+from policyengine.tax_benefit_models.us.datasets import USYearData
+from policyengine_simulation_executor.baseline_artifacts import EntityVariableResolver
 from policyengine_simulation_executor.output_frames import EntityFrames, HouseholdFrame
 from policyengine_simulation_executor.simulation_output_common import _entity_data
 
 
-def _uk_year_data() -> UKYearData:
-    def frame(entity: str) -> MicroDataFrame:
-        return MicroDataFrame(
-            pd.DataFrame({f"{entity}_id": [1], f"{entity}_weight": [2.0]}),
-            weights=f"{entity}_weight",
-        )
-
-    return UKYearData(
-        person=frame("person"), benunit=frame("benunit"), household=frame("household")
+def _frame(entity: str) -> MicroDataFrame:
+    return MicroDataFrame(
+        pd.DataFrame({f"{entity}_id": [1], f"{entity}_weight": [2.0]}),
+        weights=f"{entity}_weight",
     )
 
 
-def test_country_year_data_has_entity_frames_and_a_household_frame():
-    year_data = _uk_year_data()
+def _uk_year_data() -> UKYearData:
+    return UKYearData(
+        person=_frame("person"),
+        benunit=_frame("benunit"),
+        household=_frame("household"),
+    )
+
+
+def _us_year_data() -> USYearData:
+    return USYearData(
+        **{
+            entity: _frame(entity)
+            for entity in (
+                "person",
+                "marital_unit",
+                "family",
+                "spm_unit",
+                "tax_unit",
+                "household",
+            )
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "year_data_factory", [_uk_year_data, _us_year_data], ids=["UK", "US"]
+)
+def test_country_year_data_has_entity_frames_and_a_household_frame(
+    year_data_factory,
+):
+    year_data = year_data_factory()
 
     assert isinstance(year_data, EntityFrames)
     assert isinstance(year_data, HouseholdFrame)
+
+
+def test_country_model_versions_resolve_entity_variables():
+    # policyengine's US and UK model versions both derive from this class.
+    assert issubclass(MicrosimulationModelVersion, EntityVariableResolver)
 
 
 def test_data_with_frames_by_attribute_matches_the_shapes():
