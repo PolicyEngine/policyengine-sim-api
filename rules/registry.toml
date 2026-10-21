@@ -22,6 +22,10 @@ id = "stage12"
 title = "Stage 12 persistence"
 
 [[category]]
+id = "persistence"
+title = "Simulation persistence"
+
+[[category]]
 id = "deployment"
 title = "Deployment pipeline"
 
@@ -112,7 +116,7 @@ id = "sim.boundaries.sqlalchemy-and-alembic-only"
 category = "boundaries"
 statement = "Code connects to databases only through SQLAlchemy engines and connections, never by importing a database driver directly, and runtime code never changes the schema, which changes only through Alembic migrations."
 rationale = "docs/engineering/skills/database-access.md#rules"
-scope = ["projects/*/src/**/*.py", "libs/*/src/**/*.py", ".github/scripts/**/*.py"]
+scope = ["projects/*/src/**/*.py", "libs/*/src/**/*.py", ".github/scripts/**/*.py", "migrations/**/*.py"]
 tier = "mechanical"
 status = "enforced"
 autofix = false
@@ -132,6 +136,99 @@ bad_fixture = "rules/fixtures/sim.boundaries.sqlalchemy-and-alembic-only/bad_dat
 good_fixture = "rules/fixtures/sim.boundaries.sqlalchemy-and-alembic-only/good_database_store.py"
 project = "projects/policyengine-simulation-entry"
 test = "tests/test_database_access_boundaries.py::test_rule_proof_sqlalchemy_and_alembic_only"
+
+# --- Simulation persistence -----------------------------------------------
+
+[[rule]]
+id = "sim.persistence.one-migration-chain"
+category = "persistence"
+statement = "The simulation schema changes only through the one Alembic chain at migrations/, configured by migrations/alembic.ini and versioned in simulation.alembic_version; no other Alembic configuration, environment or revision directory exists."
+rationale = "libs/policyengine-simulation-persistence/README.md#ownership-rules"
+scope = ["migrations/env.py", "migrations/alembic.ini", "migrations/versions/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "libs/policyengine-simulation-persistence"
+nodes = ["tests/test_ownership_boundaries.py::test_repository_has_one_simulation_migration_chain"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.persistence.one-migration-chain/bad_repository"
+good_fixture = "rules/fixtures/sim.persistence.one-migration-chain/good_repository"
+project = "libs/policyengine-simulation-persistence"
+test = "tests/test_ownership_boundaries.py::test_rule_proof_one_migration_chain"
+
+[[rule]]
+id = "sim.persistence.migration-cycle"
+category = "persistence"
+statement = "On a fresh PostgreSQL, the simulation chain upgrades to its head, passes alembic check, downgrades to base and upgrades again, run by a non-superuser migrator, and the runtime role can read the revision but cannot change the schema."
+rationale = "libs/policyengine-simulation-persistence/README.md#tests"
+scope = ["migrations/versions/*.py", "libs/policyengine-simulation-persistence/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "libs/policyengine-simulation-persistence"
+nodes = [
+  "tests/test_migration_cycle.py::test_upgrade_check_downgrade_upgrade_cycle",
+  "tests/test_migration_cycle.py::test_the_version_table_lives_only_in_the_simulation_schema",
+  "tests/test_migration_cycle.py::test_the_runtime_role_reads_the_revision_but_cannot_change_the_schema",
+]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "simulation-database"
+invocation = "uv run --frozen pytest tests/ -v -m postgres"
+
+[[rule]]
+id = "sim.persistence.executor-independent"
+category = "persistence"
+statement = "The Modal executor and gateway never declare, lock or import policyengine-simulation-persistence; only the Simulation Entrypoint and the migration job install it."
+rationale = "libs/policyengine-simulation-persistence/README.md#ownership-rules"
+scope = ["projects/policyengine-simulation-executor/pyproject.toml", "projects/policyengine-simulation-gateway/pyproject.toml", "projects/policyengine-simulation-executor/src/**/*.py", "projects/policyengine-simulation-gateway/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "libs/policyengine-simulation-persistence"
+nodes = ["tests/test_ownership_boundaries.py::test_modal_projects_never_depend_on_the_persistence_library"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.persistence.executor-independent/bad_pyproject.toml"
+good_fixture = "rules/fixtures/sim.persistence.executor-independent/good_pyproject.toml"
+project = "libs/policyengine-simulation-persistence"
+test = "tests/test_ownership_boundaries.py::test_rule_proof_executor_independent"
+
+[[rule]]
+id = "sim.persistence.no-modal-database-credentials"
+category = "persistence"
+statement = "No Modal secret, Modal deployment or Modal application receives SIMULATION_DATABASE_URL or SIMULATION_MIGRATION_DATABASE_URL; until the comparison path is removed, its own database secret is the only database credential Modal holds."
+rationale = "libs/policyengine-simulation-persistence/README.md#ownership-rules"
+scope = [".github/workflows/*.yml", ".github/scripts/*.sh", "projects/policyengine-simulation-executor/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "pytest"
+project = "libs/policyengine-simulation-persistence"
+nodes = ["tests/test_ownership_boundaries.py::test_modal_never_receives_simulation_database_credentials"]
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.persistence.no-modal-database-credentials/bad_workflow.yml"
+good_fixture = "rules/fixtures/sim.persistence.no-modal-database-credentials/good_workflow.yml"
+project = "libs/policyengine-simulation-persistence"
+test = "tests/test_ownership_boundaries.py::test_rule_proof_no_modal_database_credentials"
 
 # --- Stage 12 persistence --------------------------------------------------
 
@@ -157,24 +254,6 @@ bad_fixture = "rules/fixtures/sim.stage12.no-schema-ddl/bad_stage12_runtime.py"
 good_fixture = "rules/fixtures/sim.stage12.no-schema-ddl/good_stage12_runtime.py"
 project = "projects/policyengine-simulation-entry"
 test = "tests/test_stage12_schema_authority.py::test_rule_proof_stage12_no_schema_ddl"
-
-[[rule]]
-id = "sim.stage12.no-migration-chain"
-category = "stage12"
-statement = "This repository has no schema migration chain (no Alembic); Stage 12 tables are migrated by policyengine-api."
-rationale = "libs/policyengine-stage12-persistence/README.md"
-scope = ["projects/*/src/**/*.py", "libs/*/src/**/*.py"]
-tier = "mechanical"
-status = "enforced"
-autofix = false
-[rule.enforcer]
-kind = "pytest"
-project = "projects/policyengine-simulation-entry"
-nodes = ["tests/test_stage12_schema_authority.py::test_simulation_repository_has_no_schema_migration_chain"]
-[[rule.ci]]
-workflow = ".github/workflows/pr.yml"
-job = "test"
-invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.stage12.no-production-user-associations"
