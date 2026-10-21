@@ -52,6 +52,13 @@ staging deployment of the **Deploy Stage 12 comparison path** workflow promotes
 in the same way. Rule `sim.deploy.staging-promotes-tested-revision` requires
 both.
 
+Both workflows can also be started manually, and the `beta` environment does
+not restrict which branch a run may come from. A manual run from a branch other
+than `main` therefore promotes that branch's build to the staging stable URL,
+and every staging caller of that URL reaches the unmerged build until the next
+deployment from `main` promotes again. Start a staging deployment from another
+branch only when that is intended.
+
 The workflow then checks the stable generated Cloud Run URL. It uses the
 runtime revision header to prove that the stable URL reaches the exact revision
 that passed candidate tests, and it repeats the deployed authentication checks.
