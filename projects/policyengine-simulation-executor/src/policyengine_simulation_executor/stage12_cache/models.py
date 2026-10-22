@@ -35,6 +35,25 @@ class DatasetPlanEntry(StrictCacheModel):
     exists: bool
 
 
+class StateDatasetPlanEntry(StrictCacheModel):
+    """One state's planned year file, filtered from a regional dataset.
+
+    ``folder`` is where the worker image places the file, relative to its
+    data folder; every state's file has the same ``filename``. ``exists``
+    records whether the bucket already holds it.
+    """
+
+    year: int
+    state_code: str
+    region: str
+    dataset: str
+    digest: str
+    path: str
+    filename: str
+    folder: str
+    exists: bool
+
+
 class BaselinePlanEntry(StrictCacheModel):
     """One planned baseline for a year and region group.
 
@@ -67,13 +86,15 @@ class PrecomputePlan(StrictCacheModel):
     bundle: CacheBundleIdentity
     partition_sha256: str
     determinism_verified: bool
+    state_datasets: tuple[StateDatasetPlanEntry, ...] = ()
 
 
 class WorkSelection(StrictCacheModel):
-    """The planned datasets and baselines a run still has to build."""
+    """The planned datasets, state datasets and baselines a run still has to build."""
 
     datasets: tuple[DatasetPlanEntry, ...]
     baselines: tuple[BaselinePlanEntry, ...]
+    state_datasets: tuple[StateDatasetPlanEntry, ...] = ()
 
 
 class CacheObject(StrictCacheModel):
@@ -88,6 +109,19 @@ class DatasetBuildResult(CacheObject):
     """A built dataset file and whether this run uploaded it."""
 
     year: int
+    uploaded: bool
+    build_seconds: float
+
+
+class StateDatasetBuildResult(CacheObject):
+    """A built state dataset file and whether this run uploaded it.
+
+    ``build_seconds`` is how long the year's build had run when this file was
+    uploaded, so the last result of a build gives its whole duration.
+    """
+
+    year: int
+    state_code: str
     uploaded: bool
     build_seconds: float
 
@@ -125,6 +159,28 @@ class ManifestArtifact(StrictCacheModel):
     size_bytes: int
 
 
+class StateDatasetManifestArtifact(StrictCacheModel):
+    """One state's year file, which the worker image places in its state ``folder``.
+
+    Its own model, so dataset and baseline entries keep their exact wire shape.
+    """
+
+    type: Literal["state_dataset"]
+    path: str
+    filename: str
+    folder: str
+    state_code: str
+    year: int
+    identity_digest: str
+    content_sha256: str
+    size_bytes: int
+
+
+CacheManifestEntry = Annotated[
+    ManifestArtifact | StateDatasetManifestArtifact, Field(discriminator="type")
+]
+
+
 class CacheManifest(StrictCacheModel):
     """The published list of cache files for one bundle and region partition."""
 
@@ -137,7 +193,7 @@ class CacheManifest(StrictCacheModel):
     years: tuple[int, ...]
     partition_sha256: str
     bundle: CacheBundleIdentity
-    artifacts: tuple[ManifestArtifact, ...]
+    artifacts: tuple[CacheManifestEntry, ...]
 
     def canonical_payload(self) -> dict[str, Any]:
         """Return the JSON payload that is hashed and stored, keyed by ``schema``."""

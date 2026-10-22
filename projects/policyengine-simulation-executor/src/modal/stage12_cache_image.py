@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from hashlib import sha256
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -20,16 +20,10 @@ def fetch_stage12_cache(
     if client is None:
         client = _storage_client()
     data_dir = Path(os.environ["POLICYENGINE_DATA_FOLDER"])
+    destinations = _artifact_destinations(artifacts, data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
-    filenames: set[str] = set()
-    for artifact in artifacts:
-        _fetch_artifact(
-            artifact,
-            client=client,
-            bucket=bucket,
-            data_dir=data_dir,
-            filenames=filenames,
-        )
+    for artifact, destination in zip(artifacts, destinations, strict=True):
+        _fetch_artifact(artifact, client=client, bucket=bucket, destination=destination)
     (data_dir / ".stage12-cache-manifest.json").write_bytes(canonical)
 
 
@@ -75,21 +69,92 @@ def _require_installed_identity(manifest: dict) -> None:
 
 
 def _expected_artifacts(manifest: dict) -> list:
-    """Return the manifest's artifact list once it has 3 datasets and 60 baselines."""
+    """Return the manifest's artifact list once its contents are as expected.
+
+    It must have 3 datasets and 60 baselines, no artifact of another kind, and
+    either no state datasets or the same states' files for every year.
+    """
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, list):
         msg = "Stage 12 cache manifest has no artifact list"
         raise TypeError(msg)
+    entries = [item for item in artifacts if isinstance(item, dict)]
     type_counts = {
-        kind: sum(
-            item.get("type") == kind for item in artifacts if isinstance(item, dict)
-        )
+        kind: sum(item.get("type") == kind for item in entries)
         for kind in ("dataset", "baseline")
     }
     if type_counts != {"dataset": 3, "baseline": 60}:
         msg = "Stage 12 cache manifest has an unexpected artifact count"
         raise RuntimeError(msg)
+    if any(
+        item.get("type") not in {"dataset", "baseline", "state_dataset"}
+        for item in entries
+    ):
+        msg = "Stage 12 cache manifest has an unexpected artifact type"
+        raise RuntimeError(msg)
+    states_by_year = {year: set() for year in manifest["years"]}
+    for item in entries:
+        if item.get("type") == "state_dataset":
+            states_by_year.setdefault(item.get("year"), set()).add(
+                item.get("state_code")
+            )
+    if len({frozenset(states) for states in states_by_year.values()}) > 1:
+        msg = "Stage 12 cache manifest's state datasets differ between years"
+        raise RuntimeError(msg)
     return artifacts
+
+
+def _relative_destination(artifact: dict) -> PurePosixPath | None:
+    """Return where a listed file lands, relative to the data folder, or None.
+
+    Dataset and baseline files land directly in the data folder; a state
+    dataset lands in its ``folder``, a relative path without ``.`` or ``..``
+    parts. None means the entry names an unsafe place.
+    """
+    filename = artifact.get("filename")
+    if not isinstance(filename, str) or PurePosixPath(filename).name != filename:
+        return None
+    if "\\" in filename or filename in {"", ".", ".."}:
+        return None
+    if artifact.get("type") != "state_dataset":
+        return PurePosixPath(filename)
+    folder = artifact.get("folder")
+    if not isinstance(folder, str) or not folder or "\\" in folder:
+        return None
+    parts = PurePosixPath(folder).parts
+    if (
+        PurePosixPath(folder).is_absolute()
+        or any(part in {".", ".."} for part in parts)
+        or "/".join(parts) != folder
+    ):
+        return None
+    return PurePosixPath(folder, filename)
+
+
+def _artifact_destinations(artifacts: list, data_dir: Path) -> list[Path]:
+    """Check every listed file's metadata and return where each one lands.
+
+    Runs before anything downloads, so a bad entry leaves no file behind.
+    """
+    destinations = []
+    seen: set[PurePosixPath] = set()
+    for artifact in artifacts:
+        if not isinstance(artifact, dict):
+            msg = "Stage 12 cache artifact entry is invalid"
+            raise TypeError(msg)
+        relative = _relative_destination(artifact)
+        if (
+            relative is None
+            or relative in seen
+            or not isinstance(artifact.get("path"), str)
+            or not isinstance(artifact.get("content_sha256"), str)
+            or not isinstance(artifact.get("size_bytes"), int)
+        ):
+            msg = "Stage 12 cache artifact metadata is invalid"
+            raise RuntimeError(msg)
+        seen.add(relative)
+        destinations.append(data_dir.joinpath(*relative.parts))
+    return destinations
 
 
 def _storage_client() -> Client:
@@ -116,40 +181,23 @@ def _storage_client() -> Client:
 
 
 def _fetch_artifact(
-    artifact: object,
+    artifact: dict,
     *,
     client: Client,
     bucket: str,
-    data_dir: Path,
-    filenames: set[str],
+    destination: Path,
 ) -> None:
-    """Download one listed file into ``data_dir`` and verify its size and digest.
+    """Download one checked file to ``destination`` and verify its size and digest.
 
     The download goes to a partial file beside its destination and is moved
     into place only once verified, so a failed download leaves nothing.
     """
-    if not isinstance(artifact, dict):
-        msg = "Stage 12 cache artifact entry is invalid"
-        raise TypeError(msg)
-    filename = artifact.get("filename")
-    path = artifact.get("path")
-    expected_digest = artifact.get("content_sha256")
-    expected_size = artifact.get("size_bytes")
-    if (
-        not isinstance(filename, str)
-        or Path(filename).name != filename
-        or filename in filenames
-        or not isinstance(path, str)
-        or not isinstance(expected_digest, str)
-        or not isinstance(expected_size, int)
-    ):
-        msg = "Stage 12 cache artifact metadata is invalid"
-        raise RuntimeError(msg)
-    filenames.add(filename)
-    destination = data_dir / filename
-    partial = destination.with_name(filename + ".partial")
+    expected_digest = artifact["content_sha256"]
+    expected_size = artifact["size_bytes"]
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    partial = destination.with_name(destination.name + ".partial")
     try:
-        client.bucket(bucket).blob(path).download_to_filename(str(partial))
+        client.bucket(bucket).blob(artifact["path"]).download_to_filename(str(partial))
         digest = sha256()
         with partial.open("rb") as stream:
             while chunk := stream.read(1024 * 1024):

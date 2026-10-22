@@ -539,11 +539,17 @@ def _frames(value=100.0):
 
 def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> None:
     from policyengine_simulation_executor import simulation_runtime
+    from policyengine_simulation_executor.simulation_runtime import (
+        DatasetSelection,
+        RegionResolution,
+    )
     from policyengine_simulation_executor.stage12_runtime import simulation as worker
 
     country_module = object()
-    region = type("Region", (), {"code": "us", "scoping_strategy": None})()
-    selection = object()
+    region = RegionResolution(code="us")
+    selection = DatasetSelection(
+        name="populace_us_2024", uri=_bundle().dataset.uri, is_default=True
+    )
     dataset = object()
     received: dict[str, object] = {}
 
@@ -587,9 +593,10 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
         received["region"] = region_resolution
         return selection
 
-    def load_dataset(_params, *, selection, country_module):
+    def load_dataset(_params, *, selection, country_module, data_folder=None):
         received["load_selection"] = selection
         received["load_country_module"] = country_module
+        received["load_data_folder"] = data_folder
         return dataset
 
     def build_simulation(_params, *, resolved, **_kwargs):
@@ -614,11 +621,349 @@ def test_calculator_uses_the_current_dataset_selection_contract(monkeypatch) -> 
     assert received["region"] is region
     assert received["load_selection"] is selection
     assert received["load_country_module"] is country_module
+    assert received["load_data_folder"] is None
     assert received["build_dataset"] is dataset
     assert received["build_selection"] is selection
     assert received["ensured"] is True
     assert received["extras_at_ensure"] == {"household": [], "person": []}
     assert set(result.frames) == {"household", "person"}
+
+
+class _StoppedAfterLoadingError(Exception):
+    """Raised by a stubbed simulation build once the dataset has loaded."""
+
+
+def _stage12_load(monkeypatch, *, region, selection, baked_folder, planned=None):
+    """Run a Stage 12 calculation up to its dataset load; return what it did."""
+    from policyengine_simulation_executor import simulation_runtime
+    from policyengine_simulation_executor.stage12_cache import state_datasets
+    from policyengine_simulation_executor.stage12_runtime import simulation as worker
+
+    loads = []
+    lookups = []
+
+    def load_dataset(_params, *, selection, country_module, data_folder=None):
+        loads.append({"selection": selection, "data_folder": data_folder})
+        return object()
+
+    def lookup(**kwargs):
+        lookups.append(kwargs)
+        return baked_folder
+
+    def stop_after_loading(*_args, **_kwargs):
+        raise _StoppedAfterLoadingError
+
+    monkeypatch.setattr(worker, "_require_installed_bundle", lambda _: None)
+    monkeypatch.setattr(simulation_runtime, "setup_gcp_credentials", nullcontext)
+    monkeypatch.setattr(
+        simulation_runtime, "_country_module", lambda _country: object()
+    )
+    monkeypatch.setattr(simulation_runtime, "_resolve_region", lambda **_: region)
+    monkeypatch.setattr(
+        simulation_runtime,
+        "_resolve_dataset_selection",
+        lambda _params, *, region_resolution: selection,
+    )
+    monkeypatch.setattr(simulation_runtime, "_load_dataset", load_dataset)
+    monkeypatch.setattr(state_datasets, "baked_state_data_folder", lookup)
+    monkeypatch.setattr(
+        worker, "detect_uk_local_authority_metadata", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(
+        simulation_runtime, "_require_certified_uk_weight_matrix", lambda *_: None
+    )
+    monkeypatch.setattr(worker, "build_stage12_simulation", stop_after_loading)
+
+    planned = planned or _planned_simulation(SimulationRole.BASELINE)
+    with pytest.raises(_StoppedAfterLoadingError):
+        worker.calculate_simulation_frames(planned)
+    return SimpleNamespace(loads=loads, lookups=lookups, year=planned.year)
+
+
+def _regional_selection():
+    from policyengine_simulation_executor.simulation_runtime import DatasetSelection
+
+    return DatasetSelection(
+        name="populace_us_2024_acs_local",
+        uri="hf://policyengine/populace-us/populace_us_2024_acs_local.h5@rev",
+        is_default=False,
+    )
+
+
+@pytest.mark.parametrize("region_code", ["state/ut", "congressional_district/UT-01"])
+def test_stage12_state_and_district_runs_read_their_states_baked_folder(
+    monkeypatch, region_code
+) -> None:
+    from policyengine_simulation_executor.simulation_runtime import (
+        RegionResolution,
+        resolve_data_folder,
+    )
+
+    loaded = _stage12_load(
+        monkeypatch,
+        region=RegionResolution(code=region_code, state_code="UT"),
+        selection=_regional_selection(),
+        baked_folder="/opt/policyengine/stage12-data/state-datasets/acs/UT",
+    )
+
+    assert loaded.loads == [
+        {
+            "selection": _regional_selection(),
+            "data_folder": "/opt/policyengine/stage12-data/state-datasets/acs/UT",
+        }
+    ]
+    assert loaded.lookups == [
+        {
+            "country": "us",
+            "selection": _regional_selection(),
+            "state_code": "UT",
+            "year": loaded.year,
+            "data_folder": resolve_data_folder(),
+        }
+    ]
+
+
+def test_stage12_state_run_without_a_baked_file_loads_on_demand(monkeypatch) -> None:
+    from policyengine_simulation_executor.simulation_runtime import RegionResolution
+
+    loaded = _stage12_load(
+        monkeypatch,
+        region=RegionResolution(code="state/ut", state_code="UT"),
+        selection=_regional_selection(),
+        baked_folder=None,
+    )
+
+    assert loaded.loads[0]["data_folder"] is None
+
+
+REGIONAL_URI = "hf://policyengine/data/populace_us_2024_acs_local.h5@regional-revision"
+
+
+def _regional_provenance() -> BundleProvenance:
+    return _bundle().model_copy(
+        update={
+            "dataset": DatasetProvenance(
+                identity="populace_us_2024_acs_local",
+                uri=REGIONAL_URI,
+                artifact_revision="regional-revision",
+                data_package_name="populace-data",
+                data_package_version="0.1.0",
+            )
+        }
+    )
+
+
+def _installed_bundle_with_regions():
+    from policyengine_simulation_contract.stage12_bundle import (
+        ResolvedStage12Bundle,
+        Stage12BundleManifest,
+        Stage12CountryBundle,
+        Stage12Dataset,
+        Stage12RegionDataset,
+    )
+
+    national = Stage12Dataset(
+        identity="populace_us_2024",
+        uri=_bundle().dataset.uri,
+        artifact_revision="revision",
+        sha256="a" * 64,
+        repo_type="dataset",
+    )
+    regional = Stage12Dataset(
+        identity="populace_us_2024_acs_local",
+        uri=REGIONAL_URI,
+        artifact_revision="regional-revision",
+        sha256="c" * 64,
+        repo_type="dataset",
+    )
+    return ResolvedStage12Bundle(
+        bundle=Stage12BundleManifest(
+            policyengine_version="5.2.0",
+            policyengine_requirement="policyengine==5.2.0",
+            core_package_version="3.0.0",
+            core_package_requirement="policyengine-core==3.0.0",
+            countries=(
+                Stage12CountryBundle(
+                    country="us",
+                    country_package_name="policyengine-us",
+                    country_package_version="1.764.6",
+                    country_package_requirement="policyengine-us==1.764.6",
+                    data_package_name="populace-data",
+                    data_package_version="0.1.0",
+                    data_release_version="revision",
+                    data_artifact_revision="revision",
+                    default_dataset=national.identity,
+                    default_dataset_uri=national.uri,
+                    datasets=(national, regional),
+                    region_datasets=(
+                        Stage12RegionDataset(
+                            region_type="national", dataset=national.identity
+                        ),
+                        Stage12RegionDataset(
+                            region_type="state", dataset=regional.identity
+                        ),
+                        Stage12RegionDataset(
+                            region_type="congressional_district",
+                            dataset=regional.identity,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        bundle_manifest_sha256="b" * 64,
+    )
+
+
+def _simulation_for(region: str, provenance: BundleProvenance):
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    return simulation.model_copy(
+        update={
+            "geography": GeographySelection(country="us", region=region),
+            "bundle": provenance,
+            "population": DatasetPopulationInput(
+                artifact=DatasetArtifactReference(
+                    uri=provenance.dataset.uri,
+                    media_type=DatasetArtifactMediaType.HDF5,
+                    content_sha256="a" * 64,
+                )
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("region", "provenance"),
+    [
+        ("state/ut", _regional_provenance),
+        ("State/UT", _regional_provenance),
+        ("ut", _regional_provenance),
+        ("congressional_district/UT-01", _regional_provenance),
+        ("us", _bundle),
+        # Entry services released before regional provenance send the default
+        # dataset for state runs until they are updated.
+        ("state/ut", _bundle),
+    ],
+)
+def test_installed_bundle_accepts_the_dataset_a_region_loads(
+    monkeypatch, region, provenance
+) -> None:
+    from policyengine_simulation_executor.stage12_runtime import simulation as worker
+
+    monkeypatch.setattr(worker, "load_stage12_bundle", _installed_bundle_with_regions)
+
+    worker._require_installed_bundle(_simulation_for(region, provenance()))
+
+
+def test_uk_regions_keep_the_default_dataset_when_the_bundle_names_region_types(
+    monkeypatch,
+) -> None:
+    from policyengine_simulation_contract.stage12_bundle import Stage12RegionDataset
+    from policyengine_simulation_executor.stage12_runtime import simulation as worker
+
+    resolved = _installed_bundle_with_regions()
+    us = resolved.bundle.countries[0]
+    uk = us.model_copy(
+        update={
+            "country": "uk",
+            "region_datasets": (
+                Stage12RegionDataset(
+                    region_type="national", dataset=us.default_dataset
+                ),
+            ),
+        }
+    )
+    resolved = resolved.model_copy(
+        update={"bundle": resolved.bundle.model_copy(update={"countries": (us, uk)})}
+    )
+    monkeypatch.setattr(worker, "load_stage12_bundle", lambda: resolved)
+    simulation = _simulation_for("us", _bundle()).model_copy(
+        update={"geography": GeographySelection(country="uk", region="country/wales")}
+    )
+
+    worker._require_installed_bundle(simulation)
+    with pytest.raises(RuntimeError, match="differs from the installed bundle"):
+        worker._require_installed_bundle(
+            simulation.model_copy(update={"bundle": _regional_provenance()})
+        )
+
+
+@pytest.mark.parametrize(
+    ("region", "dataset"),
+    [
+        ("us", "populace_us_2024_acs_local"),
+        ("state/ut", "source_enrichment"),
+    ],
+)
+def test_installed_bundle_refuses_a_dataset_the_region_does_not_load(
+    monkeypatch, region, dataset
+) -> None:
+    from policyengine_simulation_executor.stage12_runtime import simulation as worker
+
+    monkeypatch.setattr(worker, "load_stage12_bundle", _installed_bundle_with_regions)
+    provenance = _regional_provenance()
+    provenance = provenance.model_copy(
+        update={"dataset": provenance.dataset.model_copy(update={"identity": dataset})}
+    )
+
+    with pytest.raises(RuntimeError, match="differs from the installed bundle"):
+        worker._require_installed_bundle(_simulation_for(region, provenance))
+
+
+def _selection(name: str, uri: str, *, is_default: bool):
+    from policyengine_simulation_executor.simulation_runtime import DatasetSelection
+
+    return DatasetSelection(name=name, uri=uri, is_default=is_default)
+
+
+def test_a_calculation_loads_the_dataset_its_provenance_names(monkeypatch) -> None:
+    from policyengine_simulation_executor.simulation_runtime import RegionResolution
+
+    loaded = _stage12_load(
+        monkeypatch,
+        region=RegionResolution(code="state/ut", state_code="UT"),
+        selection=_selection(
+            "populace_us_2024_acs_local", REGIONAL_URI, is_default=False
+        ),
+        baked_folder=None,
+        planned=_simulation_for("state/ut", _regional_provenance()),
+    )
+
+    assert loaded.loads[0]["selection"].name == "populace_us_2024_acs_local"
+
+
+def test_a_calculation_refuses_provenance_naming_another_dataset(
+    monkeypatch,
+) -> None:
+    from policyengine_simulation_executor.simulation_runtime import RegionResolution
+
+    with pytest.raises(RuntimeError, match="dataset its region loads"):
+        _stage12_load(
+            monkeypatch,
+            region=RegionResolution(code="state/ut", state_code="UT"),
+            selection=_selection(
+                "populace_us_2024", _bundle().dataset.uri, is_default=True
+            ),
+            baked_folder=None,
+            planned=_simulation_for("state/ut", _regional_provenance()),
+        )
+
+
+def test_default_provenance_from_an_older_entry_service_is_still_loaded(
+    monkeypatch,
+) -> None:
+    from policyengine_simulation_executor.simulation_runtime import RegionResolution
+
+    loaded = _stage12_load(
+        monkeypatch,
+        region=RegionResolution(code="state/ut", state_code="UT"),
+        selection=_selection(
+            "populace_us_2024_acs_local", REGIONAL_URI, is_default=False
+        ),
+        baked_folder=None,
+        planned=_simulation_for("state/ut", _bundle()),
+    )
+
+    assert loaded.loads[0]["selection"].name == "populace_us_2024_acs_local"
 
 
 def test_uk_boundary_version_is_detected_from_the_unscoped_dataset() -> None:
@@ -4165,3 +4510,44 @@ def test_exhausted_wait_window_gives_the_children_no_extra_time() -> None:
     assert [len(call.probed_at) for call in invoker.calls.values()] == [1, 1]
     assert [call.cancel_count for call in invoker.calls.values()] == [1, 1]
     assert store.parent.error_code == "simulation_wait_timeout"
+
+
+def _runtime_region_type(country: str, region: str | None) -> str | None:
+    """Return the region type the runtime's own region normalisation implies."""
+    from policyengine_simulation_executor.simulation_runtime import (
+        _normalise_region_code,
+    )
+
+    code = _normalise_region_code(country, region)
+    if code == country:
+        return "national"
+    return code.split("/", 1)[0] if "/" in code else None
+
+
+@pytest.mark.parametrize(
+    ("country", "region"),
+    [
+        ("us", None),
+        ("us", ""),
+        ("us", " US "),
+        ("us", "uk"),
+        ("us", "state/ut"),
+        ("us", "State/UT"),
+        ("us", "ut"),
+        ("us", " ut "),
+        ("us", "congressional_district/ut-01"),
+        ("us", "place/UT-67000"),
+        ("us", "utah"),
+        ("uk", "uk"),
+        ("uk", "us"),
+        ("uk", "country/scotland"),
+        ("uk", "scotland"),
+        ("uk", "Northern Ireland"),
+        ("uk", "constituency/Aldershot"),
+        ("uk", "local_authority/E06000001"),
+    ],
+)
+def test_the_contract_reads_region_codes_as_the_runtime_does(country, region) -> None:
+    from policyengine_simulation_contract.stage12_bundle import region_type_of
+
+    assert region_type_of(country, region) == _runtime_region_type(country, region)

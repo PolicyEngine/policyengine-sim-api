@@ -69,6 +69,9 @@ def test_complete_packaged_bundle_selects_every_worker_dependency_and_dataset() 
         lambda bundle: bundle["data_releases"]["us"]["certified_data_artifact"].update(
             {"sha256": "0" * 64}
         ),
+        lambda bundle: bundle["data_releases"]["us"]["region_datasets"].update(
+            {"state": {"path_template": "no_such_dataset.h5"}}
+        ),
     ],
     ids=[
         "missing-data-releases",
@@ -78,6 +81,7 @@ def test_complete_packaged_bundle_selects_every_worker_dependency_and_dataset() 
         "dataset-uri-revision-mismatch",
         "malformed-dataset-digest",
         "certified-artifact-mismatch",
+        "region-dataset-names-no-dataset",
     ],
 )
 def test_missing_or_internally_inconsistent_bundle_values_fail_closed(mutate) -> None:
@@ -130,3 +134,126 @@ def test_only_bundle_schema_version_2_is_supported(schema_version) -> None:
         Stage12BundleError, match=r"^PolicyEngine\.py bundle schema_version must be 2$"
     ):
         normalize_stage12_bundle(bundle)
+
+
+def _us(bundle):
+    return next(country for country in bundle.countries if country.country == "us")
+
+
+def test_the_installed_bundle_names_the_dataset_each_us_region_type_loads() -> None:
+    us = _us(normalize_stage12_bundle(_bundle()))
+
+    assert us.dataset_for_region_type("national") == "populace_us_2024"
+    assert us.dataset_for_region_type("state") == "populace_us_2024_acs_local"
+    assert (
+        us.dataset_for_region_type("congressional_district")
+        == "populace_us_2024_acs_local"
+    )
+
+
+def test_a_per_region_file_pattern_names_no_single_dataset() -> None:
+    bundle = _bundle()
+    bundle["data_releases"]["us"]["region_datasets"]["state"] = {
+        "path_template": "states/{state_code}.h5"
+    }
+
+    us = _us(normalize_stage12_bundle(bundle))
+
+    assert any(item.region_type == "state" for item in us.region_datasets)
+    assert us.dataset_for_region_type("state") is None
+
+
+def test_a_bundle_without_region_datasets_records_none() -> None:
+    bundle = _bundle()
+    bundle["data_releases"]["us"].pop("region_datasets")
+
+    assert _us(normalize_stage12_bundle(bundle)).region_datasets is None
+
+
+def test_region_datasets_leave_the_bundle_digest_unchanged() -> None:
+    """A worker redeployed with region datasets keeps the digest it had.
+
+    The redeploy replaces the running v2 application before the new version
+    manifest is published, and entry services send the digest they read from
+    that manifest, so a changed digest would refuse every run in between.
+    Region datasets come from the same .py bundle, whose version the digest
+    already covers.
+    """
+    bundle = normalize_stage12_bundle(_bundle())
+    without_region_datasets = bundle.model_copy(
+        update={
+            "countries": tuple(
+                country.model_copy(update={"region_datasets": None})
+                for country in bundle.countries
+            )
+        }
+    )
+
+    assert _us(bundle).region_datasets is not None
+    assert bundle_digest(bundle) == bundle_digest(without_region_datasets)
+
+
+def test_a_dataset_sharing_the_default_path_does_not_replace_the_default() -> None:
+    bundle = _bundle()
+    release = bundle["data_releases"]["us"]
+    release["datasets"]["a_alias_of_the_default"] = deepcopy(
+        release["datasets"][release["default_dataset"]]
+    )
+
+    us = _us(normalize_stage12_bundle(bundle))
+
+    assert us.dataset_for_region_type("national") == us.default_dataset
+
+
+def test_the_bundle_digest_of_a_fixed_bundle_is_pinned() -> None:
+    """Any change to what the digest covers is deliberate.
+
+    A changed digest refuses comparison runs while a redeployed v2 application
+    waits for its version manifest, and rebuilds the Stage 12 cache, so a new
+    bundle field must not reach it by accident. The pinned value is the one
+    the code before region datasets gives the same bundle.
+    """
+    from policyengine_simulation_contract.stage12_bundle import (
+        Stage12BundleManifest,
+        Stage12CountryBundle,
+        Stage12Dataset,
+        Stage12RegionDataset,
+    )
+
+    dataset = Stage12Dataset(
+        identity="populace_us_2024",
+        uri="hf://policyengine/populace-us/populace_us_2024.h5@revision",
+        artifact_revision="revision",
+        sha256="a" * 64,
+        repo_type="dataset",
+    )
+    bundle = Stage12BundleManifest(
+        policyengine_version="6.7.5",
+        policyengine_requirement="policyengine==6.7.5",
+        core_package_version="3.33.0",
+        core_package_requirement="policyengine-core==3.33.0",
+        countries=(
+            Stage12CountryBundle(
+                country="us",
+                country_package_name="policyengine-us",
+                country_package_version="2.2.1",
+                country_package_requirement="policyengine-us==2.2.1",
+                data_package_name="populace-us",
+                data_package_version="1.0.0",
+                data_release_version="revision",
+                data_artifact_revision="revision",
+                default_dataset=dataset.identity,
+                default_dataset_uri=dataset.uri,
+                datasets=(dataset,),
+                region_datasets=(
+                    Stage12RegionDataset(
+                        region_type="national", dataset=dataset.identity
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    assert bundle_digest(bundle) == (
+        "47f3f7c69ea3b99005ffee585092074862bf4f55a91a95511f12924a79aac71c"
+    )

@@ -18,6 +18,9 @@ from policyengine_simulation_executor.simulation_runtime import (
     resolve_data_folder,
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
+from policyengine_simulation_executor.stage12_cache import (
+    precompute as cache_precompute,
+)
 from policyengine_simulation_executor.stage12_cache.models import CacheManifest
 from policyengine_simulation_executor.stage12_cache.precompute import (
     PRECOMPUTE_YEARS,
@@ -147,6 +150,31 @@ STAGE12_CACHE_ARTIFACT_COUNT = len(PRECOMPUTE_YEARS) * (1 + len(US_REGION_GROUPS
 STAGE12_CACHE_PROBE_YEAR = PRECOMPUTE_YEARS[0]
 
 
+def expected_state_dataset_count() -> int:
+    """Return how many state dataset files the installed bundle's cache holds.
+
+    One per precomputed year for each US state region on a non-default
+    dataset; none when every state uses the default dataset.
+    """
+    return len(PRECOMPUTE_YEARS) * len(cache_precompute.state_dataset_targets())
+
+
+def _require_installed_artifacts(
+    manifest: CacheManifest, data_folder: Path, *, state_dataset_count: int
+) -> None:
+    """Require the expected number of listed files and every state file on disk."""
+    if len(manifest.artifacts) != STAGE12_CACHE_ARTIFACT_COUNT + state_dataset_count:
+        msg = "installed Stage 12 cache artifact count differs"
+        raise RuntimeError(msg)
+    for item in manifest.artifacts:
+        if (
+            item.type == "state_dataset"
+            and not (data_folder / item.folder / item.filename).is_file()
+        ):
+            msg = f"installed Stage 12 state dataset file is missing: {item.path}"
+            raise RuntimeError(msg)
+
+
 def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
     """Validate the baked manifest and require one real baseline cache hit."""
     data_folder = Path(resolve_data_folder())
@@ -159,9 +187,11 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
     if manifest.years != PRECOMPUTE_YEARS:
         msg = "installed Stage 12 cache years differ"
         raise RuntimeError(msg)
-    if len(manifest.artifacts) != STAGE12_CACHE_ARTIFACT_COUNT:
-        msg = "installed Stage 12 cache artifact count differs"
-        raise RuntimeError(msg)
+    _require_installed_artifacts(
+        manifest,
+        data_folder,
+        state_dataset_count=expected_state_dataset_count(),
+    )
     probe = next(
         item
         for item in manifest.artifacts
@@ -175,8 +205,19 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
     if calculation.cache_outcome != "hit":
         msg = "deployed Stage 12 cache probe did not load a cache hit"
         raise RuntimeError(msg)
+    return _cache_release_summary(manifest, expected_manifest_sha256)
+
+
+def _cache_release_summary(
+    manifest: CacheManifest, manifest_sha256: str
+) -> dict[str, Any]:
+    """Return the cache release a worker reports, in ``Stage12CacheRelease`` form.
+
+    Only national datasets and baselines are counted: the release model pins
+    those counts and forbids other fields, so state datasets are not reported.
+    """
     return {
-        "manifest_sha256": expected_manifest_sha256,
+        "manifest_sha256": manifest_sha256,
         "partition_sha256": manifest.partition_sha256,
         "years": list(manifest.years),
         "segment_count": len(US_REGION_GROUPS),

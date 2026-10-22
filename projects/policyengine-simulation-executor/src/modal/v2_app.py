@@ -195,7 +195,9 @@ def build_v2_image(
             secrets=[gcp_secret],
             cpu=2.0,
             memory=4096,
-            timeout=1800,
+            # The 63 national files and the state datasets (a file per state
+            # for each precomputed year), downloaded and hashed in turn.
+            timeout=3600,
         )
     image = image.add_local_python_source(
         "src.modal",

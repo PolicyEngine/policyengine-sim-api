@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     )
 
 DATASET_SCHEMA = "stage12-ds1"
+STATE_DATASET_SCHEMA = "stage12-sds1"
 BASELINE_SCHEMA = "stage12-bl1"
 CURRENT_LAW_POLICY = "current-law"
 _ID_DIGEST_CHARS = 16
@@ -93,6 +94,66 @@ class Stage12DatasetCacheIdentity:
     def store_path(self) -> str:
         """The object path in the cache bucket."""
         return f"datasets/{self.country}/{self.digest}/{self.filename}"
+
+
+@dataclass(frozen=True)
+class Stage12StateDatasetCacheIdentity:
+    """Identity of one state's cached year file, filtered from a regional dataset.
+
+    The file is ``dataset``'s year file restricted to the households whose
+    ``filter_variable`` equals ``state_fips``. Its fields are those of a
+    dataset identity for the regional dataset, plus the state and filter.
+    """
+
+    country: CountryId
+    dataset: str
+    stem: str
+    year: int
+    source_sha256: str
+    data_artifact_revision: str
+    data_package_version: str
+    country_package_version: str
+    core_package_version: str
+    policyengine_version: str
+    bundle_manifest_sha256: str
+    state_code: str
+    state_fips: int
+    filter_variable: str
+
+    @property
+    def payload(self) -> dict[str, Any]:
+        """The fields hashed into ``digest``."""
+        return {
+            "schema": STATE_DATASET_SCHEMA,
+            "country": self.country,
+            "dataset": self.dataset,
+            "year": self.year,
+            "source_sha256": self.source_sha256,
+            "data_artifact_revision": self.data_artifact_revision,
+            "data_package_version": self.data_package_version,
+            "country_package_version": self.country_package_version,
+            "core_package_version": self.core_package_version,
+            "policyengine_version": self.policyengine_version,
+            "bundle_manifest_sha256": self.bundle_manifest_sha256,
+            "state_code": self.state_code,
+            "state_fips": self.state_fips,
+            "filter_variable": self.filter_variable,
+        }
+
+    @property
+    def digest(self) -> str:
+        """The canonical digest of ``payload``; it names the cache directory."""
+        return canonical_digest(self.payload)
+
+    @property
+    def filename(self) -> str:
+        """The year file's own name, which every state's file shares."""
+        return f"{self.stem}_year_{self.year}.h5"
+
+    @property
+    def store_path(self) -> str:
+        """The object path in the cache bucket."""
+        return f"state-datasets/{self.country}/{self.digest}/{self.filename}"
 
 
 @dataclass(frozen=True)
@@ -190,6 +251,54 @@ def collect_dataset_identity(
         core_package_version=resolved.bundle.core_package_version,
         policyengine_version=resolved.bundle.policyengine_version,
         bundle_manifest_sha256=resolved.bundle_manifest_sha256,
+    )
+
+
+def collect_state_dataset_identity(  # noqa: PLR0913  # one keyword per input of the per-state identity
+    resolved: ResolvedStage12Bundle,
+    *,
+    country: CountryId,
+    year: int,
+    dataset: str,
+    state_code: str,
+    state_fips: int,
+    filter_variable: str,
+) -> Stage12StateDatasetCacheIdentity:
+    """Collect one state's dataset identity from the installed Stage 12 bundle.
+
+    ``dataset`` names a bundle dataset other than the default, such as the
+    regional dataset state regions load; its own hash and revision key the
+    file.
+    """
+    from policyengine.provenance.manifest import (
+        dataset_logical_name,
+        resolve_dataset_reference,
+    )
+
+    country_bundle = next(
+        item for item in resolved.bundle.countries if item.country == country
+    )
+    entry = next(
+        (item for item in country_bundle.datasets if item.identity == dataset), None
+    )
+    if entry is None:
+        msg = f"Dataset {dataset!r} is not in the installed {country} Stage 12 bundle"
+        raise ValueError(msg)
+    return Stage12StateDatasetCacheIdentity(
+        country=country,
+        dataset=entry.identity,
+        stem=dataset_logical_name(resolve_dataset_reference(country, dataset)),
+        year=year,
+        source_sha256=entry.sha256,
+        data_artifact_revision=entry.artifact_revision,
+        data_package_version=country_bundle.data_package_version,
+        country_package_version=country_bundle.country_package_version,
+        core_package_version=resolved.bundle.core_package_version,
+        policyengine_version=resolved.bundle.policyengine_version,
+        bundle_manifest_sha256=resolved.bundle_manifest_sha256,
+        state_code=state_code.upper(),
+        state_fips=int(state_fips),
+        filter_variable=filter_variable,
     )
 
 

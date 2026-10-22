@@ -205,8 +205,10 @@ redacted cause (type, stage, simulation role and redacted message) followed
 by the same correlation ID.
 
 Stage 12 deployments run `src/modal/stage12_precompute_app.py` against the
-dedicated `STAGE12_CACHE_BUCKET`. It publishes three annual datasets plus 60
-current-law US baseline files and emits
+dedicated `STAGE12_CACHE_BUCKET`. It publishes three annual datasets, 60
+current-law US baseline files and, for each state region whose requests load
+a dataset other than the bundle default, that dataset's year file filtered to
+the state's households (one per state and year), and emits
 `STAGE12_CACHE_MANIFEST_DIGEST=<sha256>`. Baseline files have the names .py
 saves and loads them under (`Simulation.storage_id`, which includes the SPM
 selection's digest). Stored files are never replaced: a run computes only
@@ -217,7 +219,9 @@ workers, its image and functions mount only the read-only
 `HUGGING_FACE_TOKEN`, and
 `stage12-evaluation-gcp-credentials`; the US data it reads comes from the
 public `policyengine/populace-us` dataset repository. The US worker image
-downloads and verifies the manifest's 63 files during image construction. The
+downloads and verifies the manifest's files during image construction: the 63
+national files into the data folder, and each state dataset into
+`state-datasets/<dataset>/<state>/` under the year file's own name. The
 release validation checks the recorded manifest, hashes a baseline file, and
 requires a real calculation to load that file without recomputing it. Worker
 validation also calculates a US household under a nonempty CTC reform using
