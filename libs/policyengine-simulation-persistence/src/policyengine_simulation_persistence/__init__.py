@@ -19,6 +19,13 @@ from policyengine_simulation_persistence.run_store import (
     SUCCEEDED_RUN_REUSE_WINDOW,
     RunStore,
 )
+from policyengine_simulation_persistence.run_transitions import (
+    AbandonedDispatches,
+    DueSimulationCall,
+    RunError,
+    RunErrorCode,
+    RunTransitions,
+)
 from policyengine_simulation_persistence.runs import (
     NewReportRun,
     NewSimulationRun,
@@ -48,6 +55,8 @@ __all__ = [
     "RUNTIME_ROLE",
     "SIMULATION_SCHEMA",
     "SUCCEEDED_RUN_REUSE_WINDOW",
+    "AbandonedDispatches",
+    "DueSimulationCall",
     "NewReport",
     "NewReportRun",
     "NewSimulation",
@@ -56,8 +65,11 @@ __all__ = [
     "ReportRecord",
     "ReportRunRecord",
     "ReportStore",
+    "RunError",
+    "RunErrorCode",
     "RunStatus",
     "RunStore",
+    "RunTransitions",
     "RunTrigger",
     "SimulationKind",
     "SimulationRecord",
