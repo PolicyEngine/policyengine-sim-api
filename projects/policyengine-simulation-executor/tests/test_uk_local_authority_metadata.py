@@ -512,3 +512,22 @@ def test_breakdown_nations_are_the_uk_nations_policyengine_registers() -> None:
 
     registered = frozenset(region.code for region in registry.get_by_type("country"))
     assert registered == local_area_breakdown.UK_NATION_REGIONS
+
+
+def test_the_installed_bundle_routes_area_regions_to_the_dense_dataset() -> None:
+    # Reads only the manifest packaged with the installed policyengine.py.
+    from policyengine.countries.uk.regions import area_regions_routed_to_local_release
+    from policyengine.provenance.manifest import get_release_manifest
+    from policyengine_simulation_executor.simulation_runtime import (
+        _manifest_dataset_revision,
+    )
+
+    name = routed_uk_area_dataset_name()
+    revision = _manifest_dataset_revision("uk", name)
+
+    assert name == "microcosm_uk_2024_25_dense"
+    assert uk_area_regions_routed() is True
+    assert uk_area_regions_routed() is area_regions_routed_to_local_release()
+    assert isinstance(revision, str)
+    assert revision.startswith("microcosm-uk-2024-25-dense-")
+    assert revision == get_release_manifest("uk").datasets[name].revision

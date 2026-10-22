@@ -71,6 +71,35 @@ def test_an_older_pinned_worker_is_refused_before_spawning(
     assert breakdown_worker["func"].last_payload is None
 
 
+def test_a_worker_pinned_by_uk_model_version_without_it_is_refused(
+    breakdown_worker, client: TestClient
+):
+    # An older app serves UK model 2.60.0 and declares no breakdowns.
+    state = breakdown_worker["dicts"][ROUTING_STATE_DICT_NAME]["active"]
+    state["routes"]["uk"]["2.60.0"] = "policyengine-simulation-py3-9-0"
+    older = state["bundles"]["3.9.0"]
+    state["bundles"]["3.9.0"] = {
+        **older,
+        "uk": {**older["uk"], "model_version": "2.60.0"},
+    }
+    pinned = {**BREAKDOWN_REQUEST, "version": "2.60.0"}
+    national = {key: value for key, value in pinned.items() if key != "breakdown"}
+
+    refused = client.post("/simulate/economy/comparison", json=pinned)
+
+    assert refused.status_code == 400
+    assert "policyengine.py 3.9.0" in refused.json()["detail"]
+    assert breakdown_worker["func"].last_payload is None
+    # The same pinned route still serves a national request.
+    assert client.post("/simulate/economy/comparison", json=national).status_code == (
+        200
+    )
+    assert breakdown_worker["func"].last_from_name_call == (
+        "policyengine-simulation-py3-9-0",
+        "run_simulation",
+    )
+
+
 def test_legacy_only_routes_are_refused_before_spawning(mock_modal, client: TestClient):
     # Without a routing state no bundle manifest can declare the capability.
     del mock_modal["dicts"][ROUTING_STATE_DICT_NAME]
