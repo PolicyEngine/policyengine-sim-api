@@ -1,9 +1,10 @@
 """Start Modal calls and ask about them without waiting, for simulation runs.
 
 The Simulation Entrypoint starts each run's Modal call with ``spawn`` and later
-asks Modal about it with ``get(timeout=0)``, which returns at once. A call
-Modal pre-empted is re-run on the same input under the same call ID, so it
-reads as still running and finishes later: pre-emption is never a failure.
+asks Modal about it with ``get(timeout=0)``, which returns at once. Modal stops
+a pre-empted worker with KeyboardInterrupt, records no result for it and
+re-runs the same input under the same call ID, so the call reads as still
+running and finishes later: pre-emption is never a failure.
 
 These adapters belong to the main path. The Stage 12 comparison path keeps its
 own Modal code; the two share nothing.
@@ -11,10 +12,11 @@ own Modal code; the two share nothing.
 
 from __future__ import annotations
 
+import asyncio
+import traceback
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-import grpclib.exceptions
 import modal
 from policyengine_simulation_persistence import RunError, RunErrorCode
 
@@ -118,21 +120,28 @@ class ModalCallDispatcher:
         await modal.FunctionCall.from_id(modal_call_id).cancel.aio()
 
 
-# Problems between this client and Modal: the call's state is unknown, so ask
-# again later. Errors the worker raised come back as their own types (or
-# RemoteError, InternalFailure, FunctionTimeoutError) and fail the run.
-TRANSIENT_MODAL_ERRORS: tuple[type[Exception], ...] = (
-    modal.exception.ConnectionError,
-    modal.exception.AuthError,
-    modal.exception.PermissionDeniedError,
-    modal.exception.ServiceError,
-    modal.exception.ResourceExhaustedError,
-    modal.exception.InternalError,
-    modal.exception.VersionError,
-    modal.exception.ClientClosed,
-    grpclib.exceptions.GRPCError,
-    grpclib.exceptions.StreamTerminatedError,
+# Where Modal raises a finished call's own outcome in this process: the
+# worker's exception (whatever its type), the call's timeout, or a failure
+# Modal records for the call. Anything raised elsewhere came from this
+# process's own request to Modal.
+_CALL_RESULT_MODULE = "modal._utils.function_utils"
+_CALL_RESULT_FUNCTION = "_process_result"
+# Signals to this process itself, which must never be taken for an outcome.
+OWN_PROCESS_SIGNALS: tuple[type[BaseException], ...] = (
+    asyncio.CancelledError,
+    KeyboardInterrupt,
+    SystemExit,
+    GeneratorExit,
 )
+
+
+def raised_from_call_result(error: BaseException) -> bool:
+    """Return whether Modal raised ``error`` from a finished call's result."""
+    return any(
+        frame.f_globals.get("__name__") == _CALL_RESULT_MODULE
+        and frame.f_code.co_name == _CALL_RESULT_FUNCTION
+        for frame, _ in traceback.walk_tb(error.__traceback__)
+    )
 
 
 def _failed(code: RunErrorCode, message: str) -> CallFailed:
@@ -143,28 +152,54 @@ class ModalCallInspector:
     """Read a Modal call's output if it has one, without waiting."""
 
     async def inspect(self, modal_call_id: str) -> CallOutcome:
-        """Return the call's outcome, or raise CallInspectionError."""
+        """Return the call's outcome, or raise CallInspectionError.
+
+        A worker's exception is re-raised here by Modal and can be of any
+        type, including one Modal's client also raises (a built-in
+        TimeoutError, a Modal or grpclib error) or a BaseException such as
+        SystemExit. So the outcome is decided by where the exception was
+        raised: from the finished call's result, it is the call's outcome;
+        otherwise it came from this process's own request to Modal, and a
+        signal to this process propagates.
+        """
         try:
             call = modal.FunctionCall.from_id(modal_call_id)
             output = await call.get.aio(timeout=0)
-        # Modal raises the built-in TimeoutError while the call has no output.
-        except TimeoutError:
-            return CallRunning()
-        except modal.exception.OutputExpiredError:
-            return _failed(
-                RunErrorCode.RESULT_EXPIRED, "Modal no longer holds the call's output."
-            )
-        except modal.exception.FunctionTimeoutError:
-            return _failed(RunErrorCode.WORKER_TIMEOUT, "The Modal call timed out.")
-        except modal.exception.NotFoundError:
-            return _failed(RunErrorCode.CALL_NOT_FOUND, "Modal does not know the call.")
-        except TRANSIENT_MODAL_ERRORS as error:
-            raise CallInspectionError(type(error).__name__) from error
-        # The call re-raises whatever the worker raised. Record only its type:
-        # the message may contain calculation inputs.
-        except Exception as error:  # noqa: BLE001  # every worker failure fails the run
-            return _failed(
-                RunErrorCode.WORKER_ERROR,
-                f"The Modal call raised {type(error).__name__}.",
-            )
+        except BaseException as error:
+            if raised_from_call_result(error):
+                return _call_failure(error)
+            if isinstance(error, OWN_PROCESS_SIGNALS) or not isinstance(
+                error, Exception
+            ):
+                raise
+            return _request_outcome(error)
         return CallSucceeded(output)
+
+
+def _call_failure(error: BaseException) -> CallFailed:
+    """Turn a finished call's own outcome into a run failure."""
+    if isinstance(error, modal.exception.FunctionTimeoutError):
+        return _failed(RunErrorCode.WORKER_TIMEOUT, "The Modal call timed out.")
+    # Record only the type: the message may contain calculation inputs.
+    return _failed(
+        RunErrorCode.WORKER_ERROR, f"The Modal call raised {type(error).__name__}."
+    )
+
+
+def _request_outcome(error: Exception) -> CallOutcome:
+    """Read an error from this process's own request to Modal.
+
+    Raise CallInspectionError for a problem reaching Modal, so the call is
+    asked about again later.
+    """
+    # Modal raises the built-in TimeoutError while the call has no output,
+    # including while it re-runs a pre-empted call.
+    if type(error) is TimeoutError:
+        return CallRunning()
+    if isinstance(error, modal.exception.OutputExpiredError):
+        return _failed(
+            RunErrorCode.RESULT_EXPIRED, "Modal no longer holds the call's output."
+        )
+    if isinstance(error, modal.exception.NotFoundError):
+        return _failed(RunErrorCode.CALL_NOT_FOUND, "Modal does not know the call.")
+    raise CallInspectionError(type(error).__name__) from error
