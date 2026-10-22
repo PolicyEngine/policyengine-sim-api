@@ -679,13 +679,39 @@ def test_returned_report_rejects_an_aggregate_outside_the_macro_output_schema(
     assert artifacts.aggregate_writes == []
 
 
+def _aggregate_for_another_evaluation() -> dict:
+    return {**_macro_aggregate(), "evaluation_id": str(uuid4())}
+
+
+def _aggregate_of_other_requested_aggregates() -> dict:
+    aggregate = _macro_aggregate()
+    return {**aggregate, "requested_aggregates": aggregate["requested_aggregates"][:1]}
+
+
+def _aggregate_of_another_bundle() -> dict:
+    aggregate = _macro_aggregate()
+    return {
+        **aggregate,
+        "bundle": {**aggregate["bundle"], "country_package_version": "9.9.9"},
+    }
+
+
+@pytest.mark.parametrize(
+    "mismatched_aggregate",
+    [
+        _aggregate_for_another_evaluation,
+        _aggregate_of_other_requested_aggregates,
+        _aggregate_of_another_bundle,
+    ],
+)
 def test_returned_report_rejects_an_aggregate_for_another_report(
     forbid_database,
+    mismatched_aggregate,
 ) -> None:
     artifacts = FakeArtifacts()
 
     def aggregate_for_another_report(**_inputs):
-        return {**_macro_aggregate(), "evaluation_id": str(uuid4())}
+        return mismatched_aggregate()
 
     with pytest.raises(ReportExecutionError) as raised:
         _coordinate_returned_report(
