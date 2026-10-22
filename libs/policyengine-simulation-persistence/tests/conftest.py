@@ -15,12 +15,19 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
+from alembic import command
 from migration_support import (
     MIGRATION_DATABASE_URL_VARIABLE,
     MIGRATOR_ROLE,
     TEST_ROLE_PASSWORD,
+    alembic_config,
 )
 from policyengine_simulation_persistence.schema import RUNTIME_ROLE
+from public_api_support import (
+    PublicApiRows,
+    create_public_api_tables,
+    insert_public_api_rows,
+)
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, make_url
 
@@ -71,13 +78,26 @@ def postgres_server_url() -> URL:
 
 
 @pytest.fixture
+def references_granted() -> bool:
+    """Whether the migrator gets REFERENCES on the Public API tables.
+
+    The operator grants it in production; a test overrides this fixture to
+    leave it out.
+    """
+    return True
+
+
+@pytest.fixture
 def disposable_database(
     postgres_server_url: URL,
     monkeypatch: pytest.MonkeyPatch,
+    references_granted,
 ) -> Iterator[DisposableDatabase]:
-    """Create an empty database owned by the migrator, and drop it afterwards.
+    """Create a database owned by the migrator, and drop it afterwards.
 
-    ``SIMULATION_MIGRATION_DATABASE_URL`` points at it, as in the deploy job.
+    It holds only the Public API tables the simulation schema refers to
+    (``public_api_support``). ``SIMULATION_MIGRATION_DATABASE_URL`` points at
+    it, as in the deploy job.
     """
     database_name = f"simulation_test_{uuid4().hex[:12]}"
     server_engine = create_engine(postgres_server_url, isolation_level="AUTOCOMMIT")
@@ -106,6 +126,9 @@ def disposable_database(
             ),
             superuser_url=_canonical(postgres_server_url.set(database=database_name)),
         )
+        create_public_api_tables(
+            database.superuser_url, grant_references=references_granted
+        )
         monkeypatch.setenv(MIGRATION_DATABASE_URL_VARIABLE, database.migrator_url)
         yield database
     finally:
@@ -114,3 +137,16 @@ def disposable_database(
                 text(f'DROP DATABASE IF EXISTS "{database_name}" WITH (FORCE)')
             )
         server_engine.dispose()
+
+
+@pytest.fixture
+def migrated_database(disposable_database: DisposableDatabase) -> DisposableDatabase:
+    """Return a disposable database with the whole chain applied."""
+    command.upgrade(alembic_config(), "head")
+    return disposable_database
+
+
+@pytest.fixture
+def public_api_rows(migrated_database: DisposableDatabase) -> PublicApiRows:
+    """Insert one row of each kind the simulation tables refer to."""
+    return insert_public_api_rows(migrated_database.superuser_url)
