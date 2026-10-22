@@ -439,8 +439,14 @@ it, with its region datasets removed, equals the manifest under
 `active` before the first publish that writes it. Code released before schema
 version 2 or before region datasets republishes only the older keys it knows, so
 after a rollback the out-of-date copies stop matching and are no longer read,
-and the next publish starts from what the older code wrote. Removing the older
-copies needs a later change, once no deployed or rollback revision reads them.
+and the next publish starts from what the older code wrote. That document has
+no household functions, so the manifest names none for versions published
+before the rollback until each is published again, and it lacks whatever only
+`active-schema-2` held, such as a version with a household-only country. Code
+released before cache releases writes only `active`, which current readers do
+not read while `active-with-cache` exists; a rollback that far needs the newer
+keys deleted from the Modal Dict first. Removing the older copies needs a later
+change, once no deployed or rollback revision reads them.
 
 A rollback to code released before region datasets has one window: the older
 worker is deployed before its publish job runs, and until that publish the
