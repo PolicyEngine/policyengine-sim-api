@@ -472,6 +472,15 @@ def test_failure_bounds_its_code_and_summary() -> None:
         )
 
 
+def test_error_pickles_its_failure_as_plain_json_values() -> None:
+    # The error crosses Modal as a pickle. Plain JSON values in it mean the
+    # container's and the caller's pydantic versions need not agree.
+    pickled = pickle.dumps(ReportExecutionError(_failure()))
+
+    assert b"ReportExecutionFailure" not in pickled
+    assert b"pydantic" not in pickled
+
+
 def test_error_keeps_a_fixed_message_and_its_failure_through_pickle() -> None:
     restored = pickle.loads(pickle.dumps(ReportExecutionError(_failure())))
 

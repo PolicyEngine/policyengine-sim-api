@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from hashlib import sha256
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
@@ -34,6 +34,9 @@ from policyengine_simulation_contract.stage12_execution import (
     StrictContractModel,
     stage12_output_plan_sha256,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 REPORT_EXECUTION_ERROR_MESSAGE = "Report execution failed"
 
@@ -201,9 +204,9 @@ class ReportExecutionError(RuntimeError):
     """Raised by a coordinator or simulation whose result goes to its caller.
 
     The message is fixed; the failure is in ``failure``. The error pickles
-    with its failure, so Modal's ``FunctionCall.get`` raises it in the caller
-    as this type with the same failure, provided the caller can import this
-    module.
+    with its failure as plain JSON values, so Modal's ``FunctionCall.get``
+    raises it in the caller as this type with the same failure, provided the
+    caller can import this module, whatever pydantic version each side runs.
     """
 
     def __init__(self, failure: ReportExecutionFailure) -> None:
@@ -213,6 +216,11 @@ class ReportExecutionError(RuntimeError):
 
     def __reduce__(
         self,
-    ) -> tuple[type[ReportExecutionError], tuple[ReportExecutionFailure]]:
-        """Rebuild the error from its failure when it is unpickled."""
-        return (type(self), (self.failure,))
+    ) -> tuple[Callable[[dict[str, Any]], ReportExecutionError], tuple[dict[str, Any]]]:
+        """Rebuild the error from its failure's JSON values when it is unpickled."""
+        return (_report_execution_error, (self.failure.model_dump(mode="json"),))
+
+
+def _report_execution_error(failure: dict[str, Any]) -> ReportExecutionError:
+    """Rebuild a pickled ``ReportExecutionError`` from its failure's JSON values."""
+    return ReportExecutionError(ReportExecutionFailure.model_validate(failure))
