@@ -61,15 +61,20 @@ def _request(country: str, household: dict, **overrides) -> HouseholdExecutionRe
 
 
 class RecordingRuntime:
-    """Records the spans a calculation opens, in order."""
+    """Records the spans a calculation opens, in order, and which are open."""
 
     def __init__(self) -> None:
         self.spans: list[tuple[str, dict]] = []
+        self.open_spans: list[str] = []
 
     @contextmanager
     def span(self, name: str, *, attributes: dict | None = None):
         self.spans.append((name, dict(attributes or {})))
-        yield
+        self.open_spans.append(name)
+        try:
+            yield
+        finally:
+            self.open_spans.pop()
 
 
 # A stand-in country model: enough of a country package to exercise the
@@ -432,6 +437,50 @@ def test_spm_settings_as_sent_fail_with_public_api_codes(
     assert outcome.error.spm_error.code == spm_code
     assert outcome.error.message == outcome.error.spm_error.message
     assert outcome.error.policy_key is None
+
+
+@pytest.mark.parametrize(
+    ("source", "saved_household"), [("request", False), ("saved_household", True)]
+)
+def test_spm_settings_are_resolved_while_preparing_the_household(
+    monkeypatch, source, saved_household
+) -> None:
+    # The country model loads first, under its own span, so the time the US
+    # model takes to import is measured there and not in SPM resolution.
+    runtime = RecordingRuntime()
+    events: list[tuple[str, object]] = []
+    model = _stand_in_model(_stand_in_simulation({"net_income": np.array([1.0])}))
+
+    def load_model(country):
+        events.append(("model", list(runtime.open_spans)))
+        return model
+
+    def resolve(country, selection, *, sent, saved_household):
+        events.append(("spm", list(runtime.open_spans)))
+        events.append(("spm options", (selection, sent, saved_household)))
+
+    monkeypatch.setattr(
+        household_calculation, "resolve_household_spm_selection", resolve
+    )
+    household = {
+        "people": {"you": {"age": {"2026": 30}}},
+        "households": {"home": {"members": ["you"], "net_income": {"2026": None}}},
+    }
+
+    outcome = calculate_household(
+        _request("us", household, spm={}, spm_selection_source=source),
+        worker=_worker("us"),
+        dependencies=HouseholdCalculationDependencies(
+            model_loader=load_model, today=TODAY, runtime=runtime
+        ),
+    )
+
+    assert isinstance(outcome, HouseholdExecutionResult), outcome
+    assert events == [
+        ("model", ["v2_household_country_model_load"]),
+        ("spm", ["v2_household_input_normalization"]),
+        ("spm options", ({}, True, saved_household)),
+    ]
 
 
 def test_a_receipt_that_cannot_be_certified_is_an_spm_failure(monkeypatch) -> None:
