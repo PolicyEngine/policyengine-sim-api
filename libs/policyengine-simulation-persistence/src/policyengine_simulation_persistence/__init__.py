@@ -6,6 +6,7 @@ the migration environment compares with the database.
 
 from policyengine_simulation_persistence.economy_results import (
     OPTIONAL_SECTIONS,
+    RESULT_FIELD_STORAGE,
     EconomyComparisonRecorder,
     EconomyResultLabels,
     GeographyLabel,
@@ -62,6 +63,7 @@ __all__ = [
     "ALEMBIC_VERSION_TABLE",
     "HEAD_REVISION",
     "OPTIONAL_SECTIONS",
+    "RESULT_FIELD_STORAGE",
     "RUNTIME_ROLE",
     "SIMULATION_SCHEMA",
     "SUCCEEDED_RUN_REUSE_WINDOW",
