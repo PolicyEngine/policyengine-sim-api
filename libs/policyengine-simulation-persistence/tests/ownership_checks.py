@@ -31,9 +31,10 @@ IGNORED_DIRECTORY_NAMES = frozenset(
 IGNORED_RELATIVE_DIRECTORIES = (Path("rules") / "fixtures",)
 PERSISTENCE_DISTRIBUTION = "policyengine-simulation-persistence"
 PERSISTENCE_PACKAGE = "policyengine_simulation_persistence"
-# Any variable named like a database URL, or a PostgreSQL URL written out.
+# Any variable named like a database URL (DATABASE_URL itself included), or a
+# PostgreSQL URL written out.
 DATABASE_CREDENTIAL = re.compile(
-    r"\b[A-Z][A-Z0-9_]*DATABASE_URL[A-Z0-9_]*\b|\bpostgres(?:ql)?(?:\+\w+)?://"
+    r"\b[A-Z0-9_]*DATABASE_URL[A-Z0-9_]*\b|\bpostgres(?:ql)?(?:\+\w+)?://"
 )
 # The comparison path's own database URL, and the name of the Secret Manager
 # secret that holds it, may reach Modal until the comparison path is removed.

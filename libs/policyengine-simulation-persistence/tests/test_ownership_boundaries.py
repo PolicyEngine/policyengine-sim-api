@@ -104,11 +104,18 @@ def _modal_secret_workflow(*, step_env: str = "", job_env: str = "") -> str:
     ("step_env", "job_env"),
     [
         ("        env:\n          REPORTS_DATABASE_URL: x\n", ""),
+        ("        env:\n          DATABASE_URL: x\n", ""),
         ("        env:\n          SIMULATION_DATABASE_URL: x\n", ""),
         ("", "    env:\n      SIMULATION_MIGRATION_DATABASE_URL: x\n"),
         ("        env:\n          DSN: postgresql://user:secret@db/postgres\n", ""),
     ],
-    ids=["any-database-url", "simulation-url", "job-level-env", "url-literal"],
+    ids=[
+        "any-database-url",
+        "bare-database-url",
+        "simulation-url",
+        "job-level-env",
+        "url-literal",
+    ],
 )
 def test_modal_steps_may_carry_only_the_comparison_paths_database_url(
     step_env, job_env
@@ -152,3 +159,6 @@ def test_modal_sources_may_name_only_the_comparison_paths_database_url() -> None
     assert modal_source_violations(
         {"worker.py": "os.environ['SIMULATION_DATABASE_URL']"}
     ) == ["worker.py names SIMULATION_DATABASE_URL"]
+    assert modal_source_violations({"worker.py": "os.getenv('DATABASE_URL')"}) == [
+        "worker.py names DATABASE_URL"
+    ]
