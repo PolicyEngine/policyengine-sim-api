@@ -30,7 +30,14 @@ in each environment, the `migrate_simulation_database` job applies the
 schema's Alembic chain (`migrations/`) with the migrator role. It is the only
 job that receives `SIMULATION_MIGRATION_DATABASE_URL`, a GitHub environment
 secret in `beta` and `prod`, passed in that step's `env:` alone. If the
-migration fails, the entrypoint is not deployed.
+migration fails, the entrypoint is not deployed. Only a deployment from `main`
+applies revisions; one dispatched from another branch (the Stage 12 deploy can
+be) only requires the database to be at that branch's head, so an unmerged
+revision never reaches a shared database.
+
+The deploy service account must be able to list the versions of the runtime
+URL's secret (`gcloud secrets versions list`), as for the other runtime
+secrets.
 
 The entrypoint itself connects as the runtime role. The deploy step resolves
 the Secret Manager secret named by the `SIMULATION_DATABASE_URL_SECRET_NAME`

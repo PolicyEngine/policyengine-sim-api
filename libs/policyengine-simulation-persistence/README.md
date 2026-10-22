@@ -54,10 +54,14 @@ PostgreSQL checks `CREATE` on the database even for
 
 On every deployment, the migration job (`migrate_simulation_database` in
 `.github/workflows/simulation-deploy.reusable.yml`) runs
-`alembic upgrade head` before the Simulation Entrypoint's candidate revision is
-deployed (`sim.persistence.migrate-before-entrypoint`). It is the only job that
-receives `SIMULATION_MIGRATION_DATABASE_URL`. If it fails, the entrypoint is not
-deployed. The Simulation Entrypoint's readiness check (`GET /ready`) reports
+`.github/scripts/migrate-simulation-database.sh` before the Simulation
+Entrypoint's candidate revision is deployed
+(`sim.persistence.migrate-before-entrypoint`). From `main` it runs
+`alembic upgrade head` and then `alembic current --check-heads`; from any other
+branch it runs only the head check, so a deployment dispatched from an unmerged
+branch fails instead of applying that branch's revisions. It is the only job
+that receives `SIMULATION_MIGRATION_DATABASE_URL`. If it fails, the entrypoint
+is not deployed. The Simulation Entrypoint's readiness check (`GET /ready`) reports
 the database's revision next to `HEAD_REVISION`, the revision its image
 expects, and the candidate check requires the two to match.
 
