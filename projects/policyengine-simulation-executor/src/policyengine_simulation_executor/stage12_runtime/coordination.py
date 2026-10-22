@@ -217,11 +217,12 @@ def _cancel_pending_simulations(
             cancellation_recorded = True
         if cancellation_recorded and should_segment_simulation(simulation):
             # A segmented worker reads its record, cancels the region-group
-            # calls it started, and exits. Modal does not cancel spawned calls
-            # recursively, so cancelling the worker through Modal would leave
-            # those calls running. That is the fallback only when the record
-            # could not be written and the worker cannot learn of the
-            # cancellation.
+            # calls it started, and exits through its own failure handling.
+            # Cancelling it through Modal instead raises Modal's
+            # InputCancellation in it, which also makes it cancel those calls
+            # (Stage12SegmentRunner.run), but records nothing: that is the
+            # fallback only when the record could not be written and the
+            # worker cannot learn of the cancellation.
             continue
         _cancel_child_call(calls[role], simulation)
 
