@@ -349,3 +349,27 @@ class SingleYearMacroOutput(MacroOutputModel):
     local_authority_impact: GeographicImpactOutput | None
     congressional_district_impact: CongressionalDistrictImpactOutput | None
     cliff_impact: CliffImpactOutput | None = None
+
+
+class LocalAreaBreakdownOutput(MacroOutputModel):
+    """Completed result of a UK local-area breakdown run.
+
+    A request with ``breakdown: "local_areas"`` returns this instead of a
+    ``SingleYearMacroOutput``. The run covers the requested UK-wide or nation
+    region on the local-area dataset alone, and computes only the
+    constituency and local-authority impacts; every other figure comes from
+    the national run. ``kind`` is always ``local_areas``. ``dataset`` names the
+    local-area dataset, ``data_version`` its release revision, and
+    ``model_version`` and ``policyengine_version`` the country model and the
+    policyengine.py release that computed it. Areas whose income change
+    disclosure control withholds are left out of each list, so a list may be
+    empty.
+    """
+
+    kind: Literal["local_areas"]
+    model_version: str
+    policyengine_version: str
+    dataset: str
+    data_version: str
+    constituency_impact: GeographicImpactOutput
+    local_authority_impact: GeographicImpactOutput

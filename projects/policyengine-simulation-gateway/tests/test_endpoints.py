@@ -18,6 +18,30 @@ from policyengine_simulation_contract.hf_dataset import HuggingFaceDatasetRefere
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 
 OBSERVABILITY_ID = "00000000-0000-4000-8000-000000000001"
+LOCAL_AREA_BREAKDOWN_RESULT = {
+    "kind": "local_areas",
+    "model_version": "2.132.6",
+    "policyengine_version": "6.10.0",
+    "dataset": "microcosm_uk_2024_25_dense",
+    "data_version": "microcosm-uk-2024-25-dense-20261019T000432Z-ee5c2dbe",
+    "constituency_impact": [
+        {
+            "constituency_code": "E14001063",
+            "constituency_name": "Aldershot",
+            "x": 56,
+            "y": -40,
+            "average_household_income_change": -150.0,
+            "relative_household_income_change": -0.0026,
+            "population": 40530.0,
+            "disclosure_tier": "reported",
+            "average_household_income_change_lower": -170.0,
+            "average_household_income_change_upper": -130.0,
+            "relative_household_income_change_lower": -0.003,
+            "relative_household_income_change_upper": -0.0022,
+        }
+    ],
+    "local_authority_impact": [],
+}
 
 
 def expected_bundle(
@@ -971,6 +995,21 @@ class TestSubmitSimulationEndpoint:
 
         assert response.status_code == 200
         assert OBSERVABILITY_ID_HEADER not in response.headers
+
+    def test__given_complete_local_area_breakdown__then_polling_returns_it(
+        self, mock_modal, client: TestClient
+    ):
+        submit_response = client.post(
+            "/simulate/economy/comparison",
+            json={"country": "uk", "scope": "macro", "region": "uk", "reform": {}},
+        )
+        mock_modal["func"].last_call.result = LOCAL_AREA_BREAKDOWN_RESULT
+
+        response = client.get(f"/jobs/{submit_response.json()['job_id']}")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "complete"
+        assert response.json()["result"] == LOCAL_AREA_BREAKDOWN_RESULT
 
     def test__given_running_job__then_polling_returns_202(
         self, mock_modal, client: TestClient

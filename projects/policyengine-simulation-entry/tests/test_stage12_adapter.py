@@ -155,6 +155,39 @@ def test_adapter_returns_bounded_skip_reason(update, reason) -> None:
     assert result.skip_reason is reason
 
 
+def _uk_payload(**fields: object) -> dict:
+    return {
+        **eligible_payload(),
+        "country": "uk",
+        "region": "uk",
+        "version": "2.90.2",
+        **fields,
+    }
+
+
+def test_a_local_area_breakdown_gets_no_comparison_run() -> None:
+    # No Stage 12 report computes a local-area breakdown alone.
+    result = adapt_annual_comparison(
+        _uk_payload(breakdown="local_areas"),
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert result.report is None
+    assert result.skip_reason is ComparisonSkipReason.UNSUPPORTED_OPTIONS
+
+
+def test_an_absent_breakdown_keeps_a_uk_request_eligible() -> None:
+    result = adapt_annual_comparison(
+        _uk_payload(breakdown=None),
+        evaluation_id=EVALUATION_ID,
+        worker=worker(),
+    )
+
+    assert result.skip_reason is None
+    assert result.report is not None
+
+
 def _expected_simulation(role: str, execution_id: str, policy: dict) -> dict:
     dataset_uri = "hf://policyengine/data/populace_us_2024.h5@populace_us_2024-revision"
     return {

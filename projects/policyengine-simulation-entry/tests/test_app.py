@@ -911,6 +911,50 @@ def test_request_validation_matches_shared_contract(client):
     assert result.status_code == 422
 
 
+def _uk_submission(**fields: object) -> dict:
+    return {
+        "country": "uk",
+        "scope": "macro",
+        "reform": {},
+        "region": "uk",
+        "include_cliffs": False,
+        "time_period": "2026",
+        **fields,
+    }
+
+
+def test_a_local_area_breakdown_is_forwarded_to_the_gateway(client, backend):
+    result = client.post(
+        "/simulate/economy/comparison",
+        json=_uk_submission(breakdown="local_areas"),
+    )
+
+    assert result.status_code == 200
+    assert backend.requests[-1].json_body["breakdown"] == "local_areas"
+
+
+def test_a_breakdown_for_one_constituency_is_refused_before_the_gateway(
+    client, backend
+):
+    result = client.post(
+        "/simulate/economy/comparison",
+        json=_uk_submission(region="constituency/E14001063", breakdown="local_areas"),
+    )
+
+    assert result.status_code == 422
+    (error,) = result.json()["detail"]
+    assert error["type"] == "value_error"
+    assert "breakdown" in error["msg"]
+    assert backend.requests == []
+
+
+def test_a_national_submission_carries_no_breakdown(client, backend):
+    result = client.post("/simulate/economy/comparison", json=_uk_submission())
+
+    assert result.status_code == 200
+    assert "breakdown" not in backend.requests[-1].json_body
+
+
 @pytest.mark.parametrize(
     ("error", "expected_status", "expected_detail"),
     [

@@ -341,6 +341,85 @@ class TestJobSubmitResponse:
         )
 
 
+class TestSimulationRequestBreakdown:
+    """``breakdown`` asks a UK-wide or nation run for its local areas only."""
+
+    def test_breakdown_defaults_to_none(self):
+        request = SimulationRequest(country="uk", scope="macro")
+
+        assert request.breakdown is None
+        assert "breakdown" not in request.model_dump(exclude_none=True)
+
+    @pytest.mark.parametrize("region", [None, "uk", "UK", "country/wales"])
+    def test_local_areas_are_accepted_for_a_uk_wide_or_nation_region(self, region):
+        # The Public API always sends include_cliffs: false.
+        request = SimulationRequest(
+            country="uk",
+            scope="macro",
+            region=region,
+            include_cliffs=False,
+            breakdown="local_areas",
+        )
+
+        assert request.breakdown == "local_areas"
+        assert request.model_dump(exclude_none=True)["breakdown"] == "local_areas"
+
+    @pytest.mark.parametrize(
+        ("fields", "message"),
+        [
+            ({"country": "us"}, "only for UK requests"),
+            ({"region": "constituency/E14001063"}, "'constituency/E14001063'"),
+            ({"region": "local_authority/E06000063"}, "'local_authority/E06000063'"),
+            ({"region": "wales"}, "'wales'"),
+            ({"region": "country/"}, "'country/'"),
+            ({"include_cliffs": True}, "include_cliffs"),
+            ({"segmented": True}, "segmented"),
+            ({"region_group": ["country/wales"]}, "region_group"),
+        ],
+    )
+    def test_local_areas_are_rejected_outside_a_uk_wide_or_nation_run(
+        self, fields, message
+    ):
+        payload = {
+            "country": "uk",
+            "scope": "macro",
+            "breakdown": "local_areas",
+            **fields,
+        }
+
+        with pytest.raises(ValidationError) as caught:
+            SimulationRequest.model_validate(payload)
+
+        (error,) = caught.value.errors()
+        assert error["type"] == "value_error"
+        assert "breakdown" in error["msg"]
+        assert message in error["msg"]
+
+    def test_an_unknown_breakdown_is_rejected(self):
+        with pytest.raises(ValidationError) as caught:
+            SimulationRequest(country="uk", scope="macro", breakdown="districts")
+
+        (error,) = caught.value.errors()
+        assert error["type"] == "literal_error"
+        assert error["loc"] == ("breakdown",)
+
+    def test_budget_window_requests_take_no_breakdown(self):
+        with pytest.raises(ValidationError) as caught:
+            BudgetWindowBatchRequest.model_validate(
+                {
+                    "country": "uk",
+                    "region": "uk",
+                    "start_year": "2026",
+                    "window_size": 1,
+                    "breakdown": "local_areas",
+                }
+            )
+
+        (error,) = caught.value.errors()
+        assert error["type"] == "extra_forbidden"
+        assert error["loc"] == ("breakdown",)
+
+
 class TestJobStatusResponse:
     """Tests for JobStatusResponse model."""
 
