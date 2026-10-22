@@ -9,6 +9,7 @@ from policyengine_simulation_contract.stage12_bundle import (
     Stage12BundleManifest,
     Stage12CountryBundle,
     Stage12Dataset,
+    Stage12RegionDataset,
 )
 from policyengine_simulation_contract.stage12_execution import (
     ComparisonReportRecord,
@@ -89,6 +90,56 @@ def worker() -> V2WorkerVersion:
                 "uk": "validation-uk",
             },
         ),
+    )
+
+
+REGIONAL_DATASET = "populace_us_2024_acs_local"
+REGIONAL_REVISION = "acs-local-revision"
+REGIONAL_URI = f"hf://policyengine/data/{REGIONAL_DATASET}.h5@{REGIONAL_REVISION}"
+
+
+def regional_worker() -> V2WorkerVersion:
+    """Return ``worker()`` whose US bundle sends state and district regions elsewhere.
+
+    State and congressional-district regions load the ACS-local dataset;
+    national regions keep the default.
+    """
+    base = worker()
+    countries = []
+    for country in base.bundle.countries:
+        if country.country != "us":
+            countries.append(country)
+            continue
+        regional = Stage12Dataset(
+            identity=REGIONAL_DATASET,
+            uri=REGIONAL_URI,
+            artifact_revision=REGIONAL_REVISION,
+            sha256="c" * 64,
+            repo_type="dataset",
+        )
+        countries.append(
+            country.model_copy(
+                update={
+                    "datasets": (*country.datasets, regional),
+                    "region_datasets": (
+                        Stage12RegionDataset(
+                            region_type="national", dataset=country.default_dataset
+                        ),
+                        Stage12RegionDataset(
+                            region_type="state", dataset=REGIONAL_DATASET
+                        ),
+                        Stage12RegionDataset(
+                            region_type="congressional_district",
+                            dataset=REGIONAL_DATASET,
+                        ),
+                    ),
+                }
+            )
+        )
+    return base.model_copy(
+        update={
+            "bundle": base.bundle.model_copy(update={"countries": tuple(countries)})
+        }
     )
 
 

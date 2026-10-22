@@ -132,6 +132,103 @@ class TestFetchArtifacts:
         assert stale.read_bytes() == b"bytes-d1"
 
 
+def _state_dataset_artifact(state_code, *, folder=None, filename=None):
+    digest = f"s-{state_code}"
+    return {
+        "type": "state_dataset",
+        "path": f"state-datasets/us/{digest}/populace_local_year_2026.h5",
+        "filename": filename or "populace_local_year_2026.h5",
+        "folder": folder or f"state-datasets/populace_local/{state_code}",
+        "state_code": state_code,
+        "year": 2026,
+        "digest": digest,
+    }
+
+
+def _manifest_with_state_datasets(*state_artifacts):
+    manifest = _manifest()
+    manifest["artifacts"] = [*manifest["artifacts"], *state_artifacts]
+    return manifest
+
+
+def _store_every_artifact(client, manifest):
+    for artifact in manifest["artifacts"]:
+        client.objects[artifact["path"]] = f"bytes-{artifact['digest']}".encode()
+
+
+class TestStateDatasetPlacement:
+    """Entries with a ``folder`` land in it; every state shares one filename."""
+
+    def test_places_each_state_file_in_its_own_folder(self, fake_client, data_folder):
+        manifest = _manifest_with_state_datasets(
+            _state_dataset_artifact("UT"), _state_dataset_artifact("WY")
+        )
+        _store_every_artifact(fake_client, manifest)
+
+        fetch_artifacts("test-bucket", manifest, client=fake_client)
+
+        state_folder = data_folder / "state-datasets" / "populace_local"
+        assert (state_folder / "UT" / "populace_local_year_2026.h5").read_bytes() == (
+            b"bytes-s-UT"
+        )
+        assert (state_folder / "WY" / "populace_local_year_2026.h5").read_bytes() == (
+            b"bytes-s-WY"
+        )
+        assert (data_folder / "populace_year_2026.h5").read_bytes() == b"bytes-d1"
+        assert not (data_folder / "populace_local_year_2026.h5").exists()
+
+    @pytest.mark.parametrize(
+        "folder",
+        [
+            "/abs/state-datasets/UT",
+            "state-datasets/../../escape",
+            "state-datasets/./UT",
+            "state-datasets//UT",
+            "state-datasets\\UT",
+            "",
+        ],
+    )
+    @pytest.mark.usefixtures("data_folder")
+    def test_refuses_an_unsafe_folder_before_any_download(self, fake_client, folder):
+        manifest = _manifest_with_state_datasets(
+            _state_dataset_artifact("UT", folder=folder or None)
+        )
+        manifest["artifacts"][-1]["folder"] = folder
+        _store_every_artifact(fake_client, manifest)
+
+        with pytest.raises(RuntimeError, match="folder"):
+            fetch_artifacts("test-bucket", manifest, client=fake_client)
+        assert fake_client.downloads == []
+
+    @pytest.mark.parametrize(
+        "filename", ["../populace_local_year_2026.h5", "UT/x.h5", "..", "."]
+    )
+    @pytest.mark.usefixtures("data_folder")
+    def test_refuses_an_unsafe_filename_before_any_download(
+        self, fake_client, filename
+    ):
+        manifest = _manifest_with_state_datasets(
+            _state_dataset_artifact("UT", filename=filename)
+        )
+        _store_every_artifact(fake_client, manifest)
+
+        with pytest.raises(RuntimeError, match="filename"):
+            fetch_artifacts("test-bucket", manifest, client=fake_client)
+        assert fake_client.downloads == []
+
+    @pytest.mark.usefixtures("data_folder")
+    def test_refuses_two_entries_for_one_file_before_any_download(self, fake_client):
+        repeated = _state_dataset_artifact("UT")
+        manifest = _manifest_with_state_datasets(
+            repeated, {**repeated, "path": "state-datasets/us/other/x.h5"}
+        )
+        _store_every_artifact(fake_client, manifest)
+
+        with pytest.raises(RuntimeError, match="more than once"):
+            fetch_artifacts("test-bucket", manifest, client=fake_client)
+        assert fake_client.downloads == []
+
+
 class TestFreshnessGate:
     @pytest.mark.usefixtures("data_folder")
     def test_rejects_a_policyengine_version_mismatch(self, monkeypatch, fake_client):

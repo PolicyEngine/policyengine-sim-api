@@ -1,0 +1,8 @@
+name: CI
+on: pull_request
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: uv sync --extra test
+      - run: pip install requests

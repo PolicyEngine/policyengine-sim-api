@@ -23,12 +23,14 @@ from typing import TYPE_CHECKING, Any
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
+from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.stages import (
     ANNUAL_IMPACT_STAGES,
     Stage,
 )
 from policyengine_simulation_observability.telemetry import split_internal_payload
 
+from policyengine_simulation_executor import state_datasets
 from policyengine_simulation_executor.job_progress import (
     NULL_JOB_PROGRESS,
     JobProgressReporter,
@@ -46,7 +48,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from types import ModuleType
 
-    from policyengine.core import Dataset, Policy, Region, Simulation
+    from policyengine.core import Dataset, Policy, Region
     from policyengine.core.scoping_strategy import ScopingStrategy
     from policyengine.provenance.manifest import ArtifactPathReference
     from policyengine_observability import ObservabilityRuntime
@@ -74,12 +76,15 @@ class RegionResolution:
     """A request's normalized region code, the dataset to load, and how to scope it.
 
     ``scoping_strategy`` narrows the simulation to the region; None simulates
-    the whole dataset, as a national run does.
+    the whole dataset, as a national run does. ``state_code`` is the two-letter
+    code of the US state a state or congressional-district region lies in, and
+    None for every other region.
     """
 
     code: str
     dataset_reference: str | None = None
     scoping_strategy: Any | None = None
+    state_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -642,6 +647,7 @@ def _resolve_region(
         code=region_code,
         dataset_reference=dataset_reference,
         scoping_strategy=getattr(region, "scoping_strategy", None),
+        state_code=getattr(region, "state_code", None) if country == "us" else None,
     )
 
 
@@ -753,20 +759,49 @@ def _resolve_dataset_selection(
     raise ValueError(msg)
 
 
+def _selected_dataset_revision(country: str, selection: DatasetSelection) -> str | None:
+    """Return the release revision of the dataset a US state or district run loads.
+
+    Such runs load a non-default dataset (the ACS-local dataset since .py 6.7),
+    so their ``data_version`` names that dataset's revision rather than the
+    default dataset's release. None leaves every other run reporting the
+    release's data version, as before.
+    """
+    if country != "us" or selection.is_default:
+        return None
+    from policyengine.provenance.manifest import (
+        get_release_manifest,
+    )
+
+    reference = getattr(get_release_manifest(country), "datasets", {}).get(
+        selection.name
+    )
+    revision = getattr(reference, "revision", None)
+    return revision if isinstance(revision, str) and revision else None
+
+
 def _load_dataset(
     params: dict[str, Any],
     *,
     selection: DatasetSelection,
     country_module: ModuleType | None = None,
+    data_folder: str | None = None,
 ) -> Dataset:
+    """Load the selected dataset's year file, preparing it if the folder lacks it.
+
+    ``data_folder`` replaces the folder the selection would otherwise use: the
+    image's data folder for the default dataset, or a temporary folder for any
+    other dataset.
+    """
     country = params.get("country", "us").lower()
     year = _parse_year(params)
     country_module = country_module or _country_module(country)
-    data_folder = (
-        resolve_data_folder()
-        if selection.is_default
-        else _nondefault_data_folder(country, selection.name, selection.uri)
-    )
+    if data_folder is None:
+        data_folder = (
+            resolve_data_folder()
+            if selection.is_default
+            else _nondefault_data_folder(country, selection.name, selection.uri)
+        )
 
     start = time.monotonic()
     load_options = {"years": [year], "data_folder": data_folder}
@@ -790,7 +825,7 @@ def _build_simulation(
     dataset_selection: DatasetSelection,
     policy: dict[str, Any] | None,
     region: RegionResolution,
-) -> Simulation:
+) -> StageReportingSimulation:
     from policyengine_simulation_executor.baseline_artifacts import (
         ArtifactBaselineSimulation,
         BaselineIdentityRequest,
@@ -922,7 +957,7 @@ def _run_simulation_impl_core(
     runtime: ObservabilityRuntime,
     progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict:
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
         simulation_params, telemetry, metadata = split_internal_payload(params)
     metadata = metadata or {}
     from policyengine_simulation_executor.spm import (
@@ -951,24 +986,40 @@ def _run_simulation_impl_core(
         country=country,
     )
 
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.COUNTRY_MODULE_LOAD)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.COUNTRY_MODULE_LOAD)):
         country_module = _country_module(country)
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REGION_RESOLUTION)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.REGION_RESOLUTION)):
         region_resolution = _resolve_region(
             country_module=country_module,
             country=country,
             params=simulation_params,
         )
     runtime.set_context(region=region_resolution.code)
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.DATASET_RESOLUTION)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.DATASET_RESOLUTION)):
         dataset_selection = _resolve_dataset_selection(
             simulation_params, region_resolution=region_resolution
         )
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD)):
+        baked_folder = state_datasets.baked_state_data_folder(
+            country=country,
+            selection=dataset_selection,
+            state_code=region_resolution.state_code,
+            year=_parse_year(simulation_params),
+            data_folder=resolve_data_folder(),
+        )
+        if not dataset_selection.is_default:
+            runtime.set_context(
+                dataset_source=(
+                    state_datasets.BAKED_STATE_DATASET_SOURCE
+                    if baked_folder
+                    else state_datasets.ON_DEMAND_DATASET_SOURCE
+                )
+            )
         dataset = _load_dataset(
             simulation_params,
             selection=dataset_selection,
             country_module=country_module,
+            data_folder=baked_folder,
         )
     from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
         detect_uk_local_authority_metadata,
@@ -980,12 +1031,13 @@ def _run_simulation_impl_core(
     _require_certified_uk_weight_matrix(
         region_resolution.scoping_strategy, dataset, dataset_selection
     )
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.POLICY_NORMALIZATION)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.POLICY_NORMALIZATION)):
         baseline_policy = _normalise_policy(simulation_params.get("baseline"))
         reform_policy = _normalise_policy(simulation_params.get("reform"))
 
     logger.info("Initialising baseline and reform simulations")
-    with runtime.span(
+    with scopes.span(
+        runtime,
         ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_BUILD),
         attributes={"simulation_kind": "baseline"},
     ):
@@ -996,7 +1048,8 @@ def _run_simulation_impl_core(
             policy=baseline_policy,
             region=region_resolution,
         )
-    with runtime.span(
+    with scopes.span(
+        runtime,
         ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_BUILD),
         attributes={"simulation_kind": "reform"},
     ):
@@ -1033,7 +1086,7 @@ def _run_simulation_impl_core(
         dataset=dataset,
         baseline=baseline,
         reform=reform,
-        resolved_data_version=None,
+        resolved_data_version=_selected_dataset_revision(country, dataset_selection),
         resolved_region_code=region_resolution.code,
         runtime=runtime,
         uk_local_authority_metadata=uk_local_authority_metadata,

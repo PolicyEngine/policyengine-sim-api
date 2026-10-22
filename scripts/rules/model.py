@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -68,13 +69,21 @@ _ENFORCER_DESCRIPTIONS: dict[Kind, Callable[[Mapping[str, Any]], str]] = {
     Kind.RUFF: _describe_ruff,
     Kind.MYPY: lambda _fields: "mypy",
     Kind.WORKFLOW_JOB: lambda _fields: "CI job",
-    Kind.PYRIGHT: lambda fields: f"{Kind.PYRIGHT.value} `{fields.get('config', '')}`",
+    Kind.PYRIGHT: lambda fields: (
+        f"{Kind.PYRIGHT.value} in "
+        + ", ".join(f"`{project}`" for project in fields.get("projects", []))
+    ),
     Kind.IMPORT_LINTER: (
         lambda fields: f"{Kind.IMPORT_LINTER.value} `{fields.get('config', '')}`"
     ),
     Kind.DOCS_GUARD: lambda fields: f"docs guard on `{fields.get('doc', '')}`",
     Kind.LLM_REVIEW: lambda fields: f"LLM review with `{fields.get('prompt', '')}`",
 }
+
+
+def normalized_package(package: str) -> str:
+    """Return a package directory in one spelling, so ./libs/x and libs/x match."""
+    return os.path.normpath(package).replace(os.sep, "/")
 
 
 @dataclass(frozen=True)
@@ -202,11 +211,22 @@ class Baseline:
 
 @dataclass(frozen=True)
 class RuleException:
-    """A temporary carve-out of ``path`` from a rule; the guard fails once expired."""
+    """A carve-out of ``path`` from a rule; the guard fails once expired.
+
+    ``match`` narrows the carve-out to one site in the file (a substring of the
+    command or call), ``category`` names a class of allowed site (for example
+    ``pinned-tool``), ``removal`` says when the exception can go, and ``issue``
+    is the tracking issue for a dated exception. Guards that need these fields
+    check them; the registry loader only reads them.
+    """
 
     path: str
     reason: str
     expires: date
+    match: str = ""
+    category: str = ""
+    removal: str = ""
+    issue: int | None = None
 
 
 @dataclass(frozen=True)

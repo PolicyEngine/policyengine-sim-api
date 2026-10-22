@@ -122,8 +122,8 @@ fi
 
 if [ "$ENVIRONMENT" = "beta" ]; then
   echo "Running all simulation integration tests (including beta_only)"
-  uv run pytest tests/simulation/ -v
+  uv run --frozen pytest tests/simulation/ -v
 else
   echo "Running simulation integration tests (excluding beta_only)"
-  uv run pytest tests/simulation/ -v -m "not beta_only"
+  uv run --frozen pytest tests/simulation/ -v -m "not beta_only"
 fi

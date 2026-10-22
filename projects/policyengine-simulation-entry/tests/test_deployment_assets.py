@@ -617,7 +617,7 @@ def test_permission_enforcement_reaches_candidate_and_authenticated_tests():
     # Every deployed authentication run must know whether the target revision
     # enforces permissions, so its enforcement check runs or skips correctly.
     authenticated_runs = reusable_workflow.count(
-        "run: uv run pytest authenticated_tests/ -v"
+        "run: uv run --frozen pytest authenticated_tests/ -v"
     )
     assert authenticated_runs == 3
     assert (

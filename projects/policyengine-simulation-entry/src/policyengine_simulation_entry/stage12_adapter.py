@@ -169,6 +169,20 @@ def _accepted_dataset_values(selected_dataset: Stage12Dataset) -> set[str | None
     }
 
 
+def _region_dataset(
+    bundle_country: Stage12CountryBundle, region: str
+) -> Stage12Dataset | None:
+    """Return the dataset the bundle says this region loads, if it names one.
+
+    Workers published before region datasets name none, and their regions
+    load the default dataset.
+    """
+    identity = bundle_country.dataset_for_region(region)
+    return next(
+        (item for item in bundle_country.datasets if item.identity == identity), None
+    )
+
+
 def adapt_annual_comparison(
     payload: dict[str, Any],
     *,
@@ -191,13 +205,18 @@ def adapt_annual_comparison(
     if skip_reason is not None:
         return _skip(skip_reason)
 
-    selected_dataset = next(
+    default_dataset = next(
         item
         for item in bundle_country.datasets
         if item.identity == bundle_country.default_dataset
     )
-    if payload.get("data") not in _accepted_dataset_values(selected_dataset):
+    if payload.get("data") not in _accepted_dataset_values(default_dataset):
         return _skip(ComparisonSkipReason.UNSUPPORTED_DATASET)
+    # A state or district region loads the dataset the bundle names for its
+    # region type, so its provenance names that dataset.
+    selected_dataset = (
+        _region_dataset(bundle_country, payload["region"]) or default_dataset
+    )
 
     return AdaptedComparisonRun(
         report=_report_input(

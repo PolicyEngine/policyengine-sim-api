@@ -187,12 +187,30 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
         for item in resolved.bundle.countries
         if item.country == simulation.geography.country
     )
+    # A region loads the dataset the bundle names for its region type. Entry
+    # services released before regional provenance name the default dataset
+    # for every region, so the default stays accepted until they are updated.
+    regional = country.dataset_for_region(simulation.geography.region)
+    named = simulation.bundle.dataset.identity
+    regional_entry = next(
+        (item for item in country.datasets if item.identity == regional), None
+    )
+    if regional_entry is not None and named == regional_entry.identity:
+        expected_dataset = {
+            "dataset_identity": regional_entry.identity,
+            "dataset_uri": regional_entry.uri,
+            "dataset_revision": regional_entry.artifact_revision,
+        }
+    else:
+        expected_dataset = {
+            "dataset_identity": country.default_dataset,
+            "dataset_uri": country.default_dataset_uri,
+            "dataset_revision": country.data_artifact_revision,
+        }
     expected = {
         "country_package_name": country.country_package_name,
         "country_package_version": country.country_package_version,
-        "dataset_identity": country.default_dataset,
-        "dataset_uri": country.default_dataset_uri,
-        "dataset_revision": country.data_artifact_revision,
+        **expected_dataset,
     }
     actual = {
         "country_package_name": simulation.bundle.country_package_name,
@@ -204,6 +222,34 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
     if actual != expected:
         msg = "simulation provenance differs from the installed bundle"
         raise RuntimeError(msg)
+
+
+def _require_loaded_dataset_matches_provenance(
+    simulation: SimulationExecutionInput, selection: DatasetSelection
+) -> None:
+    """Require a calculation to load the dataset its provenance names.
+
+    The provenance is recorded with the comparison run, so it must name the
+    dataset the region actually loads. The one accepted difference is a
+    state or district run whose provenance names the default dataset while it
+    loads a regional one: entry services released before regional provenance
+    send that until they are updated.
+    """
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
+        _resolve_dataset_reference,
+    )
+
+    named = simulation.bundle.dataset
+    if (selection.name, selection.uri) == (named.identity, named.uri):
+        return
+    if not selection.is_default and named.identity == _resolve_dataset_reference(
+        simulation.geography.country
+    ):
+        return
+    msg = (
+        "simulation provenance names a dataset other than the dataset its region loads"
+    )
+    raise RuntimeError(msg)
 
 
 def calculate_simulation_frames(
@@ -236,7 +282,11 @@ def calculate_simulation_frames(
         _require_certified_uk_weight_matrix,
         _resolve_dataset_selection,
         _resolve_region,
+        resolve_data_folder,
         setup_gcp_credentials,
+    )
+    from policyengine_simulation_executor.stage12_cache import (  # noqa: PLC0415  # resolved per call so tests can patch the baked-folder lookup
+        state_datasets,
     )
 
     with (
@@ -256,11 +306,19 @@ def calculate_simulation_frames(
                 params,
                 region_resolution=region,
             )
+        _require_loaded_dataset_matches_provenance(simulation, dataset_selection)
         with stage_span(Stage.DATASET_LOAD):
             dataset = _load_dataset(
                 params,
                 selection=dataset_selection,
                 country_module=country_module,
+                data_folder=state_datasets.baked_state_data_folder(
+                    country=country,
+                    selection=dataset_selection,
+                    state_code=region.state_code,
+                    year=simulation.year,
+                    data_folder=resolve_data_folder(),
+                ),
             )
         uk_local_authority_metadata = detect_uk_local_authority_metadata(
             country,

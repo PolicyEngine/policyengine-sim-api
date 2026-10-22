@@ -15,7 +15,7 @@ so policyengine_simulation_executor is not importable there at all.
 import json
 import logging
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -178,17 +178,58 @@ def _service_account_credentials(blob: str) -> "dict[str, Any]":
     }
 
 
+def _artifact_target(data_folder: "Path", artifact: "Mapping[str, Any]") -> "Path":
+    """Return where an artifact lands: its ``folder`` (if any) under the data folder.
+
+    Per-state datasets share one ``filename`` and differ by ``folder``, a
+    relative path such as ``state-datasets/<dataset>/<state>``. Anything that
+    could leave the data folder, or name a different file than intended, is
+    refused.
+    """
+    filename = artifact.get("filename")
+    if (
+        not isinstance(filename, str)
+        or filename in {"", ".", ".."}
+        or "/" in filename
+        or "\\" in filename
+    ):
+        msg = f"Artifact {artifact.get('path')!r} has an unsafe filename {filename!r}"
+        raise RuntimeError(msg)
+    folder = artifact.get("folder")
+    if folder is None:
+        return data_folder / filename
+    parts = (
+        PurePosixPath(folder).parts
+        if isinstance(folder, str) and folder and "\\" not in folder
+        else ()
+    )
+    if (
+        not parts
+        or PurePosixPath(folder).is_absolute()
+        or any(part in {".", ".."} for part in parts)
+        or "/".join(parts) != folder
+    ):
+        msg = f"Artifact {artifact.get('path')!r} has an unsafe folder {folder!r}"
+        raise RuntimeError(msg)
+    return data_folder.joinpath(*parts, filename)
+
+
 def _download_manifest_artifacts(
     bucket_handle: "storage.Bucket",
     artifacts: "Sequence[Mapping[str, Any]]",
     data_folder: "Path",
 ) -> None:
-    """Download every artifact under its runtime filename, failing on any gap.
+    """Download every artifact to its runtime location, failing on any gap.
 
-    Every store object is checked before anything downloads, and every
-    expected file is checked after.
+    Every target and store object is checked before anything downloads, and
+    every expected file is checked after.
     """
     logger = logging.getLogger(__name__)
+    targets = [_artifact_target(data_folder, artifact) for artifact in artifacts]
+    repeated = sorted({str(target) for target in targets if targets.count(target) > 1})
+    if repeated:
+        msg = f"The manifest lists these files more than once: {repeated}"
+        raise RuntimeError(msg)
     missing = [
         artifact["path"]
         for artifact in artifacts
@@ -206,16 +247,12 @@ def _download_manifest_artifacts(
     # Unconditional downloads: a same-named stale file must never
     # survive into the image, and the layer starts empty of these
     # files anyway.
-    for artifact in artifacts:
-        target = data_folder / artifact["filename"]
+    for artifact, target in zip(artifacts, targets, strict=True):
+        target.parent.mkdir(parents=True, exist_ok=True)
         bucket_handle.blob(artifact["path"]).download_to_filename(str(target))
         logger.info("Fetched %s (%.1f MB)", target, target.stat().st_size / 1e6)
 
-    absent = [
-        str(data_folder / artifact["filename"])
-        for artifact in artifacts
-        if not (data_folder / artifact["filename"]).exists()
-    ]
+    absent = [str(target) for target in targets if not target.exists()]
     if absent:
         msg = f"Artifact fetch did not produce expected files: {absent}"
         raise RuntimeError(msg)

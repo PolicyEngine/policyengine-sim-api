@@ -5,7 +5,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, TypedDict
+from typing import Any
 
 import modal
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -55,6 +55,7 @@ from policyengine_simulation_contract.spm import (
     resolve_spm_selection,
     spm_error_detail,
 )
+from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_observability.identifiers import (
     OBSERVABILITY_ID_HEADER,
@@ -86,13 +87,6 @@ SUPPORTED_ROUTE_KINDS = ("policyengine", "us", "uk")
 _INTERNAL_JOB_METADATA_KEYS = frozenset(
     {"observability_id", "submitted_at", JOB_PROGRESS_CAPABILITY_KEY}
 )
-
-
-class VersionRoutingState(TypedDict, total=False):
-    """Routing-state fields required by the public version endpoints."""
-
-    latest: dict[str, str]
-    routes: dict[str, dict[str, str]]
 
 
 @dataclass(frozen=True)
@@ -810,7 +804,9 @@ def _job_progress_payload(
     record = None
     if reports_stages:
         try:
-            with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_PROGRESS_READ)):
+            with scopes.span(
+                runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_PROGRESS_READ)
+            ):
                 record = get_job_progress(job_id)
         except Exception as exc:  # noqa: BLE001  # stage reporting is optional
             logger.warning(
@@ -909,7 +905,7 @@ async def submit_simulation(
         observability_id=observability_id,
     )
     try:
-        with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
+        with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
             route = resolve_route(
                 request.country,
                 request.version,
@@ -925,7 +921,7 @@ async def submit_simulation(
         policyengine_version=route.policyengine_version,
     )
 
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
         payload = request.model_dump(
             exclude={"version", "policyengine_version", "telemetry"},
             mode="json",
@@ -935,7 +931,7 @@ async def submit_simulation(
         payload["_telemetry"] = request.telemetry.model_dump(mode="json")
 
     try:
-        with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.POLICYENGINE_BUNDLE)):
+        with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.POLICYENGINE_BUNDLE)):
             bundle = _build_policyengine_bundle(
                 request.country,
                 route,
@@ -968,7 +964,7 @@ async def submit_simulation(
     # handle — the control-plane RPC (hydration) happens inside ``spawn`` —
     # so both live under the spawn segment to time the real network cost.
     submitted_at = datetime.now(UTC)
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
         sim_func = modal.Function.from_name(route.app_name, "run_simulation")
         call = sim_func.spawn(
             payload,
@@ -984,10 +980,12 @@ async def submit_simulation(
         submitted_at=submitted_at,
         job_progress=_route_job_progress_capability(route),
     )
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_METADATA_WRITE)):
+    with scopes.span(
+        runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_METADATA_WRITE)
+    ):
         _job_metadata_store()[call.object_id] = job_metadata
 
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
         return JobSubmitResponse(
             job_id=call.object_id,
             status="submitted",
@@ -1019,7 +1017,7 @@ async def submit_budget_window_batch(
         observability_id=observability_id,
     )
     try:
-        with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.ROUTE_RESOLUTION)):
+        with scopes.span(runtime, BUDGET_WINDOW_STAGES.name(Stage.ROUTE_RESOLUTION)):
             route = resolve_route(
                 request.country,
                 request.version,
@@ -1036,7 +1034,7 @@ async def submit_budget_window_batch(
     )
 
     try:
-        with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.POLICYENGINE_BUNDLE)):
+        with scopes.span(runtime, BUDGET_WINDOW_STAGES.name(Stage.POLICYENGINE_BUNDLE)):
             bundle = _build_policyengine_bundle(
                 request.country,
                 route,
@@ -1052,7 +1050,7 @@ async def submit_budget_window_batch(
             )
         runtime.record_exception(exc, handled=True, status_code=400)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.REQUEST_PARSE)):
+    with scopes.span(runtime, BUDGET_WINDOW_STAGES.name(Stage.REQUEST_PARSE)):
         payload = _build_budget_window_parent_payload(
             request,
             resolved_version=route.response_version,
@@ -1062,7 +1060,7 @@ async def submit_budget_window_batch(
 
     # Lazy handle + spawn together: the RPC cost lands in ``spawn``.
     observability_context = runtime.capture_context()
-    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
+    with scopes.span(runtime, BUDGET_WINDOW_STAGES.name(Stage.MODAL_FUNCTION_SPAWN)):
         batch_func = modal.Function.from_name(route.app_name, "run_budget_window_batch")
         call = batch_func.spawn(
             payload,
@@ -1078,13 +1076,16 @@ async def submit_budget_window_batch(
         bundle=bundle,
         observability_id=observability_id,
     )
-    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.MODAL_JOB_METADATA_WRITE)):
+    with scopes.span(
+        runtime, BUDGET_WINDOW_STAGES.name(Stage.MODAL_JOB_METADATA_WRITE)
+    ):
         put_batch_job_seed(seed_state)
 
-    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
+    with scopes.span(runtime, BUDGET_WINDOW_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
         return BudgetWindowBatchSubmitResponse(
             batch_job_id=batch_job_id,
-            status=seed_state.status,
+            # A new batch's seed state is always submitted.
+            status="submitted",
             poll_url=f"/budget-window-jobs/{batch_job_id}",
             country=request.country,
             version=route.response_version,
@@ -1113,7 +1114,7 @@ async def get_job_status(
     """
     runtime = _runtime(request)
     runtime.set_context(job_id=job_id)
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_METADATA_READ)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_METADATA_READ)):
         job_metadata = _job_metadata_store().get(job_id)
     if job_metadata is None:
         _record_not_found(runtime, f"Job not found: {job_id}")
@@ -1129,7 +1130,9 @@ async def get_job_status(
     response_headers = _observability_headers(observability_id)
 
     try:
-        with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)):
+        with scopes.span(
+            runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)
+        ):
             call = modal.FunctionCall.from_id(job_id)
     except Exception as exc:
         if _is_modal_job_not_found(exc):
@@ -1147,16 +1150,22 @@ async def get_job_status(
         }
 
     try:
-        with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)):
+        with scopes.span(
+            runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)
+        ):
             result = call.get(timeout=0)
         complete_metadata = with_progress("complete")
-        with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
+        with scopes.span(
+            runtime, ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)
+        ):
             return JobStatusResponse(
                 status="complete", result=result, **complete_metadata
             )
     except TimeoutError:
         running_metadata = with_progress("running")
-        with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
+        with scopes.span(
+            runtime, ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)
+        ):
             return running_job_response(running_metadata, headers=response_headers)
     # call.get re-raises whatever the worker raised; every failure becomes a
     # failed-job response, logged with its traceback by log_and_redact_exception.
@@ -1181,7 +1190,9 @@ async def get_job_status(
             context={"job_id": job_id},
         )
         failed_metadata = with_progress("failed")
-        with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)):
+        with scopes.span(
+            runtime, ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)
+        ):
             return failed_job_response(
                 error=redacted,
                 job_metadata=failed_metadata,
@@ -1203,21 +1214,25 @@ async def get_budget_window_job_status(
     """Poll for budget-window batch status."""
     runtime = _runtime(request)
     runtime.set_context(batch_job_id=batch_job_id)
-    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)):
+    with scopes.span(
+        runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)
+    ):
         state = get_batch_job_state(batch_job_id)
     if state is not None:
         _bind_observability_id(request, runtime, state.observability_id)
         response_headers = _observability_headers(state.observability_id)
         if response_headers is not None:
             response.headers.update(response_headers)
-        with runtime.span(
-            BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
+        with scopes.span(
+            runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
         ):
             return batch_status_response(
                 build_batch_status_response(state), headers=response_headers
             )
 
-    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)):
+    with scopes.span(
+        runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)
+    ):
         seed_state = get_batch_job_seed(batch_job_id)
     if seed_state is None:
         _record_not_found(runtime, f"Budget-window job not found: {batch_job_id}")
@@ -1230,7 +1245,9 @@ async def get_budget_window_job_status(
         response.headers.update(response_headers)
 
     try:
-        with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)):
+        with scopes.span(
+            runtime, BUDGET_WINDOW_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)
+        ):
             call = modal.FunctionCall.from_id(batch_job_id)
     except Exception as exc:  # noqa: BLE001  # any lookup failure degrades to the seed state; logged below with its traceback at warning level
         # The endpoint degrades gracefully to the seed state (a successful
@@ -1251,19 +1268,21 @@ async def get_budget_window_job_status(
             batch_job_id,
             exc_info=exc,
         )
-        with runtime.span(
-            BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
+        with scopes.span(
+            runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
         ):
             return batch_status_response(
                 build_batch_status_response(seed_state), headers=response_headers
             )
 
     try:
-        with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)):
+        with scopes.span(
+            runtime, BUDGET_WINDOW_STAGES.name(Stage.MODAL_JOB_STATUS_POLL)
+        ):
             result = call.get(timeout=0)
     except TimeoutError:
-        with runtime.span(
-            BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
+        with scopes.span(
+            runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
         ):
             return batch_status_response(
                 build_batch_status_response(seed_state), headers=response_headers
@@ -1287,20 +1306,24 @@ async def get_budget_window_job_status(
         seed_state.status = "failed"
         seed_state.errors = [detail] if detail else None
         seed_state.error = message
-        with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)):
+        with scopes.span(
+            runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
+        ):
             put_batch_job_state(seed_state)
             put_batch_job_seed(seed_state)
-        with runtime.span(
-            BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
+        with scopes.span(
+            runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
         ):
             return batch_status_response(
                 build_batch_status_response(seed_state), headers=response_headers
             )
 
-    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_RESULT_PARSE)):
+    with scopes.span(
+        runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_RESULT_PARSE)
+    ):
         status_response = BudgetWindowBatchStatusResponse.model_validate(result)
-    with runtime.span(
-        BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
+    with scopes.span(
+        runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
     ):
         return batch_status_response(status_response, headers=response_headers)
 
@@ -1309,7 +1332,7 @@ async def get_budget_window_job_status(
 async def list_versions(request: Request) -> VersionsResponse:
     """List all available routing versions."""
     runtime = _runtime(request)
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
         state = _active_routing_state()
     if state:
         capabilities = {}
@@ -1330,7 +1353,7 @@ async def list_versions(request: Request) -> VersionsResponse:
 
     # ``Dict.from_name`` is a lazy handle; the RPCs fire during the
     # ``dict(...)`` iterations, so those are what the segment must cover.
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_DICT_READ)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_DICT_READ)):
         policyengine_dict = _optional_modal_dict(POLICYENGINE_VERSION_DICT_NAME)
         us_dict = modal.Dict.from_name("simulation-api-us-versions")
         uk_dict = modal.Dict.from_name("simulation-api-uk-versions")
@@ -1343,7 +1366,11 @@ async def list_versions(request: Request) -> VersionsResponse:
         )
 
 
-def _version_map_from_state(state: VersionRoutingState, kind: str) -> VersionMap:
+def _version_map_from_state(state: dict, kind: str) -> VersionMap:
+    """Return ``kind``'s routes and latest version from the active routing state.
+
+    The state is read from a Modal Dict, so the helpers check each field's type.
+    """
     versions: dict[str, str] = dict(_routing_state_routes(state, kind))
     latest = _routing_state_latest(state, kind)
     if latest is not None:
@@ -1360,7 +1387,7 @@ async def get_country_versions(kind: str, request: Request) -> VersionMap:
         _record_not_found(runtime, f"Unknown version kind: {kind}")
         raise HTTPException(status_code=404, detail=f"Unknown version kind: {kind}")
 
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
         state = _active_routing_state()
     if state:
         return _version_map_from_state(state, kind_lower)
@@ -1368,11 +1395,11 @@ async def get_country_versions(kind: str, request: Request) -> VersionMap:
     # The ``dict(...)`` iteration is where the Modal Dict RPCs happen; the
     # from_name handle itself is lazy and free.
     if kind_lower == "policyengine":
-        with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_DICT_READ)):
+        with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_DICT_READ)):
             version_dict = _optional_modal_dict(POLICYENGINE_VERSION_DICT_NAME)
             return VersionMap(dict(version_dict) if version_dict is not None else {})
 
-    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_DICT_READ)):
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_DICT_READ)):
         version_dict = modal.Dict.from_name(f"simulation-api-{kind_lower}-versions")
         return VersionMap(dict(version_dict))
 

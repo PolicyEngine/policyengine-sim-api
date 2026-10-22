@@ -121,6 +121,27 @@ def test_modal_image_uses_policyengine_bundle_install(monkeypatch):
         ]
 
 
+def test_modal_image_refreshes_ca_certificates_before_installing_packages(
+    monkeypatch,
+):
+    # Modal's cached debian_slim base still trusts the roots above the
+    # compromised eMudhra intermediate CAs; the image must upgrade Debian's CA
+    # store before any download and point grpcio at that store.
+    install_fake_modal(monkeypatch)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    calls = app.simulation_image.calls
+    assert calls[0][0] == "debian_slim"
+    assert calls[1] == ("apt_install", ("ca-certificates",))
+    assert calls[2] == (
+        "env",
+        {"GRPC_DEFAULT_SSL_ROOTS_FILE_PATH": "/etc/ssl/certs/ca-certificates.crt"},
+    )
+    assert calls[3][0] == "uv_sync"
+
+
 def _fake_manifest():
     """Return a schema-valid store manifest payload.
 
@@ -196,7 +217,9 @@ def test_modal_image_fetches_artifacts_between_env_and_local_source(monkeypatch)
     assert fetch_kwargs["secrets"] == [app.gcp_secret]
     assert fetch_kwargs["cpu"] == 2.0
     assert fetch_kwargs["memory"] == 4096
-    assert fetch_kwargs["timeout"] == 900
+    # Room for the per-state datasets (51 states for each precomputed year)
+    # on top of the national files and baselines.
+    assert fetch_kwargs["timeout"] == 3600
 
     # The fetch layer must stay after the version env (its freshness gate
     # reads the baked versions) and before add_local_python_source (whose
@@ -243,6 +266,52 @@ def test_modal_image_fetches_artifacts_between_env_and_local_source(monkeypatch)
         "policyengine_simulation_observability",
         "policyengine_simulation_contract",
     )
+
+
+def test_a_manifest_listing_state_datasets_reaches_the_fetch_layer(monkeypatch):
+    install_fake_modal(monkeypatch)
+    monkeypatch.setenv("POLICYENGINE_VERSION", "4.19.1")
+    monkeypatch.setenv("POLICYENGINE_CORE_VERSION", "3.27.1")
+    monkeypatch.setenv("POLICYENGINE_US_VERSION", "1.700.0")
+    monkeypatch.setenv("POLICYENGINE_UK_VERSION", "2.90.0")
+    monkeypatch.setenv("POLICYENGINE_MANIFEST_DIGEST", "digest-abc")
+    monkeypatch.setenv("POLICYENGINE_ARTIFACT_BUCKET", "test-bucket")
+
+    manifest = _fake_manifest()
+    manifest["artifacts"].append(
+        {
+            "type": "state_dataset",
+            "path": "state-datasets/us/s1/populace_local_year_2026.h5",
+            "filename": "populace_local_year_2026.h5",
+            "folder": "state-datasets/populace_local/UT",
+            "state_code": "UT",
+            "year": 2026,
+            "digest": "s1",
+        }
+    )
+
+    class FakeStore:
+        def __init__(self, bucket_name=None, **_kwargs):
+            self.bucket_name = bucket_name
+
+        def read_manifest(self, digest):
+            assert digest == "digest-abc"
+            return manifest
+
+    from policyengine_simulation_executor import artifact_store
+
+    monkeypatch.setattr(artifact_store, "ArtifactStore", FakeStore)
+    sys.modules.pop("src.modal.app", None)
+
+    app = importlib.import_module("src.modal.app")
+
+    (fetch_call,) = [
+        call
+        for call in app.simulation_image.calls
+        if call[0] == "run_function" and call[1] == "fetch_artifacts"
+    ]
+    assert fetch_call[2]["args"] == ("test-bucket", manifest)
+    sys.modules.pop("src.modal.app", None)
 
 
 def test_modal_image_uses_failing_sentinel_without_manifest_digest(monkeypatch):

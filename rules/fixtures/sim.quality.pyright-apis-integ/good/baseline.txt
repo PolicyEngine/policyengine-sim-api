@@ -1,0 +1,3 @@
+# Proof fixture: the baseline lists exactly the errors in pyright.json.
+projects/policyengine-apis-integ/tests/simulation/conftest.py :: reportArgumentType :: Argument of type "Client | AuthenticatedClient" cannot be assigned to parameter "client" of type "AuthenticatedClient" in function "sync_detailed"
+projects/policyengine-apis-integ/tests/simulation/test_calculate.py :: reportArgumentType :: Argument of type "Client | AuthenticatedClient" cannot be assigned to parameter "client" of type "AuthenticatedClient" in function "sync_detailed"

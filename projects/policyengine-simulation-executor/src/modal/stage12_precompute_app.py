@@ -14,10 +14,12 @@ from policyengine_simulation_executor.stage12_cache.models import (
     BaselinePlanEntry,
     DatasetPlanEntry,
     PrecomputePlan,
+    StateDatasetPlanEntry,
 )
 from policyengine_simulation_executor.stage12_cache.precompute import (
     CachePrecomputeFunctions,
     build_dataset_impl,
+    build_state_datasets_impl,
     compute_baseline_impl,
     plan_artifacts_impl,
     publish_manifest_impl,
@@ -26,6 +28,7 @@ from policyengine_simulation_executor.stage12_cache.precompute import (
 )
 from policyengine_simulation_executor.stage12_cache.store import resolve_cache_bucket
 from src.modal.bundle_data import bundle_data_install_command
+from src.modal.ca_certificates import GRPC_CA_BUNDLE_ENV, OPERATING_SYSTEM_CA_PACKAGE
 
 import modal
 
@@ -46,6 +49,10 @@ worker_secrets = [gcp_secret, hf_secret]
 
 precompute_image = (
     modal.Image.debian_slim(python_version="3.13")
+    # Upgrade Debian's CA store before anything is downloaded, and make grpcio
+    # verify servers against it (src/modal/ca_certificates.py).
+    .apt_install(OPERATING_SYSTEM_CA_PACKAGE)
+    .env(GRPC_CA_BUNDLE_ENV)
     .uv_sync(
         uv_project_dir=_UV_PROJECT_DIR,
         frozen=True,
@@ -102,6 +109,24 @@ def build_dataset(bucket: str, expected: dict) -> dict:
 @app.function(
     image=precompute_image,
     cpu=8.0,
+    # Preparing the regional dataset's full-country year file has used about
+    # 51 GB; the 51 filtered copies need room on top of that.
+    memory=98304,
+    timeout=7200,
+    secrets=worker_secrets,
+)
+def build_state_datasets(bucket: str, year: int, expected: list[dict]) -> list[dict]:
+    """Build and upload one year's planned state datasets; return their results."""
+    entries = tuple(StateDatasetPlanEntry.model_validate(entry) for entry in expected)
+    return [
+        result.model_dump()
+        for result in build_state_datasets_impl(bucket, year, entries)
+    ]
+
+
+@app.function(
+    image=precompute_image,
+    cpu=8.0,
     memory=32768,
     timeout=3600,
     secrets=worker_secrets,
@@ -149,6 +174,7 @@ def main() -> None:
         functions=CachePrecomputeFunctions(
             plan_artifacts=plan_artifacts,
             build_dataset=build_dataset,
+            build_state_datasets=build_state_datasets,
             compute_baseline=compute_baseline,
             verify_determinism=verify_determinism,
             publish_manifest=publish_manifest,

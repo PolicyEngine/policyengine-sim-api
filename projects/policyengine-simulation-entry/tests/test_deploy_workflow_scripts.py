@@ -343,7 +343,9 @@ def test_v2_application_name_comes_from_the_packaged_bundle(fakes, tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert _output(output) == "name=policyengine-simulation-v2-py4-1-0\n"
-    assert fakes.calls() == [["uv", "run", "python", "-c", V2_APPLICATION_CODE]]
+    assert fakes.calls() == [
+        ["uv", "run", "--frozen", "python", "-c", V2_APPLICATION_CODE]
+    ]
 
 
 def test_v2_application_name_fails_without_writing_when_the_bundle_fails(
@@ -383,6 +385,7 @@ def test_validate_v2_workers_records_the_validation_file(fakes, tmp_path):
         [
             "uv",
             "run",
+            "--frozen",
             "python",
             "-m",
             "src.modal.utils.validate_v2_worker_release",

@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # Create staging environment if it doesn't exist
-uv run modal environment create staging 2>/dev/null || echo "staging environment already exists"
+uv run --frozen modal environment create staging 2>/dev/null || echo "staging environment already exists"
 
 # main environment exists by default
 echo "Modal environments ready"

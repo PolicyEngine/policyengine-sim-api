@@ -6,7 +6,15 @@ import re
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
-from scripts.rules.model import Kind, Registry, Rule, Status, Tier, Violation
+from scripts.rules.model import (
+    Kind,
+    Registry,
+    Rule,
+    Status,
+    Tier,
+    Violation,
+    normalized_package,
+)
 from scripts.rules.resolve import PROOF_CI_FIELDS, node_exists
 
 if TYPE_CHECKING:
@@ -20,7 +28,7 @@ KIND_FIELDS: dict[Kind, tuple[dict[str, type], dict[str, type]]] = {
     Kind.QUALITY_GUARD: ({"name": str}, {"runner": str}),
     Kind.RUFF: ({"mode": str}, {"codes": list, "pattern": str, "config": str}),
     Kind.MYPY: ({"paths": list}, {"config": str}),
-    Kind.PYRIGHT: ({"config": str}, {"project": str}),
+    Kind.PYRIGHT: ({"projects": list}, {}),
     Kind.IMPORT_LINTER: ({"config": str, "contract": str}, {}),
     Kind.WORKFLOW_JOB: ({}, {"step": str}),
     Kind.DOCS_GUARD: ({"doc": str, "marker": str}, {}),
@@ -113,6 +121,15 @@ def _validate_enforcer(rule: Rule) -> list[Violation]:
                 "schema",
                 "pytest enforcer has no nodes",
                 "list at least one test node",
+            )
+        )
+    if kind is Kind.PYRIGHT and not fields.get("projects"):
+        violations.append(
+            Violation(
+                rule.id,
+                "schema",
+                "pyright enforcer names no projects",
+                "list the package directories Pyright checks",
             )
         )
     if kind is Kind.RUFF:
@@ -471,6 +488,32 @@ def _validate_rule(
     ]
 
 
+def _pyright_projects_listed_twice(registry: Registry) -> list[Violation]:
+    """Report each package a second Pyright rule lists.
+
+    The Pyright check holds a package to the first rule that lists it, so a
+    second listing would be silently ignored.
+    """
+    owners: dict[str, str] = {}
+    violations = []
+    for rule in registry.rules:
+        if rule.enforcer.kind is not Kind.PYRIGHT:
+            continue
+        for project in rule.enforcer.get("projects", []):
+            name = normalized_package(str(project))
+            if name in owners:
+                violations.append(
+                    _schema_violation(
+                        rule,
+                        f"project {name} is also listed by {owners[name]}",
+                        "list each package in one Pyright rule",
+                    )
+                )
+            else:
+                owners[name] = rule.id
+    return violations
+
+
 def validate(registry: Registry, root: Path, today: date) -> list[Violation]:
     """Check the registry's fields and file references against the tree at ``root``.
 
@@ -484,4 +527,5 @@ def validate(registry: Registry, root: Path, today: date) -> list[Violation]:
     ]
     for rule in registry.rules:
         violations.extend(_validate_rule(rule, root, category_ids, today))
+    violations.extend(_pyright_projects_listed_twice(registry))
     return violations

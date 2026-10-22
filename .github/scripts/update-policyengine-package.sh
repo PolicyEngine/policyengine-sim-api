@@ -301,7 +301,7 @@ done
 (
   cd "$PROJECT_PATH"
   uv lock --check
-  uv run --extra test pytest \
+  uv run --frozen --extra test pytest \
     tests/test_bundle_version_export.py \
     tests/test_policyengine_dependency_source.py \
     tests/test_modal_bundle_image.py \

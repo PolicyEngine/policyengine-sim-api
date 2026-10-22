@@ -45,6 +45,7 @@ from policyengine_simulation_observability.telemetry import (
     normalize_observability_context,
 )
 from src.modal.bundle_data import bundle_data_install_command
+from src.modal.ca_certificates import GRPC_CA_BUNDLE_ENV, OPERATING_SYSTEM_CA_PACKAGE
 from src.modal.stage12_cache_image import fetch_stage12_cache
 from src.modal.static_runtime_files import add_static_runtime_files
 
@@ -152,6 +153,10 @@ def build_v2_image(
     }
     image = (
         modal.Image.debian_slim(python_version="3.13")
+        # Upgrade Debian's CA store before anything is downloaded, and make
+        # grpcio verify servers against it (src/modal/ca_certificates.py).
+        .apt_install(OPERATING_SYSTEM_CA_PACKAGE)
+        .env(GRPC_CA_BUNDLE_ENV)
         .uv_sync(
             uv_project_dir=_UV_PROJECT_DIR,
             frozen=True,
@@ -190,7 +195,9 @@ def build_v2_image(
             secrets=[gcp_secret],
             cpu=2.0,
             memory=4096,
-            timeout=1800,
+            # The 63 national files and the state datasets (a file per state
+            # for each precomputed year), downloaded and hashed in turn.
+            timeout=3600,
         )
     image = image.add_local_python_source(
         "src.modal",

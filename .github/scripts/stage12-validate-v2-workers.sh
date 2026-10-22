@@ -13,7 +13,7 @@ MODAL_ENV="${1:?Modal environment required}"
 CACHE_MANIFEST_SHA256="${2:?Stage 12 cache manifest digest required}"
 
 output="${RUNNER_TEMP}/stage12-worker-validation.json"
-uv run python -m src.modal.utils.validate_v2_worker_release \
+uv run --frozen python -m src.modal.utils.validate_v2_worker_release \
   --environment "${MODAL_ENV}" \
   --cache-manifest-sha256 "${CACHE_MANIFEST_SHA256}" \
   --output "${output}"

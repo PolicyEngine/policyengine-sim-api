@@ -58,7 +58,7 @@ gap is visible, rather than leaving it out.
 | `[rule.proof]` | Optional; see "Proof". |
 | `[rule.baseline]` | Only for `ratcheted` rules: `file` listing tolerated violations, and their `count`. |
 | `[[rule.exception]]` | Temporary carve-out: `path`, `reason`, `expires`. |
-| `[rule.downgrade]` | Required `reason` when a rule moves from enforced/ratcheted to advisory/doc-only. |
+| `[rule.downgrade]` | Required `reason` when a rule moves from enforced/ratcheted to advisory/doc-only, or from enforced to ratcheted. |
 
 `blocking` is derived, never declared: a rule blocks merges when its status is
 `enforced` or `ratcheted` and its tier is not `judgment`.
@@ -72,7 +72,8 @@ gap is visible, rather than leaving it out.
 | `ruff` | `mode` = `format`, `lint` (with `codes`) or `per-file-ignore` (with `pattern`, `codes`) | Codes are selected / the ignore entry exists and covers only [files allowed file-level exceptions](#file-level-exceptions) |
 | `mypy` | `paths` | Each path is in `[tool.mypy].files` |
 | `workflow-job` | optional `step` | The CI job exists (the job itself is the check) |
-| `pyright`, `import-linter` | `config` (+ `contract` for Import Linter) | The config file exists |
+| `pyright` | `projects`: the package directories it checks | Each package exists, is listed by no other Pyright rule, has no `pyrightconfig.json`, lists what Pyright checks in its `pyproject.toml` `[tool.pyright] include`, and is in the CI job's matrix |
+| `import-linter` | `config`, `contract` | The config file exists |
 | `docs-guard` | `doc`, `marker` | The doc exists |
 | `llm-review` | `prompt`, `model` | The prompt exists; judgment tier only |
 | `none` | | Nothing; only for `doc-only` and `advisory` rules |
@@ -125,8 +126,8 @@ fail the guard yet.
 - Other enforcers (mypy, Pyright, Import Linter, custom guards) may start
   `ratcheted` with a baseline file of tolerated violations. Baselines may only
   shrink: the guard compares counts against the base branch.
-- Moving a rule from enforced/ratcheted to advisory/doc-only needs an explicit
-  `[rule.downgrade] reason`.
+- Moving a rule from enforced/ratcheted to advisory/doc-only, or from enforced
+  to ratcheted, needs an explicit `[rule.downgrade] reason`.
 
 ## File-level exceptions
 

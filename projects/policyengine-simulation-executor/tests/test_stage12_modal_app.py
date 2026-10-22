@@ -160,6 +160,25 @@ def test_v2_app_name_and_images_are_separate_and_bundle_derived(monkeypatch) -> 
         assert static_runtime_files[3] == {"copy": True}
 
 
+def test_v2_images_refresh_ca_certificates_before_installing_packages(
+    monkeypatch,
+) -> None:
+    module = _load(monkeypatch)
+
+    for image in (
+        module.us_worker_image,
+        module.uk_worker_image,
+        module.coordinator_image,
+    ):
+        assert image.calls[0][0] == "debian_slim"
+        assert image.calls[1] == ("apt_install", ("ca-certificates",))
+        assert image.calls[2] == (
+            "env",
+            {"GRPC_DEFAULT_SSL_ROOTS_FILE_PATH": "/etc/ssl/certs/ca-certificates.crt"},
+        )
+        assert image.calls[3][0] == "uv_sync"
+
+
 def test_v2_image_retains_required_runtime_dependencies() -> None:
     project = tomllib.loads(
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -243,6 +262,17 @@ def test_only_us_worker_image_fetches_stage12_cache(monkeypatch) -> None:
     assert any(call[0] == "run_function" for call in module.us_worker_image.calls)
     assert not any(call[0] == "run_function" for call in module.uk_worker_image.calls)
     assert not any(call[0] == "run_function" for call in module.coordinator_image.calls)
+
+
+def test_stage12_cache_fetch_has_room_for_the_state_datasets(monkeypatch) -> None:
+    module = _load(monkeypatch)
+
+    (fetch,) = [
+        call for call in module.us_worker_image.calls if call[0] == "run_function"
+    ]
+    # The 63 national files plus a file per state for each precomputed year,
+    # downloaded and hashed one after another; the main path allows the same.
+    assert fetch[2]["timeout"] == 3600
 
 
 def test_v2_app_declares_validation_workers_and_non_http_coordinator(

@@ -1,0 +1,5 @@
+# Proof fixture: pyright.json has two "route" errors and the baseline lists
+# one, and the baseline still lists a "bundle" error that no longer occurs.
+projects/policyengine-simulation-gateway/src/policyengine_simulation_gateway/endpoints.py :: reportPossiblyUnboundVariable :: "route" is possibly unbound
+projects/policyengine-simulation-gateway/src/policyengine_simulation_gateway/endpoints.py :: reportPossiblyUnboundVariable :: "payload" is possibly unbound
+projects/policyengine-simulation-gateway/src/policyengine_simulation_gateway/endpoints.py :: reportPossiblyUnboundVariable :: "bundle" is possibly unbound

@@ -439,6 +439,13 @@ def build_restored_routing_state(
 ROUTING_PLAN_SCHEMA = "policyengine-simulation.routing-plan/v1"
 
 
+# Raised, as a RuntimeError, when a routing write or a plan's completion finds
+# no routing-state Dict to write to.
+UNOPENED_ROUTING_STORE = (
+    "the routing state Modal Dict could not be opened; nothing was written"
+)
+
+
 class RoutingConflictError(RuntimeError):
     """The live routing state is not the one a plan expects."""
 
@@ -509,18 +516,27 @@ def validate_routing_plan(plan: object) -> dict:
 
 
 def _routing_store(environment: str, *, create_if_missing: bool) -> "modal.Dict | None":
+    """Return the routing-state Dict, or None when it doesn't exist.
+
+    modal's Dict.from_name returns a handle without contacting Modal, so a
+    missing Dict would surface as NotFoundError at the first read. When the
+    Dict must already exist, look it up now, so a missing one is reported here.
+    """
     try:
-        return modal.Dict.from_name(
+        store = modal.Dict.from_name(
             ROUTING_STATE_DICT_NAME,
             environment_name=environment,
             create_if_missing=create_if_missing,
         )
+        if not create_if_missing:
+            store.hydrate()
     except KeyError:
         return None
     except Exception as exc:
         if exc.__class__.__name__ == "NotFoundError":
             return None
         raise
+    return store
 
 
 CANONICAL_GITHUB_REPOSITORY = "PolicyEngine/policyengine-sim-api"
@@ -617,6 +633,8 @@ def record_routing_plan(*, environment: str, plan: dict) -> None:
     _require_serialized_routing_workflow()
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=True)
+    if store is None:
+        raise RuntimeError(UNOPENED_ROUTING_STORE)
     _require_finished_publication(store)
     if (
         routing_state_digest(store.get(ROUTING_STATE_ACTIVE_KEY))
@@ -632,6 +650,8 @@ def complete_routing_plan(*, environment: str, plan: dict) -> None:
     _require_serialized_routing_workflow()
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=False)
+    if store is None:
+        raise RuntimeError(UNOPENED_ROUTING_STORE)
     if _unfinished_publication(store) != plan:
         msg = "no matching unfinished routing publication to complete"
         raise RoutingConflictError(msg)
@@ -649,6 +669,8 @@ def apply_routing_plan(*, environment: str, plan: dict) -> None:
     _require_serialized_routing_workflow()
     validate_routing_plan(plan)
     store = _routing_store(environment, create_if_missing=True)
+    if store is None:
+        raise RuntimeError(UNOPENED_ROUTING_STORE)
     _require_finished_publication(store, allowed_plans=[plan])
     current = store.get(ROUTING_STATE_ACTIVE_KEY)
     if routing_state_digest(current) != plan["before_sha256"]:

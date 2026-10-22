@@ -93,3 +93,16 @@ addopts = "-m 'not integration'"
 markers = [
   "integration: runs against a real (ephemeral) Modal deployment",
 ]
+
+[tool.pyright]
+# The pr.yml pyright job checks these paths: python -m scripts.rules pyright.
+include = ["src"]
+# Without extraPaths, Pyright adds src as an import root, and `import modal`
+# in the Modal app modules under src/modal resolves to that directory instead
+# of the installed modal library. Where the apps run (modal deploy and
+# modal run, and the Modal containers), src is not an import root: the package
+# is installed from src, and the app modules import each other as
+# src.modal.<module> from the project directory. The unit tests are the
+# exception: pytest's pythonpath puts src first, so there `import modal` can
+# find src/modal, and the tests replace the modal module where they need it.
+extraPaths = []

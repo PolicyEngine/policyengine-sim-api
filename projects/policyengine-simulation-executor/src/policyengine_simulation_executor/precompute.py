@@ -32,9 +32,11 @@ machine.
 
 from __future__ import annotations
 
+import gc
 import logging
+import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -51,16 +53,26 @@ from policyengine_simulation_executor.precompute_models import (
     DatasetPlanEntry,
     DeterminismVerdict,
     ManifestArtifact,
+    ManifestEntry,
     PrecomputePlan,
     RemoteFunction,
+    StateDatasetArtifact,
+    StateDatasetBuildResult,
+    StateDatasetPlanEntry,
     WorkSelection,
+)
+from policyengine_simulation_executor.state_datasets import (
+    state_dataset_relative_folder,
+    year_file_reuse_problem,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from types import ModuleType
 
+    from microdf import MicroDataFrame
     from policyengine.core import Simulation
+    from policyengine.core.scoping_strategy import RowFilterStrategy
 
     from policyengine_simulation_executor.artifact_store import ArtifactStore
     from policyengine_simulation_executor.simulation_runtime import RegionResolution
@@ -152,17 +164,94 @@ def cohort_identity(year: int, group: list[str]) -> BaselineArtifactIdentity:
     return identity
 
 
+@dataclass(frozen=True)
+class StateDatasetTarget:
+    """A US state whose requests load a non-default dataset, and its row filter.
+
+    The precompute bakes this state's rows of ``dataset`` as their own year
+    file: the households whose ``filter_variable`` equals ``state_fips``.
+    ``scoping_strategy`` is the region's own .py strategy, the one a request
+    for the state applies, so a baked file holds exactly the rows the request
+    would keep.
+    """
+
+    region: str
+    state_code: str
+    state_fips: int
+    filter_variable: str
+    dataset: str
+    scoping_strategy: RowFilterStrategy | None = field(
+        default=None, compare=False, repr=False
+    )
+
+
+def state_dataset_targets() -> list[StateDatasetTarget]:
+    """Return every US state region that loads a non-default dataset, by state code.
+
+    Each state is resolved exactly as a request for it is (``_resolve_region``
+    then ``_resolve_dataset_selection``), so a bundle that sends states back to
+    the default dataset gets no state files.
+    """
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
+        _country_module,
+        _resolve_dataset_selection,
+        _resolve_region,
+    )
+
+    country_module = _country_module(PRECOMPUTE_COUNTRY)
+    targets = []
+    for region in country_module.model.region_registry.get_by_type("state"):
+        params = {
+            "country": PRECOMPUTE_COUNTRY,
+            "region": region.code,
+            "time_period": PRECOMPUTE_YEARS[0],
+        }
+        resolution = _resolve_region(
+            country_module=country_module, country=PRECOMPUTE_COUNTRY, params=params
+        )
+        selection = _resolve_dataset_selection(params, region_resolution=resolution)
+        if selection.is_default:
+            continue
+        strategy = resolution.scoping_strategy
+        variable_name = getattr(strategy, "variable_name", None)
+        variable_value = getattr(strategy, "variable_value", None)
+        if not variable_name or variable_value is None or not resolution.state_code:
+            msg = (
+                f"State region {resolution.code} loads {selection.name} but has no "
+                "row filter and state code to build its state file from"
+            )
+            raise RuntimeError(msg)
+        targets.append(
+            StateDatasetTarget(
+                region=resolution.code,
+                state_code=resolution.state_code,
+                state_fips=int(variable_value),
+                filter_variable=variable_name,
+                dataset=selection.name,
+                scoping_strategy=strategy,
+            )
+        )
+    return sorted(targets, key=lambda target: target.state_code)
+
+
 def select_work(plan: PrecomputePlan, *, force: bool) -> WorkSelection:
     """Which plan entries need computing."""
     return WorkSelection(
         datasets=[entry for entry in plan.datasets if force or not entry.exists],
         baselines=[entry for entry in plan.baselines if force or not entry.exists],
+        state_datasets=[
+            entry for entry in plan.state_datasets if force or not entry.exists
+        ],
     )
 
 
 def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
-    """Build the deploy manifest: the receipt and each artifact the image must fetch."""
-    artifacts = [
+    """Build the deploy manifest: the receipt and each artifact the image must fetch.
+
+    Datasets, then baselines, then per-state datasets, each in plan order, so
+    a plan without per-state datasets keeps the manifest it always had.
+    """
+    artifacts: list[ManifestEntry] = [
         ManifestArtifact(
             type="dataset",
             path=entry.path,
@@ -171,7 +260,8 @@ def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
             digest=entry.digest,
         )
         for entry in plan.datasets
-    ] + [
+    ]
+    artifacts += [
         ManifestArtifact(
             type="baseline",
             path=entry.path,
@@ -180,6 +270,18 @@ def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
             digest=entry.digest,
         )
         for entry in plan.baselines
+    ]
+    artifacts += [
+        StateDatasetArtifact(
+            type="state_dataset",
+            path=entry.path,
+            filename=entry.filename,
+            folder=entry.folder,
+            state_code=entry.state_code,
+            year=entry.year,
+            digest=entry.digest,
+        )
+        for entry in plan.state_datasets
     ]
     return ArtifactManifest(
         manifest_schema=MANIFEST_SCHEMA,
@@ -193,6 +295,7 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
     """Compute every expected artifact identity and its store presence."""
     from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_keys.collect_dataset_identity
         collect_dataset_identity,
+        collect_state_dataset_identity,
     )
     from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_store.ArtifactStore
         ArtifactStore,
@@ -210,8 +313,10 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
         msg = f"No national partition for {PRECOMPUTE_COUNTRY!r}"
         raise RuntimeError(msg)
 
+    targets = state_dataset_targets()
     datasets: list[DatasetPlanEntry] = []
     baselines: list[BaselinePlanEntry] = []
+    state_datasets: list[StateDatasetPlanEntry] = []
     for year in PRECOMPUTE_YEARS:
         dataset_identity = collect_dataset_identity(PRECOMPUTE_COUNTRY, year)
         datasets.append(
@@ -236,6 +341,30 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
                     exists=store.exists(identity.store_path),
                 )
             )
+        for target in targets:
+            state_identity = collect_state_dataset_identity(
+                PRECOMPUTE_COUNTRY,
+                year,
+                dataset=target.dataset,
+                state_code=target.state_code,
+                state_fips=target.state_fips,
+                filter_variable=target.filter_variable,
+            )
+            state_datasets.append(
+                StateDatasetPlanEntry(
+                    year=year,
+                    state_code=target.state_code,
+                    region=target.region,
+                    dataset=target.dataset,
+                    digest=state_identity.digest,
+                    path=state_identity.store_path,
+                    filename=state_identity.filename,
+                    folder=state_dataset_relative_folder(
+                        target.dataset, target.state_code
+                    ),
+                    exists=store.exists(state_identity.store_path),
+                )
+            )
 
     bundle = get_country_release_bundle(PRECOMPUTE_COUNTRY)
     receipt = BundleVersionIdentity(
@@ -245,7 +374,12 @@ def plan_artifacts_impl(bucket: str) -> PrecomputePlan:
         data_artifact_revision=bundle.data_artifact_revision,
         default_dataset=bundle.default_dataset,
     )
-    return PrecomputePlan(datasets=datasets, baselines=baselines, receipt=receipt)
+    return PrecomputePlan(
+        datasets=datasets,
+        baselines=baselines,
+        receipt=receipt,
+        state_datasets=state_datasets,
+    )
 
 
 def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildResult:
@@ -295,6 +429,203 @@ def build_dataset_impl(bucket: str, expected: DatasetPlanEntry) -> DatasetBuildR
         build_seconds=round(build_seconds, 1),
         size_bytes=local_file.stat().st_size,
     )
+
+
+def _checked_state_targets(
+    year: int, expected: list[StateDatasetPlanEntry]
+) -> dict[str, RowFilterStrategy]:
+    """Return each planned state's row filter, after re-deriving its key here.
+
+    The planner and this builder run in different containers; both derive a
+    state's key from the installed bundle. A disagreement means they see
+    different bundles, so nothing is built rather than uploading a file under
+    a key that does not describe it. A state without a row filter is refused
+    here too, before anything is prepared.
+    """
+    from policyengine_simulation_executor.artifact_keys import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_keys.collect_state_dataset_identity
+        collect_state_dataset_identity,
+    )
+
+    targets = {target.region: target for target in state_dataset_targets()}
+    datasets = set()
+    for entry in expected:
+        if entry.year != year:
+            msg = (
+                f"State dataset entry for {entry.state_code} is for year "
+                f"{entry.year}, not {year}"
+            )
+            raise ValueError(msg)
+        target = targets.get(entry.region)
+        if target is None:
+            msg = f"No state dataset target for {entry.region} in this container"
+            raise RuntimeError(msg)
+        if target.scoping_strategy is None:
+            msg = f"{entry.region} has no row filter to build its state file with"
+            raise RuntimeError(msg)
+        identity = collect_state_dataset_identity(
+            PRECOMPUTE_COUNTRY,
+            year,
+            dataset=target.dataset,
+            state_code=target.state_code,
+            state_fips=target.state_fips,
+            filter_variable=target.filter_variable,
+        )
+        folder = state_dataset_relative_folder(target.dataset, target.state_code)
+        if (identity.store_path, identity.filename, folder) != (
+            entry.path,
+            entry.filename,
+            entry.folder,
+        ):
+            msg = (
+                f"Planned and in-container identities of {entry.region} {year} "
+                f"disagree ({entry.path} != {identity.store_path}); refusing to "
+                "build under a mismatched key."
+            )
+            raise RuntimeError(msg)
+        datasets.add(target.dataset)
+    if len(datasets) > 1:
+        msg = f"One state dataset build covers one dataset, not {sorted(datasets)}"
+        raise ValueError(msg)
+    strategies = {}
+    for entry in expected:
+        strategy = targets[entry.region].scoping_strategy
+        if strategy is not None:
+            strategies[entry.region] = strategy
+    return strategies
+
+
+def _registered_district_geoids(country_module: ModuleType) -> set[int]:
+    """Return the district codes the US congressional-district regions filter on."""
+    return {
+        int(region.scoping_strategy.variable_value)
+        for region in country_module.model.region_registry.get_by_type(
+            "congressional_district"
+        )
+    }
+
+
+def _require_districts_within_their_states(
+    household: MicroDataFrame, district_geoids: set[int]
+) -> None:
+    """Refuse a dataset in which a household sits in another state's district.
+
+    District requests read their state's file and filter it by
+    ``congressional_district_geoid`` (state FIPS times 100 plus the district
+    number). A household whose code names a district of another state would
+    be missing from that district's results, so the build stops instead. A
+    code that names no district, such as an unassigned 0, matches no district
+    request on either path and changes no result. Both columns are labels;
+    nothing here is weighted.
+    """
+    if "congressional_district_geoid" not in household.columns:
+        return
+    district = household["congressional_district_geoid"]
+    in_another_state = district.isin(sorted(district_geoids)) & (
+        (district // 100) != household["state_fips"]
+    )
+    if in_another_state.any():
+        msg = (
+            "Some households have a congressional district code that names "
+            "another state's district; their state's file would not match "
+            "that district's results"
+        )
+        raise RuntimeError(msg)
+
+
+def build_state_datasets_impl(
+    bucket: str,
+    year: int,
+    expected: list[StateDatasetPlanEntry],
+    *,
+    work_folder: Path | None = None,
+) -> list[StateDatasetBuildResult]:
+    """Build, check and upload one year's per-state datasets.
+
+    Prepares the regional dataset's full-country year file once, then for
+    each planned state keeps the rows its region's own scoping strategy keeps,
+    writes them with .py's ``save()``, copies the year-file stamp, confirms
+    that .py's reuse checks accept the file, and uploads it.
+    """
+    from policyengine.tax_benefit_models.us.datasets import (
+        PolicyEngineUSDataset,
+        USYearData,
+    )
+    from policyengine.tax_benefit_models.us.legacy_inputs import (
+        read_year_file_stamp,
+        write_year_file_stamp,
+    )
+    from policyengine.tax_benefit_models.us.model import US_GROUP_ENTITIES
+
+    from policyengine_simulation_executor.artifact_store import (  # noqa: PLC0415  # resolved per call so tests can patch artifact_store.ArtifactStore
+        ArtifactStore,
+    )
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime helpers
+        _country_module,
+    )
+
+    if not expected:
+        return []
+    started = time.monotonic()
+    strategies = _checked_state_targets(year, expected)
+    dataset = expected[0].dataset
+    work_folder = work_folder or Path(
+        tempfile.mkdtemp(prefix="policyengine-state-datasets-")
+    )
+    source_folder = str(work_folder / "source")
+    country_module = _country_module(PRECOMPUTE_COUNTRY)
+
+    # Preparing the year file runs a Microsimulation over every state, whose
+    # objects hold reference cycles; release them before filtering 51 copies.
+    country_module.ensure_datasets(
+        datasets=[dataset], years=[year], data_folder=source_folder
+    )
+    gc.collect()
+    (source,) = country_module.load_datasets(
+        datasets=[dataset], years=[year], data_folder=source_folder
+    ).values()
+    stamp = read_year_file_stamp(source.filepath)
+    if stamp is None:
+        msg = f"The prepared year file {source.filepath} has no year-file stamp"
+        raise RuntimeError(msg)
+    _require_districts_within_their_states(
+        source.data.household, _registered_district_geoids(country_module)
+    )
+
+    store = ArtifactStore(bucket)
+    results = []
+    for entry in expected:
+        rows = strategies[entry.region].apply(
+            entity_data=source.data.entity_data,
+            group_entities=US_GROUP_ENTITIES,
+            year=year,
+        )
+        local_file = work_folder / entry.folder / entry.filename
+        PolicyEngineUSDataset(
+            name=f"{dataset}-{entry.state_code.lower()}-year-{year}",
+            description=f"{entry.region} rows of {dataset} for {year}",
+            filepath=str(local_file),
+            year=year,
+            metadata=dict(source.metadata),
+            data=USYearData(**rows),
+        ).save()
+        # save() rewrites the file without the stamp, so stamp it afterwards,
+        # as create_datasets does.
+        write_year_file_stamp(local_file, stamp)
+        problem = year_file_reuse_problem(local_file, dataset)
+        if problem is not None:
+            msg = f"ensure_datasets would not reuse {local_file}: {problem}"
+            raise RuntimeError(msg)
+        results.append(
+            StateDatasetBuildResult(
+                year=year,
+                state_code=entry.state_code,
+                path=entry.path,
+                uploaded=store.upload_file(entry.path, local_file),
+                size_bytes=local_file.stat().st_size,
+                build_seconds=round(time.monotonic() - started, 1),
+            )
+        )
+    return results
 
 
 def _prepare_cohort_baseline(
@@ -480,10 +811,11 @@ def publish_manifest_impl(bucket: str, plan: PrecomputePlan) -> str:
 
 @dataclass(frozen=True)
 class PrecomputeFunctions:
-    """The five Modal function handles the precompute orchestration calls."""
+    """The six Modal function handles the precompute orchestration calls."""
 
     plan_artifacts: RemoteFunction
     build_dataset: RemoteFunction
+    build_state_datasets: RemoteFunction
     compute_baseline: RemoteFunction
     verify_determinism: RemoteFunction
     publish_manifest: RemoteFunction
@@ -498,8 +830,11 @@ def run_precompute(
 ) -> str:
     """Orchestrate the local entrypoint: plan, spawn misses, gate, publish.
 
-    Takes the five Modal function handles as ``functions`` (each offering
+    Takes the six Modal function handles as ``functions`` (each offering
     ``.remote``/``.spawn``) so the flow is testable with plain fakes.
+    Per-state dataset builds (one container per year and dataset) start with
+    the dataset builds and are waited for only before the manifest is
+    published, so the baselines never wait for them.
     Everything crossing a handle is a plain dict (Modal's serialization
     boundary); it is validated back into models immediately on return.
     The determinism gate runs only when baselines were actually computed
@@ -512,13 +847,25 @@ def run_precompute(
     work = select_work(plan, force=force)
     echo(
         f"Plan: {len(plan.datasets)} datasets ({len(work.datasets)} to "
-        f"build), {len(plan.baselines)} baselines "
+        f"build), {len(plan.state_datasets)} state datasets "
+        f"({len(work.state_datasets)} to build), {len(plan.baselines)} baselines "
         f"({len(work.baselines)} to compute)"
     )
 
     dataset_handles = [
         functions.build_dataset.spawn(bucket, entry.model_dump())
         for entry in work.datasets
+    ]
+    # One build prepares one dataset's year file, so builds are per year and
+    # dataset.
+    state_builds: dict[tuple[int, str], list[dict]] = {}
+    for entry in work.state_datasets:
+        state_builds.setdefault((entry.year, entry.dataset), []).append(
+            entry.model_dump()
+        )
+    state_handles = [
+        (year, dataset, functions.build_state_datasets.spawn(bucket, year, entries))
+        for (year, dataset), entries in state_builds.items()
     ]
     for handle in dataset_handles:
         result = DatasetBuildResult.model_validate(handle.get())
@@ -551,6 +898,18 @@ def run_precompute(
                 "Determinism gate FAILED: " + "; ".join(verdict.differences)
             )
         echo("Determinism gate passed")
+
+    for year, dataset, handle in state_handles:
+        results = [
+            StateDatasetBuildResult.model_validate(result) for result in handle.get()
+        ]
+        uploaded = [result for result in results if result.uploaded]
+        echo(
+            f"State datasets {year} {dataset}: {len(results)} built, "
+            f"{len(uploaded)} uploaded "
+            f"({sum(result.size_bytes for result in uploaded)} bytes) in "
+            f"{max((result.build_seconds for result in results), default=0.0)} s"
+        )
 
     manifest_digest = functions.publish_manifest.remote(bucket, plan.model_dump())
     echo(manifest_digest_line(manifest_digest))

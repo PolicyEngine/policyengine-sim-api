@@ -14,6 +14,7 @@ deploy a fast-forward.
 """
 
 import modal
+from starlette.routing import Route
 
 from policyengine_simulation_gateway.app import build_gateway_image
 
@@ -62,7 +63,8 @@ def smoke_import_gateway() -> dict:
         "routes": sorted(
             f"{min(route.methods)} {route.path}"
             for route in asgi_app.routes
-            if hasattr(route, "methods")
+            # FastAPI's routes are Starlette Routes; mounts have no methods.
+            if isinstance(route, Route) and route.methods
         ),
     }
 

@@ -8,6 +8,7 @@ from policyengine_simulation_contract.stage12_bundle import (
     CountryId,
     Stage12CountryBundle,
     Stage12Dataset,
+    Stage12RegionDataset,
 )
 
 from .errors import Stage12BundleError
@@ -169,6 +170,7 @@ def normalize_country_bundle(
         f"data_releases.{country}.datasets",
     )
     datasets: list[Stage12Dataset] = []
+    identity_by_path: dict[str, str] = {}
     for identity in sorted(dataset_items):
         dataset = require_mapping(
             dataset_items[identity],
@@ -194,6 +196,10 @@ def normalize_country_bundle(
             dataset.get("sha256"),
             f"data_releases.{country}.datasets.{identity}.sha256",
         )
+        # The default dataset owns its path; otherwise the first identity
+        # in sorted order does.
+        if identity == default_dataset or path not in identity_by_path:
+            identity_by_path[path] = identity
         datasets.append(
             Stage12Dataset(
                 identity=identity,
@@ -256,4 +262,48 @@ def normalize_country_bundle(
         default_dataset=default_dataset,
         default_dataset_uri=default_dataset_uri,
         datasets=tuple(datasets),
+        region_datasets=_region_datasets(
+            release.get("region_datasets"),
+            identity_by_path=identity_by_path,
+            country=country,
+        ),
     )
+
+
+def _region_datasets(
+    value: object,
+    *,
+    identity_by_path: Mapping[str, str],
+    country: CountryId,
+) -> tuple[Stage12RegionDataset, ...] | None:
+    """Return the dataset each region type loads, from ``region_datasets``.
+
+    Each entry's ``path_template`` is matched to a dataset's ``path``, as
+    .py's ``resolve_region_dataset_path`` resolves it. A template with
+    placeholders names one file per region rather than one dataset, so it
+    maps to None. A bundle without ``region_datasets`` gives None.
+    """
+    if value is None:
+        return None
+    entries = require_mapping(value, f"data_releases.{country}.region_datasets")
+    region_datasets = []
+    for region_type in sorted(entries):
+        field_path = f"data_releases.{country}.region_datasets.{region_type}"
+        template = require_text(
+            require_mapping(entries[region_type], field_path).get("path_template"),
+            f"{field_path}.path_template",
+        )
+        if "{" in template:
+            dataset = None
+        else:
+            dataset = identity_by_path.get(template)
+            if dataset is None:
+                msg = (
+                    f"PolicyEngine.py bundle {field_path} names {template!r}, "
+                    "which is not one of its datasets"
+                )
+                raise Stage12BundleError(msg)
+        region_datasets.append(
+            Stage12RegionDataset(region_type=region_type, dataset=dataset)
+        )
+    return tuple(region_datasets)

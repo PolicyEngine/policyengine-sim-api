@@ -1,5 +1,5 @@
 # Simplified Makefile using docker-compose
-.PHONY: help dev up down build test clean logs format check push-pr-branch
+.PHONY: help dev up down build test clean logs format check require-ruff-version push-pr-branch
 
 # Load environment variables if .env exists
 ifneq (,$(wildcard deployment/.env))
@@ -30,12 +30,18 @@ help:
 	@echo "Maintenance:"
 	@echo "  make build            - Build Docker images"
 	@echo "  make format           - Format code with ruff"
-	@echo "  make check            - ruff check + pyright"
+	@echo "  make check            - CI's ruff checks + Pyright in each package"
 	@echo "  make update           - uv lock --upgrade across packages"
 	@echo "  make clean            - Remove caches and stop containers"
 	@echo "  make push-pr-branch   - Push current branch to origin for a PR"
 	@echo ""
 	@echo "Deployment is automated via GitHub Actions to Cloud Run and Modal; there is no manual deploy target."
+
+# CI's ruff, read from the lint job's `uv tool install ruff==<version>` step in
+# .github/workflows/pr.yml so the two can't drift. A ruff found on PATH may be
+# another version, which selects different rules under select = ["ALL"].
+RUFF_VERSION := $(shell sed -n 's/.*uv tool install ruff==\([0-9][0-9.]*\).*/\1/p' .github/workflows/pr.yml | head -n 1)
+RUFF := uv tool run ruff@$(RUFF_VERSION)
 
 # Development commands
 dev:
@@ -86,7 +92,7 @@ test:
 		libs/policyengine-stage12-persistence \
 		libs/policyengine-fastapi; do \
 		echo "Testing $$proj..."; \
-		(cd "$$proj" && uv sync --extra test && uv run pytest tests/ -v) || exit 1; \
+		(cd "$$proj" && uv sync --frozen --extra test && uv run --frozen pytest tests/ -v) || exit 1; \
 	done
 	@echo "✅ All unit tests passed"
 
@@ -94,7 +100,7 @@ test-service:
 ifndef service
 	@echo "Please specify service: make test-service service=simulation-executor"
 else
-	docker-compose -f deployment/docker-compose.yml run --rm $(service) sh -c "cd /app/projects/policyengine-$(service) && uv run --extra test pytest"
+	docker-compose -f deployment/docker-compose.yml run --rm $(service) sh -c "cd /app/projects/policyengine-$(service) && uv run --frozen --extra test pytest"
 endif
 
 # Integration testing
@@ -102,16 +108,16 @@ test-integration: generate-clients
 	@echo "Running integration tests against local services..."
 	@echo "Make sure services are running with 'make up' first!"
 	@cd projects/policyengine-apis-integ && \
-		uv sync --extra test && \
-		uv run pytest tests/ -v -m "not requires_gcp"
+		uv sync --frozen --extra test && \
+		uv run --frozen pytest tests/ -v -m "not requires_gcp"
 
 test-integration-all: generate-clients
 	@echo "Running all integration tests against local services..."
 	@echo "Make sure services are running with 'make up' first!"
 	@echo "Note: Workflow tests will be skipped without GCP credentials"
 	@cd projects/policyengine-apis-integ && \
-		uv sync --extra test && \
-		uv run pytest tests/ -v
+		uv sync --frozen --extra test && \
+		uv run --frozen pytest tests/ -v
 
 test-integration-with-services:
 	@echo "Starting services and running integration tests..."
@@ -138,24 +144,33 @@ update:
 	@echo "✅ All dependencies updated"
 
 # Code quality
-format:
-	@echo "Formatting code with ruff..."
+format: require-ruff-version
+	@echo "Formatting code with ruff $(RUFF_VERSION)..."
 	@for dir in projects/*/src libs/*/src; do \
 		if [ -d "$$dir" ]; then \
 			echo "Formatting $$dir..."; \
-			uv run ruff format $$dir; \
+			$(RUFF) format $$dir; \
 		fi \
 	done
 
-check:
-	@echo "Running code quality checks..."
-	@for dir in projects/*/src libs/*/src; do \
-		if [ -d "$$dir" ]; then \
-			echo "Checking $$dir..."; \
-			uv run ruff check $$dir; \
-			uv run pyright $$dir; \
-		fi \
-	done
+# Pyright runs in each package's own locked environment, with the version CI
+# pins; apis-integ needs the generated client. See
+# docs/engineering/skills/type-checking.md.
+# The ruff commands are the lint job's, so a passing make check means the job
+# passes too.
+check: require-ruff-version generate-clients
+	@echo "Running code quality checks (ruff $(RUFF_VERSION))..."
+	@status=0; \
+	$(RUFF) format --check projects/*/src libs/*/src || status=1; \
+	$(RUFF) check . || status=1; \
+	python3 -m scripts.rules pyright --sync || status=1; \
+	exit $$status
+
+require-ruff-version:
+	@if [ -z "$(RUFF_VERSION)" ]; then \
+		echo "Could not read the ruff version from .github/workflows/pr.yml (uv tool install ruff==<version>)"; \
+		exit 1; \
+	fi
 
 push-pr-branch:
 	@BRANCH=$$(git branch --show-current); \
@@ -177,7 +192,7 @@ push-pr-branch:
 
 # Integration tests
 integ-test:
-	cd projects/policyengine-apis-integ && uv run pytest
+	cd projects/policyengine-apis-integ && uv run --frozen pytest
 
 # Cleanup
 clean:

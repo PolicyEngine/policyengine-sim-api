@@ -21,9 +21,14 @@ from policyengine_simulation_contract.stage12_bundle import (
 
 V1_ROUTING_STATE_NAME = "simulation-api-routing-state"
 V2_VERSION_MANIFEST_NAME = "simulation-api-v2-version-manifest"
+# The complete manifest, including each country bundle's region datasets.
+REGION_DATASETS_MANIFEST_KEY = "active-with-region-datasets"
+# Readers released before region datasets forbid unknown fields, so they keep
+# reading this key, which holds the same manifest without them.
 ACTIVE_MANIFEST_KEY = "active-with-cache"
 # Readers released before Stage 12 cache releases forbid unknown fields, so
-# they keep reading this key, which holds the same manifest without them.
+# they keep reading this key, which holds the same manifest without them or
+# region datasets.
 PRE_CACHE_MANIFEST_KEY = "active"
 V2_APPLICATION_PREFIX = "policyengine-simulation-v2-py"
 V1_APPLICATION_PREFIX = "policyengine-simulation-py"
@@ -219,20 +224,67 @@ def _is_newer(candidate: str, current: str | None) -> bool:
         return False
 
 
+_REGION_DATASETS_FIELD = {
+    "bundle": {"countries": {"__all__": {"region_datasets"}}},
+}
+
+
+def pre_region_datasets_manifest_payload(
+    manifest: V2VersionManifest,
+) -> dict[str, object]:
+    """Return the manifest as readers released before region datasets accept it."""
+    return manifest.model_dump(
+        mode="json",
+        exclude={"versions": {"__all__": _REGION_DATASETS_FIELD}},
+    )
+
+
 def pre_cache_manifest_payload(manifest: V2VersionManifest) -> dict[str, object]:
     """Return the manifest as readers released before cache releases accept it."""
     return manifest.model_dump(
         mode="json",
-        exclude={"versions": {"__all__": {"cache": True, "validation": {"cache"}}}},
+        exclude={
+            "versions": {
+                "__all__": {
+                    "cache": True,
+                    "validation": {"cache"},
+                    **_REGION_DATASETS_FIELD,
+                }
+            }
+        },
     )
 
 
+def _is_current_region_dataset_copy(value: object, cache_copy: object) -> bool:
+    """Return whether ``value`` is the copy the last publish wrote with ``cache_copy``.
+
+    Code released before region datasets publishes only the older keys, for
+    example after a rollback, which leaves an out-of-date region dataset copy
+    behind. A current copy, with its region datasets removed, is exactly the
+    manifest under ``active-with-cache``.
+    """
+    if value is None:
+        return False
+    if cache_copy is None:
+        return True
+    try:
+        manifest = V2VersionManifest.model_validate(value)
+    except (TypeError, ValueError):
+        return False
+    return pre_region_datasets_manifest_payload(manifest) == cache_copy
+
+
 def _current_manifest(store: V2ManifestStore) -> object:
-    current = store.get(ACTIVE_MANIFEST_KEY)
-    if current is None:
-        # Until the first publish that writes both keys.
-        current = store.get(PRE_CACHE_MANIFEST_KEY)
-    return current
+    # The newest key the last publish wrote: each older key holds the same
+    # manifest without the fields its readers do not accept.
+    cache_copy = store.get(ACTIVE_MANIFEST_KEY)
+    region_dataset_copy = store.get(REGION_DATASETS_MANIFEST_KEY)
+    if _is_current_region_dataset_copy(region_dataset_copy, cache_copy):
+        return region_dataset_copy
+    if cache_copy is not None:
+        return cache_copy
+    # Until the first publish that writes the cache copy.
+    return store.get(PRE_CACHE_MANIFEST_KEY)
 
 
 def build_next_v2_manifest(
@@ -286,9 +338,11 @@ def publish_v2_manifest(
         worker=worker,
         force_default=force_default,
     )
-    # Each key holds one entire validated document, and a reader reads only
-    # one key, so no reader observes a partial update assembled from several.
-    store[ACTIVE_MANIFEST_KEY] = next_manifest.model_dump(mode="json")
+    # Each key holds one entire validated document, and a reader uses one
+    # whole document (the region dataset copy only while it matches the cache
+    # copy), so no reader observes a partial update assembled from several.
+    store[REGION_DATASETS_MANIFEST_KEY] = next_manifest.model_dump(mode="json")
+    store[ACTIVE_MANIFEST_KEY] = pre_region_datasets_manifest_payload(next_manifest)
     store[PRE_CACHE_MANIFEST_KEY] = pre_cache_manifest_payload(next_manifest)
     return next_manifest
 

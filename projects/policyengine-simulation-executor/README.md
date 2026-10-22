@@ -82,9 +82,12 @@ durable plan without changing routing.
 ## Baseline artifact pipeline (precompute → store → image fetch)
 
 The precompute app fills a content-addressed GCS store with single-year US
-datasets (2026, 2027, 2025) and the 20 per-cohort national baseline
-simulations per year; the deploy bakes them into the image, and the
-runtime loads baselines instead of computing them. Library logic lives in
+datasets (2026, 2027, 2025), the 20 per-cohort national baseline
+simulations per year, and per-state datasets: for each state region whose
+requests load a dataset other than the bundle default (the ACS-local
+dataset since policyengine 6.7), that dataset's year file filtered to the
+state's households, one file per state and year. The deploy bakes them into
+the image, and the runtime loads baselines instead of computing them. Library logic lives in
 `src/policyengine_simulation_executor/precompute.py` (keys:
 `artifact_keys.py`, store client: `artifact_store.py`); the Modal app
 (`src/modal/precompute_app.py`) is plumbing only.
@@ -103,7 +106,10 @@ The deploy job consumes the precompute job's manifest digest:
 `src/modal/app.py` resolves the manifest from GCS on the deploying
 machine and passes its content as the `fetch_artifacts` image layer's
 args (`src/modal/_image_setup.py`). The layer downloads the full
-artifact set (~430 MB) into `POLICYENGINE_DATA_FOLDER`, sitting between
+artifact set into `POLICYENGINE_DATA_FOLDER`: about 430 MB of national
+datasets and baselines, plus several GB of per-state datasets, each placed
+in `state-datasets/<dataset>/<state>/` under the year file's own name. It
+sits between
 the version env and the source mount — do not reorder. Because the
 manifest is content-addressed and rides in the layer args, Modal's layer
 cache busts exactly when the artifact set changes and never otherwise;
@@ -150,6 +156,12 @@ Operational notes:
 - Only pure default requests read the baked folder: any request naming an
   explicit `data` dataset or pinning a `data_version` bypasses it (see
   `_load_dataset` in `simulation_runtime.py`).
+- A US state or congressional-district request whose region loads a
+  non-default dataset reads its state's baked file when the image has one for
+  the requested year and .py's year-file reuse checks accept it (see
+  `state_datasets.baked_state_data_folder`). Otherwise it prepares the full
+  regional dataset during the request, as before. The run records which in
+  its `dataset_source` attribute: `baked_state` or `on_demand`.
 - Known residual, inherited rather than introduced: a data re-release
   under the same revision labels leaves the cached bundle-install layer —
   and therefore the receipt every artifact key derives from — unchanged.
@@ -193,8 +205,10 @@ redacted cause (type, stage, simulation role and redacted message) followed
 by the same correlation ID.
 
 Stage 12 deployments run `src/modal/stage12_precompute_app.py` against the
-dedicated `STAGE12_CACHE_BUCKET`. It publishes three annual datasets plus 60
-current-law US baseline files and emits
+dedicated `STAGE12_CACHE_BUCKET`. It publishes three annual datasets, 60
+current-law US baseline files and, for each state region whose requests load
+a dataset other than the bundle default, that dataset's year file filtered to
+the state's households (one per state and year), and emits
 `STAGE12_CACHE_MANIFEST_DIGEST=<sha256>`. Baseline files have the names .py
 saves and loads them under (`Simulation.storage_id`, which includes the SPM
 selection's digest). Stored files are never replaced: a run computes only
@@ -205,7 +219,9 @@ workers, its image and functions mount only the read-only
 `HUGGING_FACE_TOKEN`, and
 `stage12-evaluation-gcp-credentials`; the US data it reads comes from the
 public `policyengine/populace-us` dataset repository. The US worker image
-downloads and verifies the manifest's 63 files during image construction. The
+downloads and verifies the manifest's files during image construction: the 63
+national files into the data folder, and each state dataset into
+`state-datasets/<dataset>/<state>/` under the year file's own name. The
 release validation checks the recorded manifest, hashes a baseline file, and
 requires a real calculation to load that file without recomputing it. Worker
 validation also calculates a US household under a nonempty CTC reform using
