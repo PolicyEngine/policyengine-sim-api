@@ -63,7 +63,10 @@ def test_rule_proof_migration_cycle(disposable_database) -> None:
     )
     assert migration_cycle_failures(
         chain_config(fixtures / "bad_chain"), check=False
-    ) == ["upgrade failed: ProgrammingError"]
+    ) == [
+        "upgrade failed: ProgrammingError: (psycopg.errors.DuplicateTable) relation "
+        '"proof_bad_table" already exists'
+    ]
 
 
 def test_the_version_table_lives_only_in_the_simulation_schema(

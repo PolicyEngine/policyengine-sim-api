@@ -228,6 +228,7 @@ nodes = [
   "tests/test_ownership_boundaries.py::test_the_comparison_paths_database_url_may_reach_modal_until_it_is_removed",
   "tests/test_ownership_boundaries.py::test_a_modal_script_may_not_carry_another_database_url",
   "tests/test_ownership_boundaries.py::test_modal_sources_may_name_only_the_comparison_paths_database_url",
+  "tests/test_ownership_boundaries.py::test_a_temporary_modal_app_may_not_receive_another_database_url",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"

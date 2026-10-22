@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from migration_wiring_checks import migration_wiring_violations
+from migration_wiring_checks import migration_wiring_violations, secret_carriers
 from test_deployment_assets import (
     CLOUD_RUN_DEPLOY_SCRIPT,
     REUSABLE_DEPLOY_WORKFLOW,
@@ -88,17 +88,18 @@ def test_the_migration_job_applies_the_chain_with_the_migrator_url_alone():
     assert "permissions" not in migration
 
 
+def _workflow(path: Path) -> dict:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
 def test_only_the_migration_step_receives_the_migrator_url():
-    carriers = []
-    for workflow in sorted(WORKFLOWS_DIR.glob("*.yml")):
-        for job_name, job in _workflow_jobs(workflow).items():
-            if MIGRATION_SECRET in json.dumps(job.get("env", {})):
-                carriers.append((workflow.name, job_name, "job env"))
-            carriers.extend(
-                (workflow.name, job_name, step.get("name"))
-                for step in job.get("steps", [])
-                if MIGRATION_SECRET in json.dumps(step)
-            )
+    carriers = [
+        (path.name, *carrier)
+        for path in sorted(WORKFLOWS_DIR.glob("*.yml"))
+        for carrier in secret_carriers(
+            _workflow(path)["jobs"], workflow_env=_workflow(path).get("env")
+        )
+    ]
 
     assert carriers == [
         (
@@ -110,13 +111,38 @@ def test_only_the_migration_step_receives_the_migrator_url():
 
 
 def test_the_deploy_workflow_follows_the_migration_wiring():
-    assert migration_wiring_violations(_workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)) == []
+    workflow = _workflow(REUSABLE_DEPLOY_WORKFLOW)
+
+    assert (
+        migration_wiring_violations(workflow["jobs"], workflow_env=workflow.get("env"))
+        == []
+    )
+
+
+def test_the_migrator_url_may_not_reach_every_job_through_workflow_env():
+    workflow = yaml.safe_load(
+        (
+            REPOSITORY_ROOT
+            / "rules"
+            / "fixtures"
+            / "sim.persistence.migrate-before-entrypoint"
+            / "good_workflow.yml"
+        ).read_text(encoding="utf-8")
+    )
+    workflow["env"] = {
+        MIGRATION_SECRET: "${{ secrets.SIMULATION_MIGRATION_DATABASE_URL }}"
+    }
+
+    assert migration_wiring_violations(workflow["jobs"], workflow_env=workflow["env"])
 
 
 def test_rule_proof_migrate_before_entrypoint():
     """Proof for rule sim.persistence.migrate-before-entrypoint."""
-    fixtures = REPOSITORY_ROOT / "rules" / "fixtures" / (
-        "sim.persistence.migrate-before-entrypoint"
+    fixtures = (
+        REPOSITORY_ROOT
+        / "rules"
+        / "fixtures"
+        / ("sim.persistence.migrate-before-entrypoint")
     )
 
     bad = migration_wiring_violations(
@@ -379,9 +405,7 @@ def test_the_smoke_waits_for_a_database_a_cold_instance_has_not_reached(tmp_path
 
 
 def test_the_smoke_stops_waiting_for_an_unreachable_database(tmp_path):
-    result, ready_requests = _run_smoke_with_ready_bodies(
-        tmp_path, [_ready_body(None)]
-    )
+    result, ready_requests = _run_smoke_with_ready_bodies(tmp_path, [_ready_body(None)])
 
     assert result.returncode == 1
     assert ready_requests == 3
