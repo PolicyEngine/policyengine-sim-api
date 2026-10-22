@@ -3,6 +3,7 @@
 import importlib
 import sys
 
+import pandas as pd
 import pytest
 from fixtures.fake_modal import install_fake_modal
 from policyengine_simulation_contract.uk_geography import (
@@ -113,7 +114,7 @@ def _uk_area_dataset_smoke(
     )
     monkeypatch.setattr(
         smoke_module,
-        "detect_uk_local_authority_metadata_from_hdf",
+        "detect_uk_area_metadata_from_hdf",
         lambda path: (
             observed.append(path)
             or UKLocalAuthorityMetadata(boundary_version=boundary_version)
@@ -152,6 +153,65 @@ def test_uk_dataset_smoke_checks_the_routed_dataset_of_a_national_default(
 
     assert smoke_module._validate_installed_uk_local_authority_dataset() == "lad23"
     assert observed == ["/installed/microcosm_uk_2024_25_dense.h5"]
+
+
+_AREA_OUTPUT_COLUMNS = (
+    "constituency_code_oa",
+    "la_code_oa",
+    "region_code_oa",
+    "source_household_id",
+)
+
+
+def write_area_household_hdf(path, *, without: str | None = None) -> str:
+    """Write a household table with the area-output columns, less ``without``."""
+    household = {
+        "household_id": [1, 2],
+        "constituency_code_oa": ["E14001063", "W07000112"],
+        "la_code_oa": ["E06000063", "W06000001"],
+        "region_code_oa": ["SOUTH_EAST", "WALES"],
+        "source_household_id": [1, 2],
+    }
+    household.pop(without or "", None)
+    pd.DataFrame(household).to_hdf(
+        path, key="household", format="table", data_columns=True
+    )
+    return str(path)
+
+
+def _routed_area_smoke(monkeypatch, smoke_module, tmp_path, *, without):
+    installed = str(tmp_path / "microcosm_uk_2024_25.h5")
+    routed = write_area_household_hdf(
+        tmp_path / "microcosm_uk_2024_25_dense.h5", without=without
+    )
+    monkeypatch.setattr(
+        smoke_module,
+        "resolve_local_bundle_dataset_path",
+        lambda _country, _requested_data: installed,
+    )
+    monkeypatch.setattr(
+        smoke_module,
+        "uk_area_hdf_dataset_path",
+        lambda path: routed if path == installed else pytest.fail(path),
+    )
+
+
+@pytest.mark.parametrize("missing", _AREA_OUTPUT_COLUMNS)
+def test_uk_dataset_smoke_requires_every_area_output_column(
+    monkeypatch, smoke_module, tmp_path, missing
+) -> None:
+    _routed_area_smoke(monkeypatch, smoke_module, tmp_path, without=missing)
+
+    with pytest.raises(ValueError, match=f"has no {missing} column"):
+        smoke_module._validate_installed_uk_local_authority_dataset()
+
+
+def test_uk_dataset_smoke_accepts_a_routed_dataset_with_every_column(
+    monkeypatch, smoke_module, tmp_path
+) -> None:
+    _routed_area_smoke(monkeypatch, smoke_module, tmp_path, without=None)
+
+    assert smoke_module._validate_installed_uk_local_authority_dataset() == "lad23"
 
 
 def test_executor_smoke_can_download_a_routed_private_dataset(smoke_module) -> None:

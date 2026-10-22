@@ -507,8 +507,11 @@ def uk_area_hdf_dataset_path(installed_default_path: str) -> str:
     return routed.path
 
 
-def uk_hdf_household_has_local_authority_codes(dataset_path: str) -> bool:
-    """Whether an installed UK HDF dataset's household table has ``la_code_oa``."""
+def _uk_hdf_household_columns(dataset_path: str) -> frozenset[str]:
+    """Return the columns of an installed UK HDF dataset's household table.
+
+    Reads no rows: selecting zero rows returns only the table's columns.
+    """
     with pd.HDFStore(dataset_path, mode="r") as store:
         if "household" not in store:
             msg = "UK dataset contains no household table"
@@ -517,7 +520,32 @@ def uk_hdf_household_has_local_authority_codes(dataset_path: str) -> bool:
     if not isinstance(household, pd.DataFrame):
         msg = "UK dataset household table is not a data frame"
         raise TypeError(msg)
-    return "la_code_oa" in household.columns
+    return frozenset(str(column) for column in household.columns)
+
+
+def uk_hdf_household_has_local_authority_codes(dataset_path: str) -> bool:
+    """Whether an installed UK HDF dataset's household table has ``la_code_oa``."""
+    return "la_code_oa" in _uk_hdf_household_columns(dataset_path)
+
+
+def detect_uk_area_metadata_from_hdf(dataset_path: str) -> UKLocalAuthorityMetadata:
+    """Check an installed UK HDF dataset that serves area results.
+
+    Its household table must have every column the constituency and
+    local-authority outputs read (``UK_AREA_DATASET_COLUMNS``), checked from
+    the table's columns without reading its rows. Its authority codes must
+    then match one packaged boundary version, which is returned.
+    """
+    columns = _uk_hdf_household_columns(dataset_path)
+    for column in UK_AREA_DATASET_COLUMNS:
+        if column not in columns:
+            msg = (
+                f"UK dataset {Path(dataset_path).name} household table has no "
+                f"{column} column, which its constituency and local-authority "
+                "outputs read"
+            )
+            raise ValueError(msg)
+    return detect_uk_local_authority_metadata_from_hdf(dataset_path)
 
 
 def _require_local_authority_column(household_chunk: pd.DataFrame) -> None:

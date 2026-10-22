@@ -24,7 +24,7 @@ from policyengine_simulation_executor.release_bundle import (
     resolve_local_bundle_dataset_path,
 )
 from policyengine_simulation_executor.uk_local_authority_metadata import (
-    detect_uk_local_authority_metadata_from_hdf,
+    detect_uk_area_metadata_from_hdf,
     uk_area_hdf_dataset_path,
 )
 from src.modal.app import build_runtime_simulation_image, hf_secret
@@ -101,15 +101,14 @@ def _validate_installed_uk_local_authority_dataset() -> str:
 
     That is the installed default, unless it carries no area codes and the
     bundle routes area regions to another dataset; then the routed dataset is
-    downloaded and checked instead (``uk_area_hdf_dataset_path``).
+    downloaded and checked instead (``uk_area_hdf_dataset_path``). Its
+    household table must also have every column the area outputs read.
     """
     dataset_path = resolve_local_bundle_dataset_path("uk", None)
     if dataset_path is None:
         msg = "installed certified UK dataset is unavailable"
         raise RuntimeError(msg)
-    metadata = detect_uk_local_authority_metadata_from_hdf(
-        uk_area_hdf_dataset_path(dataset_path)
-    )
+    metadata = detect_uk_area_metadata_from_hdf(uk_area_hdf_dataset_path(dataset_path))
     return metadata.boundary_version.value
 
 
