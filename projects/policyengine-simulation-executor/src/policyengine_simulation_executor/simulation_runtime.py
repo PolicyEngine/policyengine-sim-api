@@ -108,15 +108,14 @@ class UKAreaSimulations:
 
     A local-area breakdown run builds its constituency and local-authority
     impacts from this pair, with the request's policies and nation filter,
-    and from the authority boundaries detected on that dataset. ``dataset``
-    is the loaded dataset and ``dataset_name`` its bundle name, which the
-    breakdown reports.
+    and from the authority boundaries detected on that dataset.
+    ``dataset_name`` is that dataset's bundle name, which the breakdown
+    reports.
     """
 
     baseline: StageReportingSimulation
     reform: StageReportingSimulation
     local_authority_metadata: UKLocalAuthorityMetadata
-    dataset: Dataset
     dataset_name: str
 
 
@@ -814,7 +813,6 @@ def _uk_area_simulations(
         baseline=baseline,
         reform=reform,
         local_authority_metadata=local_authority_metadata,
-        dataset=dataset,
         dataset_name=selection.name,
     )
 

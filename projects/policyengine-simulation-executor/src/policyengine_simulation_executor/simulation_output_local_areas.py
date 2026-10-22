@@ -30,6 +30,8 @@ from policyengine_simulation_executor.simulation_output_provenance import (
 )
 
 if TYPE_CHECKING:
+    from types import ModuleType
+
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
@@ -74,7 +76,7 @@ class LocalAreaBreakdownBuilder:
     dataset_name: str
     data_version: str | None
     year: int
-    country_module: Any
+    country_module: ModuleType
     runtime: ObservabilityRuntime | None = None
     progress: JobProgressReporter = NULL_JOB_PROGRESS
 
