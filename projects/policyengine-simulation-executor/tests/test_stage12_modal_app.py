@@ -326,6 +326,8 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
         "run_single_simulation_us",
         "run_single_simulation_uk",
         "coordinate_report",
+        "calculate_household_us",
+        "calculate_household_uk",
     }
     assert functions["run_single_simulation_us"]["image"] is module.us_worker_image
     assert functions["run_single_simulation_uk"]["image"] is module.uk_worker_image
@@ -447,6 +449,118 @@ def test_stage12_functions_raise_the_application_error_from_the_real_operation_s
 
     with pytest.raises(LookupError, match="application failure"):
         _invoke(monkeypatch, module, function_name, fail)
+
+
+def test_household_functions_run_without_datasets_or_secrets(monkeypatch) -> None:
+    module = _load(monkeypatch)
+    functions = dict(module.app.function_calls)
+    image_calls = module.household_image.calls
+
+    for country in ("us", "uk"):
+        declaration = functions[f"calculate_household_{country}"]
+        assert declaration["image"] is module.household_image
+        assert declaration["secrets"] == []
+        assert declaration["cpu"] == 2.0
+        # 4 GiB reserved, up to 16 GiB, for large households with axes.
+        assert declaration["memory"] == (4096, 16384)
+        assert declaration["timeout"] == 900
+        assert declaration["retries"] == 0
+        assert declaration["max_containers"] == 20
+    # The image installs the locked packages and the source, but downloads no
+    # dataset or cache, so building it needs no secret either.
+    assert [call[0] for call in image_calls[:4]] == [
+        "debian_slim",
+        "apt_install",
+        "env",
+        "uv_sync",
+    ]
+    assert not any(call[0] in {"run_commands", "run_function"} for call in image_calls)
+    assert not any(
+        isinstance(argument, dict) and "secrets" in argument
+        for call in image_calls
+        for argument in call[1:]
+    )
+    environment = {
+        name: value
+        for call in image_calls
+        if call[0] == "env"
+        for name, value in call[1].items()
+    }
+    assert "POLICYENGINE_DATA_FOLDER" not in environment
+    assert "STAGE12_CACHE_MANIFEST_DIGEST" not in environment
+    assert "OTEL_TRACES_EXPORTER" in environment
+    local_source = next(
+        call for call in image_calls if call[0] == "add_local_python_source"
+    )
+    assert "policyengine_simulation_executor" in local_source[1]
+
+
+def _household_payload(country: str) -> dict:
+    return {
+        "calculation_id": "00000000-0000-4000-8000-0000000000c1",
+        "country": country,
+        "household": {"people": {"you": {"age": {"2026": 40}}}},
+        "policies": [{"policy_key": "baseline", "parameters": {}}],
+        "bundle": {
+            "policyengine_version": "6.7.5",
+            "core_package_version": "3.0.0",
+            "country_package_name": f"policyengine-{country}",
+            "country_package_version": "1.0.0",
+            "bundle_manifest_sha256": "a" * 64,
+        },
+    }
+
+
+@pytest.mark.parametrize("country", ["us", "uk"])
+def test_household_functions_calculate_their_own_country_with_telemetry(
+    monkeypatch, country
+) -> None:
+    from policyengine_simulation_executor import household_calculation
+
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+    calls: list[dict] = []
+
+    class Outcome:
+        def model_dump(self, *, mode):
+            assert mode == "json"
+            return {"status": "succeeded"}
+
+    def calculate(request, **keywords):
+        calls.append({"request": request, **keywords})
+        return Outcome()
+
+    monkeypatch.setattr(household_calculation, "calculate_household", calculate)
+
+    result = getattr(module, f"calculate_household_{country}")(
+        _household_payload(country),
+        observability_context=_observability_context(),
+    )
+
+    assert result == {"status": "succeeded"}
+    (call,) = calls
+    assert call["request"].country == country
+    assert call["required_country"] == country
+    assert call["worker"].application_name == module.APP_NAME
+    assert call["worker"].function_name == f"calculate_household_{country}"
+    assert call["dependencies"].runtime is runtime
+    (operation,) = runtime.operations
+    assert operation["name"] == "v2_household_execution"
+    assert operation["attributes"] == {"country": country}
+    assert operation["remote_context"]["observability_id"] == OBSERVABILITY_ID
+    assert runtime.shutdown_calls == 1
+
+
+def test_household_functions_close_runtime_after_an_error(monkeypatch) -> None:
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+
+    with pytest.raises(ValueError, match="validation error"):
+        module.calculate_household_us({"country": "us"})
+
+    assert runtime.shutdown_calls == 1
 
 
 def test_external_package_values_are_assertions_only(monkeypatch) -> None:
