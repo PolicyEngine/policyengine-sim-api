@@ -14,6 +14,7 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_local_authority_boundary_version,
     detect_uk_local_authority_metadata,
     detect_uk_local_authority_metadata_from_hdf,
+    detect_uk_run_dataset_metadata,
     load_uk_local_authority_resources,
     routed_uk_area_dataset_name,
     uk_area_hdf_dataset_path,
@@ -531,3 +532,57 @@ def test_the_installed_bundle_routes_area_regions_to_the_dense_dataset() -> None
     assert isinstance(revision, str)
     assert revision.startswith("microcosm-uk-2024-25-dense-")
     assert revision == get_release_manifest("uk").datasets[name].revision
+
+
+def _authority_codes_only() -> SimpleNamespace:
+    return SimpleNamespace(
+        data=SimpleNamespace(
+            entity_data={"household": pd.DataFrame({"la_code_oa": ["E06000063"]})}
+        )
+    )
+
+
+def _routes_area_regions_to_the_dense_dataset(monkeypatch) -> None:
+    _routes_area_regions(monkeypatch, routed=True)
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.uk_local_authority_metadata."
+        "routed_uk_area_dataset_name",
+        lambda: "microcosm_uk_2024_25_dense",
+    )
+
+
+def test_an_area_run_on_another_dataset_keeps_the_authority_code_check(
+    monkeypatch,
+) -> None:
+    _routes_area_regions_to_the_dense_dataset(monkeypatch)
+
+    metadata = detect_uk_run_dataset_metadata(
+        "uk",
+        _authority_codes_only(),
+        region_code="local_authority/E06000063",
+        dataset_name="enhanced_frs_2024_25",
+    )
+
+    assert metadata is not None
+    assert metadata.boundary_version is UKLocalAuthorityBoundaryVersion.LAD23
+    with pytest.raises(ValueError, match="contains no la_code_oa column"):
+        detect_uk_run_dataset_metadata(
+            "uk",
+            _national_dataset(),
+            region_code="constituency/E14001063",
+            dataset_name="enhanced_frs_2024_25",
+        )
+
+
+def test_an_area_run_on_the_routed_dataset_needs_every_area_output_column(
+    monkeypatch,
+) -> None:
+    _routes_area_regions_to_the_dense_dataset(monkeypatch)
+
+    with pytest.raises(ValueError, match="has no constituency_code_oa column"):
+        detect_uk_run_dataset_metadata(
+            "uk",
+            _authority_codes_only(),
+            region_code="local_authority/E06000063",
+            dataset_name="microcosm_uk_2024_25_dense",
+        )

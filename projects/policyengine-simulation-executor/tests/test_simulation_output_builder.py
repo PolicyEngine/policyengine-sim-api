@@ -1841,6 +1841,65 @@ def test_a_local_area_breakdown_runs_on_the_local_area_dataset_alone(monkeypatch
     assert run.dataset_load_attributes() == [{"dataset_role": "uk_area"}]
 
 
+def test_a_scotland_breakdown_resolves_against_the_installed_bundle(monkeypatch):
+    # Only the dataset load, the simulations and the builder are faked: the
+    # country module, region resolution, dataset selection, routing and the
+    # revision come from the installed .py bundle, with no data or network.
+    from policyengine.provenance.manifest import get_release_manifest
+    from policyengine_simulation_executor import simulation_runtime
+
+    loads: list[DatasetSelection] = []
+    builds: list[dict] = []
+    builder_calls: list[dict] = []
+
+    def load_dataset(_params, *, selection, country_module, data_folder=None):
+        loads.append(selection)
+        return _routed_area_dataset()
+
+    def build_simulation(_params, *, dataset, dataset_selection, policy, region):
+        builds.append(
+            {
+                "selection": dataset_selection,
+                "region_code": region.code,
+                "scoping_strategy": region.scoping_strategy,
+            }
+        )
+        return SimpleNamespace(on_first_ensure=lambda _callback: None)
+
+    class RecordingBreakdownBuilder:
+        def __init__(self, **kwargs):
+            builder_calls.append(kwargs)
+
+        def serialize(self):
+            return {"kind": "local_areas"}
+
+    for name, value in {
+        "_load_dataset": load_dataset,
+        "_build_simulation": build_simulation,
+        "LocalAreaBreakdownBuilder": RecordingBreakdownBuilder,
+    }.items():
+        monkeypatch.setattr(simulation_runtime, name, value)
+
+    output = _run_simulation_impl_core(
+        {**_WALES_BREAKDOWN_PARAMS, "region": "country/scotland"},
+        runtime=_TrackingRuntime(),
+    )
+
+    (selection,) = loads
+    assert selection.name == "microcosm_uk_2024_25_dense"
+    assert selection.is_default is False
+    scotland = RowFilterStrategy(variable_name="region", variable_value="SCOTLAND")
+    assert [build["scoping_strategy"] for build in builds] == [scotland, scotland]
+    assert [build["selection"] for build in builds] == [selection, selection]
+    assert {build["region_code"] for build in builds} == {"country/scotland"}
+    (builder_kwargs,) = builder_calls
+    assert builder_kwargs["dataset_name"] == selection.name
+    assert builder_kwargs["data_version"] == (
+        get_release_manifest("uk").datasets[selection.name].revision
+    )
+    assert output == {"kind": "local_areas"}
+
+
 def test_a_dataset_revision_is_read_from_the_release_manifest(monkeypatch):
     from policyengine_simulation_executor import simulation_runtime
 
