@@ -299,6 +299,23 @@ def run_single_simulation_segment_us(
         runtime.shutdown()
 
 
+def _returns_to_caller(context: dict) -> bool:
+    """Report whether a dispatch context asks for the report to return to its caller."""
+    return context.get("result_delivery") == ReportResultDelivery.RETURN_TO_CALLER.value
+
+
+def _simulation_operation_attributes(payload: dict, context: dict) -> dict[str, object]:
+    """Return a worker operation's attributes; a returned report's worker says so."""
+    attributes: dict[str, object] = {
+        "runner_name": "stage12",
+        "simulation_role": payload.get("role"),
+    }
+    if _returns_to_caller(context):
+        # Telemetry tells a returned report's workers apart from Stage 12 runs.
+        attributes["result_delivery"] = ReportResultDelivery.RETURN_TO_CALLER.value
+    return attributes
+
+
 @app.function(
     image=us_worker_image,
     cpu=8.0,
@@ -338,10 +355,7 @@ def run_single_simulation_us(
         result = None
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
-            attributes={
-                "runner_name": "stage12",
-                "simulation_role": payload.get("role"),
-            },
+            attributes=_simulation_operation_attributes(payload, context),
             remote_context=propagated,
         ):
             result = stage12_runtime.run_single_simulation(
@@ -388,10 +402,7 @@ def run_single_simulation_uk(
         result = None
         with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
-            attributes={
-                "runner_name": "stage12",
-                "simulation_role": payload.get("role"),
-            },
+            attributes=_simulation_operation_attributes(payload, context),
             remote_context=propagated,
         ):
             result = stage12_runtime.run_single_simulation(
@@ -456,9 +467,7 @@ def coordinate_report(
     ``parent`` and reads and writes no Stage 12 rows: the report returns a
     ``ReportExecutionResult`` payload or raises ``ReportExecutionError``.
     """
-    returns_to_caller = (
-        context.get("result_delivery") == ReportResultDelivery.RETURN_TO_CALLER.value
-    )
+    returns_to_caller = _returns_to_caller(context)
     if returns_to_caller and parent is not None:
         msg = "a report returned to its caller takes no Stage 12 parent record"
         raise ValueError(msg)
