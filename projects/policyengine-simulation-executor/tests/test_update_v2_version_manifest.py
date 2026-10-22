@@ -55,6 +55,19 @@ def test_publisher_records_every_bundle_country_as_economy_capable() -> None:
     ]
 
 
+def test_publisher_records_each_validated_household_function() -> None:
+    payload = _validation().model_dump(mode="json")
+    payload["household_validation_invocation_ids"] = {"uk": "household-uk-1"}
+
+    worker = publisher.build_worker(payload)
+
+    assert {
+        country.country: country.household_callable for country in worker.countries
+    } == {"us": None, "uk": "calculate_household_uk"}
+    assert worker.household_worker("uk") is not None
+    assert worker.household_worker("us") is None
+
+
 def test_publisher_rejects_validation_for_another_application() -> None:
     payload = _validation().model_dump(mode="json")
     payload["application_name"] = "policyengine-simulation-v2-py-another"
