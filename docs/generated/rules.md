@@ -8,7 +8,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 49 | 5 | 0 | 15 | 69 |
+| mechanical | 51 | 3 | 0 | 15 | 69 |
 | metric | 0 | 0 | 0 | 0 | 0 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
@@ -68,8 +68,6 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.ci.multiline-run-is-script`: 13 remaining in `rules/baselines/ci-multiline-run.txt`
 - `sim.microdata.weight-stripping-confined`: 1 remaining in `rules/baselines/sim-microdata-weight-stripping.txt`
 - `sim.quality.pyright-apis-integ`: 4 remaining in `rules/baselines/pyright-apis-integ.txt`
-- `sim.quality.pyright-executor`: 0 remaining in `rules/baselines/pyright-executor.txt`
-- `sim.quality.pyright-gateway`: 0 remaining in `rules/baselines/pyright-gateway.txt`
 
 ### Exceptions and review dates
 
@@ -292,8 +290,8 @@ flowchart LR
 | `sim.quality.every-package-type-checked` | Every uv package under libs/ and projects/ (a directory with a pyproject.toml) is listed by a Pyright rule, so the pyright CI job type-checks it. | mechanical | enforced | yes | quality guard `pyright-coverage` | `pr.yml:quality-guards` | yes |
 | `sim.quality.every-project-tested` | Every project and library with unit tests runs them in the PR test matrix. | mechanical | doc-only | no | nothing | — | — |
 | `sim.quality.pyright-apis-integ` | The generated-client integration-test project, apis-integ, has no Pyright errors beyond those its baseline lists, and the baseline lists only errors that still occur, so it only shrinks; checked with the pinned Pyright version in the project's own locked environment. | mechanical | ratcheted | yes | pyright in `projects/policyengine-apis-integ` | `pr.yml:pyright` | yes |
-| `sim.quality.pyright-executor` | The simulation executor has no Pyright errors beyond those its baseline lists, and the baseline lists only errors that still occur, so it only shrinks; checked with the pinned Pyright version in the executor's own locked environment. | mechanical | ratcheted | yes | pyright in `projects/policyengine-simulation-executor` | `pr.yml:pyright` | yes |
-| `sim.quality.pyright-gateway` | The simulation gateway has no Pyright errors beyond those its baseline lists, and the baseline lists only errors that still occur, so it only shrinks; checked with the pinned Pyright version in the gateway's own locked environment. | mechanical | ratcheted | yes | pyright in `projects/policyengine-simulation-gateway` | `pr.yml:pyright` | yes |
+| `sim.quality.pyright-executor` | The simulation executor has no Pyright errors, checked with the pinned Pyright version in the executor's own locked environment. | mechanical | enforced | yes | pyright in `projects/policyengine-simulation-executor` | `pr.yml:pyright` | yes |
+| `sim.quality.pyright-gateway` | The simulation gateway has no Pyright errors, checked with the pinned Pyright version in the gateway's own locked environment. | mechanical | enforced | yes | pyright in `projects/policyengine-simulation-gateway` | `pr.yml:pyright` | yes |
 | `sim.quality.pyright-libraries-and-entry` | The contract, observability, Stage 12 persistence and fastapi libraries and the simulation entry have no Pyright errors, checked with the pinned Pyright version in each package's own locked environment. | mechanical | enforced | yes | pyright in `libs/policyengine-simulation-contract`, `libs/policyengine-simulation-observability`, `libs/policyengine-stage12-persistence`, `libs/policyengine-fastapi`, `projects/policyengine-simulation-entry` | `pr.yml:pyright` | yes |
 | `sim.quality.ruff-format-src` | Source code under projects/*/src and libs/*/src is formatted with ruff format. | mechanical | enforced | yes | ruff format | `pr.yml:lint` | — |
 | `sim.quality.ruff-format-tests` | Test code is formatted with ruff format too; CI currently checks only src directories. | mechanical | doc-only | no | nothing | — | — |
@@ -321,9 +319,9 @@ flowchart LR
   r_sim_quality_pyright_apis_integ("sim.quality.pyright-apis-integ (ratcheted)")
   e_pyright_in_projects_policyengine_apis_integ["pyright in projects/policyengine-apis-integ"]
   j_CI_pr_yml_pyright["CI pr.yml:pyright"]
-  r_sim_quality_pyright_executor("sim.quality.pyright-executor (ratcheted)")
+  r_sim_quality_pyright_executor("sim.quality.pyright-executor (enforced)")
   e_pyright_in_projects_policyengine_simulation_executor["pyright in projects/policyengine-simulation-executor"]
-  r_sim_quality_pyright_gateway("sim.quality.pyright-gateway (ratcheted)")
+  r_sim_quality_pyright_gateway("sim.quality.pyright-gateway (enforced)")
   e_pyright_in_projects_policyengine_simulation_gateway["pyright in projects/policyengine-simulation-gateway"]
   r_sim_quality_pyright_libraries_and_entry("sim.quality.pyright-libraries-and-entry (enforced)")
   e_pyright_in_libs_policyengine_simulation_contract__libs_policyengine_simulation_observability__libs_policyengine_stage12_persistence__libs_policyengine_fastapi__projects_policyengine_simulation_entry["pyright in libs/policyengine-simulation-contract, libs/policyengine-simulation-observability, libs/policyengine-stage12-persistence, libs/policyengine-fastapi, projects/policyengine-simulation-entry"]

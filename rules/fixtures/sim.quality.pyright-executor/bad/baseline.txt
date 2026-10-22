@@ -1,5 +1,0 @@
-# Proof fixture: the baseline omits the "Secret" error in pyright.json, and
-# still lists an "Image" error that no longer occurs.
-projects/policyengine-simulation-executor/src/modal/app.py :: reportAttributeAccessIssue :: "App" is not a known attribute of module "modal"
-projects/policyengine-simulation-executor/src/modal/app.py :: reportAttributeAccessIssue :: "Image" is not a known attribute of module "modal"
-projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py :: reportPossiblyUnboundVariable :: "metadata" is possibly unbound
