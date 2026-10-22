@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 
 import pandas as pd
 import pytest
+from fixtures.fake_modal import InputCancellation
 from policyengine_simulation_contract.stage12_execution import SimulationRole
 from policyengine_simulation_executor.stage12_runtime import (
     SegmentRunnerSeams,
@@ -80,7 +81,9 @@ class FakeCall:
 
 
 class FakeFunction:
-    def __init__(self, results: list[dict], errors: dict[int, list[Exception]]):
+    def __init__(
+        self, results: list[dict], errors: dict[int, list[BaseException]]
+    ) -> None:
         self.results = results
         self.errors = errors
         self.spawns: list[tuple[dict, dict | None]] = []
@@ -106,7 +109,7 @@ def _results(simulation) -> list[dict]:
     ]
 
 
-def _runner(*, errors: dict[int, list[Exception]] | None = None):
+def _runner(*, errors: dict[int, list[BaseException]] | None = None):
     simulation = _planned_simulation(SimulationRole.BASELINE)
     function = FakeFunction(_results(simulation), errors or {})
 
@@ -218,4 +221,37 @@ def test_persisted_parent_cancellation_cancels_all_segments() -> None:
         runner.run()
 
     assert sleeps == [0.5]
+    assert all(call.cancelled == 1 for call in function.calls)
+
+
+def test_modal_cancelling_the_worker_cancels_every_started_segment() -> None:
+    # Modal stops a cancelled input by raising InputCancellation in it, and does
+    # not cancel the calls that input spawned.
+    runner, function, _, _ = _runner(
+        errors={3: [InputCancellation("Input was cancelled by user")]}
+    )
+
+    with pytest.raises(InputCancellation):
+        runner.run()
+
+    assert len(function.calls) == 20
+    assert all(call.cancelled == 1 for call in function.calls)
+
+
+def test_modal_cancelling_the_worker_during_dispatch_cancels_started_segments() -> None:
+    runner, function, _, _ = _runner()
+    spawn = function.spawn
+
+    def cancel_during_dispatch(payload, *, observability_context):
+        if payload["segment_index"] == 5:
+            msg = "Input was cancelled by user"
+            raise InputCancellation(msg)
+        return spawn(payload, observability_context=observability_context)
+
+    function.spawn = cancel_during_dispatch
+
+    with pytest.raises(InputCancellation):
+        runner.run()
+
+    assert len(function.calls) == 5
     assert all(call.cancelled == 1 for call in function.calls)
