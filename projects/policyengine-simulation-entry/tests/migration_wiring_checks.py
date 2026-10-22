@@ -20,8 +20,17 @@ def _needs(job: dict) -> list[str]:
     return [needs] if isinstance(needs, str) else list(needs)
 
 
-def _secret_carriers(jobs: dict) -> list[tuple[str, str]]:
+def secret_carriers(
+    jobs: dict, *, workflow_env: dict | None = None
+) -> list[tuple[str, str]]:
+    """Return each job, job env or step that holds the migrator URL.
+
+    A workflow-level ``env:`` reaches every job, so it counts as a carrier
+    for all of them.
+    """
     carriers = []
+    if MIGRATION_SECRET in json.dumps(workflow_env or {}):
+        carriers.append(("workflow", "workflow env"))
     for job_name, job in jobs.items():
         if MIGRATION_SECRET in json.dumps(job.get("env", {})):
             carriers.append((job_name, "job env"))
@@ -33,7 +42,9 @@ def _secret_carriers(jobs: dict) -> list[tuple[str, str]]:
     return carriers
 
 
-def migration_wiring_violations(jobs: dict) -> list[str]:
+def migration_wiring_violations(
+    jobs: dict, *, workflow_env: dict | None = None
+) -> list[str]:
     """Return how a deploy workflow's jobs depart from the migration wiring."""
     migration = jobs.get(MIGRATION_JOB)
     if migration is None:
@@ -46,7 +57,7 @@ def migration_wiring_violations(jobs: dict) -> list[str]:
         violations.append(
             f"{ENTRYPOINT_JOB} does not wait for a successful {MIGRATION_JOB}"
         )
-    carriers = _secret_carriers(jobs)
+    carriers = secret_carriers(jobs, workflow_env=workflow_env)
     if carriers != [(MIGRATION_JOB, MIGRATION_STEP)]:
         violations.append(f"{MIGRATION_SECRET} reaches {carriers}")
     steps = {step.get("name"): step for step in migration.get("steps", [])}

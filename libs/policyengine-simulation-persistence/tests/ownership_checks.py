@@ -42,7 +42,9 @@ COMPARISON_PATH_CREDENTIALS = frozenset(
     {"STAGE12_DATABASE_URL", "STAGE12_DATABASE_URL_SECRET_NAME"}
 )
 MODAL_SECRET_COMMAND = re.compile(r"\bmodal\s+secret\s+create\b")
-MODAL_DEPLOY_COMMAND = re.compile(r"\bmodal\s+deploy\b")
+# Deploying an application or running a temporary one both start Modal
+# containers that a step's values may reach.
+MODAL_DEPLOY_COMMAND = re.compile(r"\bmodal\s+(?:deploy|run)\b")
 
 
 def _repository_files(root: Path, pattern: str) -> Iterator[Path]:
@@ -237,8 +239,9 @@ def modal_credential_violations(
     """Return Modal secret or deploy steps that carry a foreign database URL.
 
     ``workflow_texts`` and ``script_texts`` map a file name to its contents. A
-    step counts as giving Modal a value when it creates a Modal secret or
-    deploys a Modal application, directly or through a script that does, and
+    step counts as giving Modal a value when it creates a Modal secret, deploys
+    a Modal application or runs a temporary one, directly or through a script
+    that does, and
     every value in its step, job or workflow environment reaches it. Only the
     comparison path's own database URL may reach Modal.
     """
