@@ -89,6 +89,45 @@ The worker also adds `job_stage_seconds_<stage>` attributes to its
 `run_simulation` operation, so telemetry can split the baseline from the
 reform calculation.
 
+## UK local-area breakdowns
+
+A UK request to `POST /simulate/economy/comparison` may set
+`breakdown: "local_areas"`. The job then computes only the constituency and
+local-authority impacts, on the local-area dataset that the policyengine.py
+bundle routes those regions to (`microcosm_uk_2024_25_dense` in .py 6.10.0),
+filtered to the request's region. Its result is a `LocalAreaBreakdownOutput`
+instead of a `SingleYearMacroOutput`:
+
+| Field | Meaning |
+|---|---|
+| `kind` | Always `local_areas`. |
+| `model_version`, `policyengine_version` | The country model and the policyengine.py release that computed it. |
+| `dataset`, `data_version` | The local-area dataset's name and release revision. |
+| `constituency_impact`, `local_authority_impact` | The published areas of each level. Disclosure control leaves withheld areas out, so a list may be empty; each record carries a `disclosure_tier` (`reported` or `approximate`) and 90% interval bounds. |
+
+Rules:
+
+- The request must be for the UK, with `region` absent, `uk` or
+  `country/<nation>`. A constituency, local-authority or bare-name region,
+  `include_cliffs: true`, `segmented: true` or a `region_group` is refused
+  with 422, and so is any other `breakdown` value. `include_cliffs: false`
+  is accepted, because the Public API always sends it. Budget-window
+  requests do not take the field.
+- The gateway sends a breakdown only to a worker app whose routing bundle
+  manifest declares `local_area_breakdown: 1`; the routing publisher writes
+  it for apps whose bundle routes UK area regions. Any other route, including
+  one from the legacy version dicts, gets 400 before a job is spawned, and
+  the message names the policyengine.py version. Older apps ignore fields
+  they do not know, so they would otherwise return a national result.
+- On those bundles, a UK-wide or nation-level request without `breakdown`
+  computes no area results: `constituency_impact` and
+  `local_authority_impact` are null, and the status body omits them.
+  Constituency and local-authority requests are unchanged.
+- The job reports the usual monolithic stages: `loading_data` while the
+  local-area dataset loads, then `baseline`, `reform` and `outputs`.
+- The entry starts no Stage 12 comparison for a breakdown request (skip
+  reason `unsupported_options`).
+
 ## Image dependencies
 
 The Modal image installs with `uv_sync(frozen=True)` from this project's
