@@ -663,6 +663,51 @@ def test_us_calculate_full_adds_and_calculates_every_missing_variable() -> None:
     )
 
 
+US_SINGLE_WITHOUT_COUNTY = {
+    "people": {"you": {"age": {"2026": 35}, "employment_income": {"2026": 30_000}}},
+    "spm_units": {
+        "your spm unit": {
+            "members": ["you"],
+            "spm_unit_spm_threshold": {"2026": None},
+        }
+    },
+    "households": {
+        "your household": {"members": ["you"], "state_name": {"2026": "TX"}}
+    },
+}
+
+
+def test_us_a_chosen_spm_selection_must_have_its_geography() -> None:
+    # The certified defaults measure by county. Inherited, a household without
+    # a county leaves the SPM threshold uncalculated; chosen, it is an error.
+    def calculate(**spm_settings):
+        return calculate_household(
+            _request("us", US_SINGLE_WITHOUT_COUNTY, **spm_settings),
+            worker=_worker("us"),
+            dependencies=HouseholdCalculationDependencies(today=TODAY),
+        )
+
+    inherited = calculate()
+    chosen = calculate(spm={})
+    national = calculate(spm={"geography_kind": "national"})
+
+    assert isinstance(inherited, HouseholdExecutionResult), inherited
+    unit = inherited.output.results[0].household.to_situation()["spm_units"]
+    assert unit["your spm unit"]["spm_unit_spm_threshold"] == {"2026": None}
+    assert isinstance(chosen, HouseholdExecutionFailure)
+    assert chosen.error.code == "invalid_spm_selection"
+    assert chosen.error.spm_error is not None
+    assert chosen.error.spm_error.code == "SPM_GEOGRAPHY_REQUIRED"
+    assert isinstance(national, HouseholdExecutionResult), national
+    unit = national.output.results[0].household.to_situation()["spm_units"]
+    assert isinstance(unit["your spm unit"]["spm_unit_spm_threshold"]["2026"], float)
+    assert national.output.spm_config is not None
+    assert national.output.spm_config.geography_kind == "national"
+    receipt = national.output.results[0].spm_provenance
+    assert receipt is not None
+    assert receipt.geography_kind == "national"
+
+
 UK_SINGLE = {
     "people": {"you": {"age": {"2026": 40}, "employment_income": {"2026": 30_000}}},
     "benunits": {"your benefit unit": {"members": ["you"]}},

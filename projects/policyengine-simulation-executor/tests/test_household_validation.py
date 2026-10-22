@@ -10,6 +10,7 @@ from policyengine_simulation_contract.household_execution import (
     HouseholdWorkerIdentity,
 )
 from policyengine_simulation_executor.household_calculation import (
+    calculate_household,
     installed_household_bundle,
 )
 from policyengine_simulation_executor.household_validation import (
@@ -117,3 +118,20 @@ def test_an_outcome_that_is_not_the_calculated_household_fails_the_check(
         check_household_validation(
             change_outcome(_succeeded(request)), request=request, worker=WORKER
         )
+
+
+@pytest.mark.parametrize("country", ["us", "uk"])
+def test_the_installed_models_calculate_the_validation_household(country) -> None:
+    # Release validation and the image check depend on this household, so the
+    # PR checks calculate it with the installed country models too.
+    request = household_validation_request(country, year=2026)
+    worker = WORKER.model_copy(
+        update={"function_name": f"calculate_household_{country}"}
+    )
+
+    outcome = calculate_household(request, worker=worker, required_country=country)
+
+    net_income = check_household_validation(
+        outcome.model_dump(mode="json"), request=request, worker=worker
+    )
+    assert net_income > 0
