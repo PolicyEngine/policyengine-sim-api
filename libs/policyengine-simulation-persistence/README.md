@@ -91,10 +91,9 @@ privileges on tables the migrator creates later; revision 0002 revokes
 `UPDATE` on the definition tables, which never change. Both roles must exist
 before the first migration runs; an operator creates them. Before revision
 0002 is deployed, the owner of the Public API's tables must also grant the
-migrator `REFERENCES` on `policies`, `households` and `dynamics` (the
-operator step grants it on `tax_benefit_model_versions`, `datasets` and
-`regions` too, for later revisions); without it the migration fails and
-applies nothing. The migrator needs either
+migrator `REFERENCES` on `policies`, `households` and `dynamics`, and
+before revision 0003 on `tax_benefit_model_versions`, `datasets` and
+`regions`; without it the migration fails and applies nothing. The migrator needs either
 `CREATE` on the database or a `simulation` schema created in advance and owned
 by it: the environment creates the schema only when it is missing, because
 PostgreSQL checks `CREATE` on the database even for

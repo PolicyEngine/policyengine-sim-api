@@ -56,6 +56,25 @@ rollback checks do not, because an older image may run against a newer schema.
 The ownership rules and roles are described in
 `libs/policyengine-simulation-persistence/README.md`.
 
+## Recording run outcomes
+
+Each Simulation Entrypoint instance runs a background loop that asks Modal
+about the runs' calls and records their outcomes in the `simulation` schema
+(`policyengine_simulation_entry.run_recording`). Two deploy settings serve it:
+
+- `gcloud run deploy --no-cpu-throttling` keeps the instance's CPU allocated
+  outside requests, so the loop runs between them. Production keeps at least
+  one instance running (`entrypoint_min_instances: 1`); staging scales to
+  zero, so it records outcomes only while an instance runs, and any request
+  starts one.
+- Every deploy mounts sim's own Modal token as `MODAL_TOKEN_ID` and
+  `MODAL_TOKEN_SECRET`, whatever the Stage 12 setting: the deploy step
+  resolves the Secret Manager secrets named by the `beta` and `prod`
+  environment variables `MODAL_TOKEN_ID_SECRET_NAME` and
+  `MODAL_TOKEN_SECRET_SECRET_NAME` to their newest enabled versions. The
+  runtime service account must be able to read both secrets. The Stage 12
+  comparison path's Modal calls use the same token until it is removed.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`
