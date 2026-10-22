@@ -10,6 +10,7 @@ from policyengine.data.uk_geography_assets import (
     CONSTITUENCY_ASSET_SPEC,
 )
 
+from policyengine_simulation_executor.output_frames import HouseholdFrame
 from policyengine_simulation_executor.simulation_macro_output import (
     CongressionalDistrictImpactOutput,
     CongressionalDistrictImpactRecord,
@@ -264,6 +265,11 @@ def build_uk_constituency_impact(
     """
     if country != "uk":
         return None
+    if baseline.output_dataset is None or not isinstance(
+        baseline.output_dataset.data, HouseholdFrame
+    ):
+        msg = "the baseline has no household output frame; run it first"
+        raise TypeError(msg)
     _require_uk_area_column(
         baseline.output_dataset.data.household, "constituency_code_oa", "constituency"
     )

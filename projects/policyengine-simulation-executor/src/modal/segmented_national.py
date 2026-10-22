@@ -587,8 +587,9 @@ class SegmentedNationalRunner:
         # The canonical internal-key stripper, plus the opt-out knob.
         simulation_params, _, _ = split_internal_payload(self.params)
         simulation_params.pop("segmented", None)
-        with self.runtime.span(
-            SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_REDUCE)
+        with scopes.span(
+            self.runtime,
+            SEGMENTED_NATIONAL_STAGES.name(Stage.SEGMENTED_NATIONAL_REDUCE),
         ):
             output = build_national_output(
                 child_results,

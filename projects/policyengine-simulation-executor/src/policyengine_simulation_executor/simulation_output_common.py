@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 from policyengine_simulation_contract.spm import spm_error_detail
 
+from policyengine_simulation_executor.output_frames import HouseholdFrame
+
 if TYPE_CHECKING:
     from _typeshed import ConvertibleToFloat
     from policyengine.core import Simulation
@@ -50,8 +52,9 @@ def _collection_records(collection: object) -> list[dict[str, Any]]:
 def _output_model_dump(value: object) -> object:
     if value is None:
         return None
-    if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json")
+    model_dump = getattr(value, "model_dump", None)
+    if model_dump is not None:
+        return model_dump(mode="json")
     if isinstance(value, Mapping):
         return dict(value)
     return None
@@ -60,6 +63,9 @@ def _output_model_dump(value: object) -> object:
 def _entity_data(simulation: Simulation, entity: str) -> pd.DataFrame:
     if simulation.output_dataset is None or simulation.output_dataset.data is None:
         simulation.ensure()
+    if simulation.output_dataset is None or simulation.output_dataset.data is None:
+        msg = "the simulation has no output data after ensure()"
+        raise TypeError(msg)
     return getattr(simulation.output_dataset.data, entity)
 
 
@@ -91,6 +97,11 @@ def _unweighted_household_frame(simulation: Simulation) -> pd.DataFrame:
     shrink. It goes once the breakdown hands policyengine the simulations, as
     the constituency and US congressional district breakdowns already do.
     """
+    if simulation.output_dataset is None or not isinstance(
+        simulation.output_dataset.data, HouseholdFrame
+    ):
+        msg = "the simulation has no household output frame; run it first"
+        raise TypeError(msg)
     return pd.DataFrame(simulation.output_dataset.data.household)
 
 
@@ -132,7 +143,11 @@ def _warn_on_mismatched_weights(
 def _sum_output_variable(simulation: Simulation, variable: str, entity: str) -> float:
     data = _entity_data(simulation, entity)
     if variable in data.columns:
-        return float(data[variable].sum())
+        column = data[variable]
+        if not isinstance(column, pd.Series):
+            msg = f"{entity} output has more than one {variable!r} column"
+            raise TypeError(msg)
+        return float(column.sum())
 
     from policyengine.outputs import (  # noqa: PLC0415  # policyengine stays out of this module's import-time imports
         Aggregate,
@@ -146,6 +161,9 @@ def _sum_output_variable(simulation: Simulation, variable: str, entity: str) -> 
         aggregate_type=AggregateType.SUM,
     )
     output.run()
+    if output.result is None:
+        msg = f"Aggregate of {entity}.{variable} produced no result"
+        raise RuntimeError(msg)
     return float(output.result)
 
 
@@ -156,7 +174,14 @@ def _change_output_variable(
     reform_data = _entity_data(reform, entity)
     _warn_on_mismatched_weights(baseline_data, reform_data, entity)
     if variable in baseline_data.columns and variable in reform_data.columns:
-        return float((reform_data[variable] - baseline_data[variable]).sum())
+        reform_column = reform_data[variable]
+        baseline_column = baseline_data[variable]
+        if not isinstance(reform_column, pd.Series) or not isinstance(
+            baseline_column, pd.Series
+        ):
+            msg = f"{entity} output has more than one {variable!r} column"
+            raise TypeError(msg)
+        return float((reform_column - baseline_column).sum())
 
     from policyengine.outputs import (  # noqa: PLC0415  # policyengine stays out of this module's import-time imports
         ChangeAggregate,
@@ -171,6 +196,9 @@ def _change_output_variable(
         aggregate_type=ChangeAggregateType.SUM,
     )
     output.run()
+    if output.result is None:
+        msg = f"ChangeAggregate of {entity}.{variable} produced no result"
+        raise RuntimeError(msg)
     return float(output.result)
 
 

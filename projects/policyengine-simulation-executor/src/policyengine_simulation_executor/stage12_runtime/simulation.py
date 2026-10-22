@@ -115,17 +115,24 @@ def build_stage12_simulation(
         scoping_strategy=resolved.region.scoping_strategy,
         spm=selection,
     )
-    simulation_type = Stage12CachedSimulation if identity is not None else Simulation
-    model = simulation_type(
-        **({"spm": selection} if selection is not None else {}),
-        **({"id": identity.simulation_id} if identity is not None else {}),
+    spm_kwargs: dict[str, Any] = {"spm": selection} if selection is not None else {}
+    if identity is None:
+        return Simulation(
+            **spm_kwargs,
+            dataset=resolved.dataset,
+            tax_benefit_model_version=resolved.country_module.model,
+            policy=policy,
+            scoping_strategy=resolved.region.scoping_strategy,
+        )
+    model = Stage12CachedSimulation(
+        **spm_kwargs,
+        id=identity.simulation_id,
         dataset=resolved.dataset,
         tax_benefit_model_version=resolved.country_module.model,
         policy=policy,
         scoping_strategy=resolved.region.scoping_strategy,
     )
-    if isinstance(model, Stage12CachedSimulation):
-        model.configure_stage12_cache(execution.output_plan)
+    model.configure_stage12_cache(execution.output_plan)
     return model
 
 

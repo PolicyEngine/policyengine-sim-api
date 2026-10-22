@@ -35,6 +35,7 @@ from policyengine_simulation_executor.job_progress import (
     NULL_JOB_PROGRESS,
     JobProgressReporter,
 )
+from policyengine_simulation_executor.output_frames import EntityFrames
 from policyengine_simulation_executor.release_bundle import (
     get_country_release_bundle,
     resolve_bundle_dataset_name,
@@ -514,11 +515,10 @@ def _require_certified_uk_weight_matrix(
             msg = f"{matrix_name} entry {year} is not a weight matrix"
             raise TypeError(msg)
         matrix_households = weights.shape[-1]
-    entity_data = getattr(dataset.data, "entity_data", None)
-    if not isinstance(entity_data, dict):
+    if not isinstance(dataset.data, EntityFrames):
         msg = f"the {dataset_selection.name!r} dataset has no entity data loaded"
         raise TypeError(msg)
-    households = len(pd.DataFrame(entity_data["household"]))
+    households = len(pd.DataFrame(dataset.data.entity_data["household"]))
     if households != matrix_households:
         msg = (
             f"UK region {region!r} reweights households with {matrix_name}, "

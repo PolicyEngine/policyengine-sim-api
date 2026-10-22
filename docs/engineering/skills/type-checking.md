@@ -114,8 +114,14 @@ Baselines are under `rules/`, so changing one needs code-owner approval
   same line: `# pyright: ignore[reportAttributeAccessIssue]  # <reason>`.
 - If an error shows a real bug, first write a test that demonstrates it, then
   fix it.
-- Open observability spans with `scopes.span(runtime, ...)` from
-  `policyengine_simulation_observability.scopes`, not `runtime.span(...)`.
-  policyengine-observability types its scope managers as possibly suppressing
-  exceptions, so after `with runtime.span(...)` Pyright reports each variable
-  the block assigned as possibly unbound.
+- Open observability spans and operations with `scopes.span(runtime, ...)` and
+  `scopes.operation(runtime, ...)` from
+  `policyengine_simulation_observability.scopes`, not `runtime.span(...)` or
+  `runtime.operation(...)`. policyengine-observability types its scope
+  managers as possibly suppressing exceptions, so after `with runtime.span(...)`
+  Pyright reports each variable the block assigned as possibly unbound.
+- Before reading a simulation's output frames, narrow
+  `<simulation>.output_dataset.data` with the `EntityFrames` or
+  `HouseholdFrame` protocols in `policyengine_simulation_executor.output_frames`,
+  and keep reading through that expression: the microdata weight checks
+  recognise weighted frames by it.

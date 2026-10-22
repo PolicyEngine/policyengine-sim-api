@@ -44,6 +44,7 @@ from policyengine_simulation_executor.artifact_keys import (
     BaselineArtifactIdentity,
     baseline_artifact_filename,
 )
+from policyengine_simulation_executor.output_frames import EntityFrames
 from policyengine_simulation_executor.precompute_models import (
     ArtifactManifest,
     BaselineComputeResult,
@@ -284,7 +285,9 @@ def build_manifest(plan: PrecomputePlan) -> ArtifactManifest:
         for entry in plan.state_datasets
     ]
     return ArtifactManifest(
-        manifest_schema=MANIFEST_SCHEMA,
+        # The field's alias, which Pydantic accepts (and which its type
+        # checker support knows) at construction.
+        schema=MANIFEST_SCHEMA,
         country=PRECOMPUTE_COUNTRY,
         receipt=plan.receipt,
         artifacts=artifacts,
@@ -760,10 +763,13 @@ def verify_determinism_impl(
     if not artifact_file.exists():
         store.download_file(expected.path, artifact_file)
     baseline.ensure()
-    if baseline.artifact_outcome != OUTCOME_HIT:
+    # A cohort baseline is an ArtifactBaselineSimulation, which records the
+    # outcome; the attribute isn't on the Simulation type it is declared as.
+    outcome = getattr(baseline, "artifact_outcome", None)
+    if outcome != OUTCOME_HIT:
         msg = (
             "Determinism gate could not load the artifact it verifies "
-            f"(outcome={baseline.artifact_outcome})"
+            f"(outcome={outcome})"
         )
         raise RuntimeError(msg)
 
@@ -778,6 +784,15 @@ def verify_determinism_impl(
     )
     fresh.run()
 
+    missing_frames = "Determinism gate found a simulation with no output entity frames"
+    if baseline.output_dataset is None or not isinstance(
+        baseline.output_dataset.data, EntityFrames
+    ):
+        raise TypeError(missing_frames)
+    if fresh.output_dataset is None or not isinstance(
+        fresh.output_dataset.data, EntityFrames
+    ):
+        raise TypeError(missing_frames)
     differences = []
     loaded = baseline.output_dataset.data.entity_data
     recomputed = fresh.output_dataset.data.entity_data
