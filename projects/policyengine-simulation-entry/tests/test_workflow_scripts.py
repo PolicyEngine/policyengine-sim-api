@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 from workflow_script_support import (
     REPOSITORY_ROOT,
     WORKFLOWS_DIR,
@@ -253,15 +254,81 @@ def test_commit_and_push_fails_when_the_push_fails(fakes, tmp_path):
     assert github_output(output) == {}
 
 
-def test_create_pr_opens_the_update_pr(fakes):
-    fakes.add("gh")
+# The create-PR script finds the open "Update dependencies" issue, or opens
+# one, and names it on the first line of the update PR's description (rule
+# sim.process.pr-tracking-issue). The fake gh answers each call from the
+# environment and writes each description it is given to FAKE_PR_BODY_LOG.
+FAKE_GH_FOR_CREATE_PR = """\
+case "$1 $2" in
+  "pr list") printf '%s' "${FAKE_OPEN_PR:-}" ;;
+  "pr view") printf '%s' "${FAKE_OPEN_PR_BODY:-}" ;;
+  "pr create" | "pr edit") cat >> "$FAKE_PR_BODY_LOG" ;;
+  "issue create") printf '%s\\n' "${FAKE_CREATED_ISSUE_URL:-}" ;;
+  "api --paginate")
+    printf '%s' "${FAKE_OPEN_ISSUES:-}"
+    exit "${FAKE_GH_API_EXIT:-0}"
+    ;;
+esac
+"""
+UPDATE_PR_SUMMARY = (
+    "Automated daily dependency updates. Subsequent runs append commits to "
+    "this branch while the pull request remains open."
+)
+LEGACY_UPDATE_PR_BODY = (
+    "Automated dependency updates\n\n"
+    "This PR was automatically created by the dependency update workflow."
+)
+OPEN_UPDATE_PR_LOOKUP = [
+    "gh",
+    "pr",
+    "list",
+    "--repo",
+    "PolicyEngine/policyengine-sim-api",
+    "--base",
+    "main",
+    "--head",
+    "update-dependencies",
+    "--state",
+    "open",
+    "--json",
+    "number",
+    "--jq",
+    ".[0].number // empty",
+]
+OPEN_TRACKING_ISSUE_LOOKUP = [
+    "gh",
+    "api",
+    "--paginate",
+    "repos/PolicyEngine/policyengine-sim-api/issues?state=open&per_page=100",
+    "--jq",
+    '.[] | select(.pull_request == null and .title == "Update dependencies") | .number',
+]
 
+
+def _create_pr(fakes: FakeCommands, tmp_path: Path, **env: str):
+    """Run the create-PR script; return its result and the descriptions it set."""
+    body_log = tmp_path / "pr-bodies"
+    fakes.add("gh", FAKE_GH_FOR_CREATE_PR)
     result = run_script(
-        CREATE_PR, env=fakes.env(GITHUB_REPOSITORY="PolicyEngine/policyengine-sim-api")
+        CREATE_PR,
+        env=fakes.env(
+            GITHUB_REPOSITORY="PolicyEngine/policyengine-sim-api",
+            FAKE_PR_BODY_LOG=str(body_log),
+            **env,
+        ),
     )
+    # Read bytes: read_text would turn the CRLF line endings under test into LF.
+    descriptions = body_log.read_bytes().decode("utf-8") if body_log.exists() else ""
+    return result, descriptions
+
+
+def test_create_pr_opens_the_update_pr_naming_the_open_tracking_issue(fakes, tmp_path):
+    result, descriptions = _create_pr(fakes, tmp_path, FAKE_OPEN_ISSUES="870\n")
 
     assert result.returncode == 0, result.stderr
     assert fakes.calls() == [
+        OPEN_UPDATE_PR_LOOKUP,
+        OPEN_TRACKING_ISSUE_LOOKUP,
         [
             "gh",
             "pr",
@@ -270,15 +337,159 @@ def test_create_pr_opens_the_update_pr(fakes):
             "PolicyEngine/policyengine-sim-api",
             "--title",
             "Update dependencies",
-            "--body",
-            "Automated daily dependency updates. Subsequent runs append commits "
-            "to this branch while the pull request remains open.",
+            "--body-file",
+            "-",
             "--base",
             "main",
             "--head",
             "update-dependencies",
-        ]
+        ],
     ]
+    assert descriptions == f"Fixes #870\n\n{UPDATE_PR_SUMMARY}\n"
+
+
+def test_create_pr_names_the_oldest_open_tracking_issue(fakes, tmp_path):
+    result, descriptions = _create_pr(
+        fakes, tmp_path, FAKE_OPEN_ISSUES="875\n870\n1001\n"
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert descriptions.startswith("Fixes #870\n\n")
+
+
+def test_create_pr_opens_a_tracking_issue_when_none_is_open(fakes, tmp_path):
+    result, descriptions = _create_pr(
+        fakes,
+        tmp_path,
+        FAKE_CREATED_ISSUE_URL=(
+            "https://github.com/PolicyEngine/policyengine-sim-api/issues/871"
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert fakes.calls()[2] == [
+        "gh",
+        "issue",
+        "create",
+        "--repo",
+        "PolicyEngine/policyengine-sim-api",
+        "--title",
+        "Update dependencies",
+        "--body",
+        "Tracks the automated daily dependency updates from "
+        "update-dependencies.yml. The update pull request names this issue on "
+        "the first line of its description and closes it when it merges.",
+    ]
+    assert fakes.calls()[3][:3] == ["gh", "pr", "create"]
+    assert descriptions == f"Fixes #871\n\n{UPDATE_PR_SUMMARY}\n"
+
+
+def test_create_pr_fails_when_the_new_issue_has_no_number(fakes, tmp_path):
+    result, descriptions = _create_pr(
+        fakes, tmp_path, FAKE_CREATED_ISSUE_URL="could not create the issue"
+    )
+
+    assert result.returncode == 1
+    assert "Could not resolve the dependency-update tracking issue" in result.stderr
+    assert not any(call[1:3] == ["pr", "create"] for call in fakes.calls())
+    assert descriptions == ""
+
+
+def test_create_pr_fails_when_the_issue_lookup_fails(fakes, tmp_path):
+    result, descriptions = _create_pr(fakes, tmp_path, FAKE_GH_API_EXIT="1")
+
+    assert result.returncode == 1
+    assert fakes.calls() == [OPEN_UPDATE_PR_LOOKUP, OPEN_TRACKING_ISSUE_LOOKUP]
+    assert descriptions == ""
+
+
+def test_create_pr_puts_the_tracking_issue_first_on_an_open_update_pr(fakes, tmp_path):
+    """An update PR opened before the rule, such as #583, gets a Fixes line."""
+    result, descriptions = _create_pr(
+        fakes,
+        tmp_path,
+        FAKE_OPEN_PR="583",
+        FAKE_OPEN_PR_BODY=LEGACY_UPDATE_PR_BODY,
+        FAKE_OPEN_ISSUES="870\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert fakes.calls() == [
+        OPEN_UPDATE_PR_LOOKUP,
+        OPEN_TRACKING_ISSUE_LOOKUP,
+        [
+            "gh",
+            "pr",
+            "view",
+            "583",
+            "--repo",
+            "PolicyEngine/policyengine-sim-api",
+            "--json",
+            "body",
+            "--jq",
+            ".body",
+        ],
+        [
+            "gh",
+            "pr",
+            "edit",
+            "583",
+            "--repo",
+            "PolicyEngine/policyengine-sim-api",
+            "--body-file",
+            "-",
+        ],
+    ]
+    assert descriptions == f"Fixes #870\n\n{LEGACY_UPDATE_PR_BODY}\n"
+
+
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"])
+def test_create_pr_replaces_an_earlier_fixes_line_on_the_open_update_pr(
+    fakes, tmp_path, line_ending
+):
+    """An open update PR whose issue was closed names the open one instead."""
+    rest = f"{line_ending}{UPDATE_PR_SUMMARY}"
+    result, descriptions = _create_pr(
+        fakes,
+        tmp_path,
+        FAKE_OPEN_PR="900",
+        FAKE_OPEN_PR_BODY=f"Fixes #860 {line_ending}{rest}",
+        FAKE_OPEN_ISSUES="870\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert descriptions == f"Fixes #870\n{rest}\n"
+
+
+def test_create_pr_replaces_a_fixes_line_that_is_the_whole_description(fakes, tmp_path):
+    result, descriptions = _create_pr(
+        fakes,
+        tmp_path,
+        FAKE_OPEN_PR="900",
+        FAKE_OPEN_PR_BODY="Fixes #860",
+        FAKE_OPEN_ISSUES="870\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert descriptions == "Fixes #870\n"
+
+
+def test_create_pr_leaves_an_open_update_pr_that_names_the_tracking_issue(
+    fakes, tmp_path
+):
+    result, descriptions = _create_pr(
+        fakes,
+        tmp_path,
+        FAKE_OPEN_PR="900",
+        FAKE_OPEN_PR_BODY=f"Fixes #870\n\n{UPDATE_PR_SUMMARY}",
+        FAKE_OPEN_ISSUES="870\n",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not any(
+        call[1:3] in (["pr", "edit"], ["pr", "create"]) for call in fakes.calls()
+    )
+    assert descriptions == ""
 
 
 def test_create_pr_fails_when_gh_fails(fakes):
@@ -289,6 +500,7 @@ def test_create_pr_fails_when_gh_fails(fakes):
     )
 
     assert result.returncode == 1
+    assert fakes.calls() == [OPEN_UPDATE_PR_LOOKUP]
 
 
 def test_create_pr_requires_the_repository(fakes):
@@ -301,6 +513,20 @@ def test_create_pr_requires_the_repository(fakes):
     assert result.returncode != 0
     assert "GITHUB_REPOSITORY is required" in result.stderr
     assert fakes.calls() == []
+
+
+def test_update_dependencies_workflow_updates_the_pr_whenever_it_pushes():
+    """With or without an open update PR, a push runs the create-PR script."""
+    workflow = yaml.safe_load(
+        (WORKFLOWS_DIR / "update-dependencies.yml").read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["update-dependencies"]["steps"]
+    create_pr = next(
+        step for step in steps if step.get("run") == f".github/scripts/{CREATE_PR}"
+    )
+
+    assert create_pr["if"] == "steps.push.outputs.branch_pushed == 'true'"
+    assert create_pr["env"] == {"GH_TOKEN": "${{ steps.app-token.outputs.token }}"}
 
 
 # --- pr.yml ---------------------------------------------------------------

@@ -83,7 +83,9 @@ same-repository draft PR.
 - API integration tests live in `projects/policyengine-apis-integ`.
 - PR CI runs simulation unit tests, Ruff format and lint checks, Pyright for
   every package, quality guards (including the rules registry), Docker build,
-  and local integration tests.
+  and local integration tests. A separate `PR description` job checks that
+  every open PR's description starts with `Fixes #ISSUE_NUMBER` for an open
+  issue in this repository.
 - There is currently no repository-wide changelog fragment requirement.
 
 ## Safety Boundaries
@@ -150,9 +152,8 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Process and repository hygiene
 
-- Checked: `sim.agents.adapters-point-to-agents-md`, `sim.process.rules-registry`, `sim.process.stacked-prs-full-ci-at-bottom`
+- Checked: `sim.agents.adapters-point-to-agents-md`, `sim.process.pr-tracking-issue`, `sim.process.rules-registry`, `sim.process.stacked-prs-full-ci-at-bottom`
 - `sim.process.agents-never-bypass`: Agents never bypass branch rules, even with admin credentials: no gh pr merge --admin and no bypass option; a blocked merge is reported to a human. (doc-only, not checked: follow it yourself)
-- `sim.process.pr-tracking-issue`: Every PR has a tracking issue in this repository, and the first line of its description is Fixes #ISSUE_NUMBER. (doc-only, not checked: follow it yourself)
 - `sim.process.rule-machinery-code-owned`: Changes to the rule machinery (rules/, scripts/rules/, scripts/run_quality_guards.py and CODEOWNERS) need approval from a core developer other than the author. (doc-only, not checked: follow it yourself)
 - `sim.process.same-repo-draft-prs`: PRs are opened as drafts from branches in PolicyEngine/policyengine-sim-api, never from forks. (doc-only, not checked: follow it yourself)
 

@@ -15,7 +15,8 @@ Before creating or sharing a PR:
 2. Open a GitHub issue for the work, or verify that an appropriate issue
    already exists.
 3. Put `Fixes #ISSUE_NUMBER` as the first line of the PR description, using the
-   issue number from the issue created or found in the previous step.
+   issue number from the issue created or found in the previous step. The
+   `PR description` check fails otherwise; see [The `Fixes` Line](#the-fixes-line).
 4. Run formatting and the most relevant tests for the changed surface. If an
    expected check cannot be run, say so in the PR body.
 5. Push the current branch to the canonical repository:
@@ -44,7 +45,8 @@ human instead.
 
 In a stack of pull requests, only the lowest unmerged one runs the full PR
 workflow (`.github/workflows/pr.yml`) and the Modal image smoke. The ones above
-it run only the `CI complete` job, which fails and says so. A stack therefore
+it run only the `CI complete` job, which fails and says so, and the
+`PR description` job, which every open pull request runs. A stack therefore
 uses one set of runners instead of one per layer.
 
 - **`CI complete` is the required check.** It needs every other job in
@@ -62,6 +64,42 @@ uses one set of runners instead of one per layer.
   the other jobs.
   `projects/policyengine-simulation-executor/tests/test_ci_complete_gate.py`
   checks both.
+
+## The `Fixes` Line
+
+Rule `sim.process.pr-tracking-issue`. The `PR description` job, in
+`.github/workflows/pr-description.yml`, checks every open pull request whenever
+it is opened, reopened or edited and on every push, including each pull request
+in a stack. It skips closed pull requests. It reads the description from the
+event that started the run and fails unless:
+
+- the first line is exactly `Fixes #ISSUE_NUMBER`;
+- `ISSUE_NUMBER` is an open issue in this repository. A pull request's number,
+  an issue that was moved to another repository, a closed issue and a number
+  with no issue all fail.
+
+CRLF line endings, which the GitHub web editor uses, and trailing spaces are
+fine. These fail:
+
+- an empty description;
+- a blank first line, or leading spaces before `Fixes`;
+- other wording, such as `Fixes #615.`, `Closes #12` or `Refs #12`;
+- a reference to another repository, such as `Fixes PolicyEngine/policyengine-api#12`.
+
+To fix a failure:
+
+- **Wrong first line:** edit the description. Saving the edit runs the check
+  again.
+- **Closed issue:** if the pull request still fixes it, reopen the issue, then
+  re-run the job from the pull request's Checks tab. Reopening an issue starts
+  no run. Re-running checks the description as it was when the run started, so
+  after changing the description, rely on the run the edit starts.
+
+Automated pull requests follow the rule too. The policyengine package update
+(`update-policyengine-package.sh`) opens an issue for each version. The daily
+dependency update (`dependency-update-create-pr.sh`) reuses the open "Update
+dependencies" issue or opens one, and also puts its `Fixes` line first on an
+update pull request that is already open.
 
 ## PR Title
 

@@ -52,7 +52,7 @@ id = "process"
 title = "Process and repository hygiene"
 
 [discovery]
-workflows = [".github/workflows/pr.yml", ".github/workflows/pr-image-smoke.yml"]
+workflows = [".github/workflows/pr.yml", ".github/workflows/pr-image-smoke.yml", ".github/workflows/pr-description.yml"]
 guard_test_globs = [
   "projects/*/tests/test_*boundar*.py",
   "libs/*/tests/test_*boundar*.py",
@@ -1485,14 +1485,27 @@ invocation = "unittest discover -s scripts/rules/tests"
 [[rule]]
 id = "sim.process.pr-tracking-issue"
 category = "process"
-statement = "Every PR has a tracking issue in this repository, and the first line of its description is Fixes #ISSUE_NUMBER."
-rationale = "docs/engineering/skills/github-prs.md#same-repository-draft-prs-only"
-scope = [".github/pull_request_template.md"]
+statement = "The first line of every PR's description is Fixes #ISSUE_NUMBER, naming an open issue, not a pull request, in this repository; automated PRs open or reuse such an issue."
+rationale = "docs/engineering/skills/github-prs.md#the-fixes-line"
+scope = [".github/pull_request_template.md", ".github/workflows/pr-description.yml", ".github/scripts/check_pr_description.py", ".github/scripts/dependency-update-create-pr.sh", ".github/scripts/update-policyengine-package.sh"]
 tier = "mechanical"
-status = "doc-only"
+status = "enforced"
 autofix = false
 [rule.enforcer]
-kind = "none"
+kind = "workflow-job"
+step = "Check the first line and the tracking issue"
+[[rule.ci]]
+workflow = ".github/workflows/pr-description.yml"
+job = "pr-description"
+invocation = "check_pr_description.py"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.process.pr-tracking-issue/bad_event.json"
+good_fixture = "rules/fixtures/sim.process.pr-tracking-issue/good_event.json"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_pr_description_check.py::test_rule_proof_pr_tracking_issue"
+workflow = ".github/workflows/pr.yml"
+job = "test"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.process.same-repo-draft-prs"
