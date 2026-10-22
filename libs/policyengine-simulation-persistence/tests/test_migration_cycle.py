@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from alembic import command
 from migration_support import (
@@ -18,7 +20,7 @@ from policyengine_simulation_persistence import (
     read_schema_revision,
 )
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 pytestmark = pytest.mark.postgres
 
@@ -180,3 +182,23 @@ def test_a_failed_revision_leaves_nothing_applied(
             assert not inspect(connection).has_schema(SIMULATION_SCHEMA)
     finally:
         engine.dispose()
+
+
+def test_a_migration_waiting_for_a_lock_gives_up_instead_of_blocking(
+    disposable_database,
+) -> None:
+    """Writers queue behind a waiting migration, so it must not wait long."""
+    command.upgrade(alembic_config(), "head")
+    holder = _superuser_engine(disposable_database)
+    try:
+        with holder.begin() as connection:
+            connection.execute(
+                text("LOCK TABLE simulation.alembic_version IN ACCESS EXCLUSIVE MODE")
+            )
+            started = time.monotonic()
+            with pytest.raises(OperationalError, match="lock timeout"):
+                command.upgrade(alembic_config(), "head")
+            waited = time.monotonic() - started
+    finally:
+        holder.dispose()
+    assert waited < 30
