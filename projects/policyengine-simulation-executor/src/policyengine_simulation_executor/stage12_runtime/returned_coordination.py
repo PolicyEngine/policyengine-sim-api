@@ -145,6 +145,18 @@ class _ReturnedReportCoordination(ReportSimulationCoordination):
         record_failure_cause(self.runtime, error, detail.error_summary)
         return report_execution_error(self.report.evaluation_id, detail)
 
+    def stop_unfinished_children(self) -> None:
+        """Cancel every started, unfinished child through Modal.
+
+        The coordinator does this when it stops without a failure to report,
+        as when Modal cancels its own input: Modal does not cancel the calls
+        that input spawned.
+        """
+        self._stop_children(
+            set(self.calls) - set(self.descriptors),
+            reason="the coordinator stopped",
+        )
+
     @override
     def _record_dispatch_failure(
         self,
@@ -200,7 +212,10 @@ def coordinate_report_for_caller(
     that disagrees with the report, raises ``ValueError`` before any child
     starts. Any later failure stops the unfinished children through Modal, is
     reported once, and is raised as ``ReportExecutionError`` with the redacted
-    code and summary a Stage 12 report row would record.
+    code and summary a Stage 12 report row would record. When the coordinator
+    stops on a ``BaseException`` that is not an ``Exception``, such as the
+    ``InputCancellation`` Modal raises in a cancelled input, it cancels the
+    unfinished children through Modal and re-raises it unreported.
     """
     dependencies = dependencies or CoordinatorDependencies()
     # Open the shared child-wait window before any setup work.
@@ -229,4 +244,9 @@ def coordinate_report_for_caller(
     # artifact failure, and return it to the caller as a typed error.
     except Exception as error:  # noqa: BLE001  # every failure reaches the caller as a typed error with its redacted detail
         raise coordination.fail(error) from None
+    # Modal stops a cancelled coordinator by raising InputCancellation, a
+    # BaseException, in it.
+    except BaseException:
+        coordination.stop_unfinished_children()
+        raise
     return result.model_dump(mode="json")

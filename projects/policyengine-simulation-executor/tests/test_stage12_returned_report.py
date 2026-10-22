@@ -14,6 +14,7 @@ from hashlib import sha256
 from uuid import uuid4
 
 import pytest
+from fixtures.fake_modal import InputCancellation
 from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_contract.report_execution import (
@@ -560,6 +561,32 @@ def test_returned_report_wait_timeout_stops_every_child_through_modal(
         "coordinator starting."
     )
     assert [call.cancel_count for call in invoker.calls.values()] == [1, 1]
+
+
+@pytest.mark.parametrize("segmented", [True, False])
+def test_returned_report_stops_its_children_when_modal_cancels_it(
+    forbid_database,
+    segmented,
+) -> None:
+    # Modal stops the coordinator's own cancelled input by raising
+    # InputCancellation in it, and does not cancel the calls it spawned.
+    def cancel_the_coordinator():
+        msg = "Input was cancelled by user"
+        raise InputCancellation(msg)
+
+    invoker = ScriptedChildInvoker(during_wait={"reform": cancel_the_coordinator})
+    runtime = StageRecordingRuntime()
+
+    with pytest.raises(InputCancellation):
+        _coordinate_returned_report(
+            invoker,
+            report=_report_with_segmentation(segmented=segmented),
+            runtime=runtime,
+        )
+
+    assert [call.cancel_count for call in invoker.calls.values()] == [1, 1]
+    # A cancellation is not a report failure, so none is reported.
+    assert runtime.recorded_exceptions == []
 
 
 def test_returned_report_dispatch_failure_stops_the_started_child(
