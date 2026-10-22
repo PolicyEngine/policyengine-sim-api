@@ -588,6 +588,21 @@ def test_cloud_run_deployment_stops_when_a_runtime_secret_cannot_be_resolved(
     assert not Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"]).exists()
 
 
+def test_stage12_secrets_are_resolved_by_the_stage12_block_alone():
+    """The comparison path shares no deploy helper with the main path."""
+    script = Path(CLOUD_RUN_DEPLOY_SCRIPT).read_text(encoding="utf-8")
+    stage12_block = script.split('if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then', 1)[
+        1
+    ].split("\nfi\n", 1)[0]
+    main_path = script.replace(stage12_block, "")
+
+    assert "add_stage12_runtime_secret STAGE12_DATABASE_URL" in stage12_block
+    assert "add_runtime_secret " not in stage12_block
+    assert "add_stage12_runtime_secret " not in main_path.replace(
+        "add_stage12_runtime_secret() {", ""
+    )
+
+
 @pytest.mark.parametrize(
     ("configured", "expected"),
     [(None, "0"), ("", "0"), ("0", "0"), ("1", "1")],
