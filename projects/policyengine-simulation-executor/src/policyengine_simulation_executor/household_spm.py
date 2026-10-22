@@ -51,8 +51,25 @@ _SETTINGS_INVALID = "SPM_SETTINGS_INVALID"
 _SETTINGS_UNSUPPORTED = "SPM_SETTINGS_UNSUPPORTED"
 
 
+# The contract's SPM receipt model, which the main path shares, words these
+# errors differently from the Public API's model. The household path reports
+# the Public API's wording without changing the shared model.
+_PUBLIC_API_RECEIPT_MESSAGES = {
+    "SPM provenance years must use four-digit years": (
+        "years must contain four-digit calendar years"
+    ),
+    "SPM provenance years must be sorted and unique": "years must be sorted and unique",
+    "An SPM area receipt requires geography_id": (
+        "A metro SPM receipt requires geography_id"
+    ),
+    "Only an SPM area receipt accepts geography_id": (
+        "Only a metro SPM receipt accepts geography_id"
+    ),
+}
+
+
 def _readable_error(error: BaseException) -> str:
-    """Render a validation error as a client-facing message, without its URL."""
+    """Render a validation error as the Public API renders it, without its URL."""
     if not isinstance(error, ValidationError):
         return str(error)
     return "; ".join(
@@ -60,12 +77,16 @@ def _readable_error(error: BaseException) -> str:
             part
             for part in (
                 ".".join(str(item) for item in detail["loc"]),
-                detail["msg"].removeprefix("Value error, "),
+                _public_api_message(detail["msg"].removeprefix("Value error, ")),
             )
             if part
         )
         for detail in error.errors()
     )
+
+
+def _public_api_message(message: str) -> str:
+    return _PUBLIC_API_RECEIPT_MESSAGES.get(message, message)
 
 
 def _current_bundle() -> object:
