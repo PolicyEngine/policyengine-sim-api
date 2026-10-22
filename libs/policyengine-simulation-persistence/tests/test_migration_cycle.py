@@ -10,6 +10,7 @@ from migration_support import (
     MIGRATOR_ROLE,
     REPOSITORY_ROOT,
     alembic_config,
+    applied_revision,
     chain_config,
     migration_cycle_failures,
 )
@@ -17,21 +18,11 @@ from policyengine_simulation_persistence import (
     HEAD_REVISION,
     SIMULATION_SCHEMA,
     create_simulation_engine,
-    read_schema_revision,
 )
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 pytestmark = pytest.mark.postgres
-
-
-def _revision(database_url: str) -> str | None:
-    engine = create_simulation_engine(database_url)
-    try:
-        with engine.connect() as connection:
-            return read_schema_revision(connection)
-    finally:
-        engine.dispose()
 
 
 def _superuser_engine(database, **options):
@@ -45,10 +36,10 @@ def test_upgrade_check_downgrade_upgrade_cycle(disposable_database) -> None:
     config = alembic_config()
 
     assert migration_cycle_failures(config, check=True) == []
-    assert _revision(disposable_database.migrator_url) == HEAD_REVISION
+    assert applied_revision(disposable_database.migrator_url) == HEAD_REVISION
 
     command.downgrade(config, "base")
-    assert _revision(disposable_database.migrator_url) is None
+    assert applied_revision(disposable_database.migrator_url) is None
 
 
 def test_rule_proof_migration_cycle(disposable_database) -> None:
@@ -93,7 +84,7 @@ def test_the_version_table_lives_only_in_the_simulation_schema(
 
 
 def test_an_unmigrated_database_reports_no_revision(disposable_database) -> None:
-    assert _revision(disposable_database.migrator_url) is None
+    assert applied_revision(disposable_database.migrator_url) is None
 
 
 def _precreate_schema_without_database_create(database) -> None:
@@ -130,8 +121,8 @@ def test_a_precreated_schema_needs_no_database_create_privilege(
 
     command.upgrade(alembic_config(), "head")
 
-    assert _revision(disposable_database.migrator_url) == HEAD_REVISION
-    assert _revision(disposable_database.runtime_url) == HEAD_REVISION
+    assert applied_revision(disposable_database.migrator_url) == HEAD_REVISION
+    assert applied_revision(disposable_database.runtime_url) == HEAD_REVISION
 
 
 def test_the_runtime_role_reads_the_revision_but_cannot_change_the_schema(
@@ -139,7 +130,7 @@ def test_the_runtime_role_reads_the_revision_but_cannot_change_the_schema(
 ) -> None:
     command.upgrade(alembic_config(), "head")
 
-    assert _revision(disposable_database.runtime_url) == HEAD_REVISION
+    assert applied_revision(disposable_database.runtime_url) == HEAD_REVISION
     engine = create_simulation_engine(disposable_database.runtime_url)
     try:
         with (

@@ -7,6 +7,10 @@ from typing import TYPE_CHECKING
 
 from alembic import command
 from alembic.config import Config
+from policyengine_simulation_persistence import (
+    create_simulation_engine,
+    read_schema_revision,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -59,3 +63,13 @@ def migration_cycle_failures(config: Config, *, check: bool) -> list[str]:
         if failure is not None:
             return [failure]
     return []
+
+
+def applied_revision(database_url: str) -> str | None:
+    """Return the revision the database at ``database_url`` has applied."""
+    engine = create_simulation_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            return read_schema_revision(connection)
+    finally:
+        engine.dispose()

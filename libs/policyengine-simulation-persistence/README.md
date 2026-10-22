@@ -102,8 +102,8 @@ the same time rebases onto the new head after the first merges.
 ## Tests
 
 ```bash
-uv sync --extra test
-uv run pytest tests/
+uv sync --frozen --extra test
+uv run --frozen pytest tests/
 ```
 
 Tests marked `postgres` need a disposable PostgreSQL server. Point

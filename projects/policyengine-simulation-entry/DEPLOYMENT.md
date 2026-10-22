@@ -49,8 +49,9 @@ read it. Modal never receives either URL.
 image expects, under `simulation_database`. The database does not change the
 readiness status, because no old-gateway or Stage 12 route uses it. The
 candidate smoke check requires the two revisions to match, which shows that the
-runtime secret reached the revision and the migration ran. It asks again, up to
-six times, while a cold candidate has not reached its database yet; the stable and
+runtime secret reached the revision and the migration ran. While a cold
+candidate has not reached its database yet, it asks again, up to six requests
+in all; the stable and
 rollback checks do not, because an older image may run against a newer schema.
 The ownership rules and roles are described in
 `libs/policyengine-simulation-persistence/README.md`.
