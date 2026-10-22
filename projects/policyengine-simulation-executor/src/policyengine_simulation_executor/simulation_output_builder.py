@@ -49,34 +49,16 @@ if TYPE_CHECKING:
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
 
-@dataclass(frozen=True)
-class UKAreaSimulations:
-    """A baseline and reform on the dataset the bundle routes UK area regions to.
-
-    A UK national or nation-level run on a dataset without area codes builds
-    its constituency and local-authority breakdowns from this pair, which has
-    the same policies and nation filter, and from the authority boundaries
-    detected on that dataset. ``dataset`` is that loaded dataset and
-    ``dataset_name`` its bundle name; a local-area breakdown run reports both.
-    """
-
-    baseline: Any
-    reform: Any
-    local_authority_metadata: UKLocalAuthorityMetadata
-    dataset: Any
-    dataset_name: str
-
-
 @dataclass
 class SimulationOutputBuilder:
     """Assemble one year's macro output from a computed baseline and reform.
 
     Each output segment is built inside its own observability span when a
-    ``runtime`` is given. The UK constituency and local-authority breakdowns
-    come from ``uk_area_simulations`` when it is given, and otherwise from
-    ``baseline`` and ``reform``. ``omit_uk_area_breakdowns`` leaves them out:
-    only Stage 12 sets it, for a routed national report whose stored frames
-    carry no area codes.
+    ``runtime`` is given. ``omit_uk_area_breakdowns`` leaves the UK
+    constituency and local-authority breakdowns out, for a UK-wide or
+    nation-level run on a bundle that routes area regions to a local-area
+    dataset (``uk_area_breakdowns_omitted``); those results come from a
+    separate local-area breakdown run.
 
     ``serialize()`` builds a ``SingleYearMacroOutput``. A local-area breakdown
     run calls ``serialize_local_area_breakdown()`` instead: its ``baseline``
@@ -95,7 +77,6 @@ class SimulationOutputBuilder:
     resolved_region_code: str | None = None
     runtime: ObservabilityRuntime | None = None
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
-    uk_area_simulations: UKAreaSimulations | None = None
     omit_uk_area_breakdowns: bool = False
     progress: JobProgressReporter = NULL_JOB_PROGRESS
     _analysis: Any = field(default=None, init=False)
@@ -333,41 +314,22 @@ class SimulationOutputBuilder:
                 region_code=self.resolved_region_code,
             )
 
-    def _uk_area_breakdown_inputs(
-        self,
-    ) -> tuple[Any, Any, UKLocalAuthorityMetadata | None]:
-        """Return the baseline, reform and boundaries the UK area breakdowns use.
-
-        The impact analysis computes the run's own pair before any breakdown;
-        a separate area pair is computed here, on first use (``ensure()``
-        returns a computed simulation from policyengine.py's cache).
-        """
-        area = self.uk_area_simulations
-        if area is None:
-            return self.baseline, self.reform, self.uk_local_authority_metadata
-        area.baseline.ensure()
-        area.reform.ensure()
-        return area.baseline, area.reform, area.local_authority_metadata
-
     def _uk_geography_disclosure_output(
         self,
     ) -> simulation_output_geographic.UKGeographyDisclosureOutput | None:
         """Return UK area changes under disclosure control, computed once.
 
         Constituencies and local authorities go through one release, so the
-        disclosure check sees both. The release reads the pair the area
-        breakdowns use (see ``_uk_area_breakdown_inputs``). None for other
-        countries.
+        disclosure check sees both. None for other countries.
         """
         if self.country != "uk":
             return None
         if self._uk_geography_disclosure is None:
-            baseline, reform, _ = self._uk_area_breakdown_inputs()
             self._uk_geography_disclosure = (
                 simulation_output_geographic.compute_uk_geography_disclosure_output(
                     self.country,
-                    baseline,
-                    reform,
+                    self.baseline,
+                    self.reform,
                     year=self._simulation_year(),
                 )
             )
@@ -400,11 +362,10 @@ class SimulationOutputBuilder:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_LOCAL_AUTHORITY)):
             if self.omit_uk_area_breakdowns:
                 return None
-            metadata = self._uk_area_breakdown_inputs()[2]
             return simulation_output_geographic.build_uk_local_authority_impact(
                 self.country,
                 self._uk_geography_disclosure_output(),
-                uk_local_authority_metadata=metadata,
+                uk_local_authority_metadata=self.uk_local_authority_metadata,
             )
 
     def _model_version(self) -> str:

@@ -214,6 +214,31 @@ _NATIONAL_FILE = "microcosm_uk_2024_25.h5"
 _LOCAL_AREA_FILE = "microcosm_uk_2024_25_dense.h5"
 
 
+@pytest.mark.parametrize(
+    ("country", "region", "routed", "omitted"),
+    [
+        ("uk", "uk", True, True),
+        ("uk", "country/wales", True, True),
+        ("uk", "uk", False, False),
+        ("uk", "country/wales", False, False),
+        ("uk", "constituency/E14001063", True, False),
+        ("uk", "local_authority/E06000063", True, False),
+        ("us", "us", True, False),
+    ],
+)
+def test_area_breakdowns_are_omitted_only_from_routed_uk_wide_and_nation_runs(
+    monkeypatch, country: str, region: str, *, routed: bool, omitted: bool
+) -> None:
+    from policyengine_simulation_executor import uk_local_authority_metadata
+
+    _routes_area_regions(monkeypatch, routed=routed)
+
+    assert (
+        uk_local_authority_metadata.uk_area_breakdowns_omitted(country, region)
+        is omitted
+    )
+
+
 def _bundle_routes(monkeypatch, region_datasets: dict[str, str]) -> None:
     """Install a UK manifest routing each region type to a bundle file."""
     monkeypatch.setattr(

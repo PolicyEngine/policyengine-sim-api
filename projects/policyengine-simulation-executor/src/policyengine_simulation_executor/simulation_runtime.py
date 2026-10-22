@@ -45,7 +45,6 @@ from policyengine_simulation_executor.release_bundle import (
 )
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
-    UKAreaSimulations,
 )
 
 if TYPE_CHECKING:
@@ -56,6 +55,9 @@ if TYPE_CHECKING:
     from policyengine.core.scoping_strategy import ScopingStrategy
     from policyengine.provenance.manifest import ArtifactPathReference
     from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.uk_geography import (
+        UKLocalAuthorityMetadata,
+    )
     from policyengine_simulation_observability.telemetry import TelemetryEnvelope
 
     from policyengine_simulation_executor.stage_reporting_simulation import (
@@ -98,6 +100,24 @@ class DatasetSelection:
     name: str
     uri: str
     is_default: bool
+
+
+@dataclass(frozen=True)
+class UKAreaSimulations:
+    """A baseline and reform on the dataset the bundle routes UK area regions to.
+
+    A local-area breakdown run builds its constituency and local-authority
+    impacts from this pair, with the request's policies and nation filter,
+    and from the authority boundaries detected on that dataset. ``dataset``
+    is the loaded dataset and ``dataset_name`` its bundle name, which the
+    breakdown reports.
+    """
+
+    baseline: Any
+    reform: Any
+    local_authority_metadata: UKLocalAuthorityMetadata
+    dataset: Any
+    dataset_name: str
 
 
 def _normalize_credentials_blob(creds_json: str) -> str:
@@ -903,14 +923,12 @@ def _uk_area_simulations(
     region: RegionResolution,
     policies: tuple[dict[str, Any] | None, dict[str, Any] | None],
 ) -> UKAreaSimulations:
-    """Build the UK area breakdowns' baseline and reform on the routed dataset.
+    """Build a local-area breakdown's baseline and reform on the routed dataset.
 
-    A UK national or nation-level run may load a dataset without area codes
-    only when the bundle routes constituency and local-authority regions to
-    another dataset. Its two area breakdowns then come from this pair: the
-    run's baseline and reform policies and its nation filter, applied to the
-    routed dataset, whose area codes are checked as it loads. The national
-    figures still come from the run's own pair.
+    The bundle routes constituency and local-authority regions to a
+    local-area dataset. The pair applies the request's baseline and reform
+    policies and its UK-wide or nation filter to that dataset, whose area and
+    disclosure columns are checked as it loads.
     """
     from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
         detect_uk_area_dataset_metadata,
@@ -1131,6 +1149,7 @@ def _run_simulation_impl_core(
         )
     from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
         detect_uk_local_authority_metadata,
+        uk_area_breakdowns_omitted,
     )
 
     uk_local_authority_metadata = detect_uk_local_authority_metadata(
@@ -1172,20 +1191,6 @@ def _run_simulation_impl_core(
     _report_calculation_start(baseline, progress, JobStage.BASELINE)
     _report_calculation_start(reform, progress, JobStage.REFORM)
 
-    # Detection returns None for a UK dataset only when it carries no area
-    # codes and the bundle routes area regions to another dataset.
-    uk_area_simulations = (
-        _uk_area_simulations(
-            simulation_params,
-            runtime=runtime,
-            country_module=country_module,
-            region=region_resolution,
-            policies=(baseline_policy, reform_policy),
-        )
-        if country == "uk" and uk_local_authority_metadata is None
-        else None
-    )
-
     logger.info("Calculating economic impact")
     builder = SimulationOutputBuilder(
         country=country,
@@ -1198,7 +1203,11 @@ def _run_simulation_impl_core(
         resolved_region_code=region_resolution.code,
         runtime=runtime,
         uk_local_authority_metadata=uk_local_authority_metadata,
-        uk_area_simulations=uk_area_simulations,
+        # A routed UK-wide or nation run computes no area results; a
+        # breakdown=local_areas run on the local-area dataset does.
+        omit_uk_area_breakdowns=uk_area_breakdowns_omitted(
+            country, region_resolution.code
+        ),
         progress=progress,
     )
     output = builder.serialize()

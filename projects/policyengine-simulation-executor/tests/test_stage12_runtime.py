@@ -1884,6 +1884,12 @@ def test_uk_aggregate_omits_area_breakdowns_only_for_routed_national_reports(
     )
 
     assert observed["omit_uk_area_breakdowns"] is omitted
+    # The runtime omits them from exactly the same runs.
+    from policyengine_simulation_executor import uk_local_authority_metadata
+
+    assert uk_local_authority_metadata.uk_area_breakdowns_omitted("uk", region) is (
+        omitted
+    )
 
 
 def test_aggregate_report_wraps_builder_output_with_report_provenance(

@@ -185,7 +185,7 @@ def build_aggregate_report(
         _runtime_policy,
     )
     from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
-        uk_area_codes_required,
+        uk_area_breakdowns_omitted,
     )
 
     country = report.baseline.geography.country
@@ -238,9 +238,8 @@ def build_aggregate_report(
         resolved_data_version=report.baseline.bundle.dataset.artifact_revision,
         resolved_region_code=report.baseline.geography.region,
         uk_local_authority_metadata=uk_local_authority_metadata,
-        omit_uk_area_breakdowns=(
-            country == "uk"
-            and not uk_area_codes_required(report.baseline.geography.region)
+        omit_uk_area_breakdowns=uk_area_breakdowns_omitted(
+            country, report.baseline.geography.region
         ),
     ).serialize()
     output.update(
