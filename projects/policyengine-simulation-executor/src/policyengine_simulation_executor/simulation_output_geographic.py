@@ -401,7 +401,12 @@ def _uk_areas_inside(household: pd.DataFrame) -> _UKAreasInside:
         "household_net_income"
     ].count()
     pairs: set[tuple[str, str]] = set()
-    for (first_raw, second_raw), count in counts.items():
+    for key, count in counts.items():
+        # Grouping by two columns keys each count by a pair of area codes.
+        if not isinstance(key, tuple):
+            msg = f"UK area pair counts are keyed by {key!r}, not a pair of codes"
+            raise TypeError(msg)
+        first_raw, second_raw = key
         if float(cast("float", count)) > 0:
             pairs.add(
                 (_normalised_area_code(first_raw), _normalised_area_code(second_raw))
