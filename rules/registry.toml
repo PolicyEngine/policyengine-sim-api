@@ -450,12 +450,18 @@ nodes = [
   "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_does_not_interpolate_github_values_in_shell",
   "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_escapes_environment_and_pins_secret_versions",
   "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_stops_when_a_runtime_secret_cannot_be_resolved",
+  "tests/test_deployment_assets_cloud_run.py::test_cloud_run_deployment_resolves_each_secret_in_its_own_assignment",
   "tests/test_deployment_assets_cloud_run.py::test_stage12_secrets_are_resolved_by_the_stage12_block_alone",
 ]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
 invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.deploy.workflow-shell-safety/bad_deploy_script.sh"
+good_fixture = "rules/fixtures/sim.deploy.workflow-shell-safety/good_deploy_script.sh"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_deployment_assets_cloud_run.py::test_rule_proof_workflow_shell_safety"
 
 [[rule]]
 id = "sim.deploy.revision-tags-valid"
@@ -706,6 +712,11 @@ nodes = [
 workflow = ".github/workflows/pr.yml"
 job = "test"
 invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.deploy.container-context-minimal/bad.dockerignore"
+good_fixture = "rules/fixtures/sim.deploy.container-context-minimal/good.dockerignore"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_deployment_assets_traffic.py::test_rule_proof_container_context_minimal"
 
 [[rule]]
 id = "sim.deploy.docker-images-build"

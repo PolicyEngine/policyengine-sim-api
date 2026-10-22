@@ -10,10 +10,12 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from deployment_rule_checks import SECRET_RESOLUTION, combined_secret_resolutions
 from test_deployment_assets_support import (
     CLOUD_RUN_DEPLOY_SCRIPT,
     DEPLOY_WORKFLOW,
     DOCKERFILE,
+    REPOSITORY_ROOT,
     REUSABLE_DEPLOY_WORKFLOW,
     STAGE12_DEPLOY_WORKFLOW,
 )
@@ -191,6 +193,30 @@ def test_cloud_run_deployment_stops_when_a_runtime_secret_cannot_be_resolved(
     assert result.returncode != 0
     assert "invalid Secret Manager reference" in result.stderr
     assert not Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"]).exists()
+
+
+def test_cloud_run_deployment_resolves_each_secret_in_its_own_assignment():
+    script = Path(CLOUD_RUN_DEPLOY_SCRIPT).read_text(encoding="utf-8")
+
+    assert SECRET_RESOLUTION in script
+    assert combined_secret_resolutions(script) == []
+
+
+def test_rule_proof_workflow_shell_safety():
+    """Proof for rule sim.deploy.workflow-shell-safety (rules/registry.toml)."""
+    fixtures = (
+        REPOSITORY_ROOT / "rules" / "fixtures" / ("sim.deploy.workflow-shell-safety")
+    )
+
+    assert combined_secret_resolutions(
+        (fixtures / "bad_deploy_script.sh").read_text(encoding="utf-8")
+    ) == ["runtime_secrets=("]
+    assert (
+        combined_secret_resolutions(
+            (fixtures / "good_deploy_script.sh").read_text(encoding="utf-8")
+        )
+        == []
+    )
 
 
 def test_stage12_secrets_are_resolved_by_the_stage12_block_alone():
