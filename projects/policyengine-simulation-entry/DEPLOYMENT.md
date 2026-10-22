@@ -33,9 +33,11 @@ qualification uses Cloud Run's generated tagged revision URL and does not
 require a custom domain.
 
 The `prod` environment follows the same sequence automatically, but cannot
-begin until every `beta` deployment, routing, integration, authentication, and
-promotion job has succeeded. Both environments' tests use the tagged candidate
-URL, so the currently serving revision remains unchanged during qualification.
+begin until every `beta` deployment, routing, integration, authentication,
+promotion, and revision clean-up job has succeeded, so a failed staging
+clean-up also stops the production deployment. Both environments' tests use
+the tagged candidate URL, so the currently serving revision remains unchanged
+during qualification.
 
 ## Promotion and rollback
 
