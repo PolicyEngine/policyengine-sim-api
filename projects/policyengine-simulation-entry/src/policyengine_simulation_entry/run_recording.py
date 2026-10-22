@@ -3,7 +3,8 @@
 Each Simulation Entrypoint instance runs one loop. On every pass it:
 
 1. fails runs and comparison steps left ``dispatching`` for ten minutes, so
-   they can be submitted again;
+   they can be submitted again, and pending comparison steps whose baseline
+   or reform run failed, since they can never start;
 2. claims the running calls that are due a check, by moving their next check
    one lease ahead, so instances do not check the same call at once;
 3. asks Modal about each claimed call without waiting, and records what it
@@ -173,6 +174,10 @@ class RecordingTransitions(Protocol):
         """Fail runs and comparison steps left dispatching."""
         ...
 
+    def fail_comparisons_of_failed_runs(self) -> tuple[UUID, ...]:
+        """Fail pending comparison steps whose simulation runs failed."""
+        ...
+
 
 @dataclass
 class RecordingPass:
@@ -184,11 +189,12 @@ class RecordingPass:
     still_running: int = 0
     not_reached: int = 0
     abandoned: int = 0
+    comparisons_without_runs: int = 0
 
     @property
     def found_work(self) -> bool:
         """Whether the pass checked or failed anything."""
-        return bool(self.checked or self.abandoned)
+        return bool(self.checked or self.abandoned or self.comparisons_without_runs)
 
 
 @dataclass(frozen=True)
@@ -234,24 +240,7 @@ class RunRecorder:
     async def record_due_outcomes(self) -> RecordingPass:
         """Run one pass: fail abandoned dispatches, then check every due call."""
         recording = RecordingPass()
-        abandoned = await asyncio.to_thread(
-            lambda: self.transitions.fail_abandoned_dispatches(
-                claimed_before=self.clock() - DISPATCH_ABANDONED_AFTER
-            )
-        )
-        recording.abandoned = len(abandoned.simulation_run_ids) + len(
-            abandoned.report_run_ids
-        )
-        if recording.abandoned:
-            logger.warning(
-                "simulation_run_dispatches_abandoned",
-                extra={
-                    "simulation_run_ids": [
-                        str(i) for i in abandoned.simulation_run_ids
-                    ],
-                    "report_run_ids": [str(i) for i in abandoned.report_run_ids],
-                },
-            )
+        await self._fail_stopped_work(recording)
         calls = await asyncio.to_thread(
             lambda: self.transitions.claim_due_simulation_calls(
                 limit=CLAIM_BATCH_SIZE, lease=CHECK_LEASE
@@ -279,6 +268,42 @@ class RunRecorder:
             )
         )
         return recording
+
+    async def _fail_stopped_work(self, recording: RecordingPass) -> None:
+        """Fail dispatches that stopped, and comparisons that can never start."""
+        abandoned = await asyncio.to_thread(
+            lambda: self.transitions.fail_abandoned_dispatches(
+                claimed_before=self.clock() - DISPATCH_ABANDONED_AFTER
+            )
+        )
+        recording.abandoned = len(abandoned.simulation_run_ids) + len(
+            abandoned.report_run_ids
+        )
+        if recording.abandoned:
+            logger.warning(
+                "simulation_run_dispatches_abandoned",
+                extra={
+                    "simulation_run_ids": [
+                        str(run_id) for run_id in abandoned.simulation_run_ids
+                    ],
+                    "report_run_ids": [
+                        str(report_run_id) for report_run_id in abandoned.report_run_ids
+                    ],
+                },
+            )
+        without_runs = await asyncio.to_thread(
+            self.transitions.fail_comparisons_of_failed_runs
+        )
+        recording.comparisons_without_runs = len(without_runs)
+        if without_runs:
+            logger.warning(
+                "report_run_comparisons_failed_with_their_runs",
+                extra={
+                    "report_run_ids": [
+                        str(report_run_id) for report_run_id in without_runs
+                    ]
+                },
+            )
 
     def _simulation_handlers(
         self, call: DueSimulationCall

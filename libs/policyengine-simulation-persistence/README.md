@@ -52,6 +52,16 @@ and takes the catalog version and year from them; a report's status is its
 newest report run's. The runtime role may read, insert and update runs but
 not delete them.
 
+`RunTransitions` makes every status change one conditional update on the
+expected status, so a second writer changes nothing: only the caller that
+moves runs from `pending` to `dispatching` starts their Modal call, the runs
+one call computes change together, the recording loop claims a due call by
+moving its next check time, results are written in the transaction that
+marks a run succeeded, and dispatches left `dispatching` (and comparison
+steps whose simulation run failed) are failed so the work can be submitted
+again. A comparison step can start only once both of its simulation runs
+have succeeded; starting it is left to the stage 2 report path.
+
 ## Ownership rules
 
 These rules are registered in `rules/registry.toml` and checked by

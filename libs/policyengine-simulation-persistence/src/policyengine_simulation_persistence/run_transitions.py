@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import and_, exists, select, update
+from sqlalchemy import and_, exists, or_, select, update
 
 from policyengine_simulation_persistence.run_store import utc_now
 from policyengine_simulation_persistence.runs import (
@@ -71,6 +71,8 @@ class RunErrorCode(StrEnum):
     INVALID_RESULT = "invalid_result"
     # No recorder handles results of this kind of run.
     NO_RESULT_RECORDER = "no_result_recorder"
+    # A comparison step whose baseline or reform simulation run failed.
+    SIMULATION_RUN_FAILED = "simulation_run_failed"
 
 
 @dataclass(frozen=True)
@@ -511,6 +513,47 @@ class RunTransitions:
             "comparison_completed_at": self._clock(),
             "comparison_next_check_at": None,
         }
+
+    def fail_comparisons_of_failed_runs(self) -> tuple[UUID, ...]:
+        """Fail pending comparison steps whose baseline or reform run failed.
+
+        Such a step can never start, so it fails with ``simulation_run_failed``
+        and its report run's status says so. Return the report runs changed.
+        """
+        baseline = simulation_runs.alias("failed_baseline_run")
+        reform = simulation_runs.alias("failed_reform_run")
+        either_run_failed = or_(
+            exists().where(
+                and_(
+                    baseline.c.id == report_runs.c.baseline_simulation_run_id,
+                    baseline.c.status == RunStatus.FAILED.value,
+                )
+            ),
+            exists().where(
+                and_(
+                    reform.c.id == report_runs.c.reform_simulation_run_id,
+                    reform.c.status == RunStatus.FAILED.value,
+                )
+            ),
+        )
+        failure = self._comparison_failure(
+            RunError(
+                RunErrorCode.SIMULATION_RUN_FAILED,
+                "A simulation run this comparison needs failed.",
+            )
+        )
+        with self.engine.begin() as connection:
+            return tuple(
+                connection.execute(
+                    update(report_runs)
+                    .where(
+                        report_runs.c.comparison_status == RunStatus.PENDING.value,
+                        either_run_failed,
+                    )
+                    .values(updated_at=self._clock(), **failure)
+                    .returning(report_runs.c.id)
+                ).scalars()
+            )
 
     # --- Dispatches that never finished ------------------------------------
 
