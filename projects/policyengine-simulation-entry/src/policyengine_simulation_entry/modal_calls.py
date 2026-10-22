@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import grpclib.exceptions
 import modal
 from policyengine_simulation_persistence import RunError, RunErrorCode
 
@@ -117,13 +118,20 @@ class ModalCallDispatcher:
         await modal.FunctionCall.from_id(modal_call_id).cancel.aio()
 
 
-# Problems reaching Modal: the call's state is unknown, so ask again later.
+# Problems between this client and Modal: the call's state is unknown, so ask
+# again later. Errors the worker raised come back as their own types (or
+# RemoteError, InternalFailure, FunctionTimeoutError) and fail the run.
 TRANSIENT_MODAL_ERRORS: tuple[type[Exception], ...] = (
     modal.exception.ConnectionError,
     modal.exception.AuthError,
+    modal.exception.PermissionDeniedError,
     modal.exception.ServiceError,
     modal.exception.ResourceExhaustedError,
     modal.exception.InternalError,
+    modal.exception.VersionError,
+    modal.exception.ClientClosed,
+    grpclib.exceptions.GRPCError,
+    grpclib.exceptions.StreamTerminatedError,
 )
 
 

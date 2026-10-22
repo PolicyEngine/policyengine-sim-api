@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import grpclib.const
+import grpclib.exceptions
 import modal
 import pytest
 from policyengine_simulation_entry import modal_calls
@@ -266,8 +268,21 @@ def test_a_failed_call_records_only_the_failure_type(monkeypatch, raised, code) 
     [
         modal.exception.ConnectionError("unreachable"),
         modal.exception.ServiceError("unavailable"),
+        modal.exception.PermissionDeniedError("token revoked"),
+        modal.exception.VersionError("client too old"),
+        modal.exception.ClientClosed("closed"),
+        grpclib.exceptions.StreamTerminatedError("stream reset"),
+        grpclib.exceptions.GRPCError(grpclib.const.Status.UNAVAILABLE, "down"),
     ],
-    ids=["connection", "service"],
+    ids=[
+        "connection",
+        "service",
+        "permission",
+        "version",
+        "client-closed",
+        "stream-terminated",
+        "grpc",
+    ],
 )
 def test_a_modal_problem_is_retried_later(monkeypatch, raised) -> None:
     with pytest.raises(CallInspectionError):
