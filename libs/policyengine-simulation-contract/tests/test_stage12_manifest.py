@@ -23,6 +23,7 @@ from policyengine_simulation_contract.stage12_manifest import (
     Stage12CacheRelease,
     V2CountryWorker,
     V2ManifestLoader,
+    V2VersionManifest,
     V2WorkerValidation,
     V2WorkerVersion,
     assert_separate_manifest_names,
@@ -477,6 +478,90 @@ def test_a_household_only_country_leaves_schema_1_readers_on_their_manifest() ->
     assert worker.economy_worker("us") is not None
 
 
+def _validated_on(worker: V2WorkerVersion, day: int) -> V2WorkerVersion:
+    """Return ``worker`` as validated on ``day`` of September 2026."""
+    validation = worker.validation.model_copy(
+        update={"validated_at": datetime(2026, 9, day, tzinfo=UTC)}
+    )
+    return worker.model_copy(update={"validation": validation})
+
+
+def _write_as_a_schema_1_publisher(
+    store: FakeStore, *workers: V2WorkerVersion, default_version: str
+) -> None:
+    """Write the older keys as a publisher released before schema 2 writes them."""
+    manifest = V2VersionManifest(
+        generation="older-publisher",
+        default_version=default_version,
+        versions={worker.bundle.policyengine_version: worker for worker in workers},
+    )
+    store[ACTIVE_MANIFEST_KEY] = schema_1_manifest_payload(manifest, include_cache=True)
+    store[PRE_CACHE_MANIFEST_KEY] = schema_1_manifest_payload(
+        manifest, include_cache=False
+    )
+
+
+def test_a_publish_keeps_what_an_older_publisher_wrote_after_it() -> None:
+    # A deployment of code released before schema 2 (for example after a
+    # revert) redeploys 5.2.0 without household functions and writes only the
+    # older keys. The next schema 2 publish must start from that, not from
+    # its own stale document.
+    store = FakeStore()
+    publish_v2_manifest(
+        store=store,
+        worker=_validated_on(_worker(with_household_functions=True), 14),
+    )
+    _write_as_a_schema_1_publisher(
+        store, _validated_on(_worker(), 20), default_version="5.2.0"
+    )
+
+    manifest = publish_v2_manifest(
+        store=store,
+        worker=_validated_on(_worker("5.3.0", with_household_functions=True), 25),
+    )
+
+    assert sorted(manifest.versions) == ["5.2.0", "5.3.0"]
+    assert manifest.versions["5.2.0"].household_worker("us") is None
+    assert manifest.versions["5.2.0"].validation.validated_at.day == 20
+    assert manifest.default_version == "5.3.0"
+
+
+def test_a_publish_keeps_the_default_of_the_latest_document() -> None:
+    store = FakeStore()
+    publish_v2_manifest(store=store, worker=_validated_on(_worker("5.3.0"), 14))
+    # An older publisher later made 5.2.0 the default.
+    _write_as_a_schema_1_publisher(
+        store,
+        _validated_on(_worker("5.3.0"), 14),
+        _validated_on(_worker("5.2.0"), 20),
+        default_version="5.2.0",
+    )
+
+    manifest = publish_v2_manifest(
+        store=store, worker=_validated_on(_worker("5.2.5"), 25)
+    )
+
+    # 5.2.5 is newer than the latest default, 5.2.0, so it becomes the default.
+    assert manifest.default_version == "5.2.5"
+    assert sorted(manifest.versions) == ["5.2.0", "5.2.5", "5.3.0"]
+
+
+def test_older_keys_left_behind_by_a_schema_2_publish_change_nothing() -> None:
+    store = FakeStore({ACTIVE_MANIFEST_KEY: _schema_1_document(include_cache=True)})
+    publish_v2_manifest(
+        store=store, worker=_validated_on(_worker(household_only=("uk",)), 14)
+    )
+
+    manifest = publish_v2_manifest(
+        store=store,
+        worker=_validated_on(_worker("5.3.0", household_only=("uk",)), 25),
+    )
+
+    assert sorted(manifest.versions) == ["5.1.0", "5.2.0", "5.3.0"]
+    assert manifest.versions["5.2.0"].economy_worker("uk") is None
+    assert manifest.default_version == "5.3.0"
+
+
 def test_parse_v2_manifest_rejects_unknown_schema_versions() -> None:
     document = _schema_1_document(include_cache=True)
     document["schema_version"] = 3
@@ -699,14 +784,6 @@ def test_a_schema_2_document_left_behind_by_an_older_publish_is_not_read() -> No
     assert loaded.versions["5.3.0"].household_worker("us") is None
     assert sorted(manifest.versions) == ["5.3.0", "5.4.0"]
     assert store.values[SCHEMA_2_MANIFEST_KEY] != stale
-
-
-def _validated_on(worker: V2WorkerVersion, day: int) -> V2WorkerVersion:
-    """Return ``worker`` as validated on ``day`` of September 2026."""
-    validation = worker.validation.model_copy(
-        update={"validated_at": datetime(2026, 9, day, tzinfo=UTC)}
-    )
-    return worker.model_copy(update={"validation": validation})
 
 
 def test_a_household_only_manifest_is_read_until_an_older_publish_follows() -> None:
