@@ -1,4 +1,0 @@
-# Proof fixture: the baseline omits the test_calculate.py error in
-# pyright.json, and lists the conftest.py error twice although it occurs once.
-projects/policyengine-apis-integ/tests/simulation/conftest.py :: reportArgumentType :: Argument of type "Client | AuthenticatedClient" cannot be assigned to parameter "client" of type "AuthenticatedClient" in function "sync_detailed"
-projects/policyengine-apis-integ/tests/simulation/conftest.py :: reportArgumentType :: Argument of type "Client | AuthenticatedClient" cannot be assigned to parameter "client" of type "AuthenticatedClient" in function "sync_detailed"
