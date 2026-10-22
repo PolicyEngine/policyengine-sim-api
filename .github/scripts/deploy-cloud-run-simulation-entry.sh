@@ -70,6 +70,15 @@ add_runtime_secret() {
   runtime_secrets+=("${variable_name}=${resolved_reference}")
 }
 
+# The Stage 12 comparison path's own copy, so it shares no deploy helper with
+# the main path and is removed with it.
+add_stage12_runtime_secret() {
+  local variable_name="$1"
+  local resolved_reference
+  resolved_reference="$(resolve_secret_reference "$2")"
+  runtime_secrets+=("${variable_name}=${resolved_reference}")
+}
+
 required_variables=(
   PROJECT_ID
   REGION
@@ -151,9 +160,9 @@ if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then
     || fail "STAGE12_ARTIFACT_BUCKET_VALUE is invalid"
   validate_secret_reference "${STAGE12_DATABASE_URL_SECRET_NAME}"
 
-  add_runtime_secret MODAL_TOKEN_ID "${MODAL_TOKEN_ID_SECRET_NAME}"
-  add_runtime_secret MODAL_TOKEN_SECRET "${MODAL_TOKEN_SECRET_SECRET_NAME}"
-  add_runtime_secret STAGE12_DATABASE_URL "${STAGE12_DATABASE_URL_SECRET_NAME}"
+  add_stage12_runtime_secret MODAL_TOKEN_ID "${MODAL_TOKEN_ID_SECRET_NAME}"
+  add_stage12_runtime_secret MODAL_TOKEN_SECRET "${MODAL_TOKEN_SECRET_SECRET_NAME}"
+  add_stage12_runtime_secret STAGE12_DATABASE_URL "${STAGE12_DATABASE_URL_SECRET_NAME}"
 fi
 
 runtime_environment_file="${RUNNER_TEMP}/simulation-entry-runtime-environment.yaml"
