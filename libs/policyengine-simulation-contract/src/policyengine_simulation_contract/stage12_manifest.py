@@ -212,6 +212,20 @@ class V2WorkerVersion(StrictManifestModel):
             None,
         )
 
+    def economy_simulation_callable(self, country: str) -> str:
+        """Return the callable that runs one of ``country``'s report simulations.
+
+        Raises LookupError when the manifest does not mark ``country`` as
+        economy-capable.
+        """
+        worker = self.economy_worker(country)
+        if worker is None or worker.single_simulation_callable is None:
+            msg = (
+                f"country {country!r} is not economy-capable in {self.application_name}"
+            )
+            raise LookupError(msg)
+        return worker.single_simulation_callable
+
     def household_worker(self, country: str) -> V2CountryWorker | None:
         """Return ``country``'s worker when it has a household function."""
         return next(
