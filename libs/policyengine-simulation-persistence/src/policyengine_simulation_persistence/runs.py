@@ -339,6 +339,12 @@ Index(
     report_runs.c.comparison_next_check_at,
     postgresql_where=report_runs.c.comparison_status == RunStatus.RUNNING.value,
 )
+# Each recording pass looks for pending comparison steps whose run failed.
+Index(
+    "ix_report_runs_pending_comparisons",
+    report_runs.c.id,
+    postgresql_where=report_runs.c.comparison_status == RunStatus.PENDING.value,
+)
 Index(
     "ix_report_runs_comparisons_dispatching",
     report_runs.c.updated_at,
