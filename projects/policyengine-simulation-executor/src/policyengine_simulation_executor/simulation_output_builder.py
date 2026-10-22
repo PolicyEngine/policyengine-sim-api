@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -25,7 +24,6 @@ from policyengine_simulation_executor.job_progress import (
     NULL_JOB_PROGRESS,
     JobProgressReporter,
 )
-from policyengine_simulation_executor.release_bundle import get_country_release_bundle
 from policyengine_simulation_executor.simulation_macro_output import (
     BudgetaryImpact,
     CliffImpactOutput,
@@ -42,8 +40,15 @@ from policyengine_simulation_executor.simulation_macro_output import (
     PovertyOutput,
     SingleYearMacroOutput,
 )
+from policyengine_simulation_executor.simulation_output_provenance import (
+    output_data_version,
+    output_model_version,
+    output_span,
+)
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
@@ -82,7 +87,7 @@ class SimulationOutputBuilder:
         self.country = self.country.lower()
 
     def _span(self, name: str) -> AbstractContextManager[object]:
-        return self.runtime.span(name) if self.runtime is not None else nullcontext()
+        return output_span(self.runtime, name)
 
     @property
     def analysis(self) -> object:
@@ -320,22 +325,13 @@ class SimulationOutputBuilder:
             )
 
     def _model_version(self) -> str:
-        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_MODEL_VERSION)):
-            return str(getattr(self.country_module.model, "version", ""))
+        return output_model_version(self.country_module, runtime=self.runtime)
 
     def _data_version(self) -> str:
-        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_DATA_VERSION)):
-            if self.resolved_data_version:
-                return str(self.resolved_data_version)
-            if self.simulation_params.get("data_version"):
-                return str(self.simulation_params["data_version"])
-            metadata = getattr(self.dataset, "metadata", {}) or {}
-            for key in ("data_version", "version"):
-                value = metadata.get(key)
-                if value is not None:
-                    return str(value)
-            try:
-                return get_country_release_bundle(self.country).data_version
-            except ValueError:
-                pass
-            return ""
+        return output_data_version(
+            self.country,
+            runtime=self.runtime,
+            resolved=self.resolved_data_version,
+            simulation_params=self.simulation_params,
+            dataset=self.dataset,
+        )

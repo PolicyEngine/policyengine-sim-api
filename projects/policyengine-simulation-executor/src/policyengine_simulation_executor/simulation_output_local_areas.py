@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +22,11 @@ from policyengine_simulation_executor.simulation_macro_output import (
     GeographicImpactOutput,
     LocalAreaBreakdownOutput,
     LocalAuthorityImpactRecord,
+)
+from policyengine_simulation_executor.simulation_output_provenance import (
+    output_data_version,
+    output_model_version,
+    output_span,
 )
 
 if TYPE_CHECKING:
@@ -74,9 +78,6 @@ class LocalAreaBreakdownBuilder:
     runtime: ObservabilityRuntime | None = None
     progress: JobProgressReporter = NULL_JOB_PROGRESS
 
-    def _span(self, name: str) -> AbstractContextManager[object]:
-        return self.runtime.span(name) if self.runtime is not None else nullcontext()
-
     def build(self) -> LocalAreaBreakdownOutput:
         """Build the UK constituency and local-authority impacts alone.
 
@@ -88,8 +89,12 @@ class LocalAreaBreakdownBuilder:
         self.baseline.ensure()
         self.reform.ensure()
         self.progress.enter(JobStage.OUTPUTS)
-        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_BUILD)):
-            with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_CONSTITUENCY)):
+        with output_span(
+            self.runtime, ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_BUILD)
+        ):
+            with output_span(
+                self.runtime, ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_CONSTITUENCY)
+            ):
                 disclosure = (
                     simulation_output_geographic.compute_uk_geography_disclosure_output(
                         _COUNTRY, self.baseline, self.reform, year=self.year
@@ -100,7 +105,9 @@ class LocalAreaBreakdownBuilder:
                         _COUNTRY, disclosure
                     )
                 )
-            with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_LOCAL_AUTHORITY)):
+            with output_span(
+                self.runtime, ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_LOCAL_AUTHORITY)
+            ):
                 local_authority_impact = (
                     simulation_output_geographic.build_uk_local_authority_impact(
                         _COUNTRY,
@@ -113,12 +120,16 @@ class LocalAreaBreakdownBuilder:
                 raise ValueError(msg)
             return LocalAreaBreakdownOutput(
                 kind="local_areas",
-                model_version=self._model_version(),
+                model_version=output_model_version(
+                    self.country_module, runtime=self.runtime
+                ),
                 policyengine_version=(
                     get_country_release_bundle(_COUNTRY).policyengine_version
                 ),
                 dataset=self.dataset_name,
-                data_version=self._data_version(),
+                data_version=output_data_version(
+                    _COUNTRY, runtime=self.runtime, resolved=self.data_version
+                ),
                 constituency_impact=_area_records(
                     constituency_impact, ConstituencyImpactRecord
                 ),
@@ -129,23 +140,15 @@ class LocalAreaBreakdownBuilder:
 
     def serialize(self) -> dict[str, Any]:
         """Build the breakdown and dump it to JSON-compatible data."""
-        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.CALCULATION)):
+        with output_span(self.runtime, ANNUAL_IMPACT_STAGES.name(Stage.CALCULATION)):
             output = self.build()
         with (
-            self._span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)),
-            self._span(ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_MODEL_DUMP)),
+            output_span(
+                self.runtime, ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)
+            ),
+            output_span(
+                self.runtime,
+                ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_MODEL_DUMP),
+            ),
         ):
             return output.model_dump(mode="json")
-
-    def _model_version(self) -> str:
-        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_MODEL_VERSION)):
-            return str(getattr(self.country_module.model, "version", ""))
-
-    def _data_version(self) -> str:
-        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_DATA_VERSION)):
-            if self.data_version:
-                return self.data_version
-            try:
-                return get_country_release_bundle(_COUNTRY).data_version
-            except ValueError:
-                return ""
