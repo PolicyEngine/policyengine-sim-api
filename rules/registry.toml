@@ -208,16 +208,22 @@ test = "tests/test_ownership_boundaries.py::test_rule_proof_executor_independent
 [[rule]]
 id = "sim.persistence.no-modal-database-credentials"
 category = "persistence"
-statement = "No Modal secret, Modal deployment or Modal application receives SIMULATION_DATABASE_URL or SIMULATION_MIGRATION_DATABASE_URL; until the comparison path is removed, its own database secret is the only database credential Modal holds."
+statement = "No Modal secret, Modal deployment or Modal application receives a database URL other than the comparison path's own STAGE12_DATABASE_URL, which Modal may hold until the comparison path is removed; in particular never SIMULATION_DATABASE_URL or SIMULATION_MIGRATION_DATABASE_URL."
 rationale = "libs/policyengine-simulation-persistence/README.md#ownership-rules"
-scope = [".github/workflows/*.yml", ".github/scripts/*.sh", "projects/policyengine-simulation-executor/src/**/*.py"]
+scope = [".github/workflows/*.yml", ".github/scripts/*.sh", "projects/policyengine-simulation-executor/src/**/*.py", "projects/policyengine-simulation-gateway/src/**/*.py"]
 tier = "mechanical"
 status = "enforced"
 autofix = false
 [rule.enforcer]
 kind = "pytest"
 project = "libs/policyengine-simulation-persistence"
-nodes = ["tests/test_ownership_boundaries.py::test_modal_never_receives_simulation_database_credentials"]
+nodes = [
+  "tests/test_ownership_boundaries.py::test_modal_receives_no_database_url_but_the_comparison_paths",
+  "tests/test_ownership_boundaries.py::test_modal_steps_may_carry_only_the_comparison_paths_database_url",
+  "tests/test_ownership_boundaries.py::test_the_comparison_paths_database_url_may_reach_modal_until_it_is_removed",
+  "tests/test_ownership_boundaries.py::test_a_modal_script_may_not_carry_another_database_url",
+  "tests/test_ownership_boundaries.py::test_modal_sources_may_name_only_the_comparison_paths_database_url",
+]
 [[rule.ci]]
 workflow = ".github/workflows/pr.yml"
 job = "test"
