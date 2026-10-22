@@ -255,6 +255,19 @@ def test_run_budget_window_batch_impl_completes_and_respects_max_parallel(
     assert state.result.totals.budgetaryImpact == 51
 
 
+def test_run_budget_window_batch_impl_refuses_to_run_outside_a_modal_call(
+    mock_batch_modal, observability_runtime, monkeypatch
+):
+    """Without a Modal call id there is no batch job id to key the batch by."""
+    _, payload = _build_parent_payload()
+    monkeypatch.setattr(batch_module.modal, "current_function_call_id", lambda: None)
+
+    with pytest.raises(RuntimeError, match="must run inside a Modal function call"):
+        run_budget_window_batch_impl(payload, runtime=observability_runtime)
+
+    assert mock_batch_modal["call_registry"] == {}
+
+
 def test_run_budget_window_batch_impl_marks_failure(
     mock_batch_modal, observability_runtime
 ):
