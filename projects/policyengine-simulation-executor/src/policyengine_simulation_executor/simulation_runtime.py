@@ -22,6 +22,10 @@ from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 from policyengine_simulation_contract.job_progress import JobStage
+from policyengine_simulation_contract.local_area_breakdown import (
+    LOCAL_AREAS_BREAKDOWN,
+    local_area_breakdown_error,
+)
 from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
 from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.stages import (
@@ -769,13 +773,19 @@ def _selected_dataset_revision(country: str, selection: DatasetSelection) -> str
     """
     if country != "us" or selection.is_default:
         return None
+    return _manifest_dataset_revision(country, selection.name)
+
+
+def _manifest_dataset_revision(country: str, name: str) -> str | None:
+    """Return the revision the release manifest records for a named dataset.
+
+    None when the manifest has no such dataset or records no revision for it.
+    """
     from policyengine.provenance.manifest import (
         get_release_manifest,
     )
 
-    reference = getattr(get_release_manifest(country), "datasets", {}).get(
-        selection.name
-    )
+    reference = getattr(get_release_manifest(country), "datasets", {}).get(name)
     revision = getattr(reference, "revision", None)
     return revision if isinstance(revision, str) and revision else None
 
@@ -951,7 +961,104 @@ def _uk_area_simulations(
         baseline=baseline,
         reform=reform,
         local_authority_metadata=local_authority_metadata,
+        dataset=dataset,
+        dataset_name=selection.name,
     )
+
+
+def _require_local_area_breakdown(params: dict[str, Any], *, country: str) -> None:
+    """Refuse a local-area breakdown this worker cannot run, before loading data.
+
+    The gateway contract applies the same request rules; they are checked
+    again here because the worker can be called with any payload. The bundle
+    must also route UK area regions to a local-area dataset, which every
+    breakdown runs on.
+    """
+    breakdown = params.get("breakdown")
+    if breakdown != LOCAL_AREAS_BREAKDOWN:
+        msg = (
+            f"Unsupported breakdown {breakdown!r}; the only breakdown is "
+            f"{LOCAL_AREAS_BREAKDOWN!r}"
+        )
+        raise ValueError(msg)
+    region = params.get("region")
+    error = local_area_breakdown_error(
+        country=country,
+        region=None if region is None else str(region),
+        region_group=params.get("region_group"),
+        include_cliffs=params.get("include_cliffs"),
+        segmented=params.get("segmented"),
+    )
+    if error is not None:
+        raise ValueError(error)
+    if not _uk_area_regions_routed():
+        msg = (
+            "This policyengine.py bundle does not route UK constituency and "
+            "local-authority regions to a local-area dataset, so it cannot run "
+            "a local-area breakdown"
+        )
+        raise ValueError(msg)
+
+
+def _run_local_area_breakdown_core(
+    simulation_params: dict[str, Any],
+    *,
+    runtime: ObservabilityRuntime,
+    progress: JobProgressReporter,
+    country: str,
+) -> dict:
+    """Run a UK local-area breakdown on the local-area dataset alone.
+
+    The request's UK-wide or nation region filters one baseline and reform
+    on the dataset the bundle routes area regions to; the national file is
+    never loaded. The result holds the constituency and local-authority
+    impacts only (``LocalAreaBreakdownOutput``).
+    """
+    _require_local_area_breakdown(simulation_params, country=country)
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.COUNTRY_MODULE_LOAD)):
+        country_module = _country_module(country)
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.REGION_RESOLUTION)):
+        region_resolution = _resolve_region(
+            country_module=country_module,
+            country=country,
+            params=simulation_params,
+        )
+    runtime.set_context(region=region_resolution.code)
+    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.POLICY_NORMALIZATION)):
+        policies = (
+            _normalise_policy(simulation_params.get("baseline")),
+            _normalise_policy(simulation_params.get("reform")),
+        )
+
+    logger.info("Initialising the local-area baseline and reform simulations")
+    area = _uk_area_simulations(
+        simulation_params,
+        runtime=runtime,
+        country_module=country_module,
+        region=region_resolution,
+        policies=policies,
+    )
+    _report_calculation_start(area.baseline, progress, JobStage.BASELINE)
+    _report_calculation_start(area.reform, progress, JobStage.REFORM)
+
+    logger.info("Calculating the local-area breakdown")
+    builder = SimulationOutputBuilder(
+        country=country,
+        simulation_params=simulation_params,
+        country_module=country_module,
+        dataset=area.dataset,
+        baseline=area.baseline,
+        reform=area.reform,
+        resolved_data_version=_manifest_dataset_revision(country, area.dataset_name),
+        resolved_dataset_name=area.dataset_name,
+        resolved_region_code=region_resolution.code,
+        runtime=runtime,
+        uk_local_authority_metadata=area.local_authority_metadata,
+        progress=progress,
+    )
+    output = builder.serialize_local_area_breakdown()
+    logger.info("Local-area breakdown complete")
+    return output
 
 
 def _run_simulation_impl_core(
@@ -972,13 +1079,7 @@ def _run_simulation_impl_core(
     if selection is not None:
         simulation_params["spm"] = selection
 
-    logger.info(
-        "Starting simulation for country=%s submission_claim_id=%s",
-        simulation_params.get("country", "unknown"),
-        getattr(telemetry, "submission_claim_id", None),
-    )
-    if metadata:
-        logger.info("Received simulation metadata keys: %s", sorted(metadata))
+    _log_simulation_start(simulation_params, telemetry, metadata)
 
     country = simulation_params.get("country", "us").lower()
     _set_runtime_attributes(
@@ -988,6 +1089,10 @@ def _run_simulation_impl_core(
         metadata=metadata,
         country=country,
     )
+    if simulation_params.get("breakdown") is not None:
+        return _run_local_area_breakdown_core(
+            simulation_params, runtime=runtime, progress=progress, country=country
+        )
 
     with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.COUNTRY_MODULE_LOAD)):
         country_module = _country_module(country)
@@ -1116,6 +1221,20 @@ def _run_simulation_impl_core(
 
         output["_microdata"] = extract_output_microdata(baseline, reform)
     return output
+
+
+def _log_simulation_start(
+    simulation_params: dict[str, Any],
+    telemetry: TelemetryEnvelope | None,
+    metadata: dict[str, Any],
+) -> None:
+    logger.info(
+        "Starting simulation for country=%s submission_claim_id=%s",
+        simulation_params.get("country", "unknown"),
+        getattr(telemetry, "submission_claim_id", None),
+    )
+    if metadata:
+        logger.info("Received simulation metadata keys: %s", sorted(metadata))
 
 
 def _set_runtime_attributes(

@@ -36,6 +36,7 @@ from policyengine_simulation_executor.simulation_macro_output import (
     InequalityOutput,
     IntraDecileOutput,
     LaborSupplyResponseOutput,
+    LocalAreaBreakdownOutput,
     PovertyByGenderOutput,
     PovertyByRaceOutput,
     PovertyModuleOutputs,
@@ -55,12 +56,15 @@ class UKAreaSimulations:
     A UK national or nation-level run on a dataset without area codes builds
     its constituency and local-authority breakdowns from this pair, which has
     the same policies and nation filter, and from the authority boundaries
-    detected on that dataset.
+    detected on that dataset. ``dataset`` is that loaded dataset and
+    ``dataset_name`` its bundle name; a local-area breakdown run reports both.
     """
 
     baseline: Any
     reform: Any
     local_authority_metadata: UKLocalAuthorityMetadata
+    dataset: Any
+    dataset_name: str
 
 
 @dataclass
@@ -73,6 +77,11 @@ class SimulationOutputBuilder:
     ``baseline`` and ``reform``. ``omit_uk_area_breakdowns`` leaves them out:
     only Stage 12 sets it, for a routed national report whose stored frames
     carry no area codes.
+
+    ``serialize()`` builds a ``SingleYearMacroOutput``. A local-area breakdown
+    run calls ``serialize_local_area_breakdown()`` instead: its ``baseline``
+    and ``reform`` are the local-area pair, ``resolved_dataset_name`` names
+    that dataset and ``resolved_data_version`` its revision.
     """
 
     country: str
@@ -82,6 +91,7 @@ class SimulationOutputBuilder:
     baseline: Any
     reform: Any
     resolved_data_version: str | None = None
+    resolved_dataset_name: str | None = None
     resolved_region_code: str | None = None
     runtime: ObservabilityRuntime | None = None
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None
@@ -156,6 +166,50 @@ class SimulationOutputBuilder:
         """Build the output and dump it to JSON-compatible data."""
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.CALCULATION)):
             output = self.build()
+        with (
+            self._span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)),
+            self._span(ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_MODEL_DUMP)),
+        ):
+            return output.model_dump(mode="json")
+
+    def build_local_area_breakdown(self) -> LocalAreaBreakdownOutput:
+        """Build the UK constituency and local-authority impacts alone.
+
+        No national impact analysis runs. Both simulations are computed first,
+        baseline then reform, so a status poll moves through those stages
+        before the outputs stage, and both levels then come from one
+        disclosure release over the pair.
+        """
+        self.baseline.ensure()
+        self.reform.ensure()
+        self.progress.enter(JobStage.OUTPUTS)
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_BUILD)):
+            constituency_impact = self._build_uk_constituency_impact()
+            local_authority_impact = self._build_uk_local_authority_impact()
+            if (
+                constituency_impact is None
+                or local_authority_impact is None
+                or not self.resolved_dataset_name
+            ):
+                msg = (
+                    "A local-area breakdown is a UK output built on a named "
+                    "local-area dataset"
+                )
+                raise ValueError(msg)
+            return LocalAreaBreakdownOutput(
+                kind="local_areas",
+                model_version=self._model_version(),
+                policyengine_version=self._policyengine_version(),
+                dataset=self.resolved_dataset_name,
+                data_version=self._data_version(),
+                constituency_impact=constituency_impact,
+                local_authority_impact=local_authority_impact,
+            )
+
+    def serialize_local_area_breakdown(self) -> dict[str, Any]:
+        """Build a local-area breakdown and dump it to JSON-compatible data."""
+        with self._span(ANNUAL_IMPACT_STAGES.name(Stage.CALCULATION)):
+            output = self.build_local_area_breakdown()
         with (
             self._span(ANNUAL_IMPACT_STAGES.name(Stage.RESPONSE_SERIALIZATION)),
             self._span(ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_OUTPUT_MODEL_DUMP)),
@@ -356,6 +410,10 @@ class SimulationOutputBuilder:
     def _model_version(self) -> str:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_MODEL_VERSION)):
             return str(getattr(self.country_module.model, "version", ""))
+
+    def _policyengine_version(self) -> str:
+        """Return the policyengine.py release whose bundle this run used."""
+        return get_country_release_bundle(self.country).policyengine_version
 
     def _data_version(self) -> str:
         with self._span(ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_DATA_VERSION)):

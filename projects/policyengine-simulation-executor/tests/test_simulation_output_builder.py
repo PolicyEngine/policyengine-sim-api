@@ -33,6 +33,7 @@ from policyengine.core.scoping_strategy import (
     RowFilterStrategy,
     WeightReplacementStrategy,
 )
+from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
@@ -1548,6 +1549,41 @@ _LOCAL_AREA_SELECTION = DatasetSelection(
 )
 
 
+_LOCAL_AREA_REVISION = "microcosm-uk-2024-25-dense-20261019T000432Z-ee5c2dbe"
+_WALES = RowFilterStrategy(variable_name="region", variable_value="WALES")
+_TEST_POLICIES = {
+    "baseline": {"gov.test.parameter": {"2026-01-01.2100-12-31": 1}},
+    "reform": {"gov.test.parameter": {"2026-01-01.2100-12-31": 2}},
+}
+_WALES_NATIONAL_PARAMS = {"country": "uk", "region": "country/wales", **_TEST_POLICIES}
+_WALES_BREAKDOWN_PARAMS = {
+    "country": "uk",
+    "scope": "macro",
+    "region": "country/wales",
+    "time_period": "2026",
+    # The Public API always sends include_cliffs: false.
+    "include_cliffs": False,
+    "breakdown": "local_areas",
+    **_TEST_POLICIES,
+}
+
+
+def _routed_area_dataset(*, without: str | None = None) -> SimpleNamespace:
+    """Return a local-area dataset with every column its area outputs read.
+
+    ``without`` names one column to leave out.
+    """
+    household: dict[str, list[object]] = {
+        "region": ["WALES", "WALES"],
+        "constituency_code_oa": ["E14001063", "W07000112"],
+        "la_code_oa": ["E06000063", "W06000001"],
+        "region_code_oa": ["WALES", "WALES"],
+        "source_household_id": [1, 2],
+    }
+    household.pop(without or "", None)
+    return _uk_dataset(**household)
+
+
 @dataclass
 class _UKAreaRun:
     """A UK run through ``_run_simulation_impl_core`` with every seam faked."""
@@ -1555,28 +1591,54 @@ class _UKAreaRun:
     builds: list[dict]
     builder_calls: list[dict]
     runtime: _TrackingRuntime
+    # Each selection _load_dataset was asked for, and each country module load.
+    loads: list[DatasetSelection]
+    country_modules: list[str]
+    # The builder methods the run called to produce its output, and the output.
+    serialized: list[str]
+    output: object = None
+
+    def dataset_load_attributes(self) -> list[dict]:
+        return [
+            node["attrs"]
+            for node in self.runtime.roots
+            if node["name"] == ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD)
+        ]
 
 
-def _run_routed_uk_national(monkeypatch, *, local_area_dataset) -> _UKAreaRun:
-    national_dataset = _uk_dataset(region=["WALES", "WALES"])
-    nation = RowFilterStrategy(variable_name="region", variable_value="WALES")
-    builds: list[dict] = []
-    builder_calls: list[dict] = []
-    _routes_uk_area_regions(monkeypatch, routed=True)
-    monkeypatch.setattr(
-        "policyengine_simulation_executor.uk_local_authority_metadata."
-        "routed_uk_area_dataset_name",
-        lambda: _LOCAL_AREA_SELECTION.name,
-    )
+class _RoutedUKSeams:
+    """Fakes for each seam of a routed UK run, recording into one ``_UKAreaRun``."""
 
-    def resolve_selection(_params, *, region_resolution):
+    def __init__(self, run, *, local_area_dataset):
+        self.run = run
+        self.local_area_dataset = local_area_dataset
+        self.national_dataset = _uk_dataset(region=["WALES", "WALES"])
+
+    def country_module(self, country):
+        self.run.country_modules.append(country)
+        return SimpleNamespace(model=SimpleNamespace(version="2.132.6"))
+
+    def resolve_region(self, *, params, **_kwargs):
+        if params.get("region") == "country/wales":
+            return RegionResolution(
+                code="country/wales", dataset_reference=None, scoping_strategy=_WALES
+            )
+        return RegionResolution(code="uk", dataset_reference=None)
+
+    def resolve_selection(self, _params, *, region_resolution):
         if region_resolution.dataset_reference == _LOCAL_AREA_SELECTION.name:
             return _LOCAL_AREA_SELECTION
         return _NATIONAL_SELECTION
 
-    def build_simulation(_params, *, dataset, dataset_selection, policy, region):
+    def load_dataset(self, _params, *, selection, country_module, data_folder=None):
+        self.run.loads.append(selection)
+        if selection is _LOCAL_AREA_SELECTION:
+            return self.local_area_dataset
+        return self.national_dataset
+
+    def build_simulation(self, _params, *, dataset, dataset_selection, policy, region):
         simulation = SimpleNamespace(on_first_ensure=lambda _callback: None)
-        builds.append(
+        self.run.builds.append(
             {
                 "dataset": dataset,
                 "selection": dataset_selection,
@@ -1587,59 +1649,73 @@ def _run_routed_uk_national(monkeypatch, *, local_area_dataset) -> _UKAreaRun:
         )
         return simulation
 
-    def load_dataset(_params, *, selection, country_module, data_folder=None):
-        if selection is _LOCAL_AREA_SELECTION:
-            return local_area_dataset
-        return national_dataset
+    def output_builder(self, **kwargs):
+        self.run.builder_calls.append(kwargs)
+        return _RecordingOutputBuilder(self.run)
 
-    class FakeSimulationOutputBuilder:
-        def __init__(self, **kwargs):
-            builder_calls.append(kwargs)
 
-        def serialize(self):
-            return dict(CURRENT_SINGLE_YEAR_MACRO_RESULT)
+class _RecordingOutputBuilder:
+    def __init__(self, run):
+        self.run = run
 
+    def serialize(self):
+        self.run.serialized.append("serialize")
+        return dict(CURRENT_SINGLE_YEAR_MACRO_RESULT)
+
+    def serialize_local_area_breakdown(self):
+        self.run.serialized.append("serialize_local_area_breakdown")
+        return {"kind": "local_areas"}
+
+
+def _install_routed_uk_fakes(
+    monkeypatch, *, local_area_dataset, routed: bool = True
+) -> _UKAreaRun:
+    """Fake every seam of a UK run whose national file carries no area codes."""
+    run = _UKAreaRun(
+        builds=[],
+        builder_calls=[],
+        runtime=_TrackingRuntime(),
+        loads=[],
+        country_modules=[],
+        serialized=[],
+    )
+    seams = _RoutedUKSeams(run, local_area_dataset=local_area_dataset)
+    _routes_uk_area_regions(monkeypatch, routed=routed)
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.uk_local_authority_metadata."
+        "routed_uk_area_dataset_name",
+        lambda: _LOCAL_AREA_SELECTION.name,
+    )
     for name, value in {
-        "_country_module": lambda _country: SimpleNamespace(
-            model=SimpleNamespace(version="2.132.6")
-        ),
-        "_resolve_region": lambda **_kwargs: RegionResolution(
-            code="country/wales", dataset_reference=None, scoping_strategy=nation
-        ),
-        "_resolve_dataset_selection": resolve_selection,
-        "_load_dataset": load_dataset,
-        "_build_simulation": build_simulation,
-        "SimulationOutputBuilder": FakeSimulationOutputBuilder,
+        "_country_module": seams.country_module,
+        "_resolve_region": seams.resolve_region,
+        "_resolve_dataset_selection": seams.resolve_selection,
+        "_load_dataset": seams.load_dataset,
+        "_build_simulation": seams.build_simulation,
+        "SimulationOutputBuilder": seams.output_builder,
     }.items():
         monkeypatch.setattr(
             f"policyengine_simulation_executor.simulation_runtime.{name}", value
         )
+    return run
 
-    runtime = _TrackingRuntime()
-    _run_simulation_impl_core(
-        {
-            "country": "uk",
-            "region": "country/wales",
-            "baseline": {"gov.test.parameter": {"2026-01-01.2100-12-31": 1}},
-            "reform": {"gov.test.parameter": {"2026-01-01.2100-12-31": 2}},
-        },
-        runtime=runtime,
-    )
-    return _UKAreaRun(builds=builds, builder_calls=builder_calls, runtime=runtime)
+
+def _run_routed_uk(monkeypatch, *, params, local_area_dataset) -> _UKAreaRun:
+    run = _install_routed_uk_fakes(monkeypatch, local_area_dataset=local_area_dataset)
+    run.output = _run_simulation_impl_core(dict(params), runtime=run.runtime)
+    return run
 
 
 def test_routed_uk_national_run_builds_area_breakdowns_on_the_local_area_dataset(
     monkeypatch,
 ):
-    local_area_dataset = _uk_dataset(
-        region=["WALES", "WALES"],
-        constituency_code_oa=["E14001063", "W07000112"],
-        la_code_oa=["E06000063", "W06000001"],
-        region_code_oa=["WALES", "WALES"],
-        source_household_id=[1, 2],
-    )
+    local_area_dataset = _routed_area_dataset()
 
-    run = _run_routed_uk_national(monkeypatch, local_area_dataset=local_area_dataset)
+    run = _run_routed_uk(
+        monkeypatch,
+        params=_WALES_NATIONAL_PARAMS,
+        local_area_dataset=local_area_dataset,
+    )
 
     national, area = run.builds[:2], run.builds[2:]
     assert [build["selection"] for build in national] == [_NATIONAL_SELECTION] * 2
@@ -1663,13 +1739,10 @@ def test_routed_uk_national_run_builds_area_breakdowns_on_the_local_area_dataset
         local_authority_metadata=UKLocalAuthorityMetadata(
             boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
         ),
+        dataset=local_area_dataset,
+        dataset_name=_LOCAL_AREA_SELECTION.name,
     )
-    loads = [
-        node["attrs"]
-        for node in run.runtime.roots
-        if node["name"] == ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD)
-    ]
-    assert loads == [{}, {"dataset_role": "uk_area"}]
+    assert run.dataset_load_attributes() == [{}, {"dataset_role": "uk_area"}]
 
 
 def test_routed_uk_national_run_requires_area_codes_on_the_local_area_dataset(
@@ -1684,7 +1757,151 @@ def test_routed_uk_national_run_requires_area_codes_on_the_local_area_dataset(
         match=r"'microcosm_uk_2024_25_dense', which the bundle routes .* has no "
         r"la_code_oa column",
     ):
-        _run_routed_uk_national(monkeypatch, local_area_dataset=without_authorities)
+        _run_routed_uk(
+            monkeypatch,
+            params=_WALES_NATIONAL_PARAMS,
+            local_area_dataset=without_authorities,
+        )
+
+
+def test_a_local_area_breakdown_runs_on_the_local_area_dataset_alone(monkeypatch):
+    local_area_dataset = _routed_area_dataset()
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.simulation_runtime."
+        "_manifest_dataset_revision",
+        lambda country, name: {
+            ("uk", _LOCAL_AREA_SELECTION.name): _LOCAL_AREA_REVISION
+        }[(country, name)],
+    )
+
+    run = _run_routed_uk(
+        monkeypatch,
+        params=_WALES_BREAKDOWN_PARAMS,
+        local_area_dataset=local_area_dataset,
+    )
+
+    # The national file is never loaded: one load, one baseline and reform.
+    assert run.loads == [_LOCAL_AREA_SELECTION]
+    assert [build["selection"] for build in run.builds] == [_LOCAL_AREA_SELECTION] * 2
+    assert all(build["dataset"] is local_area_dataset for build in run.builds)
+    assert all(build["scoping_strategy"] is _WALES for build in run.builds)
+    assert [build["policy"] for build in run.builds] == [
+        _normalise_policy(_TEST_POLICIES["baseline"]),
+        _normalise_policy(_TEST_POLICIES["reform"]),
+    ]
+    (builder_kwargs,) = run.builder_calls
+    assert builder_kwargs["baseline"] is run.builds[0]["simulation"]
+    assert builder_kwargs["reform"] is run.builds[1]["simulation"]
+    assert builder_kwargs["dataset"] is local_area_dataset
+    assert builder_kwargs["uk_local_authority_metadata"] == UKLocalAuthorityMetadata(
+        boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
+    )
+    assert builder_kwargs["resolved_dataset_name"] == _LOCAL_AREA_SELECTION.name
+    assert builder_kwargs["resolved_data_version"] == _LOCAL_AREA_REVISION
+    assert builder_kwargs["resolved_region_code"] == "country/wales"
+    assert builder_kwargs.get("uk_area_simulations") is None
+    assert run.serialized == ["serialize_local_area_breakdown"]
+    assert run.output == {"kind": "local_areas"}
+    assert run.dataset_load_attributes() == [{"dataset_role": "uk_area"}]
+
+
+def test_a_dataset_revision_is_read_from_the_release_manifest(monkeypatch):
+    from policyengine_simulation_executor import simulation_runtime
+
+    manifests = {
+        "uk": SimpleNamespace(
+            datasets={
+                _LOCAL_AREA_SELECTION.name: SimpleNamespace(
+                    revision=_LOCAL_AREA_REVISION
+                ),
+                "unrevised": SimpleNamespace(revision=""),
+            }
+        )
+    }
+    monkeypatch.setattr(
+        "policyengine.provenance.manifest.get_release_manifest", manifests.__getitem__
+    )
+
+    revision = simulation_runtime._manifest_dataset_revision
+    assert revision("uk", _LOCAL_AREA_SELECTION.name) == _LOCAL_AREA_REVISION
+    assert revision("uk", "unrevised") is None
+    assert revision("uk", "absent") is None
+
+
+def test_a_uk_wide_local_area_breakdown_simulates_the_whole_dataset(monkeypatch):
+    run = _run_routed_uk(
+        monkeypatch,
+        params={**_WALES_BREAKDOWN_PARAMS, "region": "uk"},
+        local_area_dataset=_routed_area_dataset(),
+    )
+
+    assert run.loads == [_LOCAL_AREA_SELECTION]
+    assert [build["scoping_strategy"] for build in run.builds] == [None, None]
+    assert run.builder_calls[0]["resolved_region_code"] == "uk"
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"country": "us"}, "only for UK requests"),
+        ({"region": "constituency/E14001063"}, "'constituency/E14001063'"),
+        ({"region": "local_authority/E06000063"}, "'local_authority/E06000063'"),
+        ({"include_cliffs": True}, "include_cliffs=true"),
+        ({"region": None, "region_group": ["country/wales"]}, "region_group"),
+        ({"breakdown": "districts"}, "'districts'"),
+    ],
+)
+def test_an_invalid_local_area_breakdown_is_refused_before_any_load(
+    monkeypatch, change, message
+):
+    run = _install_routed_uk_fakes(
+        monkeypatch, local_area_dataset=_routed_area_dataset()
+    )
+
+    with pytest.raises(ValueError, match=message):
+        _run_simulation_impl_core(
+            {**_WALES_BREAKDOWN_PARAMS, **change}, runtime=run.runtime
+        )
+
+    assert run.country_modules == []
+    assert run.loads == []
+    assert run.builds == []
+
+
+def test_a_local_area_breakdown_needs_a_bundle_that_routes_area_regions(monkeypatch):
+    run = _install_routed_uk_fakes(
+        monkeypatch, local_area_dataset=_routed_area_dataset(), routed=False
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="does not route UK constituency and local-authority regions",
+    ):
+        _run_simulation_impl_core(dict(_WALES_BREAKDOWN_PARAMS), runtime=run.runtime)
+
+    assert run.loads == []
+    assert run.builds == []
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["constituency_code_oa", "la_code_oa", "region_code_oa", "source_household_id"],
+)
+def test_a_local_area_breakdown_needs_every_column_its_outputs_read(
+    monkeypatch, missing
+):
+    local_area_dataset = _routed_area_dataset(without=missing)
+
+    with pytest.raises(
+        ValueError,
+        match=rf"'microcosm_uk_2024_25_dense', which the bundle routes .* has no "
+        rf"{missing} column",
+    ):
+        _run_routed_uk(
+            monkeypatch,
+            params=_WALES_BREAKDOWN_PARAMS,
+            local_area_dataset=local_area_dataset,
+        )
 
 
 _LOCAL_AREA_URI = (
@@ -2586,6 +2803,8 @@ def test_uk_area_breakdowns_use_the_computed_routed_area_pair(monkeypatch):
         local_authority_metadata=UKLocalAuthorityMetadata(
             boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
         ),
+        dataset=object(),
+        dataset_name="microcosm_uk_2024_25_dense",
     )
     disclosure = simulation_output_geographic.UKGeographyDisclosureOutput()
     computed: list[tuple[str, object, object, int]] = []
@@ -2655,3 +2874,145 @@ def test_omitted_uk_area_breakdowns_compute_nothing(monkeypatch):
 
     assert builder._build_uk_constituency_impact() is None
     assert builder._build_uk_local_authority_impact() is None
+
+
+class _BreakdownSimulation:
+    """A local-area simulation that records when it is computed."""
+
+    def __init__(self, label, events):
+        self.label = label
+        self.events = events
+
+    def ensure(self):
+        self.events.append(self.label)
+
+
+class _RecordingProgress:
+    def __init__(self, events):
+        self.events = events
+
+    def enter(self, stage):
+        self.events.append(stage)
+
+
+def _breakdown_builder(monkeypatch, *, events, runtime=None):
+    """Return a UK breakdown builder whose area outputs are faked.
+
+    The country module's impact analysis fails the test if it is called.
+    Each fake records into ``events``.
+    """
+    disclosure = simulation_output_geographic.UKGeographyDisclosureOutput()
+
+    def compute(country, baseline_simulation, reform_simulation, *, year):
+        events.append(
+            ("release", country, baseline_simulation, reform_simulation, year)
+        )
+        return disclosure
+
+    def constituencies(country, value):
+        events.append(("constituency", value))
+        return GeographicImpactOutput.model_validate(
+            [_constituency_impact_record().model_dump(mode="json")]
+        )
+
+    def local_authorities(country, value, **kwargs):
+        events.append(("local_authority", value, kwargs["uk_local_authority_metadata"]))
+        return GeographicImpactOutput.model_validate([])
+
+    for name, function in {
+        "compute_uk_geography_disclosure_output": compute,
+        "build_uk_constituency_impact": constituencies,
+        "build_uk_local_authority_impact": local_authorities,
+    }.items():
+        monkeypatch.setattr(
+            f"policyengine_simulation_executor.simulation_output_geographic.{name}",
+            function,
+        )
+
+    def no_impact_analysis(*_args, **_kwargs):
+        pytest.fail("a local-area breakdown computes no national impact analysis")
+
+    builder = SimulationOutputBuilder(
+        country="uk",
+        simulation_params={
+            "country": "uk",
+            "time_period": "2026",
+            "breakdown": "local_areas",
+        },
+        country_module=SimpleNamespace(
+            model=SimpleNamespace(version="2.132.6"),
+            economic_impact_analysis=no_impact_analysis,
+        ),
+        dataset=SimpleNamespace(metadata={}),
+        baseline=_BreakdownSimulation("baseline", events),
+        reform=_BreakdownSimulation("reform", events),
+        resolved_data_version=_LOCAL_AREA_REVISION,
+        resolved_dataset_name="microcosm_uk_2024_25_dense",
+        resolved_region_code="uk",
+        runtime=runtime,
+        uk_local_authority_metadata=UKLocalAuthorityMetadata(
+            boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
+        ),
+        progress=_RecordingProgress(events),
+    )
+    return builder, disclosure
+
+
+def test_a_local_area_breakdown_publishes_both_levels_from_one_release(monkeypatch):
+    events: list[object] = []
+    builder, disclosure = _breakdown_builder(monkeypatch, events=events)
+
+    output = builder.serialize_local_area_breakdown()
+
+    releases = [event for event in events if event[0] == "release"]
+    assert releases == [("release", "uk", builder.baseline, builder.reform, 2026)]
+    assert [event for event in events if event[0] != "release"][-2:] == [
+        ("constituency", disclosure),
+        ("local_authority", disclosure, builder.uk_local_authority_metadata),
+    ]
+    assert output == {
+        "kind": "local_areas",
+        "model_version": "2.132.6",
+        "policyengine_version": get_country_release_bundle("uk").policyengine_version,
+        "dataset": "microcosm_uk_2024_25_dense",
+        "data_version": _LOCAL_AREA_REVISION,
+        "constituency_impact": [_constituency_impact_record().model_dump(mode="json")],
+        "local_authority_impact": [],
+    }
+
+
+def test_a_local_area_breakdown_enters_outputs_after_both_simulations(monkeypatch):
+    events: list[object] = []
+    builder, _ = _breakdown_builder(monkeypatch, events=events)
+
+    builder.serialize_local_area_breakdown()
+
+    simulations_and_stages = [event for event in events if not isinstance(event, tuple)]
+    assert simulations_and_stages == ["baseline", "reform", JobStage.OUTPUTS]
+    assert events.index(JobStage.OUTPUTS) < next(
+        index for index, event in enumerate(events) if isinstance(event, tuple)
+    )
+
+
+def test_a_local_area_breakdown_opens_only_registered_spans(monkeypatch):
+    events: list[object] = []
+    runtime = _TrackingRuntime()
+    builder, _ = _breakdown_builder(monkeypatch, events=events, runtime=runtime)
+
+    builder.serialize_local_area_breakdown()
+
+    registered = {stage.value for stage in ANNUAL_IMPACT_STAGES.stages}
+    assert set(runtime.names) <= registered
+    assert ANNUAL_IMPACT_STAGES.name(Stage.ECONOMIC_IMPACT_ANALYSIS) not in (
+        runtime.names
+    )
+    (calculation,) = runtime.roots[:1]
+    assert calculation["name"] == ANNUAL_IMPACT_STAGES.name(Stage.CALCULATION)
+    (output_build,) = calculation["children"]
+    assert output_build["name"] == ANNUAL_IMPACT_STAGES.name(
+        Stage.SIMULATION_OUTPUT_BUILD
+    )
+    assert {
+        ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_CONSTITUENCY),
+        ANNUAL_IMPACT_STAGES.name(Stage.OUTPUT_UK_LOCAL_AUTHORITY),
+    } <= {child["name"] for child in output_build["children"]}

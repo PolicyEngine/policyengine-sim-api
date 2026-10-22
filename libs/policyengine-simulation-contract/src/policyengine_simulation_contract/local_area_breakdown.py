@@ -12,6 +12,8 @@ any other worker.
 
 from __future__ import annotations
 
+# The one value of ``SimulationRequest.breakdown``.
+LOCAL_AREAS_BREAKDOWN = "local_areas"
 LOCAL_AREA_BREAKDOWN_CAPABILITY_KEY = "local_area_breakdown"
 LOCAL_AREA_BREAKDOWN_CAPABILITY_VERSION = 1
 
