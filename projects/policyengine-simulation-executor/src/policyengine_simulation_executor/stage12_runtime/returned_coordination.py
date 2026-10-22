@@ -78,7 +78,7 @@ class _ReturnedReportCoordination(ReportSimulationCoordination):
             simulation.role.value: simulation for simulation in planned_simulations
         }
         for simulation in planned_simulations:
-            self.calls[simulation.role.value] = self._spawn_child(simulation)
+            self._spawn_child(simulation)
         # Both children have started before the coordinator observes them
         # together through nonblocking result probes.
         self._wait_for_children(self.calls, self.descriptors)
