@@ -12,7 +12,9 @@ A result the tables cannot hold exactly is refused before any write by
 ``check_storable``: the average and relative changes of each decile map must
 name the same deciles in the same order, the decile shares and averages of
 each intra-decile breakdown must name the same categories in the same order,
-and the area lists must hold records of their own kind, each area once.
+each pair of labour supply decile maps (average, relative) must name the same
+deciles in order, and the area lists must hold records of their own kind,
+each area once.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from policyengine_simulation_contract.macro_output import (
     ConstituencyImpactRecord,
     DecileOutput,
     IntraDecileOutput,
+    LaborSupplyDecileOutput,
     LaborSupplyResponseOutput,
     LocalAuthorityImpactRecord,
     SingleYearMacroOutput,
@@ -77,7 +80,8 @@ SIDES = ("baseline", "reform")
 
 # Where each field of SingleYearMacroOutput is kept. "{key}" stands for a map
 # key and "[]" for a list item; per-simulation figures are kept on the
-# baseline's or the reform's own simulation run. Labels come from the catalog
+# baseline's or the reform's own simulation run, keyed by the report run and
+# the side too. Labels come from the catalog
 # when the result is read. A test requires this to name every field.
 REFUSED_OTHER_KIND = "refused by check_storable: a record of the other kind"
 _GEOGRAPHY_FIELDS = (
@@ -251,21 +255,24 @@ def _check_unique(section: str, codes: list[str]) -> None:
 
 
 def _check_labor_supply(labor: LaborSupplyResponseOutput | None) -> None:
+    """Require each pair of decile maps to name the same deciles in order.
+
+    The average pair may name deciles the relative pair leaves out, such as
+    decile -1 for households with negative income.
+    """
     if labor is None:
         return
     metrics = labor.decile
-    orders = {
-        tuple(values)
-        for values in (
-            metrics.average.income,
-            metrics.average.substitution,
-            metrics.relative.income,
-            metrics.relative.substitution,
-        )
-    }
-    if len(orders) > 1:
-        msg = "labor_supply_response.decile: every map must name the same deciles"
-        raise ValueError(msg)
+    for statistic, metric in (
+        ("average", metrics.average),
+        ("relative", metrics.relative),
+    ):
+        if list(metric.income) != list(metric.substitution):
+            msg = (
+                f"labor_supply_response.decile.{statistic}: income and "
+                "substitution must name the same deciles in order"
+            )
+            raise ValueError(msg)
 
 
 def check_storable(result: SingleYearMacroOutput) -> SingleYearMacroOutput:
@@ -323,6 +330,7 @@ def _simulation_rows(
             {
                 "report_run_id": report_run_id,
                 "simulation_run_id": run_id,
+                "side": side,
                 "measure": measure,
                 "group_dimension": dimension,
                 "group_value": group,
@@ -336,6 +344,7 @@ def _simulation_rows(
             {
                 "report_run_id": report_run_id,
                 "simulation_run_id": run_id,
+                "side": side,
                 **{name: getattr(value, side) for name, value in result.inequality},
             }
         ],
@@ -346,6 +355,7 @@ def _simulation_rows(
             {
                 "report_run_id": report_run_id,
                 "simulation_run_id": run_id,
+                "side": side,
                 **cliff.model_dump(),
             }
         ]
@@ -424,19 +434,37 @@ def _labor_supply_rows(
                 "hours_substitution_effect": labor.hours.substitution_effect,
             }
         ],
-        labor_supply_decile_impacts: [
-            {
-                "report_run_id": report_run_id,
-                "decile": key,
-                "position": position,
-                "average_income_effect": decile.average.income[key],
-                "average_substitution_effect": decile.average.substitution[key],
-                "relative_income_effect": decile.relative.income[key],
-                "relative_substitution_effect": decile.relative.substitution[key],
-            }
-            for position, key in enumerate(decile.average.income)
-        ],
+        labor_supply_decile_impacts: _labor_supply_decile_rows(report_run_id, decile),
     }
+
+
+def _labor_supply_decile_rows(
+    report_run_id: UUID, decile: LaborSupplyDecileOutput
+) -> list[dict[str, Any]]:
+    """Return one row per decile either pair of maps names, each with its order."""
+    rows: dict[int, dict[str, Any]] = {}
+    for statistic, metric in (
+        ("average", decile.average),
+        ("relative", decile.relative),
+    ):
+        for position, key in enumerate(metric.income):
+            row = rows.setdefault(
+                key,
+                {
+                    "report_run_id": report_run_id,
+                    "decile": key,
+                    "average_position": None,
+                    "relative_position": None,
+                    "average_income_effect": None,
+                    "average_substitution_effect": None,
+                    "relative_income_effect": None,
+                    "relative_substitution_effect": None,
+                },
+            )
+            row[f"{statistic}_position"] = position
+            row[f"{statistic}_income_effect"] = metric.income[key]
+            row[f"{statistic}_substitution_effect"] = metric.substitution[key]
+    return list(rows.values())
 
 
 def _geography_rows(
@@ -624,25 +652,37 @@ def _poverty(rows_by_side: dict[str, list[RowMapping]]) -> dict[str, Any]:
 
 
 def _figures(
-    connection: Connection, table: Table, report_run_id: UUID, run_id: UUID
+    connection: Connection,
+    table: Table,
+    report_run_id: UUID,
+    run_id: UUID,
+    side: str,
 ) -> list[RowMapping]:
-    """Return one simulation run's figures as one report run computed them."""
+    """Return one side's own figures as one report run computed them."""
     return list(
         connection.execute(
             select(table).where(
                 table.c.report_run_id == report_run_id,
                 table.c.simulation_run_id == run_id,
+                table.c.side == side,
             )
         ).mappings()
     )
 
 
 def _one_figure(
-    connection: Connection, table: Table, report_run_id: UUID, run_id: UUID
+    connection: Connection,
+    table: Table,
+    report_run_id: UUID,
+    run_id: UUID,
+    side: str,
 ) -> RowMapping:
-    rows = _figures(connection, table, report_run_id, run_id)
+    rows = _figures(connection, table, report_run_id, run_id, side)
     if len(rows) != 1:
-        msg = f"{table.name} has no row for run {run_id} in report run {report_run_id}"
+        msg = (
+            f"{table.name} has no {side} row for run {run_id} "
+            f"in report run {report_run_id}"
+        )
         raise LookupError(msg)
     return rows[0]
 
@@ -654,14 +694,15 @@ def _simulation_sections(
     sections: set[str],
 ) -> dict[str, Any]:
     by_side = {
-        side: _figures(connection, poverty_rates, report_run_id, run_id)
+        side: _figures(connection, poverty_rates, report_run_id, run_id, side)
         for side, run_id in zip(SIDES, run_ids, strict=True)
     }
     payload = _poverty(by_side)
     if "poverty_by_race" not in sections:
         payload["poverty_by_race"] = None
     inequality_rows = [
-        _one_figure(connection, inequality, report_run_id, run_id) for run_id in run_ids
+        _one_figure(connection, inequality, report_run_id, run_id, side)
+        for side, run_id in zip(SIDES, run_ids, strict=True)
     ]
     payload["inequality"] = {
         name: {
@@ -672,8 +713,8 @@ def _simulation_sections(
     payload["cliff_impact"] = None
     if "cliff_impact" in sections:
         cliff_rows = [
-            _one_figure(connection, cliff_impacts, report_run_id, run_id)
-            for run_id in run_ids
+            _one_figure(connection, cliff_impacts, report_run_id, run_id, side)
+            for side, run_id in zip(SIDES, run_ids, strict=True)
         ]
         payload["cliff_impact"] = {
             side: {name: row[name] for name in ("cliff_gap", "cliff_share")}
@@ -713,14 +754,24 @@ def _intra_deciles(rows: list[RowMapping], measure: str) -> dict[str, Any]:
     }
 
 
+def _labor_supply_decile_maps(
+    rows: list[RowMapping], statistic: str
+) -> dict[str, dict[int, float]]:
+    """Rebuild one pair of labour supply decile maps in its own order."""
+    named = sorted(
+        (row for row in rows if row[f"{statistic}_position"] is not None),
+        key=lambda row: row[f"{statistic}_position"],
+    )
+    return {
+        effect: {row["decile"]: row[f"{statistic}_{effect}_effect"] for row in named}
+        for effect in ("income", "substitution")
+    }
+
+
 def _labor_supply(connection: Connection, report_run_id: UUID) -> dict[str, Any]:
     response = _one(connection, labor_supply_responses, "report_run_id", report_run_id)
     deciles = _rows(
-        connection,
-        labor_supply_decile_impacts,
-        "report_run_id",
-        report_run_id,
-        order=("position",),
+        connection, labor_supply_decile_impacts, "report_run_id", report_run_id
     )
     return {
         "substitution_lsr": response["substitution_lsr"],
@@ -732,13 +783,7 @@ def _labor_supply(connection: Connection, report_run_id: UUID) -> dict[str, Any]
         "total_change": response["total_change"],
         "revenue_change": response["revenue_change"],
         "decile": {
-            statistic: {
-                effect: {
-                    row["decile"]: row[f"{statistic}_{effect}_effect"]
-                    for row in deciles
-                }
-                for effect in ("income", "substitution")
-            }
+            statistic: _labor_supply_decile_maps(deciles, statistic)
             for statistic in ("average", "relative")
         },
         "hours": {
