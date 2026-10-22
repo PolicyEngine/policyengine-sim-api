@@ -288,6 +288,13 @@ def _create_report_runs() -> None:
         postgresql_where=sa.text("comparison_status = 'running'"),
     )
     op.create_index(
+        "ix_report_runs_pending_comparisons",
+        "report_runs",
+        ["id"],
+        schema=SCHEMA,
+        postgresql_where=sa.text("comparison_status = 'pending'"),
+    )
+    op.create_index(
         "ix_report_runs_comparisons_dispatching",
         "report_runs",
         ["updated_at"],
@@ -305,6 +312,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Drop the tables ``upgrade`` created, with their indexes and keys."""
     for index in (
+        "ix_report_runs_pending_comparisons",
         "ix_report_runs_comparisons_dispatching",
         "ix_report_runs_due_comparison_checks",
         "ix_report_runs_reform_simulation_run_id",
