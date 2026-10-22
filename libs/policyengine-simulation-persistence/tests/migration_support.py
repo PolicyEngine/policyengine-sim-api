@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+from alembic import command
 from alembic.config import Config
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 ALEMBIC_CONFIG_PATH = REPOSITORY_ROOT / "migrations" / "alembic.ini"
@@ -16,3 +21,38 @@ TEST_ROLE_PASSWORD = "simulation-test-password"
 def alembic_config() -> Config:
     """Return the repository's Alembic configuration."""
     return Config(str(ALEMBIC_CONFIG_PATH))
+
+
+def chain_config(script_location: Path) -> Config:
+    """Return a configuration for the chain at ``script_location``."""
+    config = Config()
+    config.set_main_option("script_location", str(script_location))
+    return config
+
+
+def _step_failure(name: str, step: Callable[[], object]) -> str | None:
+    try:
+        step()
+    except Exception as error:  # noqa: BLE001  # reported as the cycle's failure
+        return f"{name} failed: {type(error).__name__}"
+    return None
+
+
+def migration_cycle_failures(config: Config, *, check: bool) -> list[str]:
+    """Upgrade, downgrade and upgrade the chain again; return what failed.
+
+    With ``check``, ``alembic check`` must also find nothing to change after
+    each upgrade. The cycle stops at the first failure.
+    """
+    steps: list[tuple[str, Callable[[], object]]] = [
+        ("upgrade", lambda: command.upgrade(config, "head"))
+    ]
+    if check:
+        steps.append(("check", lambda: command.check(config)))
+    steps.append(("downgrade", lambda: command.downgrade(config, "base")))
+    steps.extend(steps[: 2 if check else 1])
+    for name, step in steps:
+        failure = _step_failure(name, step)
+        if failure is not None:
+            return [failure]
+    return []

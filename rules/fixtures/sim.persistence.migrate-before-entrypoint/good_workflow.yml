@@ -1,0 +1,20 @@
+# Proof fixture: the migration job alone receives the migrator URL, in its
+# migration step; it applies revisions only from main; and the entrypoint
+# deploys only after it succeeded.
+name: Good deployment
+on: workflow_dispatch
+jobs:
+  migrate_simulation_database:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply simulation schema migrations
+        env:
+          SIMULATION_MIGRATION_DATABASE_URL: ${{ secrets.SIMULATION_MIGRATION_DATABASE_URL }}
+          SIMULATION_MIGRATION_MODE: ${{ github.ref == 'refs/heads/main' && 'upgrade' || 'verify' }}
+        run: ../../.github/scripts/migrate-simulation-database.sh
+  deploy_entrypoint:
+    if: ${{ always() && needs.migrate_simulation_database.result == 'success' }}
+    needs: [migrate_simulation_database]
+    runs-on: ubuntu-latest
+    steps:
+      - run: .github/scripts/deploy-cloud-run-simulation-entry.sh
