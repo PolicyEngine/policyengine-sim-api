@@ -31,7 +31,15 @@ IGNORED_DIRECTORY_NAMES = frozenset(
 IGNORED_RELATIVE_DIRECTORIES = (Path("rules") / "fixtures",)
 PERSISTENCE_DISTRIBUTION = "policyengine-simulation-persistence"
 PERSISTENCE_PACKAGE = "policyengine_simulation_persistence"
-SIMULATION_DATABASE_CREDENTIAL = re.compile(r"SIMULATION_(?:MIGRATION_)?DATABASE_URL")
+# Any variable named like a database URL, or a PostgreSQL URL written out.
+DATABASE_CREDENTIAL = re.compile(
+    r"\b[A-Z][A-Z0-9_]*DATABASE_URL[A-Z0-9_]*\b|\bpostgres(?:ql)?(?:\+\w+)?://"
+)
+# The comparison path's own database URL, and the name of the Secret Manager
+# secret that holds it, may reach Modal until the comparison path is removed.
+COMPARISON_PATH_CREDENTIALS = frozenset(
+    {"STAGE12_DATABASE_URL", "STAGE12_DATABASE_URL_SECRET_NAME"}
+)
 MODAL_SECRET_COMMAND = re.compile(r"\bmodal\s+secret\s+create\b")
 MODAL_DEPLOY_COMMAND = re.compile(r"\bmodal\s+deploy\b")
 
@@ -156,6 +164,23 @@ def persistence_dependency_violations(project_root: Path) -> list[str]:
     return violations
 
 
+def _foreign_credentials(text: str) -> list[str]:
+    """Return the database credentials in ``text`` other than the comparison path's."""
+    return sorted(
+        {
+            match
+            for match in DATABASE_CREDENTIAL.findall(text)
+            if match not in COMPARISON_PATH_CREDENTIALS
+        }
+    )
+
+
+def _environment_text(environment: object) -> str:
+    if not isinstance(environment, dict):
+        return ""
+    return "\n".join(f"{key}={value}" for key, value in environment.items())
+
+
 def _step_text(step: Mapping[str, object]) -> str:
     return "\n".join(
         str(value)
@@ -171,24 +196,50 @@ def _step_reaches_modal(step_text: str, modal_scripts: set[str]) -> bool:
     )
 
 
-def _step_carries_credential(step: Mapping[str, object], step_text: str) -> bool:
-    environment = step.get("env") or {}
-    assert isinstance(environment, dict)
-    return bool(SIMULATION_DATABASE_CREDENTIAL.search(step_text)) or any(
-        SIMULATION_DATABASE_CREDENTIAL.search(f"{key}={value}")
-        for key, value in environment.items()
-    )
+def _workflow_violations(
+    workflow_name: str, workflow_text: str, modal_scripts: set[str]
+) -> list[str]:
+    workflow = yaml.safe_load(workflow_text) or {}
+    workflow_environment = _environment_text(workflow.get("env"))
+    violations: list[str] = []
+    for job_name, job in (workflow.get("jobs") or {}).items():
+        job_environment = _environment_text(job.get("env"))
+        for step in job.get("steps") or []:
+            step_text = _step_text(step)
+            if not _step_reaches_modal(step_text, modal_scripts):
+                continue
+            # Workflow-level and job-level env reach every step of the job.
+            carried = _foreign_credentials(
+                "\n".join(
+                    (
+                        workflow_environment,
+                        job_environment,
+                        _environment_text(step.get("env")),
+                        step_text,
+                    )
+                )
+            )
+            if carried:
+                violations.append(
+                    f"{workflow_name} job {job_name} step "
+                    f"{step.get('name', '<unnamed>')!r} gives Modal a database "
+                    f"credential other than the comparison path's: "
+                    f"{', '.join(carried)}"
+                )
+    return violations
 
 
 def modal_credential_violations(
     workflow_texts: Mapping[str, str],
     script_texts: Mapping[str, str],
 ) -> list[str]:
-    """Return Modal secret or deploy steps that carry simulation database URLs.
+    """Return Modal secret or deploy steps that carry a foreign database URL.
 
     ``workflow_texts`` and ``script_texts`` map a file name to its contents. A
     step counts as giving Modal a value when it creates a Modal secret or
-    deploys a Modal application, directly or through a script that does.
+    deploys a Modal application, directly or through a script that does, and
+    every value in its step, job or workflow environment reaches it. Only the
+    comparison path's own database URL may reach Modal.
     """
     modal_scripts = {
         name
@@ -196,21 +247,23 @@ def modal_credential_violations(
         if MODAL_SECRET_COMMAND.search(text) or MODAL_DEPLOY_COMMAND.search(text)
     }
     violations = [
-        f"{name} gives Modal a simulation database credential"
+        f"{name} gives Modal a database credential other than the comparison "
+        f"path's: {', '.join(carried)}"
         for name in sorted(modal_scripts)
-        if SIMULATION_DATABASE_CREDENTIAL.search(script_texts[name])
+        if (carried := _foreign_credentials(script_texts[name]))
     ]
     for workflow_name, workflow_text in sorted(workflow_texts.items()):
-        workflow = yaml.safe_load(workflow_text) or {}
-        for job_name, job in (workflow.get("jobs") or {}).items():
-            for step in job.get("steps") or []:
-                step_text = _step_text(step)
-                if _step_reaches_modal(
-                    step_text, modal_scripts
-                ) and _step_carries_credential(step, step_text):
-                    violations.append(
-                        f"{workflow_name} job {job_name} step "
-                        f"{step.get('name', '<unnamed>')!r} gives Modal a "
-                        "simulation database credential"
-                    )
+        violations.extend(
+            _workflow_violations(workflow_name, workflow_text, modal_scripts)
+        )
     return violations
+
+
+def modal_source_violations(sources: Mapping[str, str]) -> list[str]:
+    """Return Modal project sources that name a foreign database URL variable."""
+    return [
+        f"{name} names {variable}"
+        for name, source in sorted(sources.items())
+        for variable in _foreign_credentials(source)
+        if not variable.endswith("://")
+    ]

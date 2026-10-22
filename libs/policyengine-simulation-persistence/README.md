@@ -25,11 +25,15 @@ These rules are registered in `rules/registry.toml` and checked by
   never declare, lock or import this library. Only the Simulation Entrypoint
   and the migration job install it.
 - **No database credentials in Modal**
-  (`sim.persistence.no-modal-database-credentials`). No Modal secret or Modal
-  deployment receives `SIMULATION_DATABASE_URL` or
-  `SIMULATION_MIGRATION_DATABASE_URL`. The Stage 12 comparison's own database
-  secret is the only database credential Modal holds, until the comparison
-  path is removed.
+  (`sim.persistence.no-modal-database-credentials`). No Modal secret, Modal
+  deployment or Modal application source receives or names a database URL:
+  neither a variable named like `*DATABASE_URL*` nor a written-out
+  `postgresql://` URL, whether in a step's, job's or workflow's environment
+  or in a script such a step runs. The one exception is the Stage 12
+  comparison's own `STAGE12_DATABASE_URL` (and the name of the secret that
+  holds it), until the comparison path is removed. In particular,
+  `SIMULATION_DATABASE_URL` and `SIMULATION_MIGRATION_DATABASE_URL` never
+  reach Modal.
 
 ## Database roles
 
