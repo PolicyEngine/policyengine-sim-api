@@ -1505,7 +1505,7 @@ project = "projects/policyengine-simulation-entry"
 test = "tests/test_pr_description_check.py::test_rule_proof_pr_tracking_issue"
 workflow = ".github/workflows/pr.yml"
 job = "test"
-invocation = "uv run pytest tests/"
+invocation = "uv run --frozen pytest tests/"
 
 [[rule]]
 id = "sim.process.same-repo-draft-prs"
