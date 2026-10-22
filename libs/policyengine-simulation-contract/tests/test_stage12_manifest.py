@@ -562,6 +562,16 @@ def test_older_keys_left_behind_by_a_schema_2_publish_change_nothing() -> None:
     assert manifest.default_version == "5.3.0"
 
 
+def test_only_an_economy_capable_country_names_a_simulation_callable() -> None:
+    worker = _worker(household_only=("uk",))
+
+    assert worker.economy_simulation_callable("us") == "run_single_simulation_us"
+    with pytest.raises(LookupError, match="'uk' is not economy-capable"):
+        worker.economy_simulation_callable("uk")
+    with pytest.raises(LookupError, match="'fr' is not economy-capable"):
+        worker.economy_simulation_callable("fr")
+
+
 def test_parse_v2_manifest_rejects_unknown_schema_versions() -> None:
     document = _schema_1_document(include_cache=True)
     document["schema_version"] = 3
