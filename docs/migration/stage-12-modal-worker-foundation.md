@@ -493,6 +493,16 @@ Entrypoint has household routes.
 - Each container loads a country model the first time it calculates that
   country and keeps it for later calls.
 
+Deployment validation calls each household function with a one-adult,
+current-law household and requires a successful calculation with the deployed
+bundle, reported by that function, with a number for the household's net
+income. The validation record keeps each invocation ID, and the manifest
+publisher records a country's `household_callable` only when the record shows
+its function was validated. A failed household validation fails v2 worker
+validation like any other validation failure: the manifest is not published,
+and, as described under "Release and deployment constraints", the deployment
+does not promote the new Simulation Entrypoint revision.
+
 ## Temporary direct runner endpoint
 
 > **Temporary Stage 12 interface:** The authenticated routes in this section
