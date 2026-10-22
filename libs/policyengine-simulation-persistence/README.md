@@ -87,7 +87,10 @@ this code knows.
    chain's upgrade, `alembic check`, downgrade and upgrade cycle.
 
 The schema creation and every pending revision apply in one transaction, so a
-failed migration leaves nothing applied. The previous release keeps serving
+failed migration leaves nothing applied. A statement that waits more than ten
+seconds for a lock fails the migration instead of waiting longer, because
+adding a foreign key locks the Public API table it refers to and the Public
+API's writes would queue behind it; the next deployment tries again. The previous release keeps serving
 traffic while a deployment migrates, and a rollback moves traffic back to an
 older image without downgrading the schema, so every revision must work with
 the code of the release before it: add columns and tables, and remove them

@@ -13,7 +13,7 @@ from policyengine_simulation_persistence import (
     normalized_database_url,
     simulation_metadata,
 )
-from sqlalchemy import create_engine, inspect, pool
+from sqlalchemy import create_engine, inspect, pool, text
 from sqlalchemy.schema import CreateSchema
 
 if TYPE_CHECKING:
@@ -21,6 +21,10 @@ if TYPE_CHECKING:
 
 DATABASE_URL_VARIABLE = "SIMULATION_MIGRATION_DATABASE_URL"
 CONNECT_TIMEOUT_SECONDS = 10
+# How long a migration statement waits for a lock before the migration fails.
+# Adding a foreign key locks the Public API table it refers to, and the Public
+# API's writes queue behind a migration that waits, so it must not wait long.
+LOCK_TIMEOUT = "10s"
 
 config = context.config
 if config.config_file_name is not None:
@@ -58,6 +62,7 @@ def _ensure_simulation_schema(connection: Connection) -> None:
 
 
 def _run(connection: Connection) -> None:
+    connection.execute(text(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'"))
     # The version table lives in the simulation schema, so the schema must
     # exist before Alembic looks for it.
     _ensure_simulation_schema(connection)
