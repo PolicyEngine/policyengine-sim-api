@@ -298,20 +298,37 @@ _MISSING_AREA_CODES = (
 )
 
 
-def uk_area_regions_routed() -> bool:
-    """Whether the bundle routes UK constituency and local-authority regions.
+# policyengine.py's ``regional_release_kind`` for a bundle that routes UK area
+# regions to a separate local-area release.
+_LOCAL_AREA_RELEASE_KIND = "local_area"
 
-    policyengine.py lists a region type in ``region_datasets`` when its
-    ``regional_dataset_defaults`` names a dataset for it. Only when both area
-    region types have one may the UK default, a national file, carry no area
-    codes: their runs and breakdowns then belong to that local-area dataset.
+
+def uk_area_regions_routed() -> bool:
+    """Whether the bundle routes UK area regions to one local-area dataset.
+
+    Two things must hold. The manifest's ``regional_release_kind`` must be
+    ``local_area``: only then does policyengine.py's region registry list the
+    constituencies and local authorities, which the runtime resolves as row
+    filters on that dataset. Another kind, ``area_coded_national``, routes
+    both area types to a national dataset with area codes without
+    registering them. And both area types must route to one certified
+    dataset (``routed_uk_area_dataset_name``), on which a local-area
+    breakdown builds both levels. Only then may the UK default, a national
+    file, carry no area codes.
     """
     from policyengine.provenance.manifest import (
         get_release_manifest,
     )
 
-    region_datasets = get_release_manifest("uk").region_datasets
-    return all(region_type in region_datasets for region_type in UK_AREA_REGION_TYPES)
+    manifest = get_release_manifest("uk")
+    release_kind = getattr(manifest, "regional_release_kind", None)
+    if release_kind != _LOCAL_AREA_RELEASE_KIND:
+        return False
+    try:
+        routed_uk_area_dataset_name()
+    except ValueError:
+        return False
+    return True
 
 
 def routed_uk_area_dataset_name() -> str:
@@ -319,8 +336,8 @@ def routed_uk_area_dataset_name() -> str:
 
     Like policyengine.py's ``region_dataset_name``, this is the bundle dataset
     whose path the region type's template names. Both area region types must
-    share it: a national run builds both of its area breakdowns from one
-    baseline and reform pair on that dataset.
+    share it: a local-area breakdown builds both levels from one baseline and
+    reform pair on that dataset.
     """
     from policyengine.provenance.manifest import (
         get_release_manifest,
@@ -342,8 +359,8 @@ def routed_uk_area_dataset_name() -> str:
     if len(names) > 1:
         msg = (
             "The UK bundle routes constituency and local-authority regions to "
-            f"different datasets ({', '.join(sorted(names))}); a national run "
-            "builds both area breakdowns from one dataset"
+            f"different datasets ({', '.join(sorted(names))}); a local-area "
+            "breakdown builds both levels from one dataset"
         )
         raise ValueError(msg)
     return names.pop()

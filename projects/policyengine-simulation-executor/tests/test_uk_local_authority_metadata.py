@@ -189,29 +189,70 @@ def test_dataset_detector_requires_codes_for_area_runs_even_when_routed(
         )
 
 
-@pytest.mark.parametrize(
-    ("region_types", "routed"),
-    [
-        (("national",), False),
-        (("national", "constituency"), False),
-        (("national", "constituency", "local_authority"), True),
-    ],
-)
-def test_area_regions_count_as_routed_only_when_both_have_a_dataset(
-    monkeypatch, region_types: tuple[str, ...], *, routed: bool
-) -> None:
-    monkeypatch.setattr(
-        "policyengine.provenance.manifest.get_release_manifest",
-        lambda _country: SimpleNamespace(
-            region_datasets={region_type: object() for region_type in region_types}
-        ),
-    )
-
-    assert uk_area_regions_routed() is routed
-
-
 _NATIONAL_FILE = "microcosm_uk_2024_25.h5"
 _LOCAL_AREA_FILE = "microcosm_uk_2024_25_dense.h5"
+
+
+@pytest.mark.parametrize(
+    ("release_kind", "region_datasets", "routed"),
+    [
+        ("local_area", {"national": _NATIONAL_FILE}, False),
+        (
+            "local_area",
+            {"national": _NATIONAL_FILE, "constituency": _LOCAL_AREA_FILE},
+            False,
+        ),
+        (
+            "local_area",
+            {
+                "national": _NATIONAL_FILE,
+                "constituency": _LOCAL_AREA_FILE,
+                "local_authority": _LOCAL_AREA_FILE,
+            },
+            True,
+        ),
+        # policyengine.py registers no area regions for an area-coded national
+        # release, although it routes both area types.
+        (
+            "area_coded_national",
+            {
+                "national": _NATIONAL_FILE,
+                "constituency": _NATIONAL_FILE,
+                "local_authority": _NATIONAL_FILE,
+            },
+            False,
+        ),
+        (
+            None,
+            {
+                "national": _NATIONAL_FILE,
+                "constituency": _LOCAL_AREA_FILE,
+                "local_authority": _LOCAL_AREA_FILE,
+            },
+            False,
+        ),
+        # A breakdown builds both levels from one dataset.
+        (
+            "local_area",
+            {
+                "national": _NATIONAL_FILE,
+                "constituency": _LOCAL_AREA_FILE,
+                "local_authority": _NATIONAL_FILE,
+            },
+            False,
+        ),
+    ],
+)
+def test_area_regions_count_as_routed_only_to_one_local_area_dataset(
+    monkeypatch,
+    release_kind: str | None,
+    region_datasets: dict[str, str],
+    *,
+    routed: bool,
+) -> None:
+    _bundle_routes(monkeypatch, region_datasets, release_kind=release_kind)
+
+    assert uk_area_regions_routed() is routed
 
 
 @pytest.mark.parametrize(
@@ -239,20 +280,34 @@ def test_area_breakdowns_are_omitted_only_from_routed_uk_wide_and_nation_runs(
     )
 
 
-def _bundle_routes(monkeypatch, region_datasets: dict[str, str]) -> None:
+def uk_manifest(
+    region_datasets: dict[str, str], *, release_kind: str | None = "local_area"
+) -> SimpleNamespace:
+    """Return a UK manifest routing each region type to a bundle file."""
+    return SimpleNamespace(
+        regional_release_kind=release_kind,
+        region_datasets={
+            region_type: SimpleNamespace(path_template=path)
+            for region_type, path in region_datasets.items()
+        },
+        datasets={
+            "microcosm_uk_2024_25": SimpleNamespace(path=_NATIONAL_FILE),
+            "microcosm_uk_2024_25_dense": SimpleNamespace(path=_LOCAL_AREA_FILE),
+        },
+    )
+
+
+def _bundle_routes(
+    monkeypatch,
+    region_datasets: dict[str, str],
+    *,
+    release_kind: str | None = "local_area",
+) -> None:
     """Install a UK manifest routing each region type to a bundle file."""
+    manifest = uk_manifest(region_datasets, release_kind=release_kind)
     monkeypatch.setattr(
         "policyengine.provenance.manifest.get_release_manifest",
-        lambda _country: SimpleNamespace(
-            region_datasets={
-                region_type: SimpleNamespace(path_template=path)
-                for region_type, path in region_datasets.items()
-            },
-            datasets={
-                "microcosm_uk_2024_25": SimpleNamespace(path=_NATIONAL_FILE),
-                "microcosm_uk_2024_25_dense": SimpleNamespace(path=_LOCAL_AREA_FILE),
-            },
-        ),
+        lambda _country: manifest,
     )
 
 
