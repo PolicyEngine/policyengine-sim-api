@@ -500,3 +500,15 @@ def test_detector_rejects_an_unidentifiable_configuration() -> None:
 def test_detector_rejects_missing_or_unsupported_codes(value: object) -> None:
     with pytest.raises((TypeError, ValueError), match="local-authority code"):
         detect_uk_local_authority_boundary_version([value])
+
+
+def test_breakdown_nations_are_the_uk_nations_policyengine_registers() -> None:
+    from policyengine.countries.uk.regions import build_uk_region_registry
+    from policyengine_simulation_contract import local_area_breakdown
+
+    registry = build_uk_region_registry(
+        include_constituencies=False, include_local_authorities=False
+    )
+
+    registered = frozenset(region.code for region in registry.get_by_type("country"))
+    assert registered == local_area_breakdown.UK_NATION_REGIONS

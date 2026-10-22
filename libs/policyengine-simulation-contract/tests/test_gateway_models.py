@@ -350,7 +350,19 @@ class TestSimulationRequestBreakdown:
         assert request.breakdown is None
         assert "breakdown" not in request.model_dump(exclude_none=True)
 
-    @pytest.mark.parametrize("region", [None, "uk", "UK", "country/wales"])
+    @pytest.mark.parametrize(
+        "region",
+        [
+            None,
+            "uk",
+            "UK",
+            "country/england",
+            "country/scotland",
+            "country/wales",
+            "country/northern_ireland",
+            "country/Wales",
+        ],
+    )
     def test_local_areas_are_accepted_for_a_uk_wide_or_nation_region(self, region):
         # The Public API always sends include_cliffs: false.
         request = SimulationRequest(
@@ -372,6 +384,9 @@ class TestSimulationRequestBreakdown:
             ({"region": "local_authority/E06000063"}, "'local_authority/E06000063'"),
             ({"region": "wales"}, "'wales'"),
             ({"region": "country/"}, "'country/'"),
+            # The Public API's spelling; .py names it country/northern_ireland.
+            ({"region": "country/ni"}, "'country/ni'"),
+            ({"region": "country/atlantis"}, "country/northern_ireland"),
             ({"include_cliffs": True}, "include_cliffs"),
             ({"segmented": True}, "segmented"),
             ({"region_group": ["country/wales"]}, "region_group"),

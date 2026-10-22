@@ -9,6 +9,7 @@ from policyengine_simulation_contract.gateway_models import JobStatusResponse
 from policyengine_simulation_contract.local_area_breakdown import (
     LOCAL_AREA_BREAKDOWN_CAPABILITY_KEY,
     LOCAL_AREA_BREAKDOWN_CAPABILITY_VERSION,
+    local_area_breakdown_error,
     supported_local_area_breakdown_capability,
 )
 from policyengine_simulation_contract.macro_output import (
@@ -161,3 +162,17 @@ def test_a_breakdown_names_both_area_levels(field):
 def test_a_breakdown_has_its_own_kind_and_no_other_fields(change):
     with pytest.raises(ValidationError):
         LocalAreaBreakdownOutput.model_validate({**BREAKDOWN, **change})
+
+
+def test_an_unknown_nation_is_refused_with_the_nations_a_breakdown_takes():
+    error = local_area_breakdown_error(
+        country="uk",
+        region="country/ni",
+        region_group=None,
+        include_cliffs=False,
+        segmented=None,
+    )
+
+    assert error is not None
+    for nation in ("england", "scotland", "wales", "northern_ireland"):
+        assert f"country/{nation}" in error

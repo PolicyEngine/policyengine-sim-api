@@ -16,6 +16,17 @@ from __future__ import annotations
 LOCAL_AREAS_BREAKDOWN = "local_areas"
 LOCAL_AREA_BREAKDOWN_CAPABILITY_KEY = "local_area_breakdown"
 LOCAL_AREA_BREAKDOWN_CAPABILITY_VERSION = 1
+# The nation regions policyengine.py registers for the UK (its UK_COUNTRIES);
+# an executor test checks this against the installed registry, since the
+# gateway installs no country package.
+UK_NATION_REGIONS = frozenset(
+    {
+        "country/england",
+        "country/scotland",
+        "country/wales",
+        "country/northern_ireland",
+    }
+)
 
 
 def supported_local_area_breakdown_capability(value: object) -> int | None:
@@ -38,8 +49,8 @@ def local_area_breakdown_error(
     """Return why a request cannot have a local-area breakdown, or None.
 
     A breakdown runs one UK-wide or nation region on the local-area dataset,
-    so it needs a UK request whose region is absent, ``uk`` or
-    ``country/<nation>``. It computes no cliff impacts and no region
+    so it needs a UK request whose region is absent, ``uk`` or one of
+    ``UK_NATION_REGIONS``, in any case. It computes no cliff impacts and no region
     segments, and takes no region group. ``include_cliffs`` and ``segmented``
     may still be sent as false: the Public API always sends
     ``include_cliffs: false``. The gateway contract and the worker both apply
@@ -47,13 +58,11 @@ def local_area_breakdown_error(
     """
     if country.lower() != "uk":
         return "breakdown is supported only for UK requests"
-    if region is not None and region.lower() != "uk":
-        region_type, _, nation = region.partition("/")
-        if region_type.lower() != "country" or not nation.strip():
-            return (
-                "breakdown needs a UK-wide or nation region (uk or "
-                f"country/<nation>), not {region!r}"
-            )
+    if region is not None and region.lower() not in {"uk", *UK_NATION_REGIONS}:
+        accepted = ", ".join(["uk", *sorted(UK_NATION_REGIONS)])
+        return (
+            f"breakdown needs a UK-wide or nation region ({accepted}), not {region!r}"
+        )
     for flag, value in (
         ("include_cliffs", include_cliffs),
         ("segmented", segmented),
