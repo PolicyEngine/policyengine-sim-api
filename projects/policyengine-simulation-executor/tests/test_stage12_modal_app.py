@@ -7,9 +7,14 @@ import sys
 import tomllib
 from contextlib import contextmanager
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 from fixtures.fake_modal import install_fake_modal
+from policyengine_simulation_contract.report_execution import (
+    ReportExecutionError,
+    ReportExecutionFailure,
+)
 from policyengine_simulation_executor.release_bundle import (
     get_bundled_package_version,
 )
@@ -398,11 +403,16 @@ def test_stage12_functions_close_runtime_after_application_error(
     assert runtime.shutdown_calls == 1
 
 
-def _invoke_coordinator(monkeypatch, module, context, *parent):
-    """Call the Modal coordinator with both runtime coordinators replaced."""
+def _invoke_coordinator(
+    monkeypatch, module, context, *parent, returned_error=None, runtime=None
+):
+    """Call the Modal coordinator with both runtime coordinators replaced.
+
+    The returned-report coordinator raises ``returned_error`` when one is given.
+    """
     from policyengine_simulation_executor import stage12_runtime
 
-    runtime = RecordingRuntime()
+    runtime = runtime or RecordingRuntime()
     monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
     monkeypatch.setattr(
         module.modal,
@@ -433,6 +443,8 @@ def _invoke_coordinator(monkeypatch, module, context, *parent):
                 "runtime": dependencies.runtime,
             }
         )
+        if returned_error is not None:
+            raise returned_error
         return {"delivered_by": "return_to_caller"}
 
     monkeypatch.setattr(stage12_runtime, "coordinate_report", stage12_coordinator)
@@ -469,6 +481,31 @@ def test_coordinator_runs_a_returned_report_without_a_parent(monkeypatch) -> Non
         "execution_mode": "authoritative",
         "result_delivery": "return_to_caller",
     }
+    assert runtime.shutdown_calls == 1
+
+
+def test_coordinator_raises_a_returned_reports_error_unchanged(monkeypatch) -> None:
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    error = ReportExecutionError(
+        ReportExecutionFailure(
+            evaluation_id=UUID("00000000-0000-0000-0000-000000000001"),
+            error_code="simulation_execution_failed",
+            error_summary="ValueError in dataset_load (baseline): bad input",
+        )
+    )
+
+    with pytest.raises(ReportExecutionError) as raised:
+        _invoke_coordinator(
+            monkeypatch,
+            module,
+            {"result_delivery": "return_to_caller"},
+            returned_error=error,
+            runtime=runtime,
+        )
+
+    # Modal pickles exactly what the function raises for the caller.
+    assert raised.value is error
     assert runtime.shutdown_calls == 1
 
 

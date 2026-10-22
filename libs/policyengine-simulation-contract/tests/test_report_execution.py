@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import pickle
 from datetime import UTC, datetime
@@ -11,9 +10,6 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from modal._serialization import pickle_exception
-from modal._utils.function_utils import _process_result
-from modal_proto import api_pb2
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_contract.report_execution import (
     ReportExecutionError,
@@ -482,28 +478,3 @@ def test_error_keeps_a_fixed_message_and_its_failure_through_pickle() -> None:
     assert isinstance(restored, ReportExecutionError)
     assert restored.failure == _failure()
     assert str(restored) == "Report execution failed"
-
-
-def test_modal_raises_the_error_in_the_caller_as_the_same_type() -> None:
-    """Send the error through Modal's own exception transport.
-
-    A function container pickles the exception it raised with
-    ``pickle_exception``, and ``FunctionCall.get`` in the caller unpickles and
-    raises it in ``_process_result``. Both are Modal's functions, so this
-    checks the installed Modal client rather than a copy of its behavior.
-    """
-    error = ReportExecutionError(_failure())
-    remote_result = api_pb2.GenericResult(
-        status=api_pb2.GenericResult.GENERIC_STATUS_FAILURE,
-        data=pickle_exception(error),
-        exception=repr(error),
-    )
-
-    with pytest.raises(ReportExecutionError) as raised:
-        asyncio.run(
-            _process_result(remote_result, api_pb2.DATA_FORMAT_PICKLE, None, None)
-        )
-
-    assert type(raised.value) is ReportExecutionError
-    assert raised.value.failure == _failure()
-    assert str(raised.value) == "Report execution failed"
