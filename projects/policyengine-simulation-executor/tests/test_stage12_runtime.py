@@ -669,9 +669,6 @@ def _stage12_load(monkeypatch, *, region, selection, baked_folder, planned=None)
     monkeypatch.setattr(
         worker, "detect_uk_local_authority_metadata", lambda *_a, **_k: None
     )
-    monkeypatch.setattr(
-        simulation_runtime, "_require_certified_uk_weight_matrix", lambda *_: None
-    )
     monkeypatch.setattr(worker, "build_stage12_simulation", stop_after_loading)
 
     planned = planned or _planned_simulation(SimulationRole.BASELINE)

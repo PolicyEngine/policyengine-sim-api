@@ -29,10 +29,7 @@ from fixtures.test_simulation_output_builder import (
     fake_analysis,
 )
 from fixtures.weighted_frames import weighted_entity_frame
-from policyengine.core.scoping_strategy import (
-    RowFilterStrategy,
-    WeightReplacementStrategy,
-)
+from policyengine.core.scoping_strategy import RowFilterStrategy
 from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
@@ -1916,14 +1913,6 @@ def _routed_uk_country_module() -> SimpleNamespace:
     )
 
 
-def _forbid_weight_matrix_regions(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "policyengine_simulation_executor.simulation_runtime."
-        "_build_uk_weight_replacement_region",
-        lambda _code: pytest.fail("a routed area never uses a weight matrix"),
-    )
-
-
 @pytest.mark.parametrize(
     ("requested", "expected"),
     [
@@ -1940,7 +1929,6 @@ def test_resolve_region_maps_routed_uk_area_names_and_codes_to_the_registry(
     monkeypatch, requested, expected
 ):
     _routes_uk_area_regions(monkeypatch, routed=True)
-    _forbid_weight_matrix_regions(monkeypatch)
     country_module = _routed_uk_country_module()
 
     resolution = _resolve_region(
@@ -1966,7 +1954,6 @@ def test_resolve_region_rejects_uk_areas_outside_the_routed_registry(
     monkeypatch, requested
 ):
     _routes_uk_area_regions(monkeypatch, routed=True)
-    _forbid_weight_matrix_regions(monkeypatch)
 
     with pytest.raises(ValueError, match="Unsupported UK region"):
         _resolve_region(
@@ -1976,22 +1963,22 @@ def test_resolve_region_rejects_uk_areas_outside_the_routed_registry(
         )
 
 
-def test_resolve_region_keeps_weight_matrix_uk_areas_until_areas_are_routed(
-    monkeypatch,
+@pytest.mark.parametrize(
+    "requested", ["constituency/Aldershot", "local_authority/E07000110"]
+)
+def test_resolve_region_rejects_uk_area_regions_on_an_unrouted_bundle(
+    monkeypatch, requested
 ):
+    # Without routing, policyengine.py's registry lists no area regions, and
+    # no weight-matrix region stands in for one: older bundles keep their own
+    # frozen apps.
     _routes_uk_area_regions(monkeypatch, routed=False)
-    # No region registry: an unrouted bundle must not read one.
     country_module = SimpleNamespace(model=SimpleNamespace(get_region=lambda _: None))
 
-    resolution = _resolve_region(
-        country_module=country_module,
-        country="uk",
-        params={"region": "constituency/Aldershot"},
-    )
-
-    assert resolution.code == "constituency/Aldershot"
-    assert isinstance(resolution.scoping_strategy, WeightReplacementStrategy)
-    assert resolution.scoping_strategy.region_code == "Aldershot"
+    with pytest.raises(ValueError, match=f"Unsupported UK region: {requested}"):
+        _resolve_region(
+            country_module=country_module, country="uk", params={"region": requested}
+        )
 
 
 def test_resolve_dataset_reference_uses_bundle_default():

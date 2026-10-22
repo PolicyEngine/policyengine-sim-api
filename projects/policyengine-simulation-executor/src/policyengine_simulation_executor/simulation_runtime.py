@@ -17,7 +17,6 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from importlib import import_module
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
@@ -52,8 +51,6 @@ if TYPE_CHECKING:
     from types import ModuleType
 
     from policyengine.core import Dataset, Policy, Region
-    from policyengine.core.scoping_strategy import ScopingStrategy
-    from policyengine.provenance.manifest import ArtifactPathReference
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.uk_geography import (
         UKLocalAuthorityMetadata,
@@ -417,169 +414,6 @@ def _registry_uk_area_region_code(country_module: ModuleType, region_code: str) 
     return region_code
 
 
-def _build_uk_weight_replacement_region(region_code: str) -> Region | None:
-    if "/" not in region_code:
-        return None
-
-    prefix, value = region_code.split("/", maxsplit=1)
-    if prefix not in {"constituency", "local_authority"}:
-        return None
-
-    from policyengine.core.region import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
-        Region,
-    )
-    from policyengine.core.scoping_strategy import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
-        WeightReplacementStrategy,
-    )
-    from policyengine.data.uk_geography_assets import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
-        CONSTITUENCY_ASSET_SPEC,
-        LOCAL_AUTHORITY_ASSET_SPEC,
-    )
-
-    asset_spec = (
-        CONSTITUENCY_ASSET_SPEC
-        if prefix == "constituency"
-        else LOCAL_AUTHORITY_ASSET_SPEC
-    )
-    return Region(
-        code=region_code,
-        label=value,
-        region_type=prefix,
-        parent_code="uk",
-        scoping_strategy=WeightReplacementStrategy(
-            weight_matrix_bucket=asset_spec.bucket,
-            weight_matrix_key=asset_spec.weight_matrix_filename,
-            lookup_csv_bucket=asset_spec.bucket,
-            lookup_csv_key=asset_spec.lookup_csv_filename,
-            region_code=value,
-            # The bucket copy is replaced by every data release; the matrix
-            # comes from the certified bundle instead, placed locally by
-            # ``_require_certified_uk_weight_matrix`` before the run.
-            download_missing_assets=False,
-        ),
-    )
-
-
-def _require_certified_uk_weight_matrix(
-    scoping_strategy: ScopingStrategy | None,
-    dataset: Dataset,
-    dataset_selection: DatasetSelection,
-) -> None:
-    """Bind a weight-matrix region to the release of the dataset it reweights.
-
-    ``WeightReplacementStrategy`` gives each household the weight in its
-    column of the matrix, by position. Only the matrix certified with the
-    selected dataset (same repository and revision in the policyengine.py
-    bundle) lines up with its households: another release can have the same
-    shape and a different household order. This places that certified,
-    digest-checked matrix where the strategy looks first, confirms the
-    strategy will read exactly that file, and checks the run year and the
-    household dimension. The unversioned bucket copy, which every data
-    release replaces, is never downloaded (see
-    ``_build_uk_weight_replacement_region``).
-    """
-    from policyengine.core.scoping_strategy import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
-        WeightReplacementStrategy,
-    )
-
-    if not isinstance(scoping_strategy, WeightReplacementStrategy):
-        return
-
-    import h5py
-    import pandas as pd  # noqa: PLC0415  # UK weight-matrix check: kept with its lazily loaded data dependencies
-    from policyengine.data.uk_geography_assets import (  # noqa: PLC0415  # this module keeps policyengine out of its module-level imports (see its docstring)
-        UKGeographyAssetSpec,
-        default_download_dir,
-        resolve_uk_geography_asset_paths,
-    )
-    from policyengine.provenance.dataset_materialization import (
-        materialize_dataset,
-    )
-    from policyengine.provenance.manifest import (
-        get_release_manifest,
-    )
-
-    from policyengine_simulation_executor import (  # noqa: PLC0415  # simulation_output_geographic imports this module back lazily; kept lazy on both sides
-        simulation_output_geographic,
-    )
-
-    region = scoping_strategy.region_code
-    matrix_name = scoping_strategy.weight_matrix_key
-    manifest = get_release_manifest("uk")
-    package = manifest.data_package
-
-    def release(reference: ArtifactPathReference) -> tuple[str, str]:
-        return (
-            reference.repo_id or package.repo_id,
-            reference.revision or package.release_manifest_revision or package.version,
-        )
-
-    selected = manifest.datasets.get(dataset_selection.name)
-    if selected is None:
-        msg = f"UK dataset {dataset_selection.name!r} is not in the certified bundle"
-        raise ValueError(msg)
-    certified_name = next(
-        (
-            name
-            for name, reference in manifest.datasets.items()
-            if reference.path == matrix_name and release(reference) == release(selected)
-        ),
-        None,
-    )
-    if certified_name is None:
-        msg = (
-            f"UK region {region!r} reweights households with {matrix_name}, but the "
-            f"certified bundle has no {matrix_name} from the release of "
-            f"{dataset_selection.name!r}; a matrix from another release does not "
-            "line up with its households."
-        )
-        raise ValueError(msg)
-    certified = materialize_dataset(
-        "uk", certified_name, data_dir=default_download_dir()
-    )
-    spec = UKGeographyAssetSpec(
-        geography_type="weight replacement",
-        weight_matrix_filename=matrix_name,
-        lookup_csv_filename=scoping_strategy.lookup_csv_key,
-        bucket=scoping_strategy.weight_matrix_bucket,
-        weight_matrix_bucket=scoping_strategy.weight_matrix_bucket,
-        lookup_csv_bucket=scoping_strategy.lookup_csv_bucket,
-    )
-    simulation_output_geographic._required_uk_geography_lookup_csv_path(spec)  # noqa: SLF001  # package-internal helper, called through its module so tests can patch it
-    paths = resolve_uk_geography_asset_paths(spec, download_missing_assets=False)
-    if Path(paths.weight_matrix_path).resolve() != Path(certified.path).resolve():
-        msg = (
-            f"UK region {region!r} would read {paths.weight_matrix_path}, not the "
-            f"{matrix_name} certified with {dataset_selection.name!r} "
-            f"({certified.path})."
-        )
-        raise ValueError(msg)
-    year = str(dataset.year)
-    with h5py.File(paths.weight_matrix_path, "r") as matrix:
-        if year not in matrix:
-            covered = ", ".join(sorted(matrix))
-            msg = (
-                f"UK region {region!r} reweights households with {matrix_name}, "
-                f"which has no weights for {year} (it covers {covered})."
-            )
-            raise ValueError(msg)
-        weights = matrix[year]
-        if not isinstance(weights, h5py.Dataset):
-            msg = f"{matrix_name} entry {year} is not a weight matrix"
-            raise TypeError(msg)
-        matrix_households = weights.shape[-1]
-    households = len(pd.DataFrame(dataset.data.entity_data["household"]))
-    if households != matrix_households:
-        msg = (
-            f"UK region {region!r} reweights households with {matrix_name}, "
-            f"which was built for {matrix_households} households; the selected "
-            f"UK dataset has {households}. Constituency and local-authority "
-            "runs on this dataset need a local-area dataset that carries "
-            "constituency and local-authority codes."
-        )
-        raise ValueError(msg)
-
-
 def _region_parent_dataset_reference(
     country_module: ModuleType,
     country: str,
@@ -643,8 +477,6 @@ def _resolve_region(
     if country == "uk":
         region_code = _registry_uk_area_region_code(country_module, region_code)
     region = country_module.model.get_region(region_code)
-    if region is None and country == "uk" and not _uk_area_regions_routed():
-        region = _build_uk_weight_replacement_region(region_code)
     if region is None:
         msg = f"Unsupported {country.upper()} region: {region_code}"
         raise ValueError(msg)
@@ -1154,9 +986,6 @@ def _run_simulation_impl_core(
 
     uk_local_authority_metadata = detect_uk_local_authority_metadata(
         country, dataset, region_code=region_resolution.code
-    )
-    _require_certified_uk_weight_matrix(
-        region_resolution.scoping_strategy, dataset, dataset_selection
     )
     with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.POLICY_NORMALIZATION)):
         baseline_policy = _normalise_policy(simulation_params.get("baseline"))

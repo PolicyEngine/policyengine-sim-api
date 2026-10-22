@@ -279,7 +279,6 @@ def calculate_simulation_frames(
         _country_module,
         _load_dataset,
         _normalise_policy,
-        _require_certified_uk_weight_matrix,
         _resolve_dataset_selection,
         _resolve_region,
         resolve_data_folder,
@@ -324,9 +323,6 @@ def calculate_simulation_frames(
             country,
             dataset,
             region_code=region.code,
-        )
-        _require_certified_uk_weight_matrix(
-            region.scoping_strategy, dataset, dataset_selection
         )
         with stage_span(Stage.POLICY_NORMALIZATION):
             policy = _normalise_policy(simulation.policy)
