@@ -24,8 +24,9 @@ from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 def build_worker(validation_payload: object) -> V2WorkerVersion:
     """Build the installed bundle's v2 worker entry from a validation record.
 
-    Raises ValueError if the record is invalid or the entry carries a
-    credential-like key.
+    Every bundle country has a single-simulation worker, so each is recorded
+    as economy-capable. Raises ValueError if the record is invalid or the
+    entry carries a credential-like key.
     """
     resolved = load_stage12_bundle()
     validation = V2WorkerValidation.model_validate(validation_payload)
@@ -35,7 +36,8 @@ def build_worker(validation_payload: object) -> V2WorkerVersion:
         countries=tuple(
             V2CountryWorker(
                 country=country.country,
-                single_simulation_callable=(f"run_single_simulation_{country.country}"),
+                economy_capable=True,
+                single_simulation_callable=f"run_single_simulation_{country.country}",
             )
             for country in resolved.bundle.countries
         ),
