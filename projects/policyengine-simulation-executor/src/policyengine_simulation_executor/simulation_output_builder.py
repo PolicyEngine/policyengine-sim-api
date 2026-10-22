@@ -30,6 +30,7 @@ from policyengine_simulation_executor.simulation_macro_output import (
     BudgetaryImpact,
     CliffImpactOutput,
     CongressionalDistrictImpactOutput,
+    ConstituencyImpactRecord,
     DecileOutput,
     DetailedBudgetOutput,
     GeographicImpactOutput,
@@ -37,6 +38,7 @@ from policyengine_simulation_executor.simulation_macro_output import (
     IntraDecileOutput,
     LaborSupplyResponseOutput,
     LocalAreaBreakdownOutput,
+    LocalAuthorityImpactRecord,
     PovertyByGenderOutput,
     PovertyByRaceOutput,
     PovertyModuleOutputs,
@@ -47,6 +49,19 @@ from policyengine_simulation_executor.simulation_macro_output import (
 if TYPE_CHECKING:
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
+
+
+def _area_records[AreaRecord: (ConstituencyImpactRecord, LocalAuthorityImpactRecord)](
+    output: GeographicImpactOutput, record_type: type[AreaRecord]
+) -> list[AreaRecord]:
+    """Return one area level's records, refusing a record of the other level."""
+    records: list[AreaRecord] = []
+    for record in output.root:
+        if not isinstance(record, record_type):
+            msg = f"A {record_type.__name__} list holds a {type(record).__name__}"
+            raise TypeError(msg)
+        records.append(record)
+    return records
 
 
 @dataclass
@@ -80,7 +95,9 @@ class SimulationOutputBuilder:
     omit_uk_area_breakdowns: bool = False
     progress: JobProgressReporter = NULL_JOB_PROGRESS
     _analysis: Any = field(default=None, init=False)
-    _uk_geography_disclosure: Any = field(default=None, init=False)
+    _uk_geography_disclosure: (
+        simulation_output_geographic.UKGeographyDisclosureOutput | None
+    ) = field(default=None, init=False)
 
     def __post_init__(self) -> None:
         """Normalize ``country`` to lower case."""
@@ -183,8 +200,12 @@ class SimulationOutputBuilder:
                 policyengine_version=self._policyengine_version(),
                 dataset=self.resolved_dataset_name,
                 data_version=self._data_version(),
-                constituency_impact=constituency_impact,
-                local_authority_impact=local_authority_impact,
+                constituency_impact=_area_records(
+                    constituency_impact, ConstituencyImpactRecord
+                ),
+                local_authority_impact=_area_records(
+                    local_authority_impact, LocalAuthorityImpactRecord
+                ),
             )
 
     def serialize_local_area_breakdown(self) -> dict[str, Any]:

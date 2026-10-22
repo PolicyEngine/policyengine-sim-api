@@ -361,9 +361,9 @@ class LocalAreaBreakdownOutput(MacroOutputModel):
     the national run. ``kind`` is always ``local_areas``. ``dataset`` names the
     local-area dataset, ``data_version`` its release revision, and
     ``model_version`` and ``policyengine_version`` the country model and the
-    policyengine.py release that computed it. Areas whose income change
-    disclosure control withholds are left out of each list, so a list may be
-    empty.
+    policyengine.py release that computed it. Each list holds only its own
+    level's records. Areas whose income change disclosure control withholds
+    are left out of each list, so a list may be empty.
     """
 
     kind: Literal["local_areas"]
@@ -371,5 +371,5 @@ class LocalAreaBreakdownOutput(MacroOutputModel):
     policyengine_version: str
     dataset: str
     data_version: str
-    constituency_impact: GeographicImpactOutput
-    local_authority_impact: GeographicImpactOutput
+    constituency_impact: list[ConstituencyImpactRecord]
+    local_authority_impact: list[LocalAuthorityImpactRecord]

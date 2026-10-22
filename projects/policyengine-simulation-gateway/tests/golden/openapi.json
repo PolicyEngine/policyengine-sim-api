@@ -1767,10 +1767,18 @@
             "title": "Data Version"
           },
           "constituency_impact": {
-            "$ref": "#/components/schemas/GeographicImpactOutput"
+            "items": {
+              "$ref": "#/components/schemas/ConstituencyImpactRecord"
+            },
+            "type": "array",
+            "title": "Constituency Impact"
           },
           "local_authority_impact": {
-            "$ref": "#/components/schemas/GeographicImpactOutput"
+            "items": {
+              "$ref": "#/components/schemas/LocalAuthorityImpactRecord"
+            },
+            "type": "array",
+            "title": "Local Authority Impact"
           }
         },
         "additionalProperties": false,
@@ -1785,7 +1793,7 @@
           "local_authority_impact"
         ],
         "title": "LocalAreaBreakdownOutput",
-        "description": "Completed result of a UK local-area breakdown run.\n\nA request with ``breakdown: \"local_areas\"`` returns this instead of a\n``SingleYearMacroOutput``. The run covers the requested UK-wide or nation\nregion on the local-area dataset alone, and computes only the\nconstituency and local-authority impacts; every other figure comes from\nthe national run. ``kind`` is always ``local_areas``. ``dataset`` names the\nlocal-area dataset, ``data_version`` its release revision, and\n``model_version`` and ``policyengine_version`` the country model and the\npolicyengine.py release that computed it. Areas whose income change\ndisclosure control withholds are left out of each list, so a list may be\nempty."
+        "description": "Completed result of a UK local-area breakdown run.\n\nA request with ``breakdown: \"local_areas\"`` returns this instead of a\n``SingleYearMacroOutput``. The run covers the requested UK-wide or nation\nregion on the local-area dataset alone, and computes only the\nconstituency and local-authority impacts; every other figure comes from\nthe national run. ``kind`` is always ``local_areas``. ``dataset`` names the\nlocal-area dataset, ``data_version`` its release revision, and\n``model_version`` and ``policyengine_version`` the country model and the\npolicyengine.py release that computed it. Each list holds only its own\nlevel's records. Areas whose income change disclosure control withholds\nare left out of each list, so a list may be empty."
       },
       "LocalAuthorityImpactRecord": {
         "properties": {

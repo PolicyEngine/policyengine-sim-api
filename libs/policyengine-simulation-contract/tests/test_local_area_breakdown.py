@@ -13,7 +13,9 @@ from policyengine_simulation_contract.local_area_breakdown import (
     supported_local_area_breakdown_capability,
 )
 from policyengine_simulation_contract.macro_output import (
+    ConstituencyImpactRecord,
     LocalAreaBreakdownOutput,
+    LocalAuthorityImpactRecord,
     SingleYearMacroOutput,
 )
 from pydantic import ValidationError
@@ -143,8 +145,8 @@ def test_a_breakdown_may_publish_no_area_of_either_level():
 
     output = LocalAreaBreakdownOutput.model_validate(payload)
 
-    assert output.constituency_impact.root == []
-    assert output.local_authority_impact.root == []
+    assert output.constituency_impact == []
+    assert output.local_authority_impact == []
 
 
 @pytest.mark.parametrize("field", ["constituency_impact", "local_authority_impact"])
@@ -176,3 +178,26 @@ def test_an_unknown_nation_is_refused_with_the_nations_a_breakdown_takes():
     assert error is not None
     for nation in ("england", "scotland", "wales", "northern_ireland"):
         assert f"country/{nation}" in error
+
+
+@pytest.mark.parametrize(
+    ("field", "record"),
+    [
+        ("constituency_impact", LOCAL_AUTHORITY),
+        ("local_authority_impact", CONSTITUENCY),
+    ],
+)
+def test_each_area_level_takes_only_its_own_records(field, record):
+    with pytest.raises(ValidationError):
+        LocalAreaBreakdownOutput.model_validate({**BREAKDOWN, field: [record]})
+
+
+def test_each_area_level_reads_its_records_as_its_own_type():
+    output = LocalAreaBreakdownOutput.model_validate(BREAKDOWN)
+
+    assert [type(record) for record in output.constituency_impact] == [
+        ConstituencyImpactRecord
+    ]
+    assert [type(record) for record in output.local_authority_impact] == [
+        LocalAuthorityImpactRecord
+    ]

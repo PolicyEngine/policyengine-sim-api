@@ -110,10 +110,10 @@ class UKAreaSimulations:
     breakdown reports.
     """
 
-    baseline: Any
-    reform: Any
+    baseline: StageReportingSimulation
+    reform: StageReportingSimulation
     local_authority_metadata: UKLocalAuthorityMetadata
-    dataset: Any
+    dataset: Dataset
     dataset_name: str
 
 
@@ -788,7 +788,7 @@ def _uk_area_simulations(
     local_authority_metadata = detect_uk_area_dataset_metadata(
         dataset, dataset_name=selection.name
     )
-    simulations = []
+    simulations: list[StageReportingSimulation] = []
     for kind, policy in zip(
         ("uk_area_baseline", "uk_area_reform"), policies, strict=True
     ):
