@@ -70,10 +70,14 @@ section of today's result model, `SingleYearMacroOutput`:
 
 | Belongs to | Tables |
 | --- | --- |
-| A simulation run (its own figures, kept once when the run is reused) | `poverty_rates`, `inequality`, `cliff_impacts` |
+| A simulation run (its own figures, as each report run's comparison computed them) | `poverty_rates`, `inequality`, `cliff_impacts` |
 | A report run (the comparison) | `budget_impacts`, `program_budget_impacts`, `decile_impacts` (income and wealth), `intra_decile_impacts` (income and wealth), `labor_supply_responses`, `labor_supply_decile_impacts`, `congressional_district_impacts`, `constituency_impacts`, `local_authority_impacts` |
 
-Lists and maps keep their order in a `position` column. The report run also
+A reused simulation run's own figures are keyed by the report run too,
+because they can differ between comparisons (US poverty rates follow each
+comparison's SPM selection). Lists and maps keep their order in a `position`
+column. Result rows are written once and never changed: the runtime role may
+read and insert them but not update or delete them. The report run also
 records which optional sections its result holds (`result_sections`) and its
 SPM provenance. `write_economy_comparison` checks the result can be held
 exactly (`check_storable`) and writes its rows in the transaction that marks

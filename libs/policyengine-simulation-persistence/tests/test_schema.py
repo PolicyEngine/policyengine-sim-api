@@ -121,7 +121,23 @@ def test_importing_the_package_registers_every_table() -> None:
         "simulation.reports",
         "simulation.simulation_runs",
         "simulation.report_runs",
-        "simulation.poverty_rates",
-        "simulation.budget_impacts",
-        "simulation.local_authority_impacts",
+        *(
+            f"simulation.{name}"
+            for name in (
+                "poverty_rates",
+                "inequality",
+                "cliff_impacts",
+                "budget_impacts",
+                "program_budget_impacts",
+                "decile_impacts",
+                "intra_decile_impacts",
+                "labor_supply_responses",
+                "labor_supply_decile_impacts",
+                "congressional_district_impacts",
+                "constituency_impacts",
+                "local_authority_impacts",
+                "household_outputs",
+                "output_files",
+            )
+        ),
     } <= package_tables

@@ -7,8 +7,11 @@ run, and links to each run's stored files. A simulation's own figures
 comparison of a baseline and a reform (budget, programs, deciles, labour
 supply, geographies) belongs to the report run. Each report run also records
 the optional sections its result holds and its SPM provenance. Rows are
-written in the transaction that marks a run succeeded; the default privileges
-let the runtime role read and insert them. Nothing writes them yet.
+written in the transaction that marks a run succeeded and never change: the
+runtime role may read and insert them but not update or delete them. A
+simulation's own figures are keyed by the report run that computed them too,
+because a reused run's figures can differ between comparisons. Nothing writes
+them yet.
 
 Revision ID: 0004
 Revises: 0003
@@ -20,6 +23,22 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
+
+PER_SIMULATION_TABLES = ("poverty_rates", "inequality", "cliff_impacts")
+RESULT_TABLES = (
+    *PER_SIMULATION_TABLES,
+    "budget_impacts",
+    "program_budget_impacts",
+    "decile_impacts",
+    "intra_decile_impacts",
+    "labor_supply_responses",
+    "labor_supply_decile_impacts",
+    "congressional_district_impacts",
+    "constituency_impacts",
+    "local_authority_impacts",
+    "household_outputs",
+    "output_files",
+)
 
 revision = "0004"
 down_revision = "0003"
@@ -105,35 +124,54 @@ def upgrade() -> None:
     _create_output_files()
     op.create_table(
         "cliff_impacts",
+        sa.Column("report_run_id", sa.Uuid(), nullable=False),
         sa.Column("simulation_run_id", sa.Uuid(), nullable=False),
         sa.Column("cliff_gap", sa.Double(), nullable=False),
         sa.Column("cliff_share", sa.Double(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["report_run_id"],
+            ["simulation.report_runs.id"],
+            name="fk_cliff_impacts_report_run",
+            ondelete="RESTRICT",
+        ),
         sa.ForeignKeyConstraint(
             ["simulation_run_id"],
             ["simulation.simulation_runs.id"],
             name="fk_cliff_impacts_simulation_run",
             ondelete="RESTRICT",
         ),
-        sa.PrimaryKeyConstraint("simulation_run_id", name=op.f("pk_cliff_impacts")),
+        sa.PrimaryKeyConstraint(
+            "report_run_id", "simulation_run_id", name=op.f("pk_cliff_impacts")
+        ),
         schema="simulation",
     )
     op.create_table(
         "inequality",
+        sa.Column("report_run_id", sa.Uuid(), nullable=False),
         sa.Column("simulation_run_id", sa.Uuid(), nullable=False),
         sa.Column("gini", sa.Double(), nullable=False),
         sa.Column("top_10_pct_share", sa.Double(), nullable=False),
         sa.Column("top_1_pct_share", sa.Double(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["report_run_id"],
+            ["simulation.report_runs.id"],
+            name="fk_inequality_report_run",
+            ondelete="RESTRICT",
+        ),
         sa.ForeignKeyConstraint(
             ["simulation_run_id"],
             ["simulation.simulation_runs.id"],
             name="fk_inequality_simulation_run",
             ondelete="RESTRICT",
         ),
-        sa.PrimaryKeyConstraint("simulation_run_id", name=op.f("pk_inequality")),
+        sa.PrimaryKeyConstraint(
+            "report_run_id", "simulation_run_id", name=op.f("pk_inequality")
+        ),
         schema="simulation",
     )
     op.create_table(
         "poverty_rates",
+        sa.Column("report_run_id", sa.Uuid(), nullable=False),
         sa.Column("simulation_run_id", sa.Uuid(), nullable=False),
         sa.Column("measure", sa.Text(), nullable=False),
         sa.Column("group_dimension", sa.Text(), nullable=False),
@@ -152,12 +190,19 @@ def upgrade() -> None:
             name=op.f("ck_poverty_rates_measure"),
         ),
         sa.ForeignKeyConstraint(
+            ["report_run_id"],
+            ["simulation.report_runs.id"],
+            name="fk_poverty_rates_report_run",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
             ["simulation_run_id"],
             ["simulation.simulation_runs.id"],
             name="fk_poverty_rates_simulation_run",
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint(
+            "report_run_id",
             "simulation_run_id",
             "measure",
             "group_dimension",
@@ -431,6 +476,19 @@ def upgrade() -> None:
             name=op.f("uq_program_budget_impacts_report_run_id_position"),
         ),
         schema="simulation",
+    )
+    for table in PER_SIMULATION_TABLES:
+        op.create_index(
+            op.f(f"ix_{table}_simulation_run_id"),
+            table,
+            ["simulation_run_id"],
+            schema="simulation",
+        )
+    # Result rows are written once, with their run's success, and kept.
+    op.execute(
+        "REVOKE UPDATE ON "
+        + ", ".join(f"simulation.{table}" for table in RESULT_TABLES)
+        + " FROM simulation_runtime"
     )
     op.add_column(
         "report_runs",

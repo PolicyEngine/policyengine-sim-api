@@ -10,9 +10,9 @@ authorities by code.
 
 A result the tables cannot hold exactly is refused before any write by
 ``check_storable``: the average and relative changes of each decile map must
-name the same deciles in the same order, each decile's category share list
-must hold at least one value, and the constituency and local-authority lists
-must hold records of their own kind.
+name the same deciles in the same order, the decile shares and averages of
+each intra-decile breakdown must name the same categories in the same order,
+and the area lists must hold records of their own kind, each area once.
 """
 
 from __future__ import annotations
@@ -237,8 +237,16 @@ def _check_decile_maps(name: str, decile: DecileOutput | None) -> None:
 
 
 def _check_intra_decile(name: str, intra: IntraDecileOutput | None) -> None:
-    if intra is not None and any(not shares for shares in intra.deciles.values()):
-        msg = f"{name}: every category needs at least one decile share"
+    # Today's executor gives each category's decile shares (possibly none,
+    # when the breakdown failed) and its average under the same categories.
+    if intra is not None and list(intra.deciles) != list(intra.all):
+        msg = f"{name}: deciles and all must name the same categories in order"
+        raise ValueError(msg)
+
+
+def _check_unique(section: str, codes: list[str]) -> None:
+    if len(codes) != len(set(codes)):
+        msg = f"{section} repeats an area"
         raise ValueError(msg)
 
 
@@ -272,11 +280,21 @@ def check_storable(result: SingleYearMacroOutput) -> SingleYearMacroOutput:
         ("local_authority_impact", LocalAuthorityImpactRecord),
     ):
         records = getattr(result, section)
-        if records is not None and not all(
-            isinstance(record, record_type) for record in records.root
-        ):
+        if records is None:
+            continue
+        if not all(isinstance(record, record_type) for record in records.root):
             msg = f"{section} must hold only {record_type.__name__} records"
             raise ValueError(msg)
+        code_field = f"{section.removesuffix('_impact')}_code"
+        _check_unique(section, [getattr(record, code_field) for record in records.root])
+    if result.congressional_district_impact is not None:
+        _check_unique(
+            "congressional_district_impact",
+            [
+                record.district
+                for record in result.congressional_district_impact.districts
+            ],
+        )
     return result
 
 
@@ -288,20 +306,8 @@ def _insert(connection: Connection, table: Table, rows: list[dict[str, Any]]) ->
         connection.execute(postgres_insert(table), rows)
 
 
-def _insert_once(
-    connection: Connection, table: Table, rows: list[dict[str, Any]]
-) -> None:
-    """Insert one simulation run's rows unless an earlier comparison wrote them.
-
-    A reused simulation run, most often a current-law baseline, takes part in
-    many comparisons; its own figures are the same in each.
-    """
-    if rows:
-        connection.execute(postgres_insert(table).on_conflict_do_nothing(), rows)
-
-
 def _simulation_rows(
-    result: SingleYearMacroOutput, side: str, run_id: UUID
+    result: SingleYearMacroOutput, side: str, run_id: UUID, report_run_id: UUID
 ) -> dict[Table, list[dict[str, Any]]]:
     poverty = []
     groups = [
@@ -315,6 +321,7 @@ def _simulation_rows(
     for dimension, rates, measure in groups:
         poverty.extend(
             {
+                "report_run_id": report_run_id,
                 "simulation_run_id": run_id,
                 "measure": measure,
                 "group_dimension": dimension,
@@ -327,6 +334,7 @@ def _simulation_rows(
         poverty_rates: poverty,
         inequality: [
             {
+                "report_run_id": report_run_id,
                 "simulation_run_id": run_id,
                 **{name: getattr(value, side) for name, value in result.inequality},
             }
@@ -334,7 +342,13 @@ def _simulation_rows(
     }
     if result.cliff_impact is not None:
         cliff = getattr(result.cliff_impact, side)
-        rows[cliff_impacts] = [{"simulation_run_id": run_id, **cliff.model_dump()}]
+        rows[cliff_impacts] = [
+            {
+                "report_run_id": report_run_id,
+                "simulation_run_id": run_id,
+                **cliff.model_dump(),
+            }
+        ]
     return rows
 
 
@@ -504,9 +518,10 @@ def write_economy_comparison(
 ) -> None:
     """Write an economy report run's result rows in the caller's transaction.
 
-    The figures of each simulation go to its simulation run, the comparison to
-    the report run, and the SPM provenance and the optional sections the
-    result holds to the report run's own columns.
+    The figures of each simulation go to its simulation run, keyed by this
+    report run too; the comparison goes to the report run, and the SPM
+    provenance and the optional sections the result holds to the report run's
+    own columns.
     """
     check_storable(result)
     if report_run.reform_simulation_run_id is None:
@@ -517,8 +532,10 @@ def write_economy_comparison(
         report_run.reform_simulation_run_id,
     )
     for side, run_id in zip(SIDES, run_ids, strict=True):
-        for table, rows in _simulation_rows(result, side, run_id).items():
-            _insert_once(connection, table, rows)
+        for table, rows in _simulation_rows(
+            result, side, run_id, report_run.id
+        ).items():
+            _insert(connection, table, rows)
     for table, rows in _comparison_rows(report_run.id, result).items():
         _insert(connection, table, rows)
     connection.execute(
@@ -606,18 +623,45 @@ def _poverty(rows_by_side: dict[str, list[RowMapping]]) -> dict[str, Any]:
     }
 
 
+def _figures(
+    connection: Connection, table: Table, report_run_id: UUID, run_id: UUID
+) -> list[RowMapping]:
+    """Return one simulation run's figures as one report run computed them."""
+    return list(
+        connection.execute(
+            select(table).where(
+                table.c.report_run_id == report_run_id,
+                table.c.simulation_run_id == run_id,
+            )
+        ).mappings()
+    )
+
+
+def _one_figure(
+    connection: Connection, table: Table, report_run_id: UUID, run_id: UUID
+) -> RowMapping:
+    rows = _figures(connection, table, report_run_id, run_id)
+    if len(rows) != 1:
+        msg = f"{table.name} has no row for run {run_id} in report run {report_run_id}"
+        raise LookupError(msg)
+    return rows[0]
+
+
 def _simulation_sections(
-    connection: Connection, run_ids: tuple[UUID, UUID], sections: set[str]
+    connection: Connection,
+    report_run_id: UUID,
+    run_ids: tuple[UUID, UUID],
+    sections: set[str],
 ) -> dict[str, Any]:
     by_side = {
-        side: _rows(connection, poverty_rates, "simulation_run_id", run_id)
+        side: _figures(connection, poverty_rates, report_run_id, run_id)
         for side, run_id in zip(SIDES, run_ids, strict=True)
     }
     payload = _poverty(by_side)
     if "poverty_by_race" not in sections:
         payload["poverty_by_race"] = None
     inequality_rows = [
-        _one(connection, inequality, "simulation_run_id", run_id) for run_id in run_ids
+        _one_figure(connection, inequality, report_run_id, run_id) for run_id in run_ids
     ]
     payload["inequality"] = {
         name: {
@@ -625,30 +669,21 @@ def _simulation_sections(
         }
         for name in ("gini", "top_10_pct_share", "top_1_pct_share")
     }
-    payload["cliff_impact"] = (
-        {
+    payload["cliff_impact"] = None
+    if "cliff_impact" in sections:
+        cliff_rows = [
+            _one_figure(connection, cliff_impacts, report_run_id, run_id)
+            for run_id in run_ids
+        ]
+        payload["cliff_impact"] = {
             side: {name: row[name] for name in ("cliff_gap", "cliff_share")}
-            for side, row in zip(
-                SIDES,
-                (
-                    _one(connection, cliff_impacts, "simulation_run_id", run_id)
-                    for run_id in run_ids
-                ),
-                strict=True,
-            )
+            for side, row in zip(SIDES, cliff_rows, strict=True)
         }
-        if "cliff_impact" in sections
-        else None
-    )
     return payload
 
 
-def _deciles(
-    rows: list[RowMapping], measure: str
-) -> dict[str, dict[str, float]] | None:
+def _deciles(rows: list[RowMapping], measure: str) -> dict[str, dict[str, float]]:
     measured = [row for row in rows if row["measure"] == measure]
-    if not measured:
-        return None
     return {
         "average": {row["decile"]: row["average_change"] for row in measured},
         "relative": {row["decile"]: row["relative_change"] for row in measured},
@@ -656,22 +691,25 @@ def _deciles(
 
 
 def _intra_deciles(rows: list[RowMapping], measure: str) -> dict[str, Any]:
+    """Rebuild one breakdown; its categories come from their average rows.
+
+    A category whose decile shares are missing (the breakdown failed) gets an
+    empty list, as it was written.
+    """
     measured = [row for row in rows if row["measure"] == measure]
-    deciles: dict[str, list[float]] = {}
+    averages = sorted(
+        (row for row in measured if row["decile"] is None),
+        key=lambda row: row["outcome_position"],
+    )
+    deciles: dict[str, list[float]] = {row["outcome"]: [] for row in averages}
     for row in sorted(
         (row for row in measured if row["decile"] is not None),
         key=lambda row: (row["outcome_position"], row["decile"]),
     ):
-        deciles.setdefault(row["outcome"], []).append(row["share"])
+        deciles[row["outcome"]].append(row["share"])
     return {
         "deciles": deciles,
-        "all": {
-            row["outcome"]: row["share"]
-            for row in sorted(
-                (row for row in measured if row["decile"] is None),
-                key=lambda row: row["outcome_position"],
-            )
-        },
+        "all": {row["outcome"]: row["share"] for row in averages},
     }
 
 
@@ -714,7 +752,10 @@ def _labor_supply(connection: Connection, report_run_id: UUID) -> dict[str, Any]
 
 
 def _labelled_geographies(
-    rows: list[RowMapping], code_field: str, name_field: str, labels: Mapping
+    rows: list[RowMapping],
+    code_field: str,
+    name_field: str,
+    labels: Mapping[str, GeographyLabel],
 ) -> list[dict[str, Any]]:
     records = []
     for row in rows:
@@ -873,6 +914,6 @@ def read_economy_comparison(
             "model_version": labels.model_version,
             "data_version": labels.data_version,
             **_comparison_sections(connection, report_run_id, sections, labels),
-            **_simulation_sections(connection, run_ids, sections),
+            **_simulation_sections(connection, report_run_id, run_ids, sections),
         }
     )

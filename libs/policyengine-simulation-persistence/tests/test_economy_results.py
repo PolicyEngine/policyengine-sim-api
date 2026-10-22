@@ -19,6 +19,8 @@ from result_support import (
     result_stores,
 )
 from simulation_support import simulation_store
+from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
 pytestmark = pytest.mark.postgres
 
@@ -106,12 +108,21 @@ def test_each_uk_area_keeps_its_disclosure_tier_and_intervals(
         ]
 
 
-def test_a_reused_baseline_keeps_its_figures_once(
+def test_each_report_run_reads_its_own_figures_of_a_reused_baseline(
     migrated_database, public_api_rows
 ) -> None:
+    """A reused run's figures can differ by comparison, for example by SPM."""
     first = load_sample("us_state_ca_2026")
+    child = first.poverty.poverty.child.model_copy(update={"baseline": 0.123456})
     second = first.model_copy(
-        update={"budget": first.budget.model_copy(update={"budgetary_impact": 1.5})}
+        update={
+            "budget": first.budget.model_copy(update={"budgetary_impact": 1.5}),
+            "poverty": first.poverty.model_copy(
+                update={
+                    "poverty": first.poverty.poverty.model_copy(update={"child": child})
+                }
+            ),
+        }
     )
     stores = result_stores(migrated_database)
     first_run = comparison_ready(stores, migrated_database, public_api_rows)
@@ -130,6 +141,55 @@ def test_a_reused_baseline_keeps_its_figures_once(
     labels = labels_for(first)
     assert _read(migrated_database, first_run.id, labels) == first
     assert _read(migrated_database, second_run.id, labels) == second
+
+
+def _executor_fallbacks(result):
+    """Return the shapes today's executor emits when a breakdown fails."""
+    categories = list(result.intra_decile.all)
+    failed_intra = result.intra_decile.model_copy(
+        update={
+            "deciles": {category: [] for category in categories},
+            "all": dict.fromkeys(categories, 0.0),
+        }
+    )
+    no_deciles = result.decile.model_copy(update={"average": {}, "relative": {}})
+    return result.model_copy(
+        update={
+            "intra_decile": failed_intra,
+            "intra_wealth_decile": failed_intra,
+            "wealth_decile": no_deciles,
+        }
+    )
+
+
+def test_the_executors_fallback_shapes_are_rebuilt_exactly(
+    migrated_database, public_api_rows
+) -> None:
+    result = _executor_fallbacks(load_sample("uk_national_2026"))
+    stores = result_stores(migrated_database)
+    report_run = comparison_ready(stores, migrated_database, public_api_rows)
+
+    _write(stores, report_run, RECORDER.validate(result.model_dump(mode="json")))
+
+    rebuilt = _read(migrated_database, report_run.id, labels_for(result))
+    assert rebuilt.model_dump_json() == result.model_dump_json()
+
+
+def test_an_empty_income_decile_map_is_rebuilt(
+    migrated_database, public_api_rows
+) -> None:
+    sample = load_sample("us_budget_window_year_2030")
+    result = sample.model_copy(
+        update={
+            "decile": sample.decile.model_copy(update={"average": {}, "relative": {}})
+        }
+    )
+    stores = result_stores(migrated_database)
+    report_run = comparison_ready(stores, migrated_database, public_api_rows)
+
+    _write(stores, report_run, result)
+
+    assert _read(migrated_database, report_run.id, labels_for(result)) == result
 
 
 def test_reading_needs_a_succeeded_comparison(
@@ -174,8 +234,8 @@ def test_results_the_tables_cannot_hold_exactly_are_refused() -> None:
     reordered = result.decile.model_copy(
         update={"relative": dict(reversed(result.decile.relative.items()))}
     )
-    no_shares = result.intra_decile.model_copy(
-        update={"deciles": {**result.intra_decile.deciles, "No change": []}}
+    other_categories = result.intra_decile.model_copy(
+        update={"all": dict(reversed(result.intra_decile.all.items()))}
     )
     mixed = result.constituency_impact.model_copy(
         update={
@@ -185,11 +245,20 @@ def test_results_the_tables_cannot_hold_exactly_are_refused() -> None:
             ]
         }
     )
+    repeated_constituency = result.constituency_impact.model_copy(
+        update={"root": [*result.constituency_impact.root[:2]] * 2}
+    )
+    districts = load_sample("us_state_ca_2026").congressional_district_impact
+    repeated_district = districts.model_copy(
+        update={"districts": [*districts.districts[:1]] * 2}
+    )
 
     for refused, message in (
         (_with(result, decile=reordered), "decile"),
-        (_with(result, intra_decile=no_shares), "intra_decile"),
+        (_with(result, intra_decile=other_categories), "intra_decile"),
         (_with(result, constituency_impact=mixed), "constituency_impact"),
+        (_with(result, constituency_impact=repeated_constituency), "repeats"),
+        (_with(result, congressional_district_impact=repeated_district), "repeats"),
     ):
         with pytest.raises(ValueError, match=message):
             check_storable(refused)
@@ -198,3 +267,25 @@ def test_results_the_tables_cannot_hold_exactly_are_refused() -> None:
 def test_the_recorder_refuses_output_that_is_not_a_result() -> None:
     with pytest.raises(ValidationError):
         RECORDER.validate({"budget": {"budgetary_impact": "much"}})
+
+
+@pytest.mark.parametrize("table_name", ["budget_impacts", "poverty_rates"])
+def test_the_runtime_role_cannot_change_stored_results(
+    migrated_database, public_api_rows, table_name
+) -> None:
+    stores = result_stores(migrated_database)
+    report_run = comparison_ready(stores, migrated_database, public_api_rows)
+    _write(stores, report_run, load_sample("us_budget_window_year_2030"))
+    engine = create_simulation_engine(migrated_database.runtime_url)
+    try:
+        for statement in (
+            f"UPDATE simulation.{table_name} SET report_run_id = report_run_id",  # noqa: S608  # fixed table names
+            f"DELETE FROM simulation.{table_name}",  # noqa: S608  # fixed table names
+        ):
+            with (
+                pytest.raises(ProgrammingError, match="permission denied"),
+                engine.begin() as connection,
+            ):
+                connection.execute(text(statement))
+    finally:
+        engine.dispose()
