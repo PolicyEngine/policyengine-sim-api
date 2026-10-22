@@ -13,11 +13,24 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-from policyengine_simulation_entry.modal_calls import ModalRequest, ModalTarget
-from policyengine_simulation_persistence import RunError, RunStatus
+from policyengine_simulation_entry.modal_calls import (
+    CallInspectionError,
+    CallRunning,
+    ModalRequest,
+    ModalTarget,
+)
+from policyengine_simulation_persistence import (
+    AbandonedDispatches,
+    DueSimulationCall,
+    RunError,
+    RunStatus,
+    SimulationKind,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Collection
+
+    from policyengine_simulation_entry.modal_calls import CallOutcome
 
 
 @dataclass
@@ -50,6 +63,26 @@ class FakeExecution:
     error: RunError | None = None
     updated_at: datetime | None = None
     written_results: list[Any] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class FakeRunRecord:
+    """The run fields the recorder reads from a claimed run."""
+
+    id: UUID
+    simulation_kind: SimulationKind
+    modal_call_id: str | None
+    check_count: int
+
+
+@dataclass(frozen=True)
+class FakeReportRunRecord:
+    """The report run fields the recorder reads from a claimed comparison."""
+
+    id: UUID
+    report_kind: str
+    comparison_modal_call_id: str | None
+    comparison_check_count: int
 
 
 class FakeRunTransitions:
@@ -192,6 +225,181 @@ class FakeRunTransitions:
             is not None
         )
 
+    # --- Recording -------------------------------------------------------
+
+    def claim_due_simulation_calls(
+        self, *, limit: int, lease: timedelta
+    ) -> list[DueSimulationCall]:
+        """Claim running runs that are due, grouped by call."""
+        now = self.clock()
+        due = [
+            run
+            for run in self.runs.values()
+            if run.status is RunStatus.RUNNING
+            and run.next_check_at is not None
+            and run.next_check_at <= now
+        ][:limit]
+        calls: dict[str, list[FakeRunRecord]] = {}
+        for run in due:
+            run.next_check_at = now + lease
+            run.check_count += 1
+            assert run.modal_call_id is not None
+            calls.setdefault(run.modal_call_id, []).append(
+                FakeRunRecord(
+                    id=run.id,
+                    simulation_kind=SimulationKind(run.kind),
+                    modal_call_id=run.modal_call_id,
+                    check_count=run.check_count,
+                )
+            )
+        return [
+            DueSimulationCall(modal_call_id=call_id, runs=tuple(runs))  # type: ignore[arg-type]
+            for call_id, runs in sorted(calls.items())
+        ]
+
+    def _call_runs(self, modal_call_id: str) -> list[FakeExecution]:
+        return [
+            run
+            for run in self.runs.values()
+            if run.modal_call_id == modal_call_id and run.status is RunStatus.RUNNING
+        ]
+
+    def record_simulation_call_running(
+        self, modal_call_id: str, *, next_check_at: datetime
+    ) -> bool:
+        """Set the next check of a call's running runs."""
+        runs = self._call_runs(modal_call_id)
+        for run in runs:
+            run.next_check_at = next_check_at
+        return bool(runs)
+
+    def complete_simulation_call(self, modal_call_id: str, write_results) -> bool:
+        """Mark a call's runs succeeded after the writer succeeds."""
+        runs = self._call_runs(modal_call_id)
+        if not runs:
+            return False
+        records = tuple(
+            FakeRunRecord(
+                id=run.id,
+                simulation_kind=SimulationKind(run.kind),
+                modal_call_id=run.modal_call_id,
+                check_count=run.check_count,
+            )
+            for run in runs
+        )
+        connection = object()
+        write_results(connection, records)
+        for run in runs:
+            run.status = RunStatus.SUCCEEDED
+            run.next_check_at = None
+            run.written_results.append(connection)
+        return True
+
+    def fail_simulation_call(self, modal_call_id: str, error: RunError) -> bool:
+        """Fail a call's running runs."""
+        runs = self._call_runs(modal_call_id)
+        for run in runs:
+            run.status = RunStatus.FAILED
+            run.error = error
+            run.next_check_at = None
+        return bool(runs)
+
+    def claim_due_comparisons(
+        self, *, limit: int, lease: timedelta
+    ) -> list[FakeReportRunRecord]:
+        """Claim running comparison steps that are due."""
+        now = self.clock()
+        due = [
+            comparison
+            for comparison in self.comparisons.values()
+            if comparison.status is RunStatus.RUNNING
+            and comparison.next_check_at is not None
+            and comparison.next_check_at <= now
+        ][:limit]
+        for comparison in due:
+            comparison.next_check_at = now + lease
+            comparison.check_count += 1
+        return [
+            FakeReportRunRecord(
+                id=comparison.id,
+                report_kind="economy",
+                comparison_modal_call_id=comparison.modal_call_id,
+                comparison_check_count=comparison.check_count,
+            )
+            for comparison in due
+        ]
+
+    def record_comparison_running(
+        self, report_run_id: UUID, *, next_check_at: datetime
+    ) -> bool:
+        """Set a running comparison step's next check."""
+        return (
+            self._change_comparison(
+                report_run_id, RunStatus.RUNNING, next_check_at=next_check_at
+            )
+            is not None
+        )
+
+    def complete_comparison(self, report_run_id: UUID, write_results) -> bool:
+        """Mark a running comparison step succeeded after the writer succeeds."""
+        comparison = self.comparisons[report_run_id]
+        if comparison.status is not RunStatus.RUNNING:
+            return False
+        connection = object()
+        write_results(
+            connection,
+            FakeReportRunRecord(
+                id=comparison.id,
+                report_kind="economy",
+                comparison_modal_call_id=comparison.modal_call_id,
+                comparison_check_count=comparison.check_count,
+            ),
+        )
+        comparison.status = RunStatus.SUCCEEDED
+        comparison.next_check_at = None
+        comparison.written_results.append(connection)
+        return True
+
+    def fail_comparison(self, report_run_id: UUID, error: RunError) -> bool:
+        """Fail a running comparison step."""
+        return (
+            self._change_comparison(
+                report_run_id,
+                RunStatus.RUNNING,
+                status=RunStatus.FAILED,
+                error=error,
+                next_check_at=None,
+            )
+            is not None
+        )
+
+    def fail_abandoned_dispatches(
+        self, *, claimed_before: datetime
+    ) -> AbandonedDispatches:
+        """Fail runs and comparison steps dispatching since before the cutoff."""
+        failed_runs = []
+        for run in self.runs.values():
+            if (
+                run.status is RunStatus.DISPATCHING
+                and run.updated_at is not None
+                and run.updated_at < claimed_before
+            ):
+                run.status = RunStatus.FAILED
+                failed_runs.append(run.id)
+        failed_comparisons = []
+        for comparison in self.comparisons.values():
+            if (
+                comparison.status is RunStatus.DISPATCHING
+                and comparison.updated_at is not None
+                and comparison.updated_at < claimed_before
+            ):
+                comparison.status = RunStatus.FAILED
+                failed_comparisons.append(comparison.id)
+        return AbandonedDispatches(
+            simulation_run_ids=tuple(failed_runs),
+            report_run_ids=tuple(failed_comparisons),
+        )
+
 
 class FakeDispatcher:
     """Record spawned requests and return call IDs, or fail like Modal."""
@@ -207,6 +415,23 @@ class FakeDispatcher:
         if self.failure is not None:
             raise self.failure
         return f"fc-{len(self.requests)}"
+
+
+class FakeInspector:
+    """Return a scripted outcome per call ID, or running when none is set."""
+
+    def __init__(self) -> None:
+        """Start with every call running."""
+        self.outcomes: dict[str, CallOutcome | CallInspectionError] = {}
+        self.inspected: list[str] = []
+
+    async def inspect(self, modal_call_id: str) -> CallOutcome:
+        """Return the scripted outcome, or raise the scripted error."""
+        self.inspected.append(modal_call_id)
+        outcome = self.outcomes.get(modal_call_id, CallRunning())
+        if isinstance(outcome, CallInspectionError):
+            raise outcome
+        return outcome
 
 
 SAMPLE_REQUEST = ModalRequest(

@@ -33,6 +33,9 @@ class FakeSimulationDatabase:
             raise self.failure
         return self.revision
 
+    def recording_loop(self):
+        return None
+
     def dispose(self):
         self.disposed = True
 

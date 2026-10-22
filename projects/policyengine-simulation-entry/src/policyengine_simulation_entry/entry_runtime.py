@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     )
 
     from policyengine_simulation_entry.config import Settings
+    from policyengine_simulation_entry.run_recording import RunRecordingLoop
 
 # Moved out of app.py; this code still logs under that module's name.
 logger = logging.getLogger("policyengine_simulation_entry.app")
@@ -218,6 +219,10 @@ class SimulationDatabaseConnection(Protocol):
 
     async def read_revision(self) -> str | None:
         """Return the applied migration revision, or None before the first one."""
+        ...
+
+    def recording_loop(self) -> RunRecordingLoop | None:
+        """Return the loop that records Modal call outcomes on runs, if any."""
         ...
 
     def dispose(self) -> None:
