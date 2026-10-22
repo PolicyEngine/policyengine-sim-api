@@ -578,9 +578,18 @@ def create_app(
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         runtime_settings.validate()
         await runtime_backend.start()
+        # Each instance records the outcomes of due Modal calls in the
+        # background; Cloud Run keeps its CPU allocated between requests.
+        recording_loop = (
+            None if runtime_database is None else runtime_database.recording_loop()
+        )
+        if recording_loop is not None:
+            recording_loop.start()
         try:
             yield
         finally:
+            if recording_loop is not None:
+                await recording_loop.stop()
             await runtime_backend.close()
             if runtime_database is not None:
                 runtime_database.dispose()

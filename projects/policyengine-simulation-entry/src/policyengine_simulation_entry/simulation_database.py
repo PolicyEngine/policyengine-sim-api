@@ -6,8 +6,16 @@ import asyncio
 from typing import TYPE_CHECKING
 
 from policyengine_simulation_persistence import (
+    RunTransitions,
     create_simulation_engine,
     read_schema_revision,
+)
+
+from policyengine_simulation_entry.modal_calls import ModalCallInspector
+from policyengine_simulation_entry.run_recording import (
+    ResultRecorders,
+    RunRecorder,
+    RunRecordingLoop,
 )
 
 if TYPE_CHECKING:
@@ -36,6 +44,20 @@ class SimulationDatabase:
     async def read_revision(self) -> str | None:
         """Return the applied migration revision, or None before the first one."""
         return await asyncio.to_thread(self._read_revision)
+
+    def recording_loop(self) -> RunRecordingLoop:
+        """Return the loop that records Modal call outcomes on runs.
+
+        No kind of run has a result recorder yet, so a finished call would
+        fail its runs with ``no_result_recorder``; no route creates runs yet.
+        """
+        return RunRecordingLoop(
+            RunRecorder(
+                transitions=RunTransitions(self.engine),
+                inspector=ModalCallInspector(),
+                recorders=ResultRecorders(),
+            )
+        )
 
     def dispose(self) -> None:
         """Close every pooled connection."""
