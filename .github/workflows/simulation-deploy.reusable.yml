@@ -182,6 +182,9 @@ jobs:
         working-directory: libs/policyengine-simulation-persistence
         env:
           SIMULATION_MIGRATION_DATABASE_URL: ${{ secrets.SIMULATION_MIGRATION_DATABASE_URL }}
+          # Only a deployment from main applies revisions. One dispatched from
+          # another branch requires the database to be at its chain's head.
+          SIMULATION_MIGRATION_MODE: ${{ github.ref == 'refs/heads/main' && 'upgrade' || 'verify' }}
         run: ../../.github/scripts/migrate-simulation-database.sh
 
   deploy_entrypoint:
