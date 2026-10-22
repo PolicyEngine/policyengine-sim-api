@@ -1588,6 +1588,11 @@ def _run_routed_uk_national(monkeypatch, *, local_area_dataset) -> _UKAreaRun:
         )
         return simulation
 
+    def load_dataset(_params, *, selection, country_module, data_folder=None):
+        if selection is _LOCAL_AREA_SELECTION:
+            return local_area_dataset
+        return national_dataset
+
     class FakeSimulationOutputBuilder:
         def __init__(self, **kwargs):
             builder_calls.append(kwargs)
@@ -1603,11 +1608,7 @@ def _run_routed_uk_national(monkeypatch, *, local_area_dataset) -> _UKAreaRun:
             code="country/wales", dataset_reference=None, scoping_strategy=nation
         ),
         "_resolve_dataset_selection": resolve_selection,
-        "_load_dataset": lambda _params, *, selection, country_module: (
-            local_area_dataset
-            if selection is _LOCAL_AREA_SELECTION
-            else national_dataset
-        ),
+        "_load_dataset": load_dataset,
         "_build_simulation": build_simulation,
         "SimulationOutputBuilder": FakeSimulationOutputBuilder,
     }.items():

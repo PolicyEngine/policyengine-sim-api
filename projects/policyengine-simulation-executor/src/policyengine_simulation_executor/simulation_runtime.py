@@ -908,8 +908,10 @@ def _uk_area_simulations(
     )
 
     area_role = {"dataset_role": "uk_area"}
-    with runtime.span(
-        ANNUAL_IMPACT_STAGES.name(Stage.DATASET_RESOLUTION), attributes=area_role
+    with scopes.span(
+        runtime,
+        ANNUAL_IMPACT_STAGES.name(Stage.DATASET_RESOLUTION),
+        attributes=area_role,
     ):
         selection = _resolve_dataset_selection(
             params,
@@ -917,8 +919,8 @@ def _uk_area_simulations(
                 code=region.code, dataset_reference=routed_uk_area_dataset_name()
             ),
         )
-    with runtime.span(
-        ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD), attributes=area_role
+    with scopes.span(
+        runtime, ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD), attributes=area_role
     ):
         dataset = _load_dataset(
             params, selection=selection, country_module=country_module
@@ -930,7 +932,8 @@ def _uk_area_simulations(
     for kind, policy in zip(
         ("uk_area_baseline", "uk_area_reform"), policies, strict=True
     ):
-        with runtime.span(
+        with scopes.span(
+            runtime,
             ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_BUILD),
             attributes={"simulation_kind": kind},
         ):
