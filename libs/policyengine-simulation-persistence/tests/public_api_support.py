@@ -21,6 +21,24 @@ if TYPE_CHECKING:
     from sqlalchemy import Engine
 
 PUBLIC_API_TABLE_STATEMENTS = (
+    "CREATE TABLE public.tax_benefit_model_versions (id uuid PRIMARY KEY)",
+    "CREATE TABLE public.datasets ("
+    " id uuid PRIMARY KEY,"
+    " name varchar(255) NOT NULL,"
+    " tax_benefit_model_version_id uuid NOT NULL"
+    " REFERENCES public.tax_benefit_model_versions (id),"
+    " CONSTRAINT uq_datasets_model_version_name"
+    " UNIQUE (tax_benefit_model_version_id, name),"
+    " CONSTRAINT uq_datasets_id_model_version"
+    " UNIQUE (id, tax_benefit_model_version_id))",
+    "CREATE TABLE public.regions ("
+    " id uuid PRIMARY KEY,"
+    " code varchar(255) NOT NULL,"
+    " tax_benefit_model_version_id uuid NOT NULL"
+    " REFERENCES public.tax_benefit_model_versions (id),"
+    " default_dataset_id uuid NOT NULL,"
+    " CONSTRAINT uq_regions_model_version_code"
+    " UNIQUE (tax_benefit_model_version_id, code))",
     "CREATE TABLE public.policies ("
     " id uuid PRIMARY KEY,"
     " country_id varchar(2) NOT NULL,"
@@ -31,7 +49,14 @@ PUBLIC_API_TABLE_STATEMENTS = (
     " CONSTRAINT uq_households_id_country UNIQUE (id, country_id))",
     "CREATE TABLE public.dynamics (id uuid PRIMARY KEY)",
 )
-REFERENCED_TABLES = ("policies", "households", "dynamics")
+REFERENCED_TABLES = (
+    "tax_benefit_model_versions",
+    "datasets",
+    "regions",
+    "policies",
+    "households",
+    "dynamics",
+)
 
 
 def superuser_engine(superuser_url: str, **options: object) -> Engine:
@@ -65,13 +90,57 @@ def create_public_api_tables(superuser_url: str, *, grant_references: bool) -> N
 
 @dataclass(frozen=True)
 class PublicApiRows:
-    """Public API rows a simulation can refer to."""
+    """Public API rows a simulation or run can refer to.
+
+    Two catalog versions each have California (``state/ca``) with its own
+    default dataset, as each publication creates new rows.
+    """
 
     us_policy_id: UUID
     uk_policy_id: UUID
     us_household_id: UUID
     uk_household_id: UUID
     dynamic_id: UUID
+    catalog_version_id: UUID
+    newer_catalog_version_id: UUID
+    dataset_id: UUID
+    newer_dataset_id: UUID
+
+
+def _catalog_statements(rows: PublicApiRows) -> tuple[tuple[str, dict], ...]:
+    return (
+        (
+            "INSERT INTO public.tax_benefit_model_versions (id) VALUES "
+            "(:version), (:newer_version)",
+            {
+                "version": rows.catalog_version_id,
+                "newer_version": rows.newer_catalog_version_id,
+            },
+        ),
+        (
+            "INSERT INTO public.datasets (id, name, tax_benefit_model_version_id) "
+            "VALUES (:dataset, 'populace_us_2024', :version), "
+            "(:newer_dataset, 'populace_us_2024_acs_local', :newer_version)",
+            {
+                "dataset": rows.dataset_id,
+                "newer_dataset": rows.newer_dataset_id,
+                "version": rows.catalog_version_id,
+                "newer_version": rows.newer_catalog_version_id,
+            },
+        ),
+        (
+            "INSERT INTO public.regions "
+            "(id, code, tax_benefit_model_version_id, default_dataset_id) VALUES "
+            "(gen_random_uuid(), 'state/ca', :version, :dataset), "
+            "(gen_random_uuid(), 'state/ca', :newer_version, :newer_dataset)",
+            {
+                "version": rows.catalog_version_id,
+                "newer_version": rows.newer_catalog_version_id,
+                "dataset": rows.dataset_id,
+                "newer_dataset": rows.newer_dataset_id,
+            },
+        ),
+    )
 
 
 def insert_public_api_rows(superuser_url: str) -> PublicApiRows:
@@ -82,8 +151,13 @@ def insert_public_api_rows(superuser_url: str) -> PublicApiRows:
         us_household_id=uuid4(),
         uk_household_id=uuid4(),
         dynamic_id=uuid4(),
+        catalog_version_id=uuid4(),
+        newer_catalog_version_id=uuid4(),
+        dataset_id=uuid4(),
+        newer_dataset_id=uuid4(),
     )
     statements = (
+        *_catalog_statements(rows),
         (
             "INSERT INTO public.policies (id, country_id) VALUES "
             "(:us_policy, 'us'), (:uk_policy, 'uk')",

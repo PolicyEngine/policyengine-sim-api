@@ -14,6 +14,8 @@ writes them with DML only.
 | --- | --- |
 | `simulations` | What to run, independent of model versions: kind (`economy` or `household`), country, policy (null for current law), dynamic, and either a household or a region code (`state/ca`) with an optional dataset name (null means the region's default dataset in each catalog version) |
 | `reports` | Which two simulations a report compares (an economy report needs a reform; a household report may have only a baseline), both of the report's own country and kind, with its year and options |
+| `simulation_runs` | One execution of a simulation for a catalog version and year: the region code and dataset row it resolved in that version (economy runs only), its status, Modal call ID, timings, error, trigger (`initial`, `manual` or `system`) and attempt number |
+| `report_runs` | One calculation of a report: a baseline and a reform simulation run of the same catalog version and year (no reform run for a single-simulation household report), the trigger, and, for an economy report, the comparison step's own status and Modal call |
 
 Both are definitions: the runtime role may read and insert them but not update
 or delete them. Rows migrated from the Public API's v1 database keep their v1
@@ -22,9 +24,33 @@ the stores' `create_migrated` methods return the existing row when the same v1
 ID is migrated again.
 
 Foreign keys into the Public API's tables in the same database (`policies` and
-`households`, each together with its country, and `dynamics`) are
-`ON DELETE RESTRICT`. Creating them needs `REFERENCES` on those tables for the
-migrator role; the runtime role needs no privilege on them.
+`households`, each together with its country, `dynamics`,
+`tax_benefit_model_versions`, and `regions` and `datasets` each together with
+its catalog version) are `ON DELETE RESTRICT`. Creating them needs
+`REFERENCES` on those tables for the migrator role; the runtime role needs no
+privilege on them.
+
+### Runs
+
+A simulation run's setup is its catalog version (one policyengine.py bundle
+version for one country, which pins the country package, data release and
+datasets) and its year. Its region and dataset keys include its catalog
+version, through the Public API's unique constraints
+`uq_regions_model_version_code` and `uq_datasets_id_model_version`, so a run
+can use only its own version's rows; the caller resolves them in that version
+(the simulation's region code, and the dataset it names or the region's
+default dataset). A report run's simulation run keys include its catalog
+version and year, so both of its runs share them.
+
+`RunStore.start_simulation_run` reuses the newest attempt for the same
+simulation, catalog version and year while it is unfinished, or when it
+succeeded within the last 28 days (output files are kept 30); a failed run is
+never reused. Otherwise, and always when forced, it adds the next attempt.
+Concurrent starts settle on one row through the unique attempt number.
+`RunStore.create_report_run` joins one run of each of the report's simulations
+and takes the catalog version and year from them; a report's status is its
+newest report run's. The runtime role may read, insert and update runs but
+not delete them.
 
 ## Ownership rules
 
