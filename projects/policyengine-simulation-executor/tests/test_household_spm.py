@@ -243,6 +243,76 @@ def test_an_uncertifiable_country_receipt_is_an_spm_error() -> None:
     )
 
 
+_UNCERTIFIABLE = (
+    "The installed country model reported an SPM receipt this API cannot certify: "
+)
+
+
+def _receipt_without(*names: str, **overrides: object) -> dict:
+    receipt = _country_receipt(**overrides)
+    for name in names:
+        del receipt[name]
+    return receipt
+
+
+@pytest.mark.parametrize(
+    ("receipt", "reason"),
+    [
+        # Each required text is checked before the receipt is compared.
+        (
+            _receipt_without("scenario", forecast_sha256="b" * 64),
+            "Country SPM receipt requires scenario",
+        ),
+        (
+            _receipt_without("geography_kind", scenario="flat"),
+            "Country SPM receipt requires geography_kind",
+        ),
+        (
+            _country_receipt(years=["2026"]),
+            "Country SPM receipt requires a years mapping",
+        ),
+        (
+            _country_receipt(years={2026: {}}),
+            "Country SPM receipt years must be strings",
+        ),
+        # Runtime versions are checked before the forecast ID.
+        (
+            _receipt_without("runtime_versions", "forecast_id"),
+            "Country SPM receipt requires runtime_versions",
+        ),
+        (
+            _receipt_without("forecast_id"),
+            "Country SPM receipt requires forecast_id",
+        ),
+        (
+            _country_receipt(years={"26": {}}),
+            "years: years must contain four-digit calendar years",
+        ),
+    ],
+)
+def test_uncertifiable_receipts_are_worded_as_the_public_api_words_them(
+    receipt, reason
+) -> None:
+    with pytest.raises(SPMInputError) as raised:
+        household_spm.household_spm_provenance(
+            FakeSimulation(receipt=receipt), DEFAULTS
+        )
+
+    assert raised.value.code == "SPM_CONFIGURATION_UNAVAILABLE"
+    assert raised.value.message == _UNCERTIFIABLE + reason
+
+
+def test_a_receipt_that_is_not_an_object_is_uncertifiable() -> None:
+    with pytest.raises(SPMInputError) as raised:
+        household_spm.household_spm_provenance(
+            FakeSimulation(receipt=["not", "an", "object"]), DEFAULTS
+        )
+
+    assert (
+        raised.value.message == _UNCERTIFIABLE + "Country SPM receipt must be an object"
+    )
+
+
 def test_a_receipt_for_another_selection_is_rejected() -> None:
     with pytest.raises(ValueError, match="differs from the request"):
         household_spm.household_spm_provenance(
