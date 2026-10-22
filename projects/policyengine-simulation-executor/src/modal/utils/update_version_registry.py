@@ -64,6 +64,10 @@ class BundleManifestMetadata(TypedDict):
     # Apps deployed before stage reporting have no key; the gateway then
     # reports no stage for their jobs.
     job_progress: NotRequired[int]
+    # Present only for apps whose bundle routes UK area regions to a
+    # local-area dataset; the gateway refuses breakdown=local_areas for any
+    # other app, which would ignore the field and return a national result.
+    local_area_breakdown: NotRequired[int]
 
 
 class LatestVersions(TypedDict):
@@ -140,8 +144,14 @@ def build_bundle_manifest_metadata(
     from policyengine_simulation_contract.job_progress import (  # noqa: PLC0415  # the contract package loads only when bundle metadata is built
         JOB_PROGRESS_CAPABILITY_VERSION,
     )
+    from policyengine_simulation_contract.local_area_breakdown import (  # noqa: PLC0415  # the contract package loads only when bundle metadata is built
+        LOCAL_AREA_BREAKDOWN_CAPABILITY_VERSION,
+    )
     from policyengine_simulation_executor.spm import (
         runtime_spm_capability,
+    )
+    from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the executor package loads only when bundle metadata is built
+        uk_area_regions_routed,
     )
 
     capability = runtime_spm_capability()
@@ -154,6 +164,8 @@ def build_bundle_manifest_metadata(
     }
     if capability is not None:
         metadata["spm"] = capability.model_dump(mode="json")
+    if uk_area_regions_routed():
+        metadata["local_area_breakdown"] = LOCAL_AREA_BREAKDOWN_CAPABILITY_VERSION
     return metadata
 
 

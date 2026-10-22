@@ -191,6 +191,39 @@ def test_bundle_manifest_declares_job_progress_capability(monkeypatch):
 
 
 @pytest.mark.usefixtures("fake_bundle_metadata")
+@pytest.mark.parametrize("routed", [True, False])
+def test_bundle_manifest_declares_local_area_breakdowns_only_for_routed_area_regions(
+    monkeypatch, routed
+):
+    from policyengine_simulation_contract.local_area_breakdown import (
+        LOCAL_AREA_BREAKDOWN_CAPABILITY_KEY,
+        LOCAL_AREA_BREAKDOWN_CAPABILITY_VERSION,
+    )
+    from policyengine_simulation_executor import spm as executor_spm
+
+    monkeypatch.setattr(executor_spm, "runtime_spm_capability", lambda: None)
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.uk_local_authority_metadata."
+        "uk_area_regions_routed",
+        lambda: routed,
+    )
+
+    metadata = registry.build_bundle_manifest_metadata(
+        app_name="policyengine-simulation-py6-10-0",
+        policyengine_version="6.10.0",
+    )
+
+    # A breakdown runs on the local-area dataset the bundle routes area
+    # regions to; the gateway sends breakdowns only to workers declaring it.
+    if routed:
+        assert metadata[LOCAL_AREA_BREAKDOWN_CAPABILITY_KEY] == (
+            LOCAL_AREA_BREAKDOWN_CAPABILITY_VERSION
+        )
+    else:
+        assert LOCAL_AREA_BREAKDOWN_CAPABILITY_KEY not in metadata
+
+
+@pytest.mark.usefixtures("fake_bundle_metadata")
 def test_validate_routing_state_rejects_missing_latest_route():
     state = registry.build_next_routing_state(
         current_state=None,
