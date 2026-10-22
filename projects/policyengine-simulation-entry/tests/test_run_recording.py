@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 from datetime import timedelta
 
 import pytest
@@ -350,6 +351,42 @@ def test_abandoned_comparison_steps_are_logged_as_comparison_events(caplog) -> N
     ]
 
 
+class _NotAnException(BaseException):
+    """An error that derives from BaseException only, like a worker's exit."""
+
+
+def test_a_non_exception_error_in_one_check_ends_with_its_pass(caplog) -> None:
+    recorder, transitions, _, clock = _recorder()
+    (run_id,) = transitions.running_call("fc-broken")
+
+    def raise_a_group(modal_call_id, *, next_check_at):
+        message = "writes"
+        raise builtins.BaseExceptionGroup(message, [_NotAnException()])
+
+    transitions.record_simulation_call_running = raise_a_group  # type: ignore[method-assign]
+
+    recording = _run(recorder)
+
+    assert recording.not_reached == 1
+    assert transitions.runs[run_id].next_check_at == clock() + CHECK_LEASE
+    assert "simulation_run_check_failed" in [
+        record.message for record in caplog.records
+    ]
+
+
+def test_a_signal_to_this_process_stops_a_check() -> None:
+    recorder, transitions, _, _ = _recorder()
+    transitions.running_call("fc-1")
+
+    def interrupted(modal_call_id, *, next_check_at):
+        raise KeyboardInterrupt
+
+    transitions.record_simulation_call_running = interrupted  # type: ignore[method-assign]
+
+    with pytest.raises(KeyboardInterrupt):
+        _run(recorder)
+
+
 class _ScriptedRecorder:
     """Return scripted passes, or raise, and count how often it ran."""
 
@@ -360,20 +397,25 @@ class _ScriptedRecorder:
     async def record_due_outcomes(self) -> RecordingPass:
         self.calls += 1
         outcome = self.passes.pop(0) if self.passes else RecordingPass()
-        if isinstance(outcome, Exception):
+        if isinstance(outcome, BaseException):
             raise outcome
         return outcome
 
 
 def test_the_loop_waits_less_while_there_is_work_and_survives_failures() -> None:
     scripted = _ScriptedRecorder(
-        [RecordingPass(checked=3), RecordingPass(), RuntimeError("database down")]
+        [
+            RecordingPass(checked=3),
+            RecordingPass(),
+            RuntimeError("database down"),
+            builtins.BaseExceptionGroup("pass", [_NotAnException()]),
+        ]
     )
     waits = []
 
     async def sleep(seconds: float) -> None:
         waits.append(seconds)
-        if len(waits) == 5:
+        if len(waits) == 6:
             raise asyncio.CancelledError
 
     loop = RunRecordingLoop(scripted, sleep=sleep)  # type: ignore[arg-type]
@@ -387,8 +429,21 @@ def test_the_loop_waits_less_while_there_is_work_and_survives_failures() -> None
         IDLE_PASS_INTERVAL_SECONDS,
         IDLE_PASS_INTERVAL_SECONDS,
         IDLE_PASS_INTERVAL_SECONDS,
+        IDLE_PASS_INTERVAL_SECONDS,
     ]
-    assert scripted.calls == 4
+    assert scripted.calls == 5
+
+
+def test_a_signal_to_this_process_stops_the_loop() -> None:
+    scripted = _ScriptedRecorder([KeyboardInterrupt()])
+
+    async def sleep(_seconds: float) -> None:
+        return None
+
+    loop = RunRecordingLoop(scripted, sleep=sleep)  # type: ignore[arg-type]
+
+    with pytest.raises(KeyboardInterrupt):
+        asyncio.run(loop.run())
 
 
 def test_the_loop_starts_and_stops_as_a_background_task() -> None:
