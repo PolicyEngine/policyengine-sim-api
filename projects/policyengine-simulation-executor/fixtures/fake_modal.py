@@ -102,6 +102,16 @@ class FakeSecret:
         return {"args": args, "kwargs": kwargs}
 
 
+class InputCancellation(BaseException):
+    """Stand-in for ``modal.exception.InputCancellation``.
+
+    Modal raises it in a running synchronous input that is cancelled. It
+    subclasses ``BaseException`` so that ``except Exception`` does not catch
+    it. The project's ``src/modal`` package shadows the installed Modal package
+    in unit tests, so the real class cannot be imported there.
+    """
+
+
 class FakeApp:
     """Stand-in for ``modal.App`` that records ``function`` decorator options."""
 

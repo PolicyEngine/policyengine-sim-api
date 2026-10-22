@@ -119,7 +119,9 @@ class Stage12SegmentRunner:
         A segment whose result cannot be read twice in a row raises
         ``Stage12ExecutionError``, and a requested cancellation raises
         ``Stage12CancellationError``. Either way, every started segment is
-        cancelled first.
+        cancelled first. Every started segment is also cancelled when the
+        run stops for any other reason before the results are collected,
+        such as a failed dispatch or Modal cancelling this worker's input.
         """
         groups = self._groups()
         segments = build_segment_inputs(self.simulation, groups=groups)
@@ -140,7 +142,9 @@ class Stage12SegmentRunner:
                         observability_context=self.runtime.capture_context(),
                     )
                 handles.append((segment.segment_index, _require_call(call)))
-        except Exception:
+        # BaseException: Modal stops a cancelled input by raising its
+        # InputCancellation, a BaseException, in it.
+        except BaseException:
             self._cancel_all(handles)
             raise
 
@@ -148,7 +152,7 @@ class Stage12SegmentRunner:
         with self.runtime.span(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_WAIT)
         ):
-            payloads = self._collect(handles)
+            payloads = self._collect_or_cancel(handles)
         if payloads is None:
             msg = "Stage 12 segment wait returned no payloads"
             raise RuntimeError(msg)
@@ -165,6 +169,23 @@ class Stage12SegmentRunner:
             msg = "Stage 12 segment merge returned no calculation"
             raise RuntimeError(msg)
         return merged
+
+    def _collect_or_cancel(self, handles: list[tuple[int, Any]]) -> list[object]:
+        """Collect every segment's result; cancel them all if Modal stops the wait.
+
+        Modal stops a cancelled input by raising ``InputCancellation``, a
+        ``BaseException``, in it, and does not cancel the calls that input
+        spawned, so this worker cancels them before it stops. An ``Exception``
+        keeps its existing handling: ``_collect`` cancels every segment itself
+        before it raises a segment failure or a requested cancellation.
+        """
+        try:
+            return self._collect(handles)
+        except Exception:
+            raise
+        except BaseException:
+            self._cancel_all(handles)
+            raise
 
     def _collect(self, handles: list[tuple[int, Any]]) -> list[object]:
         results: list[object | None] = [None] * len(handles)
