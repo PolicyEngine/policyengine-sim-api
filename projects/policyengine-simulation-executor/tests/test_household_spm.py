@@ -47,7 +47,7 @@ def certified_bundle(monkeypatch):
         household_spm, "_bundle_spm_configuration", lambda: dict(DEFAULTS)
     )
     monkeypatch.setattr(household_spm, "_us_model_supports_spm", lambda: True)
-    monkeypatch.setattr(household_spm, "_forecast", lambda sha: FakeForecast())
+    monkeypatch.setattr(household_spm, "certified_forecast", lambda sha: FakeForecast())
 
 
 # Stands for a request that sends no SPM settings at all.
@@ -207,7 +207,7 @@ def test_changing_the_geography_kind_drops_an_inherited_area(monkeypatch) -> Non
         lambda: {**DEFAULTS, "geography_kind": "metro", "geography_id": "31080"},
     )
     monkeypatch.setattr(household_spm, "_us_model_supports_spm", lambda: True)
-    monkeypatch.setattr(household_spm, "_forecast", lambda sha: FakeForecast())
+    monkeypatch.setattr(household_spm, "certified_forecast", lambda sha: FakeForecast())
 
     assert _resolve({"geography_kind": "national"}) == {
         **DEFAULTS,
@@ -398,9 +398,9 @@ def test_spm_errors_are_recognized_through_wrapping_exceptions() -> None:
 
 
 def test_the_certified_forecast_is_loaded_once_by_its_digest() -> None:
-    from policyengine_simulation_executor.spm import certified_spm_forecast
+    # The household path keeps its own loader, separate from the main path's
+    # SPM module.
+    forecast = household_spm.certified_forecast(FORECAST_SHA)
 
-    forecast = certified_spm_forecast(FORECAST_SHA)
-
-    assert certified_spm_forecast(FORECAST_SHA) is forecast
+    assert household_spm.certified_forecast(FORECAST_SHA) is forecast
     assert forecast.years

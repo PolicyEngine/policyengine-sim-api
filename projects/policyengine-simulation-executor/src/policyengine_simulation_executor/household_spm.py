@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Mapping
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from policyengine_simulation_contract.spm import (
@@ -115,10 +116,17 @@ def _us_model_supports_spm() -> bool:
     return _simulation_supports_spm(Simulation)
 
 
-def _forecast(expected_sha256: str) -> SPMForecast:
-    from policyengine_simulation_executor.spm import certified_spm_forecast
+@lru_cache(maxsize=4)
+def certified_forecast(expected_sha256: str) -> SPMForecast:
+    """Return the packaged SPM forecast whose content has ``expected_sha256``.
 
-    return certified_spm_forecast(expected_sha256)
+    Loaded once per process and digest; raises when the packaged forecast has
+    another digest. The household path keeps this loader apart from the main
+    path's SPM module.
+    """
+    from spm_calculator import load_forecast
+
+    return load_forecast(expected_sha256=expected_sha256)
 
 
 def _certified_defaults(configured: object) -> tuple[SPMSelection, SPMForecast]:
@@ -134,7 +142,7 @@ def _certified_defaults(configured: object) -> tuple[SPMSelection, SPMForecast]:
     if not _us_model_supports_spm():
         msg = "The installed US model does not support canonical SPM"
         raise ValueError(msg)
-    return defaults, _forecast(defaults.forecast_content_sha256)
+    return defaults, certified_forecast(defaults.forecast_content_sha256)
 
 
 def _validated_selection(values: dict[str, Any], forecast: SPMForecast) -> SPMSelection:
