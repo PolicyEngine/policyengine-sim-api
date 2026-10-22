@@ -11,7 +11,8 @@ Each Simulation Entrypoint instance runs one loop. On every pass it:
    found with conditional writes: a finished call's result is validated and
    its result rows are written in the transaction that marks its runs
    ``succeeded``; a failed or timed-out call is marked ``failed`` with its
-   error; a call still running gets a later check, backing off.
+   error; a call still running, or finished but of a kind this revision has
+   no recorder for, gets a later check, backing off.
 
 Pre-emption is never a failure: Modal re-runs a pre-empted call under the
 same call ID, so it reads as still running. No caller polls, and Modal holds
@@ -190,6 +191,7 @@ class RecordingPass:
     not_reached: int = 0
     abandoned: int = 0
     comparisons_without_runs: int = 0
+    without_recorder: int = 0
 
     @property
     def found_work(self) -> bool:
@@ -397,13 +399,15 @@ class RunRecorder:
             return
         steps = handlers.result_steps
         if steps is None:
-            await self._fail(
-                handlers,
-                RunError(
-                    RunErrorCode.NO_RESULT_RECORDER,
-                    "No result recorder handles this kind of run.",
-                ),
-                recording,
+            # During a deploy an older revision runs beside the new one, and
+            # with CPU always allocated its loop keeps checking calls. A
+            # revision without a recorder for this kind leaves the call for
+            # one that has it; Modal's output retention bounds the wait.
+            next_check_at = self.clock() + next_check_delay(handlers.check_count)
+            await asyncio.to_thread(handlers.keep_running, next_check_at)
+            recording.without_recorder += 1
+            logger.warning(
+                "simulation_run_without_result_recorder", extra=handlers.subject
             )
             return
         try:
