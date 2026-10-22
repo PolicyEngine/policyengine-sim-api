@@ -41,5 +41,3 @@ dynamics = Table(
     public_api_metadata,
     Column("id", Uuid(as_uuid=True), primary_key=True),
 )
-
-REFERENCED_PUBLIC_API_TABLES = tuple(sorted(public_api_metadata.tables))

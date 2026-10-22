@@ -9,13 +9,16 @@ from policyengine_simulation_persistence import (
     NewSimulation,
     SimulationKind,
     SimulationRecord,
+    create_simulation_engine,
 )
+from policyengine_simulation_persistence.simulations import simulations
 from public_api_support import delete_public_api_row
 from simulation_support import (
     economy_simulation,
     household_simulation,
     simulation_store,
 )
+from sqlalchemy import insert
 from sqlalchemy.exc import IntegrityError
 
 pytestmark = pytest.mark.postgres
@@ -210,3 +213,35 @@ def test_two_simulations_cannot_share_a_legacy_id(
 
 def test_an_unknown_simulation_reads_as_none(migrated_database) -> None:
     assert simulation_store(migrated_database).get(uuid4()) is None
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "constraint"),
+    [
+        ("kind", "microsimulation", "ck_simulations_kind"),
+        ("country", "USA", "ck_simulations_country"),
+        ("region_code", "state ca", "ck_simulations_region_code"),
+        ("dataset_name", "populace us", "ck_simulations_dataset_name"),
+        ("legacy_simulation_id", 0, "ck_simulations_legacy_simulation_id"),
+    ],
+)
+def test_the_database_checks_each_simulation_field(
+    migrated_database, public_api_rows, column, value, constraint
+) -> None:
+    """The database checks what NewSimulation also checks, for any other writer."""
+    values = {
+        "id": uuid4(),
+        "kind": "economy",
+        "country": "us",
+        "region_code": "state/ca",
+        column: value,
+    }
+    engine = create_simulation_engine(migrated_database.runtime_url)
+    try:
+        with (
+            pytest.raises(IntegrityError, match=constraint),
+            engine.begin() as connection,
+        ):
+            connection.execute(insert(simulations).values(**values))
+    finally:
+        engine.dispose()
