@@ -453,6 +453,33 @@ not satisfy the requested output plan is recalculated. Each region-group log
 records whether it loaded a complete file, recalculated an incomplete file, or
 computed because no file existed.
 
+## v2 household functions
+
+The versioned v2 application also defines a household function for each
+country, `calculate_household_us` and `calculate_household_uk`. Each call
+calculates one household, in the Public API's situation shape and with
+optional axes, under one to ten policies, so a baseline and its reform are
+calculated in one call. It takes a `HouseholdExecutionRequest` and returns a
+`HouseholdExecutionResult` or a typed `HouseholdExecutionFailure` from
+`policyengine_simulation_contract.household_execution`, as JSON. The
+calculation follows the Public API's household calculation, including its
+input errors, warnings and SPM receipt. A function refuses a request for
+another country, and returns a `bundle_mismatch` failure for a request that
+names another bundle. Nothing calls these functions until the Simulation
+Entrypoint has household routes.
+
+- Image: the CA store, the frozen `modal-simulation-image` dependency group
+  and the source packages, without the bundle's datasets or the Stage 12
+  cache. Building it needs no secret.
+- Secrets: none. A household calculation reads no private data, Cloud
+  Storage or database. Telemetry authenticates with the identity token Modal
+  gives every container (`MODAL_IDENTITY_TOKEN`) and the workload identity
+  settings baked into the image at deployment.
+- Limits: 2 CPUs, 4,096 MiB of reserved and 16,384 MiB of maximum memory, a
+  900-second timeout, no retries, and a Modal `max_containers` value of 20.
+- Each container loads a country model the first time it calculates that
+  country and keeps it for later calls.
+
 ## Temporary direct runner endpoint
 
 > **Temporary Stage 12 interface:** The authenticated routes in this section
