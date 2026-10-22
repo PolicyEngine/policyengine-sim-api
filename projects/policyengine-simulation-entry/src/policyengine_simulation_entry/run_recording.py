@@ -33,6 +33,7 @@ from policyengine_simulation_persistence import RunError, RunErrorCode
 from policyengine_simulation_persistence.run_store import utc_now
 
 from policyengine_simulation_entry.modal_calls import (
+    OWN_PROCESS_SIGNALS,
     CallFailed,
     CallRunning,
 )
@@ -391,10 +392,13 @@ class RunRecorder:
             outcome = await self.inspector.inspect(modal_call_id)
             await self._record(outcome, handlers, recording)
         # Modal could not be reached, or a database write failed (for example
-        # a dropped connection). Each check ends here, so a pass returns only
-        # once all of its checks have, and its concurrency limit holds. The
-        # claim's lease makes the call due again; nothing was recorded.
-        except Exception as error:  # noqa: BLE001  # retried after the lease
+        # a dropped connection). Each check ends here, whatever was raised
+        # (only a signal to this process passes), so a pass returns only once
+        # all of its checks have, and its concurrency limit holds. The claim's
+        # lease makes the call due again; nothing was recorded.
+        except BaseException as error:
+            if isinstance(error, OWN_PROCESS_SIGNALS):
+                raise
             recording.not_reached += 1
             logger.warning(
                 _event_name(handlers.event_prefix, "check_failed"),
@@ -482,24 +486,27 @@ class RunRecordingLoop:
         """Record outcomes until cancelled; wait less while there is work."""
         while True:
             await self._sleep(IDLE_PASS_INTERVAL_SECONDS)
-            try:
-                recording = await self.recorder.record_due_outcomes()
-            except Exception as error:
-                logger.exception(
-                    "simulation_run_recording_pass_failed",
-                    extra={"error_type": type(error).__name__},
-                )
-                continue
-            while recording.found_work:
+            recording = await self._pass()
+            while recording is not None and recording.found_work:
                 await self._sleep(BUSY_PASS_INTERVAL_SECONDS)
-                try:
-                    recording = await self.recorder.record_due_outcomes()
-                except Exception as error:
-                    logger.exception(
-                        "simulation_run_recording_pass_failed",
-                        extra={"error_type": type(error).__name__},
-                    )
-                    break
+                recording = await self._pass()
+
+    async def _pass(self) -> RecordingPass | None:
+        """Run one pass; log and return None if it raised anything.
+
+        Only a signal to this process, such as the cancellation that stops
+        the loop at shutdown, passes through.
+        """
+        try:
+            return await self.recorder.record_due_outcomes()
+        except BaseException as error:
+            if isinstance(error, OWN_PROCESS_SIGNALS):
+                raise
+            logger.exception(
+                "simulation_run_recording_pass_failed",
+                extra={"error_type": type(error).__name__},
+            )
+            return None
 
     def start(self) -> None:
         """Start the loop as a background task of the running event loop."""
