@@ -25,7 +25,11 @@ Every known difference from the Public API is listed here:
 - An explicit null ``axes`` means no axes, because the contract drops it; the
   Public API treats the key's presence as a household with axes.
 - Every policy's parameters are checked before any policy is calculated, so
-  an unknown parameter in a reform fails the whole request.
+  an unknown parameter in a reform fails the whole request. Likewise any
+  failure under one policy, such as a reform value that cannot be converted
+  or an SPM error only the reform causes, returns one failure for the whole
+  request, without the policies already calculated; the Public API's
+  separate request for each policy would still return the others.
 - Its messages are the request routes' (``/calculate`` and
   ``/calculate-full``). The stored-household route words a household it
   cannot read, and any other failure except an SPM error, with the household
@@ -607,17 +611,20 @@ def _calculate_output(
 ) -> HouseholdCalculationOutput:
     """Calculate every policy of ``request``, raising a typed failure.
 
-    Checks run in the Public API's order: the bundle, the SPM selection, the
-    household's and policies' names, then each policy.
+    After the bundle check and loading the country model, checks run in the
+    Public API's order: the SPM selection, the household's and policies'
+    names, then each policy. The model loads first so its span measures the
+    whole load, which for the US otherwise happens while the SPM selection is
+    resolved.
     """
     if request.bundle != bundle:
         raise _bundle_mismatch_failure(bundle)
-    spm_selection = _resolved_spm_selection(request)
     country = {"country": request.country}
     runtime = dependencies.runtime
     with _stage_scope(runtime, Stage.V2_HOUSEHOLD_COUNTRY_MODEL_LOAD, country):
         model = dependencies.model_loader(request.country)
     with _stage_scope(runtime, Stage.V2_HOUSEHOLD_INPUT_NORMALIZATION, country):
+        spm_selection = _resolved_spm_selection(request)
         prepared = _prepared_household(
             request,
             model,
