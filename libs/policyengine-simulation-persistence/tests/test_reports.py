@@ -5,7 +5,12 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
-from policyengine_simulation_persistence import ReportKind, ReportRecord
+from policyengine_simulation_persistence import (
+    ReportKind,
+    ReportRecord,
+    create_simulation_engine,
+)
+from policyengine_simulation_persistence.reports import reports
 from public_api_support import superuser_engine
 from report_support import (
     economy_pair,
@@ -14,7 +19,7 @@ from report_support import (
     report_store,
 )
 from simulation_support import economy_simulation, simulation_store
-from sqlalchemy import text
+from sqlalchemy import insert, text
 from sqlalchemy.exc import IntegrityError
 
 pytestmark = pytest.mark.postgres
@@ -188,3 +193,37 @@ def test_a_migrated_report_needs_its_legacy_id(
 
 def test_an_unknown_report_reads_as_none(migrated_database) -> None:
     assert report_store(migrated_database).get(uuid4()) is None
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "constraint"),
+    [
+        ("kind", "microsimulation", "ck_reports_kind"),
+        ("country", "GB", "ck_reports_country"),
+        ("legacy_report_id", -4, "ck_reports_legacy_report_id"),
+        ("reform_simulation_id", None, "ck_reports_economy_has_reform"),
+    ],
+)
+def test_the_database_checks_each_report_field(
+    migrated_database, public_api_rows, column, value, constraint
+) -> None:
+    """The database checks what NewReport also checks, for any other writer."""
+    baseline, reform = economy_pair(migrated_database, public_api_rows)
+    values = {
+        "id": uuid4(),
+        "kind": "economy",
+        "country": "us",
+        "baseline_simulation_id": baseline.id,
+        "reform_simulation_id": reform.id,
+        "year": 2026,
+        column: value,
+    }
+    engine = create_simulation_engine(migrated_database.runtime_url)
+    try:
+        with (
+            pytest.raises(IntegrityError, match=constraint),
+            engine.begin() as connection,
+        ):
+            connection.execute(insert(reports).values(**values))
+    finally:
+        engine.dispose()
