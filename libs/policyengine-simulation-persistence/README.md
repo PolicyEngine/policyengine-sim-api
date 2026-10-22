@@ -86,6 +86,14 @@ local-authority names and map positions by code. Each UK area's disclosure
 tier and the 90% interval bounds of its income changes are stored with its
 figures (null for a result computed before disclosure control).
 
+A computed household is one JSON value (`household_outputs`, PostgreSQL
+`json`, so its text, key order included, is kept as written) on its
+simulation run, with its schema version. `write_household_output` stores it
+in the transaction that marks the run succeeded
+(`RunTransitions.complete_simulation_call`); a household report's two runs
+share one Modal call and each gets its own household. `read_household_output`
+returns it unchanged.
+
 ## Ownership rules
 
 These rules are registered in `rules/registry.toml` and checked by

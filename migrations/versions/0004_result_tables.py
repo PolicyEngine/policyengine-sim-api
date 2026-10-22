@@ -1,7 +1,8 @@
-"""Add the economy result tables.
+"""Add the result tables.
 
 Every economy result is stored as rows, each section of today's result model
-in its own table. A simulation's own figures (poverty rates, inequality, cliff
+in its own table, and a computed household as one JSON value on its
+simulation run. A simulation's own figures (poverty rates, inequality, cliff
 exposure) belong to its simulation run; the comparison of a baseline and a
 reform (budget, programs, deciles, labour supply, geographies) belongs to the
 report run. Each report run also records the optional sections its result
@@ -26,8 +27,33 @@ branch_labels = None
 depends_on = None
 
 
+def _create_household_outputs() -> None:
+    op.create_table(
+        "household_outputs",
+        sa.Column("simulation_run_id", sa.Uuid(), nullable=False),
+        sa.Column("household", sa.JSON(none_as_null=True), nullable=False),
+        sa.Column("schema_version", sa.Integer(), nullable=False),
+        sa.CheckConstraint(
+            "json_typeof(household) = 'object'",
+            name=op.f("ck_household_outputs_household"),
+        ),
+        sa.CheckConstraint(
+            "schema_version >= 1", name=op.f("ck_household_outputs_schema_version")
+        ),
+        sa.ForeignKeyConstraint(
+            ["simulation_run_id"],
+            ["simulation.simulation_runs.id"],
+            name="fk_household_outputs_simulation_run",
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("simulation_run_id", name=op.f("pk_household_outputs")),
+        schema="simulation",
+    )
+
+
 def upgrade() -> None:
     """Create the result tables and the report run's result columns."""
+    _create_household_outputs()
     op.create_table(
         "cliff_impacts",
         sa.Column("simulation_run_id", sa.Uuid(), nullable=False),
@@ -399,3 +425,4 @@ def downgrade() -> None:
     op.drop_table("poverty_rates", schema="simulation")
     op.drop_table("inequality", schema="simulation")
     op.drop_table("cliff_impacts", schema="simulation")
+    op.drop_table("household_outputs", schema="simulation")
