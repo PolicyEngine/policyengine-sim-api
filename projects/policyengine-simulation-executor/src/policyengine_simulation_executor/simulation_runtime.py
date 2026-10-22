@@ -980,12 +980,15 @@ def _run_simulation_impl_core(
             data_folder=baked_folder,
         )
     from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
-        detect_uk_local_authority_metadata,
+        detect_uk_run_dataset_metadata,
         uk_area_breakdowns_omitted,
     )
 
-    uk_local_authority_metadata = detect_uk_local_authority_metadata(
-        country, dataset, region_code=region_resolution.code
+    uk_local_authority_metadata = detect_uk_run_dataset_metadata(
+        country,
+        dataset,
+        region_code=region_resolution.code,
+        dataset_name=dataset_selection.name,
     )
     with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.POLICY_NORMALIZATION)):
         baseline_policy = _normalise_policy(simulation_params.get("baseline"))

@@ -417,6 +417,32 @@ def detect_uk_local_authority_metadata(
     )
 
 
+def detect_uk_run_dataset_metadata(
+    country: str,
+    dataset: object,
+    *,
+    region_code: str | None,
+    dataset_name: str,
+) -> UKLocalAuthorityMetadata | None:
+    """Check a run's loaded dataset before anything is simulated on it.
+
+    A UK run that needs area codes, on the dataset the bundle routes area
+    regions to, must carry every column its area outputs read
+    (``detect_uk_area_dataset_metadata``): a constituency or local-authority
+    run on a release missing one then fails here instead of after both
+    simulations and the impact analysis. Every other run keeps
+    ``detect_uk_local_authority_metadata``.
+    """
+    if (
+        country == "uk"
+        and uk_area_codes_required(region_code)
+        and uk_area_regions_routed()
+        and dataset_name == routed_uk_area_dataset_name()
+    ):
+        return detect_uk_area_dataset_metadata(dataset, dataset_name=dataset_name)
+    return detect_uk_local_authority_metadata(country, dataset, region_code=region_code)
+
+
 def detect_uk_area_dataset_metadata(
     dataset: object, *, dataset_name: str
 ) -> UKLocalAuthorityMetadata:

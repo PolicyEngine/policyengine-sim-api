@@ -37,7 +37,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
 )
 from policyengine_simulation_executor.stage12_bundle import load_stage12_bundle
 from policyengine_simulation_executor.uk_local_authority_metadata import (
-    detect_uk_local_authority_metadata,
+    detect_uk_run_dataset_metadata,
 )
 
 from .cached_simulation import Stage12CachedSimulation, qualifying_cache_identity
@@ -319,10 +319,11 @@ def calculate_simulation_frames(
                     data_folder=resolve_data_folder(),
                 ),
             )
-        uk_local_authority_metadata = detect_uk_local_authority_metadata(
+        uk_local_authority_metadata = detect_uk_run_dataset_metadata(
             country,
             dataset,
             region_code=region.code,
+            dataset_name=dataset_selection.name,
         )
         with stage_span(Stage.POLICY_NORMALIZATION):
             policy = _normalise_policy(simulation.policy)

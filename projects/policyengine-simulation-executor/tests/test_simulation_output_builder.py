@@ -1616,9 +1616,21 @@ class _RoutedUKSeams:
         return SimpleNamespace(model=SimpleNamespace(version="2.132.6"))
 
     def resolve_region(self, *, params, **_kwargs):
-        if params.get("region") == "country/wales":
+        region = params.get("region")
+        if region == "country/wales":
             return RegionResolution(
                 code="country/wales", dataset_reference=None, scoping_strategy=_WALES
+            )
+        region_type = str(region).partition("/")[0]
+        if region_type in {"constituency", "local_authority"}:
+            # An area region names the routed local-area dataset itself.
+            return RegionResolution(
+                code=region,
+                dataset_reference=_LOCAL_AREA_SELECTION.name,
+                scoping_strategy=RowFilterStrategy(
+                    variable_name=f"{region_type}_code_oa",
+                    variable_value=region.partition("/")[2],
+                ),
             )
         return RegionResolution(code="uk", dataset_reference=None)
 
@@ -1735,6 +1747,47 @@ def test_a_routed_uk_wide_or_nation_run_builds_no_area_pair(monkeypatch, region)
     assert "uk_area_simulations" not in builder_kwargs
     assert run.serialized == ["serialize"]
     assert {"dataset_role": "uk_area"} not in _span_attributes(run.runtime.roots)
+
+
+@pytest.mark.parametrize(
+    "region", ["constituency/E14001063", "local_authority/E06000063"]
+)
+@pytest.mark.parametrize(
+    "missing",
+    ["constituency_code_oa", "la_code_oa", "region_code_oa", "source_household_id"],
+)
+def test_a_routed_area_run_needs_every_column_its_outputs_read_before_simulating(
+    monkeypatch, region, missing
+):
+    run = _install_routed_uk_fakes(
+        monkeypatch, local_area_dataset=_routed_area_dataset(without=missing)
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"'microcosm_uk_2024_25_dense', which the bundle routes .* has no "
+        rf"{missing} column",
+    ):
+        _run_simulation_impl_core(
+            {**_WALES_NATIONAL_PARAMS, "region": region}, runtime=run.runtime
+        )
+
+    assert run.loads == [_LOCAL_AREA_SELECTION]
+    assert run.builds == []
+
+
+def test_a_routed_area_run_with_every_column_detects_its_boundaries(monkeypatch):
+    run = _run_routed_uk(
+        monkeypatch,
+        params={**_WALES_NATIONAL_PARAMS, "region": "local_authority/E06000063"},
+        local_area_dataset=_routed_area_dataset(),
+    )
+
+    (builder_kwargs,) = run.builder_calls
+    assert builder_kwargs["uk_local_authority_metadata"] == UKLocalAuthorityMetadata(
+        boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
+    )
+    assert builder_kwargs["omit_uk_area_breakdowns"] is False
 
 
 def test_a_local_area_breakdown_runs_on_the_local_area_dataset_alone(monkeypatch):
