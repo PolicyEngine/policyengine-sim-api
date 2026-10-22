@@ -1,4 +1,10 @@
-"""Coordination of a Stage 12 report's baseline and reform simulations."""
+"""Coordination of a report's baseline and reform simulations.
+
+``ReportSimulationCoordination`` holds the steps every report coordinator
+runs. ``coordinate_report`` runs a Stage 12 report and records each step in
+the Stage 12 tables; ``returned_coordination`` runs the same steps for a
+report whose result returns to its caller and records nothing.
+"""
 
 from __future__ import annotations
 
@@ -861,14 +867,15 @@ class ReportSimulationCoordination(ABC):
         )
 
     def _failure_detail(self, error: Exception) -> Stage12FailureDetail:
-        """Return the failure a failed run records, reporting it once.
+        """Return the redacted failure of a failed run, reporting it once.
 
         Child, dispatch and wait-timeout failures raise Stage12ExecutionError
         only after reporting the original failure and stopping their unfinished
-        peers. Any other failure is reported here, before any database write.
-        If it occurred after a child started, such as a failed placeholder
-        write or invocation attach, every started, unfinished child is then
-        stopped so none keeps running for a failed report.
+        peers. Any other failure is reported here, before the caller records
+        or raises it. If it occurred while a child was still running, such as
+        a failed placeholder write or invocation attach on the Stage 12 path,
+        every started, unfinished child is then stopped through
+        ``_stop_children`` so none keeps running for a failed report.
         """
         if isinstance(error, Stage12ExecutionError):
             return error.detail
