@@ -20,7 +20,7 @@ of the referenced table.
 
 from __future__ import annotations
 
-from sqlalchemy import Column, MetaData, String, Table, Uuid
+from sqlalchemy import Column, MetaData, String, Table, UniqueConstraint, Uuid
 
 public_api_metadata = MetaData()
 
@@ -40,4 +40,31 @@ dynamics = Table(
     "dynamics",
     public_api_metadata,
     Column("id", Uuid(as_uuid=True), primary_key=True),
+)
+# A catalog version: one published set of model metadata for one country and
+# one policyengine.py version. Each publication creates new region and dataset
+# rows, unique by code or name within their version.
+tax_benefit_model_versions = Table(
+    "tax_benefit_model_versions",
+    public_api_metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True),
+)
+regions = Table(
+    "regions",
+    public_api_metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True),
+    Column("tax_benefit_model_version_id", Uuid(as_uuid=True), nullable=False),
+    Column("code", String(255), nullable=False),
+    UniqueConstraint(
+        "tax_benefit_model_version_id", "code", name="uq_regions_model_version_code"
+    ),
+)
+datasets = Table(
+    "datasets",
+    public_api_metadata,
+    Column("id", Uuid(as_uuid=True), primary_key=True),
+    Column("tax_benefit_model_version_id", Uuid(as_uuid=True), nullable=False),
+    UniqueConstraint(
+        "id", "tax_benefit_model_version_id", name="uq_datasets_id_model_version"
+    ),
 )

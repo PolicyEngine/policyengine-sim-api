@@ -17,7 +17,7 @@ RUNTIME_ROLE = "simulation_runtime"
 # The newest revision in migrations/versions. Each migration PR updates it, and
 # tests/test_schema.py fails when it differs from the chain's head. The
 # readiness check reports it next to the database's revision.
-HEAD_REVISION = "0002"
+HEAD_REVISION = "0003"
 
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_N_name)s",
