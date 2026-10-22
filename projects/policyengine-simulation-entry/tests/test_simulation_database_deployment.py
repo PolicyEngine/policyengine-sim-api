@@ -72,7 +72,10 @@ def test_the_migration_job_applies_the_chain_with_the_migrator_url_alone():
     assert apply_step["working-directory"] == "libs/policyengine-simulation-persistence"
     assert apply_step["run"] == f"../../.github/scripts/{MIGRATION_SCRIPT}"
     assert apply_step["env"] == {
-        MIGRATION_SECRET: "${{ secrets.SIMULATION_MIGRATION_DATABASE_URL }}"
+        MIGRATION_SECRET: "${{ secrets.SIMULATION_MIGRATION_DATABASE_URL }}",
+        "SIMULATION_MIGRATION_MODE": (
+            "${{ github.ref == 'refs/heads/main' && 'upgrade' || 'verify' }}"
+        ),
     }
     assert "env" not in migration
     assert "permissions" not in migration
@@ -99,32 +102,56 @@ def test_only_the_migration_step_receives_the_migrator_url():
     ]
 
 
+UV_ALEMBIC = ["uv", "run", "--frozen", "--extra", "migrations", "alembic", "-c",
+              "../../migrations/alembic.ini"]  # fmt: skip
+
+
+def _run_migration_script(fakes, **environment):
+    values = {
+        "SIMULATION_MIGRATION_DATABASE_URL": FAKE_MIGRATION_URL,
+        "SIMULATION_MIGRATION_MODE": "upgrade",
+        **environment,
+    }
+    return run_script(MIGRATION_SCRIPT, env=fakes.env(**values))
+
+
 def test_the_migration_script_upgrades_and_then_requires_the_head(fakes):
     fakes.add("uv")
 
-    result = run_script(
-        MIGRATION_SCRIPT,
-        env=fakes.env(SIMULATION_MIGRATION_DATABASE_URL=FAKE_MIGRATION_URL),
-    )
+    result = _run_migration_script(fakes)
 
     assert result.returncode == 0, result.stderr
-    config = "../../migrations/alembic.ini"
     assert fakes.calls("uv") == [
-        ["uv", "run", "--frozen", "--extra", "migrations", "alembic", "-c", config,
-         "upgrade", "head"],
-        ["uv", "run", "--frozen", "--extra", "migrations", "alembic", "-c", config,
-         "current", "--check-heads"],
-    ]  # fmt: skip
+        [*UV_ALEMBIC, "upgrade", "head"],
+        [*UV_ALEMBIC, "current", "--check-heads"],
+    ]
     assert "secret" not in result.stdout + result.stderr
+
+
+def test_verify_mode_only_requires_the_database_at_the_head(fakes):
+    fakes.add("uv")
+
+    result = _run_migration_script(fakes, SIMULATION_MIGRATION_MODE="verify")
+
+    assert result.returncode == 0, result.stderr
+    assert fakes.calls("uv") == [[*UV_ALEMBIC, "current", "--check-heads"]]
+
+
+@pytest.mark.parametrize("mode", ["", "downgrade", "UPGRADE"])
+def test_the_migration_script_refuses_an_unknown_mode(fakes, mode):
+    fakes.add("uv")
+
+    result = _run_migration_script(fakes, SIMULATION_MIGRATION_MODE=mode)
+
+    assert result.returncode != 0
+    assert "SIMULATION_MIGRATION_MODE" in result.stderr
+    assert fakes.calls("uv") == []
 
 
 def test_the_migration_script_refuses_to_run_without_the_migrator_url(fakes):
     fakes.add("uv")
 
-    result = run_script(
-        MIGRATION_SCRIPT,
-        env=fakes.env(SIMULATION_MIGRATION_DATABASE_URL=""),
-    )
+    result = _run_migration_script(fakes, SIMULATION_MIGRATION_DATABASE_URL="")
 
     assert result.returncode != 0
     assert MIGRATION_SECRET in result.stderr
@@ -134,13 +161,23 @@ def test_the_migration_script_refuses_to_run_without_the_migrator_url(fakes):
 def test_a_failed_upgrade_fails_the_job_before_the_head_check(fakes):
     fakes.add("uv", 'if [[ " $* " == *" upgrade "* ]]; then exit 3; fi\n')
 
-    result = run_script(
-        MIGRATION_SCRIPT,
-        env=fakes.env(SIMULATION_MIGRATION_DATABASE_URL=FAKE_MIGRATION_URL),
-    )
+    result = _run_migration_script(fakes)
 
     assert result.returncode == 3
     assert len(fakes.calls("uv")) == 1
+
+
+def test_only_the_default_branch_applies_migrations():
+    migration = _workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)[MIGRATION_JOB]
+    steps = {step.get("name"): step for step in migration["steps"]}
+    mode = steps["Apply simulation schema migrations"]["env"][
+        "SIMULATION_MIGRATION_MODE"
+    ]
+
+    # A deployment dispatched from another branch must not apply that branch's
+    # revisions; it only requires the database to be at its chain's head.
+    assert _gh_eval(mode, {"github": {"ref": "refs/heads/main"}}) == "upgrade"
+    assert _gh_eval(mode, {"github": {"ref": "refs/heads/feature"}}) == "verify"
 
 
 # --- The entrypoint's runtime URL -----------------------------------------

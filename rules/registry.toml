@@ -237,7 +237,7 @@ test = "tests/test_ownership_boundaries.py::test_rule_proof_no_modal_database_cr
 [[rule]]
 id = "sim.persistence.migrate-before-entrypoint"
 category = "persistence"
-statement = "Each deployment applies the simulation chain in its own job, the only one that receives SIMULATION_MIGRATION_DATABASE_URL, before the entrypoint candidate deploys; the entrypoint receives SIMULATION_DATABASE_URL as a pinned Secret Manager version; and the candidate smoke requires the database at the image's revision."
+statement = "Each deployment migrates the simulation schema in its own job, the only one that receives SIMULATION_MIGRATION_DATABASE_URL, before the entrypoint candidate deploys, applying revisions only from main and otherwise requiring the database at the chain's head; the entrypoint receives SIMULATION_DATABASE_URL as a pinned Secret Manager version; and the candidate smoke requires the database at the image's revision."
 rationale = "libs/policyengine-simulation-persistence/README.md#deployment"
 scope = [".github/workflows/simulation-deploy.reusable.yml", ".github/scripts/migrate-simulation-database.sh", ".github/scripts/deploy-cloud-run-simulation-entry.sh", ".github/scripts/cloud-run-simulation-entry-smoke.sh"]
 tier = "mechanical"
@@ -249,6 +249,7 @@ project = "projects/policyengine-simulation-entry"
 nodes = [
   "tests/test_simulation_database_deployment.py::test_the_migration_job_runs_before_the_entrypoint_deploys",
   "tests/test_simulation_database_deployment.py::test_only_the_migration_step_receives_the_migrator_url",
+  "tests/test_simulation_database_deployment.py::test_only_the_default_branch_applies_migrations",
   "tests/test_simulation_database_deployment.py::test_the_entrypoint_receives_the_runtime_url_as_a_pinned_secret",
   "tests/test_simulation_database_deployment.py::test_the_candidate_smoke_requires_the_current_database_revision",
 ]
