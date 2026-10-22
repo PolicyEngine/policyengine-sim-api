@@ -99,13 +99,12 @@ async def test_a_refused_call_fails_the_runs_without_raising() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_call_whose_runs_stopped_dispatching_is_reported() -> None:
+async def test_a_call_whose_runs_stopped_dispatching_is_cancelled(caplog) -> None:
     service, transitions, _ = _service()
     run_id = transitions.add_run()
 
     class SlowDispatcher(FakeDispatcher):
         async def spawn(self, request):
-            # The recording loop gave up on the dispatch in the meantime.
             transitions.runs[run_id].status = RunStatus.FAILED
             return await super().spawn(request)
 
@@ -114,7 +113,73 @@ async def test_a_call_whose_runs_stopped_dispatching_is_reported() -> None:
     outcome = await service.start_simulation_runs([run_id], SAMPLE_REQUEST)
 
     assert outcome is DispatchOutcome.NOT_RECORDED
-    assert execution(transitions, run_id).modal_call_id is None
+    assert service.dispatcher.cancelled == ["fc-1"]
+    assert "simulation_run_call_not_recorded" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_call_that_cannot_be_recorded_is_cancelled_and_its_runs_failed(
+    caplog,
+) -> None:
+    service, transitions, _ = _service()
+    run_id = transitions.add_run()
+
+    def unreachable_database(*_arguments, **_keywords):
+        msg = "connection lost"
+        raise ConnectionError(msg)
+
+    transitions.record_simulation_dispatched = unreachable_database  # type: ignore[method-assign]
+
+    outcome = await service.start_simulation_runs([run_id], SAMPLE_REQUEST)
+
+    assert outcome is DispatchOutcome.NOT_RECORDED
+    assert service.dispatcher.cancelled == ["fc-1"]
+    run = execution(transitions, run_id)
+    assert run.status is RunStatus.FAILED
+    assert run.error.code is RunErrorCode.DISPATCH_FAILED
+    assert "could not be recorded" in run.error.message
+    assert any(
+        getattr(record, "modal_call_id", None) == "fc-1" for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cancel_is_logged_without_raising(caplog) -> None:
+    service, transitions, _ = _service(
+        FakeDispatcher(cancel_failure=RuntimeError("modal down"))
+    )
+    run_id = transitions.add_run()
+
+    def unreachable_database(*_arguments, **_keywords):
+        msg = "connection lost"
+        raise ConnectionError(msg)
+
+    transitions.record_simulation_dispatched = unreachable_database  # type: ignore[method-assign]
+    transitions.record_simulation_dispatch_failure = unreachable_database  # type: ignore[method-assign]
+
+    outcome = await service.start_simulation_runs([run_id], SAMPLE_REQUEST)
+
+    assert outcome is DispatchOutcome.NOT_RECORDED
+    assert "simulation_run_call_not_cancelled" in caplog.text
+
+
+def test_the_dispatcher_cancels_a_call_by_its_id(monkeypatch) -> None:
+    cancelled = []
+
+    class _FakeCancel:
+        async def aio(self):
+            cancelled.append("cancelled")
+
+    class _FakeCall:
+        cancel = _FakeCancel()
+
+    monkeypatch.setattr(
+        modal_calls.modal.FunctionCall, "from_id", lambda call_id: _FakeCall()
+    )
+
+    asyncio.run(ModalCallDispatcher("staging").cancel("fc-orphan"))
+
+    assert cancelled == ["cancelled"]
 
 
 @pytest.mark.asyncio

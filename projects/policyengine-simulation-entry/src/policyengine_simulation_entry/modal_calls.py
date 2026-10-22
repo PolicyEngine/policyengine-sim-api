@@ -66,10 +66,14 @@ class CallInspectionError(RuntimeError):
 
 
 class CallDispatcher(Protocol):
-    """Start a Modal call without waiting for it."""
+    """Start a Modal call without waiting for it, or cancel one."""
 
     async def spawn(self, request: ModalRequest) -> str:
         """Return the call ID once Modal acknowledges the call."""
+        ...
+
+    async def cancel(self, modal_call_id: str) -> None:
+        """Ask Modal to stop a call whose runs could not record it."""
         ...
 
 
@@ -107,6 +111,10 @@ class ModalCallDispatcher:
             msg = "Modal acknowledged the call without a call ID"
             raise RuntimeError(msg)
         return modal_call_id
+
+    async def cancel(self, modal_call_id: str) -> None:
+        """Ask Modal to stop the call; its output will never be collected."""
+        await modal.FunctionCall.from_id(modal_call_id).cancel.aio()
 
 
 # Problems reaching Modal: the call's state is unknown, so ask again later.
