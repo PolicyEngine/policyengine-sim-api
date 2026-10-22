@@ -200,7 +200,7 @@ async def test_a_comparison_starts_only_once_its_runs_succeeded() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_refused_comparison_call_fails_the_step() -> None:
+async def test_a_refused_comparison_call_fails_the_step(caplog) -> None:
     service, transitions, _ = _service(FakeDispatcher(failure=RuntimeError("down")))
     comparison = transitions.add_comparison()
 
@@ -208,6 +208,9 @@ async def test_a_refused_comparison_call_fails_the_step() -> None:
 
     assert outcome is DispatchOutcome.DISPATCH_FAILED
     assert transitions.comparisons[comparison].status is RunStatus.FAILED
+    assert [record.message for record in caplog.records] == [
+        "report_run_comparison_dispatch_failed"
+    ]
 
 
 class _FakeCall:

@@ -57,6 +57,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _event_name(prefix: str, outcome: str) -> str:
+    """Name a log event for a simulation run or a comparison step."""
+    return f"{prefix}_{outcome}"
+
+
 # A claimed call is not checked by another instance for this long; if the
 # claiming instance stops, the call becomes due again afterwards.
 CHECK_LEASE = timedelta(minutes=1)
@@ -65,7 +71,10 @@ DISPATCH_ABANDONED_AFTER = timedelta(minutes=10)
 FIRST_BACKOFF = timedelta(seconds=2)
 LONGEST_BACKOFF = timedelta(seconds=60)
 CLAIM_BATCH_SIZE = 50
-INSPECTION_CONCURRENCY = 10
+# Each check writes through the runtime engine's small pool, which requests
+# share (policyengine_simulation_persistence.engine: 2 connections plus 3
+# overflow), so the loop uses at most three at once.
+INSPECTION_CONCURRENCY = 3
 BUSY_PASS_INTERVAL_SECONDS = 1.0
 IDLE_PASS_INTERVAL_SECONDS = 5.0
 
@@ -215,6 +224,8 @@ class _CallHandlers:
     """
 
     subject: dict[str, object]
+    # "simulation_run" or "report_run_comparison": the log event names' start.
+    event_prefix: str
     check_count: int
     result_steps: _ResultSteps | None
     fail: Callable[[RunError], bool]
@@ -332,6 +343,7 @@ class RunRecorder:
                 "modal_call_id": call_id,
                 "simulation_run_ids": [str(run.id) for run in call.runs],
             },
+            event_prefix="simulation_run",
             check_count=max(run.check_count for run in call.runs),
             result_steps=result_steps,
             fail=lambda error: self.transitions.fail_simulation_call(call_id, error),
@@ -360,6 +372,7 @@ class RunRecorder:
             )
         return call_id, _CallHandlers(
             subject={"modal_call_id": call_id, "report_run_id": str(report_run_id)},
+            event_prefix="report_run_comparison",
             check_count=report_run.comparison_check_count,
             result_steps=result_steps,
             fail=lambda error: self.transitions.fail_comparison(report_run_id, error),
@@ -380,7 +393,7 @@ class RunRecorder:
             # The claim's lease makes the call due again; nothing to record.
             recording.not_reached += 1
             logger.warning(
-                "simulation_run_check_failed",
+                _event_name(handlers.event_prefix, "check_failed"),
                 extra={**handlers.subject, "error_type": str(error)},
             )
             return
@@ -407,7 +420,8 @@ class RunRecorder:
             await asyncio.to_thread(handlers.keep_running, next_check_at)
             recording.without_recorder += 1
             logger.warning(
-                "simulation_run_without_result_recorder", extra=handlers.subject
+                _event_name(handlers.event_prefix, "without_result_recorder"),
+                extra=handlers.subject,
             )
             return
         try:
@@ -423,13 +437,15 @@ class RunRecorder:
         except Exception as error:
             recording.not_reached += 1
             logger.exception(
-                "simulation_run_result_not_written",
+                _event_name(handlers.event_prefix, "result_not_written"),
                 extra={**handlers.subject, "error_type": type(error).__name__},
             )
             return
         if completed:
             recording.succeeded += 1
-            logger.info("simulation_run_succeeded", extra=handlers.subject)
+            logger.info(
+                _event_name(handlers.event_prefix, "succeeded"), extra=handlers.subject
+            )
 
     async def _fail(
         self, handlers: _CallHandlers, error: RunError, recording: RecordingPass
@@ -437,7 +453,7 @@ class RunRecorder:
         if await asyncio.to_thread(handlers.fail, error):
             recording.failed += 1
             logger.warning(
-                "simulation_run_failed",
+                _event_name(handlers.event_prefix, "failed"),
                 extra={**handlers.subject, "error_code": error.code.value},
             )
 

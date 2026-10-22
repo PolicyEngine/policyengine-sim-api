@@ -33,6 +33,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _event_name(prefix: str, outcome: str) -> str:
+    """Name a log event for a simulation run or a comparison step."""
+    return f"{prefix}_{outcome}"
+
+
 # The first check of a new call; the recording loop backs off from there.
 FIRST_CHECK_DELAY = timedelta(seconds=2)
 
@@ -102,6 +108,8 @@ class _DispatchSteps:
     claim: Callable[[], bool]
     record: Callable[[str, datetime], bool]
     fail: Callable[[RunError], bool]
+    # "simulation_run" or "report_run_comparison": the log event names' start.
+    event_prefix: str
 
 
 @dataclass
@@ -132,6 +140,7 @@ class RunDispatchService:
                 fail=lambda error: self.transitions.record_simulation_dispatch_failure(
                     runs, error
                 ),
+                event_prefix="simulation_run",
             ),
             request,
             subject={"simulation_run_ids": sorted(str(run_id) for run_id in runs)},
@@ -158,6 +167,7 @@ class RunDispatchService:
                 fail=lambda error: self.transitions.record_comparison_dispatch_failure(
                     report_run_id, error
                 ),
+                event_prefix="report_run_comparison",
             ),
             request,
             subject={"report_run_id": str(report_run_id)},
@@ -177,7 +187,7 @@ class RunDispatchService:
         # Any failure to start the call fails the runs; they can be run again.
         except Exception as error:  # noqa: BLE001  # recorded on the runs
             logger.warning(
-                "simulation_run_dispatch_failed",
+                _event_name(steps.event_prefix, "dispatch_failed"),
                 extra={**subject, "error_type": type(error).__name__},
             )
             await asyncio.to_thread(
@@ -208,27 +218,31 @@ class RunDispatchService:
             )
         except Exception as error:  # the call is cancelled instead
             logger.exception(
-                "simulation_run_call_not_recorded",
+                _event_name(steps.event_prefix, "call_not_recorded"),
                 extra={**context, "error_type": type(error).__name__},
             )
-            await self._cancel(modal_call_id, context)
+            await self._cancel(modal_call_id, context, steps.event_prefix)
             await self._fail_quietly(steps, context)
             return DispatchOutcome.NOT_RECORDED
         if not recorded:
             # The runs stopped dispatching while Modal acknowledged the call,
             # for example because the recording loop failed them as abandoned.
-            logger.warning("simulation_run_call_not_recorded", extra=context)
-            await self._cancel(modal_call_id, context)
+            logger.warning(
+                _event_name(steps.event_prefix, "call_not_recorded"), extra=context
+            )
+            await self._cancel(modal_call_id, context, steps.event_prefix)
             return DispatchOutcome.NOT_RECORDED
-        logger.info("simulation_run_dispatched", extra=context)
+        logger.info(_event_name(steps.event_prefix, "dispatched"), extra=context)
         return DispatchOutcome.STARTED
 
-    async def _cancel(self, modal_call_id: str, context: dict[str, object]) -> None:
+    async def _cancel(
+        self, modal_call_id: str, context: dict[str, object], event_prefix: str
+    ) -> None:
         try:
             await self.dispatcher.cancel(modal_call_id)
         except Exception as error:  # logged; nothing else can be done
             logger.exception(
-                "simulation_run_call_not_cancelled",
+                _event_name(event_prefix, "call_not_cancelled"),
                 extra={**context, "error_type": type(error).__name__},
             )
 
@@ -245,6 +259,6 @@ class RunDispatchService:
             )
         except Exception as error:  # the abandoned-dispatch check fails the runs later
             logger.exception(
-                "simulation_run_dispatch_failure_not_recorded",
+                _event_name(steps.event_prefix, "dispatch_failure_not_recorded"),
                 extra={**context, "error_type": type(error).__name__},
             )

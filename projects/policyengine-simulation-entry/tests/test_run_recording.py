@@ -8,6 +8,7 @@ from datetime import timedelta
 import pytest
 from conftest import FakeBackend, make_settings
 from fastapi.testclient import TestClient
+from policyengine_simulation_entry import run_recording
 from policyengine_simulation_entry.app import create_app
 from policyengine_simulation_entry.modal_calls import (
     CallFailed,
@@ -32,6 +33,7 @@ from policyengine_simulation_persistence import (
     RunStatus,
     SimulationKind,
 )
+from policyengine_simulation_persistence.engine import MAX_OVERFLOW, POOL_SIZE
 from pydantic import BaseModel
 from run_fakes import FakeInspector, FakeRunTransitions, ManualClock
 
@@ -285,6 +287,26 @@ def test_a_pass_fails_comparisons_whose_simulation_run_failed() -> None:
         RunErrorCode.SIMULATION_RUN_FAILED
     )
     assert transitions.comparisons[waiting].status is RunStatus.PENDING
+
+
+def test_comparison_outcomes_are_logged_as_comparison_events(caplog) -> None:
+    recorder, transitions, inspector, clock = _recorder()
+    transitions.add_comparison(
+        status=RunStatus.RUNNING, modal_call_id="fc-failed", next_check_at=clock()
+    )
+    inspector.outcomes["fc-failed"] = CallFailed(
+        RunError(RunErrorCode.WORKER_ERROR, "The Modal call raised KeyError.")
+    )
+
+    _run(recorder)
+
+    assert [record.message for record in caplog.records] == [
+        "report_run_comparison_failed"
+    ]
+
+
+def test_the_loop_leaves_database_connections_for_requests() -> None:
+    assert run_recording.INSPECTION_CONCURRENCY < POOL_SIZE + MAX_OVERFLOW
 
 
 class _ScriptedRecorder:
