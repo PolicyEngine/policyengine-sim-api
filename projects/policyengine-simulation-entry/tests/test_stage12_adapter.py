@@ -155,6 +155,17 @@ def test_adapter_returns_bounded_skip_reason(update, reason) -> None:
     assert result.skip_reason is reason
 
 
+def test_adapter_skips_a_country_the_manifest_marks_household_only() -> None:
+    result = adapt_annual_comparison(
+        eligible_payload(),
+        evaluation_id=EVALUATION_ID,
+        worker=worker(household_only=("us",)),
+    )
+
+    assert result.report is None
+    assert result.skip_reason is ComparisonSkipReason.UNSUPPORTED_COUNTRY
+
+
 def _expected_simulation(role: str, execution_id: str, policy: dict) -> dict:
     dataset_uri = "hf://policyengine/data/populace_us_2024.h5@populace_us_2024-revision"
     return {
