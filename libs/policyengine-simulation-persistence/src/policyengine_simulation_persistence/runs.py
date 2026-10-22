@@ -42,6 +42,7 @@ from sqlalchemy import (
     Uuid,
     text,
 )
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 from policyengine_simulation_persistence import public_api
 from policyengine_simulation_persistence.reports import (
@@ -280,8 +281,16 @@ report_runs = Table(
     *_execution_columns("comparison_", required=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    # Set with an economy comparison's result rows (item 1.07): the optional
+    # sections the result holds, and its SPM provenance, if any.
+    Column("result_sections", ARRAY(Text), nullable=True),
+    Column("spm_provenance", JSONB(none_as_null=True), nullable=True),
     CheckConstraint(f"year BETWEEN {FIRST_YEAR} AND {LAST_YEAR}", name="year"),
     CheckConstraint(f"trigger IN ({_values(RunTrigger)})", name="trigger"),
+    CheckConstraint(
+        "spm_provenance IS NULL OR jsonb_typeof(spm_provenance) = 'object'",
+        name="spm_provenance",
+    ),
     # An economy report run compares two simulation runs in its own comparison
     # step; a household report run has no comparison step.
     CheckConstraint(

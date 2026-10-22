@@ -1,0 +1,4295 @@
+{
+ "spm_provenance": {
+  "schema_version": "canonical-spm-comparison-v2",
+  "baseline": {
+   "receipt": {
+    "schema_version": "canonical-spm-provenance-v2",
+    "forecast_id": "spm-forecast-2022-2036",
+    "forecast_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "scenario": "central",
+    "geography_kind": "county",
+    "geography_id": null,
+    "county_vintage": "2020",
+    "as_of": null,
+    "years": [
+     "2026"
+    ],
+    "runtime_versions": {
+     "policyengine": "6.10.0",
+     "policyengine-core": "3.20.0",
+     "policyengine-us": "1.715.2",
+     "spm-calculator": "0.4.1"
+    }
+   },
+   "execution_count": 2
+  },
+  "reform": {
+   "receipt": {
+    "schema_version": "canonical-spm-provenance-v2",
+    "forecast_id": "spm-forecast-2022-2036",
+    "forecast_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "scenario": "central",
+    "geography_kind": "county",
+    "geography_id": null,
+    "county_vintage": "2020",
+    "as_of": null,
+    "years": [
+     "2026"
+    ],
+    "runtime_versions": {
+     "policyengine": "6.10.0",
+     "policyengine-core": "3.20.0",
+     "policyengine-us": "1.715.2",
+     "spm-calculator": "0.4.1"
+    }
+   },
+   "execution_count": 2
+  }
+ },
+ "model_version": "1.715.2",
+ "data_version": "1.115.5",
+ "budget": {
+  "tax_revenue_impact": 69486747387.44653,
+  "state_tax_revenue_impact": 527549237.95322806,
+  "benefit_spending_impact": -48986194852.11566,
+  "budgetary_impact": -73127151177.51976,
+  "households": 129908701.74183881,
+  "baseline_net_income": 11898982129577.477
+ },
+ "detailed_budget": {
+  "income_tax": {
+   "baseline": 303185945.4455259,
+   "reform": 577446702.2710264,
+   "difference": -812280826.4515302
+  },
+  "snap": {
+   "baseline": -943305046.9559873,
+   "reform": 671530207.8397393,
+   "difference": -134465864.18989325
+  },
+  "eitc": {
+   "baseline": 524560164.91588396,
+   "reform": -995787893.2977786,
+   "difference": -109225611.89039715
+  },
+  "ctc": {
+   "baseline": 443080064.6815651,
+   "reform": -542475557.4590948,
+   "difference": 890541391.1078446
+  },
+  "ssi": {
+   "baseline": 802854915.2229671,
+   "reform": -938820033.9328929,
+   "difference": -949108278.0130785
+  },
+  "state_income_tax": {
+   "baseline": 82824945.58699316,
+   "reform": 878298325.5570211,
+   "difference": -237591524.62357512
+  }
+ },
+ "decile": {
+  "average": {
+   "1": -1700.4036172163196,
+   "2": -467.3005465036961,
+   "3": -2825.7552745507924,
+   "4": -1669.8500023617896,
+   "5": -372.67443809656766,
+   "6": -25.126551708896105,
+   "7": -1601.4932984545642,
+   "8": -1614.8007507540942,
+   "9": -1687.3137759738684,
+   "10": -242.37920557359848
+  },
+  "relative": {
+   "1": 0.0,
+   "2": 0.4161799388943461,
+   "3": 0.0,
+   "4": 1e-12,
+   "5": 1e-12,
+   "6": 0.8955753946414917,
+   "7": -3.5e-9,
+   "8": -0.0,
+   "9": 0.3033685109329176,
+   "10": -3.5e-9
+  }
+ },
+ "inequality": {
+  "gini": {
+   "baseline": 0.8461974184283128,
+   "reform": 0.5052838205796004
+  },
+  "top_10_pct_share": {
+   "baseline": 0.5890022579825517,
+   "reform": 0.034525830151341586
+  },
+  "top_1_pct_share": {
+   "baseline": 0.24273997354306764,
+   "reform": 0.7974042475543028
+  }
+ },
+ "poverty": {
+  "poverty": {
+   "child": {
+    "baseline": 0.4143139993007743,
+    "reform": 0.17300740157905092
+   },
+   "adult": {
+    "baseline": 0.548798761388153,
+    "reform": 0.7030407620656315
+   },
+   "senior": {
+    "baseline": 0.6744858305023272,
+    "reform": 0.3747030205016403
+   },
+   "all": {
+    "baseline": 0.4389616300445631,
+    "reform": 0.5084264882499818
+   }
+  },
+  "deep_poverty": {
+   "child": {
+    "baseline": 0.7784426150001458,
+    "reform": 0.5209384176131452
+   },
+   "adult": {
+    "baseline": 0.39325509496422606,
+    "reform": 0.4896935204622582
+   },
+   "senior": {
+    "baseline": 0.029574963966907064,
+    "reform": 0.04348729035652743
+   },
+   "all": {
+    "baseline": 0.703382088603836,
+    "reform": 0.9831877173096739
+   }
+  }
+ },
+ "poverty_by_gender": {
+  "poverty": {
+   "male": {
+    "baseline": 0.5931837303800576,
+    "reform": 0.393599686377914
+   },
+   "female": {
+    "baseline": 0.17034919685568128,
+    "reform": 0.5022385584334831
+   }
+  },
+  "deep_poverty": {
+   "male": {
+    "baseline": 0.9820766375385342,
+    "reform": 0.7705231398308006
+   },
+   "female": {
+    "baseline": 0.5396174484497788,
+    "reform": 0.8602897789205496
+   }
+  }
+ },
+ "poverty_by_race": {
+  "poverty": {
+   "white": {
+    "baseline": 0.23217612806301458,
+    "reform": 0.513771663187637
+   },
+   "black": {
+    "baseline": 0.9524673882682695,
+    "reform": 0.5777948078012031
+   },
+   "hispanic": {
+    "baseline": 0.45913173191066836,
+    "reform": 0.2692794774414212
+   },
+   "other": {
+    "baseline": 0.5479963094662489,
+    "reform": 0.9571162814602269
+   }
+  }
+ },
+ "intra_decile": {
+  "deciles": {
+   "Gain more than 5%": [
+    0.005709129450392925,
+    0.7836552326153898,
+    0.8204859119254819,
+    0.8861795808260082,
+    0.7405034118331963,
+    0.8091399008724796,
+    0.518678283523002,
+    0.561357864778379,
+    0.4260906796881502,
+    0.05612329752074041
+   ],
+   "Gain less than 5%": [
+    0.8700101551766398,
+    0.5699993338763802,
+    0.19983942017714307,
+    0.5047204674288633,
+    0.48492511222773416,
+    0.3567899645449557,
+    0.3460779190181549,
+    0.5384787957378443,
+    0.6234894527975051,
+    0.6124524647827256
+   ],
+   "No change": [
+    0.4581468000997244,
+    0.027974984083842358,
+    0.22960503127702392,
+    0.1772112589385827,
+    0.5844608707784413,
+    0.8610088608533248,
+    0.798438940577426,
+    0.7970975626354962,
+    0.8164373705606909,
+    0.25529404008730594
+   ],
+   "Lose less than 5%": [
+    0.841744832274096,
+    0.6731135254387071,
+    0.08323413780389788,
+    0.0166906301155596,
+    0.014559974924812313,
+    0.7555867752521982,
+    0.2495592256534228,
+    0.10948862729435938,
+    0.6248020841524763,
+    0.3444228640964949
+   ],
+   "Lose more than 5%": [
+    0.06951537853084733,
+    0.1596255246938475,
+    0.5273803990480128,
+    0.16814494622242826,
+    0.2729144368186801,
+    0.7115899271852729,
+    0.4547016300456639,
+    0.3220017663873259,
+    0.4737710141702789,
+    0.023634577631987064
+   ]
+  },
+  "all": {
+   "Gain more than 5%": 0.38655710476146987,
+   "Gain less than 5%": 0.4209186792090759,
+   "No change": 0.18803930475131292,
+   "Lose less than 5%": 0.10876169244541334,
+   "Lose more than 5%": 0.8998185003560202
+  }
+ },
+ "wealth_decile": null,
+ "intra_wealth_decile": null,
+ "labor_supply_response": {
+  "substitution_lsr": -95240892.98036276,
+  "income_lsr": 119544772.1609919,
+  "relative_lsr": {
+   "income": -3.5e-9,
+   "substitution": 0.45183232059956535
+  },
+  "total_change": -620195937.3852562,
+  "revenue_change": 607800625.4420971,
+  "decile": {
+   "average": {
+    "income": {
+     "1": -48.473527582247435,
+     "2": 227.91766811872827,
+     "3": -627.6526288073741,
+     "4": -106.8136944860032,
+     "5": -716.4097414810877,
+     "6": 77.387017155357,
+     "7": 780.7609840249787,
+     "8": 268.905565766697,
+     "9": 190.8730116813393,
+     "10": -207.68004708353027
+    },
+    "substitution": {
+     "1": -94.01026883836794,
+     "2": 477.83176028076844,
+     "3": 300.1419478281451,
+     "4": 246.25690303743974,
+     "5": 663.4032506999561,
+     "6": -873.6701598830357,
+     "7": -928.6944390802345,
+     "8": 759.1299450687021,
+     "9": 199.23616990570105,
+     "10": 556.2168130864866
+    }
+   },
+   "relative": {
+    "income": {
+     "1": -347.4132949034705,
+     "2": 181.91888693611503,
+     "3": -609.3572449814661,
+     "4": -532.7087247328207,
+     "5": -411.69685870747054,
+     "6": -990.8124556772482,
+     "7": -830.022477249356,
+     "8": 309.60327801351093,
+     "9": -186.4425242296428,
+     "10": 102.53547125595253
+    },
+    "substitution": {
+     "1": 863.3704459699325,
+     "2": -833.5930450587033,
+     "3": -492.01051421050425,
+     "4": 515.9800980935379,
+     "5": 25.769282714127595,
+     "6": -940.4961754348353,
+     "7": 126.28452131581125,
+     "8": -784.146168822053,
+     "9": -784.3937896701154,
+     "10": -418.1942137105237
+    }
+   }
+  },
+  "hours": {
+   "baseline": -8663469857.26917,
+   "reform": -9662190549.476479,
+   "change": 3697949.498973032,
+   "income_effect": -5729966.430408149,
+   "substitution_effect": 8540842.966775883
+  }
+ },
+ "constituency_impact": null,
+ "local_authority_impact": null,
+ "congressional_district_impact": {
+  "districts": [
+   {
+    "district": "AL-01",
+    "average_household_income_change": -101.7172852458077,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.14260035292536777,
+    "loser_percentage": 0.01086044309006795,
+    "no_change_percentage": 0.3747544920633644,
+    "population": 548096.2789566629
+   },
+   {
+    "district": "AL-02",
+    "average_household_income_change": 1241.3922089403352,
+    "relative_household_income_change": 0.6905926530386846,
+    "winner_percentage": 0.22764436571441626,
+    "loser_percentage": 0.0016658802428921593,
+    "no_change_percentage": 0.6242328818537503,
+    "population": 1956080.890298706
+   },
+   {
+    "district": "AL-03",
+    "average_household_income_change": -529.378558329722,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.05882432741086607,
+    "loser_percentage": 0.8188201278420804,
+    "no_change_percentage": 0.07460963363587747,
+    "population": 1373891.0081870835
+   },
+   {
+    "district": "AL-04",
+    "average_household_income_change": -652.0016288329296,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.018604300312002775,
+    "loser_percentage": 0.06078469618896887,
+    "no_change_percentage": 0.9150336434099469,
+    "population": 1017851.832855403
+   },
+   {
+    "district": "AL-05",
+    "average_household_income_change": -1636.0880437656667,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.11252763614702643,
+    "loser_percentage": 0.4232066122540936,
+    "no_change_percentage": 0.13506950094916403,
+    "population": 625081.3883845364
+   },
+   {
+    "district": "AL-06",
+    "average_household_income_change": 485.807793085729,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.5551503462434865,
+    "loser_percentage": 0.5072476701117876,
+    "no_change_percentage": 0.0836027964988253,
+    "population": 1214877.9991096288
+   },
+   {
+    "district": "AL-07",
+    "average_household_income_change": 672.5957273236207,
+    "relative_household_income_change": 0.46959011611914814,
+    "winner_percentage": 0.38458139107487466,
+    "loser_percentage": 0.030494381790816316,
+    "no_change_percentage": 0.7263274273474801,
+    "population": 1934917.7657345892
+   },
+   {
+    "district": "AK-01",
+    "average_household_income_change": 1905.2150782139736,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.9410878223413865,
+    "loser_percentage": 0.8661318249263946,
+    "no_change_percentage": 0.38559418673644075,
+    "population": 619805.2333866417
+   },
+   {
+    "district": "AZ-01",
+    "average_household_income_change": -990.4892374583359,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5113505018743109,
+    "loser_percentage": 0.8101070729276686,
+    "no_change_percentage": 0.5000121234313284,
+    "population": 56286.53438263037
+   },
+   {
+    "district": "AZ-02",
+    "average_household_income_change": 1290.2704733337002,
+    "relative_household_income_change": 0.43015437597568906,
+    "winner_percentage": 0.025740945504366897,
+    "loser_percentage": 0.675654354894482,
+    "no_change_percentage": 0.043483476253197484,
+    "population": 408810.50783274416
+   },
+   {
+    "district": "AZ-03",
+    "average_household_income_change": 429.15350504556795,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.17804952768967286,
+    "loser_percentage": 0.6958955397739035,
+    "no_change_percentage": 0.03684608961256153,
+    "population": 553095.2587470373
+   },
+   {
+    "district": "AZ-04",
+    "average_household_income_change": -623.286050496465,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.5140179727916571,
+    "loser_percentage": 0.36830555803174847,
+    "no_change_percentage": 0.3396596259019955,
+    "population": 911261.5805307392
+   },
+   {
+    "district": "AZ-05",
+    "average_household_income_change": 787.7910720928934,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.9558918773273261,
+    "loser_percentage": 0.1675630022937611,
+    "no_change_percentage": 0.924249742544119,
+    "population": 728385.5554744796
+   },
+   {
+    "district": "AZ-06",
+    "average_household_income_change": -1243.0708775985843,
+    "relative_household_income_change": 0.7485277743628934,
+    "winner_percentage": 0.006674252060786756,
+    "loser_percentage": 0.2682540484924081,
+    "no_change_percentage": 0.7706727594239515,
+    "population": 683579.4773629309
+   },
+   {
+    "district": "AZ-07",
+    "average_household_income_change": -1033.6530865744967,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.2475557298889539,
+    "loser_percentage": 0.11605849850039973,
+    "no_change_percentage": 0.3609521686918671,
+    "population": 1093124.59086775
+   },
+   {
+    "district": "AZ-08",
+    "average_household_income_change": -1380.7734243896737,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6394110628821505,
+    "loser_percentage": 0.22951422470938387,
+    "no_change_percentage": 0.5272370763287079,
+    "population": 954776.9947312413
+   },
+   {
+    "district": "AZ-09",
+    "average_household_income_change": 508.0174015085941,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.8943184147686908,
+    "loser_percentage": 0.16214764452574437,
+    "no_change_percentage": 0.291321379072099,
+    "population": 1746339.202612584
+   },
+   {
+    "district": "AR-01",
+    "average_household_income_change": -886.7798349260943,
+    "relative_household_income_change": 0.9439036612373847,
+    "winner_percentage": 0.6402315474746479,
+    "loser_percentage": 0.44509850222390723,
+    "no_change_percentage": 0.7921069280361347,
+    "population": 1468015.1981863473
+   },
+   {
+    "district": "AR-02",
+    "average_household_income_change": 83.92200633709423,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.694104723835435,
+    "loser_percentage": 0.13173181234315456,
+    "no_change_percentage": 0.8864370231764853,
+    "population": 840645.7027551291
+   },
+   {
+    "district": "AR-03",
+    "average_household_income_change": -1035.0756287494755,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.559931781666012,
+    "loser_percentage": 0.6247386687904641,
+    "no_change_percentage": 0.919934108379581,
+    "population": 1923975.397019315
+   },
+   {
+    "district": "AR-04",
+    "average_household_income_change": 1041.737170195717,
+    "relative_household_income_change": 0.4176558064756952,
+    "winner_percentage": 0.09287217930675717,
+    "loser_percentage": 0.4047303109558881,
+    "no_change_percentage": 0.19899172023060585,
+    "population": 1113857.468180032
+   },
+   {
+    "district": "CA-01",
+    "average_household_income_change": 1920.0493803164393,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5633272391626525,
+    "loser_percentage": 0.017112014359287886,
+    "no_change_percentage": 0.7101313185350905,
+    "population": 1807612.6580073712
+   },
+   {
+    "district": "CA-02",
+    "average_household_income_change": 1190.9251224377977,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5349338144076542,
+    "loser_percentage": 0.7891161659884908,
+    "no_change_percentage": 0.379471337738705,
+    "population": 196587.60294740985
+   },
+   {
+    "district": "CA-03",
+    "average_household_income_change": -587.3232427555886,
+    "relative_household_income_change": 0.3121132200263218,
+    "winner_percentage": 0.49172302053949546,
+    "loser_percentage": 0.6111343735808167,
+    "no_change_percentage": 0.21191451351534507,
+    "population": 1198005.299279376
+   },
+   {
+    "district": "CA-04",
+    "average_household_income_change": 716.4863465475145,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.40688231107412964,
+    "loser_percentage": 0.32359317751493566,
+    "no_change_percentage": 0.6852808172439641,
+    "population": 283617.2683020191
+   },
+   {
+    "district": "CA-05",
+    "average_household_income_change": -1637.850054481115,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.7596269971014065,
+    "loser_percentage": 0.6593931588317239,
+    "no_change_percentage": 0.934706631571226,
+    "population": 731208.9827030475
+   },
+   {
+    "district": "CA-06",
+    "average_household_income_change": -1881.0388383520524,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.48537066712505683,
+    "loser_percentage": 0.056666014100585804,
+    "no_change_percentage": 0.5942091818248112,
+    "population": 913910.6011144014
+   },
+   {
+    "district": "CA-07",
+    "average_household_income_change": 1537.1464588478023,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.007724418967058444,
+    "loser_percentage": 0.36031096701684984,
+    "no_change_percentage": 0.27969295418847406,
+    "population": 402670.9003519397
+   },
+   {
+    "district": "CA-08",
+    "average_household_income_change": -270.1820046885661,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.501034557094322,
+    "loser_percentage": 0.6980941469409674,
+    "no_change_percentage": 0.16234615818193077,
+    "population": 929260.2895029439
+   },
+   {
+    "district": "CA-09",
+    "average_household_income_change": 426.12124982149214,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.46017155393683884,
+    "loser_percentage": 0.7854393337281037,
+    "no_change_percentage": 0.04923914247505368,
+    "population": 1544560.3762195243
+   },
+   {
+    "district": "CA-10",
+    "average_household_income_change": -369.84459942607907,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5214095761879433,
+    "loser_percentage": 0.4399166678136097,
+    "no_change_percentage": 0.052247836980488294,
+    "population": 212633.49881591904
+   },
+   {
+    "district": "CA-11",
+    "average_household_income_change": 281.6506827110996,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.32226459514400096,
+    "loser_percentage": 0.49990018379463286,
+    "no_change_percentage": 0.3608400868813272,
+    "population": 614394.250070395
+   },
+   {
+    "district": "CA-12",
+    "average_household_income_change": -1456.3521600642657,
+    "relative_household_income_change": 0.2256742626495376,
+    "winner_percentage": 0.134494187324123,
+    "loser_percentage": 0.49460694973104014,
+    "no_change_percentage": 0.4290896639496672,
+    "population": 729571.0039977863
+   },
+   {
+    "district": "CA-13",
+    "average_household_income_change": -365.9226317365758,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.3890777290830446,
+    "loser_percentage": 0.8730978577541066,
+    "no_change_percentage": 0.8972224563897103,
+    "population": 641934.4119458575
+   },
+   {
+    "district": "CA-14",
+    "average_household_income_change": -1496.642820259904,
+    "relative_household_income_change": 0.64094436192942,
+    "winner_percentage": 0.7960876508380115,
+    "loser_percentage": 0.3784190372558184,
+    "no_change_percentage": 0.4238353268638516,
+    "population": 1316958.22273491
+   },
+   {
+    "district": "CA-15",
+    "average_household_income_change": -640.6313059657078,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.38465022995985754,
+    "loser_percentage": 0.3995515988373419,
+    "no_change_percentage": 0.807182492186913,
+    "population": 339653.4441229799
+   },
+   {
+    "district": "CA-16",
+    "average_household_income_change": -1179.6415497140028,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5227510622715033,
+    "loser_percentage": 0.052923693272417416,
+    "no_change_percentage": 0.8353954006210182,
+    "population": 1747067.9393701318
+   },
+   {
+    "district": "CA-17",
+    "average_household_income_change": 1284.5950041837382,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.7708073492145247,
+    "loser_percentage": 0.8589537357187278,
+    "no_change_percentage": 0.31103929007826037,
+    "population": 1745340.4845477268
+   },
+   {
+    "district": "CA-18",
+    "average_household_income_change": 996.0133397522277,
+    "relative_household_income_change": 0.8595428617640705,
+    "winner_percentage": 0.3084141838742047,
+    "loser_percentage": 0.012955567317396666,
+    "no_change_percentage": 0.17104269709747133,
+    "population": 326517.4209606851
+   },
+   {
+    "district": "CA-19",
+    "average_household_income_change": 863.3173647119321,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.9815326644782767,
+    "loser_percentage": 0.7734976508614569,
+    "no_change_percentage": 0.546164705322463,
+    "population": 43443.39082932053
+   },
+   {
+    "district": "CA-20",
+    "average_household_income_change": 1643.211636016627,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5362462043780879,
+    "loser_percentage": 0.4484523393074651,
+    "no_change_percentage": 0.5275703669056998,
+    "population": 1302992.286184724
+   },
+   {
+    "district": "CA-21",
+    "average_household_income_change": 1202.8325019108204,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.46729097780509044,
+    "loser_percentage": 0.634066252711196,
+    "no_change_percentage": 0.3884791199329697,
+    "population": 829737.1997349036
+   },
+   {
+    "district": "CA-22",
+    "average_household_income_change": 66.62941062963812,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.020535945332515126,
+    "loser_percentage": 0.1550549007322337,
+    "no_change_percentage": 0.7571143646203627,
+    "population": 732875.0445007881
+   },
+   {
+    "district": "CA-23",
+    "average_household_income_change": -1587.8683043620656,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5487682328065107,
+    "loser_percentage": 0.9626410648799001,
+    "no_change_percentage": 0.3749766852995049,
+    "population": 143596.87028899114
+   },
+   {
+    "district": "CA-24",
+    "average_household_income_change": 1667.4429514798517,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.1081431390573181,
+    "loser_percentage": 0.08424475644417895,
+    "no_change_percentage": 0.05643113581015269,
+    "population": 16805.930927915848
+   },
+   {
+    "district": "CA-25",
+    "average_household_income_change": -1001.9043376747802,
+    "relative_household_income_change": 0.11317412321718456,
+    "winner_percentage": 0.6158127630016563,
+    "loser_percentage": 0.9656566882560107,
+    "no_change_percentage": 0.9605179179485582,
+    "population": 1493449.8495685991
+   },
+   {
+    "district": "CA-26",
+    "average_household_income_change": 1798.4606020938431,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.5870715001683793,
+    "loser_percentage": 0.8033802842755158,
+    "no_change_percentage": 0.6292175442471413,
+    "population": 921870.451521964
+   },
+   {
+    "district": "CA-27",
+    "average_household_income_change": -653.0806594029559,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.8001046273240519,
+    "loser_percentage": 0.39075730805975006,
+    "no_change_percentage": 0.6560261369262086,
+    "population": 674653.2909981434
+   },
+   {
+    "district": "CA-28",
+    "average_household_income_change": -1765.08349219778,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.14212089999151623,
+    "loser_percentage": 0.1224568853043495,
+    "no_change_percentage": 0.4855769544848747,
+    "population": 273398.3199164645
+   },
+   {
+    "district": "CA-29",
+    "average_household_income_change": -888.6998292046791,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.4824218931490709,
+    "loser_percentage": 0.7309984068579884,
+    "no_change_percentage": 0.8258033946553545,
+    "population": 1514596.9736237328
+   },
+   {
+    "district": "CA-30",
+    "average_household_income_change": -641.2184359421058,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.34254197921430385,
+    "loser_percentage": 0.8894237400921909,
+    "no_change_percentage": 0.6355235318535916,
+    "population": 1239103.128934888
+   },
+   {
+    "district": "CA-31",
+    "average_household_income_change": -1742.6211467233204,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6123986882300106,
+    "loser_percentage": 0.12683588146028657,
+    "no_change_percentage": 0.5409306560920599,
+    "population": 1904601.5656046001
+   },
+   {
+    "district": "CA-32",
+    "average_household_income_change": 979.7718608096169,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.9908157296652765,
+    "loser_percentage": 0.1192586923916098,
+    "no_change_percentage": 0.586893637715749,
+    "population": 984877.5889400134
+   },
+   {
+    "district": "CA-33",
+    "average_household_income_change": -549.301011917969,
+    "relative_household_income_change": 0.15602356639396198,
+    "winner_percentage": 0.5771809315400935,
+    "loser_percentage": 0.37839441251537,
+    "no_change_percentage": 0.3098382754201858,
+    "population": 709689.0495239014
+   },
+   {
+    "district": "CA-34",
+    "average_household_income_change": 1990.247485523149,
+    "relative_household_income_change": 0.33035619514819015,
+    "winner_percentage": 0.5982952077680709,
+    "loser_percentage": 0.0711720822230778,
+    "no_change_percentage": 0.6246853947621606,
+    "population": 1778686.913921832
+   },
+   {
+    "district": "CA-35",
+    "average_household_income_change": 1761.4016628961574,
+    "relative_household_income_change": 0.6205345270569311,
+    "winner_percentage": 0.34989600523094433,
+    "loser_percentage": 0.9379414777595734,
+    "no_change_percentage": 0.2968685503029024,
+    "population": 664761.1110170053
+   },
+   {
+    "district": "CA-36",
+    "average_household_income_change": 630.1992727016485,
+    "relative_household_income_change": 0.3972508761498267,
+    "winner_percentage": 0.3285972226227972,
+    "loser_percentage": 0.5373940175300163,
+    "no_change_percentage": 0.8349531491962504,
+    "population": 1050973.0294520468
+   },
+   {
+    "district": "CA-37",
+    "average_household_income_change": 1462.2350111671283,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.989549913187835,
+    "loser_percentage": 0.6737291687045169,
+    "no_change_percentage": 0.1715974717820693,
+    "population": 876524.1090736537
+   },
+   {
+    "district": "CA-38",
+    "average_household_income_change": -869.4282452112944,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.18770762679166875,
+    "loser_percentage": 0.2739483389115531,
+    "no_change_percentage": 0.12201087651538456,
+    "population": 424290.5019186154
+   },
+   {
+    "district": "CA-39",
+    "average_household_income_change": -1267.8231454240251,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.4584474945996394,
+    "loser_percentage": 0.9370204171804093,
+    "no_change_percentage": 0.3917403626543372,
+    "population": 930712.5864732913
+   },
+   {
+    "district": "CA-40",
+    "average_household_income_change": -562.3775341210342,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.23918997191071245,
+    "loser_percentage": 0.5260113238125497,
+    "no_change_percentage": 0.726498808599626,
+    "population": 1003126.5118603492
+   },
+   {
+    "district": "CA-41",
+    "average_household_income_change": 649.5470617907051,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.3552770048304683,
+    "loser_percentage": 0.30657120150850037,
+    "no_change_percentage": 0.024657019036375294,
+    "population": 1780674.3483204115
+   },
+   {
+    "district": "CA-42",
+    "average_household_income_change": 1159.5063296568303,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.902446400231012,
+    "loser_percentage": 0.15150610126548647,
+    "no_change_percentage": 0.8366777637624933,
+    "population": 841703.408616225
+   },
+   {
+    "district": "CA-43",
+    "average_household_income_change": -742.9544276215356,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.8309765238449147,
+    "loser_percentage": 0.14219214804793068,
+    "no_change_percentage": 0.4530294918780535,
+    "population": 1062304.3523327063
+   },
+   {
+    "district": "CA-44",
+    "average_household_income_change": -1017.3755240887896,
+    "relative_household_income_change": 0.21079003156596632,
+    "winner_percentage": 0.3796624281418225,
+    "loser_percentage": 0.4902777918239447,
+    "no_change_percentage": 0.6012503437187471,
+    "population": 1865959.885605579
+   },
+   {
+    "district": "CA-45",
+    "average_household_income_change": -1415.5658531587014,
+    "relative_household_income_change": 0.22807510480238247,
+    "winner_percentage": 0.9096491728454665,
+    "loser_percentage": 0.9317969080573828,
+    "no_change_percentage": 0.5283844979134728,
+    "population": 734097.1646511267
+   },
+   {
+    "district": "CA-46",
+    "average_household_income_change": -1245.3931830569275,
+    "relative_household_income_change": 0.910627262349237,
+    "winner_percentage": 0.10830967717910556,
+    "loser_percentage": 0.23905658916176586,
+    "no_change_percentage": 0.034282621247537115,
+    "population": 1092646.3590046442
+   },
+   {
+    "district": "CA-47",
+    "average_household_income_change": -225.7024315421745,
+    "relative_household_income_change": 0.4894877420169603,
+    "winner_percentage": 0.18535651239951723,
+    "loser_percentage": 0.837768991053808,
+    "no_change_percentage": 0.8392587441699838,
+    "population": 1288153.679040642
+   },
+   {
+    "district": "CA-48",
+    "average_household_income_change": -256.17032345475496,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.3840748545466999,
+    "loser_percentage": 0.841556693614585,
+    "no_change_percentage": 0.08498238084986265,
+    "population": 1092656.6410106996
+   },
+   {
+    "district": "CA-49",
+    "average_household_income_change": 1642.418280899994,
+    "relative_household_income_change": 0.45499419839442967,
+    "winner_percentage": 0.3996318991780353,
+    "loser_percentage": 0.00811283921494399,
+    "no_change_percentage": 0.5043576089482401,
+    "population": 830007.685726782
+   },
+   {
+    "district": "CA-50",
+    "average_household_income_change": -1434.719830025666,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.527748098058697,
+    "loser_percentage": 0.6223956665167715,
+    "no_change_percentage": 0.9904167675348735,
+    "population": 439734.6422016735
+   },
+   {
+    "district": "CA-51",
+    "average_household_income_change": -370.500854257362,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5242253175436219,
+    "loser_percentage": 0.7770367389890476,
+    "no_change_percentage": 0.67725832793819,
+    "population": 1738334.257700544
+   },
+   {
+    "district": "CA-52",
+    "average_household_income_change": 600.7036555406855,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.3466247177277443,
+    "loser_percentage": 0.6541914874562558,
+    "no_change_percentage": 0.8251537907311142,
+    "population": 229628.011221144
+   },
+   {
+    "district": "CO-01",
+    "average_household_income_change": 1230.9077125999916,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.134106127817758,
+    "loser_percentage": 0.9661923609934115,
+    "no_change_percentage": 0.5327523065182042,
+    "population": 354098.5665959717
+   },
+   {
+    "district": "CO-02",
+    "average_household_income_change": 1306.482550421162,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.83221204878799,
+    "loser_percentage": 0.01950485751610953,
+    "no_change_percentage": 0.14456465305764543,
+    "population": 916157.3733286823
+   },
+   {
+    "district": "CO-03",
+    "average_household_income_change": -177.2015481856779,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.8239581007636878,
+    "loser_percentage": 0.7509151623422733,
+    "no_change_percentage": 0.28541203910408686,
+    "population": 1511081.9751586048
+   },
+   {
+    "district": "CO-04",
+    "average_household_income_change": -265.2517793746414,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.9316170783510357,
+    "loser_percentage": 0.3549960878338857,
+    "no_change_percentage": 0.2925758443326615,
+    "population": 1226064.510495367
+   },
+   {
+    "district": "CO-05",
+    "average_household_income_change": -512.3692031236847,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.5662456475393759,
+    "loser_percentage": 0.5387945165631575,
+    "no_change_percentage": 0.5297979237287209,
+    "population": 1974517.8305325997
+   },
+   {
+    "district": "CO-06",
+    "average_household_income_change": 1619.0403702740514,
+    "relative_household_income_change": 0.2986875371903074,
+    "winner_percentage": 0.3151406134613959,
+    "loser_percentage": 0.9370034399542125,
+    "no_change_percentage": 0.05758881507922853,
+    "population": 636076.0962848675
+   },
+   {
+    "district": "CO-07",
+    "average_household_income_change": 1727.502898734149,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.8844145545487769,
+    "loser_percentage": 0.08739250868322412,
+    "no_change_percentage": 0.9585700859571149,
+    "population": 1219250.9647520587
+   },
+   {
+    "district": "CO-08",
+    "average_household_income_change": 971.9081053382092,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.9984189291863486,
+    "loser_percentage": 0.7792686301844646,
+    "no_change_percentage": 0.43725611432633693,
+    "population": 1822882.5088412128
+   },
+   {
+    "district": "CT-01",
+    "average_household_income_change": -733.4613699543544,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6602848372615883,
+    "loser_percentage": 0.48001860008713937,
+    "no_change_percentage": 0.2037742723546132,
+    "population": 438639.2924348621
+   },
+   {
+    "district": "CT-02",
+    "average_household_income_change": -1730.1936797458893,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.49352746379574675,
+    "loser_percentage": 0.8078484679181165,
+    "no_change_percentage": 0.16398700709907843,
+    "population": 404813.0910622814
+   },
+   {
+    "district": "CT-03",
+    "average_household_income_change": 1618.8458045691646,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.7062977130428661,
+    "loser_percentage": 0.9848558991480393,
+    "no_change_percentage": 0.8456447938061156,
+    "population": 1355856.6590365525
+   },
+   {
+    "district": "CT-04",
+    "average_household_income_change": 361.44050009557515,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.7172149080608088,
+    "loser_percentage": 0.98576729859634,
+    "no_change_percentage": 0.11465761960796195,
+    "population": 1300055.6738872197
+   },
+   {
+    "district": "CT-05",
+    "average_household_income_change": -1146.7188842352507,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.32802415989117717,
+    "loser_percentage": 0.987883939767343,
+    "no_change_percentage": 0.6841018084490844,
+    "population": 1033246.891060393
+   },
+   {
+    "district": "DE-01",
+    "average_household_income_change": -264.3914325460721,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.16889186920869248,
+    "loser_percentage": 0.8453652777791822,
+    "no_change_percentage": 0.5708336953080093,
+    "population": 358288.9534547711
+   },
+   {
+    "district": "DC-01",
+    "average_household_income_change": 308.59947634037167,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.7232746655069926,
+    "loser_percentage": 0.626121078335344,
+    "no_change_percentage": 0.6628708181544503,
+    "population": 86669.61242482299
+   },
+   {
+    "district": "FL-01",
+    "average_household_income_change": -112.59017197951904,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.15922019566186107,
+    "loser_percentage": 0.08851487828435323,
+    "no_change_percentage": 0.9383871813145351,
+    "population": 1217564.895666008
+   },
+   {
+    "district": "FL-02",
+    "average_household_income_change": 773.8733757136331,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.9285740031135886,
+    "loser_percentage": 0.9698970354758635,
+    "no_change_percentage": 0.7932385199454783,
+    "population": 1941585.7962708066
+   },
+   {
+    "district": "FL-03",
+    "average_household_income_change": 1574.4123838912917,
+    "relative_household_income_change": 0.5165645744583381,
+    "winner_percentage": 0.24757697079047203,
+    "loser_percentage": 0.8596539097339346,
+    "no_change_percentage": 0.260714167730137,
+    "population": 158112.12946288916
+   },
+   {
+    "district": "FL-04",
+    "average_household_income_change": -1348.045750010432,
+    "relative_household_income_change": 0.271839320032379,
+    "winner_percentage": 0.8783503813610679,
+    "loser_percentage": 0.6696400495589823,
+    "no_change_percentage": 0.42651065886229844,
+    "population": 82879.99705410458
+   },
+   {
+    "district": "FL-05",
+    "average_household_income_change": 1326.1189019811054,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.6302331792941935,
+    "loser_percentage": 0.7683230628258404,
+    "no_change_percentage": 0.5568693144833027,
+    "population": 1344401.3008842464
+   },
+   {
+    "district": "FL-06",
+    "average_household_income_change": 689.2957361718439,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.734240342177587,
+    "loser_percentage": 0.14068781884842652,
+    "no_change_percentage": 0.2989575457439484,
+    "population": 415235.8634614184
+   },
+   {
+    "district": "FL-07",
+    "average_household_income_change": -244.4070681592101,
+    "relative_household_income_change": 0.9214691498053794,
+    "winner_percentage": 0.8158466151929633,
+    "loser_percentage": 0.5105868144012156,
+    "no_change_percentage": 0.7931260265065381,
+    "population": 138135.2066096766
+   },
+   {
+    "district": "FL-08",
+    "average_household_income_change": -1346.2538446209026,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.9777477008113244,
+    "loser_percentage": 0.01067312919301644,
+    "no_change_percentage": 0.10743206798937299,
+    "population": 20020.80181001546
+   },
+   {
+    "district": "FL-09",
+    "average_household_income_change": 1039.002504622171,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.7211832505316047,
+    "loser_percentage": 0.11887451199230736,
+    "no_change_percentage": 0.6579935892283897,
+    "population": 338129.9739872749
+   },
+   {
+    "district": "FL-10",
+    "average_household_income_change": 380.0954758283601,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.8237264751259077,
+    "loser_percentage": 0.783237713622185,
+    "no_change_percentage": 0.37165318391889746,
+    "population": 560149.8769812064
+   },
+   {
+    "district": "FL-11",
+    "average_household_income_change": -552.922874730938,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.27346908472699316,
+    "loser_percentage": 0.6961161667540838,
+    "no_change_percentage": 0.885445907248799,
+    "population": 513503.2501471353
+   },
+   {
+    "district": "FL-12",
+    "average_household_income_change": 1073.0994188497257,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.11962075594871358,
+    "loser_percentage": 0.4001913220232566,
+    "no_change_percentage": 0.15816280416066675,
+    "population": 876361.5777005955
+   },
+   {
+    "district": "FL-13",
+    "average_household_income_change": -4.45563556553763,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.8852236546294064,
+    "loser_percentage": 0.7652657751329798,
+    "no_change_percentage": 0.3866405389602191,
+    "population": 134669.5287914708
+   },
+   {
+    "district": "FL-14",
+    "average_household_income_change": 1561.1667301797008,
+    "relative_household_income_change": 0.9666775774731736,
+    "winner_percentage": 0.4453773809085094,
+    "loser_percentage": 0.6875953301020271,
+    "no_change_percentage": 0.7446337852288136,
+    "population": 1652638.352648129
+   },
+   {
+    "district": "FL-15",
+    "average_household_income_change": -750.7834866353904,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.047040171938993014,
+    "loser_percentage": 0.873520383209386,
+    "no_change_percentage": 0.31531043718411744,
+    "population": 784895.5178367962
+   },
+   {
+    "district": "FL-16",
+    "average_household_income_change": -748.468167882268,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.9217627058581727,
+    "loser_percentage": 0.8034127881093197,
+    "no_change_percentage": 0.41369178988727084,
+    "population": 157895.94684732158
+   },
+   {
+    "district": "FL-17",
+    "average_household_income_change": -683.6432519853073,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.4622665515230927,
+    "loser_percentage": 0.35546866115783415,
+    "no_change_percentage": 0.309973778859606,
+    "population": 687355.3547359019
+   },
+   {
+    "district": "FL-18",
+    "average_household_income_change": -1567.9375428973196,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.19496632411823256,
+    "loser_percentage": 0.414156400672014,
+    "no_change_percentage": 0.2066105747818574,
+    "population": 1561995.0401522873
+   },
+   {
+    "district": "FL-19",
+    "average_household_income_change": 1929.3050462902315,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.7384347309102355,
+    "loser_percentage": 0.22676891304456437,
+    "no_change_percentage": 0.10882645138615277,
+    "population": 1968314.4360111654
+   },
+   {
+    "district": "FL-20",
+    "average_household_income_change": 738.0566493055829,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.02162699991270478,
+    "loser_percentage": 0.3689932192516341,
+    "no_change_percentage": 0.8564042008511202,
+    "population": 735483.202492574
+   },
+   {
+    "district": "FL-21",
+    "average_household_income_change": -1311.1095736131308,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.09085898731234521,
+    "loser_percentage": 0.0809758001730293,
+    "no_change_percentage": 0.7504106876231031,
+    "population": 704384.8907859478
+   },
+   {
+    "district": "FL-22",
+    "average_household_income_change": -88.06165501404539,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.7200803570245979,
+    "loser_percentage": 0.3373593868866339,
+    "no_change_percentage": 0.10096316178102516,
+    "population": 1477463.1731296738
+   },
+   {
+    "district": "FL-23",
+    "average_household_income_change": -779.9565957539163,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.02821889127456545,
+    "loser_percentage": 0.057384409391906255,
+    "no_change_percentage": 0.5136530379520321,
+    "population": 481440.7194824504
+   },
+   {
+    "district": "FL-24",
+    "average_household_income_change": -734.1701476158872,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.16571489383564586,
+    "loser_percentage": 0.42181229313837243,
+    "no_change_percentage": 0.4148364652968418,
+    "population": 144671.57912561274
+   },
+   {
+    "district": "FL-25",
+    "average_household_income_change": 1439.0123523600278,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.9847264132526234,
+    "loser_percentage": 0.0600499173398964,
+    "no_change_percentage": 0.8935094299991524,
+    "population": 1927505.4994544394
+   },
+   {
+    "district": "FL-26",
+    "average_household_income_change": 1112.7518063829727,
+    "relative_household_income_change": 0.5800136872358187,
+    "winner_percentage": 0.4817964173700803,
+    "loser_percentage": 0.853193681149301,
+    "no_change_percentage": 0.578356603109671,
+    "population": 1094981.2602417956
+   },
+   {
+    "district": "FL-27",
+    "average_household_income_change": -379.87702691171154,
+    "relative_household_income_change": 0.6281933650116516,
+    "winner_percentage": 0.00751791104830124,
+    "loser_percentage": 0.46553684601857914,
+    "no_change_percentage": 0.9720088938614151,
+    "population": 342727.5228511398
+   },
+   {
+    "district": "FL-28",
+    "average_household_income_change": 1893.5463200119464,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5260196223449102,
+    "loser_percentage": 0.7269352285508964,
+    "no_change_percentage": 0.07248637234593225,
+    "population": 293197.241799674
+   },
+   {
+    "district": "GA-01",
+    "average_household_income_change": -1269.247954243442,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.4930499461266703,
+    "loser_percentage": 0.8119924059635303,
+    "no_change_percentage": 0.6451811151764774,
+    "population": 1743797.409884929
+   },
+   {
+    "district": "GA-02",
+    "average_household_income_change": 1944.5634662257744,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.1637474833297795,
+    "loser_percentage": 0.9101331135824555,
+    "no_change_percentage": 0.8924927066636925,
+    "population": 1809722.0657042577
+   },
+   {
+    "district": "GA-03",
+    "average_household_income_change": 200.13903071021844,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.92450506566269,
+    "loser_percentage": 0.9839192343928617,
+    "no_change_percentage": 0.021287694151356895,
+    "population": 1855389.9606955382
+   },
+   {
+    "district": "GA-04",
+    "average_household_income_change": -1586.2380303510556,
+    "relative_household_income_change": 0.948824094584967,
+    "winner_percentage": 0.25648213147860555,
+    "loser_percentage": 0.7153116942268624,
+    "no_change_percentage": 0.5629683530630664,
+    "population": 904596.870184385
+   },
+   {
+    "district": "GA-05",
+    "average_household_income_change": 507.64950923949795,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.6951005281807577,
+    "loser_percentage": 0.005613476946991103,
+    "no_change_percentage": 0.6392093871665209,
+    "population": 1409873.9105898377
+   },
+   {
+    "district": "GA-06",
+    "average_household_income_change": 1466.3481151392882,
+    "relative_household_income_change": 0.5359969399876601,
+    "winner_percentage": 0.03130806345470605,
+    "loser_percentage": 0.7646033703967934,
+    "no_change_percentage": 0.5326925731859895,
+    "population": 1833778.2332628572
+   },
+   {
+    "district": "GA-07",
+    "average_household_income_change": -1894.2026823531771,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.3840918648059817,
+    "loser_percentage": 0.6223416845764114,
+    "no_change_percentage": 0.029831920661660516,
+    "population": 893996.0575827288
+   },
+   {
+    "district": "GA-08",
+    "average_household_income_change": 1193.489638982387,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.3496351693543115,
+    "loser_percentage": 0.1995086740568508,
+    "no_change_percentage": 0.3990670077832993,
+    "population": 538851.1072021148
+   },
+   {
+    "district": "GA-09",
+    "average_household_income_change": 1705.0355266840365,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5578041016153189,
+    "loser_percentage": 0.6860369771120276,
+    "no_change_percentage": 0.20796258986036864,
+    "population": 489292.4891201653
+   },
+   {
+    "district": "GA-10",
+    "average_household_income_change": 1696.1171971869958,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.6026795763876366,
+    "loser_percentage": 0.8750851361290138,
+    "no_change_percentage": 0.973836406000621,
+    "population": 385172.0208488181
+   },
+   {
+    "district": "GA-11",
+    "average_household_income_change": -1363.7847713726296,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.09165394883261968,
+    "loser_percentage": 0.5740776221964935,
+    "no_change_percentage": 0.43305379741901473,
+    "population": 1511611.7264460314
+   },
+   {
+    "district": "GA-12",
+    "average_household_income_change": -495.6398197756493,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5992307575882658,
+    "loser_percentage": 0.5502319596449463,
+    "no_change_percentage": 0.6098730762934008,
+    "population": 866752.5806505374
+   },
+   {
+    "district": "GA-13",
+    "average_household_income_change": 715.2380413264541,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.4474572622702626,
+    "loser_percentage": 0.6793474774468349,
+    "no_change_percentage": 0.8072004938963492,
+    "population": 571649.1788765253
+   },
+   {
+    "district": "GA-14",
+    "average_household_income_change": -1179.6946454105735,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.6158108831536124,
+    "loser_percentage": 0.8145916322268135,
+    "no_change_percentage": 0.08660852191797641,
+    "population": 1941243.7141759186
+   },
+   {
+    "district": "HI-01",
+    "average_household_income_change": 1422.2919651118193,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.30675674401692676,
+    "loser_percentage": 0.1487782451775993,
+    "no_change_percentage": 0.0101814912137137,
+    "population": 1922514.898091813
+   },
+   {
+    "district": "HI-02",
+    "average_household_income_change": 1561.1958715981639,
+    "relative_household_income_change": 0.4462215807781249,
+    "winner_percentage": 0.6107603943100495,
+    "loser_percentage": 0.043475700084457114,
+    "no_change_percentage": 0.3460879482288295,
+    "population": 1267120.312960441
+   },
+   {
+    "district": "ID-01",
+    "average_household_income_change": -1958.8201887857224,
+    "relative_household_income_change": 0.2775124877026566,
+    "winner_percentage": 0.9126213405124977,
+    "loser_percentage": 0.973963041712753,
+    "no_change_percentage": 0.49025534971259277,
+    "population": 269400.4299547344
+   },
+   {
+    "district": "ID-02",
+    "average_household_income_change": -39.28612547861299,
+    "relative_household_income_change": 0.9944174108151674,
+    "winner_percentage": 0.8003806250954807,
+    "loser_percentage": 0.9773639957690703,
+    "no_change_percentage": 0.10415293898520461,
+    "population": 909449.6274312991
+   },
+   {
+    "district": "IL-01",
+    "average_household_income_change": -742.5521383258542,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.22288892351390233,
+    "loser_percentage": 0.9315611406686448,
+    "no_change_percentage": 0.5668338419436574,
+    "population": 1720931.9288024302
+   },
+   {
+    "district": "IL-02",
+    "average_household_income_change": 831.6869640152884,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.2967933749601812,
+    "loser_percentage": 0.13571963406036935,
+    "no_change_percentage": 0.832357673164309,
+    "population": 791041.6696110559
+   },
+   {
+    "district": "IL-03",
+    "average_household_income_change": -797.2436956244903,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.06490534314116103,
+    "loser_percentage": 0.7519750388599092,
+    "no_change_percentage": 0.06660901599496571,
+    "population": 377217.7807398747
+   },
+   {
+    "district": "IL-04",
+    "average_household_income_change": -1428.9377996776147,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.12265122169157006,
+    "loser_percentage": 0.8518052170670675,
+    "no_change_percentage": 0.11059112619811418,
+    "population": 1160167.199854474
+   },
+   {
+    "district": "IL-05",
+    "average_household_income_change": 1836.659970776044,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5523320784858717,
+    "loser_percentage": 0.14139887426910824,
+    "no_change_percentage": 0.24547275396857648,
+    "population": 1925810.3730733125
+   },
+   {
+    "district": "IL-06",
+    "average_household_income_change": -1189.7986860261929,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.17377762261537033,
+    "loser_percentage": 0.6797731681642427,
+    "no_change_percentage": 0.8520375232552789,
+    "population": 1203109.6925865589
+   },
+   {
+    "district": "IL-07",
+    "average_household_income_change": 1577.7835323325617,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.9000013013614059,
+    "loser_percentage": 0.45935866427942185,
+    "no_change_percentage": 0.4947185302278443,
+    "population": 539344.8345100002
+   },
+   {
+    "district": "IL-08",
+    "average_household_income_change": 1492.6037455260212,
+    "relative_household_income_change": 0.8647602261811477,
+    "winner_percentage": 0.19806932299158597,
+    "loser_percentage": 0.741758214164136,
+    "no_change_percentage": 0.1973706976064603,
+    "population": 1242894.371215378
+   },
+   {
+    "district": "IL-09",
+    "average_household_income_change": -1957.9202231447507,
+    "relative_household_income_change": 0.5767955919563806,
+    "winner_percentage": 0.5049045593188333,
+    "loser_percentage": 0.627906677936699,
+    "no_change_percentage": 0.11768377169617017,
+    "population": 915472.239240144
+   },
+   {
+    "district": "IL-10",
+    "average_household_income_change": 1134.101038401237,
+    "relative_household_income_change": 0.37314553166486586,
+    "winner_percentage": 0.5989421207757561,
+    "loser_percentage": 0.8079306184127111,
+    "no_change_percentage": 0.7389160850591271,
+    "population": 609919.9286527971
+   },
+   {
+    "district": "IL-11",
+    "average_household_income_change": 1276.4461081683498,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.722586100687897,
+    "loser_percentage": 0.4047369019257887,
+    "no_change_percentage": 0.4875187991267902,
+    "population": 736190.8603408891
+   },
+   {
+    "district": "IL-12",
+    "average_household_income_change": -532.8141313249755,
+    "relative_household_income_change": 0.7093294285856272,
+    "winner_percentage": 0.34796286831592704,
+    "loser_percentage": 0.8753306159584747,
+    "no_change_percentage": 0.012947354199790873,
+    "population": 1882250.0880713076
+   },
+   {
+    "district": "IL-13",
+    "average_household_income_change": 299.88269945536985,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.3439412827291133,
+    "loser_percentage": 0.5127197856449134,
+    "no_change_percentage": 0.1306229711870046,
+    "population": 1296650.8797191768
+   },
+   {
+    "district": "IL-14",
+    "average_household_income_change": 1131.5001533207214,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.14414609199940498,
+    "loser_percentage": 0.6757638724127316,
+    "no_change_percentage": 0.7381168627632002,
+    "population": 1569660.962972421
+   },
+   {
+    "district": "IL-15",
+    "average_household_income_change": 30.82038680684196,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.8985201664466087,
+    "loser_percentage": 0.7166345684965276,
+    "no_change_percentage": 0.2767519988734092,
+    "population": 814190.5964516615
+   },
+   {
+    "district": "IL-16",
+    "average_household_income_change": -1653.123022446867,
+    "relative_household_income_change": 0.22451665861812453,
+    "winner_percentage": 0.8656914299923075,
+    "loser_percentage": 0.843313160737658,
+    "no_change_percentage": 0.6805555743171952,
+    "population": 995973.5312472819
+   },
+   {
+    "district": "IL-17",
+    "average_household_income_change": 953.972640733002,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.4786241894978204,
+    "loser_percentage": 0.9012826937760073,
+    "no_change_percentage": 0.3547081545876839,
+    "population": 1402391.0197606967
+   },
+   {
+    "district": "IN-01",
+    "average_household_income_change": 70.96249182250335,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5604255503804655,
+    "loser_percentage": 0.15983701084647672,
+    "no_change_percentage": 0.8607033798105205,
+    "population": 859789.5127165096
+   },
+   {
+    "district": "IN-02",
+    "average_household_income_change": 168.1599924637851,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.4693498350379831,
+    "loser_percentage": 0.8680105613452282,
+    "no_change_percentage": 0.5706545236591403,
+    "population": 767782.6765989842
+   },
+   {
+    "district": "IN-03",
+    "average_household_income_change": 1404.6936404954358,
+    "relative_household_income_change": 0.9259161295515774,
+    "winner_percentage": 0.4652944676602273,
+    "loser_percentage": 0.729817009920871,
+    "no_change_percentage": 0.9303847318216023,
+    "population": 1215597.6254804253
+   },
+   {
+    "district": "IN-04",
+    "average_household_income_change": 706.652772622924,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5740192806288786,
+    "loser_percentage": 0.7826523228155402,
+    "no_change_percentage": 0.954839434574745,
+    "population": 242552.16058150108
+   },
+   {
+    "district": "IN-05",
+    "average_household_income_change": 1045.6028209384463,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.38949969665516526,
+    "loser_percentage": 0.6257720740999431,
+    "no_change_percentage": 0.9185202262992922,
+    "population": 1414403.4565510713
+   },
+   {
+    "district": "IN-06",
+    "average_household_income_change": -1680.3948280650854,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.5152840905248333,
+    "loser_percentage": 0.682781489402838,
+    "no_change_percentage": 0.9056795948117755,
+    "population": 1328114.3576752637
+   },
+   {
+    "district": "IN-07",
+    "average_household_income_change": -1593.6092126578392,
+    "relative_household_income_change": 0.9300165882962277,
+    "winner_percentage": 0.8071593733641752,
+    "loser_percentage": 0.900119994221593,
+    "no_change_percentage": 0.8354954367787131,
+    "population": 1367430.5327072756
+   },
+   {
+    "district": "IN-08",
+    "average_household_income_change": 1068.5852631784965,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.8204132946245839,
+    "loser_percentage": 0.3608426792138256,
+    "no_change_percentage": 0.18788889430727695,
+    "population": 21498.863981323782
+   },
+   {
+    "district": "IN-09",
+    "average_household_income_change": 776.9347282683157,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.6616872981421206,
+    "loser_percentage": 0.030077650802229683,
+    "no_change_percentage": 0.34472141995243333,
+    "population": 1302732.5334541004
+   },
+   {
+    "district": "IA-01",
+    "average_household_income_change": -172.90289721353201,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.9984860116826633,
+    "loser_percentage": 0.4338107893045394,
+    "no_change_percentage": 0.8739248717621387,
+    "population": 503227.16508634866
+   },
+   {
+    "district": "IA-02",
+    "average_household_income_change": -1394.6923023364013,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.8106361295631114,
+    "loser_percentage": 0.626002225091513,
+    "no_change_percentage": 0.8134850179621343,
+    "population": 784835.4653311565
+   },
+   {
+    "district": "IA-03",
+    "average_household_income_change": 1713.4816470394996,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.9076181488172578,
+    "loser_percentage": 0.36436919530845213,
+    "no_change_percentage": 0.33861984777998977,
+    "population": 1784915.3228063858
+   },
+   {
+    "district": "IA-04",
+    "average_household_income_change": 1302.92709206923,
+    "relative_household_income_change": 0.5909766192015912,
+    "winner_percentage": 0.6048621685192132,
+    "loser_percentage": 0.37038998722410765,
+    "no_change_percentage": 0.21580580665448057,
+    "population": 521908.5145946276
+   },
+   {
+    "district": "KS-01",
+    "average_household_income_change": -801.536463991424,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.15779600302905106,
+    "loser_percentage": 0.3275096345694931,
+    "no_change_percentage": 0.7700970063040022,
+    "population": 1158917.6367092847
+   },
+   {
+    "district": "KS-02",
+    "average_household_income_change": -1467.5486906880017,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.07794971326549949,
+    "loser_percentage": 0.3659647085800364,
+    "no_change_percentage": 0.6697767196678369,
+    "population": 1180315.3254442988
+   },
+   {
+    "district": "KS-03",
+    "average_household_income_change": -998.5389142285652,
+    "relative_household_income_change": 0.96644400131702,
+    "winner_percentage": 0.2199866045393546,
+    "loser_percentage": 0.7212089046789031,
+    "no_change_percentage": 0.5273740102688681,
+    "population": 1300551.5281737293
+   },
+   {
+    "district": "KS-04",
+    "average_household_income_change": 59.76139904572708,
+    "relative_household_income_change": 0.0731691308450253,
+    "winner_percentage": 0.4230926063914482,
+    "loser_percentage": 0.5564120081519053,
+    "no_change_percentage": 0.16805565313238235,
+    "population": 1825669.2040313217
+   },
+   {
+    "district": "KY-01",
+    "average_household_income_change": -439.46558083917967,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.5315916588112487,
+    "loser_percentage": 0.4297116811134062,
+    "no_change_percentage": 0.7779802329532324,
+    "population": 1241387.4136178733
+   },
+   {
+    "district": "KY-02",
+    "average_household_income_change": -1958.2920564168428,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.3102185117449269,
+    "loser_percentage": 0.2601416687778113,
+    "no_change_percentage": 0.7174637011128064,
+    "population": 103222.15098348679
+   },
+   {
+    "district": "KY-03",
+    "average_household_income_change": 1577.5956112680167,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5509390406133198,
+    "loser_percentage": 0.41939119315240914,
+    "no_change_percentage": 0.40112867829271226,
+    "population": 1293036.2265681778
+   },
+   {
+    "district": "KY-04",
+    "average_household_income_change": 597.7932019967614,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.5566798264100037,
+    "loser_percentage": 0.49443671187899363,
+    "no_change_percentage": 0.8664142094952593,
+    "population": 159073.7403591771
+   },
+   {
+    "district": "KY-05",
+    "average_household_income_change": -627.7167955459339,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.0639402084248164,
+    "loser_percentage": 0.44643648536776714,
+    "no_change_percentage": 0.9930082783315363,
+    "population": 1958931.4244845738
+   },
+   {
+    "district": "KY-06",
+    "average_household_income_change": -727.5992738181895,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5726424832986132,
+    "loser_percentage": 0.862548842259578,
+    "no_change_percentage": 0.7502947980563558,
+    "population": 949144.9444322865
+   },
+   {
+    "district": "LA-01",
+    "average_household_income_change": -1364.3590971359308,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.476438483581604,
+    "loser_percentage": 0.9005795074767224,
+    "no_change_percentage": 0.7464015955534695,
+    "population": 345043.6507790921
+   },
+   {
+    "district": "LA-02",
+    "average_household_income_change": -1903.5085270057257,
+    "relative_household_income_change": 0.1703089988165779,
+    "winner_percentage": 0.7175414719440296,
+    "loser_percentage": 0.23317379559193963,
+    "no_change_percentage": 0.3609540565462225,
+    "population": 1383561.5821714178
+   },
+   {
+    "district": "LA-03",
+    "average_household_income_change": -1629.2180327406131,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.22703210958810316,
+    "loser_percentage": 0.7907577314390017,
+    "no_change_percentage": 0.2606935385885101,
+    "population": 729464.6838370862
+   },
+   {
+    "district": "LA-04",
+    "average_household_income_change": -383.22317966654043,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.18074902751456967,
+    "loser_percentage": 0.2926629118216396,
+    "no_change_percentage": 0.7159850595200199,
+    "population": 400149.26426947257
+   },
+   {
+    "district": "LA-05",
+    "average_household_income_change": 313.5519251237011,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6867985570598312,
+    "loser_percentage": 0.14598790261955452,
+    "no_change_percentage": 0.19367174558790679,
+    "population": 1818327.8344902145
+   },
+   {
+    "district": "LA-06",
+    "average_household_income_change": -1122.701598229701,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.41670316989239153,
+    "loser_percentage": 0.5276358782343809,
+    "no_change_percentage": 0.10157188800946892,
+    "population": 1340155.2865167146
+   },
+   {
+    "district": "ME-01",
+    "average_household_income_change": 1921.3484261844283,
+    "relative_household_income_change": 0.15347762030365875,
+    "winner_percentage": 0.4775584954966925,
+    "loser_percentage": 0.5635039159944188,
+    "no_change_percentage": 0.9200100413801342,
+    "population": 1005730.3873189946
+   },
+   {
+    "district": "ME-02",
+    "average_household_income_change": 1198.2131676192255,
+    "relative_household_income_change": 0.8484137820647389,
+    "winner_percentage": 0.9766204344664193,
+    "loser_percentage": 0.2650886493790763,
+    "no_change_percentage": 0.10344663845239477,
+    "population": 1863014.0881681717
+   },
+   {
+    "district": "MD-01",
+    "average_household_income_change": 1702.901383133684,
+    "relative_household_income_change": 0.2143028894383544,
+    "winner_percentage": 0.18688458854843337,
+    "loser_percentage": 0.5461223819936809,
+    "no_change_percentage": 0.34596273557092383,
+    "population": 844926.0891118036
+   },
+   {
+    "district": "MD-02",
+    "average_household_income_change": -446.36186571537183,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.49660729888128285,
+    "loser_percentage": 0.862475039076589,
+    "no_change_percentage": 0.4454012730312159,
+    "population": 542673.1678530314
+   },
+   {
+    "district": "MD-03",
+    "average_household_income_change": -426.33497306834033,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.7712136782106079,
+    "loser_percentage": 0.4604555382163549,
+    "no_change_percentage": 0.6293759911041594,
+    "population": 1388690.6206276682
+   },
+   {
+    "district": "MD-04",
+    "average_household_income_change": -1285.7942373542714,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6450332932660897,
+    "loser_percentage": 0.10992059831565892,
+    "no_change_percentage": 0.10908133197881842,
+    "population": 1617344.7215995933
+   },
+   {
+    "district": "MD-05",
+    "average_household_income_change": 829.1519073807833,
+    "relative_household_income_change": 0.6244743874457772,
+    "winner_percentage": 0.11104437970100578,
+    "loser_percentage": 0.6871799963497981,
+    "no_change_percentage": 0.10347992565513853,
+    "population": 34837.83938187687
+   },
+   {
+    "district": "MD-06",
+    "average_household_income_change": -1250.5060513492663,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.2945014209753922,
+    "loser_percentage": 0.28703695418546127,
+    "no_change_percentage": 0.5723026316816926,
+    "population": 1279464.5968338784
+   },
+   {
+    "district": "MD-07",
+    "average_household_income_change": -1173.7953960926784,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.3077889316540633,
+    "loser_percentage": 0.14604870787099422,
+    "no_change_percentage": 0.5784019372409128,
+    "population": 835102.5847782891
+   },
+   {
+    "district": "MD-08",
+    "average_household_income_change": 958.4059995627747,
+    "relative_household_income_change": 0.1797136586040724,
+    "winner_percentage": 0.5783591341667679,
+    "loser_percentage": 0.877472856433452,
+    "no_change_percentage": 0.5081306575888774,
+    "population": 908920.711186995
+   },
+   {
+    "district": "MA-01",
+    "average_household_income_change": 1416.8346562987865,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.3141124548700813,
+    "loser_percentage": 0.5490960771595501,
+    "no_change_percentage": 0.1370813477802525,
+    "population": 1269028.186098155
+   },
+   {
+    "district": "MA-02",
+    "average_household_income_change": -503.1472085947617,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.741863264029681,
+    "loser_percentage": 0.4452677828502838,
+    "no_change_percentage": 0.25980312603028133,
+    "population": 1019406.9456735733
+   },
+   {
+    "district": "MA-03",
+    "average_household_income_change": 593.7196781514027,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.0010621942626991565,
+    "loser_percentage": 0.1586070962209688,
+    "no_change_percentage": 0.9960816450557308,
+    "population": 1092970.6778509466
+   },
+   {
+    "district": "MA-04",
+    "average_household_income_change": 54.53362383745875,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.8263750701371254,
+    "loser_percentage": 0.31033436314622787,
+    "no_change_percentage": 0.27119567144427503,
+    "population": 146002.38956846413
+   },
+   {
+    "district": "MA-05",
+    "average_household_income_change": -775.4813945067278,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.17269551015352502,
+    "loser_percentage": 0.33134070111743685,
+    "no_change_percentage": 0.6644311862866258,
+    "population": 1296533.775787876
+   },
+   {
+    "district": "MA-06",
+    "average_household_income_change": -1221.0022519637093,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.13285402478580643,
+    "loser_percentage": 0.1485201336102424,
+    "no_change_percentage": 0.6721815076145037,
+    "population": 100614.97459270433
+   },
+   {
+    "district": "MA-07",
+    "average_household_income_change": -87.21918760309944,
+    "relative_household_income_change": 0.863282508684126,
+    "winner_percentage": 0.6083553079922789,
+    "loser_percentage": 0.5994646976434661,
+    "no_change_percentage": 0.12318961270575113,
+    "population": 1981178.1976581682
+   },
+   {
+    "district": "MA-08",
+    "average_household_income_change": 1861.3530810064406,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.8005235502084675,
+    "loser_percentage": 0.051754679795765646,
+    "no_change_percentage": 0.806748361608218,
+    "population": 485845.9904615471
+   },
+   {
+    "district": "MA-09",
+    "average_household_income_change": -1493.1860660360483,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.19562419841567757,
+    "loser_percentage": 0.5421273722207332,
+    "no_change_percentage": 0.378957135325633,
+    "population": 223702.1652700539
+   },
+   {
+    "district": "MI-01",
+    "average_household_income_change": 747.6924636515037,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.332978525789828,
+    "loser_percentage": 0.02250058685817169,
+    "no_change_percentage": 0.0699379879127281,
+    "population": 1069746.452205889
+   },
+   {
+    "district": "MI-02",
+    "average_household_income_change": -582.2341453743993,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.809417093226375,
+    "loser_percentage": 0.9572113987884276,
+    "no_change_percentage": 0.7663004546750843,
+    "population": 304063.51036169555
+   },
+   {
+    "district": "MI-03",
+    "average_household_income_change": 539.0419864831002,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.44319499146694996,
+    "loser_percentage": 0.7559869300969424,
+    "no_change_percentage": 0.6467521336418156,
+    "population": 555912.7641956314
+   },
+   {
+    "district": "MI-04",
+    "average_household_income_change": -598.8011472955503,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.5453152034206704,
+    "loser_percentage": 0.9099431686557429,
+    "no_change_percentage": 0.6870091744991247,
+    "population": 1388686.9483119224
+   },
+   {
+    "district": "MI-05",
+    "average_household_income_change": 1688.969341646402,
+    "relative_household_income_change": 0.012013326021297233,
+    "winner_percentage": 0.738762866655325,
+    "loser_percentage": 0.06721378517513077,
+    "no_change_percentage": 0.6932132528410323,
+    "population": 751136.6903781283
+   },
+   {
+    "district": "MI-06",
+    "average_household_income_change": -1481.2829169075976,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.3439870287900032,
+    "loser_percentage": 0.11495835563060186,
+    "no_change_percentage": 0.1642953836325286,
+    "population": 1410030.2948224256
+   },
+   {
+    "district": "MI-07",
+    "average_household_income_change": 1298.3306232899383,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.7475569280994253,
+    "loser_percentage": 0.1522308590335446,
+    "no_change_percentage": 0.2738319866907999,
+    "population": 1661527.2188666146
+   },
+   {
+    "district": "MI-08",
+    "average_household_income_change": 98.35919936821958,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.8087863580886516,
+    "loser_percentage": 0.17937380845130346,
+    "no_change_percentage": 0.6067885223130947,
+    "population": 878.3177274980117
+   },
+   {
+    "district": "MI-09",
+    "average_household_income_change": -1161.4298905365165,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6298236728074138,
+    "loser_percentage": 0.6801065870092902,
+    "no_change_percentage": 0.2817643398509323,
+    "population": 753184.912590639
+   },
+   {
+    "district": "MI-10",
+    "average_household_income_change": 1558.124809115705,
+    "relative_household_income_change": 0.2627878996555487,
+    "winner_percentage": 0.5572251010462818,
+    "loser_percentage": 0.17597908543615892,
+    "no_change_percentage": 0.5817198682065653,
+    "population": 1091698.9193075108
+   },
+   {
+    "district": "MI-11",
+    "average_household_income_change": 599.9241748259441,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.08410093298080046,
+    "loser_percentage": 0.9434356805492797,
+    "no_change_percentage": 0.8972368101002257,
+    "population": 1529510.4841412515
+   },
+   {
+    "district": "MI-12",
+    "average_household_income_change": 43.70565216707334,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.7824540201953049,
+    "loser_percentage": 0.5640828896294948,
+    "no_change_percentage": 0.6404440150803293,
+    "population": 556875.7039056781
+   },
+   {
+    "district": "MI-13",
+    "average_household_income_change": -430.5457952783849,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.21234343940768685,
+    "loser_percentage": 0.4275690963090871,
+    "no_change_percentage": 0.2916862542675427,
+    "population": 1179000.7744625115
+   },
+   {
+    "district": "MN-01",
+    "average_household_income_change": -1049.7138824796225,
+    "relative_household_income_change": 0.3727512718102719,
+    "winner_percentage": 0.4770714577747178,
+    "loser_percentage": 0.3914468962844778,
+    "no_change_percentage": 0.1778027569550269,
+    "population": 1330527.5413455432
+   },
+   {
+    "district": "MN-02",
+    "average_household_income_change": -1474.8076265750228,
+    "relative_household_income_change": 0.9289048142758826,
+    "winner_percentage": 0.13997488521748647,
+    "loser_percentage": 0.5799255484506891,
+    "no_change_percentage": 0.009217647181251842,
+    "population": 63614.29054890922
+   },
+   {
+    "district": "MN-03",
+    "average_household_income_change": 478.6972643757057,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.8834709327868909,
+    "loser_percentage": 0.9764696126405257,
+    "no_change_percentage": 0.06808872782490405,
+    "population": 279478.5977209589
+   },
+   {
+    "district": "MN-04",
+    "average_household_income_change": -758.4000623220745,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.9793788964482745,
+    "loser_percentage": 0.9223794630483954,
+    "no_change_percentage": 0.9913210056905115,
+    "population": 1236882.1844880541
+   },
+   {
+    "district": "MN-05",
+    "average_household_income_change": -1276.0615571959931,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.4391093208196486,
+    "loser_percentage": 0.7049212714324123,
+    "no_change_percentage": 0.2091770500168495,
+    "population": 1138057.030369344
+   },
+   {
+    "district": "MN-06",
+    "average_household_income_change": 1419.3816667809144,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.14382038488848137,
+    "loser_percentage": 0.6655023332981367,
+    "no_change_percentage": 0.041662734674265844,
+    "population": 487674.8074334767
+   },
+   {
+    "district": "MN-07",
+    "average_household_income_change": -1712.1659206986233,
+    "relative_household_income_change": 0.19708362157980042,
+    "winner_percentage": 0.3506818697740155,
+    "loser_percentage": 0.323962746659895,
+    "no_change_percentage": 0.4885777377608531,
+    "population": 360611.0401030129
+   },
+   {
+    "district": "MN-08",
+    "average_household_income_change": -901.656897741046,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.66631940230475,
+    "loser_percentage": 0.7223543911582926,
+    "no_change_percentage": 0.27213596933584105,
+    "population": 561758.3054228415
+   },
+   {
+    "district": "MS-01",
+    "average_household_income_change": -255.90344511944662,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.8661702253422987,
+    "loser_percentage": 0.66118515674882,
+    "no_change_percentage": 0.048966995321201856,
+    "population": 1595101.0802975115
+   },
+   {
+    "district": "MS-02",
+    "average_household_income_change": 1072.3170739476213,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.734126910069098,
+    "loser_percentage": 0.2760096221893993,
+    "no_change_percentage": 0.68582587357717,
+    "population": 1936414.229907305
+   },
+   {
+    "district": "MS-03",
+    "average_household_income_change": 298.2937768552656,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5634955646257539,
+    "loser_percentage": 0.2557204553896971,
+    "no_change_percentage": 0.5532640828786518,
+    "population": 852166.905599482
+   },
+   {
+    "district": "MS-04",
+    "average_household_income_change": -1123.6494666458668,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.4850530850613204,
+    "loser_percentage": 0.542074369202462,
+    "no_change_percentage": 0.70572458521411,
+    "population": 216115.7074154712
+   },
+   {
+    "district": "MO-01",
+    "average_household_income_change": 40.81526602761221,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.07891563444520278,
+    "loser_percentage": 0.9464586690534529,
+    "no_change_percentage": 0.028449114629045757,
+    "population": 615711.0223877344
+   },
+   {
+    "district": "MO-02",
+    "average_household_income_change": -657.1049821804115,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.014130832310066177,
+    "loser_percentage": 0.5988327326146267,
+    "no_change_percentage": 0.2385767692206523,
+    "population": 1598205.7162534988
+   },
+   {
+    "district": "MO-03",
+    "average_household_income_change": -53.7815958697565,
+    "relative_household_income_change": 0.3229614670597981,
+    "winner_percentage": 0.36156747690200897,
+    "loser_percentage": 0.6781971292751447,
+    "no_change_percentage": 0.942078824705612,
+    "population": 1269408.8987946059
+   },
+   {
+    "district": "MO-04",
+    "average_household_income_change": -671.5295872504687,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.6979644825140945,
+    "loser_percentage": 0.601781099012347,
+    "no_change_percentage": 0.572364627309296,
+    "population": 907118.6239947318
+   },
+   {
+    "district": "MO-05",
+    "average_household_income_change": -530.1692420025117,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.23027025708676785,
+    "loser_percentage": 0.4051771799769186,
+    "no_change_percentage": 0.887996694797536,
+    "population": 49155.26876678865
+   },
+   {
+    "district": "MO-06",
+    "average_household_income_change": -586.0399057701087,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.7738649989297562,
+    "loser_percentage": 0.8679764267682314,
+    "no_change_percentage": 0.7292179446919571,
+    "population": 1122912.1066235972
+   },
+   {
+    "district": "MO-07",
+    "average_household_income_change": 1964.898418684791,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.9042759026361998,
+    "loser_percentage": 0.36455736475779155,
+    "no_change_percentage": 0.8489084702077566,
+    "population": 379743.7160746093
+   },
+   {
+    "district": "MO-08",
+    "average_household_income_change": 336.5603570250859,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.18712335357307075,
+    "loser_percentage": 0.657845419356025,
+    "no_change_percentage": 0.7113805920262503,
+    "population": 1255582.067934901
+   },
+   {
+    "district": "MT-01",
+    "average_household_income_change": 983.512209057535,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.6886199078768173,
+    "loser_percentage": 0.25605725846858585,
+    "no_change_percentage": 0.09915451748889526,
+    "population": 719811.1730435372
+   },
+   {
+    "district": "MT-02",
+    "average_household_income_change": -1226.0794958019412,
+    "relative_household_income_change": 0.5612276116099638,
+    "winner_percentage": 0.28209905361394183,
+    "loser_percentage": 0.5945383380085424,
+    "no_change_percentage": 0.7352463894684987,
+    "population": 397016.73677204945
+   },
+   {
+    "district": "NE-01",
+    "average_household_income_change": -1178.9227940818466,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.7717445355667062,
+    "loser_percentage": 0.9548158300345837,
+    "no_change_percentage": 0.36881783488012165,
+    "population": 1458335.460089935
+   },
+   {
+    "district": "NE-02",
+    "average_household_income_change": 778.2964863920827,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.4417767511041598,
+    "loser_percentage": 0.6507108550430083,
+    "no_change_percentage": 0.711661616417475,
+    "population": 967943.6800451052
+   },
+   {
+    "district": "NE-03",
+    "average_household_income_change": -922.672970623951,
+    "relative_household_income_change": 0.6319237715503292,
+    "winner_percentage": 0.09726516916592454,
+    "loser_percentage": 0.6428243489026462,
+    "no_change_percentage": 0.4190339797262024,
+    "population": 323762.0653781112
+   },
+   {
+    "district": "NV-01",
+    "average_household_income_change": -688.8600459298738,
+    "relative_household_income_change": 0.06928171539895811,
+    "winner_percentage": 0.5809572073479989,
+    "loser_percentage": 0.5315051068930021,
+    "no_change_percentage": 0.767522214563325,
+    "population": 910692.5784934496
+   },
+   {
+    "district": "NV-02",
+    "average_household_income_change": 1709.6034596338495,
+    "relative_household_income_change": 0.28167393496270166,
+    "winner_percentage": 0.23278075110677732,
+    "loser_percentage": 0.6063454319254328,
+    "no_change_percentage": 0.09937772231269837,
+    "population": 1597996.9889687065
+   },
+   {
+    "district": "NV-03",
+    "average_household_income_change": 1408.0974916503135,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.0941601815928258,
+    "loser_percentage": 0.14353136380653897,
+    "no_change_percentage": 0.5629582751261204,
+    "population": 477334.4048267159
+   },
+   {
+    "district": "NV-04",
+    "average_household_income_change": -427.9378679351966,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.775371200821322,
+    "loser_percentage": 0.8848608727622929,
+    "no_change_percentage": 0.2384576473390242,
+    "population": 520367.63519200013
+   },
+   {
+    "district": "NH-01",
+    "average_household_income_change": 1326.8209031397103,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.05550972747813998,
+    "loser_percentage": 0.34506329326687946,
+    "no_change_percentage": 0.4858060824382846,
+    "population": 1215752.0712104617
+   },
+   {
+    "district": "NH-02",
+    "average_household_income_change": -1941.5662836592323,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.8913316946883595,
+    "loser_percentage": 0.15248270653918305,
+    "no_change_percentage": 0.2127113800760161,
+    "population": 999683.2521774701
+   },
+   {
+    "district": "NJ-01",
+    "average_household_income_change": -1346.610051685778,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.8705037018178549,
+    "loser_percentage": 0.9332653671497912,
+    "no_change_percentage": 0.0013087110055514106,
+    "population": 41657.1833312962
+   },
+   {
+    "district": "NJ-02",
+    "average_household_income_change": -1430.9975323618924,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.3961612522306085,
+    "loser_percentage": 0.5497374172842523,
+    "no_change_percentage": 0.9570351353602428,
+    "population": 988525.2115806546
+   },
+   {
+    "district": "NJ-03",
+    "average_household_income_change": -480.9490596831703,
+    "relative_household_income_change": 0.8715069679828527,
+    "winner_percentage": 0.4162030039946538,
+    "loser_percentage": 0.8147648361198342,
+    "no_change_percentage": 0.2477053114997656,
+    "population": 200620.21363778634
+   },
+   {
+    "district": "NJ-04",
+    "average_household_income_change": -1064.0883488234874,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.25384228249797125,
+    "loser_percentage": 0.07328308823761476,
+    "no_change_percentage": 0.10878178812122041,
+    "population": 1600451.562733883
+   },
+   {
+    "district": "NJ-05",
+    "average_household_income_change": 7.583440590375634,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6524841274565424,
+    "loser_percentage": 0.5011181621406384,
+    "no_change_percentage": 0.4005971159936217,
+    "population": 642122.7083181444
+   },
+   {
+    "district": "NJ-06",
+    "average_household_income_change": 1847.4813653025826,
+    "relative_household_income_change": 0.2827700149160155,
+    "winner_percentage": 0.4871872762468712,
+    "loser_percentage": 0.09090848080435499,
+    "no_change_percentage": 0.8499029659176067,
+    "population": 1764753.0816979911
+   },
+   {
+    "district": "NJ-07",
+    "average_household_income_change": 297.92674740995295,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.3579658557678955,
+    "loser_percentage": 0.020493003160175216,
+    "no_change_percentage": 0.9566814801456087,
+    "population": 935278.8794728584
+   },
+   {
+    "district": "NJ-08",
+    "average_household_income_change": -644.7962448650793,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.7972547616227862,
+    "loser_percentage": 0.22063907980487918,
+    "no_change_percentage": 0.8316761144777678,
+    "population": 1229915.3582338342
+   },
+   {
+    "district": "NJ-09",
+    "average_household_income_change": 1045.5579441464936,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.702622771047097,
+    "loser_percentage": 0.20381647945908887,
+    "no_change_percentage": 0.32418582253424266,
+    "population": 1564811.1773359927
+   },
+   {
+    "district": "NJ-10",
+    "average_household_income_change": -1692.9557828654338,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.9267951257709088,
+    "loser_percentage": 0.8464769553409315,
+    "no_change_percentage": 0.5949924228024286,
+    "population": 803577.459125552
+   },
+   {
+    "district": "NJ-11",
+    "average_household_income_change": -1614.937124481708,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.3196812411637635,
+    "loser_percentage": 0.2890420591557624,
+    "no_change_percentage": 0.9655833503800089,
+    "population": 659520.9005394165
+   },
+   {
+    "district": "NJ-12",
+    "average_household_income_change": -1313.8963892744994,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.8108024249786424,
+    "loser_percentage": 0.2677947791608425,
+    "no_change_percentage": 0.6793089734463279,
+    "population": 1197655.9216551264
+   },
+   {
+    "district": "NM-01",
+    "average_household_income_change": 665.160281218299,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.10307122147386438,
+    "loser_percentage": 0.10536976699570999,
+    "no_change_percentage": 0.6019343481516051,
+    "population": 1805298.145269294
+   },
+   {
+    "district": "NM-02",
+    "average_household_income_change": 758.7531207589988,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6688154452139765,
+    "loser_percentage": 0.9238301237088424,
+    "no_change_percentage": 0.970947528110894,
+    "population": 1674333.7811092706
+   },
+   {
+    "district": "NM-03",
+    "average_household_income_change": -1410.5419522807897,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5035464357324184,
+    "loser_percentage": 0.09269884575570186,
+    "no_change_percentage": 0.3889352298588644,
+    "population": 1264979.3720552137
+   },
+   {
+    "district": "NY-01",
+    "average_household_income_change": -1131.9068991340923,
+    "relative_household_income_change": 0.5124881192237833,
+    "winner_percentage": 0.043046256625358104,
+    "loser_percentage": 0.28712796446459776,
+    "no_change_percentage": 0.9838704782107919,
+    "population": 205012.35009282408
+   },
+   {
+    "district": "NY-02",
+    "average_household_income_change": -477.0191933506838,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.4581353685754621,
+    "loser_percentage": 0.867650173463171,
+    "no_change_percentage": 0.9665102631560167,
+    "population": 1767864.3394364882
+   },
+   {
+    "district": "NY-03",
+    "average_household_income_change": -757.0547505228901,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5814616489172288,
+    "loser_percentage": 0.35448345534666637,
+    "no_change_percentage": 0.02075688966386391,
+    "population": 1430049.911309068
+   },
+   {
+    "district": "NY-04",
+    "average_household_income_change": 30.62315461557752,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.28234767077960055,
+    "loser_percentage": 0.5712067988140119,
+    "no_change_percentage": 0.17006966026273418,
+    "population": 1147280.7963970727
+   },
+   {
+    "district": "NY-05",
+    "average_household_income_change": 1598.90583811054,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.662399958732312,
+    "loser_percentage": 0.4758014996172041,
+    "no_change_percentage": 0.9788769458498555,
+    "population": 209471.40409972053
+   },
+   {
+    "district": "NY-06",
+    "average_household_income_change": 504.5097612222769,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.6602851280753035,
+    "loser_percentage": 0.13842947192019328,
+    "no_change_percentage": 0.4769611571458495,
+    "population": 505524.22618424473
+   },
+   {
+    "district": "NY-07",
+    "average_household_income_change": 96.57497287162408,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.229946620086402,
+    "loser_percentage": 0.7237784986880081,
+    "no_change_percentage": 0.48589571188743963,
+    "population": 282855.9638871306
+   },
+   {
+    "district": "NY-08",
+    "average_household_income_change": -885.3169937163821,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.06829423577168159,
+    "loser_percentage": 0.045665461944919716,
+    "no_change_percentage": 0.09213515158018915,
+    "population": 1993094.250617465
+   },
+   {
+    "district": "NY-09",
+    "average_household_income_change": -9.819844727013916,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.49939512073940096,
+    "loser_percentage": 0.8090282530465259,
+    "no_change_percentage": 0.29321700485540136,
+    "population": 1681118.686924439
+   },
+   {
+    "district": "NY-10",
+    "average_household_income_change": -1643.0299274703914,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.8417835247167857,
+    "loser_percentage": 0.276875009337478,
+    "no_change_percentage": 0.8327242279468658,
+    "population": 164428.2753839366
+   },
+   {
+    "district": "NY-11",
+    "average_household_income_change": 208.95180757382238,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.6332524715018043,
+    "loser_percentage": 0.274690539324145,
+    "no_change_percentage": 0.06459456905720373,
+    "population": 1724656.115367233
+   },
+   {
+    "district": "NY-12",
+    "average_household_income_change": 1722.1994291750575,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.028903587133481956,
+    "loser_percentage": 0.3340357928932579,
+    "no_change_percentage": 0.1664276573795902,
+    "population": 261655.8073576924
+   },
+   {
+    "district": "NY-13",
+    "average_household_income_change": -1745.0492620231976,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.7205626808437235,
+    "loser_percentage": 0.6470267452056409,
+    "no_change_percentage": 0.16648296179389988,
+    "population": 1796774.8541061652
+   },
+   {
+    "district": "NY-14",
+    "average_household_income_change": -531.5544893596945,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.2280700295259258,
+    "loser_percentage": 0.4236858118644774,
+    "no_change_percentage": 0.26285857414761926,
+    "population": 949264.7736125515
+   },
+   {
+    "district": "NY-15",
+    "average_household_income_change": 1035.1640699670766,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.5029805375678822,
+    "loser_percentage": 0.849430602105124,
+    "no_change_percentage": 0.4518045751817217,
+    "population": 746851.0845919283
+   },
+   {
+    "district": "NY-16",
+    "average_household_income_change": 260.053738656719,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.11890264690165409,
+    "loser_percentage": 0.09255369884592246,
+    "no_change_percentage": 0.6021350418455398,
+    "population": 1139978.6944879943
+   },
+   {
+    "district": "NY-17",
+    "average_household_income_change": 551.1459088188273,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.2568565800548146,
+    "loser_percentage": 0.0658448817049383,
+    "no_change_percentage": 0.5905054752811186,
+    "population": 1769856.515164564
+   },
+   {
+    "district": "NY-18",
+    "average_household_income_change": 203.09432013447682,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.597936552673326,
+    "loser_percentage": 0.7150144141312778,
+    "no_change_percentage": 0.724789937585622,
+    "population": 520257.4395910977
+   },
+   {
+    "district": "NY-19",
+    "average_household_income_change": -1716.2211584708255,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.6519717033404463,
+    "loser_percentage": 0.7779712516376676,
+    "no_change_percentage": 0.17157435465193505,
+    "population": 1591882.803708056
+   },
+   {
+    "district": "NY-20",
+    "average_household_income_change": 1531.0381811405045,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.05659121270802303,
+    "loser_percentage": 0.11572867482718951,
+    "no_change_percentage": 0.41368525303321957,
+    "population": 798354.4591802023
+   },
+   {
+    "district": "NY-21",
+    "average_household_income_change": -1481.0177408200632,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.6685485548771268,
+    "loser_percentage": 0.02926629431828265,
+    "no_change_percentage": 0.3220783749376873,
+    "population": 665986.4590287958
+   },
+   {
+    "district": "NY-22",
+    "average_household_income_change": 1110.8941560254143,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.4214323670077975,
+    "loser_percentage": 0.10234225456208867,
+    "no_change_percentage": 0.376245986759273,
+    "population": 544219.2144474802
+   },
+   {
+    "district": "NY-23",
+    "average_household_income_change": 684.7430799549437,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.3068240717924594,
+    "loser_percentage": 0.975577878932322,
+    "no_change_percentage": 0.781071020452218,
+    "population": 1175599.50257008
+   },
+   {
+    "district": "NY-24",
+    "average_household_income_change": -1120.5230243440383,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.24738329428120054,
+    "loser_percentage": 0.5051294587237802,
+    "no_change_percentage": 0.8702153105443287,
+    "population": 1007687.6809980447
+   },
+   {
+    "district": "NY-25",
+    "average_household_income_change": 1495.6211572010943,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.3327362674239437,
+    "loser_percentage": 0.3980352900226982,
+    "no_change_percentage": 0.6395244769245754,
+    "population": 309126.55115195736
+   },
+   {
+    "district": "NY-26",
+    "average_household_income_change": 1005.7524739921187,
+    "relative_household_income_change": 0.09384776304331244,
+    "winner_percentage": 0.5132535713329025,
+    "loser_percentage": 0.11991430122939095,
+    "no_change_percentage": 0.7204974469291235,
+    "population": 1780659.23172649
+   },
+   {
+    "district": "NC-01",
+    "average_household_income_change": 1905.7524663701408,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.8819134926398041,
+    "loser_percentage": 0.44699135441524274,
+    "no_change_percentage": 0.4400285541797978,
+    "population": 1801522.6923972447
+   },
+   {
+    "district": "NC-02",
+    "average_household_income_change": 812.7845438528553,
+    "relative_household_income_change": 0.13890439070678073,
+    "winner_percentage": 0.06797734049370718,
+    "loser_percentage": 0.745111961730822,
+    "no_change_percentage": 0.3039520706041381,
+    "population": 1010127.7867981759
+   },
+   {
+    "district": "NC-03",
+    "average_household_income_change": -1126.1533846759257,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.9059222479170311,
+    "loser_percentage": 0.6088042548949335,
+    "no_change_percentage": 0.8361479455723221,
+    "population": 1253346.8417832286
+   },
+   {
+    "district": "NC-04",
+    "average_household_income_change": 1588.7537548469916,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.12372180888852413,
+    "loser_percentage": 0.3926530286250651,
+    "no_change_percentage": 0.07132101791808032,
+    "population": 1999747.478495196
+   },
+   {
+    "district": "NC-05",
+    "average_household_income_change": 634.647556682796,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.32064494301872304,
+    "loser_percentage": 0.6033236611754655,
+    "no_change_percentage": 0.7298074029257416,
+    "population": 1431115.4234459244
+   },
+   {
+    "district": "NC-06",
+    "average_household_income_change": 347.2242650809525,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.36731627649607035,
+    "loser_percentage": 0.8032802872387302,
+    "no_change_percentage": 0.746072309880131,
+    "population": 624814.0610123319
+   },
+   {
+    "district": "NC-07",
+    "average_household_income_change": 444.4180985521879,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.7289746258995076,
+    "loser_percentage": 0.3690668818213545,
+    "no_change_percentage": 0.37433748707080783,
+    "population": 1800904.0843756036
+   },
+   {
+    "district": "NC-08",
+    "average_household_income_change": 343.9543664215217,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.2889409643152038,
+    "loser_percentage": 0.29650633313595953,
+    "no_change_percentage": 0.11314476007451024,
+    "population": 582017.0773053442
+   },
+   {
+    "district": "NC-09",
+    "average_household_income_change": 847.1751648054621,
+    "relative_household_income_change": 0.06368776621470995,
+    "winner_percentage": 0.771368497288142,
+    "loser_percentage": 0.5813582055912243,
+    "no_change_percentage": 0.10983216055702494,
+    "population": 573445.3001250993
+   },
+   {
+    "district": "NC-10",
+    "average_household_income_change": -644.2881383254942,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.23855349169819606,
+    "loser_percentage": 0.14772417607751975,
+    "no_change_percentage": 0.5789166367792238,
+    "population": 628706.4061903722
+   },
+   {
+    "district": "NC-11",
+    "average_household_income_change": 1798.3776681929794,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.6038503969417593,
+    "loser_percentage": 0.6954240140826077,
+    "no_change_percentage": 0.25102031418475945,
+    "population": 1036069.6351497878
+   },
+   {
+    "district": "NC-12",
+    "average_household_income_change": -1153.2334003615556,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.6494020962773108,
+    "loser_percentage": 0.68112893847386,
+    "no_change_percentage": 0.7945625910754524,
+    "population": 453780.4738603879
+   },
+   {
+    "district": "NC-13",
+    "average_household_income_change": 861.2013752677723,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.2529435759627967,
+    "loser_percentage": 0.6842805912026738,
+    "no_change_percentage": 0.691510662077478,
+    "population": 681472.2032578625
+   },
+   {
+    "district": "NC-14",
+    "average_household_income_change": -843.4969218054666,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.17844476062520975,
+    "loser_percentage": 0.02440019156351525,
+    "no_change_percentage": 0.17493552120416667,
+    "population": 325878.15639773593
+   },
+   {
+    "district": "ND-01",
+    "average_household_income_change": -538.4817956617094,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.11051184383413304,
+    "loser_percentage": 0.41292386930040537,
+    "no_change_percentage": 0.06585623221099801,
+    "population": 390452.8819427029
+   },
+   {
+    "district": "OH-01",
+    "average_household_income_change": 1429.5334028291213,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5278426955891395,
+    "loser_percentage": 0.6005590283137375,
+    "no_change_percentage": 0.15869088860396208,
+    "population": 82774.95630957745
+   },
+   {
+    "district": "OH-02",
+    "average_household_income_change": 247.34152192959513,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.7216089357104507,
+    "loser_percentage": 0.8680780650241383,
+    "no_change_percentage": 0.00885484187005492,
+    "population": 831747.4468137303
+   },
+   {
+    "district": "OH-03",
+    "average_household_income_change": 181.29081106309462,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.374288814448134,
+    "loser_percentage": 0.8938726257407104,
+    "no_change_percentage": 0.5813620810563472,
+    "population": 1804950.9344293228
+   },
+   {
+    "district": "OH-04",
+    "average_household_income_change": 800.7647640367987,
+    "relative_household_income_change": 0.8207485460353191,
+    "winner_percentage": 0.11277780936311466,
+    "loser_percentage": 0.25265940767418205,
+    "no_change_percentage": 0.9111574621350451,
+    "population": 1794784.9527226053
+   },
+   {
+    "district": "OH-05",
+    "average_household_income_change": -1562.6244364927354,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.9966657867352428,
+    "loser_percentage": 0.10886754706831803,
+    "no_change_percentage": 0.8545825291242566,
+    "population": 233265.7912630831
+   },
+   {
+    "district": "OH-06",
+    "average_household_income_change": -883.7521616253334,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.5164168845139231,
+    "loser_percentage": 0.027945412433999173,
+    "no_change_percentage": 0.21120343602251246,
+    "population": 177783.19323167205
+   },
+   {
+    "district": "OH-07",
+    "average_household_income_change": -188.90997633302487,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.9380606200193555,
+    "loser_percentage": 0.34740716217814394,
+    "no_change_percentage": 0.8893278594350348,
+    "population": 964015.0225381623
+   },
+   {
+    "district": "OH-08",
+    "average_household_income_change": 222.99145786351636,
+    "relative_household_income_change": 0.2599862225866242,
+    "winner_percentage": 0.7865415348656284,
+    "loser_percentage": 0.5699768907923377,
+    "no_change_percentage": 0.7590644900019196,
+    "population": 898104.1320936508
+   },
+   {
+    "district": "OH-09",
+    "average_household_income_change": 933.2464358174275,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5186146433595739,
+    "loser_percentage": 0.03456639265822781,
+    "no_change_percentage": 0.27847571623212297,
+    "population": 1678208.3304820228
+   },
+   {
+    "district": "OH-10",
+    "average_household_income_change": -1327.57201116124,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.2890878055085202,
+    "loser_percentage": 0.8531745179280665,
+    "no_change_percentage": 0.7718057506643415,
+    "population": 1838588.7533272905
+   },
+   {
+    "district": "OH-11",
+    "average_household_income_change": 1750.127418250961,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.4939449029501517,
+    "loser_percentage": 0.19558528920942286,
+    "no_change_percentage": 0.14683928808809676,
+    "population": 117625.8044139602
+   },
+   {
+    "district": "OH-12",
+    "average_household_income_change": 1111.884158618861,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.6528616464533499,
+    "loser_percentage": 0.021400312488671913,
+    "no_change_percentage": 0.030273923372256095,
+    "population": 234545.10408303817
+   },
+   {
+    "district": "OH-13",
+    "average_household_income_change": -687.0037649600005,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.17953726005725024,
+    "loser_percentage": 0.9367507607303269,
+    "no_change_percentage": 0.19810480784373719,
+    "population": 1608747.5418619215
+   },
+   {
+    "district": "OH-14",
+    "average_household_income_change": 1002.2901963771469,
+    "relative_household_income_change": 0.949115972430235,
+    "winner_percentage": 0.6452992282399889,
+    "loser_percentage": 0.6732223970621404,
+    "no_change_percentage": 0.8211002682278746,
+    "population": 1776435.5005847374
+   },
+   {
+    "district": "OH-15",
+    "average_household_income_change": -713.3260828235599,
+    "relative_household_income_change": 0.8153911026362762,
+    "winner_percentage": 0.9751500980329527,
+    "loser_percentage": 0.1837252033481077,
+    "no_change_percentage": 0.6880747422849436,
+    "population": 1904353.6250990205
+   },
+   {
+    "district": "OK-01",
+    "average_household_income_change": 1460.3826473514553,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.7070840854137713,
+    "loser_percentage": 0.30215987451830306,
+    "no_change_percentage": 0.5015683823012259,
+    "population": 1139495.53806115
+   },
+   {
+    "district": "OK-02",
+    "average_household_income_change": 1083.7770389931225,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.2890350001539308,
+    "loser_percentage": 0.9653428558779258,
+    "no_change_percentage": 0.19620231019756684,
+    "population": 162863.33019325696
+   },
+   {
+    "district": "OK-03",
+    "average_household_income_change": -937.8420013990443,
+    "relative_household_income_change": 0.4727799567491602,
+    "winner_percentage": 0.3201734466820204,
+    "loser_percentage": 0.022463908344121597,
+    "no_change_percentage": 0.35784388173343773,
+    "population": 1275767.40827854
+   },
+   {
+    "district": "OK-04",
+    "average_household_income_change": 1080.8028799910123,
+    "relative_household_income_change": 0.9267783457836459,
+    "winner_percentage": 0.9681426826536599,
+    "loser_percentage": 0.24653060984129416,
+    "no_change_percentage": 0.9900239027127675,
+    "population": 690757.1648270963
+   },
+   {
+    "district": "OK-05",
+    "average_household_income_change": -186.4124367820863,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.38612199074311315,
+    "loser_percentage": 0.39905328159098163,
+    "no_change_percentage": 0.5755953780919827,
+    "population": 314083.9250144502
+   },
+   {
+    "district": "OR-01",
+    "average_household_income_change": 1215.0282215772452,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6001265471383288,
+    "loser_percentage": 0.9671144958686907,
+    "no_change_percentage": 0.838732929258236,
+    "population": 313837.5584065651
+   },
+   {
+    "district": "OR-02",
+    "average_household_income_change": 704.6383715214604,
+    "relative_household_income_change": 0.7029758642693501,
+    "winner_percentage": 0.8293483474290964,
+    "loser_percentage": 0.5755792575435204,
+    "no_change_percentage": 0.9333065230896005,
+    "population": 1464348.4347723061
+   },
+   {
+    "district": "OR-03",
+    "average_household_income_change": -873.0524531996738,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.2377304067129462,
+    "loser_percentage": 0.16987010804218217,
+    "no_change_percentage": 0.19668375289592133,
+    "population": 1394621.2240415476
+   },
+   {
+    "district": "OR-04",
+    "average_household_income_change": 1899.8809389932742,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.2679186601454181,
+    "loser_percentage": 0.9327699126738945,
+    "no_change_percentage": 0.3492058947704546,
+    "population": 669531.8836256716
+   },
+   {
+    "district": "OR-05",
+    "average_household_income_change": -693.9948241065301,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.8890441269074849,
+    "loser_percentage": 0.004487024580698384,
+    "no_change_percentage": 0.42569268304669017,
+    "population": 1654538.1237349864
+   },
+   {
+    "district": "OR-06",
+    "average_household_income_change": 1963.1431541606328,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.8270559556960193,
+    "loser_percentage": 0.2337614248102322,
+    "no_change_percentage": 0.6327919707602321,
+    "population": 602386.5793205993
+   },
+   {
+    "district": "PA-01",
+    "average_household_income_change": -1724.7276769199145,
+    "relative_household_income_change": 0.0791408204484465,
+    "winner_percentage": 0.3384174936357105,
+    "loser_percentage": 0.28023895938453636,
+    "no_change_percentage": 0.15202515307938014,
+    "population": 1651262.3038585437
+   },
+   {
+    "district": "PA-02",
+    "average_household_income_change": 1089.8441601017366,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.7689888611451111,
+    "loser_percentage": 0.6930673921450239,
+    "no_change_percentage": 0.2060269791840018,
+    "population": 897542.4105421195
+   },
+   {
+    "district": "PA-03",
+    "average_household_income_change": -1969.1553365678662,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.05619416354044959,
+    "loser_percentage": 0.4384500983984615,
+    "no_change_percentage": 0.3180855632642814,
+    "population": 281678.32508080103
+   },
+   {
+    "district": "PA-04",
+    "average_household_income_change": 285.9503748558221,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.428737064786506,
+    "loser_percentage": 0.6940226808823239,
+    "no_change_percentage": 0.8569663707062056,
+    "population": 1721941.9270078402
+   },
+   {
+    "district": "PA-05",
+    "average_household_income_change": 997.6363395334391,
+    "relative_household_income_change": 0.9818112362598781,
+    "winner_percentage": 0.4502167723979821,
+    "loser_percentage": 0.12921709727170727,
+    "no_change_percentage": 0.12082370227430617,
+    "population": 295940.35761302616
+   },
+   {
+    "district": "PA-06",
+    "average_household_income_change": 665.1380166195513,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.07783017425906258,
+    "loser_percentage": 0.9647536084038852,
+    "no_change_percentage": 0.4847236296018368,
+    "population": 1626059.0412948849
+   },
+   {
+    "district": "PA-07",
+    "average_household_income_change": -471.4252506002263,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5757088097507093,
+    "loser_percentage": 0.603956925904559,
+    "no_change_percentage": 0.6430133895206961,
+    "population": 1973132.5320566306
+   },
+   {
+    "district": "PA-08",
+    "average_household_income_change": -925.3953112617737,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.9231177478320901,
+    "loser_percentage": 0.8934945233526166,
+    "no_change_percentage": 0.028048398007435416,
+    "population": 1427743.709207689
+   },
+   {
+    "district": "PA-09",
+    "average_household_income_change": 1941.9594629095197,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5663048289142881,
+    "loser_percentage": 0.9751785263409453,
+    "no_change_percentage": 0.5087186098095644,
+    "population": 1751731.1897622026
+   },
+   {
+    "district": "PA-10",
+    "average_household_income_change": -168.88982054250468,
+    "relative_household_income_change": 0.0557679908403409,
+    "winner_percentage": 0.7502997397542419,
+    "loser_percentage": 0.840708859748251,
+    "no_change_percentage": 0.4231543787214357,
+    "population": 330194.5655087655
+   },
+   {
+    "district": "PA-11",
+    "average_household_income_change": -142.78281027491778,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.5385685110982603,
+    "loser_percentage": 0.9064943105743645,
+    "no_change_percentage": 0.40045233370041333,
+    "population": 1313346.120477421
+   },
+   {
+    "district": "PA-12",
+    "average_household_income_change": 729.1416517787517,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.2808591493475159,
+    "loser_percentage": 0.5302376654329679,
+    "no_change_percentage": 0.798006877012943,
+    "population": 1570502.0636920966
+   },
+   {
+    "district": "PA-13",
+    "average_household_income_change": -1010.1366291548954,
+    "relative_household_income_change": 0.9495430575625469,
+    "winner_percentage": 0.7609948129598099,
+    "loser_percentage": 0.05588084422096318,
+    "no_change_percentage": 0.2097914206301834,
+    "population": 212650.61445635825
+   },
+   {
+    "district": "PA-14",
+    "average_household_income_change": 193.65812691362328,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.3910458766204923,
+    "loser_percentage": 0.10675034109650516,
+    "no_change_percentage": 0.9594313286131515,
+    "population": 1751171.2271268014
+   },
+   {
+    "district": "PA-15",
+    "average_household_income_change": 1046.0629749759046,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.6325803240880272,
+    "loser_percentage": 0.493105175529035,
+    "no_change_percentage": 0.4439200089858375,
+    "population": 63941.620072624995
+   },
+   {
+    "district": "PA-16",
+    "average_household_income_change": 1008.7316836972371,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6399996688075169,
+    "loser_percentage": 0.29180332739195713,
+    "no_change_percentage": 0.05235921925952458,
+    "population": 576947.4273465474
+   },
+   {
+    "district": "PA-17",
+    "average_household_income_change": -1717.8033293070962,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.1607192942837673,
+    "loser_percentage": 0.6626523627031539,
+    "no_change_percentage": 0.7392257404199818,
+    "population": 585286.8629265588
+   },
+   {
+    "district": "RI-01",
+    "average_household_income_change": -1550.5857205303325,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.6313800843931212,
+    "loser_percentage": 0.08215021086848406,
+    "no_change_percentage": 0.6494960270009935,
+    "population": 150834.82240956987
+   },
+   {
+    "district": "RI-02",
+    "average_household_income_change": -1465.6676100434124,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.7130625752476205,
+    "loser_percentage": 0.17460034652050782,
+    "no_change_percentage": 0.31426725005408773,
+    "population": 656190.5805730725
+   },
+   {
+    "district": "SC-01",
+    "average_household_income_change": 1937.2605734310505,
+    "relative_household_income_change": 0.8527070615837832,
+    "winner_percentage": 0.6689396741212047,
+    "loser_percentage": 0.8519964791926429,
+    "no_change_percentage": 0.8147617722049865,
+    "population": 460259.70526279614
+   },
+   {
+    "district": "SC-02",
+    "average_household_income_change": -1649.4072107732266,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.981992756769073,
+    "loser_percentage": 0.7032420090911612,
+    "no_change_percentage": 0.800160582343668,
+    "population": 296933.1304116682
+   },
+   {
+    "district": "SC-03",
+    "average_household_income_change": 1735.5185940756512,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6806667209436814,
+    "loser_percentage": 0.5663093565909887,
+    "no_change_percentage": 0.3417763897456615,
+    "population": 1623962.9294941647
+   },
+   {
+    "district": "SC-04",
+    "average_household_income_change": 897.709921417864,
+    "relative_household_income_change": 0.7014147411138223,
+    "winner_percentage": 0.2848775149342192,
+    "loser_percentage": 0.3324586260623994,
+    "no_change_percentage": 0.8577746284838489,
+    "population": 1343769.0691192998
+   },
+   {
+    "district": "SC-05",
+    "average_household_income_change": 931.9711004520146,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.9517118339588264,
+    "loser_percentage": 0.21759914654466395,
+    "no_change_percentage": 0.5180028856504914,
+    "population": 1009850.8155595793
+   },
+   {
+    "district": "SC-06",
+    "average_household_income_change": 1795.8222332940825,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.852897153549233,
+    "loser_percentage": 0.8048781565393026,
+    "no_change_percentage": 0.16201608908649556,
+    "population": 49066.04191148456
+   },
+   {
+    "district": "SC-07",
+    "average_household_income_change": 1857.6974684671775,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.6818888391172473,
+    "loser_percentage": 0.10539479653499773,
+    "no_change_percentage": 0.10947920866386618,
+    "population": 1474599.5751547609
+   },
+   {
+    "district": "SD-01",
+    "average_household_income_change": -185.12946706296242,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.9583114599271013,
+    "loser_percentage": 0.8566897788956356,
+    "no_change_percentage": 0.49133982229752937,
+    "population": 1025155.0366304349
+   },
+   {
+    "district": "TN-01",
+    "average_household_income_change": 1990.8502151773625,
+    "relative_household_income_change": 0.08071195025176936,
+    "winner_percentage": 0.1424522722051551,
+    "loser_percentage": 0.2501611832548506,
+    "no_change_percentage": 0.7393905997045908,
+    "population": 509389.427303286
+   },
+   {
+    "district": "TN-02",
+    "average_household_income_change": 971.2647989363505,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.8322193743039388,
+    "loser_percentage": 0.7729427687676738,
+    "no_change_percentage": 0.6847091596468332,
+    "population": 44818.485711245215
+   },
+   {
+    "district": "TN-03",
+    "average_household_income_change": 211.71389701787734,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.4102747777269825,
+    "loser_percentage": 0.1076519599220832,
+    "no_change_percentage": 0.4359652614253863,
+    "population": 612016.9535068158
+   },
+   {
+    "district": "TN-04",
+    "average_household_income_change": -1166.3652707529218,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6121302979479828,
+    "loser_percentage": 0.4740172036626341,
+    "no_change_percentage": 0.31505716327074385,
+    "population": 1814735.1803401406
+   },
+   {
+    "district": "TN-05",
+    "average_household_income_change": -1710.819262182215,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.38390327544462677,
+    "loser_percentage": 0.3353685612318471,
+    "no_change_percentage": 0.004715856283499242,
+    "population": 190008.9265465967
+   },
+   {
+    "district": "TN-06",
+    "average_household_income_change": 197.01400925287825,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.7802816388354746,
+    "loser_percentage": 0.7305906386275102,
+    "no_change_percentage": 0.29038385863341176,
+    "population": 1900723.3659439501
+   },
+   {
+    "district": "TN-07",
+    "average_household_income_change": 211.41923929555918,
+    "relative_household_income_change": 0.0015568199371647218,
+    "winner_percentage": 0.20229323028117163,
+    "loser_percentage": 0.022150695649819307,
+    "no_change_percentage": 0.8006018451087608,
+    "population": 184644.49612084823
+   },
+   {
+    "district": "TN-08",
+    "average_household_income_change": 1328.484630047538,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.818603043336867,
+    "loser_percentage": 0.9312811484394016,
+    "no_change_percentage": 0.4553042462854815,
+    "population": 236288.20602635806
+   },
+   {
+    "district": "TN-09",
+    "average_household_income_change": 855.8315869415694,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.5605413938252272,
+    "loser_percentage": 0.47705405595659556,
+    "no_change_percentage": 0.630088073594293,
+    "population": 1413809.7312156651
+   },
+   {
+    "district": "TX-01",
+    "average_household_income_change": 1771.1915705224733,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.8751630156858404,
+    "loser_percentage": 0.9114745108775637,
+    "no_change_percentage": 0.3566363032064842,
+    "population": 1142428.890069966
+   },
+   {
+    "district": "TX-02",
+    "average_household_income_change": -1920.1601722975875,
+    "relative_household_income_change": 0.12208181487092995,
+    "winner_percentage": 0.4552730089959446,
+    "loser_percentage": 0.13482867731225923,
+    "no_change_percentage": 0.27201447248401667,
+    "population": 979537.4973681483
+   },
+   {
+    "district": "TX-03",
+    "average_household_income_change": 1016.9133388870835,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.9864993640141612,
+    "loser_percentage": 0.32025950019262006,
+    "no_change_percentage": 0.3573404493437041,
+    "population": 137241.399852384
+   },
+   {
+    "district": "TX-04",
+    "average_household_income_change": 1892.9127819556993,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.8989800061359351,
+    "loser_percentage": 0.6689276605507882,
+    "no_change_percentage": 0.8953958061825441,
+    "population": 829341.8250034208
+   },
+   {
+    "district": "TX-05",
+    "average_household_income_change": 1897.0403281518222,
+    "relative_household_income_change": 0.7958420854245689,
+    "winner_percentage": 0.25572293996702045,
+    "loser_percentage": 0.41508734432727257,
+    "no_change_percentage": 0.32680578798631954,
+    "population": 1246583.3372938028
+   },
+   {
+    "district": "TX-06",
+    "average_household_income_change": -1006.7452094515037,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.31716495088768626,
+    "loser_percentage": 0.41932200244509976,
+    "no_change_percentage": 0.5052989869058244,
+    "population": 114900.41963940545
+   },
+   {
+    "district": "TX-07",
+    "average_household_income_change": -986.750860859265,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.057531609216056045,
+    "loser_percentage": 0.11214276134254297,
+    "no_change_percentage": 0.8670485270497249,
+    "population": 1189524.561694502
+   },
+   {
+    "district": "TX-08",
+    "average_household_income_change": 468.61581361870196,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.15544793198009388,
+    "loser_percentage": 0.23765541453250072,
+    "no_change_percentage": 0.6203152864878174,
+    "population": 1553341.3028538858
+   },
+   {
+    "district": "TX-09",
+    "average_household_income_change": 592.3138853555479,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.09526139620272689,
+    "loser_percentage": 0.6789476722459857,
+    "no_change_percentage": 0.8930914340790302,
+    "population": 650602.021581664
+   },
+   {
+    "district": "TX-10",
+    "average_household_income_change": -771.8822058271178,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.7667801354023313,
+    "loser_percentage": 0.4397946703112,
+    "no_change_percentage": 0.6944012866100824,
+    "population": 1514675.1003138293
+   },
+   {
+    "district": "TX-11",
+    "average_household_income_change": 445.10938641772714,
+    "relative_household_income_change": 0.7661649830512469,
+    "winner_percentage": 0.4350632876947641,
+    "loser_percentage": 0.9852093398616844,
+    "no_change_percentage": 0.02306253066745889,
+    "population": 536280.1697764277
+   },
+   {
+    "district": "TX-12",
+    "average_household_income_change": -1723.4154822526245,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.03244025476786705,
+    "loser_percentage": 0.9614424944997229,
+    "no_change_percentage": 0.4952649603765471,
+    "population": 1906516.5371909686
+   },
+   {
+    "district": "TX-13",
+    "average_household_income_change": 1812.3135179699345,
+    "relative_household_income_change": 0.9502675017988578,
+    "winner_percentage": 0.21105628812509547,
+    "loser_percentage": 0.31887128979074797,
+    "no_change_percentage": 0.4497497380723805,
+    "population": 562688.9379618007
+   },
+   {
+    "district": "TX-14",
+    "average_household_income_change": -862.4498626305681,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.5468959965169081,
+    "loser_percentage": 0.25935447600951667,
+    "no_change_percentage": 0.7624524603063794,
+    "population": 1249745.2596928063
+   },
+   {
+    "district": "TX-15",
+    "average_household_income_change": 1134.5925667142494,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.18858944824948876,
+    "loser_percentage": 0.6909012927595274,
+    "no_change_percentage": 0.79550145373388,
+    "population": 1284249.0165737546
+   },
+   {
+    "district": "TX-16",
+    "average_household_income_change": -94.51012579706753,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.0481356954979375,
+    "loser_percentage": 0.029640494303868503,
+    "no_change_percentage": 0.08919240436367959,
+    "population": 154477.28857511468
+   },
+   {
+    "district": "TX-17",
+    "average_household_income_change": 123.32877219063931,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.8167313479183358,
+    "loser_percentage": 0.4250737287064854,
+    "no_change_percentage": 0.6504954644323904,
+    "population": 1123673.307339278
+   },
+   {
+    "district": "TX-18",
+    "average_household_income_change": 1474.4750546742705,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.3096230476943209,
+    "loser_percentage": 0.6586386549698358,
+    "no_change_percentage": 0.10163494198560052,
+    "population": 36032.47793310054
+   },
+   {
+    "district": "TX-19",
+    "average_household_income_change": -36.34491580021493,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.17522246712590916,
+    "loser_percentage": 0.7155230138235702,
+    "no_change_percentage": 0.9265095903708955,
+    "population": 1892844.0312474421
+   },
+   {
+    "district": "TX-20",
+    "average_household_income_change": 482.6199015754944,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.04341115956437347,
+    "loser_percentage": 0.5589910741196304,
+    "no_change_percentage": 0.4497429279862738,
+    "population": 989503.7761538144
+   },
+   {
+    "district": "TX-21",
+    "average_household_income_change": -612.6131101039554,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.4466640199476205,
+    "loser_percentage": 0.9878969837278956,
+    "no_change_percentage": 0.8386056028138273,
+    "population": 222734.239231813
+   },
+   {
+    "district": "TX-22",
+    "average_household_income_change": 148.9376439441039,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.20146267050549793,
+    "loser_percentage": 0.8518191979985624,
+    "no_change_percentage": 0.38611458542964494,
+    "population": 1819989.6572932268
+   },
+   {
+    "district": "TX-23",
+    "average_household_income_change": -473.62444502771825,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.2441475454205131,
+    "loser_percentage": 0.9219497484248206,
+    "no_change_percentage": 0.5222034568292102,
+    "population": 10823.250447892933
+   },
+   {
+    "district": "TX-24",
+    "average_household_income_change": -1672.3682809212992,
+    "relative_household_income_change": 0.07985271423887697,
+    "winner_percentage": 0.5084063876062761,
+    "loser_percentage": 0.7220018931521209,
+    "no_change_percentage": 0.2215680200641278,
+    "population": 1595642.3387817296
+   },
+   {
+    "district": "TX-25",
+    "average_household_income_change": 1077.5688699725806,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.24499324827021263,
+    "loser_percentage": 0.01432222664134064,
+    "no_change_percentage": 0.8939382050641294,
+    "population": 1787983.1005429467
+   },
+   {
+    "district": "TX-26",
+    "average_household_income_change": -1438.4307054370513,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.6198227349896034,
+    "loser_percentage": 0.11800847290362171,
+    "no_change_percentage": 0.009304095159581083,
+    "population": 876845.671226172
+   },
+   {
+    "district": "TX-27",
+    "average_household_income_change": 1340.9013998003868,
+    "relative_household_income_change": 0.3019592228300463,
+    "winner_percentage": 0.28964951902839375,
+    "loser_percentage": 0.7622993632880837,
+    "no_change_percentage": 0.614048893466411,
+    "population": 123347.98733697983
+   },
+   {
+    "district": "TX-28",
+    "average_household_income_change": 488.0047599682156,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.9402775258918264,
+    "loser_percentage": 0.9393313495884833,
+    "no_change_percentage": 0.37357540068239203,
+    "population": 438695.46877367457
+   },
+   {
+    "district": "TX-29",
+    "average_household_income_change": 1036.8306845711284,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.025297254401102753,
+    "loser_percentage": 0.7802251539465428,
+    "no_change_percentage": 0.6236464207364651,
+    "population": 1735638.9703092447
+   },
+   {
+    "district": "TX-30",
+    "average_household_income_change": -1816.620642287472,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.2371013107937745,
+    "loser_percentage": 0.611306274602615,
+    "no_change_percentage": 0.8355836741413932,
+    "population": 910562.3826486651
+   },
+   {
+    "district": "TX-31",
+    "average_household_income_change": 681.3583160127758,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.008027992944522722,
+    "loser_percentage": 0.5828667622610165,
+    "no_change_percentage": 0.024280868889418383,
+    "population": 616179.7522015433
+   },
+   {
+    "district": "TX-32",
+    "average_household_income_change": -785.7929442762619,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.6420402033057935,
+    "loser_percentage": 0.40296422224895634,
+    "no_change_percentage": 0.17046871016524834,
+    "population": 762591.0685096306
+   },
+   {
+    "district": "TX-33",
+    "average_household_income_change": 336.01806354446273,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.9774601220731014,
+    "loser_percentage": 0.5795747826478493,
+    "no_change_percentage": 0.06407656228653436,
+    "population": 1669168.5241341875
+   },
+   {
+    "district": "TX-34",
+    "average_household_income_change": -1683.0786772779436,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.8589802594733764,
+    "loser_percentage": 0.5004712894867026,
+    "no_change_percentage": 0.8681841973260737,
+    "population": 695506.4088603129
+   },
+   {
+    "district": "TX-35",
+    "average_household_income_change": -645.2997247970522,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.037310115037405334,
+    "loser_percentage": 0.05650574967910238,
+    "no_change_percentage": 0.6290940416189846,
+    "population": 1123262.8945596083
+   },
+   {
+    "district": "TX-36",
+    "average_household_income_change": -1181.8042866717713,
+    "relative_household_income_change": 0.1539846603505851,
+    "winner_percentage": 0.8433985352622048,
+    "loser_percentage": 0.3449587698057731,
+    "no_change_percentage": 0.6164753452177081,
+    "population": 584047.538738149
+   },
+   {
+    "district": "TX-37",
+    "average_household_income_change": -773.9294231231523,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.43736613788104073,
+    "loser_percentage": 0.3930416960662526,
+    "no_change_percentage": 0.49201046742835874,
+    "population": 379840.7069587959
+   },
+   {
+    "district": "TX-38",
+    "average_household_income_change": 1856.1006064111475,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.1472091366732724,
+    "loser_percentage": 0.5111329976782713,
+    "no_change_percentage": 0.802506694325617,
+    "population": 1058823.7384297766
+   },
+   {
+    "district": "UT-01",
+    "average_household_income_change": 538.9230690131752,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.8078746504361951,
+    "loser_percentage": 0.9086907148230051,
+    "no_change_percentage": 0.41718805953400595,
+    "population": 744308.05743929
+   },
+   {
+    "district": "UT-02",
+    "average_household_income_change": 625.4079449694609,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.9719555970079679,
+    "loser_percentage": 0.7046548863901538,
+    "no_change_percentage": 0.4750052548308249,
+    "population": 1194783.1107481858
+   },
+   {
+    "district": "UT-03",
+    "average_household_income_change": -1995.7045903511234,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.05076764633301312,
+    "loser_percentage": 0.9114782823193239,
+    "no_change_percentage": 0.4413152091515967,
+    "population": 362227.6352435327
+   },
+   {
+    "district": "UT-04",
+    "average_household_income_change": -677.9393110516531,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.37380705077204834,
+    "loser_percentage": 0.15795234703252115,
+    "no_change_percentage": 0.2040000223666747,
+    "population": 1494796.9803889361
+   },
+   {
+    "district": "VT-01",
+    "average_household_income_change": 353.4738828261714,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.8532040557443087,
+    "loser_percentage": 0.2235960450042347,
+    "no_change_percentage": 0.20134550743715096,
+    "population": 953075.3632854001
+   },
+   {
+    "district": "VA-01",
+    "average_household_income_change": 778.0368366974453,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.36308011279451313,
+    "loser_percentage": 0.15114920586672909,
+    "no_change_percentage": 0.8882407670893311,
+    "population": 1490063.1040169136
+   },
+   {
+    "district": "VA-02",
+    "average_household_income_change": -1010.0022195655356,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.399603834907748,
+    "loser_percentage": 0.9509916921568538,
+    "no_change_percentage": 0.9225239801101054,
+    "population": 684844.1720984051
+   },
+   {
+    "district": "VA-03",
+    "average_household_income_change": 1160.5277807052973,
+    "relative_household_income_change": 0.1768590513948327,
+    "winner_percentage": 0.9925433691281884,
+    "loser_percentage": 0.9119338074690182,
+    "no_change_percentage": 0.11498448813031215,
+    "population": 671222.2659518386
+   },
+   {
+    "district": "VA-04",
+    "average_household_income_change": 1075.5192645445359,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.3117099809717838,
+    "loser_percentage": 0.18532163428785997,
+    "no_change_percentage": 0.8815658664157163,
+    "population": 651704.0237652881
+   },
+   {
+    "district": "VA-05",
+    "average_household_income_change": -1592.2137507489542,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.05487263637982431,
+    "loser_percentage": 0.7545716977655509,
+    "no_change_percentage": 0.42546699188341486,
+    "population": 1960083.0280343024
+   },
+   {
+    "district": "VA-06",
+    "average_household_income_change": 173.80291494289946,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.32986302289622504,
+    "loser_percentage": 0.9004772463524898,
+    "no_change_percentage": 0.27213789635182417,
+    "population": 1104186.0216722307
+   },
+   {
+    "district": "VA-07",
+    "average_household_income_change": -1168.1843187495872,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.9468439755493232,
+    "loser_percentage": 0.6741460863894962,
+    "no_change_percentage": 0.22514942250463243,
+    "population": 1144019.3339419388
+   },
+   {
+    "district": "VA-08",
+    "average_household_income_change": 1871.03639237891,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.2178838122898782,
+    "loser_percentage": 0.5505946063075128,
+    "no_change_percentage": 0.061186857186479204,
+    "population": 333578.719343903
+   },
+   {
+    "district": "VA-09",
+    "average_household_income_change": -1811.655724093852,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.13689686569124193,
+    "loser_percentage": 0.6687216826093308,
+    "no_change_percentage": 0.497092817382386,
+    "population": 494593.77289942297
+   },
+   {
+    "district": "VA-10",
+    "average_household_income_change": -815.4371158922849,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.7856146432574787,
+    "loser_percentage": 0.940402140652285,
+    "no_change_percentage": 0.2895285985773879,
+    "population": 1214469.82023329
+   },
+   {
+    "district": "VA-11",
+    "average_household_income_change": -360.1121235607505,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.3753365275814715,
+    "loser_percentage": 0.6813036121555542,
+    "no_change_percentage": 0.8724926283246953,
+    "population": 707703.9404915355
+   },
+   {
+    "district": "WA-01",
+    "average_household_income_change": 105.63506368520504,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.43902152935839744,
+    "loser_percentage": 0.11987463568444745,
+    "no_change_percentage": 0.9262362054297277,
+    "population": 1268970.990725781
+   },
+   {
+    "district": "WA-02",
+    "average_household_income_change": 1691.1267713793006,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.8109962062353352,
+    "loser_percentage": 0.5735816744632423,
+    "no_change_percentage": 0.36983592279142374,
+    "population": 1370317.1348295836
+   },
+   {
+    "district": "WA-03",
+    "average_household_income_change": 40.5972770329508,
+    "relative_household_income_change": 0.9835896952422006,
+    "winner_percentage": 0.4652226252562398,
+    "loser_percentage": 0.7078615262701772,
+    "no_change_percentage": 0.8071584891291584,
+    "population": 872059.7943409345
+   },
+   {
+    "district": "WA-04",
+    "average_household_income_change": 1732.5251561029313,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.7946573412175163,
+    "loser_percentage": 0.9188465382642514,
+    "no_change_percentage": 0.5385030078329925,
+    "population": 1632884.0302181193
+   },
+   {
+    "district": "WA-05",
+    "average_household_income_change": 1202.1063187299212,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.757030017005171,
+    "loser_percentage": 0.3806079639722343,
+    "no_change_percentage": 0.42515199640370005,
+    "population": 931161.6787912422
+   },
+   {
+    "district": "WA-06",
+    "average_household_income_change": -41.683066187413246,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.7419630561106269,
+    "loser_percentage": 0.7982884089457194,
+    "no_change_percentage": 0.5766984839678304,
+    "population": 1925306.5372831763
+   },
+   {
+    "district": "WA-07",
+    "average_household_income_change": -1038.8288175164387,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.7487836469612043,
+    "loser_percentage": 0.04627926690743911,
+    "no_change_percentage": 0.7637763617204205,
+    "population": 1394007.9334284214
+   },
+   {
+    "district": "WA-08",
+    "average_household_income_change": -113.39026359794602,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.14656233016666997,
+    "loser_percentage": 0.14227889496061186,
+    "no_change_percentage": 0.8942400203221307,
+    "population": 1159468.3679830425
+   },
+   {
+    "district": "WA-09",
+    "average_household_income_change": -1188.6320903149917,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.6848291117385173,
+    "loser_percentage": 0.7192944917615914,
+    "no_change_percentage": 0.47453869785998914,
+    "population": 1237632.7477468404
+   },
+   {
+    "district": "WA-10",
+    "average_household_income_change": -1918.8638263145253,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.9811299633185824,
+    "loser_percentage": 0.07117563047989073,
+    "no_change_percentage": 0.40085829518483473,
+    "population": 1658622.2639309997
+   },
+   {
+    "district": "WV-01",
+    "average_household_income_change": -1719.9286068807128,
+    "relative_household_income_change": -0.0,
+    "winner_percentage": 0.9148158153481513,
+    "loser_percentage": 0.08663114488601364,
+    "no_change_percentage": 0.4853402444158086,
+    "population": 1344776.2874544123
+   },
+   {
+    "district": "WV-02",
+    "average_household_income_change": -1825.9565032373657,
+    "relative_household_income_change": 0.0,
+    "winner_percentage": 0.9883328689997977,
+    "loser_percentage": 0.1932626210579047,
+    "no_change_percentage": 0.17022618841907056,
+    "population": 1867594.7605861642
+   },
+   {
+    "district": "WI-01",
+    "average_household_income_change": 1290.4459829291638,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.18361453960505825,
+    "loser_percentage": 0.5292730478053601,
+    "no_change_percentage": 0.25849761902750124,
+    "population": 1729840.943088221
+   },
+   {
+    "district": "WI-02",
+    "average_household_income_change": 1181.9427409174762,
+    "relative_household_income_change": 0.6753359662801989,
+    "winner_percentage": 0.9024734844569519,
+    "loser_percentage": 0.7123801306820899,
+    "no_change_percentage": 0.497654118406206,
+    "population": 212370.7586732047
+   },
+   {
+    "district": "WI-03",
+    "average_household_income_change": -1899.8950693658596,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.6429595737137347,
+    "loser_percentage": 0.7202951055596833,
+    "no_change_percentage": 0.15965232924903816,
+    "population": 1248918.761505698
+   },
+   {
+    "district": "WI-04",
+    "average_household_income_change": -1923.8872113506757,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.7134800021365812,
+    "loser_percentage": 0.16077300392286054,
+    "no_change_percentage": 0.4204664571222778,
+    "population": 529063.6749248685
+   },
+   {
+    "district": "WI-05",
+    "average_household_income_change": -1150.9174218021424,
+    "relative_household_income_change": 1e-12,
+    "winner_percentage": 0.2447208698368899,
+    "loser_percentage": 0.6477205033828267,
+    "no_change_percentage": 0.2917078822429261,
+    "population": 591469.1625126833
+   },
+   {
+    "district": "WI-06",
+    "average_household_income_change": 1122.465409431541,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.030952864425620397,
+    "loser_percentage": 0.13790808032567214,
+    "no_change_percentage": 0.1335488088157848,
+    "population": 375057.91329466144
+   },
+   {
+    "district": "WI-07",
+    "average_household_income_change": 514.946210223933,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.36936029678754523,
+    "loser_percentage": 0.3861623591027703,
+    "no_change_percentage": 0.6236829834736486,
+    "population": 441020.0640803472
+   },
+   {
+    "district": "WI-08",
+    "average_household_income_change": -1220.801385442289,
+    "relative_household_income_change": 0.13138239333980972,
+    "winner_percentage": 0.9148413673253681,
+    "loser_percentage": 0.2235683708974472,
+    "no_change_percentage": 0.1651680949063037,
+    "population": 320289.09370709525
+   },
+   {
+    "district": "WY-01",
+    "average_household_income_change": 541.4347808810725,
+    "relative_household_income_change": -3.5e-9,
+    "winner_percentage": 0.33422766415601324,
+    "loser_percentage": 0.7974131376543324,
+    "no_change_percentage": 0.10343429179638364,
+    "population": 547664.9796359495
+   }
+  ]
+ },
+ "cliff_impact": {
+  "baseline": {
+   "cliff_gap": 19000000000.0,
+   "cliff_share": 0.0712
+  },
+  "reform": {
+   "cliff_gap": 20500000000.0,
+   "cliff_share": 0.0698
+  }
+ }
+}
