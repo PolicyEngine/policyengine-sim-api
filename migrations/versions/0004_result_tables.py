@@ -1,14 +1,14 @@
 """Add the result tables.
 
 Every economy result is stored as rows, each section of today's result model
-in its own table, and a computed household as one JSON value on its
-simulation run. A simulation's own figures (poverty rates, inequality, cliff
-exposure) belong to its simulation run; the comparison of a baseline and a
-reform (budget, programs, deciles, labour supply, geographies) belongs to the
-report run. Each report run also records the optional sections its result
-holds and its SPM provenance. Rows are written in the transaction that marks a
-run succeeded; the default privileges let the runtime role read and insert
-them. Nothing writes them yet.
+in its own table, a computed household as one JSON value on its simulation
+run, and links to each run's stored files. A simulation's own figures
+(poverty rates, inequality, cliff exposure) belong to its simulation run; the
+comparison of a baseline and a reform (budget, programs, deciles, labour
+supply, geographies) belongs to the report run. Each report run also records
+the optional sections its result holds and its SPM provenance. Rows are
+written in the transaction that marks a run succeeded; the default privileges
+let the runtime role read and insert them. Nothing writes them yet.
 
 Revision ID: 0004
 Revises: 0003
@@ -51,9 +51,58 @@ def _create_household_outputs() -> None:
     )
 
 
+def _create_output_files() -> None:
+    op.create_table(
+        "output_files",
+        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column("simulation_run_id", sa.Uuid(), nullable=True),
+        sa.Column("report_run_id", sa.Uuid(), nullable=True),
+        sa.Column("role", sa.Text(), nullable=False),
+        sa.Column("uri", sa.Text(), nullable=False),
+        sa.Column("sha256", sa.String(length=64), nullable=False),
+        sa.Column("written_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint(
+            "(simulation_run_id IS NULL) <> (report_run_id IS NULL)",
+            name=op.f("ck_output_files_one_run"),
+        ),
+        sa.CheckConstraint(
+            "sha256 ~ '^[0-9a-f]{64}$'", name=op.f("ck_output_files_sha256")
+        ),
+        sa.CheckConstraint(
+            "uri ~ '^[a-z][a-z0-9+.-]*://\\S+$'", name=op.f("ck_output_files_uri")
+        ),
+        sa.CheckConstraint(
+            "role ~ '^[a-z][a-z0-9_]{0,63}$'", name=op.f("ck_output_files_role")
+        ),
+        sa.ForeignKeyConstraint(
+            ["simulation_run_id"],
+            ["simulation.simulation_runs.id"],
+            name="fk_output_files_simulation_run",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["report_run_id"],
+            ["simulation.report_runs.id"],
+            name="fk_output_files_report_run",
+            ondelete="RESTRICT",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_output_files")),
+        sa.UniqueConstraint(
+            "simulation_run_id",
+            "uri",
+            name=op.f("uq_output_files_simulation_run_id_uri"),
+        ),
+        sa.UniqueConstraint(
+            "report_run_id", "uri", name=op.f("uq_output_files_report_run_id_uri")
+        ),
+        schema="simulation",
+    )
+
+
 def upgrade() -> None:
     """Create the result tables and the report run's result columns."""
     _create_household_outputs()
+    _create_output_files()
     op.create_table(
         "cliff_impacts",
         sa.Column("simulation_run_id", sa.Uuid(), nullable=False),
@@ -426,3 +475,4 @@ def downgrade() -> None:
     op.drop_table("inequality", schema="simulation")
     op.drop_table("cliff_impacts", schema="simulation")
     op.drop_table("household_outputs", schema="simulation")
+    op.drop_table("output_files", schema="simulation")

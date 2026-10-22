@@ -94,6 +94,11 @@ in the transaction that marks the run succeeded
 share one Modal call and each gets its own household. `read_household_output`
 returns it unchanged.
 
+`output_files` links each stored file (its role, URI and SHA-256) to the one
+simulation run or report run that wrote it. `available_output_files` offers a
+link for 30 days after its file was written (`OUTPUT_FILE_RETENTION`), as long
+as the artifact bucket keeps it; result rows stay for good.
+
 ## Ownership rules
 
 These rules are registered in `rules/registry.toml` and checked by
