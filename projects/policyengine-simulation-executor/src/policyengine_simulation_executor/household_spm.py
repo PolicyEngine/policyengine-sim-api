@@ -323,51 +323,69 @@ def _receipt_mapping(receipt: Mapping[str, object], field_name: str) -> Mapping:
     value = receipt.get(field_name)
     if not isinstance(value, Mapping):
         msg = f"Country SPM receipt requires {field_name}"
-        raise TypeError(msg)
+        raise ValueError(msg)  # noqa: TRY004  # only ValueError means an uncertifiable receipt, as in the Public API
     return value
+
+
+def _receipt_years(receipt: Mapping[str, object]) -> tuple[str, ...]:
+    """Return the receipt's years, sorted; raise ValueError if they are unusable."""
+    source_years = receipt.get("years")
+    if not isinstance(source_years, Mapping):
+        msg = "Country SPM receipt requires a years mapping"
+        raise ValueError(msg)  # noqa: TRY004  # only ValueError means an uncertifiable receipt, as in the Public API
+    if any(not isinstance(year, str) for year in source_years):
+        msg = "Country SPM receipt years must be strings"
+        raise ValueError(msg)
+    return tuple(sorted(source_years))
 
 
 def _compact_receipt(
     selection: SPMSelection, receipt: Mapping[str, object]
 ) -> SPMProvenance:
-    """Reduce the country model's rich receipt to the compact public receipt."""
+    """Reduce the country model's rich receipt to the compact public receipt.
+
+    Checks run in the Public API's order, so the first problem reported is the
+    one it reports: the required texts, their match with the selection, the
+    years, the runtime versions, then the forecast ID.
+    """
     forecast_sha256 = _required_text(receipt, "forecast_sha256")
+    scenario = _required_text(receipt, "scenario")
+    geography_kind = _required_text(receipt, "geography_kind")
     if (
         forecast_sha256 != selection.forecast_content_sha256
-        or _required_text(receipt, "scenario") != selection.scenario
-        or _required_text(receipt, "geography_kind") != selection.geography_kind
+        or scenario != selection.scenario
+        or geography_kind != selection.geography_kind
     ):
         msg = "Country SPM receipt differs from the SPM configuration"
         raise ValueError(msg)
-    source_years = _receipt_mapping(receipt, "years")
-    if any(not isinstance(year, str) for year in source_years):
-        msg = "Country SPM receipt years must be strings"
-        raise ValueError(msg)
+    years = _receipt_years(receipt)
+    runtime_versions = SPMRuntimeVersions.model_validate(
+        _receipt_mapping(receipt, "runtime_versions")
+    )
     return build_spm_provenance(
         forecast_id=_required_text(receipt, "forecast_id"),
         forecast_sha256=forecast_sha256,
         selection=selection,
-        years=tuple(sorted(source_years)),
-        runtime_versions=SPMRuntimeVersions.model_validate(
-            _receipt_mapping(receipt, "runtime_versions")
-        ),
+        years=years,
+        runtime_versions=runtime_versions,
     )
 
 
 def _country_receipt(simulation: object) -> SPMProvenance:
     """Reduce the simulation's receipt.
 
-    Raises ValueError or TypeError if the receipt cannot be certified.
+    Raises ValueError if the receipt cannot be certified. A simulation with
+    ``spm_config`` but no ``spm_provenance`` method raises AttributeError, as
+    in the Public API.
     """
     selection = _complete_settings(getattr(simulation, "spm_config", None))
     if selection is None:
         msg = "Country SPM configuration is incomplete"
         raise ValueError(msg)
-    receipt_method = getattr(simulation, "spm_provenance", None)
-    source = receipt_method() if callable(receipt_method) else None
+    source = simulation.spm_provenance()  # pyright: ignore[reportAttributeAccessIssue]  # a country Simulation with spm_config has this method
     if not isinstance(source, Mapping):
         msg = "Country SPM receipt must be an object"
-        raise TypeError(msg)
+        raise ValueError(msg)  # noqa: TRY004  # only ValueError means an uncertifiable receipt, as in the Public API
     return _compact_receipt(selection, source)
 
 
@@ -377,7 +395,7 @@ def _calculation_receipt(simulation: object) -> SPMProvenance | None:
         return None
     try:
         return _country_receipt(simulation)
-    except (TypeError, ValueError) as error:
+    except ValueError as error:
         raise SPMInputError(
             _CONFIGURATION_UNAVAILABLE,
             "The installed country model reported an SPM receipt this API cannot "

@@ -193,10 +193,10 @@ class SPMProvenance(BaseModel):
     def validate_years(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         """Require four-digit years, sorted ascending with no duplicates."""
         if any(re.fullmatch(r"[0-9]{4}", year) is None for year in value):
-            msg = "SPM provenance years must use four-digit years"
+            msg = "years must contain four-digit calendar years"
             raise ValueError(msg)
         if value != tuple(sorted(set(value))):
-            msg = "SPM provenance years must be sorted and unique"
+            msg = "years must be sorted and unique"
             raise ValueError(msg)
         return value
 
@@ -205,10 +205,10 @@ class SPMProvenance(BaseModel):
         """Require ``geography_id`` for metro receipts and forbid it otherwise."""
         if self.geography_kind == "metro":
             if self.geography_id is None or not self.geography_id.strip():
-                msg = "An SPM area receipt requires geography_id"
+                msg = "A metro SPM receipt requires geography_id"
                 raise ValueError(msg)
         elif self.geography_id is not None:
-            msg = "Only an SPM area receipt accepts geography_id"
+            msg = "Only a metro SPM receipt accepts geography_id"
             raise ValueError(msg)
         return self
 
