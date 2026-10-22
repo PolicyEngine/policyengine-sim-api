@@ -45,6 +45,9 @@ from policyengine_simulation_executor.release_bundle import (
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
 )
+from policyengine_simulation_executor.simulation_output_local_areas import (
+    LocalAreaBreakdownBuilder,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -892,21 +895,18 @@ def _run_local_area_breakdown_core(
     _report_calculation_start(area.reform, progress, JobStage.REFORM)
 
     logger.info("Calculating the local-area breakdown")
-    builder = SimulationOutputBuilder(
-        country=country,
-        simulation_params=simulation_params,
-        country_module=country_module,
-        dataset=area.dataset,
+    builder = LocalAreaBreakdownBuilder(
         baseline=area.baseline,
         reform=area.reform,
-        resolved_data_version=_manifest_dataset_revision(country, area.dataset_name),
-        resolved_dataset_name=area.dataset_name,
-        resolved_region_code=region_resolution.code,
+        local_authority_metadata=area.local_authority_metadata,
+        dataset_name=area.dataset_name,
+        data_version=_manifest_dataset_revision(country, area.dataset_name),
+        year=_parse_year(simulation_params),
+        country_module=country_module,
         runtime=runtime,
-        uk_local_authority_metadata=area.local_authority_metadata,
         progress=progress,
     )
-    output = builder.serialize_local_area_breakdown()
+    output = builder.serialize()
     logger.info("Local-area breakdown complete")
     return output
 

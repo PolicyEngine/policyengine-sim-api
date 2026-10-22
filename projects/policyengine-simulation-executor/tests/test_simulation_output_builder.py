@@ -68,6 +68,9 @@ from policyengine_simulation_executor.simulation_output_geographic import (
     build_congressional_district_impact,
     build_congressional_district_impact_output,
 )
+from policyengine_simulation_executor.simulation_output_local_areas import (
+    LocalAreaBreakdownBuilder,
+)
 from policyengine_simulation_executor.simulation_runtime import (
     DatasetSelection,
     RegionResolution,
@@ -1660,20 +1663,28 @@ class _RoutedUKSeams:
 
     def output_builder(self, **kwargs):
         self.run.builder_calls.append(kwargs)
-        return _RecordingOutputBuilder(self.run)
+        return _RecordingBuilder(
+            self.run, "macro", dict(CURRENT_SINGLE_YEAR_MACRO_RESULT)
+        )
+
+    def breakdown_builder(self, **kwargs):
+        self.run.builder_calls.append(kwargs)
+        return _RecordingBuilder(
+            self.run, "local_area_breakdown", {"kind": "local_areas"}
+        )
 
 
-class _RecordingOutputBuilder:
-    def __init__(self, run):
+class _RecordingBuilder:
+    """Records which builder serialized the run's output."""
+
+    def __init__(self, run, kind, output):
         self.run = run
+        self.kind = kind
+        self.output = output
 
     def serialize(self):
-        self.run.serialized.append("serialize")
-        return dict(CURRENT_SINGLE_YEAR_MACRO_RESULT)
-
-    def serialize_local_area_breakdown(self):
-        self.run.serialized.append("serialize_local_area_breakdown")
-        return {"kind": "local_areas"}
+        self.run.serialized.append(self.kind)
+        return self.output
 
 
 def _install_routed_uk_fakes(
@@ -1702,6 +1713,7 @@ def _install_routed_uk_fakes(
         "_load_dataset": seams.load_dataset,
         "_build_simulation": seams.build_simulation,
         "SimulationOutputBuilder": seams.output_builder,
+        "LocalAreaBreakdownBuilder": seams.breakdown_builder,
     }.items():
         monkeypatch.setattr(
             f"policyengine_simulation_executor.simulation_runtime.{name}", value
@@ -1745,7 +1757,7 @@ def test_a_routed_uk_wide_or_nation_run_builds_no_area_pair(monkeypatch, region)
         uk_local_authority_metadata.uk_area_breakdowns_omitted("uk", region)
     )
     assert "uk_area_simulations" not in builder_kwargs
-    assert run.serialized == ["serialize"]
+    assert run.serialized == ["macro"]
     assert {"dataset_role": "uk_area"} not in _span_attributes(run.runtime.roots)
 
 
@@ -1818,15 +1830,13 @@ def test_a_local_area_breakdown_runs_on_the_local_area_dataset_alone(monkeypatch
     (builder_kwargs,) = run.builder_calls
     assert builder_kwargs["baseline"] is run.builds[0]["simulation"]
     assert builder_kwargs["reform"] is run.builds[1]["simulation"]
-    assert builder_kwargs["dataset"] is local_area_dataset
-    assert builder_kwargs["uk_local_authority_metadata"] == UKLocalAuthorityMetadata(
+    assert builder_kwargs["local_authority_metadata"] == UKLocalAuthorityMetadata(
         boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
     )
-    assert builder_kwargs["resolved_dataset_name"] == _LOCAL_AREA_SELECTION.name
-    assert builder_kwargs["resolved_data_version"] == _LOCAL_AREA_REVISION
-    assert builder_kwargs["resolved_region_code"] == "country/wales"
-    assert builder_kwargs.get("uk_area_simulations") is None
-    assert run.serialized == ["serialize_local_area_breakdown"]
+    assert builder_kwargs["dataset_name"] == _LOCAL_AREA_SELECTION.name
+    assert builder_kwargs["data_version"] == _LOCAL_AREA_REVISION
+    assert builder_kwargs["year"] == 2026
+    assert run.serialized == ["local_area_breakdown"]
     assert run.output == {"kind": "local_areas"}
     assert run.dataset_load_attributes() == [{"dataset_role": "uk_area"}]
 
@@ -1863,7 +1873,7 @@ def test_a_uk_wide_local_area_breakdown_simulates_the_whole_dataset(monkeypatch)
 
     assert run.loads == [_LOCAL_AREA_SELECTION]
     assert [build["scoping_strategy"] for build in run.builds] == [None, None]
-    assert run.builder_calls[0]["resolved_region_code"] == "uk"
+    assert run.serialized == ["local_area_breakdown"]
 
 
 @pytest.mark.parametrize(
@@ -2879,27 +2889,20 @@ def _breakdown_builder(monkeypatch, *, events, runtime=None):
     def no_impact_analysis(*_args, **_kwargs):
         pytest.fail("a local-area breakdown computes no national impact analysis")
 
-    builder = SimulationOutputBuilder(
-        country="uk",
-        simulation_params={
-            "country": "uk",
-            "time_period": "2026",
-            "breakdown": "local_areas",
-        },
+    builder = LocalAreaBreakdownBuilder(
+        baseline=_BreakdownSimulation("baseline", events),
+        reform=_BreakdownSimulation("reform", events),
+        local_authority_metadata=UKLocalAuthorityMetadata(
+            boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
+        ),
+        dataset_name="microcosm_uk_2024_25_dense",
+        data_version=_LOCAL_AREA_REVISION,
+        year=2026,
         country_module=SimpleNamespace(
             model=SimpleNamespace(version="2.132.6"),
             economic_impact_analysis=no_impact_analysis,
         ),
-        dataset=SimpleNamespace(metadata={}),
-        baseline=_BreakdownSimulation("baseline", events),
-        reform=_BreakdownSimulation("reform", events),
-        resolved_data_version=_LOCAL_AREA_REVISION,
-        resolved_dataset_name="microcosm_uk_2024_25_dense",
-        resolved_region_code="uk",
         runtime=runtime,
-        uk_local_authority_metadata=UKLocalAuthorityMetadata(
-            boundary_version=UKLocalAuthorityBoundaryVersion.LAD23
-        ),
         progress=_RecordingProgress(events),
     )
     return builder, disclosure
@@ -2909,13 +2912,13 @@ def test_a_local_area_breakdown_publishes_both_levels_from_one_release(monkeypat
     events: list[object] = []
     builder, disclosure = _breakdown_builder(monkeypatch, events=events)
 
-    output = builder.serialize_local_area_breakdown()
+    output = builder.serialize()
 
     releases = [event for event in events if event[0] == "release"]
     assert releases == [("release", "uk", builder.baseline, builder.reform, 2026)]
     assert [event for event in events if event[0] != "release"][-2:] == [
         ("constituency", disclosure),
-        ("local_authority", disclosure, builder.uk_local_authority_metadata),
+        ("local_authority", disclosure, builder.local_authority_metadata),
     ]
     assert output == {
         "kind": "local_areas",
@@ -2932,7 +2935,7 @@ def test_a_local_area_breakdown_enters_outputs_after_both_simulations(monkeypatc
     events: list[object] = []
     builder, _ = _breakdown_builder(monkeypatch, events=events)
 
-    builder.serialize_local_area_breakdown()
+    builder.serialize()
 
     simulations_and_stages = [event for event in events if not isinstance(event, tuple)]
     assert simulations_and_stages == ["baseline", "reform", JobStage.OUTPUTS]
@@ -2946,7 +2949,7 @@ def test_a_local_area_breakdown_opens_only_registered_spans(monkeypatch):
     runtime = _TrackingRuntime()
     builder, _ = _breakdown_builder(monkeypatch, events=events, runtime=runtime)
 
-    builder.serialize_local_area_breakdown()
+    builder.serialize()
 
     registered = {stage.value for stage in ANNUAL_IMPACT_STAGES.stages}
     assert set(runtime.names) <= registered
