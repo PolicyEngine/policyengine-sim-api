@@ -34,7 +34,10 @@ def _step_failure(name: str, step: Callable[[], object]) -> str | None:
     try:
         step()
     except Exception as error:  # noqa: BLE001  # reported as the cycle's failure
-        return f"{name} failed: {type(error).__name__}"
+        detail = str(error).strip().splitlines()
+        return f"{name} failed: {type(error).__name__}" + (
+            f": {detail[0]}" if detail else ""
+        )
     return None
 
 

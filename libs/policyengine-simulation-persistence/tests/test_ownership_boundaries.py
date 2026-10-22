@@ -162,3 +162,17 @@ def test_modal_sources_may_name_only_the_comparison_paths_database_url() -> None
     assert modal_source_violations({"worker.py": "os.getenv('DATABASE_URL')"}) == [
         "worker.py names DATABASE_URL"
     ]
+
+
+def test_a_temporary_modal_app_may_not_receive_another_database_url() -> None:
+    workflow = (
+        "jobs:\n"
+        "  precompute:\n"
+        "    steps:\n"
+        "      - name: Precompute\n"
+        "        env:\n"
+        "          SIMULATION_DATABASE_URL: x\n"
+        "        run: uv run --frozen modal run src/modal/precompute_app.py\n"
+    )
+
+    assert modal_credential_violations({"precompute.yml": workflow}, {}) != []
