@@ -398,6 +398,7 @@ def _schema_1_document(*, include_cache: bool, version: str = "5.1.0") -> dict:
                 {"household_validation_invocation_ids"}
                 | (set() if include_cache else {"cache"})
             ),
+            "bundle": {"countries": {"__all__": {"region_datasets"}}},
             **({} if include_cache else {"cache": True}),
         },
     )
@@ -489,16 +490,14 @@ def _validated_on(worker: V2WorkerVersion, day: int) -> V2WorkerVersion:
 def _write_as_a_schema_1_publisher(
     store: FakeStore, *workers: V2WorkerVersion, default_version: str
 ) -> None:
-    """Write the older keys as a publisher released before schema 2 writes them."""
+    """Write the keys a publisher released before region datasets writes."""
     manifest = V2VersionManifest(
         generation="older-publisher",
         default_version=default_version,
         versions={worker.bundle.policyengine_version: worker for worker in workers},
     )
-    store[ACTIVE_MANIFEST_KEY] = schema_1_manifest_payload(manifest, include_cache=True)
-    store[PRE_CACHE_MANIFEST_KEY] = schema_1_manifest_payload(
-        manifest, include_cache=False
-    )
+    store[ACTIVE_MANIFEST_KEY] = pre_region_datasets_manifest_payload(manifest)
+    store[PRE_CACHE_MANIFEST_KEY] = pre_cache_manifest_payload(manifest)
 
 
 def test_a_publish_keeps_what_an_older_publisher_wrote_after_it() -> None:
@@ -589,6 +588,30 @@ def test_loader_retains_its_last_valid_v2_document() -> None:
     store.values[SCHEMA_2_MANIFEST_KEY] = {"schema_version": 999}
 
     assert loader.load() == expected
+
+
+def test_a_publish_refuses_an_unreadable_schema_2_document() -> None:
+    store = FakeStore()
+    publish_v2_manifest(store=store, worker=_worker())
+    store.values[SCHEMA_2_MANIFEST_KEY] = {"schema_version": 999}
+
+    with pytest.raises(ValueError, match="schema_version"):
+        publish_v2_manifest(store=store, worker=_worker("5.3.0"))
+
+
+@pytest.mark.parametrize("include_cache", [True, False])
+def test_older_publisher_fixtures_hold_only_released_fields(
+    include_cache: bool,  # noqa: FBT001  # pytest passes parameters by name
+) -> None:
+    # The documents these tests store as older publishers' output carry only
+    # the fields those publishers wrote.
+    document = _schema_1_document(include_cache=include_cache)
+    worker = _assert_schema_1_top_level(
+        {**document, "versions": {"5.2.0": document["versions"]["5.1.0"]}}
+    )["versions"]["5.2.0"]
+    for country in worker["bundle"]["countries"]:
+        assert set(country) == _COUNTRY_BUNDLE_FIELDS_BEFORE_REGION_DATASETS
+    assert ("cache" in worker) is include_cache
 
 
 def test_loader_never_falls_back_to_v1_state() -> None:
