@@ -21,6 +21,7 @@ from policyengine_api_simulation_client.models import (
     JobStage,
     JobStatusResponse,
     JobSubmitResponse,
+    LocalAreaBreakdownOutput,
     SimulationRequest,
 )
 
@@ -253,6 +254,45 @@ def assert_congressional_district_results(
         )
 
 
+_UK_AREA_RESULT_KEYS = ("constituency_impact", "local_authority_impact")
+_PUBLISHED_DISCLOSURE_TIERS = {"reported", "approximate"}
+
+
+def assert_no_uk_area_results(economy_result: object) -> None:
+    """Check a UK national result carries no constituency or local-authority data."""
+    economy_result = _as_mapping(economy_result, label="economy result")
+    for key in _UK_AREA_RESULT_KEYS:
+        assert economy_result.get(key) is None, (
+            f"Expected no {key} in a UK national result, got {economy_result[key]!r}"
+        )
+
+
+def assert_uk_local_area_breakdown(breakdown_result: object) -> None:
+    """Check a local-area breakdown came from the local-area dataset.
+
+    Both area levels must publish at least one area, and every published area
+    must carry a disclosure tier.
+    """
+    breakdown = _as_mapping(breakdown_result, label="local-area breakdown")
+    assert breakdown.get("kind") == "local_areas", (
+        f"Expected a local-area breakdown, got kind {breakdown.get('kind')!r}"
+    )
+    dataset = breakdown.get("dataset")
+    assert isinstance(dataset, str), f"Expected a dataset name, got {dataset!r}"
+    assert dataset.endswith("_dense"), (
+        f"Expected the local-area dataset, got {dataset!r}"
+    )
+    for key in _UK_AREA_RESULT_KEYS:
+        areas = breakdown.get(key)
+        assert isinstance(areas, list), f"Expected {key} to be a list, got {areas!r}"
+        assert areas, f"Expected {key} to publish at least one area"
+        for area in areas:
+            record = _as_mapping(area, label=f"{key} record")
+            assert record.get("disclosure_tier") in _PUBLISHED_DISCLOSURE_TIERS, (
+                f"Expected a published disclosure_tier in {key}, got {record}"
+            )
+
+
 class _GeneratedClientObject:
     def __init__(self, payload: Mapping) -> None:
         self._payload = dict(payload)
@@ -289,6 +329,89 @@ def test_result_assertions_accept_generated_client_objects() -> None:
 
     assert_economy_result_sections(result)
     assert_congressional_district_results(result, expected_district_prefix="UT-")
+
+
+_BREAKDOWN_CONSTITUENCY = {
+    "constituency_code": "E14001063",
+    "constituency_name": "Aldershot",
+    "x": 56,
+    "y": -40,
+    "average_household_income_change": -150.0,
+    "relative_household_income_change": -0.0026,
+    "population": 40530.0,
+    "disclosure_tier": "reported",
+    "average_household_income_change_lower": -170.0,
+    "average_household_income_change_upper": -130.0,
+    "relative_household_income_change_lower": -0.003,
+    "relative_household_income_change_upper": -0.0022,
+}
+_BREAKDOWN_LOCAL_AUTHORITY = {
+    "local_authority_code": "E06000063",
+    "local_authority_name": "Cumberland",
+    "x": 4,
+    "y": 18,
+    "average_household_income_change": -120.0,
+    "relative_household_income_change": -0.002,
+    "population": 120000.0,
+    "disclosure_tier": "approximate",
+    "average_household_income_change_lower": -160.0,
+    "average_household_income_change_upper": -80.0,
+    "relative_household_income_change_lower": -0.003,
+    "relative_household_income_change_upper": -0.001,
+}
+_BREAKDOWN_RESULT = {
+    "kind": "local_areas",
+    "model_version": "2.132.6",
+    "policyengine_version": "6.10.0",
+    "dataset": "microcosm_uk_2024_25_dense",
+    "data_version": "microcosm-uk-2024-25-dense-20261019T000432Z-ee5c2dbe",
+    "constituency_impact": [_BREAKDOWN_CONSTITUENCY],
+    "local_authority_impact": [_BREAKDOWN_LOCAL_AUTHORITY],
+}
+
+
+def test_breakdown_assertions_accept_generated_client_objects() -> None:
+    status = JobStatusResponse.from_dict(
+        {"status": "complete", "result": _BREAKDOWN_RESULT}
+    )
+
+    assert isinstance(status.result, LocalAreaBreakdownOutput)
+    assert_uk_local_area_breakdown(status.result)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"dataset": "microcosm_uk_2024_25"}, "local-area dataset"),
+        ({"constituency_impact": []}, "constituency_impact"),
+        ({"local_authority_impact": []}, "local_authority_impact"),
+        (
+            {
+                "constituency_impact": [
+                    {**_BREAKDOWN_CONSTITUENCY, "disclosure_tier": None}
+                ]
+            },
+            "disclosure_tier",
+        ),
+    ],
+)
+def test_breakdown_assertions_reject_an_incomplete_breakdown(change, message) -> None:
+    with pytest.raises(AssertionError, match=message):
+        assert_uk_local_area_breakdown({**_BREAKDOWN_RESULT, **change})
+
+
+def test_national_uk_assertions_accept_a_result_without_area_results() -> None:
+    assert_no_uk_area_results(
+        _GeneratedClientObject({"budget": {}, "poverty": {}, "inequality": {}})
+    )
+    assert_no_uk_area_results(
+        {"constituency_impact": None, "local_authority_impact": None}
+    )
+
+
+def test_national_uk_assertions_reject_area_results() -> None:
+    with pytest.raises(AssertionError, match="constituency_impact"):
+        assert_no_uk_area_results({"constituency_impact": [_BREAKDOWN_CONSTITUENCY]})
 
 
 @dataclass
@@ -705,3 +828,48 @@ def test_calculate_uk_model(
 
     economy_result = result.result
     assert_economy_result_sections(economy_result)
+    # A UK-wide run on a bundle that routes area regions computes no area
+    # results; a breakdown=local_areas run does.
+    assert_no_uk_area_results(economy_result)
+
+
+@pytest.mark.beta_only
+def test_calculate_uk_local_area_breakdown(
+    client: Client | AuthenticatedClient,
+    uk_model_version: str,
+    max_wait_seconds: float,
+    poll_interval: float,
+):
+    """A UK local-area breakdown returns both area levels from the local-area dataset.
+
+    Given a UK-wide request with breakdown=local_areas
+    When the simulation is submitted and polled to completion
+    Then the result is a local-area breakdown with published constituencies
+    and local authorities, each with a disclosure tier.
+    """
+    # Given
+    request = SimulationRequest.from_dict(
+        {
+            "country": "uk",
+            "version": uk_model_version,
+            "scope": "macro",
+            "region": "uk",
+            "time_period": "2026",
+            "include_cliffs": False,
+            "breakdown": "local_areas",
+            "reform": {
+                "gov.hmrc.income_tax.rates.uk[0].rate": {"2023-01-01.2100-12-31": 0.21}
+            },
+        }
+    )
+
+    # When
+    submit_response = submit_simulation_request(client, request)
+    assert submit_response.version == uk_model_version
+    result = poll_for_completion(
+        client, submit_response.job_id, max_wait_seconds, poll_interval
+    )
+
+    # Then
+    assert result.status == "complete"
+    assert_uk_local_area_breakdown(result.result)
