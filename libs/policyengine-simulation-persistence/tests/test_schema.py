@@ -121,4 +121,7 @@ def test_importing_the_package_registers_every_table() -> None:
         "simulation.reports",
         "simulation.simulation_runs",
         "simulation.report_runs",
+        "simulation.poverty_rates",
+        "simulation.budget_impacts",
+        "simulation.local_authority_impacts",
     } <= package_tables

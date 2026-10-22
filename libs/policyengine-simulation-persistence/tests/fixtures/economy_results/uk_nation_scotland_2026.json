@@ -1,0 +1,1107 @@
+{
+ "spm_provenance": null,
+ "model_version": "2.62.1",
+ "data_version": "1.30.2",
+ "budget": {
+  "tax_revenue_impact": 64390808463.94536,
+  "state_tax_revenue_impact": 0.0,
+  "benefit_spending_impact": -2993074413.8109365,
+  "budgetary_impact": 58668016752.332596,
+  "households": 125232429.65889315,
+  "baseline_net_income": 11000903429770.143
+ },
+ "detailed_budget": {
+  "income_tax": {
+   "baseline": 325637125.7675352,
+   "reform": -59491485.87110997,
+   "difference": 519461270.1957861
+  },
+  "national_insurance": {
+   "baseline": -253679255.8523169,
+   "reform": 540279671.8759804,
+   "difference": -454603828.65605855
+  },
+  "universal_credit": {
+   "baseline": 603830966.3252072,
+   "reform": 459649665.2440321,
+   "difference": -171987117.66939324
+  }
+ },
+ "decile": {
+  "average": {
+   "1": 229.8313173316613,
+   "2": 1092.3104477320703,
+   "3": -1842.0907454154756,
+   "4": 321.6909929897056,
+   "5": 1830.7442990938393,
+   "6": -1406.8736733689877,
+   "7": 1820.1918576678795,
+   "8": 1114.1392926026454,
+   "9": 2065.6939487769896,
+   "10": -986.5078930451141
+  },
+  "relative": {
+   "1": -3.5e-9,
+   "2": -3.5e-9,
+   "3": -0.0,
+   "4": 1e-12,
+   "5": 0.0,
+   "6": -0.0,
+   "7": 1e-12,
+   "8": -0.0,
+   "9": 0.514651161252579,
+   "10": 0.0
+  }
+ },
+ "inequality": {
+  "gini": {
+   "baseline": 0.6334784504873784,
+   "reform": 0.24489570857396148
+  },
+  "top_10_pct_share": {
+   "baseline": 0.42968860495332184,
+   "reform": 0.35737961969641396
+  },
+  "top_1_pct_share": {
+   "baseline": 0.11958467282121965,
+   "reform": 0.5001571542030486
+  }
+ },
+ "poverty": {
+  "poverty": {
+   "child": {
+    "baseline": 0.6786164084469019,
+    "reform": 0.19912544724959425
+   },
+   "adult": {
+    "baseline": 0.6082083930279402,
+    "reform": 0.26788463676184904
+   },
+   "senior": {
+    "baseline": 0.7190033361034402,
+    "reform": 0.37980670097279756
+   },
+   "all": {
+    "baseline": 0.22273872895617441,
+    "reform": 0.5973431930682456
+   }
+  },
+  "deep_poverty": {
+   "child": {
+    "baseline": 0.8340038125629663,
+    "reform": 0.8759846739338617
+   },
+   "adult": {
+    "baseline": 0.5221405328253113,
+    "reform": 0.1887466667447798
+   },
+   "senior": {
+    "baseline": 0.16914279771639962,
+    "reform": 0.6479872117408518
+   },
+   "all": {
+    "baseline": 0.5577457838091093,
+    "reform": 0.6713560120781157
+   }
+  }
+ },
+ "poverty_by_gender": {
+  "poverty": {
+   "male": {
+    "baseline": 0.6186183415809611,
+    "reform": 0.3746321527466535
+   },
+   "female": {
+    "baseline": 0.5273738308933793,
+    "reform": 0.2891491959008181
+   }
+  },
+  "deep_poverty": {
+   "male": {
+    "baseline": 0.6787295490494265,
+    "reform": 0.48875780443714656
+   },
+   "female": {
+    "baseline": 0.1853489385760475,
+    "reform": 0.5939299668842034
+   }
+  }
+ },
+ "poverty_by_race": null,
+ "intra_decile": {
+  "deciles": {
+   "Gain more than 5%": [
+    0.9983275487852417,
+    0.09598156795630997,
+    0.4412533584632802,
+    0.805664919162214,
+    0.0890571094472482,
+    0.6031814416514121,
+    0.8704750455134551,
+    0.44611240511532246,
+    0.7839082541410588,
+    0.38001855310871324
+   ],
+   "Gain less than 5%": [
+    0.07647079614316421,
+    0.426420781544818,
+    0.3034617506390286,
+    0.8165324211795908,
+    0.9407251558149671,
+    0.192145382959514,
+    0.6801797096864858,
+    0.4513581729506253,
+    0.7226273326875959,
+    0.9650738699147708
+   ],
+   "No change": [
+    0.018540926440606675,
+    0.5379422837756225,
+    0.2511375515864458,
+    0.8017780733186686,
+    0.18755907011264716,
+    0.5027365420127902,
+    0.3294401386946224,
+    0.5168725569156065,
+    0.9815612316919237,
+    0.9269299125618775
+   ],
+   "Lose less than 5%": [
+    0.42174289086593053,
+    0.4854045828278176,
+    0.6024852653943666,
+    0.6562875544916017,
+    0.4920221130712703,
+    0.7212748928180196,
+    0.49665032554919664,
+    0.6344686285014524,
+    0.46726121994398717,
+    0.3664770249966022
+   ],
+   "Lose more than 5%": [
+    0.16303107865725508,
+    0.9130982750883577,
+    0.6194427711966841,
+    0.6944523200618581,
+    0.2658040323861912,
+    0.6460990041366336,
+    0.9750146231651212,
+    0.7293056383240148,
+    0.1581871877358284,
+    0.8276901266782712
+   ]
+  },
+  "all": {
+   "Gain more than 5%": 0.5598594695791028,
+   "Gain less than 5%": 0.623783986638168,
+   "No change": 0.9646560032450038,
+   "Lose less than 5%": 0.18257821373725425,
+   "Lose more than 5%": 0.6099615676222211
+  }
+ },
+ "wealth_decile": {
+  "average": {
+   "1": 418.61987615264894,
+   "2": 1092.5765507745975,
+   "3": -774.5793001944729,
+   "4": 2895.625186194798,
+   "5": -15.355742566662167,
+   "6": 538.4961543504079,
+   "7": 2515.641832022293,
+   "8": -2073.6700617943084,
+   "9": -1384.4805830672783,
+   "10": -2911.058153713721
+  },
+  "relative": {
+   "1": 0.806214673685218,
+   "2": -3.5e-9,
+   "3": 1e-12,
+   "4": -0.0,
+   "5": -0.0,
+   "6": -0.0,
+   "7": 0.0,
+   "8": 0.0,
+   "9": -3.5e-9,
+   "10": 0.0
+  }
+ },
+ "intra_wealth_decile": {
+  "deciles": {
+   "Gain more than 5%": [
+    0.6291973816666468,
+    0.7013704668836823,
+    0.12700661731226226,
+    0.8326633343412233,
+    0.08354357750012409,
+    0.6181217255531115,
+    0.9113983457176773,
+    0.907729408431122,
+    0.8932946373096041,
+    0.45198385044703215
+   ],
+   "Gain less than 5%": [
+    0.6938003899178132,
+    0.7913324805904123,
+    0.13707201047427242,
+    0.9434018223642858,
+    0.9087743307211948,
+    0.44088664262863775,
+    0.7784980195721916,
+    0.44707866429232035,
+    0.276407066564499,
+    0.7124788208255114
+   ],
+   "No change": [
+    0.06367014967968354,
+    0.8001987583321369,
+    0.9780769226211543,
+    0.2860706698905068,
+    0.9396713676591827,
+    0.0836817585111066,
+    0.8580787872954002,
+    0.27980791981603825,
+    0.9662205612145367,
+    0.43069671425396816
+   ],
+   "Lose less than 5%": [
+    0.9221630049605285,
+    0.031913121892390484,
+    0.0856434274433241,
+    0.8163716167559534,
+    0.6385726424936319,
+    0.5355011205782659,
+    0.03271274819258396,
+    0.17329315346763263,
+    0.37048865878554826,
+    0.052065871297530264
+   ],
+   "Lose more than 5%": [
+    0.9930401276040598,
+    0.7651977371516221,
+    0.9497969464151493,
+    0.700686107822012,
+    0.3434781125570455,
+    0.07759481040860672,
+    0.7315198754952839,
+    0.11403501331547539,
+    0.5471255342341411,
+    0.4640510361121649
+   ]
+  },
+  "all": {
+   "Gain more than 5%": 0.49453074216398074,
+   "Gain less than 5%": 0.07518152242937215,
+   "No change": 0.0739710655093323,
+   "Lose less than 5%": 0.5202668233103811,
+   "Lose more than 5%": 0.030475714696043932
+  }
+ },
+ "labor_supply_response": null,
+ "constituency_impact": [
+  {
+   "constituency_code": "S14000000001",
+   "constituency_name": "Constituency 1",
+   "x": null,
+   "y": null,
+   "average_household_income_change": -22.0502560822613,
+   "relative_household_income_change": 1e-12,
+   "population": 79332.57320595343
+  },
+  {
+   "constituency_code": "S14000000002",
+   "constituency_name": "Constituency 2",
+   "x": 1,
+   "y": 0,
+   "average_household_income_change": 1215.908995067085,
+   "relative_household_income_change": 1e-12,
+   "population": 85934.48703372813
+  },
+  {
+   "constituency_code": "S14000000003",
+   "constituency_name": "Constituency 3",
+   "x": 2,
+   "y": 0,
+   "average_household_income_change": -377.999828418476,
+   "relative_household_income_change": -0.0,
+   "population": 83465.39782866623
+  },
+  {
+   "constituency_code": "S14000000004",
+   "constituency_name": "Constituency 4",
+   "x": 3,
+   "y": 0,
+   "average_household_income_change": -1974.7197361654237,
+   "relative_household_income_change": 0.0,
+   "population": 113477.96855441103
+  },
+  {
+   "constituency_code": "S14000000005",
+   "constituency_name": "Constituency 5",
+   "x": 4,
+   "y": 0,
+   "average_household_income_change": -649.8105518108947,
+   "relative_household_income_change": -0.0,
+   "population": 62789.23357183145
+  },
+  {
+   "constituency_code": "S14000000006",
+   "constituency_name": "Constituency 6",
+   "x": 5,
+   "y": 0,
+   "average_household_income_change": -387.339732156089,
+   "relative_household_income_change": 1e-12,
+   "population": 94065.14389717858
+  },
+  {
+   "constituency_code": "S14000000007",
+   "constituency_name": "Constituency 7",
+   "x": 6,
+   "y": 0,
+   "average_household_income_change": -726.0333413494302,
+   "relative_household_income_change": -0.0,
+   "population": 128189.16865653818
+  },
+  {
+   "constituency_code": "S14000000008",
+   "constituency_name": "Constituency 8",
+   "x": null,
+   "y": null,
+   "average_household_income_change": 459.8825949063641,
+   "relative_household_income_change": -0.0,
+   "population": 63046.60303942481
+  },
+  {
+   "constituency_code": "S14000000009",
+   "constituency_name": "Constituency 9",
+   "x": 8,
+   "y": 0,
+   "average_household_income_change": -1766.27589639709,
+   "relative_household_income_change": 0.0,
+   "population": 103944.30710763739
+  },
+  {
+   "constituency_code": "S14000000010",
+   "constituency_name": "Constituency 10",
+   "x": 9,
+   "y": 0,
+   "average_household_income_change": -1656.9844230967562,
+   "relative_household_income_change": 0.0,
+   "population": 92293.1508555326
+  },
+  {
+   "constituency_code": "S14000000011",
+   "constituency_name": "Constituency 11",
+   "x": 10,
+   "y": 0,
+   "average_household_income_change": -1568.4105912709422,
+   "relative_household_income_change": 0.0,
+   "population": 89367.41666308911
+  },
+  {
+   "constituency_code": "S14000000012",
+   "constituency_name": "Constituency 12",
+   "x": 11,
+   "y": 0,
+   "average_household_income_change": -1540.3301530676376,
+   "relative_household_income_change": 1e-12,
+   "population": 53137.15027763359
+  },
+  {
+   "constituency_code": "S14000000013",
+   "constituency_name": "Constituency 13",
+   "x": 12,
+   "y": 0,
+   "average_household_income_change": -49.71783554546061,
+   "relative_household_income_change": -3.5e-9,
+   "population": 69494.2870251734
+  },
+  {
+   "constituency_code": "S14000000014",
+   "constituency_name": "Constituency 14",
+   "x": 13,
+   "y": 0,
+   "average_household_income_change": -1713.485408027081,
+   "relative_household_income_change": 1e-12,
+   "population": 114944.10521441708
+  },
+  {
+   "constituency_code": "S14000000015",
+   "constituency_name": "Constituency 15",
+   "x": null,
+   "y": null,
+   "average_household_income_change": 515.040158455704,
+   "relative_household_income_change": 1e-12,
+   "population": 123680.0940363324
+  },
+  {
+   "constituency_code": "S14000000016",
+   "constituency_name": "Constituency 16",
+   "x": 15,
+   "y": 0,
+   "average_household_income_change": 886.6824618994942,
+   "relative_household_income_change": -0.0,
+   "population": 133563.797744863
+  },
+  {
+   "constituency_code": "S14000000017",
+   "constituency_name": "Constituency 17",
+   "x": 16,
+   "y": 0,
+   "average_household_income_change": 1847.8852194008336,
+   "relative_household_income_change": 0.970116107552746,
+   "population": 96561.24036341548
+  },
+  {
+   "constituency_code": "S14000000018",
+   "constituency_name": "Constituency 18",
+   "x": 17,
+   "y": 0,
+   "average_household_income_change": -199.63383446378157,
+   "relative_household_income_change": -0.0,
+   "population": 130680.98864876162
+  },
+  {
+   "constituency_code": "S14000000019",
+   "constituency_name": "Constituency 19",
+   "x": 18,
+   "y": 0,
+   "average_household_income_change": -1286.6748534572503,
+   "relative_household_income_change": -3.5e-9,
+   "population": 73823.59031650981
+  },
+  {
+   "constituency_code": "S14000000020",
+   "constituency_name": "Constituency 20",
+   "x": 19,
+   "y": 0,
+   "average_household_income_change": -1170.758388551763,
+   "relative_household_income_change": 0.8412079197691499,
+   "population": 95406.04234472507
+  },
+  {
+   "constituency_code": "S14000000021",
+   "constituency_name": "Constituency 21",
+   "x": 20,
+   "y": 0,
+   "average_household_income_change": -721.0569534926518,
+   "relative_household_income_change": -0.0,
+   "population": 68215.09086082038
+  },
+  {
+   "constituency_code": "S14000000022",
+   "constituency_name": "Constituency 22",
+   "x": null,
+   "y": null,
+   "average_household_income_change": -1327.8413593194002,
+   "relative_household_income_change": 1e-12,
+   "population": 139680.9189915626
+  },
+  {
+   "constituency_code": "S14000000023",
+   "constituency_name": "Constituency 23",
+   "x": 22,
+   "y": 0,
+   "average_household_income_change": 1823.701833262151,
+   "relative_household_income_change": 0.0,
+   "population": 135075.91381560973
+  },
+  {
+   "constituency_code": "S14000000024",
+   "constituency_name": "Constituency 24",
+   "x": 23,
+   "y": 0,
+   "average_household_income_change": 585.4829596118924,
+   "relative_household_income_change": 0.0,
+   "population": 62805.9120249973
+  },
+  {
+   "constituency_code": "S14000000025",
+   "constituency_name": "Constituency 25",
+   "x": 24,
+   "y": 0,
+   "average_household_income_change": -10.380093653008071,
+   "relative_household_income_change": 1e-12,
+   "population": 93527.3783158783
+  },
+  {
+   "constituency_code": "S14000000026",
+   "constituency_name": "Constituency 26",
+   "x": 25,
+   "y": 0,
+   "average_household_income_change": -256.4312080701563,
+   "relative_household_income_change": 0.6432241717762336,
+   "population": 88101.31906153599
+  },
+  {
+   "constituency_code": "S14000000027",
+   "constituency_name": "Constituency 27",
+   "x": 26,
+   "y": 0,
+   "average_household_income_change": 1702.7522243659537,
+   "relative_household_income_change": 0.0,
+   "population": 125414.43486372594
+  },
+  {
+   "constituency_code": "S14000000028",
+   "constituency_name": "Constituency 28",
+   "x": 27,
+   "y": 0,
+   "average_household_income_change": 1224.4288663412387,
+   "relative_household_income_change": 1e-12,
+   "population": 125936.64670777883
+  },
+  {
+   "constituency_code": "S14000000029",
+   "constituency_name": "Constituency 29",
+   "x": null,
+   "y": null,
+   "average_household_income_change": -50.36433936503304,
+   "relative_household_income_change": 0.5045905570059873,
+   "population": 110678.73316985903
+  },
+  {
+   "constituency_code": "S14000000030",
+   "constituency_name": "Constituency 30",
+   "x": 29,
+   "y": 0,
+   "average_household_income_change": -1787.784293656903,
+   "relative_household_income_change": -3.5e-9,
+   "population": 137815.36506324858
+  },
+  {
+   "constituency_code": "S14000000031",
+   "constituency_name": "Constituency 31",
+   "x": 30,
+   "y": 0,
+   "average_household_income_change": -712.4863332789974,
+   "relative_household_income_change": 0.8140841787567573,
+   "population": 77978.11324744608
+  },
+  {
+   "constituency_code": "S14000000032",
+   "constituency_name": "Constituency 32",
+   "x": 0,
+   "y": 1,
+   "average_household_income_change": 1623.627170035723,
+   "relative_household_income_change": -0.0,
+   "population": 106220.79881424447
+  },
+  {
+   "constituency_code": "S14000000033",
+   "constituency_name": "Constituency 33",
+   "x": 1,
+   "y": 1,
+   "average_household_income_change": -879.6243473802599,
+   "relative_household_income_change": -0.0,
+   "population": 113212.96419666243
+  },
+  {
+   "constituency_code": "S14000000034",
+   "constituency_name": "Constituency 34",
+   "x": 2,
+   "y": 1,
+   "average_household_income_change": -759.2250650364525,
+   "relative_household_income_change": -0.0,
+   "population": 75244.09885972543
+  },
+  {
+   "constituency_code": "S14000000035",
+   "constituency_name": "Constituency 35",
+   "x": 3,
+   "y": 1,
+   "average_household_income_change": 328.0589704575538,
+   "relative_household_income_change": -0.0,
+   "population": 100810.42044062808
+  },
+  {
+   "constituency_code": "S14000000036",
+   "constituency_name": "Constituency 36",
+   "x": null,
+   "y": null,
+   "average_household_income_change": 1123.594288313716,
+   "relative_household_income_change": 1e-12,
+   "population": 124050.46952325002
+  },
+  {
+   "constituency_code": "S14000000037",
+   "constituency_name": "Constituency 37",
+   "x": 5,
+   "y": 1,
+   "average_household_income_change": -207.40824634245314,
+   "relative_household_income_change": 0.566121478909492,
+   "population": 86172.31704600062
+  },
+  {
+   "constituency_code": "S14000000038",
+   "constituency_name": "Constituency 38",
+   "x": 6,
+   "y": 1,
+   "average_household_income_change": 450.9534054524922,
+   "relative_household_income_change": 1e-12,
+   "population": 71202.13598416587
+  },
+  {
+   "constituency_code": "S14000000039",
+   "constituency_name": "Constituency 39",
+   "x": 7,
+   "y": 1,
+   "average_household_income_change": -505.1320248700919,
+   "relative_household_income_change": -0.0,
+   "population": 78380.02565944156
+  },
+  {
+   "constituency_code": "S14000000040",
+   "constituency_name": "Constituency 40",
+   "x": 8,
+   "y": 1,
+   "average_household_income_change": 369.07046484015103,
+   "relative_household_income_change": 0.0,
+   "population": 96559.91677812286
+  },
+  {
+   "constituency_code": "S14000000041",
+   "constituency_name": "Constituency 41",
+   "x": 9,
+   "y": 1,
+   "average_household_income_change": 1725.916837222794,
+   "relative_household_income_change": 0.6377702114609652,
+   "population": 54537.937931824395
+  },
+  {
+   "constituency_code": "S14000000042",
+   "constituency_name": "Constituency 42",
+   "x": 10,
+   "y": 1,
+   "average_household_income_change": 1330.2517858463264,
+   "relative_household_income_change": 0.5598026330340823,
+   "population": 52934.12546599741
+  },
+  {
+   "constituency_code": "S14000000043",
+   "constituency_name": "Constituency 43",
+   "x": null,
+   "y": null,
+   "average_household_income_change": 1766.9186377099031,
+   "relative_household_income_change": 1e-12,
+   "population": 67014.41931048906
+  },
+  {
+   "constituency_code": "S14000000044",
+   "constituency_name": "Constituency 44",
+   "x": 12,
+   "y": 1,
+   "average_household_income_change": -573.5210003270792,
+   "relative_household_income_change": 0.5958518145639365,
+   "population": 143726.2105377167
+  },
+  {
+   "constituency_code": "S14000000045",
+   "constituency_name": "Constituency 45",
+   "x": 13,
+   "y": 1,
+   "average_household_income_change": -1142.3319096547716,
+   "relative_household_income_change": 1e-12,
+   "population": 127568.64904169193
+  },
+  {
+   "constituency_code": "S14000000046",
+   "constituency_name": "Constituency 46",
+   "x": 14,
+   "y": 1,
+   "average_household_income_change": -1987.0210639986383,
+   "relative_household_income_change": -0.0,
+   "population": 79684.65150836893
+  },
+  {
+   "constituency_code": "S14000000047",
+   "constituency_name": "Constituency 47",
+   "x": 15,
+   "y": 1,
+   "average_household_income_change": -899.9641960071924,
+   "relative_household_income_change": 0.33535050184635984,
+   "population": 110975.7867195766
+  },
+  {
+   "constituency_code": "S14000000048",
+   "constituency_name": "Constituency 48",
+   "x": 16,
+   "y": 1,
+   "average_household_income_change": 43.803712052223446,
+   "relative_household_income_change": -0.0,
+   "population": 55638.22656504041
+  },
+  {
+   "constituency_code": "S14000000049",
+   "constituency_name": "Constituency 49",
+   "x": 17,
+   "y": 1,
+   "average_household_income_change": -1858.2148152893594,
+   "relative_household_income_change": -0.0,
+   "population": 61494.55783779679
+  },
+  {
+   "constituency_code": "S14000000050",
+   "constituency_name": "Constituency 50",
+   "x": null,
+   "y": null,
+   "average_household_income_change": 1793.552834263271,
+   "relative_household_income_change": 1e-12,
+   "population": 71150.5956498904
+  },
+  {
+   "constituency_code": "S14000000051",
+   "constituency_name": "Constituency 51",
+   "x": 19,
+   "y": 1,
+   "average_household_income_change": 395.1686018800302,
+   "relative_household_income_change": -3.5e-9,
+   "population": 57577.16533695534
+  },
+  {
+   "constituency_code": "S14000000052",
+   "constituency_name": "Constituency 52",
+   "x": 20,
+   "y": 1,
+   "average_household_income_change": 1734.0747439322786,
+   "relative_household_income_change": 1e-12,
+   "population": 65718.41606608071
+  },
+  {
+   "constituency_code": "S14000000053",
+   "constituency_name": "Constituency 53",
+   "x": 21,
+   "y": 1,
+   "average_household_income_change": -1021.0283577089085,
+   "relative_household_income_change": 1e-12,
+   "population": 52738.38868454951
+  },
+  {
+   "constituency_code": "S14000000054",
+   "constituency_name": "Constituency 54",
+   "x": 22,
+   "y": 1,
+   "average_household_income_change": 1195.60033690023,
+   "relative_household_income_change": 0.0,
+   "population": 58687.69580485995
+  },
+  {
+   "constituency_code": "S14000000055",
+   "constituency_name": "Constituency 55",
+   "x": 23,
+   "y": 1,
+   "average_household_income_change": 1258.2528562824318,
+   "relative_household_income_change": 1e-12,
+   "population": 52638.640102357116
+  },
+  {
+   "constituency_code": "S14000000056",
+   "constituency_name": "Constituency 56",
+   "x": 24,
+   "y": 1,
+   "average_household_income_change": -1190.9949809860163,
+   "relative_household_income_change": -3.5e-9,
+   "population": 95505.81052752634
+  },
+  {
+   "constituency_code": "S14000000057",
+   "constituency_name": "Constituency 57",
+   "x": null,
+   "y": null,
+   "average_household_income_change": -1580.6126310753368,
+   "relative_household_income_change": 0.8216310930495441,
+   "population": 64646.038428561056
+  }
+ ],
+ "local_authority_impact": [
+  {
+   "local_authority_code": "S12000000001",
+   "local_authority_name": "Local Authority 1",
+   "x": null,
+   "y": null,
+   "average_household_income_change": 1711.9662635106972,
+   "relative_household_income_change": -0.0,
+   "population": 139245.28916534188
+  },
+  {
+   "local_authority_code": "S12000000002",
+   "local_authority_name": "Local Authority 2",
+   "x": 1,
+   "y": 0,
+   "average_household_income_change": -760.4907483529573,
+   "relative_household_income_change": -0.0,
+   "population": 100805.127015022
+  },
+  {
+   "local_authority_code": "S12000000003",
+   "local_authority_name": "Local Authority 3",
+   "x": 2,
+   "y": 0,
+   "average_household_income_change": -1353.896856076334,
+   "relative_household_income_change": -0.0,
+   "population": 136496.49703708116
+  },
+  {
+   "local_authority_code": "S12000000004",
+   "local_authority_name": "Local Authority 4",
+   "x": 3,
+   "y": 0,
+   "average_household_income_change": -1879.016683323623,
+   "relative_household_income_change": 0.0,
+   "population": 127529.863915214
+  },
+  {
+   "local_authority_code": "S12000000005",
+   "local_authority_name": "Local Authority 5",
+   "x": 4,
+   "y": 0,
+   "average_household_income_change": -629.0130927662503,
+   "relative_household_income_change": -0.0,
+   "population": 119156.76386104178
+  },
+  {
+   "local_authority_code": "S12000000006",
+   "local_authority_name": "Local Authority 6",
+   "x": 5,
+   "y": 0,
+   "average_household_income_change": 874.6099793547413,
+   "relative_household_income_change": -3.5e-9,
+   "population": 106277.9233003826
+  },
+  {
+   "local_authority_code": "S12000000007",
+   "local_authority_name": "Local Authority 7",
+   "x": 6,
+   "y": 0,
+   "average_household_income_change": 467.98635714846614,
+   "relative_household_income_change": 1e-12,
+   "population": 139741.54468077584
+  },
+  {
+   "local_authority_code": "S12000000008",
+   "local_authority_name": "Local Authority 8",
+   "x": null,
+   "y": null,
+   "average_household_income_change": -550.7700901310177,
+   "relative_household_income_change": 0.0,
+   "population": 80739.55317161283
+  },
+  {
+   "local_authority_code": "S12000000009",
+   "local_authority_name": "Local Authority 9",
+   "x": 8,
+   "y": 0,
+   "average_household_income_change": -838.1639537967227,
+   "relative_household_income_change": 0.42674518552708585,
+   "population": 77962.94927239053
+  },
+  {
+   "local_authority_code": "S12000000010",
+   "local_authority_name": "Local Authority 10",
+   "x": 9,
+   "y": 0,
+   "average_household_income_change": -1308.258634844165,
+   "relative_household_income_change": 0.7317258270864375,
+   "population": 106985.32281751494
+  },
+  {
+   "local_authority_code": "S12000000011",
+   "local_authority_name": "Local Authority 11",
+   "x": 10,
+   "y": 0,
+   "average_household_income_change": -1200.3987427447091,
+   "relative_household_income_change": -0.0,
+   "population": 60169.16904360067
+  },
+  {
+   "local_authority_code": "S12000000012",
+   "local_authority_name": "Local Authority 12",
+   "x": 11,
+   "y": 0,
+   "average_household_income_change": -538.9775499790547,
+   "relative_household_income_change": 1e-12,
+   "population": 134657.14469719745
+  },
+  {
+   "local_authority_code": "S12000000013",
+   "local_authority_name": "Local Authority 13",
+   "x": 12,
+   "y": 0,
+   "average_household_income_change": -521.6966583670524,
+   "relative_household_income_change": -0.0,
+   "population": 84326.3910283849
+  },
+  {
+   "local_authority_code": "S12000000014",
+   "local_authority_name": "Local Authority 14",
+   "x": 13,
+   "y": 0,
+   "average_household_income_change": -403.72167393983773,
+   "relative_household_income_change": 1e-12,
+   "population": 90121.64285325728
+  },
+  {
+   "local_authority_code": "S12000000015",
+   "local_authority_name": "Local Authority 15",
+   "x": null,
+   "y": null,
+   "average_household_income_change": -1992.3987578717731,
+   "relative_household_income_change": 0.5390980006995861,
+   "population": 57146.25648990415
+  },
+  {
+   "local_authority_code": "S12000000016",
+   "local_authority_name": "Local Authority 16",
+   "x": 15,
+   "y": 0,
+   "average_household_income_change": 1912.9330818653293,
+   "relative_household_income_change": -3.5e-9,
+   "population": 61630.540132526454
+  },
+  {
+   "local_authority_code": "S12000000017",
+   "local_authority_name": "Local Authority 17",
+   "x": 16,
+   "y": 0,
+   "average_household_income_change": 676.9488735769369,
+   "relative_household_income_change": 0.22230810403099188,
+   "population": 83264.51133432586
+  },
+  {
+   "local_authority_code": "S12000000018",
+   "local_authority_name": "Local Authority 18",
+   "x": 17,
+   "y": 0,
+   "average_household_income_change": 736.3951699342284,
+   "relative_household_income_change": -3.5e-9,
+   "population": 60421.1365110476
+  },
+  {
+   "local_authority_code": "S12000000019",
+   "local_authority_name": "Local Authority 19",
+   "x": 18,
+   "y": 0,
+   "average_household_income_change": -892.5830346459045,
+   "relative_household_income_change": -3.5e-9,
+   "population": 149136.34982537729
+  },
+  {
+   "local_authority_code": "S12000000020",
+   "local_authority_name": "Local Authority 20",
+   "x": 19,
+   "y": 0,
+   "average_household_income_change": 1871.832185732079,
+   "relative_household_income_change": 0.9315108544036715,
+   "population": 82551.14096226152
+  },
+  {
+   "local_authority_code": "S12000000021",
+   "local_authority_name": "Local Authority 21",
+   "x": 20,
+   "y": 0,
+   "average_household_income_change": -1775.413352074153,
+   "relative_household_income_change": -3.5e-9,
+   "population": 142543.40081999943
+  },
+  {
+   "local_authority_code": "S12000000022",
+   "local_authority_name": "Local Authority 22",
+   "x": null,
+   "y": null,
+   "average_household_income_change": 1677.2264729092446,
+   "relative_household_income_change": -3.5e-9,
+   "population": 119213.98806155729
+  },
+  {
+   "local_authority_code": "S12000000023",
+   "local_authority_name": "Local Authority 23",
+   "x": 22,
+   "y": 0,
+   "average_household_income_change": 253.80086043629467,
+   "relative_household_income_change": 0.16846215105615936,
+   "population": 131349.02471522414
+  },
+  {
+   "local_authority_code": "S12000000024",
+   "local_authority_name": "Local Authority 24",
+   "x": 23,
+   "y": 0,
+   "average_household_income_change": -1851.6056943936076,
+   "relative_household_income_change": -3.5e-9,
+   "population": 98606.58597465903
+  },
+  {
+   "local_authority_code": "S12000000025",
+   "local_authority_name": "Local Authority 25",
+   "x": 24,
+   "y": 0,
+   "average_household_income_change": -1449.2733170436777,
+   "relative_household_income_change": 1e-12,
+   "population": 57564.83061204634
+  },
+  {
+   "local_authority_code": "S12000000026",
+   "local_authority_name": "Local Authority 26",
+   "x": 25,
+   "y": 0,
+   "average_household_income_change": -872.6789126607173,
+   "relative_household_income_change": 1e-12,
+   "population": 125783.43975305068
+  },
+  {
+   "local_authority_code": "S12000000027",
+   "local_authority_name": "Local Authority 27",
+   "x": 26,
+   "y": 0,
+   "average_household_income_change": -1311.9645179858242,
+   "relative_household_income_change": 0.9912178495741759,
+   "population": 81237.5561149096
+  },
+  {
+   "local_authority_code": "S12000000028",
+   "local_authority_name": "Local Authority 28",
+   "x": 27,
+   "y": 0,
+   "average_household_income_change": 576.031133075289,
+   "relative_household_income_change": 0.7038678747725524,
+   "population": 141107.730757162
+  },
+  {
+   "local_authority_code": "S12000000029",
+   "local_authority_name": "Local Authority 29",
+   "x": null,
+   "y": null,
+   "average_household_income_change": 958.8442127965027,
+   "relative_household_income_change": 1e-12,
+   "population": 102312.94874371101
+  },
+  {
+   "local_authority_code": "S12000000030",
+   "local_authority_name": "Local Authority 30",
+   "x": 29,
+   "y": 0,
+   "average_household_income_change": -1343.8459777407186,
+   "relative_household_income_change": -3.5e-9,
+   "population": 103091.15965651689
+  },
+  {
+   "local_authority_code": "S12000000031",
+   "local_authority_name": "Local Authority 31",
+   "x": 30,
+   "y": 0,
+   "average_household_income_change": -26.106472316017815,
+   "relative_household_income_change": -3.5e-9,
+   "population": 139125.5993482639
+  },
+  {
+   "local_authority_code": "S12000000032",
+   "local_authority_name": "Local Authority 32",
+   "x": 0,
+   "y": 1,
+   "average_household_income_change": 1875.5073255172429,
+   "relative_household_income_change": 1e-12,
+   "population": 52821.895044486846
+  }
+ ],
+ "congressional_district_impact": null,
+ "cliff_impact": null
+}

@@ -63,6 +63,27 @@ steps whose simulation run failed) are failed so the work can be submitted
 again. A comparison step can start only once both of its simulation runs
 have succeeded; starting it is left to the stage 2 report path.
 
+### Results
+
+Every economy result is stored as rows (`result_tables`), one table per
+section of today's result model, `SingleYearMacroOutput`:
+
+| Belongs to | Tables |
+| --- | --- |
+| A simulation run (its own figures, kept once when the run is reused) | `poverty_rates`, `inequality`, `cliff_impacts` |
+| A report run (the comparison) | `budget_impacts`, `program_budget_impacts`, `decile_impacts` (income and wealth), `intra_decile_impacts` (income and wealth), `labor_supply_responses`, `labor_supply_decile_impacts`, `congressional_district_impacts`, `constituency_impacts`, `local_authority_impacts` |
+
+Lists and maps keep their order in a `position` column. The report run also
+records which optional sections its result holds (`result_sections`) and its
+SPM provenance. `write_economy_comparison` checks the result can be held
+exactly (`check_storable`) and writes its rows in the transaction that marks
+the comparison step succeeded (`RunTransitions.complete_comparison`);
+`EconomyComparisonRecorder` pairs that writer with validation against the
+result model. `read_economy_comparison` rebuilds the result exactly from the
+rows and from labels the region catalog supplies (`EconomyResultLabels`): the
+model and data versions of the run's catalog version, and constituency and
+local-authority names and map positions by code.
+
 ## Ownership rules
 
 These rules are registered in `rules/registry.toml` and checked by
