@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from policyengine_simulation_contract.spm import SPMInputError, SPMSelection
+from policyengine_simulation_contract.spm import SPMInputError
 from policyengine_simulation_executor import household_spm
 
 FORECAST_SHA = "3d86d5c4c0423480e6b69b75d222ffa4a7a2639e4094df5ba2504af01be17173"
@@ -50,15 +50,20 @@ def certified_bundle(monkeypatch):
     monkeypatch.setattr(household_spm, "_forecast", lambda sha: FakeForecast())
 
 
-def _resolve(selection=None, *, country="us", saved_household=False):
+# Stands for a request that sends no SPM settings at all.
+OMITTED = object()
+
+
+def _resolve(selection=OMITTED, *, country="us", saved_household=False):
     return household_spm.resolve_household_spm_selection(
         country,
-        None if selection is None else SPMSelection.model_validate(selection),
+        None if selection is OMITTED else selection,
+        sent=selection is not OMITTED,
         saved_household=saved_household,
     )
 
 
-def _error(selection=None, **options) -> SPMInputError:
+def _error(selection=OMITTED, **options) -> SPMInputError:
     with pytest.raises(SPMInputError) as raised:
         _resolve(selection, **options)
     return raised.value
@@ -84,6 +89,43 @@ def test_other_countries_accept_no_selection(certified_bundle) -> None:
         "SPM_SETTINGS_UNSUPPORTED",
         "SPM settings are only available for the US",
     )
+
+
+def test_an_explicit_null_is_invalid_for_the_us_and_unsupported_elsewhere(
+    certified_bundle,
+) -> None:
+    us_error = _error(None)
+    uk_error = _error(None, country="uk")
+
+    assert (us_error.code, us_error.message) == (
+        "SPM_SETTINGS_INVALID",
+        "spm must be an object; omit it to inherit the certified defaults.",
+    )
+    assert (uk_error.code, uk_error.message) == (
+        "SPM_SETTINGS_UNSUPPORTED",
+        "SPM settings are only available for the US",
+    )
+
+
+@pytest.mark.parametrize(
+    ("selection", "message"),
+    [
+        ({"geography_kind": "metro"}, "An SPM area selection requires geography_id"),
+        ({"geography_id": "31080"}, "Only an SPM area selection accepts geography_id"),
+        ("national", "Input should be a valid dictionary or instance of SPMSelection"),
+    ],
+)
+def test_a_malformed_selection_is_invalid_before_the_bundle_is_read(
+    monkeypatch, selection, message
+) -> None:
+    # As in the Public API, even a bundle without SPM support reports the
+    # settings' own problem first.
+    monkeypatch.setattr(household_spm, "_bundle_spm_configuration", lambda: None)
+    monkeypatch.setattr(household_spm, "_us_model_supports_spm", lambda: False)
+
+    error = _error(selection)
+
+    assert (error.code, error.message) == ("SPM_SETTINGS_INVALID", message)
 
 
 def test_a_foreign_artifact_hash_is_reported_by_where_it_came_from(

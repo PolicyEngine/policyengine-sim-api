@@ -3,8 +3,9 @@
 This reproduces the Public API's household SPM handling, so that a v2
 household result and error carry the same SPM codes, messages and receipt:
 
-- ``resolve_household_spm_selection`` merges a caller's selection over the
-  installed bundle's certified defaults, with the Public API's error codes;
+- ``resolve_household_spm_selection`` checks a caller's settings, exactly as
+  sent, and merges them over the installed bundle's certified defaults, with
+  the Public API's error codes;
 - ``household_spm_error_detail`` recognizes the SPM errors that end a
   calculation;
 - ``household_spm_provenance`` reduces the country model's receipt to the
@@ -250,34 +251,67 @@ def _resolve_certified_selection(
     return resolved.model_dump(mode="json")
 
 
+def _requested_selection(selection: object) -> SPMSelection:
+    """Read the caller's settings; raise SPM_SETTINGS_INVALID if they are malformed.
+
+    As in the Public API, the area rule applies to the settings as sent, with
+    an omitted geography kind read as county: a metro selection needs an area
+    and any other kind accepts none. The contract's model checks that rule
+    only once both fields are set, because Stage 12 requests inherit omitted
+    fields first.
+    """
+    try:
+        chosen = SPMSelection.model_validate({} if selection is None else selection)
+    except ValidationError as error:
+        raise SPMInputError(_SETTINGS_INVALID, _readable_error(error)) from error
+    if chosen.geography_kind == "metro":
+        if not chosen.geography_id or not chosen.geography_id.strip():
+            raise SPMInputError(
+                _SETTINGS_INVALID, "An SPM area selection requires geography_id"
+            )
+    elif chosen.geography_id is not None:
+        raise SPMInputError(
+            _SETTINGS_INVALID, "Only an SPM area selection accepts geography_id"
+        )
+    return chosen
+
+
 def resolve_household_spm_selection(
     country: str,
-    selection: SPMSelection | None,
+    selection: object,
     *,
+    sent: bool,
     saved_household: bool,
 ) -> dict[str, Any] | None:
-    """Resolve a household's SPM selection against the installed bundle.
+    """Resolve a household's SPM settings, exactly as sent, against the bundle.
 
-    ``selection`` is None when the caller made no choice. Returns the complete
-    resolved selection, or None when no SPM applies (any country but the US,
-    or a bundle whose US model predates canonical SPM). Raises SPMInputError
-    with the Public API's code and message otherwise. ``saved_household`` says
-    the selection was read from a saved household, which changes only how a
-    forecast hash the bundle no longer carries is reported.
+    ``sent`` says whether the caller sent settings at all; ``selection`` is
+    what it sent. Returns the complete resolved selection, or None when no SPM
+    applies (any country but the US, or a bundle whose US model predates
+    canonical SPM). Raises SPMInputError with the Public API's code and
+    message otherwise, checking in its order: settings for another country,
+    an explicit null, malformed settings, then the bundle's certification.
+    ``saved_household`` says the settings were read from a saved household,
+    which changes only how a forecast hash the bundle no longer carries is
+    reported.
     """
     if country != "us":
-        if selection is not None:
+        if sent:
             raise SPMInputError(
                 _SETTINGS_UNSUPPORTED, "SPM settings are only available for the US"
             )
         return None
-    configured = _certified_configuration(selection_sent=selection is not None)
+    if sent and selection is None:
+        raise SPMInputError(
+            _SETTINGS_INVALID,
+            "spm must be an object; omit it to inherit the certified defaults.",
+        )
+    chosen = _requested_selection(selection)
+    configured = _certified_configuration(selection_sent=sent)
     if configured is None:
         return None
     return _resolve_certified_selection(
-        selection if selection is not None else SPMSelection(),
-        configured,
-        saved_household=saved_household,
+        chosen, configured, saved_household=saved_household
     )
 
 

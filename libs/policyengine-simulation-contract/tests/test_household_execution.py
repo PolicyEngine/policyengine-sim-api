@@ -330,9 +330,19 @@ def test_an_empty_spm_selection_is_still_a_choice() -> None:
     assert HouseholdExecutionRequest.model_validate(dumped).spm_requested is True
 
 
-def test_an_explicit_null_spm_is_rejected() -> None:
-    with pytest.raises(ValidationError, match="omit it"):
-        _request(spm=None)
+def test_spm_settings_travel_exactly_as_the_caller_sent_them() -> None:
+    # The household function checks them, so a malformed selection or an
+    # explicit null fails with the Public API's SPM error codes.
+    for sent in (None, {"geography_kind": "planet"}, "national"):
+        request = _request(spm=sent)
+
+        assert request.spm == sent
+        assert request.spm_requested is True
+        dumped = request.model_dump(mode="json")
+        assert dumped["spm"] == sent
+        transported = HouseholdExecutionRequest.model_validate(dumped)
+        assert transported.spm == sent
+        assert transported.spm_requested is True
 
 
 def test_a_request_rejects_unknown_fields_and_other_schema_versions() -> None:

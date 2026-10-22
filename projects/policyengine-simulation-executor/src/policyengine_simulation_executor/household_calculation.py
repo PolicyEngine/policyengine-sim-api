@@ -532,6 +532,7 @@ def _resolved_spm_selection(
         return resolve_household_spm_selection(
             request.country,
             request.spm,
+            sent=request.spm_requested,
             saved_household=request.spm_selection_source == "saved_household",
         )
     except SPMInputError as error:
