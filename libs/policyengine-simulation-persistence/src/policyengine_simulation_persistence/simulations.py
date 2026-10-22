@@ -145,6 +145,18 @@ def check_legacy_id(field_name: str, value: int | None) -> None:
         raise ValueError(msg)
 
 
+def parse_kind[KindT: StrEnum](value: object, kind_type: type[KindT]) -> KindT:
+    """Return the ``kind_type`` member for ``value``, which may be its text.
+
+    Raise ValueError naming ``kind`` when the value is not one of its members.
+    """
+    try:
+        return kind_type(value)
+    except ValueError:
+        msg = f"kind must be one of {', '.join(kind_type)}"
+        raise ValueError(msg) from None
+
+
 def check_country(country: str) -> None:
     """Reject a country that is not a lowercase two-letter code."""
     if not COUNTRY_PATTERN.fullmatch(country):
@@ -200,6 +212,8 @@ class NewSimulation:
 
     def __post_init__(self) -> None:
         """Reject malformed fields without touching the database."""
+        # A frozen dataclass sets its own field through object.__setattr__.
+        object.__setattr__(self, "kind", parse_kind(self.kind, SimulationKind))
         check_country(self.country)
         _check_catalog_key("region_code", self.region_code)
         _check_catalog_key("dataset_name", self.dataset_name)

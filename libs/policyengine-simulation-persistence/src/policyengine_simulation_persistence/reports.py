@@ -42,6 +42,7 @@ from policyengine_simulation_persistence.simulations import (
     check_country,
     check_legacy_id,
     insert_or_get_existing,
+    parse_kind,
     simulations,
 )
 
@@ -129,6 +130,8 @@ class NewReport:
 
     def __post_init__(self) -> None:
         """Reject malformed fields without touching the database."""
+        # A frozen dataclass sets its own field through object.__setattr__.
+        object.__setattr__(self, "kind", parse_kind(self.kind, ReportKind))
         check_country(self.country)
         if not FIRST_YEAR <= self.year <= LAST_YEAR:
             msg = f"year must be between {FIRST_YEAR} and {LAST_YEAR}"
