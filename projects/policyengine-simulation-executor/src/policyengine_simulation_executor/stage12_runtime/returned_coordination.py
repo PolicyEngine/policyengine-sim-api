@@ -182,10 +182,11 @@ class _ReturnedReportCoordination(ReportSimulationCoordination):
 
     @override
     def _stop_children(self, roles: set[str], *, reason: str) -> None:
-        """Cancel each child through Modal: no record can tell it why.
+        """Cancel each child through Modal: no record can tell it to stop.
 
-        Modal does not cancel the region-group segment calls a segmented US
-        child started; they run until they finish or reach their timeout.
+        Modal raises its ``InputCancellation`` in the child, and a segmented US
+        child then cancels the region-group segment calls it started
+        (``Stage12SegmentRunner.run``), since Modal does not cancel them.
         """
         self._cancel_through_modal(roles)
 
