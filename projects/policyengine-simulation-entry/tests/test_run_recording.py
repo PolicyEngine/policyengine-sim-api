@@ -266,6 +266,22 @@ def test_dispatches_left_for_ten_minutes_are_failed_by_a_pass() -> None:
     assert transitions.runs[recent].status is RunStatus.DISPATCHING
 
 
+def test_a_pass_fails_comparisons_whose_simulation_run_failed() -> None:
+    recorder, transitions, _, _ = _recorder()
+    stuck = transitions.add_comparison(runs_failed=True)
+    waiting = transitions.add_comparison(runs_succeeded=False)
+
+    recording = _run(recorder)
+
+    assert recording.comparisons_without_runs == 1
+    assert recording.found_work
+    assert transitions.comparisons[stuck].status is RunStatus.FAILED
+    assert transitions.comparisons[stuck].error.code is (
+        RunErrorCode.SIMULATION_RUN_FAILED
+    )
+    assert transitions.comparisons[waiting].status is RunStatus.PENDING
+
+
 class _ScriptedRecorder:
     """Return scripted passes, or raise, and count how often it ran."""
 

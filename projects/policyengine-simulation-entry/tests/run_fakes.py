@@ -23,6 +23,7 @@ from policyengine_simulation_persistence import (
     AbandonedDispatches,
     DueSimulationCall,
     RunError,
+    RunErrorCode,
     RunStatus,
     SimulationKind,
 )
@@ -96,6 +97,7 @@ class FakeRunTransitions:
         self.runs: dict[UUID, FakeExecution] = {}
         self.comparisons: dict[UUID, FakeExecution] = {}
         self.comparison_runs_succeeded: dict[UUID, bool] = {}
+        self.comparisons_with_failed_runs: set[UUID] = set()
 
     # --- Building state --------------------------------------------------
 
@@ -105,11 +107,17 @@ class FakeRunTransitions:
         self.runs[run.id] = run
         return run.id
 
-    def add_comparison(self, *, runs_succeeded: bool = True, **values: Any) -> UUID:
+    def add_comparison(
+        self, *, runs_succeeded: bool = True, runs_failed: bool = False, **values: Any
+    ) -> UUID:
         """Add an economy report run's comparison step and return its ID."""
         comparison = FakeExecution(id=uuid4(), kind="economy", **values)
         self.comparisons[comparison.id] = comparison
-        self.comparison_runs_succeeded[comparison.id] = runs_succeeded
+        self.comparison_runs_succeeded[comparison.id] = (
+            runs_succeeded and not runs_failed
+        )
+        if runs_failed:
+            self.comparisons_with_failed_runs.add(comparison.id)
         return comparison.id
 
     def running_call(self, call_id: str, *kinds: str) -> list[UUID]:
@@ -372,6 +380,20 @@ class FakeRunTransitions:
             )
             is not None
         )
+
+    def fail_comparisons_of_failed_runs(self) -> tuple[UUID, ...]:
+        """Fail pending comparison steps whose simulation runs failed."""
+        failed = []
+        for comparison_id in sorted(self.comparisons_with_failed_runs):
+            changed = self._change_comparison(
+                comparison_id,
+                RunStatus.PENDING,
+                status=RunStatus.FAILED,
+                error=RunError(RunErrorCode.SIMULATION_RUN_FAILED, "A run failed."),
+            )
+            if changed is not None:
+                failed.append(comparison_id)
+        return tuple(failed)
 
     def fail_abandoned_dispatches(
         self, *, claimed_before: datetime

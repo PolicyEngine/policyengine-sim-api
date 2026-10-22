@@ -489,3 +489,30 @@ def test_dispatches_left_for_ten_minutes_are_failed(
         == "dispatch_abandoned"
     )
     assert stores.runs.get_simulation_run(recent_run.id).status is RunStatus.DISPATCHING
+
+
+def test_a_comparison_of_a_failed_run_fails_too(
+    migrated_database, public_api_rows
+) -> None:
+    stores = clocked_stores(migrated_database)
+    report_run, (baseline_run, reform_run) = _economy_report_run(
+        stores, migrated_database, public_api_rows
+    )
+    waiting, _ = _economy_report_run(stores, migrated_database, public_api_rows)
+    _succeed(stores, baseline_run, "fc-baseline")
+    stores.transitions.claim_simulation_dispatch([reform_run.id])
+    stores.transitions.record_simulation_dispatched(
+        [reform_run.id], modal_call_id="fc-reform", first_check_at=stores.clock()
+    )
+    stores.transitions.fail_simulation_call("fc-reform", WORKER_ERROR)
+
+    failed = stores.transitions.fail_comparisons_of_failed_runs()
+
+    assert failed == (report_run.id,)
+    record = stores.runs.get_report_run(report_run.id)
+    assert record.comparison_status is RunStatus.FAILED
+    assert record.comparison_error_code == "simulation_run_failed"
+    assert stores.runs.get_report_run(waiting.id).comparison_status is (
+        RunStatus.PENDING
+    )
+    assert stores.transitions.fail_comparisons_of_failed_runs() == ()
