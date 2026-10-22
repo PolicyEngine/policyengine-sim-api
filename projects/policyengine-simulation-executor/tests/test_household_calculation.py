@@ -278,7 +278,7 @@ def test_an_spm_input_error_fails_only_a_chosen_measurement(monkeypatch) -> None
     monkeypatch.setattr(
         household_calculation,
         "resolve_household_spm_selection",
-        lambda country, selection, *, saved_household: dict(resolved),
+        lambda country, selection, *, sent, saved_household: dict(resolved),
     )
     monkeypatch.setattr(
         household_calculation,
@@ -324,7 +324,7 @@ def test_the_selection_and_its_receipt_reach_each_simulation(monkeypatch) -> Non
     monkeypatch.setattr(
         household_calculation,
         "resolve_household_spm_selection",
-        lambda country, selection, *, saved_household: resolved,
+        lambda country, selection, *, sent, saved_household: resolved,
     )
 
     def record_receipt(simulation, expected_selection):
@@ -353,7 +353,7 @@ def test_an_spm_configuration_error_fails_even_an_inherited_measurement(
     monkeypatch.setattr(
         household_calculation,
         "resolve_household_spm_selection",
-        lambda country, selection, *, saved_household: {
+        lambda country, selection, *, sent, saved_household: {
             "forecast_content_sha256": "a" * 64,
             "scenario": "ce_trend",
             "geography_kind": "national",
@@ -409,6 +409,29 @@ def test_simulation_build_failures_use_public_api_messages(
     assert outcome.error.policy_key == "baseline"
     assert outcome.worker == _worker("uk")
     assert outcome.calculation_id == CALCULATION_ID
+
+
+@pytest.mark.parametrize(
+    ("country", "settings", "spm_code"),
+    [
+        ("uk", None, "SPM_SETTINGS_UNSUPPORTED"),
+        ("us", None, "SPM_SETTINGS_INVALID"),
+        ("us", {"geography_kind": "planet"}, "SPM_SETTINGS_INVALID"),
+    ],
+)
+def test_spm_settings_as_sent_fail_with_public_api_codes(
+    country, settings, spm_code
+) -> None:
+    outcome = _calculate_with_stand_in(
+        _stand_in_simulation({}), country=country, spm=settings
+    )
+
+    assert isinstance(outcome, HouseholdExecutionFailure)
+    assert outcome.error.code == "invalid_spm_selection"
+    assert outcome.error.spm_error is not None
+    assert outcome.error.spm_error.code == spm_code
+    assert outcome.error.message == outcome.error.spm_error.message
+    assert outcome.error.policy_key is None
 
 
 def test_a_receipt_that_cannot_be_certified_is_an_spm_failure(monkeypatch) -> None:

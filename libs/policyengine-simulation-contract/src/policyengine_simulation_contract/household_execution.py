@@ -33,9 +33,9 @@ from uuid import UUID
 from pydantic import (
     AfterValidator,
     BaseModel,
-    BeforeValidator,
     ConfigDict,
     Field,
+    JsonValue,
     PrivateAttr,
     TypeAdapter,
     field_validator,
@@ -47,7 +47,6 @@ from policyengine_simulation_contract.spm import (
     SPMErrorDetail,
     SPMProvenance,
     SPMResolvedConfiguration,
-    SPMSelection,
 )
 from policyengine_simulation_contract.stage12_bundle import (
     CountryId,
@@ -416,20 +415,6 @@ Policies = Annotated[
 ]
 
 
-def _reject_explicit_null_spm(value: object) -> object:
-    # Validators do not run on the default, so only an explicit null gets here.
-    if value is None:
-        msg = "spm must be an object; omit it to inherit the certified defaults."
-        raise ValueError(msg)
-    return value
-
-
-SPMChoice = Annotated[
-    SPMSelection | None,
-    BeforeValidator(_reject_explicit_null_spm),
-]
-
-
 class HouseholdBundleProvenance(StrictHouseholdModel):
     """The PolicyEngine.py bundle a household calculation runs with.
 
@@ -484,20 +469,33 @@ class HouseholdExecutionRequest(StrictHouseholdModel):
 
     ``add_missing_variables`` adds every yearly, monthly and eternal variable
     the household's entities lack before calculating, as the Public API's
-    ``/calculate-full`` route does. ``spm`` selects SPM settings for a US
-    household: omit it to inherit the bundle's certified defaults; supplying
-    it, even as an empty object, is a choice, and then a missing SPM input is
-    an error rather than an uncalculated value. ``spm_selection_source`` says
-    whether the selection came from this request or from a saved household,
-    which changes only how an SPM forecast the bundle no longer carries is
-    reported.
+    ``/calculate-full`` route does. ``spm`` carries the caller's SPM settings
+    exactly as sent, as any JSON value, and the household function checks
+    them with the Public API's SPM error codes: settings for a country other
+    than the US are unsupported, and for the US an explicit null or malformed
+    settings are invalid. Omit ``spm`` to inherit the bundle's certified
+    defaults; sending it, even as an empty object, is a choice, and then a
+    missing SPM input is an error rather than an uncalculated value.
+    ``spm_selection_source`` says whether the settings came from this request
+    or from a saved household, which changes only how an SPM forecast the
+    bundle no longer carries is reported.
 
-    To calculate a saved household as the Public API's stored-household
-    route (``GET /{country}/household/{id}/policy/{policy_id}``) does, set
-    ``add_missing_variables``, because that route always adds missing
-    variables; pass the household's saved SPM selection, if it has one, as
-    ``spm``, so it counts as chosen; and set ``spm_selection_source`` to
-    ``"saved_household"``.
+    To calculate a saved household with the inputs the Public API's
+    stored-household route (``GET /{country}/household/{id}/policy/{policy_id}``)
+    uses, set ``add_missing_variables``, because that route always adds
+    missing variables; pass the household's saved SPM selection as ``spm``
+    only if it has one (a saved null is no choice); and set
+    ``spm_selection_source`` to ``"saved_household"``. The calculated
+    household, warnings, SPM receipt and SPM error codes then match that
+    route's. Its error messages do not: the route reports a household it
+    cannot read, and any other failure except an SPM error, as an error
+    calculating that household ID under that policy ID, while a household
+    function reports the request routes' wording (``invalid_household`` and
+    ``calculation_failed``), so a caller that serves the stored-household
+    route rewrites those two messages.
+
+    These models check the request's structure; a request they reject (for
+    example a group without ``members``) is the caller's to report.
     """
 
     schema_version: Literal[1] = HOUSEHOLD_CONTRACT_SCHEMA_VERSION
@@ -506,7 +504,7 @@ class HouseholdExecutionRequest(StrictHouseholdModel):
     household: HouseholdDocument
     policies: Policies
     add_missing_variables: bool = False
-    spm: SPMChoice = None
+    spm: JsonValue = None
     spm_selection_source: Literal["request", "saved_household"] = "request"
     bundle: HouseholdBundleProvenance
 
@@ -514,16 +512,16 @@ class HouseholdExecutionRequest(StrictHouseholdModel):
     def serialize_request(
         self, handler: SerializerFunctionWrapHandler
     ) -> dict[str, Any]:
-        """Leave out ``spm`` when no selection was made, so omission is kept."""
+        """Leave out ``spm`` when the caller sent none, so omission is kept."""
         dumped: dict[str, Any] = handler(self)
-        if self.spm is None:
+        if not self.spm_requested:
             dumped.pop("spm", None)
         return dumped
 
     @property
     def spm_requested(self) -> bool:
-        """Whether the caller chose SPM settings rather than inheriting the defaults."""
-        return self.spm is not None
+        """Whether the caller sent SPM settings rather than inheriting the defaults."""
+        return "spm" in self.model_fields_set
 
 
 class HouseholdPolicyResult(StrictHouseholdModel):
