@@ -404,10 +404,22 @@ class FakeRunTransitions:
 class FakeDispatcher:
     """Record spawned requests and return call IDs, or fail like Modal."""
 
-    def __init__(self, failure: Exception | None = None) -> None:
-        """Fail every spawn with ``failure`` when it is set."""
+    def __init__(
+        self,
+        failure: Exception | None = None,
+        cancel_failure: Exception | None = None,
+    ) -> None:
+        """Fail spawns with ``failure`` and cancels with ``cancel_failure``."""
         self.failure = failure
+        self.cancel_failure = cancel_failure
         self.requests: list[ModalRequest] = []
+        self.cancelled: list[str] = []
+
+    async def cancel(self, modal_call_id: str) -> None:
+        """Record the cancelled call, or raise the configured failure."""
+        self.cancelled.append(modal_call_id)
+        if self.cancel_failure is not None:
+            raise self.cancel_failure
 
     async def spawn(self, request: ModalRequest) -> str:
         """Return a new call ID, or raise the configured failure."""

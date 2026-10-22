@@ -188,11 +188,63 @@ class RunDispatchService:
                 ),
             )
             return DispatchOutcome.DISPATCH_FAILED
-        recorded = await asyncio.to_thread(
-            steps.record, modal_call_id, self.clock() + FIRST_CHECK_DELAY
-        )
-        logger.info(
-            "simulation_run_dispatched",
-            extra={**subject, "modal_call_id": modal_call_id, "recorded": recorded},
-        )
-        return DispatchOutcome.STARTED if recorded else DispatchOutcome.NOT_RECORDED
+        return await self._record(steps, modal_call_id, subject)
+
+    async def _record(
+        self, steps: _DispatchSteps, modal_call_id: str, subject: dict[str, object]
+    ) -> DispatchOutcome:
+        """Record the acknowledged call, or cancel it if it cannot be recorded.
+
+        A call whose runs never record it would run to its end with nobody
+        collecting its output, and its runs would later be failed as
+        abandoned; a resubmission would then start a second call. So such a
+        call is cancelled, and when the record failed, its runs are failed
+        at once with dispatch_failed if the database allows.
+        """
+        context = {**subject, "modal_call_id": modal_call_id}
+        try:
+            recorded = await asyncio.to_thread(
+                steps.record, modal_call_id, self.clock() + FIRST_CHECK_DELAY
+            )
+        except Exception as error:  # the call is cancelled instead
+            logger.exception(
+                "simulation_run_call_not_recorded",
+                extra={**context, "error_type": type(error).__name__},
+            )
+            await self._cancel(modal_call_id, context)
+            await self._fail_quietly(steps, context)
+            return DispatchOutcome.NOT_RECORDED
+        if not recorded:
+            # The runs stopped dispatching while Modal acknowledged the call,
+            # for example because the recording loop failed them as abandoned.
+            logger.warning("simulation_run_call_not_recorded", extra=context)
+            await self._cancel(modal_call_id, context)
+            return DispatchOutcome.NOT_RECORDED
+        logger.info("simulation_run_dispatched", extra=context)
+        return DispatchOutcome.STARTED
+
+    async def _cancel(self, modal_call_id: str, context: dict[str, object]) -> None:
+        try:
+            await self.dispatcher.cancel(modal_call_id)
+        except Exception as error:  # logged; nothing else can be done
+            logger.exception(
+                "simulation_run_call_not_cancelled",
+                extra={**context, "error_type": type(error).__name__},
+            )
+
+    async def _fail_quietly(
+        self, steps: _DispatchSteps, context: dict[str, object]
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                steps.fail,
+                RunError(
+                    RunErrorCode.DISPATCH_FAILED,
+                    "The Modal call could not be recorded, so it was cancelled.",
+                ),
+            )
+        except Exception as error:  # the abandoned-dispatch check fails the runs later
+            logger.exception(
+                "simulation_run_dispatch_failure_not_recorded",
+                extra={**context, "error_type": type(error).__name__},
+            )
