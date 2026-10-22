@@ -684,11 +684,12 @@ class ReportSimulationCoordination(ABC):
         return output_plan, tuple(simulations)
 
     def _spawn_child(self, simulation: PlannedSimulationExecutionInput) -> ChildCall:
-        """Start one child simulation and return its call.
+        """Start one child simulation, keep its call in ``calls`` and return it.
 
-        A spawn failure is reported, recorded through
-        ``_record_dispatch_failure``, every started child is stopped, and
-        Stage12ExecutionError is raised with the failure.
+        The call is kept before the dispatch span closes, so a stop while the
+        span closes still finds it. A spawn failure is reported, recorded
+        through ``_record_dispatch_failure``, every started child is stopped,
+        and Stage12ExecutionError is raised with the failure.
         """
         try:
             with self.span(
@@ -708,6 +709,7 @@ class ReportSimulationCoordination(ABC):
                         observability_context=child_observability_context,
                     )
                 )
+                self.calls[simulation.role.value] = call
         except Exception as error:  # noqa: BLE001  # any dispatch failure is recorded on the child and stops its started peers
             detail = report_failure(
                 error,
@@ -1026,10 +1028,9 @@ class _ReportCoordination(ReportSimulationCoordination):
                 }
             )
         )
+        # _spawn_child keeps the call in calls, so a failed attach still stops
+        # it.
         call = self._spawn_child(simulation)
-        # Record the call before attaching its ID, so a failed attach still
-        # stops it.
-        self.calls[simulation.role.value] = call
         self.persistence.attach_simulation_invocation(
             simulation.simulation_execution_id,
             expected_placeholder=dispatch_placeholder,

@@ -87,11 +87,17 @@ class StageRecordingRuntime:
         self.spans: list[str] = []
         self.operations: list[str] = []
         self.recorded_exceptions: list[Exception] = []
+        # Raise InputCancellation as the span with this name and these
+        # attributes closes, as Modal's cancellation can arrive at any point.
+        self.stop_on_close: tuple[str, dict] | None = None
 
     @contextmanager
-    def span(self, name, *_args, **_kwargs):
+    def span(self, name, *_args, attributes=None, **_kwargs):
         self.spans.append(name)
         yield
+        if self.stop_on_close == (name, attributes):
+            msg = "Input was cancelled by user"
+            raise InputCancellation(msg)
 
     @contextmanager
     def operation(self, name, *_args, **_kwargs):
@@ -587,6 +593,32 @@ def test_returned_report_stops_its_children_when_modal_cancels_it(
     assert [call.cancel_count for call in invoker.calls.values()] == [1, 1]
     # A cancellation is not a report failure, so none is reported.
     assert runtime.recorded_exceptions == []
+
+
+@pytest.mark.parametrize(
+    ("closing_role", "started_roles"),
+    [("baseline", ["baseline"]), ("reform", ["baseline", "reform"])],
+)
+def test_returned_report_stops_a_child_whose_dispatch_is_closing_when_cancelled(
+    forbid_database,
+    closing_role,
+    started_roles,
+) -> None:
+    runtime = StageRecordingRuntime()
+    # The worker has started, but its dispatch span has not closed yet.
+    runtime.stop_on_close = (
+        STAGE12_CANONICAL_REPORT_STAGES.name(Stage.STAGE12_CHILD_DISPATCH),
+        {"simulation_role": closing_role},
+    )
+    invoker = ScriptedChildInvoker()
+
+    with pytest.raises(InputCancellation):
+        _coordinate_returned_report(invoker, runtime=runtime)
+
+    assert list(invoker.calls) == started_roles
+    assert [call.cancel_count for call in invoker.calls.values()] == [1] * len(
+        started_roles
+    )
 
 
 def test_returned_report_dispatch_failure_stops_the_started_child(
