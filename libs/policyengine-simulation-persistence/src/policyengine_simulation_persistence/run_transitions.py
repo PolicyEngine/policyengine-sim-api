@@ -69,8 +69,6 @@ class RunErrorCode(StrEnum):
     CALL_NOT_FOUND = "call_not_found"
     # The output failed validation against its result model.
     INVALID_RESULT = "invalid_result"
-    # No recorder handles results of this kind of run.
-    NO_RESULT_RECORDER = "no_result_recorder"
     # A comparison step whose baseline or reform simulation run failed.
     SIMULATION_RUN_FAILED = "simulation_run_failed"
 

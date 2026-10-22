@@ -49,7 +49,8 @@ class SimulationDatabase:
         """Return the loop that records Modal call outcomes on runs.
 
         No kind of run has a result recorder yet, so a finished call would
-        fail its runs with ``no_result_recorder``; no route creates runs yet.
+        stay running until a revision with a recorder records it; no route
+        creates runs yet.
         """
         return RunRecordingLoop(
             RunRecorder(

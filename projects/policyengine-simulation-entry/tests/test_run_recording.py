@@ -147,14 +147,19 @@ def test_a_household_pair_is_written_once_for_both_runs() -> None:
     assert {transitions.runs[run_id].status for run_id in pair} == {RunStatus.SUCCEEDED}
 
 
-def test_a_kind_without_a_recorder_fails_its_runs() -> None:
-    recorder, transitions, inspector, _ = _recorder()
+def test_a_kind_without_a_recorder_waits_for_an_instance_with_one() -> None:
+    """An older revision still running beside a new one must not fail the run."""
+    recorder, transitions, inspector, clock = _recorder()
     (run_id,) = transitions.running_call("fc-1")
     inspector.outcomes["fc-1"] = CallSucceeded({"budgetary_impact": 1})
 
-    _run(recorder)
+    recording = _run(recorder)
 
-    assert transitions.runs[run_id].error.code is RunErrorCode.NO_RESULT_RECORDER
+    assert recording.without_recorder == 1
+    run = transitions.runs[run_id]
+    assert run.status is RunStatus.RUNNING
+    assert run.error is None
+    assert run.next_check_at == clock() + timedelta(seconds=2)
 
 
 def test_an_invalid_output_fails_its_runs_without_repeating_it() -> None:
