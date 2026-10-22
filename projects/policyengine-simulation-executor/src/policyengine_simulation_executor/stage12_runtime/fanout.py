@@ -29,6 +29,7 @@ if TYPE_CHECKING:
         PlannedSimulationExecutionInput,
     )
 
+    from .segment_contracts import Stage12SegmentInput
     from .simulation import SimulationCalculation
 
 logger = logging.getLogger(__name__)
@@ -130,29 +131,24 @@ class Stage12SegmentRunner:
             stage12_segment_count=len(segments),
         )
         handles: list[tuple[int, Any]] = []
+        payloads: list[object] | None = None
         try:
-            for segment in segments:
-                call = None
-                with self.runtime.span(
-                    STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_DISPATCH),
-                    attributes={"segment_index": segment.segment_index},
-                ):
-                    call = self.child_function.spawn(
-                        segment.model_dump(mode="python"),
-                        observability_context=self.runtime.capture_context(),
-                    )
-                handles.append((segment.segment_index, _require_call(call)))
-        # BaseException: Modal stops a cancelled input by raising its
-        # InputCancellation, a BaseException, in it.
+            self._start_segments(segments, handles)
+            with self.runtime.span(
+                STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_WAIT)
+            ):
+                payloads = self._collect(handles)
+        # An Exception keeps its existing handling: a failed dispatch, a
+        # segment failure and a requested cancellation each cancel every
+        # started segment once before they are raised.
+        except Exception:
+            raise
+        # Modal stops a cancelled input by raising InputCancellation, a
+        # BaseException, in it, and does not cancel the calls that input
+        # spawned, so this worker cancels them before it stops.
         except BaseException:
             self._cancel_all(handles)
             raise
-
-        payloads: list[object] | None = None
-        with self.runtime.span(
-            STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_WAIT)
-        ):
-            payloads = self._collect_or_cancel(handles)
         if payloads is None:
             msg = "Stage 12 segment wait returned no payloads"
             raise RuntimeError(msg)
@@ -170,20 +166,32 @@ class Stage12SegmentRunner:
             raise RuntimeError(msg)
         return merged
 
-    def _collect_or_cancel(self, handles: list[tuple[int, Any]]) -> list[object]:
-        """Collect every segment's result; cancel them all if Modal stops the wait.
+    def _start_segments(
+        self,
+        segments: Sequence[Stage12SegmentInput],
+        handles: list[tuple[int, Any]],
+    ) -> None:
+        """Spawn every segment, adding each call to ``handles`` as soon as it starts.
 
-        Modal stops a cancelled input by raising ``InputCancellation``, a
-        ``BaseException``, in it, and does not cancel the calls that input
-        spawned, so this worker cancels them before it stops. An ``Exception``
-        keeps its existing handling: ``_collect`` cancels every segment itself
-        before it raises a segment failure or a requested cancellation.
+        A failed dispatch cancels every segment already started, then is raised.
         """
         try:
-            return self._collect(handles)
+            for segment in segments:
+                call = None
+                with self.runtime.span(
+                    STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_DISPATCH),
+                    attributes={"segment_index": segment.segment_index},
+                ):
+                    call = self.child_function.spawn(
+                        segment.model_dump(mode="python"),
+                        observability_context=self.runtime.capture_context(),
+                    )
+                    # Keep the call before its span closes, so a stop while
+                    # the span closes still cancels it.
+                    if call is not None:
+                        handles.append((segment.segment_index, call))
+                _require_call(call)
         except Exception:
-            raise
-        except BaseException:
             self._cancel_all(handles)
             raise
 
