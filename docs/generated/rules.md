@@ -55,8 +55,6 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 - `sim.deploy.smoke-tests-strict`
 - `sim.deploy.traffic-changes-exact`
 - `sim.deploy.workflow-shell-safety`
-- `sim.persistence.migrate-before-entrypoint`
-- `sim.persistence.migration-cycle`
 - `sim.process.rules-registry`
 - `sim.stage12.deployment-scope`
 - `sim.stage12.deployment-uses-api-schema`
@@ -141,8 +139,8 @@ flowchart LR
 | Rule | Statement | Tier | Status | Blocking | Enforced by | CI | Proof |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `sim.persistence.executor-independent` | The Modal executor and gateway never declare, lock or import policyengine-simulation-persistence; only the Simulation Entrypoint and the migration job install it. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
-| `sim.persistence.migrate-before-entrypoint` | Each deployment migrates the simulation schema in its own job, the only one that receives SIMULATION_MIGRATION_DATABASE_URL, before the entrypoint candidate deploys, applying revisions only from main and otherwise requiring the database at the chain's head; the entrypoint receives SIMULATION_DATABASE_URL as a pinned Secret Manager version; and the candidate smoke requires the database at the image's revision. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_simulation_database_deployment.py` | `pr.yml:test` | **unproven** |
-| `sim.persistence.migration-cycle` | On a fresh PostgreSQL, the simulation chain upgrades to its head, passes alembic check, downgrades to base and upgrades again, run by a non-superuser migrator, and the runtime role can read the revision but cannot change the schema. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_migration_cycle.py` | `pr.yml:simulation-database` | **unproven** |
+| `sim.persistence.migrate-before-entrypoint` | Each deployment migrates the simulation schema in its own job, the only one that receives SIMULATION_MIGRATION_DATABASE_URL, before the entrypoint candidate deploys, applying revisions only from main and otherwise requiring the database at the chain's head; the entrypoint receives SIMULATION_DATABASE_URL as a pinned Secret Manager version; and the candidate smoke requires the database at the image's revision. | mechanical | enforced | yes | pytest `projects/policyengine-simulation-entry/tests/test_simulation_database_deployment.py` | `pr.yml:test` | yes |
+| `sim.persistence.migration-cycle` | On a fresh PostgreSQL, the simulation chain upgrades to its head, passes alembic check, downgrades to base and upgrades again, run by a non-superuser migrator, and the runtime role can read the revision but cannot change the schema. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_migration_cycle.py` | `pr.yml:simulation-database` | yes |
 | `sim.persistence.no-modal-database-credentials` | No Modal secret, Modal deployment or Modal application receives a database URL other than the comparison path's own STAGE12_DATABASE_URL, which Modal may hold until the comparison path is removed; in particular never SIMULATION_DATABASE_URL or SIMULATION_MIGRATION_DATABASE_URL. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
 | `sim.persistence.one-migration-chain` | The simulation schema changes only through the one Alembic chain at migrations/, configured by migrations/alembic.ini and versioned in simulation.alembic_version; no other Alembic configuration, environment or revision directory exists. | mechanical | enforced | yes | pytest `libs/policyengine-simulation-persistence/tests/test_ownership_boundaries.py` | `pr.yml:test` | yes |
 

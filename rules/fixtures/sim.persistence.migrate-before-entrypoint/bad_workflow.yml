@@ -1,0 +1,19 @@
+# Proof fixture: the entrypoint deploys without waiting for the migration,
+# the migrator URL reaches every step of the job, and revisions are applied
+# from whatever branch dispatched the deployment.
+name: Bad deployment
+on: workflow_dispatch
+jobs:
+  migrate_simulation_database:
+    runs-on: ubuntu-latest
+    env:
+      SIMULATION_MIGRATION_DATABASE_URL: ${{ secrets.SIMULATION_MIGRATION_DATABASE_URL }}
+    steps:
+      - name: Apply simulation schema migrations
+        env:
+          SIMULATION_MIGRATION_MODE: upgrade
+        run: ../../.github/scripts/migrate-simulation-database.sh
+  deploy_entrypoint:
+    runs-on: ubuntu-latest
+    steps:
+      - run: .github/scripts/deploy-cloud-run-simulation-entry.sh

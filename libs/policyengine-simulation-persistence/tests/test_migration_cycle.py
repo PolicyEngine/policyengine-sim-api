@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 from alembic import command
-from migration_support import MIGRATOR_ROLE, alembic_config
+from migration_support import (
+    MIGRATOR_ROLE,
+    REPOSITORY_ROOT,
+    alembic_config,
+    chain_config,
+    migration_cycle_failures,
+)
 from policyengine_simulation_persistence import (
     HEAD_REVISION,
     SIMULATION_SCHEMA,
@@ -36,16 +42,26 @@ def _superuser_engine(database, **options):
 def test_upgrade_check_downgrade_upgrade_cycle(disposable_database) -> None:
     config = alembic_config()
 
-    command.upgrade(config, "head")
+    assert migration_cycle_failures(config, check=True) == []
     assert _revision(disposable_database.migrator_url) == HEAD_REVISION
-    command.check(config)
 
     command.downgrade(config, "base")
     assert _revision(disposable_database.migrator_url) is None
 
-    command.upgrade(config, "head")
-    assert _revision(disposable_database.migrator_url) == HEAD_REVISION
-    command.check(config)
+
+def test_rule_proof_migration_cycle(disposable_database) -> None:
+    """Proof for rule sim.persistence.migration-cycle (rules/registry.toml)."""
+    fixtures = (
+        REPOSITORY_ROOT / "rules" / "fixtures" / "sim.persistence.migration-cycle"
+    )
+
+    assert (
+        migration_cycle_failures(chain_config(fixtures / "good_chain"), check=False)
+        == []
+    )
+    assert migration_cycle_failures(
+        chain_config(fixtures / "bad_chain"), check=False
+    ) == ["upgrade failed: ProgrammingError"]
 
 
 def test_the_version_table_lives_only_in_the_simulation_schema(

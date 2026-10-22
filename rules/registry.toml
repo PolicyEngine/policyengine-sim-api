@@ -181,6 +181,11 @@ nodes = [
 workflow = ".github/workflows/pr.yml"
 job = "simulation-database"
 invocation = "uv run --frozen pytest tests/ -v -m postgres"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.persistence.migration-cycle/bad_chain/versions/0001_proof_table.py"
+good_fixture = "rules/fixtures/sim.persistence.migration-cycle/good_chain/versions/0001_proof_table.py"
+project = "libs/policyengine-simulation-persistence"
+test = "tests/test_migration_cycle.py::test_rule_proof_migration_cycle"
 
 [[rule]]
 id = "sim.persistence.executor-independent"
@@ -247,6 +252,7 @@ autofix = false
 kind = "pytest"
 project = "projects/policyengine-simulation-entry"
 nodes = [
+  "tests/test_simulation_database_deployment.py::test_the_deploy_workflow_follows_the_migration_wiring",
   "tests/test_simulation_database_deployment.py::test_the_migration_job_runs_before_the_entrypoint_deploys",
   "tests/test_simulation_database_deployment.py::test_only_the_migration_step_receives_the_migrator_url",
   "tests/test_simulation_database_deployment.py::test_only_the_default_branch_applies_migrations",
@@ -257,6 +263,11 @@ nodes = [
 workflow = ".github/workflows/pr.yml"
 job = "test"
 invocation = "uv run --frozen pytest tests/"
+[rule.proof]
+bad_fixture = "rules/fixtures/sim.persistence.migrate-before-entrypoint/bad_workflow.yml"
+good_fixture = "rules/fixtures/sim.persistence.migrate-before-entrypoint/good_workflow.yml"
+project = "projects/policyengine-simulation-entry"
+test = "tests/test_simulation_database_deployment.py::test_rule_proof_migrate_before_entrypoint"
 
 # --- Stage 12 persistence --------------------------------------------------
 

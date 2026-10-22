@@ -13,6 +13,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
+from migration_wiring_checks import migration_wiring_violations
 from test_deployment_assets import (
     CLOUD_RUN_DEPLOY_SCRIPT,
     REUSABLE_DEPLOY_WORKFLOW,
@@ -23,7 +25,12 @@ from test_deployment_assets import (
     _workflow_jobs,
     _write_fake_smoke_curl,
 )
-from workflow_script_support import WORKFLOWS_DIR, FakeCommands, run_script
+from workflow_script_support import (
+    REPOSITORY_ROOT,
+    WORKFLOWS_DIR,
+    FakeCommands,
+    run_script,
+)
 
 MIGRATION_SCRIPT = "migrate-simulation-database.sh"
 MIGRATION_JOB = "migrate_simulation_database"
@@ -100,6 +107,31 @@ def test_only_the_migration_step_receives_the_migrator_url():
             "Apply simulation schema migrations",
         )
     ]
+
+
+def test_the_deploy_workflow_follows_the_migration_wiring():
+    assert migration_wiring_violations(_workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)) == []
+
+
+def test_rule_proof_migrate_before_entrypoint():
+    """Proof for rule sim.persistence.migrate-before-entrypoint."""
+    fixtures = REPOSITORY_ROOT / "rules" / "fixtures" / (
+        "sim.persistence.migrate-before-entrypoint"
+    )
+
+    bad = migration_wiring_violations(
+        yaml.safe_load((fixtures / "bad_workflow.yml").read_text(encoding="utf-8"))[
+            "jobs"
+        ]
+    )
+    good = migration_wiring_violations(
+        yaml.safe_load((fixtures / "good_workflow.yml").read_text(encoding="utf-8"))[
+            "jobs"
+        ]
+    )
+
+    assert len(bad) == 3
+    assert good == []
 
 
 UV_ALEMBIC = ["uv", "run", "--frozen", "--extra", "migrations", "alembic", "-c",
