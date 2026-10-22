@@ -107,17 +107,22 @@ instead of a `SingleYearMacroOutput`:
 
 Rules:
 
-- The request must be for the UK, with `region` absent, `uk` or
-  `country/<nation>`. A constituency, local-authority or bare-name region,
-  `include_cliffs: true`, `segmented: true` or a `region_group` is refused
-  with 422, and so is any other `breakdown` value. `include_cliffs: false`
+- The request must be for the UK, with `region` absent, `uk`,
+  `country/england`, `country/scotland`, `country/wales` or
+  `country/northern_ireland` (the nations policyengine.py registers). Any
+  other region, including a constituency, a local authority, a bare name or
+  `country/ni`, and `include_cliffs: true`, `segmented: true` or a
+  `region_group`, is refused with 422, and so is any other `breakdown`
+  value. `include_cliffs: false`
   is accepted, because the Public API always sends it. Budget-window
   requests do not take the field.
 - The gateway sends a breakdown only to a worker app whose routing bundle
-  manifest declares `local_area_breakdown: 1`; the routing publisher writes
-  it for apps whose bundle routes UK area regions. Any other route, including
-  one from the legacy version dicts, gets 400 before a job is spawned, and
-  the message names the policyengine.py version. Older apps ignore fields
+  manifest declares `local_area_breakdown: 1`. The routing publisher writes
+  it for apps whose bundle routes both UK area region types to one
+  local-area release dataset (`regional_release_kind` `local_area`). Any
+  other route, including one pinned to an older version and one from the
+  legacy version dicts, gets 400 before a job is spawned, and the message
+  names the policyengine.py version. Older apps ignore fields
   they do not know, so they would otherwise return a national result.
 - On those bundles, a UK-wide or nation-level request without `breakdown`
   computes no area results: `constituency_impact` and
