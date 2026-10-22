@@ -24,6 +24,7 @@ from policyengine_simulation_contract.stage12_execution import (
 from policyengine_simulation_observability.stages import Stage
 
 from policyengine_simulation_executor.uk_local_authority_metadata import (
+    UK_AREA_DATASET_COLUMNS,
     uk_area_codes_required,
 )
 
@@ -32,15 +33,9 @@ if TYPE_CHECKING:
     from policyengine_simulation_contract.stage12_bundle import CountryId
 
 # Input-dataset columns the UK constituency and local-authority breakdowns
-# read: the area codes, the region the disclosure check nests them in, and the
-# survey household each row was copied from, by which it counts support.
+# read, the same ones a routed local-area dataset is checked for as it loads.
 UK_GEOGRAPHIC_DATASET_VARIABLES: dict[str, tuple[str, ...]] = {
-    "household": (
-        "constituency_code_oa",
-        "la_code_oa",
-        "region_code_oa",
-        "source_household_id",
-    ),
+    "household": UK_AREA_DATASET_COLUMNS,
 }
 
 

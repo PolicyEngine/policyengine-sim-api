@@ -1635,6 +1635,8 @@ def test_routed_uk_national_run_builds_area_breakdowns_on_the_local_area_dataset
         region=["WALES", "WALES"],
         constituency_code_oa=["E14001063", "W07000112"],
         la_code_oa=["E06000063", "W06000001"],
+        region_code_oa=["WALES", "WALES"],
+        source_household_id=[1, 2],
     )
 
     run = _run_routed_uk_national(monkeypatch, local_area_dataset=local_area_dataset)

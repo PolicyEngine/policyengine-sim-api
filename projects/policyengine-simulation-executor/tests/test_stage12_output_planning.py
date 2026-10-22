@@ -196,6 +196,20 @@ def test_uk_plan_copies_area_codes_unless_a_routed_national_report_lacks_them(
     )
 
 
+def test_uk_geographic_plan_copies_the_routed_dataset_columns(monkeypatch) -> None:
+    from policyengine_simulation_executor import uk_local_authority_metadata
+
+    _route_uk_area_regions(monkeypatch, routed=True)
+
+    plan = resolve_report_output_plan(_report("uk", region="constituency/E14001063"))
+
+    # Stage 12 copies exactly the columns a routed area dataset must carry.
+    household = next(item for item in plan.entities if item.entity == "household")
+    assert tuple(household.dataset_variables) == (
+        uk_local_authority_metadata.UK_AREA_DATASET_COLUMNS
+    )
+
+
 def test_cliff_variables_are_conditional() -> None:
     without_cliffs = resolve_report_output_plan(_report())
     with_cliffs = resolve_report_output_plan(_report(include_cliffs=True))

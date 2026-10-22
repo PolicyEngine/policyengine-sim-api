@@ -282,10 +282,22 @@ def _area_dataset(**household: list[str]) -> SimpleNamespace:
     )
 
 
+# One household of a routed local-area dataset: the area codes, the region
+# the disclosure check nests them in, and the survey household it came from.
+_ROUTED_AREA_HOUSEHOLD = {
+    "constituency_code_oa": ["E14001063"],
+    "la_code_oa": ["E06000063"],
+    "region_code_oa": ["SOUTH_EAST"],
+    "source_household_id": ["1"],
+}
+
+
 def test_routed_dataset_detection_identifies_the_authority_boundaries() -> None:
     dataset = _area_dataset(
         constituency_code_oa=["E14001063", "W07000112"],
         la_code_oa=["E06000063", "W06000001"],
+        region_code_oa=["SOUTH_EAST", "WALES"],
+        source_household_id=["1", "2"],
     )
 
     metadata = detect_uk_area_dataset_metadata(dataset, dataset_name="local")
@@ -293,14 +305,11 @@ def test_routed_dataset_detection_identifies_the_authority_boundaries() -> None:
     assert metadata.boundary_version is UKLocalAuthorityBoundaryVersion.LAD23
 
 
-@pytest.mark.parametrize("missing", ["constituency_code_oa", "la_code_oa"])
-def test_routed_dataset_detection_requires_both_area_code_columns(
+@pytest.mark.parametrize("missing", list(_ROUTED_AREA_HOUSEHOLD))
+def test_routed_area_dataset_needs_every_column_area_outputs_read(
     missing: str,
 ) -> None:
-    columns = {
-        "constituency_code_oa": ["E14001063"],
-        "la_code_oa": ["E06000063"],
-    }
+    columns = dict(_ROUTED_AREA_HOUSEHOLD)
     del columns[missing]
 
     with pytest.raises(

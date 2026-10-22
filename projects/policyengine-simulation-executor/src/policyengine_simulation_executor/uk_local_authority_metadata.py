@@ -282,7 +282,15 @@ def detect_uk_local_authority_boundary_version(
 
 
 UK_AREA_REGION_TYPES = ("constituency", "local_authority")
-UK_AREA_CODE_COLUMNS = ("constituency_code_oa", "la_code_oa")
+# Household columns the UK constituency and local-authority outputs read: the
+# two area codes, the region the disclosure check nests them in, and the
+# survey household each row was copied from, by which it counts support.
+UK_AREA_DATASET_COLUMNS = (
+    "constituency_code_oa",
+    "la_code_oa",
+    "region_code_oa",
+    "source_household_id",
+)
 _MISSING_AREA_CODES = (
     "UK dataset household table contains no la_code_oa column; a UK dataset "
     "may omit area codes only when the policyengine.py bundle routes "
@@ -384,16 +392,19 @@ def detect_uk_area_dataset_metadata(
     """Check a loaded dataset that UK area regions are routed to.
 
     That dataset serves constituency and local-authority results, so unlike a
-    national default it must carry both area code columns, and its authority
-    codes must match one packaged boundary version.
+    national default it must carry every column those results read
+    (``UK_AREA_DATASET_COLUMNS``), and its authority codes must match one
+    packaged boundary version. Checking here, as the dataset loads, stops a
+    run before it simulates anything on a dataset its area outputs cannot
+    read.
     """
     household_frame = _uk_household_frame(dataset)
-    for column in UK_AREA_CODE_COLUMNS:
+    for column in UK_AREA_DATASET_COLUMNS:
         if column not in household_frame:
             msg = (
                 f"UK dataset {dataset_name!r}, which the bundle routes "
                 f"constituency and local-authority regions to, has no {column} "
-                "column"
+                "column, which its constituency and local-authority outputs read"
             )
             raise ValueError(msg)
     return detect_uk_local_authority_boundary_version(
