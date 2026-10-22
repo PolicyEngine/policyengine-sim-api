@@ -23,8 +23,9 @@ FIXTURES_ROOT = (
     / "sim.boundaries.sqlalchemy-and-alembic-only"
 )
 # Every directory that holds non-test source. The executor's src/modal is
-# under projects/*/src.
-SOURCE_ROOT_PATTERNS = ("projects/*/src", "libs/*/src", ".github/scripts")
+# under projects/*/src. The simulation schema's Alembic chain may import
+# alembic and change the schema, but still connects only through SQLAlchemy.
+SOURCE_ROOT_PATTERNS = ("projects/*/src", "libs/*/src", ".github/scripts", "migrations")
 # Directories the rule names, each of which must contribute scanned files.
 REQUIRED_SOURCE_DIRECTORIES = (
     "projects/policyengine-simulation-entry/src",
@@ -34,8 +35,10 @@ REQUIRED_SOURCE_DIRECTORIES = (
     "libs/policyengine-fastapi/src",
     "libs/policyengine-simulation-contract/src",
     "libs/policyengine-simulation-observability/src",
+    "libs/policyengine-simulation-persistence/src",
     "libs/policyengine-stage12-persistence/src",
     ".github/scripts",
+    "migrations",
 )
 
 

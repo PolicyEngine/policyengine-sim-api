@@ -1,0 +1,7 @@
+# Proof fixture: a Modal project that depends on the persistence library.
+[project]
+name = "policyengine-simulation-executor"
+dependencies = [
+    "policyengine-simulation-contract",
+    "policyengine-simulation-persistence",
+]

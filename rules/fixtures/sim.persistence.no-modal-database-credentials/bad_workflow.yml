@@ -1,0 +1,11 @@
+# Proof fixture: a step that copies the simulation database URL into a Modal secret.
+name: Bad deployment
+on: workflow_dispatch
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Synchronize Modal runtime secrets
+        env:
+          SIMULATION_DATABASE_URL: ${{ secrets.SIMULATION_DATABASE_URL }}
+        run: uv run modal secret create simulation-database "SIMULATION_DATABASE_URL=${SIMULATION_DATABASE_URL}" --force

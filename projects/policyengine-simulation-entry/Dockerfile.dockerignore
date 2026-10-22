@@ -13,6 +13,8 @@ libs/*
 !libs/policyengine-simulation-contract/**
 !libs/policyengine-simulation-observability/
 !libs/policyengine-simulation-observability/**
+!libs/policyengine-simulation-persistence/
+!libs/policyengine-simulation-persistence/**
 !libs/policyengine-stage12-persistence/
 !libs/policyengine-stage12-persistence/**
 libs/**/tests

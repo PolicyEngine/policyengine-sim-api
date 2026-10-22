@@ -9,6 +9,11 @@ from pathlib import Path
 
 import pytest
 import tomllib
+from deployment_rule_checks import (
+    SECRET_RESOLUTION,
+    combined_secret_resolutions,
+    libraries_missing_from_context,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 GITIGNORE = REPOSITORY_ROOT / ".gitignore"
@@ -132,7 +137,22 @@ def _write_fake_smoke_curl(tmp_path: Path, revisions: list[str]) -> tuple[Path, 
                 printf '{"status":"healthy"}' > "${body_file}"
                 ;;
               */ready)
-                printf '{"status":"ready"}'
+                ready_body='{"status":"ready"}'
+                if [ -n "${FAKE_CURL_READY_BODIES:-}" ]; then
+                  # One body per line, served in order; the last one repeats.
+                  ready_count=0
+                  if [ -f "${FAKE_CURL_READY_BODIES}.count" ]; then
+                    ready_count="$(cat "${FAKE_CURL_READY_BODIES}.count")"
+                  fi
+                  ready_count=$((ready_count + 1))
+                  printf '%s' "${ready_count}" > "${FAKE_CURL_READY_BODIES}.count"
+                  line_count="$(wc -l < "${FAKE_CURL_READY_BODIES}")"
+                  if [ "${ready_count}" -gt "${line_count}" ]; then
+                    ready_count="${line_count}"
+                  fi
+                  ready_body="$(sed -n "${ready_count}p" "${FAKE_CURL_READY_BODIES}")"
+                fi
+                printf '%s' "${FAKE_CURL_READY:-${ready_body}}"
                 ;;
               */versions)
                 versions='{}'
@@ -353,8 +373,9 @@ def _assert_beta_then_prod_release(
 
 def _assert_deployment_environment_settings(reusable_workflow: str) -> None:
     assert (
-        # Sentinel, restore and final routing acknowledgement use secrets too.
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 15
+        # Sentinel, restore, final routing acknowledgement and the simulation
+        # database migration use secrets too.
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 16
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow
@@ -507,6 +528,9 @@ def _cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
         "STAGE12_DATABASE_URL_SECRET_NAME": "stage12-staging-database-url",
         "MODAL_TOKEN_ID_SECRET_NAME": "modal-token-id",
         "MODAL_TOKEN_SECRET_SECRET_NAME": "modal-token-secret",
+        "SIMULATION_DATABASE_URL_SECRET_NAME": (
+            "simulation-staging-runtime-database-url"
+        ),
     }
 
 
@@ -545,11 +569,57 @@ def test_cloud_run_deployment_escapes_environment_and_pins_secret_versions(tmp_p
     secrets_argument = arguments[arguments.index("--set-secrets") + 1]
     assert secrets_argument == (
         "OLD_GATEWAY_AUTH_CLIENT_SECRET=old-client-secret:3,"
+        "SIMULATION_DATABASE_URL=simulation-staging-runtime-database-url:3,"
         "MODAL_TOKEN_ID=modal-token-id:3,"
         "MODAL_TOKEN_SECRET=modal-token-secret:3,"
         "STAGE12_DATABASE_URL=stage12-staging-database-url:3"
     )
     assert ":latest" not in secrets_argument
+
+
+@pytest.mark.parametrize(
+    "secret_name_variable",
+    [
+        "OLD_GATEWAY_AUTH_CLIENT_SECRET_SECRET_NAME",
+        "SIMULATION_DATABASE_URL_SECRET_NAME",
+        "MODAL_TOKEN_ID_SECRET_NAME",
+        "MODAL_TOKEN_SECRET_SECRET_NAME",
+        "STAGE12_DATABASE_URL_SECRET_NAME",
+    ],
+)
+def test_cloud_run_deployment_stops_when_a_runtime_secret_cannot_be_resolved(
+    tmp_path, secret_name_variable
+):
+    command_environment = _cloud_run_deploy_environment(tmp_path) | {
+        secret_name_variable: "not a secret name"
+    }
+
+    result = subprocess.run(
+        [CLOUD_RUN_DEPLOY_SCRIPT],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=command_environment,
+    )
+
+    assert result.returncode != 0
+    assert "invalid Secret Manager reference" in result.stderr
+    assert not Path(command_environment["GCLOUD_ARGUMENTS_CAPTURE"]).exists()
+
+
+def test_stage12_secrets_are_resolved_by_the_stage12_block_alone():
+    """The comparison path shares no deploy helper with the main path."""
+    script = Path(CLOUD_RUN_DEPLOY_SCRIPT).read_text(encoding="utf-8")
+    stage12_block = script.split('if [[ "${DEPLOY_STAGE12_V2}" == "true" ]]; then', 1)[
+        1
+    ].split("\nfi\n", 1)[0]
+    main_path = script.replace(stage12_block, "")
+
+    assert "add_stage12_runtime_secret STAGE12_DATABASE_URL" in stage12_block
+    assert "add_runtime_secret " not in stage12_block
+    assert "add_stage12_runtime_secret " not in main_path.replace(
+        "add_stage12_runtime_secret() {", ""
+    )
 
 
 @pytest.mark.parametrize(
@@ -1893,6 +1963,61 @@ def test_container_context_excludes_local_environments_and_unrelated_projects():
     )
     assert ignore_rules.index("**/.venv") > ignore_rules.index(
         "!libs/policyengine-simulation-contract/**"
+    )
+
+
+def test_container_context_includes_every_local_library_the_entrypoint_installs():
+    entry_project = REPOSITORY_ROOT / "projects" / "policyengine-simulation-entry"
+    pyproject = (entry_project / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "path = " in pyproject
+    assert (
+        libraries_missing_from_context(
+            pyproject, DOCKERIGNORE.read_text(encoding="utf-8")
+        )
+        == []
+    )
+
+
+def test_rule_proof_container_context_minimal():
+    """Proof for rule sim.deploy.container-context-minimal (rules/registry.toml)."""
+    fixtures = REPOSITORY_ROOT / "rules" / "fixtures" / (
+        "sim.deploy.container-context-minimal"
+    )
+    pyproject = (fixtures / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert libraries_missing_from_context(
+        pyproject, (fixtures / "bad.dockerignore").read_text(encoding="utf-8")
+    ) == ["fixture-persistence"]
+    assert (
+        libraries_missing_from_context(
+            pyproject, (fixtures / "good.dockerignore").read_text(encoding="utf-8")
+        )
+        == []
+    )
+
+
+def test_cloud_run_deployment_resolves_each_secret_in_its_own_assignment():
+    script = Path(CLOUD_RUN_DEPLOY_SCRIPT).read_text(encoding="utf-8")
+
+    assert SECRET_RESOLUTION in script
+    assert combined_secret_resolutions(script) == []
+
+
+def test_rule_proof_workflow_shell_safety():
+    """Proof for rule sim.deploy.workflow-shell-safety (rules/registry.toml)."""
+    fixtures = REPOSITORY_ROOT / "rules" / "fixtures" / (
+        "sim.deploy.workflow-shell-safety"
+    )
+
+    assert combined_secret_resolutions(
+        (fixtures / "bad_deploy_script.sh").read_text(encoding="utf-8")
+    ) == ["runtime_secrets=("]
+    assert (
+        combined_secret_resolutions(
+            (fixtures / "good_deploy_script.sh").read_text(encoding="utf-8")
+        )
+        == []
     )
 
 
