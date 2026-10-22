@@ -74,6 +74,10 @@ def _simulation_run_key(table_name: str) -> list[SchemaItem]:
     return [
         Column("report_run_id", Uuid(as_uuid=True), nullable=False),
         Column("simulation_run_id", Uuid(as_uuid=True), nullable=False),
+        # Which side of the comparison the figures describe; it tells them
+        # apart when one simulation run is both the baseline and the reform.
+        Column("side", Text, nullable=False),
+        CheckConstraint("side IN ('baseline', 'reform')", name="side"),
         ForeignKeyConstraint(
             ["report_run_id"],
             [report_runs.c.id],
@@ -143,6 +147,7 @@ poverty_rates = Table(
     PrimaryKeyConstraint(
         "report_run_id",
         "simulation_run_id",
+        "side",
         "measure",
         "group_dimension",
         "group_value",
@@ -163,7 +168,7 @@ inequality = Table(
     simulation_metadata,
     *_simulation_run_key("inequality"),
     *_numbers("gini", "top_10_pct_share", "top_1_pct_share"),
-    PrimaryKeyConstraint("report_run_id", "simulation_run_id"),
+    PrimaryKeyConstraint("report_run_id", "simulation_run_id", "side"),
 )
 
 cliff_impacts = Table(
@@ -171,7 +176,7 @@ cliff_impacts = Table(
     simulation_metadata,
     *_simulation_run_key("cliff_impacts"),
     *_numbers("cliff_gap", "cliff_share"),
-    PrimaryKeyConstraint("report_run_id", "simulation_run_id"),
+    PrimaryKeyConstraint("report_run_id", "simulation_run_id", "side"),
 )
 
 # --- Per report run ---------------------------------------------------------
@@ -259,20 +264,41 @@ labor_supply_responses = Table(
     PrimaryKeyConstraint("report_run_id"),
 )
 
+# One row per decile any of the four maps names. The average maps may name a
+# decile the relative maps leave out: policyengine.py puts households with
+# negative income in decile -1 and gives relative effects for positive
+# deciles only. Each pair keeps its own order.
 labor_supply_decile_impacts = Table(
     "labor_supply_decile_impacts",
     simulation_metadata,
     *_report_run_key("labor_supply_decile_impacts"),
     Column("decile", Integer, nullable=False),
-    *_position(),
-    *_numbers(
-        "average_income_effect",
-        "average_substitution_effect",
-        "relative_income_effect",
-        "relative_substitution_effect",
-    ),
+    Column("average_position", Integer, nullable=True),
+    Column("relative_position", Integer, nullable=True),
+    Column("average_income_effect", Double, nullable=True),
+    Column("average_substitution_effect", Double, nullable=True),
+    Column("relative_income_effect", Double, nullable=True),
+    Column("relative_substitution_effect", Double, nullable=True),
     PrimaryKeyConstraint("report_run_id", "decile"),
-    UniqueConstraint("report_run_id", "position"),
+    UniqueConstraint("report_run_id", "average_position"),
+    UniqueConstraint("report_run_id", "relative_position"),
+    CheckConstraint(
+        "(average_position IS NULL) = (average_income_effect IS NULL) "
+        "AND (average_position IS NULL) = (average_substitution_effect IS NULL)",
+        name="average",
+    ),
+    CheckConstraint(
+        "(relative_position IS NULL) = (relative_income_effect IS NULL) "
+        "AND (relative_position IS NULL) = (relative_substitution_effect IS NULL)",
+        name="relative",
+    ),
+    CheckConstraint(
+        "average_position IS NOT NULL OR relative_position IS NOT NULL",
+        name="in_a_map",
+    ),
+    CheckConstraint(
+        "average_position >= 0 AND relative_position >= 0", name="positions"
+    ),
 )
 
 congressional_district_impacts = Table(

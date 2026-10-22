@@ -126,8 +126,12 @@ def upgrade() -> None:
         "cliff_impacts",
         sa.Column("report_run_id", sa.Uuid(), nullable=False),
         sa.Column("simulation_run_id", sa.Uuid(), nullable=False),
+        sa.Column("side", sa.Text(), nullable=False),
         sa.Column("cliff_gap", sa.Double(), nullable=False),
         sa.Column("cliff_share", sa.Double(), nullable=False),
+        sa.CheckConstraint(
+            "side IN ('baseline', 'reform')", name=op.f("ck_cliff_impacts_side")
+        ),
         sa.ForeignKeyConstraint(
             ["report_run_id"],
             ["simulation.report_runs.id"],
@@ -141,7 +145,7 @@ def upgrade() -> None:
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint(
-            "report_run_id", "simulation_run_id", name=op.f("pk_cliff_impacts")
+            "report_run_id", "simulation_run_id", "side", name=op.f("pk_cliff_impacts")
         ),
         schema="simulation",
     )
@@ -149,9 +153,13 @@ def upgrade() -> None:
         "inequality",
         sa.Column("report_run_id", sa.Uuid(), nullable=False),
         sa.Column("simulation_run_id", sa.Uuid(), nullable=False),
+        sa.Column("side", sa.Text(), nullable=False),
         sa.Column("gini", sa.Double(), nullable=False),
         sa.Column("top_10_pct_share", sa.Double(), nullable=False),
         sa.Column("top_1_pct_share", sa.Double(), nullable=False),
+        sa.CheckConstraint(
+            "side IN ('baseline', 'reform')", name=op.f("ck_inequality_side")
+        ),
         sa.ForeignKeyConstraint(
             ["report_run_id"],
             ["simulation.report_runs.id"],
@@ -165,7 +173,7 @@ def upgrade() -> None:
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint(
-            "report_run_id", "simulation_run_id", name=op.f("pk_inequality")
+            "report_run_id", "simulation_run_id", "side", name=op.f("pk_inequality")
         ),
         schema="simulation",
     )
@@ -173,6 +181,7 @@ def upgrade() -> None:
         "poverty_rates",
         sa.Column("report_run_id", sa.Uuid(), nullable=False),
         sa.Column("simulation_run_id", sa.Uuid(), nullable=False),
+        sa.Column("side", sa.Text(), nullable=False),
         sa.Column("measure", sa.Text(), nullable=False),
         sa.Column("group_dimension", sa.Text(), nullable=False),
         sa.Column("group_value", sa.Text(), nullable=False),
@@ -189,6 +198,9 @@ def upgrade() -> None:
             "measure IN ('poverty', 'deep_poverty')",
             name=op.f("ck_poverty_rates_measure"),
         ),
+        sa.CheckConstraint(
+            "side IN ('baseline', 'reform')", name=op.f("ck_poverty_rates_side")
+        ),
         sa.ForeignKeyConstraint(
             ["report_run_id"],
             ["simulation.report_runs.id"],
@@ -204,6 +216,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint(
             "report_run_id",
             "simulation_run_id",
+            "side",
             "measure",
             "group_dimension",
             "group_value",
@@ -363,13 +376,29 @@ def upgrade() -> None:
         "labor_supply_decile_impacts",
         sa.Column("report_run_id", sa.Uuid(), nullable=False),
         sa.Column("decile", sa.Integer(), nullable=False),
-        sa.Column("position", sa.Integer(), nullable=False),
-        sa.Column("average_income_effect", sa.Double(), nullable=False),
-        sa.Column("average_substitution_effect", sa.Double(), nullable=False),
-        sa.Column("relative_income_effect", sa.Double(), nullable=False),
-        sa.Column("relative_substitution_effect", sa.Double(), nullable=False),
+        sa.Column("average_position", sa.Integer(), nullable=True),
+        sa.Column("relative_position", sa.Integer(), nullable=True),
+        sa.Column("average_income_effect", sa.Double(), nullable=True),
+        sa.Column("average_substitution_effect", sa.Double(), nullable=True),
+        sa.Column("relative_income_effect", sa.Double(), nullable=True),
+        sa.Column("relative_substitution_effect", sa.Double(), nullable=True),
         sa.CheckConstraint(
-            "position >= 0", name=op.f("ck_labor_supply_decile_impacts_position")
+            "(average_position IS NULL) = (average_income_effect IS NULL) "
+            "AND (average_position IS NULL) = (average_substitution_effect IS NULL)",
+            name=op.f("ck_labor_supply_decile_impacts_average"),
+        ),
+        sa.CheckConstraint(
+            "(relative_position IS NULL) = (relative_income_effect IS NULL) "
+            "AND (relative_position IS NULL) = (relative_substitution_effect IS NULL)",
+            name=op.f("ck_labor_supply_decile_impacts_relative"),
+        ),
+        sa.CheckConstraint(
+            "average_position IS NOT NULL OR relative_position IS NOT NULL",
+            name=op.f("ck_labor_supply_decile_impacts_in_a_map"),
+        ),
+        sa.CheckConstraint(
+            "average_position >= 0 AND relative_position >= 0",
+            name=op.f("ck_labor_supply_decile_impacts_positions"),
         ),
         sa.ForeignKeyConstraint(
             ["report_run_id"],
@@ -382,8 +411,13 @@ def upgrade() -> None:
         ),
         sa.UniqueConstraint(
             "report_run_id",
-            "position",
-            name=op.f("uq_labor_supply_decile_impacts_report_run_id_position"),
+            "average_position",
+            name=op.f("uq_labor_supply_decile_impacts_report_run_id_average_position"),
+        ),
+        sa.UniqueConstraint(
+            "report_run_id",
+            "relative_position",
+            name=op.f("uq_labor_supply_decile_impacts_report_run_id_relative_position"),
         ),
         schema="simulation",
     )

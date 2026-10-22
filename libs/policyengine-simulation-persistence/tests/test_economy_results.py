@@ -6,11 +6,14 @@ import pytest
 from policyengine_simulation_persistence import (
     EconomyComparisonRecorder,
     EconomyResultLabels,
+    NewReportRun,
+    RunTrigger,
     check_storable,
     create_simulation_engine,
     read_economy_comparison,
 )
 from pydantic import ValidationError
+from report_support import economy_report, report_store
 from result_support import (
     SAMPLE_NAMES,
     comparison_ready,
@@ -18,7 +21,8 @@ from result_support import (
     load_sample,
     result_stores,
 )
-from simulation_support import simulation_store
+from run_support import economy_run
+from simulation_support import economy_simulation, simulation_store
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
@@ -186,6 +190,75 @@ def test_an_empty_income_decile_map_is_rebuilt(
     )
     stores = result_stores(migrated_database)
     report_run = comparison_ready(stores, migrated_database, public_api_rows)
+
+    _write(stores, report_run, result)
+
+    assert _read(migrated_database, report_run.id, labels_for(result)) == result
+
+
+def _with_negative_income_decile(result):
+    """Add the -1 decile policyengine.py gives households with negative income.
+
+    It appears in the average labour supply maps only; the relative maps keep
+    positive deciles.
+    """
+    labor = result.labor_supply_response
+    average = labor.decile.average
+    widened = average.model_copy(
+        update={
+            "income": {-1: -12.5, **average.income},
+            "substitution": {-1: 3.25, **average.substitution},
+        }
+    )
+    decile = labor.decile.model_copy(update={"average": widened})
+    return result.model_copy(
+        update={"labor_supply_response": labor.model_copy(update={"decile": decile})}
+    )
+
+
+@pytest.mark.parametrize("sample_name", ["us_national_2026", "uk_national_2026"])
+def test_labour_supply_with_a_negative_income_decile_is_rebuilt(
+    migrated_database, public_api_rows, sample_name
+) -> None:
+    result = _with_negative_income_decile(load_sample(sample_name))
+    stores = result_stores(migrated_database)
+    report_run = comparison_ready(stores, migrated_database, public_api_rows)
+
+    _write(stores, report_run, RECORDER.validate(result.model_dump(mode="json")))
+
+    rebuilt = _read(migrated_database, report_run.id, labels_for(result))
+    assert rebuilt.model_dump_json() == result.model_dump_json()
+
+
+def test_a_report_run_comparing_a_run_with_itself_is_stored(
+    migrated_database, public_api_rows
+) -> None:
+    result = load_sample("us_state_ca_2026")
+    stores = result_stores(migrated_database)
+    simulation = simulation_store(migrated_database).create(
+        economy_simulation(public_api_rows, policy_id=None)
+    )
+    report = report_store(migrated_database).create(
+        economy_report(simulation, simulation)
+    )
+    run = stores.runs.start_simulation_run(economy_run(simulation, public_api_rows)).run
+    stores.transitions.claim_simulation_dispatch([run.id])
+    stores.transitions.record_simulation_dispatched(
+        [run.id], modal_call_id="fc-itself", first_check_at=stores.clock()
+    )
+    stores.transitions.complete_simulation_call("fc-itself", lambda *_: None)
+    report_run = stores.runs.create_report_run(
+        NewReportRun(
+            report_id=report.id,
+            baseline_simulation_run_id=run.id,
+            reform_simulation_run_id=run.id,
+            trigger=RunTrigger.INITIAL,
+        )
+    )
+    stores.transitions.claim_comparison_dispatch(report_run.id)
+    stores.transitions.record_comparison_dispatched(
+        report_run.id, modal_call_id="fc-comparison", first_check_at=stores.clock()
+    )
 
     _write(stores, report_run, result)
 
