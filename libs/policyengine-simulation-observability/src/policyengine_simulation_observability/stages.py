@@ -26,6 +26,7 @@ class RunConfiguration(StrEnum):
     STAGE12_CANONICAL_REPORT = "stage12_canonical_report"
     STAGE12_SIMULATION = "stage12_simulation"
     STAGE12_SEGMENT = "stage12_segment"
+    V2_HOUSEHOLD = "v2_household"
 
 
 class Stage(StrEnum):
@@ -111,6 +112,10 @@ class Stage(StrEnum):
     STAGE12_AGGREGATION = "stage12_aggregation"
     STAGE12_AGGREGATE_ARTIFACT_WRITE = "stage12_aggregate_artifact_write"
     STAGE12_RESULT_COMPARISON = "stage12_result_comparison"
+    V2_HOUSEHOLD_EXECUTION = "v2_household_execution"
+    V2_HOUSEHOLD_COUNTRY_MODEL_LOAD = "v2_household_country_model_load"
+    V2_HOUSEHOLD_INPUT_NORMALIZATION = "v2_household_input_normalization"
+    V2_HOUSEHOLD_CALCULATION = "v2_household_calculation"
 
 
 @dataclass(frozen=True)
@@ -271,6 +276,17 @@ RUN_STAGE_REGISTRY: Mapping[RunConfiguration, StagePlan] = MappingProxyType(
                 Stage.STAGE12_CALCULATION,
             ),
         ),
+        # One v2 household function call: loading the country model,
+        # preparing the household, then one calculation per policy.
+        RunConfiguration.V2_HOUSEHOLD: StagePlan(
+            RunConfiguration.V2_HOUSEHOLD,
+            (
+                Stage.V2_HOUSEHOLD_EXECUTION,
+                Stage.V2_HOUSEHOLD_COUNTRY_MODEL_LOAD,
+                Stage.V2_HOUSEHOLD_INPUT_NORMALIZATION,
+                Stage.V2_HOUSEHOLD_CALCULATION,
+            ),
+        ),
     }
 )
 
@@ -285,3 +301,4 @@ STAGE12_CANONICAL_REPORT_STAGES = RUN_STAGE_REGISTRY[
 ]
 STAGE12_SIMULATION_STAGES = RUN_STAGE_REGISTRY[RunConfiguration.STAGE12_SIMULATION]
 STAGE12_SEGMENT_STAGES = RUN_STAGE_REGISTRY[RunConfiguration.STAGE12_SEGMENT]
+V2_HOUSEHOLD_STAGES = RUN_STAGE_REGISTRY[RunConfiguration.V2_HOUSEHOLD]
