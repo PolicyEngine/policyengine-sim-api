@@ -70,8 +70,9 @@ add_runtime_secret() {
   runtime_secrets+=("${variable_name}=${resolved_reference}")
 }
 
-# The Stage 12 comparison path's own copy, so it shares no deploy helper with
-# the main path and is removed with it.
+# The Stage 12 comparison path's own wrapper, removed with it, so the main
+# path's wrapper can change without touching the Stage 12 block. Both use the
+# secret lookups above, which predate the split.
 add_stage12_runtime_secret() {
   local variable_name="$1"
   local resolved_reference
