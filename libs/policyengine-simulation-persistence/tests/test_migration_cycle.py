@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 
 import pytest
@@ -18,10 +19,13 @@ from policyengine_simulation_persistence import (
     HEAD_REVISION,
     SIMULATION_SCHEMA,
     create_simulation_engine,
+    simulation_metadata,
 )
 from report_support import economy_pair, economy_report, report_store
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import OperationalError, ProgrammingError
+from sqlalchemy.schema import CreateTable
 
 pytestmark = pytest.mark.postgres
 
@@ -229,3 +233,36 @@ def test_the_runtime_role_cannot_change_or_delete_a_definition(
                 connection.execute(text(statement))
     finally:
         engine.dispose()
+
+
+def _declared_constraint_names() -> set[str]:
+    """Return the names the table definitions give their constraints."""
+    names: set[str] = set()
+    for table in simulation_metadata.sorted_tables:
+        ddl = str(CreateTable(table).compile(dialect=postgresql.dialect()))
+        names.update(re.findall(r"CONSTRAINT (\w+)", ddl))
+    return names
+
+
+def test_every_constraint_has_the_name_its_definition_gives_it(
+    migrated_database,
+) -> None:
+    """Compare names here, since alembic check does not compare check constraints."""
+    engine = _superuser_engine(migrated_database)
+    try:
+        with engine.connect() as connection:
+            database_names = set(
+                connection.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint "
+                        "JOIN pg_namespace ON pg_namespace.oid = connamespace "
+                        "WHERE nspname = 'simulation' "
+                        "AND contype IN ('c', 'f', 'p', 'u') "
+                        "AND conrelid <> 'simulation.alembic_version'::regclass"
+                    )
+                ).scalars()
+            )
+    finally:
+        engine.dispose()
+
+    assert database_names == _declared_constraint_names()

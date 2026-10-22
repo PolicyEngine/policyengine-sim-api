@@ -54,27 +54,29 @@ def _create_simulations() -> None:
         ),
         sa.CheckConstraint(
             "kind IN ('economy', 'household')",
-            name="ck_simulations_kind",
+            name=op.f("ck_simulations_kind"),
         ),
-        sa.CheckConstraint("country ~ '^[a-z]{2}$'", name="ck_simulations_country"),
+        sa.CheckConstraint(
+            "country ~ '^[a-z]{2}$'", name=op.f("ck_simulations_country")
+        ),
         sa.CheckConstraint(
             "(kind = 'household' AND household_id IS NOT NULL "
             "AND region_code IS NULL AND dataset_name IS NULL) "
             "OR (kind = 'economy' AND household_id IS NULL "
             "AND region_code IS NOT NULL)",
-            name="ck_simulations_population_matches_kind",
+            name=op.f("ck_simulations_population_matches_kind"),
         ),
         sa.CheckConstraint(
             "region_code IS NULL OR region_code ~ '^\\S+$'",
-            name="ck_simulations_region_code",
+            name=op.f("ck_simulations_region_code"),
         ),
         sa.CheckConstraint(
             "dataset_name IS NULL OR dataset_name ~ '^\\S+$'",
-            name="ck_simulations_dataset_name",
+            name=op.f("ck_simulations_dataset_name"),
         ),
         sa.CheckConstraint(
             "legacy_simulation_id IS NULL OR legacy_simulation_id > 0",
-            name="ck_simulations_legacy_simulation_id",
+            name=op.f("ck_simulations_legacy_simulation_id"),
         ),
         sa.ForeignKeyConstraint(
             ["policy_id", "country"],
@@ -136,19 +138,21 @@ def _create_reports() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.CheckConstraint("kind IN ('economy', 'household')", name="ck_reports_kind"),
-        sa.CheckConstraint("country ~ '^[a-z]{2}$'", name="ck_reports_country"),
-        sa.CheckConstraint("year BETWEEN 1900 AND 2200", name="ck_reports_year"),
         sa.CheckConstraint(
-            "jsonb_typeof(options) = 'object'", name="ck_reports_options"
+            "kind IN ('economy', 'household')", name=op.f("ck_reports_kind")
+        ),
+        sa.CheckConstraint("country ~ '^[a-z]{2}$'", name=op.f("ck_reports_country")),
+        sa.CheckConstraint("year BETWEEN 1900 AND 2200", name=op.f("ck_reports_year")),
+        sa.CheckConstraint(
+            "jsonb_typeof(options) = 'object'", name=op.f("ck_reports_options")
         ),
         sa.CheckConstraint(
             "kind = 'household' OR reform_simulation_id IS NOT NULL",
-            name="ck_reports_economy_has_reform",
+            name=op.f("ck_reports_economy_has_reform"),
         ),
         sa.CheckConstraint(
             "legacy_report_id IS NULL OR legacy_report_id > 0",
-            name="ck_reports_legacy_report_id",
+            name=op.f("ck_reports_legacy_report_id"),
         ),
         sa.ForeignKeyConstraint(
             ["baseline_simulation_id", "country", "kind"],
