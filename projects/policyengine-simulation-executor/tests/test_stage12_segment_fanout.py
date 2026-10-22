@@ -22,6 +22,10 @@ from policyengine_simulation_executor.stage12_runtime import (
 from policyengine_simulation_executor.stage12_runtime.partition import (
     US_REGION_GROUPS,
 )
+from policyengine_simulation_observability.stages import (
+    STAGE12_SIMULATION_STAGES,
+    Stage,
+)
 from test_stage12_runtime import _planned_simulation
 
 if TYPE_CHECKING:
@@ -50,6 +54,10 @@ class FakeRuntime:
     def __init__(self) -> None:
         self.context: dict[str, object] = {}
         self.spans: list[tuple[str, dict | None]] = []
+        # Raise this when the span with this name and attributes opens or
+        # closes, as Modal's cancellation can arrive at any point.
+        self.stop_on_open: tuple[str, dict | None] | None = None
+        self.stop_on_close: tuple[str, dict | None] | None = None
 
     def set_context(self, **attributes) -> None:
         self.context.update(attributes)
@@ -60,7 +68,13 @@ class FakeRuntime:
     @contextmanager
     def span(self, name, *, attributes=None):
         self.spans.append((name, attributes))
+        if self.stop_on_open == (name, attributes):
+            msg = "Input was cancelled by user"
+            raise InputCancellation(msg)
         yield
+        if self.stop_on_close == (name, attributes):
+            msg = "Input was cancelled by user"
+            raise InputCancellation(msg)
 
 
 class FakeCall:
@@ -254,4 +268,34 @@ def test_modal_cancelling_the_worker_during_dispatch_cancels_started_segments() 
         runner.run()
 
     assert len(function.calls) == 5
+    assert all(call.cancelled == 1 for call in function.calls)
+
+
+def test_modal_cancelling_the_worker_as_a_dispatch_span_closes_cancels_it() -> None:
+    runner, function, runtime, _ = _runner()
+    # The call has started, but its dispatch span has not closed yet.
+    runtime.stop_on_close = (
+        STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_DISPATCH),
+        {"segment_index": 3},
+    )
+
+    with pytest.raises(InputCancellation):
+        runner.run()
+
+    assert len(function.calls) == 4
+    assert all(call.cancelled == 1 for call in function.calls)
+
+
+def test_modal_cancelling_the_worker_before_the_wait_cancels_every_segment() -> None:
+    runner, function, runtime, _ = _runner()
+    # Every segment has started; the wait has not begun.
+    runtime.stop_on_open = (
+        STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_WAIT),
+        None,
+    )
+
+    with pytest.raises(InputCancellation):
+        runner.run()
+
+    assert len(function.calls) == 20
     assert all(call.cancelled == 1 for call in function.calls)
