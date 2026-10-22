@@ -3,8 +3,10 @@
 Each section of today's economy result model (``SingleYearMacroOutput``) maps
 to one table. Numbers that describe one simulation (a baseline's or a reform's
 own poverty rates, inequality and cliff exposure) belong to that simulation
-run, so a reused current-law baseline keeps them once; comparisons (the change
-between baseline and reform) belong to the report run. Lists and maps keep
+run, as computed by one comparison: they are keyed by the simulation run and
+the report run, because a reused run's figures can differ between comparisons.
+Comparisons (the change between baseline and reform) belong to the report
+run. Lists and maps keep
 their order in a ``position`` column, so a reader rebuilds the result exactly.
 
 Constituency and local-authority names and map positions are not stored: they
@@ -25,6 +27,7 @@ from sqlalchemy import (
     Column,
     Double,
     ForeignKeyConstraint,
+    Index,
     Integer,
     PrimaryKeyConstraint,
     SmallInteger,
@@ -62,14 +65,28 @@ def _values(values: tuple[str, ...]) -> str:
 
 
 def _simulation_run_key(table_name: str) -> list[SchemaItem]:
+    """Key a simulation's own figures by its run and the comparison that computed them.
+
+    A reused simulation run takes part in many comparisons, and its figures
+    can differ between them (US poverty rates follow each comparison's SPM
+    selection), so each report run keeps its own copy.
+    """
     return [
+        Column("report_run_id", Uuid(as_uuid=True), nullable=False),
         Column("simulation_run_id", Uuid(as_uuid=True), nullable=False),
+        ForeignKeyConstraint(
+            ["report_run_id"],
+            [report_runs.c.id],
+            name=f"fk_{table_name}_report_run",
+            ondelete="RESTRICT",
+        ),
         ForeignKeyConstraint(
             ["simulation_run_id"],
             [simulation_runs.c.id],
             name=f"fk_{table_name}_simulation_run",
             ondelete="RESTRICT",
         ),
+        Index(f"ix_{table_name}_simulation_run_id", "simulation_run_id"),
     ]
 
 
@@ -124,7 +141,11 @@ poverty_rates = Table(
     Column("group_value", Text, nullable=False),
     *_numbers("rate"),
     PrimaryKeyConstraint(
-        "simulation_run_id", "measure", "group_dimension", "group_value"
+        "report_run_id",
+        "simulation_run_id",
+        "measure",
+        "group_dimension",
+        "group_value",
     ),
     CheckConstraint(f"measure IN ({_values(POVERTY_MEASURES)})", name="measure"),
     CheckConstraint(
@@ -142,7 +163,7 @@ inequality = Table(
     simulation_metadata,
     *_simulation_run_key("inequality"),
     *_numbers("gini", "top_10_pct_share", "top_1_pct_share"),
-    PrimaryKeyConstraint("simulation_run_id"),
+    PrimaryKeyConstraint("report_run_id", "simulation_run_id"),
 )
 
 cliff_impacts = Table(
@@ -150,7 +171,7 @@ cliff_impacts = Table(
     simulation_metadata,
     *_simulation_run_key("cliff_impacts"),
     *_numbers("cliff_gap", "cliff_share"),
-    PrimaryKeyConstraint("simulation_run_id"),
+    PrimaryKeyConstraint("report_run_id", "simulation_run_id"),
 )
 
 # --- Per report run ---------------------------------------------------------
