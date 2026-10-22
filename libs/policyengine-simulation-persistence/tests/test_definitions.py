@@ -70,3 +70,31 @@ def test_report_options_must_be_a_json_object() -> None:
             year=2026,
             options=["not", "an", "object"],  # type: ignore[arg-type]
         )
+
+
+def test_a_kind_given_as_text_becomes_the_enum() -> None:
+    simulation = NewSimulation(kind="economy", country="us", region_code="state/ca")  # type: ignore[arg-type]
+    report = NewReport(
+        kind="household",  # type: ignore[arg-type]
+        country="us",
+        baseline_simulation_id=uuid4(),
+        year=2026,
+    )
+
+    assert simulation.kind is SimulationKind.ECONOMY
+    assert report.kind is ReportKind.HOUSEHOLD
+
+
+def test_an_unknown_simulation_kind_is_rejected() -> None:
+    with pytest.raises(ValueError, match="kind"):
+        NewSimulation(kind="microsimulation", country="us", region_code="state/ca")  # type: ignore[arg-type]
+
+
+def test_an_unknown_report_kind_is_rejected() -> None:
+    with pytest.raises(ValueError, match="kind"):
+        NewReport(
+            kind="microsimulation",  # type: ignore[arg-type]
+            country="us",
+            baseline_simulation_id=uuid4(),
+            year=2026,
+        )
