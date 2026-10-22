@@ -77,6 +77,9 @@ if [ "${expected_identity}" = "required" ] ||
 fi
 routing_max_attempts="${SIMULATION_ENTRYPOINT_ROUTING_MAX_ATTEMPTS:-24}"
 routing_retry_delay_seconds="${SIMULATION_ENTRYPOINT_ROUTING_RETRY_DELAY_SECONDS:-5}"
+# A cold candidate may not reach its database within /ready's three-second
+# wait; an unreachable database is asked about again this many times.
+database_ready_max_attempts="${SIMULATION_DATABASE_READY_MAX_ATTEMPTS:-6}"
 
 if ! [[ "${routing_max_attempts}" =~ ^[1-9][0-9]*$ ]]; then
   printf 'SIMULATION_ENTRYPOINT_ROUTING_MAX_ATTEMPTS must be a positive integer\n' >&2
@@ -84,6 +87,10 @@ if ! [[ "${routing_max_attempts}" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if ! [[ "${routing_retry_delay_seconds}" =~ ^[0-9]+$ ]]; then
   printf 'SIMULATION_ENTRYPOINT_ROUTING_RETRY_DELAY_SECONDS must be a non-negative integer\n' >&2
+  exit 2
+fi
+if ! [[ "${database_ready_max_attempts}" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'SIMULATION_DATABASE_READY_MAX_ATTEMPTS must be a positive integer\n' >&2
   exit 2
 fi
 
@@ -147,6 +154,17 @@ done
 
 ready_body="$(curl --fail --silent --show-error "${base_url}/ready")"
 jq -e '.status == "ready"' <<<"${ready_body}" >/dev/null
+if [ "${require_database_revision}" = "true" ]; then
+  database_attempt=1
+  while [ "${database_attempt}" -lt "${database_ready_max_attempts}" ] &&
+    jq -e '.simulation_database.reachable == false' <<<"${ready_body}" >/dev/null; do
+    printf '%s: the simulation database was not reached; asking again (%s/%s)\n' \
+      "${base_url}" "${database_attempt}" "${database_ready_max_attempts}" >&2
+    sleep "${routing_retry_delay_seconds}"
+    ready_body="$(curl --fail --silent --show-error "${base_url}/ready")"
+    database_attempt=$((database_attempt + 1))
+  done
+fi
 if [ "${require_database_revision}" = "true" ] &&
   ! jq -e '
     .simulation_database.reachable == true
