@@ -309,6 +309,47 @@ def test_the_loop_leaves_database_connections_for_requests() -> None:
     assert run_recording.INSPECTION_CONCURRENCY < POOL_SIZE + MAX_OVERFLOW
 
 
+def test_a_database_error_in_one_check_ends_with_its_pass(caplog) -> None:
+    """Every check finishes before the pass returns, so the limit holds."""
+    recorder, transitions, inspector, clock = _recorder()
+    (broken_run,) = transitions.running_call("fc-broken")
+    (failed_run,) = transitions.running_call("fc-failed")
+    inspector.outcomes["fc-failed"] = CallFailed(
+        RunError(RunErrorCode.WORKER_ERROR, "The Modal call raised KeyError.")
+    )
+    keep_running = transitions.record_simulation_call_running
+
+    def drop_one_connection(modal_call_id, *, next_check_at):
+        if modal_call_id == "fc-broken":
+            msg = "connection lost"
+            raise ConnectionError(msg)
+        return keep_running(modal_call_id, next_check_at=next_check_at)
+
+    transitions.record_simulation_call_running = drop_one_connection  # type: ignore[method-assign]
+
+    recording = _run(recorder)
+
+    assert recording.not_reached == 1
+    assert recording.failed == 1
+    assert transitions.runs[failed_run].status is RunStatus.FAILED
+    assert transitions.runs[broken_run].next_check_at == clock() + CHECK_LEASE
+    assert "simulation_run_check_failed" in [
+        record.message for record in caplog.records
+    ]
+
+
+def test_abandoned_comparison_steps_are_logged_as_comparison_events(caplog) -> None:
+    recorder, transitions, _, clock = _recorder()
+    transitions.add_comparison(status=RunStatus.DISPATCHING, updated_at=clock())
+    clock.advance(timedelta(minutes=10, seconds=1))
+
+    _run(recorder)
+
+    assert [record.message for record in caplog.records] == [
+        "report_run_comparison_dispatches_abandoned"
+    ]
+
+
 class _ScriptedRecorder:
     """Return scripted passes, or raise, and count how often it ran."""
 

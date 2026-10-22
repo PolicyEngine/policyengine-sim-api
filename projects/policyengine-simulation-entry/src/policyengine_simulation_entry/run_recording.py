@@ -34,7 +34,6 @@ from policyengine_simulation_persistence.run_store import utc_now
 
 from policyengine_simulation_entry.modal_calls import (
     CallFailed,
-    CallInspectionError,
     CallRunning,
 )
 
@@ -117,7 +116,11 @@ class ComparisonResultRecorder(Protocol):
 
 @dataclass(frozen=True)
 class ResultRecorders:
-    """The result recorders by kind of run; a kind with none fails its runs."""
+    """The result recorders by kind of run.
+
+    A finished call of a kind with no recorder here is checked again later,
+    so that a revision which has one records it.
+    """
 
     simulations: Mapping[SimulationKind, SimulationResultRecorder] = field(
         default_factory=dict
@@ -292,18 +295,15 @@ class RunRecorder:
         recording.abandoned = len(abandoned.simulation_run_ids) + len(
             abandoned.report_run_ids
         )
-        if recording.abandoned:
-            logger.warning(
-                "simulation_run_dispatches_abandoned",
-                extra={
-                    "simulation_run_ids": [
-                        str(run_id) for run_id in abandoned.simulation_run_ids
-                    ],
-                    "report_run_ids": [
-                        str(report_run_id) for report_run_id in abandoned.report_run_ids
-                    ],
-                },
-            )
+        for event_prefix, field_name, ids in (
+            ("simulation_run", "simulation_run_ids", abandoned.simulation_run_ids),
+            ("report_run_comparison", "report_run_ids", abandoned.report_run_ids),
+        ):
+            if ids:
+                logger.warning(
+                    _event_name(event_prefix, "dispatches_abandoned"),
+                    extra={field_name: [str(identifier) for identifier in ids]},
+                )
         without_runs = await asyncio.to_thread(
             self.transitions.fail_comparisons_of_failed_runs
         )
@@ -389,15 +389,17 @@ class RunRecorder:
         recording.checked += 1
         try:
             outcome = await self.inspector.inspect(modal_call_id)
-        except CallInspectionError as error:
-            # The claim's lease makes the call due again; nothing to record.
+            await self._record(outcome, handlers, recording)
+        # Modal could not be reached, or a database write failed (for example
+        # a dropped connection). Each check ends here, so a pass returns only
+        # once all of its checks have, and its concurrency limit holds. The
+        # claim's lease makes the call due again; nothing was recorded.
+        except Exception as error:  # noqa: BLE001  # retried after the lease
             recording.not_reached += 1
             logger.warning(
                 _event_name(handlers.event_prefix, "check_failed"),
-                extra={**handlers.subject, "error_type": str(error)},
+                extra={**handlers.subject, "error_type": type(error).__name__},
             )
-            return
-        await self._record(outcome, handlers, recording)
 
     async def _record(
         self, outcome: CallOutcome, handlers: _CallHandlers, recording: RecordingPass
