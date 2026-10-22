@@ -325,6 +325,52 @@ def test_the_smoke_rejects_a_database_not_at_the_expected_revision(
     assert "simulation database" in result.stderr
 
 
+def _run_smoke_with_ready_bodies(tmp_path, bodies):
+    bodies_file = tmp_path / "ready-bodies"
+    bodies_file.write_text("\n".join(bodies) + "\n", encoding="utf-8")
+    state_file, revisions_file = write_fake_smoke_curl(tmp_path, ["revision-1"])
+    environment = smoke_test_env(tmp_path, state_file, revisions_file) | {
+        "FAKE_CURL_READY_BODIES": str(bodies_file),
+        "REQUIRE_CURRENT_SIMULATION_DATABASE_REVISION": "true",
+        "SIMULATION_DATABASE_READY_MAX_ATTEMPTS": "3",
+    }
+    result = subprocess.run(
+        ["bash", SMOKE_SCRIPT, "https://candidate.example.test", "revision-1"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    ready_requests = int(Path(f"{bodies_file}.count").read_text(encoding="utf-8"))
+    return result, ready_requests
+
+
+def test_the_smoke_waits_for_a_database_a_cold_instance_has_not_reached(tmp_path):
+    result, ready_requests = _run_smoke_with_ready_bodies(
+        tmp_path, [_ready_body(None), _ready_body(None), _ready_body("0001")]
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert ready_requests == 3
+
+
+def test_the_smoke_stops_waiting_for_an_unreachable_database(tmp_path):
+    result, ready_requests = _run_smoke_with_ready_bodies(tmp_path, [_ready_body(None)])
+
+    assert result.returncode == 1
+    assert ready_requests == 3
+    assert "simulation database" in result.stderr
+
+
+def test_the_smoke_does_not_wait_for_a_database_at_another_revision(tmp_path):
+    result, ready_requests = _run_smoke_with_ready_bodies(
+        tmp_path, [_ready_body("0001", expected_revision="0002"), _ready_body("0002")]
+    )
+
+    assert result.returncode == 1
+    assert ready_requests == 1
+
+
 def test_stable_and_rollback_smokes_ignore_the_database_revision(tmp_path):
     result = _run_smoke(tmp_path, _ready_body(None), require=None)
 
