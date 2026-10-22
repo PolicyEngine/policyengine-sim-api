@@ -547,6 +547,48 @@ def test_coordinator_runs_a_stage12_report_with_unchanged_attributes(
     }
 
 
+@pytest.mark.parametrize(
+    "function_name", ["run_single_simulation_us", "run_single_simulation_uk"]
+)
+@pytest.mark.parametrize(
+    ("context", "expected_attributes"),
+    [
+        ({}, {"runner_name": "stage12", "simulation_role": "baseline"}),
+        (
+            {"result_delivery": "return_to_caller"},
+            {
+                "runner_name": "stage12",
+                "simulation_role": "baseline",
+                "result_delivery": "return_to_caller",
+            },
+        ),
+    ],
+)
+def test_worker_operation_says_when_its_report_returns_to_the_caller(
+    monkeypatch,
+    function_name,
+    context,
+    expected_attributes,
+) -> None:
+    from policyengine_simulation_executor import stage12_runtime
+
+    module = _load(monkeypatch)
+    runtime = RecordingRuntime()
+    monkeypatch.setattr(module, "init_process_observability", lambda **_: runtime)
+    monkeypatch.setattr(
+        stage12_runtime, "run_single_simulation", lambda *_, **__: {"ok": True}
+    )
+
+    getattr(module, function_name)(
+        {"role": "baseline"},
+        context,
+        observability_context=_observability_context(),
+    )
+
+    # Telemetry tells a returned report's workers apart from Stage 12 runs.
+    assert runtime.operations[0]["attributes"] == expected_attributes
+
+
 def test_external_package_values_are_assertions_only(monkeypatch) -> None:
     install_fake_modal(monkeypatch)
     monkeypatch.setenv("STAGE12_EXPECT_US_VERSION", "not-the-bundled-version")
