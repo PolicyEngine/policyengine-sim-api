@@ -12,10 +12,26 @@ calculated, warnings and SPM receipt. Failures carry the codes and messages of
 the Public API's matching error responses. This keeps v2 results comparable
 with the Public API's results while both exist.
 
-Two values are written differently, because the contract carries only finite
-numbers and JSON scalars: an undefined number is the string "NaN" (the Public
-API writes a bare ``NaN``, which is not JSON), and a date is the HTTP date
-text the Public API's Flask encoder writes.
+Every known difference from the Public API is listed here:
+
+- An undefined number is the string "NaN": the contract carries only finite
+  numbers and JSON scalars, and the Public API writes a bare ``NaN``, which
+  is not JSON. A date is the HTTP date text the Public API's Flask encoder
+  writes.
+- The default household year, used when ``you`` has no age by period, is the
+  current UTC year; the Public API uses its host's local date.
+- With ``add_missing_variables``, an age given for ``you`` as one value, not
+  by period, counts as no age; the Public API fails with an internal error.
+- An explicit null ``axes`` means no axes, because the contract drops it; the
+  Public API treats the key's presence as a household with axes.
+- Every policy's parameters are checked before any policy is calculated, so
+  an unknown parameter in a reform fails the whole request.
+- Its messages are the request routes' (``/calculate`` and
+  ``/calculate-full``). The stored-household route words a household it
+  cannot read, and any other failure except an SPM error, with the household
+  and policy IDs, which a household function does not have.
+- A request the contract's models reject, such as a group without
+  ``members``, never reaches this module; the caller reports it.
 """
 
 from __future__ import annotations
