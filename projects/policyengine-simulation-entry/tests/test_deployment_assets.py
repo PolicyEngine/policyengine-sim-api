@@ -9,6 +9,11 @@ from pathlib import Path
 
 import pytest
 import tomllib
+from deployment_rule_checks import (
+    SECRET_RESOLUTION,
+    combined_secret_resolutions,
+    libraries_missing_from_context,
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 GITIGNORE = REPOSITORY_ROOT / ".gitignore"
@@ -1962,25 +1967,58 @@ def test_container_context_excludes_local_environments_and_unrelated_projects():
 
 
 def test_container_context_includes_every_local_library_the_entrypoint_installs():
-    ignore_rules = DOCKERIGNORE.read_text(encoding="utf-8").splitlines()
-    pyproject = tomllib.loads(
-        (
-            REPOSITORY_ROOT
-            / "projects"
-            / "policyengine-simulation-entry"
-            / "pyproject.toml"
-        ).read_text(encoding="utf-8")
-    )
-    library_paths = [
-        Path(source["path"]).name
-        for source in pyproject["tool"]["uv"]["sources"].values()
-        if "path" in source
-    ]
+    entry_project = REPOSITORY_ROOT / "projects" / "policyengine-simulation-entry"
+    pyproject = (entry_project / "pyproject.toml").read_text(encoding="utf-8")
 
-    assert library_paths
-    for library in library_paths:
-        assert f"!libs/{library}/" in ignore_rules, library
-        assert f"!libs/{library}/**" in ignore_rules, library
+    assert "path = " in pyproject
+    assert (
+        libraries_missing_from_context(
+            pyproject, DOCKERIGNORE.read_text(encoding="utf-8")
+        )
+        == []
+    )
+
+
+def test_rule_proof_container_context_minimal():
+    """Proof for rule sim.deploy.container-context-minimal (rules/registry.toml)."""
+    fixtures = REPOSITORY_ROOT / "rules" / "fixtures" / (
+        "sim.deploy.container-context-minimal"
+    )
+    pyproject = (fixtures / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert libraries_missing_from_context(
+        pyproject, (fixtures / "bad.dockerignore").read_text(encoding="utf-8")
+    ) == ["fixture-persistence"]
+    assert (
+        libraries_missing_from_context(
+            pyproject, (fixtures / "good.dockerignore").read_text(encoding="utf-8")
+        )
+        == []
+    )
+
+
+def test_cloud_run_deployment_resolves_each_secret_in_its_own_assignment():
+    script = Path(CLOUD_RUN_DEPLOY_SCRIPT).read_text(encoding="utf-8")
+
+    assert SECRET_RESOLUTION in script
+    assert combined_secret_resolutions(script) == []
+
+
+def test_rule_proof_workflow_shell_safety():
+    """Proof for rule sim.deploy.workflow-shell-safety (rules/registry.toml)."""
+    fixtures = REPOSITORY_ROOT / "rules" / "fixtures" / (
+        "sim.deploy.workflow-shell-safety"
+    )
+
+    assert combined_secret_resolutions(
+        (fixtures / "bad_deploy_script.sh").read_text(encoding="utf-8")
+    ) == ["runtime_secrets=("]
+    assert (
+        combined_secret_resolutions(
+            (fixtures / "good_deploy_script.sh").read_text(encoding="utf-8")
+        )
+        == []
+    )
 
 
 def test_production_lock_contains_the_direct_stage12_database_runtime():
