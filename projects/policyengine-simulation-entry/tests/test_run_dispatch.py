@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 
 import grpclib.const
 import grpclib.exceptions
 import modal
 import pytest
+from modal._serialization import serialize
+from modal._utils.function_utils import _process_result
+from modal_proto import api_pb2
 from policyengine_simulation_entry import modal_calls
 from policyengine_simulation_entry.modal_calls import (
     CallFailed,
@@ -22,7 +26,7 @@ from policyengine_simulation_entry.run_dispatch import (
     DispatchOutcome,
     RunDispatchService,
 )
-from policyengine_simulation_persistence import RunErrorCode, RunStatus
+from policyengine_simulation_persistence import RunError, RunErrorCode, RunStatus
 from run_fakes import (
     SAMPLE_REQUEST,
     FakeDispatcher,
@@ -247,20 +251,26 @@ def test_a_finished_call_returns_its_output(monkeypatch) -> None:
 @pytest.mark.parametrize(
     ("raised", "code"),
     [
-        (modal.exception.FunctionTimeoutError("slow"), RunErrorCode.WORKER_TIMEOUT),
         (modal.exception.OutputExpiredError(), RunErrorCode.RESULT_EXPIRED),
         (modal.exception.NotFoundError("gone"), RunErrorCode.CALL_NOT_FOUND),
-        (KeyError("household secret"), RunErrorCode.WORKER_ERROR),
-        (modal.exception.InternalFailure("lost"), RunErrorCode.WORKER_ERROR),
     ],
-    ids=["timeout", "expired", "not-found", "worker-error", "internal-failure"],
+    ids=["expired", "not-found"],
 )
-def test_a_failed_call_records_only_the_failure_type(monkeypatch, raised, code) -> None:
+def test_modal_answers_about_the_call_itself_fail_the_run(
+    monkeypatch, raised, code
+) -> None:
     outcome = _inspect(monkeypatch, raised)
 
     assert isinstance(outcome, CallFailed)
     assert outcome.error.code is code
-    assert "secret" not in outcome.error.message
+
+
+def test_a_failed_call_records_only_the_failure_type(monkeypatch) -> None:
+    outcome = _inspect_finished(monkeypatch, KeyError("household secret"))
+
+    assert outcome == CallFailed(
+        RunError(RunErrorCode.WORKER_ERROR, "The Modal call raised KeyError.")
+    )
 
 
 @pytest.mark.parametrize(
@@ -273,6 +283,7 @@ def test_a_failed_call_records_only_the_failure_type(monkeypatch, raised, code) 
         modal.exception.ClientClosed("closed"),
         grpclib.exceptions.StreamTerminatedError("stream reset"),
         grpclib.exceptions.GRPCError(grpclib.const.Status.UNAVAILABLE, "down"),
+        RuntimeError("an unexpected client problem"),
     ],
     ids=[
         "connection",
@@ -282,11 +293,107 @@ def test_a_failed_call_records_only_the_failure_type(monkeypatch, raised, code) 
         "client-closed",
         "stream-terminated",
         "grpc",
+        "other-client-error",
     ],
 )
 def test_a_modal_problem_is_retried_later(monkeypatch, raised) -> None:
     with pytest.raises(CallInspectionError):
         _inspect(monkeypatch, raised)
+
+
+class _FinishedCall:
+    """A call whose output Modal holds: the worker's exception, or a timeout.
+
+    Reading it goes through Modal's own result processing, which raises the
+    worker's exception in this process, as a real finished call does.
+    """
+
+    def __init__(self, worker_exception, status=None):
+        self.result = api_pb2.GenericResult(
+            status=status or api_pb2.GenericResult.GENERIC_STATUS_FAILURE,
+            data=serialize(worker_exception),
+            exception=repr(worker_exception),
+        )
+        self.get = self
+
+    async def aio(self, *, timeout):
+        assert timeout == 0
+        return await _process_result(
+            self.result, api_pb2.DATA_FORMAT_PICKLE, None, None
+        )
+
+
+def _inspect_finished(monkeypatch, worker_exception, status=None):
+    monkeypatch.setattr(
+        modal_calls.modal.FunctionCall,
+        "from_id",
+        lambda call_id: _FinishedCall(worker_exception, status),
+    )
+    return asyncio.run(ModalCallInspector().inspect("fc-test"))
+
+
+@pytest.mark.parametrize(
+    "worker_exception",
+    [
+        SystemExit(2),
+        builtins.BaseExceptionGroup("worker", [ValueError("one")]),
+        KeyboardInterrupt(),
+        TimeoutError("a child call timed out"),
+        modal.exception.ConnectionError("the worker's own Modal call failed"),
+        grpclib.exceptions.GRPCError(grpclib.const.Status.UNAVAILABLE, "down"),
+    ],
+    ids=[
+        "system-exit",
+        "exception-group",
+        "keyboard-interrupt",
+        "timeout",
+        "modal-connection",
+        "grpc",
+    ],
+)
+def test_whatever_the_worker_raised_fails_the_run(
+    monkeypatch, worker_exception
+) -> None:
+    """The worker's own exception, even of a type the client also raises, is final."""
+    outcome = _inspect_finished(monkeypatch, worker_exception)
+
+    assert isinstance(outcome, CallFailed)
+    assert outcome.error.code is RunErrorCode.WORKER_ERROR
+    assert type(worker_exception).__name__ in outcome.error.message
+
+
+def test_a_call_modal_failed_internally_fails_the_run(monkeypatch) -> None:
+    outcome = _inspect_finished(
+        monkeypatch,
+        RuntimeError("ignored"),
+        status=api_pb2.GenericResult.GENERIC_STATUS_INTERNAL_FAILURE,
+    )
+
+    assert isinstance(outcome, CallFailed)
+    assert outcome.error.code is RunErrorCode.WORKER_ERROR
+
+
+def test_a_call_modal_timed_out_fails_as_a_timeout(monkeypatch) -> None:
+    outcome = _inspect_finished(
+        monkeypatch,
+        RuntimeError("ignored"),
+        status=api_pb2.GenericResult.GENERIC_STATUS_TIMEOUT,
+    )
+
+    assert outcome == CallFailed(
+        RunError(RunErrorCode.WORKER_TIMEOUT, "The Modal call timed out.")
+    )
+
+
+@pytest.mark.parametrize(
+    "signal",
+    [asyncio.CancelledError(), KeyboardInterrupt(), SystemExit(0)],
+    ids=["cancelled", "keyboard-interrupt", "system-exit"],
+)
+def test_a_signal_to_this_process_is_not_swallowed(monkeypatch, signal) -> None:
+    """Only an exception that came from the call's result is the worker's."""
+    with pytest.raises(type(signal)):
+        _inspect(monkeypatch, signal)
 
 
 def test_the_dispatcher_passes_observability_as_its_own_argument(monkeypatch) -> None:
