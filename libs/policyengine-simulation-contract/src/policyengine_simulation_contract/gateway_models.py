@@ -19,7 +19,13 @@ from policyengine_simulation_contract.job_progress import (
     JobStage,
 )
 from policyengine_simulation_contract.json_types import JsonObject
-from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
+from policyengine_simulation_contract.local_area_breakdown import (
+    local_area_breakdown_error,
+)
+from policyengine_simulation_contract.macro_output import (
+    LocalAreaBreakdownOutput,
+    SingleYearMacroOutput,
+)
 from policyengine_simulation_contract.spm import (
     SPMCapability,
     SPMComparisonProvenance,
@@ -153,9 +159,17 @@ class GatewayRequestBase(BaseModel):
 
 
 class SimulationRequest(GatewayRequestBase):
-    """Request model for simulation submission."""
+    """Request model for simulation submission.
+
+    ``breakdown: "local_areas"`` asks a UK-wide or nation run for its
+    constituency and local-authority impacts alone, computed on the
+    local-area dataset; the job's result is then a
+    ``LocalAreaBreakdownOutput``. Without it, the job runs the usual
+    comparison.
+    """
 
     region: str | None = None
+    breakdown: Literal["local_areas"] | None = None
 
     @model_validator(mode="after")
     def region_xor_region_group(self) -> "SimulationRequest":
@@ -163,6 +177,22 @@ class SimulationRequest(GatewayRequestBase):
         if self.region is not None and self.region_group is not None:
             msg = "Provide `region` or `region_group`, not both."
             raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def local_area_breakdown_scope(self) -> "SimulationRequest":
+        """Reject a breakdown outside a UK-wide or nation run of its own."""
+        if self.breakdown is None:
+            return self
+        error = local_area_breakdown_error(
+            country=self.country,
+            region=self.region,
+            region_group=self.region_group,
+            include_cliffs=self.include_cliffs,
+            segmented=self.segmented,
+        )
+        if error is not None:
+            raise ValueError(error)
         return self
 
 
@@ -212,7 +242,10 @@ class JobStatusResponse(BaseModel):
     """Response model for job status polling."""
 
     status: Literal["running", "complete", "failed"]
-    result: SingleYearMacroOutput | None = None
+    # A breakdown request's result is a LocalAreaBreakdownOutput; every other
+    # request's is a SingleYearMacroOutput. Both forbid extra fields, so a
+    # payload validates as one of them only.
+    result: SingleYearMacroOutput | LocalAreaBreakdownOutput | None = None
     errors: list[SPMErrorDetail] | None = None
     error: str | None = None
     resolved_app_name: str | None = None

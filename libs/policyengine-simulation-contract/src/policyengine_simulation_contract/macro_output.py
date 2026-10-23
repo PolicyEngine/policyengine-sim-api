@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, RootModel
 
@@ -234,12 +234,38 @@ class CliffImpactOutput(MacroOutputModel):
     reform: CliffImpactInSimulation
 
 
-class ConstituencyImpactRecord(MacroOutputModel):
+UKGeographyDisclosureTier = Literal["reported", "approximate"]
+
+
+class UKAreaDisclosureFields(MacroOutputModel):
+    """Disclosure tier and 90% intervals of a published UK area's income changes.
+
+    UK area results come from licensed survey microdata and pass policyengine's
+    disclosure control. An area whose income change is withheld is left out of
+    the list, so every record here has values. ``disclosure_tier`` is
+    ``reported``, or ``approximate`` when the area's effective sample is thin
+    and the interval understates the uncertainty. The ``_lower`` and ``_upper``
+    fields bound each change's 90% bootstrap interval, rounded outward.
+
+    All of these fields are optional, so results stored before disclosure
+    control still validate; there they are null.
+    """
+
+    disclosure_tier: UKGeographyDisclosureTier | None = None
+    average_household_income_change_lower: float | None = None
+    average_household_income_change_upper: float | None = None
+    relative_household_income_change_lower: float | None = None
+    relative_household_income_change_upper: float | None = None
+
+
+class ConstituencyImpactRecord(UKAreaDisclosureFields):
     """Reform impact on household net income in one UK parliamentary constituency.
 
     ``average_household_income_change`` is the average change per household and
     ``relative_household_income_change`` the relative change in the area's total
-    household net income. ``x`` and ``y`` are integer map-rendering coordinates.
+    household net income, both rounded to the order of their standard error.
+    ``population`` is the weighted number of households. ``x`` and ``y`` are
+    integer map-rendering coordinates.
     """
 
     constituency_code: str
@@ -251,7 +277,7 @@ class ConstituencyImpactRecord(MacroOutputModel):
     population: float
 
 
-class LocalAuthorityImpactRecord(MacroOutputModel):
+class LocalAuthorityImpactRecord(UKAreaDisclosureFields):
     """Reform impact on household net income in one UK local authority.
 
     Fields mean the same as in ``ConstituencyImpactRecord``.
@@ -269,7 +295,10 @@ class LocalAuthorityImpactRecord(MacroOutputModel):
 class GeographicImpactOutput(
     MacroRootModel[list[ConstituencyImpactRecord | LocalAuthorityImpactRecord]]
 ):
-    """UK constituency or local-authority impact records."""
+    """UK constituency or local-authority impact records.
+
+    Areas whose income change disclosure control withholds are left out.
+    """
 
 
 class CongressionalDistrictImpactRecord(MacroOutputModel):
@@ -320,3 +349,27 @@ class SingleYearMacroOutput(MacroOutputModel):
     local_authority_impact: GeographicImpactOutput | None
     congressional_district_impact: CongressionalDistrictImpactOutput | None
     cliff_impact: CliffImpactOutput | None = None
+
+
+class LocalAreaBreakdownOutput(MacroOutputModel):
+    """Completed result of a UK local-area breakdown run.
+
+    A request with ``breakdown: "local_areas"`` returns this instead of a
+    ``SingleYearMacroOutput``. The run covers the requested UK-wide or nation
+    region on the local-area dataset alone, and computes only the
+    constituency and local-authority impacts; every other figure comes from
+    the national run. ``kind`` is always ``local_areas``. ``dataset`` names the
+    local-area dataset, ``data_version`` its release revision, and
+    ``model_version`` and ``policyengine_version`` the country model and the
+    policyengine.py release that computed it. Each list holds only its own
+    level's records. Areas whose income change disclosure control withholds
+    are left out of each list, so a list may be empty.
+    """
+
+    kind: Literal["local_areas"]
+    model_version: str
+    policyengine_version: str
+    dataset: str
+    data_version: str
+    constituency_impact: list[ConstituencyImpactRecord]
+    local_authority_impact: list[LocalAuthorityImpactRecord]

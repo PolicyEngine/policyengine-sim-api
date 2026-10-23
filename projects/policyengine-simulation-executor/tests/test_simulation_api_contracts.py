@@ -52,14 +52,18 @@ def test_openapi_publishes_the_single_year_macro_result_schema():
     )
     result_schema = schemas["JobStatusResponse"]["properties"]["result"]
     assert result_schema == {
+        "title": "Result",
         "anyOf": [
             {
                 "$ref": "#/components/schemas/SingleYearMacroOutput",
             },
             {
+                "$ref": "#/components/schemas/LocalAreaBreakdownOutput",
+            },
+            {
                 "type": "null",
             },
-        ]
+        ],
     }
 
 

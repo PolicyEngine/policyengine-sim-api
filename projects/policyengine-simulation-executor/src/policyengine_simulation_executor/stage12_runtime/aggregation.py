@@ -172,7 +172,10 @@ def build_aggregate_report(
     """Build the aggregate report payload from retained baseline and reform frames.
 
     Runs the standard macro output builder over stand-in simulations that load
-    the stored frames, so no model is recomputed.
+    the stored frames, so no model is recomputed. A UK national or nation-level
+    report whose bundle routes area regions to another dataset has no area
+    codes in its frames (see ``output_planning``), so its constituency and
+    local-authority breakdowns are left out.
     """
     from policyengine_simulation_executor.simulation_output_builder import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_output_builder.SimulationOutputBuilder
         SimulationOutputBuilder,
@@ -180,6 +183,9 @@ def build_aggregate_report(
     from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call so tests can patch simulation_runtime._country_module
         _country_module,
         _runtime_policy,
+    )
+    from policyengine_simulation_executor.uk_local_authority_metadata import (  # noqa: PLC0415  # the UK metadata module is not loaded at import; loaded per call
+        uk_area_breakdowns_omitted,
     )
 
     country = report.baseline.geography.country
@@ -232,6 +238,9 @@ def build_aggregate_report(
         resolved_data_version=report.baseline.bundle.dataset.artifact_revision,
         resolved_region_code=report.baseline.geography.region,
         uk_local_authority_metadata=uk_local_authority_metadata,
+        omit_uk_area_breakdowns=uk_area_breakdowns_omitted(
+            country, report.baseline.geography.region
+        ),
     ).serialize()
     output.update(
         build_spm_result(

@@ -667,10 +667,7 @@ def _stage12_load(monkeypatch, *, region, selection, baked_folder, planned=None)
     monkeypatch.setattr(simulation_runtime, "_load_dataset", load_dataset)
     monkeypatch.setattr(state_datasets, "baked_state_data_folder", lookup)
     monkeypatch.setattr(
-        worker, "detect_uk_local_authority_metadata", lambda *_a, **_k: None
-    )
-    monkeypatch.setattr(
-        simulation_runtime, "_require_certified_uk_weight_matrix", lambda *_: None
+        worker, "detect_uk_run_dataset_metadata", lambda *_a, **_k: None
     )
     monkeypatch.setattr(worker, "build_stage12_simulation", stop_after_loading)
 
@@ -678,6 +675,103 @@ def _stage12_load(monkeypatch, *, region, selection, baked_folder, planned=None)
     with pytest.raises(_StoppedAfterLoadingError):
         worker.calculate_simulation_frames(planned)
     return SimpleNamespace(loads=loads, lookups=lookups, year=planned.year)
+
+
+_UK_LOCAL_AREA_DATASET = "microcosm_uk_2024_25_dense"
+_UK_LOCAL_AREA_URI = "hf://policyengine/uk/microcosm_uk_2024_25_dense.h5@revision"
+
+
+def _uk_area_planned_simulation(region_code: str) -> PlannedSimulationExecutionInput:
+    """Return a planned UK area simulation whose provenance names the dense file."""
+    payload = _planned_simulation(SimulationRole.BASELINE).model_dump(mode="json")
+    payload["geography"] = {"country": "uk", "region": region_code}
+    payload["output_plan"]["country"] = "uk"
+    payload["bundle"]["country_package_name"] = "policyengine-uk"
+    payload["bundle"]["country_package_version"] = "2.132.6"
+    payload["bundle"]["dataset"]["identity"] = _UK_LOCAL_AREA_DATASET
+    payload["bundle"]["dataset"]["uri"] = _UK_LOCAL_AREA_URI
+    payload["population"]["artifact"]["uri"] = _UK_LOCAL_AREA_URI
+    return PlannedSimulationExecutionInput.model_validate(payload)
+
+
+def _uk_area_household(*, without: str) -> pd.DataFrame:
+    household = {
+        "constituency_code_oa": ["E14001063", "W07000112"],
+        "la_code_oa": ["E06000063", "W06000001"],
+        "region_code_oa": ["SOUTH_EAST", "WALES"],
+        "source_household_id": [1, 2],
+    }
+    del household[without]
+    return pd.DataFrame(household)
+
+
+@pytest.mark.parametrize(
+    "region_code", ["constituency/E14001063", "local_authority/E06000063"]
+)
+@pytest.mark.parametrize(
+    "missing",
+    ["constituency_code_oa", "la_code_oa", "region_code_oa", "source_household_id"],
+)
+def test_stage12_area_run_needs_every_column_its_outputs_read_before_simulating(
+    monkeypatch, region_code, missing
+) -> None:
+    from policyengine_simulation_executor import simulation_runtime
+    from policyengine_simulation_executor.simulation_runtime import (
+        DatasetSelection,
+        RegionResolution,
+    )
+    from policyengine_simulation_executor.stage12_runtime import simulation as worker
+
+    selection = DatasetSelection(
+        name=_UK_LOCAL_AREA_DATASET, uri=_UK_LOCAL_AREA_URI, is_default=False
+    )
+    dataset = SimpleNamespace(
+        data=SimpleNamespace(
+            entity_data={"household": _uk_area_household(without=missing)}
+        )
+    )
+    for target, value in {
+        "uk_area_regions_routed": lambda: True,
+        "routed_uk_area_dataset_name": lambda: _UK_LOCAL_AREA_DATASET,
+    }.items():
+        monkeypatch.setattr(
+            f"policyengine_simulation_executor.uk_local_authority_metadata.{target}",
+            value,
+        )
+    monkeypatch.setattr(worker, "_require_installed_bundle", lambda _: None)
+    monkeypatch.setattr(simulation_runtime, "setup_gcp_credentials", nullcontext)
+    monkeypatch.setattr(
+        simulation_runtime, "_country_module", lambda _country: object()
+    )
+    monkeypatch.setattr(
+        simulation_runtime,
+        "_resolve_region",
+        lambda **_: RegionResolution(
+            code=region_code, dataset_reference=_UK_LOCAL_AREA_DATASET
+        ),
+    )
+    monkeypatch.setattr(
+        simulation_runtime,
+        "_resolve_dataset_selection",
+        lambda _params, *, region_resolution: selection,
+    )
+    monkeypatch.setattr(
+        simulation_runtime,
+        "_load_dataset",
+        lambda _params, *, selection, country_module, data_folder=None: dataset,
+    )
+    monkeypatch.setattr(
+        worker,
+        "build_stage12_simulation",
+        lambda *_args, **_kwargs: pytest.fail("simulated a dataset it cannot use"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=rf"'{_UK_LOCAL_AREA_DATASET}', which the bundle routes .* has no "
+        rf"{missing} column",
+    ):
+        worker.calculate_simulation_frames(_uk_area_planned_simulation(region_code))
 
 
 def _regional_selection():
@@ -1832,6 +1926,66 @@ def test_uk_aggregate_without_spm_provenance_is_written(monkeypatch) -> None:
     assert json.loads(stored_aggregate)["result"]["spm_provenance"] is None
 
 
+@pytest.mark.parametrize(
+    ("region", "routed", "omitted"),
+    [
+        ("uk", True, True),
+        ("country/wales", True, True),
+        ("uk", False, False),
+        ("constituency/E14001063", True, False),
+    ],
+)
+def test_uk_aggregate_omits_area_breakdowns_only_for_routed_national_reports(
+    monkeypatch, region: str, *, routed: bool, omitted: bool
+) -> None:
+    from policyengine_simulation_executor import simulation_output_builder
+
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.uk_local_authority_metadata."
+        "uk_area_regions_routed",
+        lambda: routed,
+    )
+    observed = {}
+
+    class CapturingBuilder:
+        def __init__(self, **values):
+            observed.update(values)
+
+        def serialize(self):
+            return {}
+
+    monkeypatch.setattr(
+        simulation_output_builder, "SimulationOutputBuilder", CapturingBuilder
+    )
+    payload = _uk_report().model_dump(mode="json")
+    for role in ("baseline", "reform"):
+        payload[role]["geography"] = {"country": "uk", "region": region}
+    report = ReportExecutionInput.model_validate(payload)
+    frames = {
+        entity: pd.DataFrame({f"{entity}_id": [1]})
+        for entity in ("person", "benunit", "household")
+    }
+    artifacts = FakeArtifacts()
+
+    build_aggregate_report(
+        report=report,
+        baseline=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.baseline)
+        ),
+        reform=RetainedSimulationOutput(
+            frames, artifacts.add_simulation(report.reform)
+        ),
+    )
+
+    assert observed["omit_uk_area_breakdowns"] is omitted
+    # The runtime omits them from exactly the same runs.
+    from policyengine_simulation_executor import uk_local_authority_metadata
+
+    assert uk_local_authority_metadata.uk_area_breakdowns_omitted("uk", region) is (
+        omitted
+    )
+
+
 def test_aggregate_report_wraps_builder_output_with_report_provenance(
     monkeypatch,
 ) -> None:
@@ -1894,6 +2048,7 @@ def test_aggregate_report_wraps_builder_output_with_report_provenance(
         "resolved_data_version",
         "resolved_region_code",
         "uk_local_authority_metadata",
+        "omit_uk_area_breakdowns",
     ]
     assert observed["country"] == "us"
     assert observed["simulation_params"] == {
@@ -1913,6 +2068,7 @@ def test_aggregate_report_wraps_builder_output_with_report_provenance(
     )
     assert observed["resolved_region_code"] == report.baseline.geography.region
     assert observed["uk_local_authority_metadata"] is None
+    assert observed["omit_uk_area_breakdowns"] is False
 
 
 def test_single_worker_rejects_combined_baseline_and_reform_input() -> None:

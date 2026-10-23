@@ -212,10 +212,23 @@ aggregate calculations. Extra columns are permitted; missing planned columns
 fail the temporary Stage 12 report without affecting the production result.
 
 The plan distinguishes calculated variables from columns copied directly from
-the source dataset. UK geographic reports require the household columns
-`constituency_code_oa` and `la_code_oa`. Workers do not request those columns as
-calculated PolicyEngine variables, but they must be present in each materialized
-artifact; otherwise validation fails before geographic aggregation begins.
+the source dataset. UK geographic reports require the household columns that
+the constituency and local-authority outputs read (`UK_AREA_DATASET_COLUMNS`):
+`constituency_code_oa`, `la_code_oa`, `region_code_oa` and
+`source_household_id`. Workers do not request those columns as calculated
+PolicyEngine variables, but they must be present in each materialized artifact;
+otherwise validation fails before geographic aggregation begins.
+
+The exception is a UK national or nation-level report whose bundle routes
+constituency and local-authority regions to another dataset. Its national
+dataset may carry no area codes, so the plan copies none, and its aggregate
+leaves the constituency and local-authority breakdowns out. The production
+national run leaves them out too: both decide with
+`uk_area_breakdowns_omitted`, so their results still compare. Production
+computes those breakdowns in a separate `breakdown: "local_areas"` request on
+the routed dataset. The entry adapts no such request into a Stage 12 report
+(skip reason `unsupported_options`), and Stage 12 has no local-area report
+yet, so the shadow comparison does not cover the breakdown numbers.
 
 Aggregation uses the retained output tables without rerunning either model.
 The precomputed baseline and reform simulations retain their original policy

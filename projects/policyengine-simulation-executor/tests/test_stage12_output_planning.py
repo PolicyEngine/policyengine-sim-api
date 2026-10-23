@@ -63,6 +63,7 @@ def _simulation(
     *,
     policy: dict[str, JsonValue] | None = None,
     options: dict[str, JsonValue] | None = None,
+    region: str | None = None,
 ) -> SimulationExecutionInput:
     bundle = _bundle(country)
     return SimulationExecutionInput(
@@ -82,7 +83,7 @@ def _simulation(
             )
         ),
         year=2026,
-        geography=GeographySelection(country=country, region=country),
+        geography=GeographySelection(country=country, region=region or country),
         options=options or {},
         bundle=bundle,
     )
@@ -94,6 +95,7 @@ def _report(
     reform: dict[str, JsonValue] | None = None,
     include_cliffs: bool = False,
     aggregates: tuple[ReportAggregate, ...] = tuple(ReportAggregate),
+    region: str | None = None,
 ) -> ReportExecutionInput:
     options: dict[str, JsonValue] = {"include_cliffs": True} if include_cliffs else {}
     return ReportExecutionInput(
@@ -102,12 +104,14 @@ def _report(
             country,
             SimulationRole.BASELINE,
             options=options,
+            region=region,
         ),
         reform=_simulation(
             country,
             SimulationRole.REFORM,
             policy=reform,
             options=options,
+            region=region,
         ),
         requested_aggregates=aggregates,
     )
@@ -139,7 +143,16 @@ def test_us_plan_adds_budget_variables_to_the_country_defaults() -> None:
     )
 
 
-def test_uk_plan_uses_uk_defaults_without_us_budget_variables() -> None:
+def _route_uk_area_regions(monkeypatch, *, routed: bool) -> None:
+    monkeypatch.setattr(
+        "policyengine_simulation_executor.uk_local_authority_metadata."
+        "uk_area_regions_routed",
+        lambda: routed,
+    )
+
+
+def test_uk_plan_uses_uk_defaults_without_us_budget_variables(monkeypatch) -> None:
+    _route_uk_area_regions(monkeypatch, routed=False)
     plan = resolve_report_output_plan(_report("uk"))
 
     assert "benunit" in {entity.entity for entity in plan.entities}
@@ -148,8 +161,53 @@ def test_uk_plan_uses_uk_defaults_without_us_budget_variables() -> None:
     assert _dataset_variables(plan, "household") == {
         "constituency_code_oa",
         "la_code_oa",
+        "region_code_oa",
+        "source_household_id",
     }
     assert _dataset_variables(plan, "household").issubset(_variables(plan, "household"))
+
+
+@pytest.mark.parametrize(
+    ("region", "routed", "planned"),
+    [
+        ("uk", False, True),
+        ("uk", True, False),
+        ("country/wales", True, False),
+        ("constituency/E14001063", True, True),
+        ("local_authority/E06000063", True, True),
+    ],
+)
+def test_uk_plan_copies_area_codes_unless_a_routed_national_report_lacks_them(
+    monkeypatch, region: str, *, routed: bool, planned: bool
+) -> None:
+    _route_uk_area_regions(monkeypatch, routed=routed)
+
+    plan = resolve_report_output_plan(_report("uk", region=region))
+
+    assert _dataset_variables(plan, "household") == (
+        {
+            "constituency_code_oa",
+            "la_code_oa",
+            "region_code_oa",
+            "source_household_id",
+        }
+        if planned
+        else set()
+    )
+
+
+def test_uk_geographic_plan_copies_the_routed_dataset_columns(monkeypatch) -> None:
+    from policyengine_simulation_executor import uk_local_authority_metadata
+
+    _route_uk_area_regions(monkeypatch, routed=True)
+
+    plan = resolve_report_output_plan(_report("uk", region="constituency/E14001063"))
+
+    # Stage 12 copies exactly the columns a routed area dataset must carry.
+    household = next(item for item in plan.entities if item.entity == "household")
+    assert tuple(household.dataset_variables) == (
+        uk_local_authority_metadata.UK_AREA_DATASET_COLUMNS
+    )
 
 
 def test_cliff_variables_are_conditional() -> None:
@@ -256,12 +314,17 @@ def test_apply_and_validate_output_plan_reject_missing_materialized_columns() ->
         validate_output_frames(frames, plan)
 
 
-@pytest.mark.parametrize("missing", ["constituency_code_oa", "la_code_oa"])
+@pytest.mark.parametrize(
+    "missing",
+    ["constituency_code_oa", "la_code_oa", "region_code_oa", "source_household_id"],
+)
 def test_uk_output_validation_requires_geographic_dataset_columns(
+    monkeypatch,
     missing: str,
 ) -> None:
     from policyengine.tax_benefit_models import uk
 
+    _route_uk_area_regions(monkeypatch, routed=False)
     plan = resolve_report_output_plan(_report("uk"))
     simulation = Simulation.model_construct(
         policy={},

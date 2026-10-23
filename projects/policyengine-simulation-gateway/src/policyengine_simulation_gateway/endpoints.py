@@ -47,6 +47,10 @@ from policyengine_simulation_contract.job_progress import (
 )
 from policyengine_simulation_contract.job_progress_state import get_job_progress
 from policyengine_simulation_contract.json_types import JsonObject
+from policyengine_simulation_contract.local_area_breakdown import (
+    LOCAL_AREA_BREAKDOWN_CAPABILITY_KEY,
+    supported_local_area_breakdown_capability,
+)
 from policyengine_simulation_contract.spm import (
     SPMCapability,
     SPMInputError,
@@ -744,6 +748,35 @@ def _route_job_progress_capability(route: RouteResolution) -> int | None:
     return supported_job_progress_capability(manifest.get(JOB_PROGRESS_CAPABILITY_KEY))
 
 
+def _require_route_serves_breakdown(
+    request: SimulationRequest, route: RouteResolution
+) -> None:
+    """Refuse a breakdown for a route whose worker does not declare serving it.
+
+    Workers built before local-area breakdowns ignore the field and would
+    return a national result, so only a bundle manifest that declares
+    ``LOCAL_AREA_BREAKDOWN_CAPABILITY_KEY`` may receive one. Routes from the
+    legacy version dicts have no manifest and are refused too.
+    """
+    if request.breakdown is None:
+        return
+    manifest = route.bundle_manifest
+    declared = (
+        manifest.get(LOCAL_AREA_BREAKDOWN_CAPABILITY_KEY)
+        if isinstance(manifest, dict)
+        else None
+    )
+    if supported_local_area_breakdown_capability(declared) is not None:
+        return
+    version = route.policyengine_version or "an unknown version"
+    msg = (
+        f"breakdown={request.breakdown} is not supported by the worker for "
+        f"policyengine.py {version} ({route.app_name}); its routing manifest "
+        f"declares no {LOCAL_AREA_BREAKDOWN_CAPABILITY_KEY} capability"
+    )
+    raise ValueError(msg)
+
+
 def _bind_observability_id(
     http_request: Request,
     runtime: ObservabilityRuntime,
@@ -903,6 +936,7 @@ async def submit_simulation(
         country=request.country,
         scope=request.scope,
         observability_id=observability_id,
+        breakdown=request.breakdown,
     )
     try:
         with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
@@ -911,6 +945,7 @@ async def submit_simulation(
                 request.version,
                 request.policyengine_version,
             )
+        _require_route_serves_breakdown(request, route)
     except ValueError as e:
         runtime.record_exception(e, handled=True, status_code=400)
         raise HTTPException(status_code=400, detail=str(e)) from e

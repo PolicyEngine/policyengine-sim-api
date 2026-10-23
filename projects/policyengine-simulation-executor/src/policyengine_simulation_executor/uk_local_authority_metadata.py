@@ -9,6 +9,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib.resources import files
+from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
@@ -281,6 +282,15 @@ def detect_uk_local_authority_boundary_version(
 
 
 UK_AREA_REGION_TYPES = ("constituency", "local_authority")
+# Household columns the UK constituency and local-authority outputs read: the
+# two area codes, the region the disclosure check nests them in, and the
+# survey household each row was copied from, by which it counts support.
+UK_AREA_DATASET_COLUMNS = (
+    "constituency_code_oa",
+    "la_code_oa",
+    "region_code_oa",
+    "source_household_id",
+)
 _MISSING_AREA_CODES = (
     "UK dataset household table contains no la_code_oa column; a UK dataset "
     "may omit area codes only when the policyengine.py bundle routes "
@@ -288,20 +298,72 @@ _MISSING_AREA_CODES = (
 )
 
 
-def uk_area_regions_routed() -> bool:
-    """Whether the bundle routes UK constituency and local-authority regions.
+# policyengine.py's ``regional_release_kind`` for a bundle that routes UK area
+# regions to a separate local-area release.
+_LOCAL_AREA_RELEASE_KIND = "local_area"
 
-    policyengine.py lists a region type in ``region_datasets`` when its
-    ``regional_dataset_defaults`` names a dataset for it. Only when both area
-    region types have one may the UK default, a national file, carry no area
-    codes: their runs and breakdowns then belong to that local-area dataset.
+
+def uk_area_regions_routed() -> bool:
+    """Whether the bundle routes UK area regions to one local-area dataset.
+
+    Two things must hold. The manifest's ``regional_release_kind`` must be
+    ``local_area``: only then does policyengine.py's region registry list the
+    constituencies and local authorities, which the runtime resolves as row
+    filters on that dataset. Another kind, ``area_coded_national``, routes
+    both area types to a national dataset with area codes without
+    registering them. And both area types must route to one certified
+    dataset (``routed_uk_area_dataset_name``), on which a local-area
+    breakdown builds both levels. Only then may the UK default, a national
+    file, carry no area codes.
     """
     from policyengine.provenance.manifest import (
         get_release_manifest,
     )
 
-    region_datasets = get_release_manifest("uk").region_datasets
-    return all(region_type in region_datasets for region_type in UK_AREA_REGION_TYPES)
+    manifest = get_release_manifest("uk")
+    release_kind = getattr(manifest, "regional_release_kind", None)
+    if release_kind != _LOCAL_AREA_RELEASE_KIND:
+        return False
+    try:
+        routed_uk_area_dataset_name()
+    except ValueError:
+        return False
+    return True
+
+
+def routed_uk_area_dataset_name() -> str:
+    """Name the certified dataset the bundle routes UK area regions to.
+
+    Like policyengine.py's ``region_dataset_name``, this is the bundle dataset
+    whose path the region type's template names. Both area region types must
+    share it: a local-area breakdown builds both levels from one baseline and
+    reform pair on that dataset.
+    """
+    from policyengine.provenance.manifest import (
+        get_release_manifest,
+    )
+
+    manifest = get_release_manifest("uk")
+    names: set[str] = set()
+    for region_type in UK_AREA_REGION_TYPES:
+        template = manifest.region_datasets.get(region_type)
+        routed = [
+            name
+            for name, reference in manifest.datasets.items()
+            if template is not None and reference.path == template.path_template
+        ]
+        if not routed:
+            msg = f"The UK bundle routes {region_type} regions to no certified dataset"
+            raise ValueError(msg)
+        names.add(routed[0])
+    if len(names) > 1:
+        msg = (
+            "The UK bundle routes constituency and local-authority regions to "
+            f"different datasets ({', '.join(sorted(names))}); a local-area "
+            "breakdown builds both levels from one dataset"
+        )
+        raise ValueError(msg)
+    return names.pop()
 
 
 def uk_area_codes_required(region_code: str | None) -> bool:
@@ -315,6 +377,20 @@ def uk_area_codes_required(region_code: str | None) -> bool:
     if region_type in UK_AREA_REGION_TYPES:
         return True
     return not uk_area_regions_routed()
+
+
+def uk_area_breakdowns_omitted(country: str, region_code: str | None) -> bool:
+    """Whether a run leaves out the UK constituency and local-authority breakdowns.
+
+    A UK-wide or nation-level run on a bundle that routes area regions to a
+    local-area dataset computes none: its national file carries no area
+    codes, and those results come from a separate local-area breakdown run on
+    the routed dataset (``breakdown: "local_areas"``). Constituency and
+    local-authority runs, UK runs on a bundle that does not route area
+    regions, and other countries' runs are unaffected. The runtime and Stage
+    12 both decide by this.
+    """
+    return country == "uk" and not uk_area_codes_required(region_code)
 
 
 def detect_uk_local_authority_metadata(
@@ -331,16 +407,7 @@ def detect_uk_local_authority_metadata(
     """
     if country != "uk":
         return None
-    data = getattr(dataset, "data", None)
-    entity_data = getattr(data, "entity_data", None)
-    if not isinstance(entity_data, Mapping):
-        msg = "UK dataset contains no entity tables"
-        raise TypeError(msg)
-    household = entity_data.get("household")
-    if household is None:
-        msg = "UK dataset contains no household table"
-        raise ValueError(msg)
-    household_frame = pd.DataFrame(household)
+    household_frame = _uk_household_frame(dataset)
     if "la_code_oa" not in household_frame:
         if uk_area_codes_required(region_code):
             raise ValueError(_MISSING_AREA_CODES)
@@ -350,8 +417,101 @@ def detect_uk_local_authority_metadata(
     )
 
 
-def uk_hdf_household_has_local_authority_codes(dataset_path: str) -> bool:
-    """Whether an installed UK HDF dataset's household table has ``la_code_oa``."""
+def detect_uk_run_dataset_metadata(
+    country: str,
+    dataset: object,
+    *,
+    region_code: str | None,
+    dataset_name: str,
+) -> UKLocalAuthorityMetadata | None:
+    """Check a run's loaded dataset before anything is simulated on it.
+
+    A UK run that needs area codes, on the dataset the bundle routes area
+    regions to, must carry every column its area outputs read
+    (``detect_uk_area_dataset_metadata``): a constituency or local-authority
+    run on a release missing one then fails here instead of after both
+    simulations and the impact analysis. Every other run keeps
+    ``detect_uk_local_authority_metadata``.
+    """
+    if (
+        country == "uk"
+        and uk_area_codes_required(region_code)
+        and uk_area_regions_routed()
+        and dataset_name == routed_uk_area_dataset_name()
+    ):
+        return detect_uk_area_dataset_metadata(dataset, dataset_name=dataset_name)
+    return detect_uk_local_authority_metadata(country, dataset, region_code=region_code)
+
+
+def detect_uk_area_dataset_metadata(
+    dataset: object, *, dataset_name: str
+) -> UKLocalAuthorityMetadata:
+    """Check a loaded dataset that UK area regions are routed to.
+
+    That dataset serves constituency and local-authority results, so unlike a
+    national default it must carry every column those results read
+    (``UK_AREA_DATASET_COLUMNS``), and its authority codes must match one
+    packaged boundary version. Checking here, as the dataset loads, stops a
+    run before it simulates anything on a dataset its area outputs cannot
+    read.
+    """
+    household_frame = _uk_household_frame(dataset)
+    for column in UK_AREA_DATASET_COLUMNS:
+        if column not in household_frame:
+            msg = (
+                f"UK dataset {dataset_name!r}, which the bundle routes "
+                f"constituency and local-authority regions to, has no {column} "
+                "column, which its constituency and local-authority outputs read"
+            )
+            raise ValueError(msg)
+    return detect_uk_local_authority_boundary_version(
+        household_frame["la_code_oa"].tolist()
+    )
+
+
+def _uk_household_frame(dataset: object) -> pd.DataFrame:
+    data = getattr(dataset, "data", None)
+    entity_data = getattr(data, "entity_data", None)
+    if not isinstance(entity_data, Mapping):
+        msg = "UK dataset contains no entity tables"
+        raise TypeError(msg)
+    household = entity_data.get("household")
+    if household is None:
+        msg = "UK dataset contains no household table"
+        raise ValueError(msg)
+    return pd.DataFrame(household)
+
+
+def uk_area_hdf_dataset_path(installed_default_path: str) -> str:
+    """Return the UK HDF file whose area codes the worker's results use.
+
+    That is the installed default, unless it carries no area codes and the
+    bundle routes constituency and local-authority regions to another
+    dataset. Then the routed dataset is downloaded next to the default and
+    checked against its bundle digest, and its path is returned. The download
+    needs the Hugging Face token, as the data is private.
+    """
+    if not uk_area_regions_routed() or uk_hdf_household_has_local_authority_codes(
+        installed_default_path
+    ):
+        return installed_default_path
+    from policyengine.provenance.dataset_materialization import (
+        materialize_dataset,
+    )
+
+    routed = materialize_dataset(
+        "uk",
+        routed_uk_area_dataset_name(),
+        data_dir=Path(installed_default_path).parent,
+    )
+    return routed.path
+
+
+def _uk_hdf_household_columns(dataset_path: str) -> frozenset[str]:
+    """Return the columns of an installed UK HDF dataset's household table.
+
+    Reads no rows: selecting zero rows returns only the table's columns.
+    """
     with pd.HDFStore(dataset_path, mode="r") as store:
         if "household" not in store:
             msg = "UK dataset contains no household table"
@@ -360,7 +520,32 @@ def uk_hdf_household_has_local_authority_codes(dataset_path: str) -> bool:
     if not isinstance(household, pd.DataFrame):
         msg = "UK dataset household table is not a data frame"
         raise TypeError(msg)
-    return "la_code_oa" in household.columns
+    return frozenset(str(column) for column in household.columns)
+
+
+def uk_hdf_household_has_local_authority_codes(dataset_path: str) -> bool:
+    """Whether an installed UK HDF dataset's household table has ``la_code_oa``."""
+    return "la_code_oa" in _uk_hdf_household_columns(dataset_path)
+
+
+def detect_uk_area_metadata_from_hdf(dataset_path: str) -> UKLocalAuthorityMetadata:
+    """Check an installed UK HDF dataset that serves area results.
+
+    Its household table must have every column the constituency and
+    local-authority outputs read (``UK_AREA_DATASET_COLUMNS``), checked from
+    the table's columns without reading its rows. Its authority codes must
+    then match one packaged boundary version, which is returned.
+    """
+    columns = _uk_hdf_household_columns(dataset_path)
+    for column in UK_AREA_DATASET_COLUMNS:
+        if column not in columns:
+            msg = (
+                f"UK dataset {Path(dataset_path).name} household table has no "
+                f"{column} column, which its constituency and local-authority "
+                "outputs read"
+            )
+            raise ValueError(msg)
+    return detect_uk_local_authority_metadata_from_hdf(dataset_path)
 
 
 def _require_local_authority_column(household_chunk: pd.DataFrame) -> None:
