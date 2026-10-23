@@ -25,6 +25,7 @@ from fixtures.test_simulation_output_builder import (
     REFORM_POVERTY_BY_AGE,
     REFORM_POVERTY_BY_GENDER,
     REFORM_POVERTY_BY_RACE,
+    FakeCollection,
     FakeModelOutput,
     fake_analysis,
 )
@@ -60,6 +61,9 @@ from policyengine_simulation_executor.simulation_macro_output import (
 )
 from policyengine_simulation_executor.simulation_output_builder import (
     SimulationOutputBuilder,
+)
+from policyengine_simulation_executor.simulation_output_distribution import (
+    build_decile_output,
 )
 from policyengine_simulation_executor.simulation_output_geographic import (
     build_congressional_district_impact,
@@ -951,6 +955,23 @@ def test_builder_records_output_timings_without_real_calculation(monkeypatch):
     assert segment_tree[1]["children"][0]["name"] == (
         Stage.SIMULATION_OUTPUT_MODEL_DUMP
     )
+
+
+def test_decile_relative_is_a_fraction_of_the_baseline_mean():
+    # policyengine.py reports relative_change as a percentage (1.1254 is
+    # 1.1254%); the API's relative field is a fraction (0.011254).
+    output = build_decile_output(
+        FakeCollection(
+            [
+                {"decile": 1, "absolute_change": 180.7, "relative_change": 1.1254},
+                {"decile": 10, "absolute_change": 1410.3, "relative_change": 0.8227},
+                {"decile": 2, "absolute_change": 0.0, "relative_change": None},
+            ]
+        )
+    )
+
+    assert output.average == {"1": 180.7, "2": 0.0, "10": 1410.3}
+    assert output.relative == pytest.approx({"1": 0.011254, "2": 0.0, "10": 0.008227})
 
 
 def test_builder_maps_uk_wealth_outputs_and_omits_us_only_race(monkeypatch):
