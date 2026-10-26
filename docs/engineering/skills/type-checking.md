@@ -111,29 +111,59 @@ After fixing errors:
 2. set the rule's `[rule.baseline] count` in `rules/registry.toml` to the
    number of entries left.
 
-What stops a baseline growing is the rules guard, which compares each existing
-rule's status and baseline count with the base branch. It fails when the count
-doesn't match the file, when the count is higher than on the base branch, and
-when an enforced rule becomes ratcheted without a `[rule.downgrade] reason`.
+What stops a baseline growing is the rules guard, which compares the registry
+with the base branch. It fails when:
+
+- a rule's baseline count doesn't match its file, or is higher than on the
+  base branch;
+- an enforced rule becomes ratcheted without a `[rule.downgrade]` section,
+  which gives a `reason` and an `issue`, the number of the issue that tracks
+  restoring the rule;
+- a rule that the base branch doesn't have starts ratcheted with a baseline
+  count above 0, without a `[rule.downgrade]` section;
+- a package that an enforced or ratcheted Pyright rule lists on the base
+  branch, and whose `pyproject.toml` still exists, is listed by no Pyright
+  rule, or moves to a weaker one (from enforced to any other status, or from
+  ratcheted to advisory), unless the rule that lists it now has a
+  `[rule.downgrade]` section. Deleting the package, or moving it to a rule at
+  least as strong, passes this check; a new ratcheted rule with a count above
+  0 still needs the section, as above;
+- a `[rule.downgrade]` section's `issue` isn't an open issue in this
+  repository. The guard looks up every section's issue on every run, with
+  `gh api` and the token in `GH_TOKEN` or `GITHUB_TOKEN`. In CI, a missing
+  token or a failed lookup fails it, and so does an `issue_repository` at the
+  top of the registry that isn't the repository the workflow runs in. Locally,
+  without a token, it prints a note for each issue it didn't check; to check
+  them, run it with `GH_TOKEN="$(gh auth token)"`.
+
 It doesn't check:
 
-- what the reason says: any non-empty reason passes;
+- what the reason says, or whether the issue is about restoring this rule: any
+  non-empty reason and any open issue pass;
 - which entries changed: a change that fixes one error and adds another keeps
   the count and passes;
-- which packages a rule lists: moving a package from an enforced rule into a
-  new ratcheted rule passes without a reason, because a new rule has no status
-  on the base branch to compare with.
+- whether a `[rule.downgrade]` section is new: a section already on the base
+  branch also covers a further weakening of its rule, such as another package
+  moving into it;
+- whether a rule that stays weakened keeps its `[rule.downgrade]` section:
+  removing the section from a ratcheted or advisory rule passes, and its
+  tracking issue can then be closed without failing anything.
 
 Review is what catches these. `.github/CODEOWNERS` assigns `rules/` to the core
 developers, but `sim.process.rule-machinery-code-owned` is doc-only: merging
 doesn't require their approval. Whoever reviews a pull request that changes a
-baseline, a rule's status or a rule's `enforcer.projects` checks it.
+baseline, a rule's status, a rule's `enforcer.projects` or a
+`[rule.downgrade]` section checks it.
 
-When a person decides to ratchet a package's rule, `--write-baseline` creates
-its baseline: it refuses an error an existing baseline doesn't list, but
-records every current error when the file doesn't exist yet.
+When a person decides to ratchet a package's rule, they add the
+`[rule.downgrade]` section, and `--write-baseline` creates its baseline: it
+refuses an error an existing baseline doesn't list, but records every current
+error when the file doesn't exist yet.
 
-Once a baseline is empty, delete it and make the rule `enforced`.
+Once a baseline is empty, delete it, make the rule `enforced` and remove its
+`[rule.downgrade]` section, which an enforced rule can't have. That pull
+request can then close the tracking issue. Closing the issue while the
+section is still in the registry fails the guard on every pull request.
 
 ## Fixing errors
 

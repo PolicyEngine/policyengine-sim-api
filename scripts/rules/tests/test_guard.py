@@ -5,12 +5,15 @@ from __future__ import annotations
 import subprocess
 import unittest
 from datetime import date
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
-from scripts.rules.baseline import check_baselines
+from scripts.rules.baseline import check_baselines, check_pyright_packages
 from scripts.rules.load import load_text
 from scripts.rules.render import render_agents_block, render_rules_md
 from scripts.rules.tests.support import REGISTRY, Repo
+
+if TYPE_CHECKING:
+    from scripts.rules.model import Registry
 
 RATCHETED_RULE = """
 [[rule]]
@@ -575,6 +578,248 @@ class PyrightRuleTest(unittest.TestCase):
             )
 
 
+def pyright_rule(
+    rule_id: str, packages: list[str], *, status: str = "enforced", tail: str = ""
+) -> str:
+    """Return a Pyright rule over ``packages``; ``tail`` adds tables to its end."""
+    listed = ", ".join(f'"{package}"' for package in packages)
+    baseline = (
+        f'[rule.baseline]\nfile = "rules/baselines/{rule_id}.txt"\ncount = 0\n'
+        if status == "ratcheted"
+        else ""
+    )
+    return (
+        PYRIGHT_RULE.replace('id = "ex.quality.pyright"', f'id = "{rule_id}"')
+        .replace('status = "enforced"', f'status = "{status}"')
+        .replace('projects = ["libs/alpha", "projects/beta"]', f"projects = [{listed}]")
+        + baseline
+        + tail
+    )
+
+
+DOWNGRADE_SECTION = '[rule.downgrade]\nreason = "a Pyright upgrade"\nissue = 912\n'
+PERSON_DOWNGRADE_FIX = (
+    'only a person may weaken a rule, by adding [rule.downgrade] with reason = "..." '
+    "and issue = <number of the open issue that tracks restoring the rule>."
+)
+
+
+class PyrightPackageTest(unittest.TestCase):
+    """A package a blocking Pyright rule lists keeps a check at least as strong."""
+
+    BASE_RULES = pyright_rule("ex.quality.pyright", ["libs/alpha", "projects/beta"])
+
+    def setUp(self) -> None:
+        repo = Repo(pyright_files(), render=False)
+        self.addCleanup(repo.__exit__)
+        self.repo = repo
+
+    def compare(self, head_rules: str) -> tuple[list[str], list[str]]:
+        """Compare ``head_rules`` with BASE_RULES; return the violations and notes."""
+        base, _ = load_text(REGISTRY + self.BASE_RULES)
+        head, _ = load_text(REGISTRY + head_rules)
+        assert base is not None and head is not None
+        violations, notes = check_pyright_packages(head, base, self.repo.root)
+        return [str(violation) for violation in violations], notes
+
+    def test_a_package_may_move_to_another_enforced_rule(self) -> None:
+        head_rules = pyright_rule("ex.quality.pyright", ["libs/alpha"]) + pyright_rule(
+            "ex.quality.pyright-beta", ["projects/beta"]
+        )
+
+        self.assertEqual(self.compare(head_rules), ([], []))
+
+    def test_a_package_moved_to_a_rule_that_is_not_enforced_is_a_downgrade(
+        self,
+    ) -> None:
+        for status in ("ratcheted", "advisory"):
+            with self.subTest(status=status):
+                head_rules = pyright_rule(
+                    "ex.quality.pyright", ["libs/alpha"]
+                ) + pyright_rule(
+                    "ex.quality.pyright-beta", ["projects/beta"], status=status
+                )
+
+                violations, _ = self.compare(head_rules)
+
+                self.assertEqual(
+                    violations,
+                    [
+                        "[ex.quality.pyright-beta] baseline: package projects/beta "
+                        "moved from enforced rule ex.quality.pyright to "
+                        f"{status} rule ex.quality.pyright-beta. Fix: list "
+                        "projects/beta in an enforced Pyright rule again; "
+                        f"{PERSON_DOWNGRADE_FIX}"
+                    ],
+                )
+
+    def test_a_downgrade_on_the_rule_that_lists_the_package_now_allows_it(
+        self,
+    ) -> None:
+        head_rules = pyright_rule("ex.quality.pyright", ["libs/alpha"]) + pyright_rule(
+            "ex.quality.pyright-beta",
+            ["projects/beta"],
+            status="ratcheted",
+            tail=DOWNGRADE_SECTION,
+        )
+
+        self.assertEqual(
+            self.compare(head_rules),
+            (
+                [],
+                [
+                    "package projects/beta moved from enforced rule "
+                    "ex.quality.pyright to ratcheted rule ex.quality.pyright-beta: "
+                    "a Pyright upgrade (issue #912)"
+                ],
+            ),
+        )
+
+    def test_a_downgrade_on_the_rule_the_package_left_does_not_allow_it(
+        self,
+    ) -> None:
+        head_rules = pyright_rule(
+            "ex.quality.pyright", ["libs/alpha"], tail=DOWNGRADE_SECTION
+        ) + pyright_rule(
+            "ex.quality.pyright-beta", ["projects/beta"], status="advisory"
+        )
+
+        violations, _ = self.compare(head_rules)
+
+        self.assertEqual(len(violations), 1)
+        self.assertIn("package projects/beta moved from enforced rule", violations[0])
+
+    def test_a_package_that_no_rule_lists_must_be_deleted(self) -> None:
+        violations, _ = self.compare(pyright_rule("ex.quality.pyright", ["libs/alpha"]))
+
+        self.assertEqual(
+            violations,
+            [
+                "[ex.quality.pyright] baseline: package projects/beta left enforced "
+                "rule ex.quality.pyright, and no Pyright rule lists it now. Fix: "
+                "list projects/beta in an enforced Pyright rule again, or delete "
+                "the package."
+            ],
+        )
+
+    def test_a_deleted_package_may_leave(self) -> None:
+        (self.repo.root / "projects/beta/pyproject.toml").unlink()
+
+        self.assertEqual(
+            self.compare(pyright_rule("ex.quality.pyright", ["libs/alpha"])), ([], [])
+        )
+
+    def test_a_package_written_differently_is_still_listed(self) -> None:
+        head_rules = pyright_rule("ex.quality.pyright", ["./libs/alpha"]) + (
+            pyright_rule("ex.quality.pyright-beta", ["projects/beta/"])
+        )
+
+        self.assertEqual(self.compare(head_rules), ([], []))
+
+    def test_a_rule_that_keeps_its_packages_is_left_to_the_status_check(
+        self,
+    ) -> None:
+        head_rules = pyright_rule(
+            "ex.quality.pyright", ["libs/alpha", "projects/beta"], status="ratcheted"
+        )
+
+        self.assertEqual(self.compare(head_rules), ([], []))
+
+    def test_a_package_moved_from_a_ratcheted_to_an_advisory_rule_is_a_downgrade(
+        self,
+    ) -> None:
+        self.BASE_RULES = pyright_rule(
+            "ex.quality.pyright", ["libs/alpha", "projects/beta"], status="ratcheted"
+        )
+        head_rules = pyright_rule(
+            "ex.quality.pyright", ["libs/alpha"], status="ratcheted"
+        ) + pyright_rule(
+            "ex.quality.pyright-beta", ["projects/beta"], status="advisory"
+        )
+
+        self.assertEqual(
+            self.compare(head_rules),
+            (
+                [
+                    "[ex.quality.pyright-beta] baseline: package projects/beta "
+                    "moved from ratcheted rule ex.quality.pyright to advisory rule "
+                    "ex.quality.pyright-beta. Fix: list projects/beta in an "
+                    "enforced or ratcheted Pyright rule again; "
+                    f"{PERSON_DOWNGRADE_FIX}"
+                ],
+                [],
+            ),
+        )
+
+    def test_a_package_may_move_between_ratcheted_rules(self) -> None:
+        # check_baselines still requires a downgrade for a new ratcheted rule
+        # with a count above 0; this comparison only checks the move.
+        self.BASE_RULES = pyright_rule(
+            "ex.quality.pyright", ["libs/alpha", "projects/beta"], status="ratcheted"
+        )
+        head_rules = pyright_rule(
+            "ex.quality.pyright", ["libs/alpha"], status="ratcheted"
+        ) + pyright_rule(
+            "ex.quality.pyright-beta", ["projects/beta"], status="ratcheted"
+        )
+
+        self.assertEqual(self.compare(head_rules), ([], []))
+
+    def test_a_package_that_left_a_ratcheted_rule_must_be_listed(self) -> None:
+        self.BASE_RULES = pyright_rule(
+            "ex.quality.pyright", ["libs/alpha", "projects/beta"], status="ratcheted"
+        )
+
+        violations, _ = self.compare(
+            pyright_rule("ex.quality.pyright", ["libs/alpha"], status="ratcheted")
+        )
+
+        self.assertEqual(
+            violations,
+            [
+                "[ex.quality.pyright] baseline: package projects/beta left ratcheted "
+                "rule ex.quality.pyright, and no Pyright rule lists it now. Fix: "
+                "list projects/beta in an enforced or ratcheted Pyright rule again, "
+                "or delete the package."
+            ],
+        )
+
+    def test_packages_of_advisory_rules_on_the_base_are_not_compared(self) -> None:
+        self.BASE_RULES = pyright_rule(
+            "ex.quality.pyright", ["libs/alpha", "projects/beta"], status="advisory"
+        )
+
+        self.assertEqual(
+            self.compare(
+                pyright_rule("ex.quality.pyright", ["libs/alpha"], status="advisory")
+            ),
+            ([], []),
+        )
+
+    def test_the_guard_compares_packages_with_the_git_base_ref(self) -> None:
+        repo = self.repo
+        repo.render()
+        git = ["git", "-c", "user.email=t@example.com", "-c", "user.name=t"]
+        subprocess.run(["git", "init", "-q"], cwd=repo.root, check=True)
+        subprocess.run([*git, "add", "-A"], cwd=repo.root, check=True)
+        subprocess.run([*git, "commit", "-qm", "base"], cwd=repo.root, check=True)
+        repo.write(
+            "rules/registry.toml",
+            REGISTRY
+            + pyright_rule("ex.quality.pyright", ["libs/alpha"])
+            + pyright_rule(
+                "ex.quality.pyright-beta", ["projects/beta"], status="advisory"
+            ),
+        )
+        repo.render()
+
+        self.assertIn(
+            "[ex.quality.pyright-beta] baseline: package projects/beta moved from "
+            "enforced rule ex.quality.pyright to advisory rule ex.quality.pyright-beta",
+            "\n".join(repo.messages(base_ref="HEAD")),
+        )
+
+
 class HiddenRuleTest(unittest.TestCase):
     def assert_violation(self, repo: Repo, fragment: str) -> None:
         messages = repo.messages()
@@ -800,7 +1045,7 @@ class BaselineTest(unittest.TestCase):
         violations = check_baselines(current, base)[0]
         self.assertIn("baseline grew from 2 to 3", str(violations[0]))
 
-    def test_downgrade_needs_reason(self) -> None:
+    def test_downgrade_needs_reason_and_issue(self) -> None:
         base = self.registry("")
         weakened = REGISTRY.replace(
             'status = "enforced"\nautofix = true\n[rule.enforcer]\nkind = "ruff"\n'
@@ -815,15 +1060,26 @@ class BaselineTest(unittest.TestCase):
         violations = check_baselines(current, base)[0]
         self.assertIn("status weakened from enforced to advisory", str(violations[0]))
 
-        with_reason, _ = load_text(
-            weakened.replace(
-                'mode = "format"',
-                'mode = "format"\n[rule.downgrade]\nreason = "flaky"',
-                1,
+        def with_downgrade(section: str) -> Registry:
+            registry, _ = load_text(
+                weakened.replace('mode = "format"', f'mode = "format"\n{section}', 1)
             )
+            assert registry is not None
+            return registry
+
+        reason_only = with_downgrade('[rule.downgrade]\nreason = "flaky"')
+        self.assertIn(
+            "status weakened from enforced to advisory",
+            str(check_baselines(reason_only, base)[0][0]),
         )
-        assert with_reason is not None
-        self.assertEqual(check_baselines(with_reason, base)[0], [])
+        reason_and_issue = with_downgrade(
+            '[rule.downgrade]\nreason = "flaky"\nissue = 912'
+        )
+        violations, notes = check_baselines(reason_and_issue, base)
+        self.assertEqual(violations, [])
+        self.assertIn(
+            "rule ex.quality.format downgraded to advisory: flaky (issue #912)", notes
+        )
 
     def test_ratcheting_an_enforced_rule_needs_reason(self) -> None:
         ratcheted = RATCHETED_RULE.format(count=50)
@@ -838,17 +1094,67 @@ class BaselineTest(unittest.TestCase):
             [str(violation) for violation in violations],
             [
                 "[ex.layers.ratcheted] baseline: status weakened from enforced to "
-                'ratcheted. Fix: add [rule.downgrade] reason = "..." so the '
-                "downgrade is explicit and reviewable."
+                'ratcheted. Fix: restore status = "enforced"; only a person may '
+                'weaken a rule, by adding [rule.downgrade] with reason = "..." and '
+                "issue = <number of the open issue that tracks restoring the rule>."
             ],
         )
         with_reason = self.registry(
             ratcheted.replace(
                 "[rule.baseline]",
-                '[rule.downgrade]\nreason = "a Pyright upgrade"\n[rule.baseline]',
+                '[rule.downgrade]\nreason = "a Pyright upgrade"\nissue = 912\n'
+                "[rule.baseline]",
             )
         )
         self.assertEqual(check_baselines(with_reason, base)[0], [])
+
+    def test_a_new_rule_starts_ratcheted_only_with_a_downgrade(self) -> None:
+        base = self.registry("")
+        current = self.registry(RATCHETED_RULE.format(count=2))
+
+        violations, notes = check_baselines(current, base)
+
+        self.assertEqual(
+            [str(violation) for violation in violations],
+            [
+                "[ex.layers.ratcheted] baseline: new rule starts ratcheted with 2 "
+                "tolerated violations. Fix: fix them and make the rule enforced; "
+                "only a person may weaken a rule, by adding [rule.downgrade] with "
+                'reason = "..." and issue = <number of the open issue that tracks '
+                "restoring the rule>."
+            ],
+        )
+        self.assertEqual(notes, ["rule ex.layers.ratcheted is new"])
+
+    def test_a_downgrade_lets_a_new_rule_start_ratcheted(self) -> None:
+        base = self.registry("")
+        current = self.registry(
+            RATCHETED_RULE.format(count=2).replace(
+                "[rule.baseline]",
+                '[rule.downgrade]\nreason = "a new checker"\nissue = 912\n'
+                "[rule.baseline]",
+            )
+        )
+
+        violations, notes = check_baselines(current, base)
+
+        self.assertEqual(violations, [])
+        self.assertEqual(
+            notes,
+            [
+                "rule ex.layers.ratcheted is new",
+                "rule ex.layers.ratcheted starts ratcheted with 2 tolerated "
+                "violations: a new checker (issue #912)",
+            ],
+        )
+
+    def test_a_new_rule_may_start_ratcheted_with_nothing_tolerated(self) -> None:
+        base = self.registry("")
+        current = self.registry(RATCHETED_RULE.format(count=0))
+
+        self.assertEqual(
+            check_baselines(current, base), ([], ["rule ex.layers.ratcheted is new"])
+        )
 
     def test_compares_against_git_base_ref(self) -> None:
         with Repo(with_rule(RATCHETED_RULE.format(count=1)), render=False) as repo:
