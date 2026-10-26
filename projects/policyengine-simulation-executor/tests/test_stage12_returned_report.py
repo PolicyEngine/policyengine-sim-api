@@ -9,12 +9,14 @@ a Stage 12 row would record.
 from __future__ import annotations
 
 import logging
+import math
 from contextlib import contextmanager
 from hashlib import sha256
 from uuid import uuid4
 
 import pytest
 from fixtures.fake_modal import InputCancellation
+from fixtures.fake_object_store import InMemoryObjectStore
 from fixtures.macro_output import CURRENT_SINGLE_YEAR_MACRO_RESULT
 from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
 from policyengine_simulation_contract.report_execution import (
@@ -26,12 +28,14 @@ from policyengine_simulation_contract.report_execution import (
 )
 from policyengine_simulation_contract.spm import SPMInputError
 from policyengine_simulation_contract.stage12_execution import (
+    PlannedSimulationExecutionInput,
     ReportAggregate,
     ReportResultDelivery,
     SimulationArtifactDescriptor,
     SimulationRole,
     Stage12InvocationContext,
 )
+from policyengine_simulation_executor.stage12_artifacts import Stage12ArtifactStore
 from policyengine_simulation_executor.stage12_runtime import (
     CoordinatorDependencies,
     CoordinatorInvocation,
@@ -799,3 +803,150 @@ def test_stage12_report_still_requires_its_parent_record() -> None:
 
     assert store.parent is None
     assert invoker.events == []
+
+
+# Modal restarts a pre-empted call on another machine, and the restarted call
+# starts over. Its calculation can differ in the last bits from the first
+# attempt's, so its output must not need to match what that attempt stored.
+
+
+def _write_once_artifacts() -> Stage12ArtifactStore:
+    """Return an artifact store that, like the bucket, never replaces an object."""
+    return Stage12ArtifactStore("private", store=InMemoryObjectStore())
+
+
+def test_a_restarted_returned_simulation_stores_output_that_differs_from_before(
+    forbid_database,
+) -> None:
+    artifacts = _write_once_artifacts()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+
+    first_attempt = _run_returned_simulation(
+        simulation, artifacts=artifacts, calculator=lambda _: _frames(100.0)
+    )
+    restarted = _run_returned_simulation(
+        simulation,
+        artifacts=artifacts,
+        calculator=lambda _: _frames(math.nextafter(100.0, math.inf)),
+    )
+
+    for result in (first_attempt, restarted):
+        descriptor = SimulationArtifactDescriptor.model_validate(result)
+        stored = artifacts.read(descriptor.artifact.uri)
+        assert sha256(stored).hexdigest() == descriptor.artifact.content_sha256
+    assert first_attempt["artifact"]["uri"] != restarted["artifact"]["uri"]
+
+
+def test_a_restarted_returned_simulation_with_the_same_output_reuses_its_artifact(
+    forbid_database,
+) -> None:
+    artifacts = _write_once_artifacts()
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+
+    first_attempt = _run_returned_simulation(
+        simulation, artifacts=artifacts, calculator=lambda _: _frames(100.0)
+    )
+    restarted = _run_returned_simulation(
+        simulation, artifacts=artifacts, calculator=lambda _: _frames(100.0)
+    )
+
+    assert restarted == first_attempt
+
+
+class InProcessWorkerCall:
+    """A started worker whose outcome was computed when it was started."""
+
+    def __init__(self, object_id, outcome) -> None:
+        self.object_id = object_id
+        self.outcome = outcome
+        self.cancel_count = 0
+
+    def get(self, *, timeout=None):
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return self.outcome
+
+    def cancel(self) -> None:
+        self.cancel_count += 1
+
+
+class InProcessWorkerInvoker:
+    """Run each returned worker in this process, storing into ``artifacts``.
+
+    ``household_income`` gives each role's calculated household net income.
+    Probing ``interrupted_role``'s result raises ``KeyboardInterrupt``, as the
+    interrupt Modal sends a pre-empted container does in the coordinator.
+    """
+
+    def __init__(self, artifacts, *, household_income, interrupted_role=None):
+        self.artifacts = artifacts
+        self.household_income = household_income
+        self.interrupted_role = interrupted_role
+        self.calls = {}
+
+    def spawn(self, request):
+        role = PlannedSimulationExecutionInput.model_validate(
+            request.simulation
+        ).role.value
+        if role == self.interrupted_role:
+            outcome = KeyboardInterrupt()
+        else:
+            income = self.household_income[role]
+            outcome = run_single_simulation(
+                request.simulation,
+                request.context,
+                required_country="us",
+                dependencies=SimulationWorkerDependencies(
+                    artifacts=self.artifacts,
+                    calculator=lambda _: _frames(income),
+                ),
+            )
+        call = InProcessWorkerCall(f"call-{role}", outcome)
+        self.calls[role] = call
+        return call
+
+
+def _report_with_a_dated_reform_period():
+    """Return the test report with a reform period the worker's check accepts."""
+    report = _report()
+    return report.model_copy(
+        update={
+            "reform": report.reform.model_copy(
+                update={"policy": {"reform": {"2026-01-01.2026-12-31": 1}}}
+            )
+        }
+    )
+
+
+def test_a_pre_empted_returned_report_finishes_when_modal_restarts_it(
+    forbid_database,
+) -> None:
+    artifacts = _write_once_artifacts()
+    report = _report_with_a_dated_reform_period()
+    first_attempt = InProcessWorkerInvoker(
+        artifacts,
+        household_income={"baseline": 100.0},
+        interrupted_role="reform",
+    )
+
+    # The baseline worker stores its output before Modal pre-empts the
+    # coordinator, which then cancels the unfinished reform worker.
+    with pytest.raises(KeyboardInterrupt):
+        _coordinate_returned_report(first_attempt, report=report, artifacts=artifacts)
+    assert first_attempt.calls["reform"].cancel_count == 1
+
+    restarted = InProcessWorkerInvoker(
+        artifacts,
+        household_income={
+            "baseline": math.nextafter(100.0, math.inf),
+            "reform": 120.0,
+        },
+    )
+    returned = _coordinate_returned_report(
+        restarted, report=report, artifacts=artifacts
+    )
+
+    result = ReportExecutionResult.model_validate(returned)
+    for descriptor in (result.baseline, result.reform):
+        stored = artifacts.read(descriptor.artifact.uri)
+        assert sha256(stored).hexdigest() == descriptor.artifact.content_sha256

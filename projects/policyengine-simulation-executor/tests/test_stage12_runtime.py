@@ -504,6 +504,10 @@ class FakeArtifacts:
             update={"calculation_provenance": calculation_provenance}
         )
 
+    # A returned simulation names its output by its digest; this fake keeps
+    # one object per role either way.
+    write_simulation_named_by_digest = write_simulation
+
     def read(self, uri):
         if uri in self.payloads:
             return self.payloads[uri]

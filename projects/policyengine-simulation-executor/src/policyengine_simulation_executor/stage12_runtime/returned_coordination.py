@@ -202,12 +202,15 @@ def coordinate_report_for_caller(
 
     The payload is a ``ReportExecutionResult`` in JSON mode. No Stage 12 row is
     read or written and ``dependencies.store`` is never used. Nothing claims
-    the report, so a repeated dispatch runs it again: the caller deduplicates,
-    and uses a new ``evaluation_id`` for each attempt because artifact paths
-    are write-once. Artifacts go under the Stage 12 layout for the context's
+    the report, so a repeated dispatch runs it again, and the caller
+    deduplicates. Artifacts go under the Stage 12 layout for the context's
     environment, creation time and report, whatever prefix the caller sent.
-    Both children start with the same delivery, so they write no rows either.
-    No aggregate artifact is written: the aggregate is returned inline.
+    Both children start with the same delivery, so they write no rows either,
+    and each names its output by its digest. A repeated dispatch, or a call
+    Modal restarts after pre-empting it, therefore stores its artifacts beside
+    any an earlier attempt stored, even where its calculation differs in the
+    last bits. No aggregate artifact is written: the aggregate is returned
+    inline.
 
     A context that does not ask for the report to return to its caller, or
     that disagrees with the report, raises ``ValueError`` before any child

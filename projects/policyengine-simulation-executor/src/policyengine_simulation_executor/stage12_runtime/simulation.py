@@ -530,8 +530,16 @@ class _SimulationRun:
             cancellation_requested=cancellation_requested,
         )
         validate_output_frames(calculation.frames, simulation.output_plan)
+        # Modal restarts a pre-empted call, possibly on another machine whose
+        # calculation differs in its last bits, so a returned simulation names
+        # its output by its digest and never needs a key holding other data.
+        write_simulation = (
+            self.artifact_storage.write_simulation_named_by_digest
+            if self.context.result_delivery is ReportResultDelivery.RETURN_TO_CALLER
+            else self.artifact_storage.write_simulation
+        )
         with stage_span(Stage.STAGE12_SIMULATION_ARTIFACT_WRITE):
-            return self.artifact_storage.write_simulation(
+            return write_simulation(
                 prefix=self.context.artifact_prefix,
                 simulation=simulation,
                 frames=calculation.frames,
@@ -618,9 +626,11 @@ def _run_simulation_for_caller(run: _SimulationRun) -> dict[str, Any]:
 
     No Stage 12 row is read or written. The simulation is always calculated:
     no record can carry a cancellation, so the coordinator stops this call
-    through Modal instead. A failure is reported once, recorded as the
-    operation's cause, and raised as ``ReportExecutionError`` with the
-    redacted detail a Stage 12 row would record.
+    through Modal instead. Its output is stored under a key naming its digest,
+    so a call Modal restarts after pre-empting it can always store its own.
+    A failure is reported once, recorded as the operation's cause, and raised
+    as ``ReportExecutionError`` with the redacted detail a Stage 12 row would
+    record.
     """
     runtime = run.dependencies.runtime
     try:

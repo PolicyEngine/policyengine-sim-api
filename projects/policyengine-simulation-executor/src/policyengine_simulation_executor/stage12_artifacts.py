@@ -82,6 +82,21 @@ def simulation_path(*, prefix: str, role: str) -> str:
     return f"{prefix}/simulations/{role}.parquet"
 
 
+def content_addressed_simulation_path(
+    *,
+    prefix: str,
+    role: str,
+    content_sha256: str,
+) -> str:
+    """Return the key of a Parquet output named by its own SHA-256.
+
+    A restarted simulation whose output differs in any byte stores it under a
+    new key instead of colliding with the earlier attempt's object, and an
+    identical output reuses the earlier object.
+    """
+    return f"{prefix}/simulations/{role}-{content_sha256}.parquet"
+
+
 def aggregate_path(*, prefix: str) -> str:
     """Return the key of the run's aggregate report JSON."""
     return f"{prefix}/reports/aggregate.json"
@@ -331,14 +346,66 @@ class Stage12ArtifactStore:
         calculation_provenance: SPMProvenance | None = None,
         uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
     ) -> SimulationArtifactDescriptor:
-        """Store a simulation's output frames and describe the artifact for reports."""
+        """Store a simulation's output frames under its role's fixed key.
+
+        Returns the artifact's descriptor for reports.
+        """
         payload, row_identity = serialize_simulation_frames(
             frames,
             calculation_provenance=calculation_provenance,
             uk_local_authority_metadata=uk_local_authority_metadata,
         )
-        artifact = self._write_immutable(
+        return self._store_simulation_payload(
             simulation_path(prefix=prefix, role=simulation.role.value),
+            simulation,
+            payload,
+            row_identity,
+            calculation_provenance,
+        )
+
+    def write_simulation_named_by_digest(
+        self,
+        *,
+        prefix: str,
+        simulation: PlannedSimulationExecutionInput,
+        frames: Mapping[str, pd.DataFrame],
+        calculation_provenance: SPMProvenance | None = None,
+        uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
+    ) -> SimulationArtifactDescriptor:
+        """Store a simulation's output frames under a key naming their SHA-256.
+
+        A restarted simulation can always store its output this way (see
+        ``content_addressed_simulation_path``). Returns the artifact's
+        descriptor for reports.
+        """
+        payload, row_identity = serialize_simulation_frames(
+            frames,
+            calculation_provenance=calculation_provenance,
+            uk_local_authority_metadata=uk_local_authority_metadata,
+        )
+        return self._store_simulation_payload(
+            content_addressed_simulation_path(
+                prefix=prefix,
+                role=simulation.role.value,
+                content_sha256=sha256(payload).hexdigest(),
+            ),
+            simulation,
+            payload,
+            row_identity,
+            calculation_provenance,
+        )
+
+    def _store_simulation_payload(
+        self,
+        path: str,
+        simulation: PlannedSimulationExecutionInput,
+        payload: bytes,
+        row_identity: RowIdentity,
+        calculation_provenance: SPMProvenance | None,
+    ) -> SimulationArtifactDescriptor:
+        """Store one encoded simulation output at ``path`` and describe it."""
+        artifact = self._write_immutable(
+            path,
             payload,
             content_type=SIMULATION_MEDIA_TYPE,
         )
