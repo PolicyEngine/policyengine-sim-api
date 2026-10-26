@@ -79,7 +79,17 @@ def _run(recorder) -> RecordingPass:
 
 @pytest.mark.parametrize(
     ("check_count", "seconds"),
-    [(0, 2), (1, 2), (2, 4), (3, 8), (5, 32), (6, 60), (40, 60)],
+    [
+        (0, 2),
+        (1, 2),
+        (2, 4),
+        (3, 8),
+        (5, 32),
+        (6, 60),
+        (40, 60),
+        (47, 60),
+        (10_000, 60),
+    ],
 )
 def test_checks_back_off_up_to_a_minute(check_count, seconds) -> None:
     assert next_check_delay(check_count) == timedelta(seconds=seconds)

@@ -78,9 +78,15 @@ BUSY_PASS_INTERVAL_SECONDS = 1.0
 IDLE_PASS_INTERVAL_SECONDS = 5.0
 
 
+# Past this many doublings the wait is LONGEST_BACKOFF anyway; capping the
+# exponent keeps the product within timedelta's range for a long call.
+_MOST_DOUBLINGS = 16
+
+
 def next_check_delay(check_count: int) -> timedelta:
     """Return the wait before the next check of a call checked ``check_count`` times."""
-    return min(FIRST_BACKOFF * 2 ** max(check_count - 1, 0), LONGEST_BACKOFF)
+    doublings = min(max(check_count - 1, 0), _MOST_DOUBLINGS)
+    return min(FIRST_BACKOFF * 2**doublings, LONGEST_BACKOFF)
 
 
 class SimulationResultRecorder(Protocol):
