@@ -32,6 +32,11 @@ When adding, changing, or removing a rule, a guard test, a checker
 configuration, or a CI job that enforces one, read
 `docs/engineering/skills/rules-registry.md`.
 
+Never weaken a rule yourself: don't downgrade a rule's status, add a
+`[rule.downgrade]` section, create or grow a baseline, or move a package or
+path out of a rule's scope. When a rule reports violations you can't fix, stop
+and report them to a person, who decides whether to relax the rule.
+
 Before adding a Pydantic model or a class that other models inherit from, or
 moving an import under `if TYPE_CHECKING:`, read
 `docs/engineering/skills/typing-only-imports.md`.

@@ -71,11 +71,28 @@ the errors the new version reports.
 
 ## Baselines
 
-No package has a Pyright baseline now. If a Pyright upgrade or a new package
-brings errors that can't be fixed in the same pull request, a package's rule
-can be ratcheted, which for an enforced rule needs a `[rule.downgrade] reason`
-in the registry. Its baseline, `rules/baselines/pyright-<package>.txt`, lists
-the errors it may still have, one line per error, sorted:
+No package has a Pyright baseline now: every Pyright rule is enforced.
+
+### When you can't fix Pyright errors
+
+Weakening a Pyright rule is a decision for a person, not an agent. If Pyright
+reports errors you can't fix in your pull request, including after a Pyright
+upgrade or in a new package, stop and report them: list the errors and say
+what you tried. Don't:
+
+- change a Pyright rule's `status` from `enforced`, or add a
+  `[rule.downgrade]` section;
+- create a file under `rules/baselines/`, or add entries to one;
+- move a package out of an enforced rule's `enforcer.projects`, or into a new
+  rule;
+- weaken a package's `[tool.pyright]` settings (see above).
+
+Fixing a ratcheted package's errors and shrinking its baseline is fine.
+
+### How a baseline works
+
+A ratcheted rule's baseline, `rules/baselines/pyright-<package>.txt`, lists the
+errors the package may still have, one line per error, sorted:
 
 ```text
 <path> :: <Pyright rule> :: <first line of the message>
@@ -94,19 +111,29 @@ After fixing errors:
 2. set the rule's `[rule.baseline] count` in `rules/registry.toml` to the
    number of entries left.
 
-What stops a baseline growing is the rules guard, which compares counts. It
-fails when the count doesn't match the file, when the count is higher than on
-the base branch, and when an enforced rule becomes ratcheted without a
-`[rule.downgrade] reason`. It doesn't compare entries: a change that fixes one
-error and adds another keeps the count and passes the guard, so code-owner
-review of `rules/` is what catches that. `--write-baseline` refuses an error
-an existing baseline doesn't list, but records every current error when the
-file doesn't exist yet, which is how a package is first ratcheted.
+What stops a baseline growing is the rules guard, which compares each existing
+rule's status and baseline count with the base branch. It fails when the count
+doesn't match the file, when the count is higher than on the base branch, and
+when an enforced rule becomes ratcheted without a `[rule.downgrade] reason`.
+It doesn't check:
+
+- what the reason says: any non-empty reason passes;
+- which entries changed: a change that fixes one error and adds another keeps
+  the count and passes;
+- which packages a rule lists: moving a package from an enforced rule into a
+  new ratcheted rule passes without a reason, because a new rule has no status
+  on the base branch to compare with.
+
+Review is what catches these. `.github/CODEOWNERS` assigns `rules/` to the core
+developers, but `sim.process.rule-machinery-code-owned` is doc-only: merging
+doesn't require their approval. Whoever reviews a pull request that changes a
+baseline, a rule's status or a rule's `enforcer.projects` checks it.
+
+When a person decides to ratchet a package's rule, `--write-baseline` creates
+its baseline: it refuses an error an existing baseline doesn't list, but
+records every current error when the file doesn't exist yet.
 
 Once a baseline is empty, delete it and make the rule `enforced`.
-
-Baselines are under `rules/`, so changing one needs code-owner approval
-(`sim.process.rule-machinery-code-owned`).
 
 ## Fixing errors
 
@@ -123,7 +150,6 @@ Baselines are under `rules/`, so changing one needs code-owner approval
   managers as possibly suppressing exceptions, so after `with runtime.span(...)`
   Pyright reports each variable the block assigned as possibly unbound.
 - Before reading a simulation's output frames, narrow
-  `<simulation>.output_dataset.data` with the `EntityFrames` or
-  `HouseholdFrame` protocols in `policyengine_simulation_executor.output_frames`,
-  and keep reading through that expression: the microdata weight checks
-  recognise weighted frames by it.
+  `<simulation>.output_dataset.data` with the `EntityFrames` protocol in
+  `policyengine_simulation_executor.output_frames`, and keep reading through
+  that expression: the microdata weight checks recognise weighted frames by it.

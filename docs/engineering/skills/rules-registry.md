@@ -127,7 +127,14 @@ fail the guard yet.
   `ratcheted` with a baseline file of tolerated violations. Baselines may only
   shrink: the guard compares counts against the base branch.
 - Moving a rule from enforced/ratcheted to advisory/doc-only, or from enforced
-  to ratcheted, needs an explicit `[rule.downgrade] reason`.
+  to ratcheted, needs an explicit `[rule.downgrade] reason`. The guard accepts
+  any non-empty reason; the reason is for the reviewer.
+- **Weakening a rule is a decision for a person, not an agent.** Agents don't
+  downgrade a rule, add a `[rule.downgrade]` section, create a baseline or add
+  entries to one, or move a package or path out of a rule's scope. When a rule
+  reports violations an agent can't fix in its pull request, the agent stops
+  and reports them, with what it tried. Fixing violations and shrinking a
+  baseline is fine.
 
 ## File-level exceptions
 
