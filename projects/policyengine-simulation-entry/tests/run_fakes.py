@@ -233,6 +233,20 @@ class FakeRunTransitions:
             is not None
         )
 
+    def simulation_runs_hold_call(
+        self, run_ids: Collection[UUID], modal_call_id: str
+    ) -> bool:
+        """Return whether every run recorded ``modal_call_id``."""
+        with self.lock:
+            return all(
+                self.runs[run_id].modal_call_id == modal_call_id for run_id in run_ids
+            )
+
+    def comparison_holds_call(self, report_run_id: UUID, modal_call_id: str) -> bool:
+        """Return whether the comparison step recorded ``modal_call_id``."""
+        with self.lock:
+            return self.comparisons[report_run_id].modal_call_id == modal_call_id
+
     # --- Recording -------------------------------------------------------
 
     def claim_due_simulation_calls(

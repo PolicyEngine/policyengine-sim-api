@@ -53,8 +53,13 @@ class DispatchOutcome(StrEnum):
     # Modal refused the call; the runs are failed.
     DISPATCH_FAILED = "dispatch_failed"
     # Modal acknowledged the call, but the runs had stopped dispatching before
-    # the call ID could be recorded.
+    # the call ID could be recorded, or recording it failed; the call is
+    # cancelled.
     NOT_RECORDED = "not_recorded"
+    # Recording the call raised and the database could not say whether the
+    # record committed; the call is left running. If it did, the recording
+    # loop collects the call; if not, the runs are failed as abandoned.
+    RECORD_UNKNOWN = "record_unknown"
 
 
 class DispatchTransitions(Protocol):
@@ -80,6 +85,12 @@ class DispatchTransitions(Protocol):
         """Fail dispatching runs."""
         ...
 
+    def simulation_runs_hold_call(
+        self, run_ids: Collection[UUID], modal_call_id: str
+    ) -> bool:
+        """Return whether every one of the runs recorded the call."""
+        ...
+
     def claim_comparison_dispatch(self, report_run_id: UUID) -> bool:
         """Move a pending comparison step to dispatching."""
         ...
@@ -100,14 +111,19 @@ class DispatchTransitions(Protocol):
         """Fail a dispatching comparison step."""
         ...
 
+    def comparison_holds_call(self, report_run_id: UUID, modal_call_id: str) -> bool:
+        """Return whether the comparison step recorded the call."""
+        ...
+
 
 @dataclass(frozen=True)
 class _DispatchSteps:
-    """The three writes around one spawn, bound to the runs they change."""
+    """The writes around one spawn, and a read, bound to the runs they change."""
 
     claim: Callable[[], bool]
     record: Callable[[str, datetime], bool]
     fail: Callable[[RunError], bool]
+    holds_call: Callable[[str], bool]
     # "simulation_run" or "report_run_comparison": the log event names' start.
     event_prefix: str
 
@@ -140,6 +156,9 @@ class RunDispatchService:
                 fail=lambda error: self.transitions.record_simulation_dispatch_failure(
                     runs, error
                 ),
+                holds_call=lambda call_id: self.transitions.simulation_runs_hold_call(
+                    runs, call_id
+                ),
                 event_prefix="simulation_run",
             ),
             request,
@@ -166,6 +185,9 @@ class RunDispatchService:
                 ),
                 fail=lambda error: self.transitions.record_comparison_dispatch_failure(
                     report_run_id, error
+                ),
+                holds_call=lambda call_id: self.transitions.comparison_holds_call(
+                    report_run_id, call_id
                 ),
                 event_prefix="report_run_comparison",
             ),
@@ -208,22 +230,19 @@ class RunDispatchService:
         A call whose runs never record it would run to its end with nobody
         collecting its output, and its runs would later be failed as
         abandoned; a resubmission would then start a second call. So such a
-        call is cancelled, and when the record failed, its runs are failed
-        at once with dispatch_failed if the database allows.
+        call is cancelled.
         """
         context = {**subject, "modal_call_id": modal_call_id}
         try:
             recorded = await asyncio.to_thread(
                 steps.record, modal_call_id, self.clock() + FIRST_CHECK_DELAY
             )
-        except Exception as error:  # the call is cancelled instead
+        except Exception as error:  # settled below
             logger.exception(
-                _event_name(steps.event_prefix, "call_not_recorded"),
+                _event_name(steps.event_prefix, "call_record_failed"),
                 extra={**context, "error_type": type(error).__name__},
             )
-            await self._cancel(modal_call_id, context, steps.event_prefix)
-            await self._fail_quietly(steps, context)
-            return DispatchOutcome.NOT_RECORDED
+            return await self._settle_failed_record(steps, modal_call_id, context)
         if not recorded:
             # The runs stopped dispatching while Modal acknowledged the call,
             # for example because the recording loop failed them as abandoned.
@@ -246,19 +265,44 @@ class RunDispatchService:
                 extra={**context, "error_type": type(error).__name__},
             )
 
-    async def _fail_quietly(
-        self, steps: _DispatchSteps, context: dict[str, object]
-    ) -> None:
+    async def _settle_failed_record(
+        self,
+        steps: _DispatchSteps,
+        modal_call_id: str,
+        context: dict[str, object],
+    ) -> DispatchOutcome:
+        """Settle a call whose record raised: it may have committed all the same.
+
+        A record that committed but whose reply was lost leaves the runs
+        running under the call, which must keep running. Only an uncommitted
+        record leaves them dispatching, so they are failed if they still are,
+        and then the call is cancelled. Otherwise the runs are read: holding
+        the call, it started; not holding it (failed meanwhile as abandoned),
+        the call is cancelled. If the database cannot answer, the call is left
+        running, since cancelling it could stop a recorded call.
+        """
         try:
-            await asyncio.to_thread(
+            failed = await asyncio.to_thread(
                 steps.fail,
                 RunError(
                     RunErrorCode.DISPATCH_FAILED,
                     "The Modal call could not be recorded, so it was cancelled.",
                 ),
             )
-        except Exception as error:  # the abandoned-dispatch check fails the runs later
+            holds_call = not failed and await asyncio.to_thread(
+                steps.holds_call, modal_call_id
+            )
+        except Exception as error:  # the call is left running; see above
             logger.exception(
-                _event_name(steps.event_prefix, "dispatch_failure_not_recorded"),
+                _event_name(steps.event_prefix, "call_record_unknown"),
                 extra={**context, "error_type": type(error).__name__},
             )
+            return DispatchOutcome.RECORD_UNKNOWN
+        if holds_call:
+            logger.info(_event_name(steps.event_prefix, "dispatched"), extra=context)
+            return DispatchOutcome.STARTED
+        logger.warning(
+            _event_name(steps.event_prefix, "call_not_recorded"), extra=context
+        )
+        await self._cancel(modal_call_id, context, steps.event_prefix)
+        return DispatchOutcome.NOT_RECORDED

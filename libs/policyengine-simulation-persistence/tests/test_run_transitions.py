@@ -112,6 +112,25 @@ def test_a_dispatched_run_records_its_call_and_first_check(
     )
 
 
+def test_runs_say_whether_they_recorded_a_call(
+    migrated_database, public_api_rows
+) -> None:
+    """A dispatcher whose record raised reads whether it committed all the same."""
+    stores = clocked_stores(migrated_database)
+    running = _running_run(stores, migrated_database, public_api_rows)
+    dispatching = _pending_run(stores, migrated_database, public_api_rows)
+    stores.transitions.claim_simulation_dispatch([dispatching.id])
+    transitions = stores.transitions
+
+    assert transitions.simulation_runs_hold_call([running.id], "fc-economy")
+    assert not transitions.simulation_runs_hold_call([running.id], "fc-other")
+    assert not transitions.simulation_runs_hold_call([dispatching.id], "fc-economy")
+    assert not transitions.simulation_runs_hold_call(
+        [running.id, dispatching.id], "fc-economy"
+    )
+    assert not transitions.simulation_runs_hold_call([], "fc-economy")
+
+
 def test_a_refused_dispatch_fails_the_run_and_frees_the_setup(
     migrated_database, public_api_rows
 ) -> None:
@@ -409,6 +428,28 @@ def test_a_comparison_failure_is_recorded(migrated_database, public_api_rows) ->
     assert failed.comparison_status is RunStatus.FAILED
     assert failed.comparison_error_code == "worker_error"
     assert failed.comparison_completed_at == stores.clock()
+
+
+def test_a_comparison_says_whether_it_recorded_a_call(
+    migrated_database, public_api_rows
+) -> None:
+    stores = clocked_stores(migrated_database)
+    report_run, (baseline_run, reform_run) = _economy_report_run(
+        stores, migrated_database, public_api_rows
+    )
+    _succeed(stores, baseline_run, "fc-baseline")
+    _succeed(stores, reform_run, "fc-reform")
+    transitions = stores.transitions
+    transitions.claim_comparison_dispatch(report_run.id)
+
+    assert not transitions.comparison_holds_call(report_run.id, "fc-comparison")
+
+    transitions.record_comparison_dispatched(
+        report_run.id, modal_call_id="fc-comparison", first_check_at=stores.clock()
+    )
+
+    assert transitions.comparison_holds_call(report_run.id, "fc-comparison")
+    assert not transitions.comparison_holds_call(report_run.id, "fc-other")
 
 
 def test_a_refused_comparison_dispatch_fails_the_step(
