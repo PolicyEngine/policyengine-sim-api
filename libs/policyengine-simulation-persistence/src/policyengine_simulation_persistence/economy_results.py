@@ -32,6 +32,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 
 from policyengine_simulation_persistence.result_tables import (
+    UK_AREA_DISCLOSURE_COLUMNS,
     budget_impacts,
     cliff_impacts,
     congressional_district_impacts,
@@ -328,6 +329,7 @@ def _geography_rows(
                     record.relative_household_income_change
                 ),
                 "population": record.population,
+                **{name: getattr(record, name) for name in UK_AREA_DISCLOSURE_COLUMNS},
             }
             for position, record in enumerate(records.root)
         ]
@@ -604,6 +606,7 @@ def _labelled_geographies(
                     "relative_household_income_change"
                 ],
                 "population": row["population"],
+                **{name: row[name] for name in UK_AREA_DISCLOSURE_COLUMNS},
             }
         )
     return records

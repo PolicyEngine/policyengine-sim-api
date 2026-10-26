@@ -8,15 +8,18 @@ between baseline and reform) belong to the report run. Lists and maps keep
 their order in a ``position`` column, so a reader rebuilds the result exactly.
 
 Constituency and local-authority names and map positions are not stored: they
-come from the region catalog by code. The model and data versions are pinned
+come from the region catalog by code. Each area's disclosure tier and 90%
+interval bounds are stored with its figures, null for a result computed before
+disclosure control. The model and data versions are pinned
 by the run's catalog version. The SPM provenance and the list of optional
 sections a result holds are columns on the report run.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 
+from policyengine_simulation_contract.macro_output import UKGeographyDisclosureTier
 from sqlalchemy import (
     CheckConstraint,
     Column,
@@ -44,6 +47,14 @@ POVERTY_GROUPS = {
     "race": ("white", "black", "hispanic", "other"),
 }
 DECILE_MEASURES = ("income", "wealth")
+UK_AREA_DISCLOSURE_TIERS: tuple[str, ...] = get_args(UKGeographyDisclosureTier)
+UK_AREA_DISCLOSURE_COLUMNS = (
+    "disclosure_tier",
+    "average_household_income_change_lower",
+    "average_household_income_change_upper",
+    "relative_household_income_change_lower",
+    "relative_household_income_change_upper",
+)
 
 
 def _values(values: tuple[str, ...]) -> str:
@@ -82,6 +93,23 @@ def _position() -> list[SchemaItem]:
     return [
         Column("position", Integer, nullable=False),
         CheckConstraint("position >= 0", name="position"),
+    ]
+
+
+def _uk_area_disclosure() -> list[SchemaItem]:
+    """Return a UK area's disclosure tier and its changes' 90% interval bounds.
+
+    All are null for a result computed before disclosure control.
+    """
+    tier_column, *bound_columns = UK_AREA_DISCLOSURE_COLUMNS
+    return [
+        Column(tier_column, Text, nullable=True),
+        *(Column(name, Double, nullable=True) for name in bound_columns),
+        CheckConstraint(
+            f"{tier_column} IS NULL OR "
+            f"{tier_column} IN ({_values(UK_AREA_DISCLOSURE_TIERS)})",
+            name=tier_column,
+        ),
     ]
 
 
@@ -255,6 +283,7 @@ constituency_impacts = Table(
         "relative_household_income_change",
         "population",
     ),
+    *_uk_area_disclosure(),
     PrimaryKeyConstraint("report_run_id", "constituency_code"),
     UniqueConstraint("report_run_id", "position"),
 )
@@ -270,6 +299,7 @@ local_authority_impacts = Table(
         "relative_household_income_change",
         "population",
     ),
+    *_uk_area_disclosure(),
     PrimaryKeyConstraint("report_run_id", "local_authority_code"),
     UniqueConstraint("report_run_id", "position"),
 )

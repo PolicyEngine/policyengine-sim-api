@@ -300,10 +300,15 @@
  "constituency_impact": null,
  "local_authority_impact": [
   {
+   "disclosure_tier": null,
+   "average_household_income_change_lower": null,
+   "average_household_income_change_upper": null,
+   "relative_household_income_change_lower": null,
+   "relative_household_income_change_upper": null,
    "local_authority_code": "E06000000001",
    "local_authority_name": "Local Authority 1",
-   "x": null,
-   "y": null,
+   "x": 0,
+   "y": 0,
    "average_household_income_change": 23.761655080990707,
    "relative_household_income_change": 0.45328471316462604,
    "population": 103153.12548296218

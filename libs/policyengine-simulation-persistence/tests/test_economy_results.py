@@ -69,6 +69,43 @@ def test_a_stored_result_is_rebuilt_exactly(
     assert rebuilt == result
 
 
+UK_AREA_DISCLOSURE_FIELDS = {
+    "disclosure_tier",
+    "average_household_income_change_lower",
+    "average_household_income_change_upper",
+    "relative_household_income_change_lower",
+    "relative_household_income_change_upper",
+}
+
+
+def test_each_uk_area_keeps_its_disclosure_tier_and_intervals(
+    migrated_database, public_api_rows
+) -> None:
+    result = load_sample("uk_nation_scotland_2026")
+    stores = result_stores(migrated_database)
+    report_run = comparison_ready(stores, migrated_database, public_api_rows)
+
+    _write(stores, report_run, RECORDER.validate(result.model_dump(mode="json")))
+
+    rebuilt = _read(migrated_database, report_run.id, labels_for(result))
+    for written, read in (
+        (result.constituency_impact, rebuilt.constituency_impact),
+        (result.local_authority_impact, rebuilt.local_authority_impact),
+    ):
+        assert written is not None
+        assert read is not None
+        assert {record.disclosure_tier for record in written.root} == {
+            "reported",
+            "approximate",
+        }
+        assert [
+            record.model_dump(include=UK_AREA_DISCLOSURE_FIELDS) for record in read.root
+        ] == [
+            record.model_dump(include=UK_AREA_DISCLOSURE_FIELDS)
+            for record in written.root
+        ]
+
+
 def test_a_reused_baseline_keeps_its_figures_once(
     migrated_database, public_api_rows
 ) -> None:
