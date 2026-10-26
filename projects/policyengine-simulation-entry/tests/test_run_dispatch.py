@@ -9,7 +9,8 @@ import grpclib.const
 import grpclib.exceptions
 import modal
 import pytest
-from modal._serialization import serialize
+from modal._serialization import pickle_traceback, serialize
+from modal._utils import blob_utils
 from modal._utils.function_utils import _process_result
 from modal_proto import api_pb2
 from policyengine_simulation_entry import modal_calls
@@ -382,6 +383,124 @@ def test_a_call_modal_timed_out_fails_as_a_timeout(monkeypatch) -> None:
 
     assert outcome == CallFailed(
         RunError(RunErrorCode.WORKER_TIMEOUT, "The Modal call timed out.")
+    )
+
+
+BLOB_DOWNLOAD_URL = "https://blob.test/output"
+
+
+class _BlobStub:
+    """Modal's API as its result processing uses it to fetch a stored output."""
+
+    def __init__(self, failure=None):
+        self.failure = failure
+
+    async def BlobGet(self, request):  # noqa: N802  # Modal's method name
+        assert request.blob_id == "bl-test"
+        if self.failure is not None:
+            raise self.failure
+        return api_pb2.BlobGetResponse(download_url=BLOB_DOWNLOAD_URL)
+
+
+class _BlobStoredCall:
+    """A finished call whose output Modal stores as a blob.
+
+    Modal does so for any spawned call's output over 8 KiB, so nearly every
+    real result is read this way: Modal's result processing first makes this
+    process's own requests for the blob, then decodes it.
+    """
+
+    def __init__(self, stub):
+        self.result = api_pb2.GenericResult(
+            status=api_pb2.GenericResult.GENERIC_STATUS_SUCCESS,
+            data_blob_id="bl-test",
+        )
+        self.stub = stub
+        self.get = self
+
+    async def aio(self, *, timeout):
+        assert timeout == 0
+        return await _process_result(
+            self.result, api_pb2.DATA_FORMAT_PICKLE, self.stub, None
+        )
+
+
+def _inspect_blob_stored(monkeypatch, stub, download):
+    async def fake_download(download_url):
+        assert download_url == BLOB_DOWNLOAD_URL
+        if isinstance(download, BaseException):
+            raise download
+        return download
+
+    monkeypatch.setattr(blob_utils, "_download_from_url", fake_download)
+    monkeypatch.setattr(
+        modal_calls.modal.FunctionCall,
+        "from_id",
+        lambda call_id: _BlobStoredCall(stub),
+    )
+    return asyncio.run(ModalCallInspector().inspect("fc-test"))
+
+
+def test_an_output_stored_as_a_blob_is_read(monkeypatch) -> None:
+    outcome = _inspect_blob_stored(monkeypatch, _BlobStub(), serialize({"budget": 1.0}))
+
+    assert outcome == CallSucceeded({"budget": 1.0})
+
+
+@pytest.mark.parametrize(
+    ("blob_request_failure", "download_failure"),
+    [
+        (modal.exception.ExecutionError("blob request failed"), None),
+        (grpclib.exceptions.GRPCError(grpclib.const.Status.UNAVAILABLE, "down"), None),
+        (modal.exception.ConnectionError("unreachable"), None),
+        (None, modal.exception.ExecutionError("Get from url failed with status 503")),
+    ],
+    ids=["blob-request-execution-error", "blob-request-grpc", "connection", "download"],
+)
+def test_a_failed_output_download_is_retried_later(
+    monkeypatch, blob_request_failure, download_failure
+) -> None:
+    """Requests for a stored output are the entrypoint's own, not the worker's."""
+    with pytest.raises(CallInspectionError):
+        _inspect_blob_stored(
+            monkeypatch, _BlobStub(blob_request_failure), download_failure
+        )
+
+
+def test_an_output_download_that_times_out_is_checked_again(monkeypatch) -> None:
+    outcome = _inspect_blob_stored(monkeypatch, _BlobStub(), TimeoutError())
+
+    assert outcome == CallRunning()
+
+
+def _worker_exception_from_its_own_download():
+    """Return what a worker raises when its own Modal blob download fails."""
+
+    async def worker():
+        await blob_utils.blob_download(
+            "bl-test", _BlobStub(modal.exception.ConnectionError("worker's download"))
+        )
+
+    try:
+        asyncio.run(worker())
+    except modal.exception.ConnectionError as error:
+        return error
+    raise AssertionError
+
+
+def test_a_worker_exception_with_its_traceback_fails_the_run(monkeypatch) -> None:
+    """The worker's frames follow Modal's result processing, whatever they hold."""
+    worker_exception = _worker_exception_from_its_own_download()
+    serialized_tb, tb_line_cache = pickle_traceback(worker_exception, "ta-test")
+    call = _FinishedCall(worker_exception)
+    call.result.serialized_tb = serialized_tb
+    call.result.tb_line_cache = tb_line_cache
+    monkeypatch.setattr(modal_calls.modal.FunctionCall, "from_id", lambda call_id: call)
+
+    outcome = asyncio.run(ModalCallInspector().inspect("fc-test"))
+
+    assert outcome == CallFailed(
+        RunError(RunErrorCode.WORKER_ERROR, "The Modal call raised ConnectionError.")
     )
 
 
