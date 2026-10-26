@@ -752,7 +752,8 @@ class PyrightPackageTest(unittest.TestCase):
         )
 
     def test_a_package_may_move_between_ratcheted_rules(self) -> None:
-        # The new rule's baseline count is compared by check_baselines instead.
+        # check_baselines still requires a downgrade for a new ratcheted rule
+        # with a count above 0; this comparison only checks the move.
         self.BASE_RULES = pyright_rule(
             "ex.quality.pyright", ["libs/alpha", "projects/beta"], status="ratcheted"
         )

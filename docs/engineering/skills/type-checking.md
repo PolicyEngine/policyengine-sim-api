@@ -125,8 +125,9 @@ with the base branch. It fails when:
   branch, and whose `pyproject.toml` still exists, is listed by no Pyright
   rule, or moves to a weaker one (from enforced to any other status, or from
   ratcheted to advisory), unless the rule that lists it now has a
-  `[rule.downgrade]` section. Moving a package to a rule at least as strong,
-  or deleting it, passes;
+  `[rule.downgrade]` section. Deleting the package, or moving it to a rule at
+  least as strong, passes this check; a new ratcheted rule with a count above
+  0 still needs the section, as above;
 - a `[rule.downgrade]` section's `issue` isn't an open issue in this
   repository. The guard looks up every section's issue on every run, with
   `gh api` and the token in `GH_TOKEN` or `GITHUB_TOKEN`. In CI, a missing
@@ -143,7 +144,10 @@ It doesn't check:
   the count and passes;
 - whether a `[rule.downgrade]` section is new: a section already on the base
   branch also covers a further weakening of its rule, such as another package
-  moving into it.
+  moving into it;
+- whether a rule that stays weakened keeps its `[rule.downgrade]` section:
+  removing the section from a ratcheted or advisory rule passes, and its
+  tracking issue can then be closed without failing anything.
 
 Review is what catches these. `.github/CODEOWNERS` assigns `rules/` to the core
 developers, but `sim.process.rule-machinery-code-owned` is doc-only: merging
@@ -158,8 +162,8 @@ error when the file doesn't exist yet.
 
 Once a baseline is empty, delete it, make the rule `enforced` and remove its
 `[rule.downgrade]` section, which an enforced rule can't have. That pull
-request can then close the tracking issue. Closing the issue while the rule
-stays weakened fails the guard on every pull request.
+request can then close the tracking issue. Closing the issue while the
+section is still in the registry fails the guard on every pull request.
 
 ## Fixing errors
 

@@ -140,18 +140,24 @@ fail the guard yet.
   `issue_repository` other than the repository the workflow runs in
   (`GITHUB_REPOSITORY`), so a pull request can't name an issue elsewhere.
   Elsewhere, without a token, it prints a note for each issue it didn't
-  check. Closing the issue while the
-  rule stays weakened fails the guard on every pull request, and an enforced
-  rule can't have the section, so the pull request that restores the rule
-  removes it. The guard accepts any non-empty reason and any open issue;
-  whether the issue is about this rule is for the reviewer.
+  check. Closing the issue while the section is still in the registry fails
+  the guard on every pull request, and an enforced rule can't have the
+  section, so the pull request that restores the rule removes it. The guard
+  accepts any non-empty reason and any open issue; whether the issue is about
+  this rule, and whether a section was removed from a rule that stays
+  weakened, is for the reviewer.
 - A package in an enforced or ratcheted rule's `enforcer.projects` on the base
   branch (only `pyright` enforcers list packages) stays, while its
   `pyproject.toml` exists, in a rule of the same kind that is at least as
   strong: enforced for a package from an enforced rule, enforced or
   ratcheted for one from a ratcheted rule. If it moves to a weaker rule, that
-  rule needs a `[rule.downgrade]` section. Moving it to a rule at least as
-  strong, or deleting it, passes.
+  rule needs a `[rule.downgrade]` section. Deleting the package, or moving it
+  to a rule at least as strong, passes this check; a new ratcheted rule with a
+  count above 0 still needs the section.
+- The guard compares rules by id. Removing a rule, or replacing it with a
+  weaker rule under a new id, produces only the notes "rule ... was removed"
+  and "rule ... is new", except that the checks above still cover Pyright
+  packages and new ratcheted rules. Review catches the rest.
 - **Weakening a rule is a decision for a person, not an agent.** Agents don't
   downgrade a rule, add a `[rule.downgrade]` section, create a baseline or add
   entries to one, or move a package or path out of a rule's scope. When a rule
