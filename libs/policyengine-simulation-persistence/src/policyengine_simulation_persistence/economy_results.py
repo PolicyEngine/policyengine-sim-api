@@ -13,9 +13,10 @@ A result the tables cannot hold exactly is refused before any write by
 ``check_storable``: the average and relative changes of each decile map must
 name the same deciles in the same order, the decile shares and averages of
 each intra-decile breakdown must name the same categories in the same order,
-each pair of labour supply decile maps (average, relative) must name the same
-deciles in order, and the area lists must hold records of their own kind,
-each area once.
+within each labour supply decile map pair (average, relative) the income and
+substitution effects must name the same deciles in order (the average pair may
+name deciles the relative pair leaves out, such as decile -1), and the area
+lists must hold records of their own kind, each area once.
 """
 
 from __future__ import annotations
@@ -253,7 +254,7 @@ def _check_unique(section: str, codes: list[str]) -> None:
 
 
 def _check_labor_supply(labor: LaborSupplyResponseOutput | None) -> None:
-    """Require each pair of decile maps to name the same deciles in order.
+    """Require each pair's income and substitution maps to name one decile order.
 
     The average pair may name deciles the relative pair leaves out, such as
     decile -1 for households with negative income.

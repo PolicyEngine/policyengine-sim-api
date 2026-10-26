@@ -11,6 +11,8 @@ dependencies = [
     # The result models the result tables store and rebuild.
     "policyengine-simulation-contract",
     "psycopg[binary]>=3.2,<4",
+    # The household writer validates with pydantic directly.
+    "pydantic>=2,<3",
     "sqlalchemy>=2,<3",
 ]
 
