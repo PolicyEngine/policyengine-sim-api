@@ -8,10 +8,10 @@ from collections.abc import Callable, Mapping
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 from policyengine_simulation_contract.spm import spm_error_detail
 
 if TYPE_CHECKING:
-    import pandas as pd
     from _typeshed import ConvertibleToFloat
     from policyengine.core import Simulation
 
