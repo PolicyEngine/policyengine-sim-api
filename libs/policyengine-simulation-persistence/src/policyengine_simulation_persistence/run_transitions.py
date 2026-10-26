@@ -58,7 +58,7 @@ class RunErrorCode(StrEnum):
     """Why a run or comparison step failed."""
 
     # Modal refused the call or never acknowledged it, or the acknowledged
-    # call could not be recorded and was cancelled.
+    # call could not be recorded (the entrypoint then tries to cancel it).
     DISPATCH_FAILED = "dispatch_failed"
     # The instance stopped between claiming the dispatch and recording the call.
     DISPATCH_ABANDONED = "dispatch_abandoned"

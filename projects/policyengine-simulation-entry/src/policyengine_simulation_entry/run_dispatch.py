@@ -286,7 +286,7 @@ class RunDispatchService:
                 steps.fail,
                 RunError(
                     RunErrorCode.DISPATCH_FAILED,
-                    "The Modal call could not be recorded, so it was cancelled.",
+                    "The Modal call could not be recorded.",
                 ),
             )
             holds_call = not failed and await asyncio.to_thread(
