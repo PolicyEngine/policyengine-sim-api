@@ -27,6 +27,22 @@ PERSON_DOWNGRADE = (
 )
 
 
+# The statuses a package or a rule may keep, or move to, without a downgrade.
+_AT_LEAST_AS_STRONG = {
+    Status.ENFORCED: (Status.ENFORCED,),
+    Status.RATCHETED: (Status.ENFORCED, Status.RATCHETED),
+}
+
+
+def _weakens(old: Status, new: Status) -> bool:
+    """Whether going from ``old`` to ``new`` weakens a rule that blocked merges.
+
+    A ratcheted rule tolerates its baseline, so ratcheting an enforced rule
+    weakens it too, with whatever count its new baseline starts at.
+    """
+    return old in _AT_LEAST_AS_STRONG and new not in _AT_LEAST_AS_STRONG[old]
+
+
 class BaseUnavailableError(Exception):
     """The base ref could not be read."""
 
@@ -85,12 +101,7 @@ def check_baselines(
                     "fix the new violations instead of adding them to the baseline",
                 )
             )
-        weaker = (Status.ADVISORY, Status.DOC_ONLY)
-        # A ratcheted rule tolerates its baseline, so ratcheting an enforced
-        # rule weakens it too, with whatever count its new baseline starts at.
-        if (
-            old.status in (Status.ENFORCED, Status.RATCHETED) and new.status in weaker
-        ) or (old.status is Status.ENFORCED and new.status is Status.RATCHETED):
+        if _weakens(old.status, new.status):
             if new.downgrade:
                 notes.append(
                     f"rule {new.id} downgraded to {new.status}: "
@@ -157,43 +168,46 @@ def _pyright_listings(registry: Registry) -> dict[str, Rule]:
     return listings
 
 
-def check_enforced_packages(
+def check_pyright_packages(
     current: Registry, base: Registry, root: Path
 ) -> tuple[list[Violation], list[str]]:
-    """Check that each package an enforced Pyright rule lists on the base still is.
+    """Check that each package a blocking Pyright rule lists on the base still is.
 
-    Return (violations, notes). A package may move to another enforced Pyright
-    rule, or leave with its ``pyproject.toml`` deleted. Moving it to a rule
-    that isn't enforced weakens its check, so that rule needs
-    ``[rule.downgrade]``. A rule that keeps the package under the same id is
-    left to ``check_baselines``, which compares its status.
+    Return (violations, notes). A package from an enforced rule stays in an
+    enforced Pyright rule, and one from a ratcheted rule in an enforced or
+    ratcheted one, unless its ``pyproject.toml`` was deleted. Moving it to a
+    weaker rule needs ``[rule.downgrade]`` on that rule. A rule that keeps the
+    package under the same id is left to ``check_baselines``, which compares
+    its status, and so is a ratcheted rule's baseline count.
     """
     violations: list[Violation] = []
     notes: list[str] = []
     head_listings = _pyright_listings(current)
     for package, base_rule in _pyright_listings(base).items():
-        if base_rule.status is not Status.ENFORCED:
+        allowed = _AT_LEAST_AS_STRONG.get(base_rule.status)
+        if allowed is None or not (root / package / "pyproject.toml").is_file():
             continue
-        if not (root / package / "pyproject.toml").is_file():
-            continue
+        relist = (
+            f"list {package} in an "
+            f"{' or '.join(str(status) for status in allowed)} Pyright rule again"
+        )
         head_rule = head_listings.get(package)
         if head_rule is None:
             violations.append(
                 Violation(
                     base_rule.id,
                     "baseline",
-                    f"package {package} left enforced rule {base_rule.id}, and no "
-                    "Pyright rule lists it now",
-                    f"list {package} in an enforced Pyright rule again, or delete "
-                    "the package",
+                    f"package {package} left {base_rule.status} rule {base_rule.id}, "
+                    "and no Pyright rule lists it now",
+                    f"{relist}, or delete the package",
                 )
             )
             continue
-        if head_rule.status is Status.ENFORCED or head_rule.id == base_rule.id:
+        if head_rule.status in allowed or head_rule.id == base_rule.id:
             continue
         move = (
-            f"package {package} moved from enforced rule {base_rule.id} to "
-            f"{head_rule.status} rule {head_rule.id}"
+            f"package {package} moved from {base_rule.status} rule {base_rule.id} "
+            f"to {head_rule.status} rule {head_rule.id}"
         )
         if head_rule.downgrade:
             notes.append(
@@ -206,8 +220,7 @@ def check_enforced_packages(
                     head_rule.id,
                     "baseline",
                     move,
-                    f"list {package} in an enforced Pyright rule again; "
-                    f"{PERSON_DOWNGRADE}",
+                    f"{relist}; {PERSON_DOWNGRADE}",
                 )
             )
     return violations, notes

@@ -121,10 +121,12 @@ with the base branch. It fails when:
   restoring the rule;
 - a rule that the base branch doesn't have starts ratcheted with a baseline
   count above 0, without a `[rule.downgrade]` section;
-- a package that an enforced Pyright rule lists on the base branch, and whose
-  `pyproject.toml` still exists, isn't listed by an enforced Pyright rule,
-  unless the rule that lists it now has a `[rule.downgrade]` section. Moving a
-  package to another enforced Pyright rule, or deleting it, passes;
+- a package that an enforced or ratcheted Pyright rule lists on the base
+  branch, and whose `pyproject.toml` still exists, is listed by no Pyright
+  rule, or moves to a weaker one (from enforced to any other status, or from
+  ratcheted to advisory), unless the rule that lists it now has a
+  `[rule.downgrade]` section. Moving a package to a rule at least as strong,
+  or deleting it, passes;
 - a `[rule.downgrade]` section's `issue` isn't an open issue in this
   repository. The guard looks up every section's issue on every run, with
   `gh api` and the token in `GH_TOKEN` or `GITHUB_TOKEN`. In CI, a missing

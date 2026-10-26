@@ -11,7 +11,7 @@ from scripts.rules.adapters import check_adapters
 from scripts.rules.baseline import (
     BaseUnavailableError,
     check_baselines,
-    check_enforced_packages,
+    check_pyright_packages,
     default_base_ref,
     load_base_registry,
 )
@@ -144,7 +144,7 @@ def _compare_with_base(
         return
     for violations, notes in (
         check_baselines(registry, base),
-        check_enforced_packages(registry, base, root),
+        check_pyright_packages(registry, base, root),
     ):
         result.violations += violations
         result.notes += notes

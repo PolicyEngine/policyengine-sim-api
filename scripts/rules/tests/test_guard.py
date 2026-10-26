@@ -7,7 +7,7 @@ import unittest
 from datetime import date
 from typing import TYPE_CHECKING, ClassVar
 
-from scripts.rules.baseline import check_baselines, check_enforced_packages
+from scripts.rules.baseline import check_baselines, check_pyright_packages
 from scripts.rules.load import load_text
 from scripts.rules.render import render_agents_block, render_rules_md
 from scripts.rules.tests.support import REGISTRY, Repo
@@ -604,8 +604,8 @@ PERSON_DOWNGRADE_FIX = (
 )
 
 
-class EnforcedPackageTest(unittest.TestCase):
-    """A package an enforced Pyright rule lists stays in an enforced Pyright rule."""
+class PyrightPackageTest(unittest.TestCase):
+    """A package a blocking Pyright rule lists keeps a check at least as strong."""
 
     BASE_RULES = pyright_rule("ex.quality.pyright", ["libs/alpha", "projects/beta"])
 
@@ -619,7 +619,7 @@ class EnforcedPackageTest(unittest.TestCase):
         base, _ = load_text(REGISTRY + self.BASE_RULES)
         head, _ = load_text(REGISTRY + head_rules)
         assert base is not None and head is not None
-        violations, notes = check_enforced_packages(head, base, self.repo.root)
+        violations, notes = check_pyright_packages(head, base, self.repo.root)
         return [str(violation) for violation in violations], notes
 
     def test_a_package_may_move_to_another_enforced_rule(self) -> None:
@@ -725,7 +725,7 @@ class EnforcedPackageTest(unittest.TestCase):
 
         self.assertEqual(self.compare(head_rules), ([], []))
 
-    def test_packages_that_were_not_enforced_on_the_base_are_not_compared(
+    def test_a_package_moved_from_a_ratcheted_to_an_advisory_rule_is_a_downgrade(
         self,
     ) -> None:
         self.BASE_RULES = pyright_rule(
@@ -737,7 +737,63 @@ class EnforcedPackageTest(unittest.TestCase):
             "ex.quality.pyright-beta", ["projects/beta"], status="advisory"
         )
 
+        self.assertEqual(
+            self.compare(head_rules),
+            (
+                [
+                    "[ex.quality.pyright-beta] baseline: package projects/beta "
+                    "moved from ratcheted rule ex.quality.pyright to advisory rule "
+                    "ex.quality.pyright-beta. Fix: list projects/beta in an "
+                    "enforced or ratcheted Pyright rule again; "
+                    f"{PERSON_DOWNGRADE_FIX}"
+                ],
+                [],
+            ),
+        )
+
+    def test_a_package_may_move_between_ratcheted_rules(self) -> None:
+        # The new rule's baseline count is compared by check_baselines instead.
+        self.BASE_RULES = pyright_rule(
+            "ex.quality.pyright", ["libs/alpha", "projects/beta"], status="ratcheted"
+        )
+        head_rules = pyright_rule(
+            "ex.quality.pyright", ["libs/alpha"], status="ratcheted"
+        ) + pyright_rule(
+            "ex.quality.pyright-beta", ["projects/beta"], status="ratcheted"
+        )
+
         self.assertEqual(self.compare(head_rules), ([], []))
+
+    def test_a_package_that_left_a_ratcheted_rule_must_be_listed(self) -> None:
+        self.BASE_RULES = pyright_rule(
+            "ex.quality.pyright", ["libs/alpha", "projects/beta"], status="ratcheted"
+        )
+
+        violations, _ = self.compare(
+            pyright_rule("ex.quality.pyright", ["libs/alpha"], status="ratcheted")
+        )
+
+        self.assertEqual(
+            violations,
+            [
+                "[ex.quality.pyright] baseline: package projects/beta left ratcheted "
+                "rule ex.quality.pyright, and no Pyright rule lists it now. Fix: "
+                "list projects/beta in an enforced or ratcheted Pyright rule again, "
+                "or delete the package."
+            ],
+        )
+
+    def test_packages_of_advisory_rules_on_the_base_are_not_compared(self) -> None:
+        self.BASE_RULES = pyright_rule(
+            "ex.quality.pyright", ["libs/alpha", "projects/beta"], status="advisory"
+        )
+
+        self.assertEqual(
+            self.compare(
+                pyright_rule("ex.quality.pyright", ["libs/alpha"], status="advisory")
+            ),
+            ([], []),
+        )
 
     def test_the_guard_compares_packages_with_the_git_base_ref(self) -> None:
         repo = self.repo

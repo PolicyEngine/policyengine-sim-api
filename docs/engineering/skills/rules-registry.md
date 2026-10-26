@@ -58,7 +58,7 @@ gap is visible, rather than leaving it out.
 | `[rule.proof]` | Optional; see "Proof". |
 | `[rule.baseline]` | Only for `ratcheted` rules: `file` listing tolerated violations, and their `count`. |
 | `[[rule.exception]]` | Temporary carve-out: `path`, `reason`, `expires`. |
-| `[rule.downgrade]` | `reason`, and `issue`: the number of an open issue in the registry's `issue_repository` that tracks restoring the rule. Not allowed on an enforced rule. Required when a rule moves from enforced/ratcheted to advisory/doc-only, or from enforced to ratcheted; on a new rule that starts ratcheted with a baseline count above 0; and on a rule that lists a package an enforced rule listed on the base branch. |
+| `[rule.downgrade]` | `reason`, and `issue`: the number of an open issue in the registry's `issue_repository` that tracks restoring the rule. Not allowed on an enforced rule. Required when a rule moves from enforced/ratcheted to advisory/doc-only, or from enforced to ratcheted; on a new rule that starts ratcheted with a baseline count above 0; and on a rule that now lists a package from a stronger rule on the base branch. |
 
 `blocking` is derived, never declared: a rule blocks merges when its status is
 `enforced` or `ratcheted` and its tier is not `judgment`.
@@ -141,11 +141,13 @@ fail the guard yet.
   rule can't have the section, so the pull request that restores the rule
   removes it. The guard accepts any non-empty reason and any open issue;
   whether the issue is about this rule is for the reviewer.
-- A package in an enforced rule's `enforcer.projects` on the base branch (only
-  `pyright` enforcers list packages) stays in an enforced rule of the same
-  kind while its `pyproject.toml` exists. If it moves to a rule that isn't
-  enforced, that rule needs a `[rule.downgrade]` section. Moving it between
-  enforced rules, or deleting it, passes.
+- A package in an enforced or ratcheted rule's `enforcer.projects` on the base
+  branch (only `pyright` enforcers list packages) stays, while its
+  `pyproject.toml` exists, in a rule of the same kind that is at least as
+  strong: enforced for a package from an enforced rule, enforced or
+  ratcheted for one from a ratcheted rule. If it moves to a weaker rule, that
+  rule needs a `[rule.downgrade]` section. Moving it to a rule at least as
+  strong, or deleting it, passes.
 - **Weakening a rule is a decision for a person, not an agent.** Agents don't
   downgrade a rule, add a `[rule.downgrade]` section, create a baseline or add
   entries to one, or move a package or path out of a rule's scope. When a rule
