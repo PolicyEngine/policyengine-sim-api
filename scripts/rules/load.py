@@ -19,6 +19,7 @@ from scripts.rules.model import (
     CiRef,
     CiScripts,
     Discovery,
+    Downgrade,
     Enforcer,
     Ignored,
     Kind,
@@ -70,6 +71,10 @@ _RULE_KEYS = {
     "exception",
     "downgrade",
 }
+_DOWNGRADE_KEYS = {"reason", "issue"}
+DOWNGRADE_ISSUE_FIX = (
+    "write issue = <number of the open issue that tracks restoring the rule>"
+)
 _DISCOVERY_KEYS = {
     "workflows",
     "guard_test_globs",
@@ -348,22 +353,49 @@ def _exceptions(
     return tuple(exceptions)
 
 
-def _downgrade_reason(
+def _issue_number(value: object) -> int | None:
+    """Return ``value`` if it is a positive issue number, otherwise None.
+
+    TOML's ``true`` reads as a Python ``bool``, which is an ``int``; it is no
+    issue number.
+    """
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
+def _downgrade(
     c: _Collector, rule_id: str | None, raw: dict[str, Any], label: str
-) -> str | None:
-    """Read the reason in ``[rule.downgrade]``, which is optional."""
+) -> Downgrade | None:
+    """Read ``[rule.downgrade]``, which is optional.
+
+    It needs a reason and the number of the issue that tracks restoring the
+    rule. A section without both is reported and read as absent, so it never
+    allows a weaker rule.
+    """
     if "downgrade" not in raw:
         return None
-    draw = raw["downgrade"]
-    if isinstance(draw, dict) and isinstance(draw.get("reason"), str):
-        reason: str = draw["reason"]
-        return reason
-    c.add(
-        rule_id,
-        f"{label}.downgrade needs a 'reason'",
-        'write [rule.downgrade] reason = "..."',
-    )
-    return None
+    downgrade_raw = raw["downgrade"]
+    where = f"{label}.downgrade"
+    if not isinstance(downgrade_raw, dict):
+        c.add(
+            rule_id,
+            f"{where} must be a table",
+            'write [rule.downgrade] with reason = "..." and issue = <number>',
+        )
+        return None
+    c.unknown_keys(rule_id, downgrade_raw, _DOWNGRADE_KEYS, where)
+    reason = c.string(rule_id, downgrade_raw, "reason", where)
+    issue = _issue_number(downgrade_raw.get("issue"))
+    if issue is None:
+        c.add(
+            rule_id,
+            f"{where}.issue must be a positive issue number",
+            DOWNGRADE_ISSUE_FIX,
+        )
+    if not reason or issue is None:
+        return None
+    return Downgrade(reason, issue)
 
 
 def _autofix(
@@ -390,7 +422,7 @@ def _rule(c: _Collector, raw: object, index: int) -> Rule | None:
     proof = _proof(c, rule_id, raw, label)
     baseline = _baseline(c, rule_id, raw, label)
     exceptions = _exceptions(c, rule_id, raw, label)
-    downgrade_reason = _downgrade_reason(c, rule_id, raw, label)
+    downgrade = _downgrade(c, rule_id, raw, label)
     autofix = _autofix(c, rule_id, raw, label)
     review_by = None
     if "review_by" in raw:
@@ -416,7 +448,7 @@ def _rule(c: _Collector, raw: object, index: int) -> Rule | None:
         proof=proof,
         baseline=baseline,
         exceptions=exceptions,
-        downgrade_reason=downgrade_reason,
+        downgrade=downgrade,
     )
 
 

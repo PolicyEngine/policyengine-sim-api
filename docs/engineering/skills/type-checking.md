@@ -114,10 +114,12 @@ After fixing errors:
 What stops a baseline growing is the rules guard, which compares each existing
 rule's status and baseline count with the base branch. It fails when the count
 doesn't match the file, when the count is higher than on the base branch, and
-when an enforced rule becomes ratcheted without a `[rule.downgrade] reason`.
-It doesn't check:
+when an enforced rule becomes ratcheted without a `[rule.downgrade]` section,
+which gives a `reason` and an `issue`, the number of the issue that tracks
+restoring the rule. It doesn't check:
 
-- what the reason says: any non-empty reason passes;
+- what the reason says, or which issue the number names: any non-empty reason
+  and any positive number pass;
 - which entries changed: a change that fixes one error and adds another keeps
   the count and passes;
 - which packages a rule lists: moving a package from an enforced rule into a

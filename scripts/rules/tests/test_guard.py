@@ -5,12 +5,15 @@ from __future__ import annotations
 import subprocess
 import unittest
 from datetime import date
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from scripts.rules.baseline import check_baselines
 from scripts.rules.load import load_text
 from scripts.rules.render import render_agents_block, render_rules_md
 from scripts.rules.tests.support import REGISTRY, Repo
+
+if TYPE_CHECKING:
+    from scripts.rules.model import Registry
 
 RATCHETED_RULE = """
 [[rule]]
@@ -800,7 +803,7 @@ class BaselineTest(unittest.TestCase):
         violations = check_baselines(current, base)[0]
         self.assertIn("baseline grew from 2 to 3", str(violations[0]))
 
-    def test_downgrade_needs_reason(self) -> None:
+    def test_downgrade_needs_reason_and_issue(self) -> None:
         base = self.registry("")
         weakened = REGISTRY.replace(
             'status = "enforced"\nautofix = true\n[rule.enforcer]\nkind = "ruff"\n'
@@ -815,15 +818,26 @@ class BaselineTest(unittest.TestCase):
         violations = check_baselines(current, base)[0]
         self.assertIn("status weakened from enforced to advisory", str(violations[0]))
 
-        with_reason, _ = load_text(
-            weakened.replace(
-                'mode = "format"',
-                'mode = "format"\n[rule.downgrade]\nreason = "flaky"',
-                1,
+        def with_downgrade(section: str) -> Registry:
+            registry, _ = load_text(
+                weakened.replace('mode = "format"', f'mode = "format"\n{section}', 1)
             )
+            assert registry is not None
+            return registry
+
+        reason_only = with_downgrade('[rule.downgrade]\nreason = "flaky"')
+        self.assertIn(
+            "status weakened from enforced to advisory",
+            str(check_baselines(reason_only, base)[0][0]),
         )
-        assert with_reason is not None
-        self.assertEqual(check_baselines(with_reason, base)[0], [])
+        reason_and_issue = with_downgrade(
+            '[rule.downgrade]\nreason = "flaky"\nissue = 912'
+        )
+        violations, notes = check_baselines(reason_and_issue, base)
+        self.assertEqual(violations, [])
+        self.assertIn(
+            "rule ex.quality.format downgraded to advisory: flaky (issue #912)", notes
+        )
 
     def test_ratcheting_an_enforced_rule_needs_reason(self) -> None:
         ratcheted = RATCHETED_RULE.format(count=50)
@@ -838,14 +852,16 @@ class BaselineTest(unittest.TestCase):
             [str(violation) for violation in violations],
             [
                 "[ex.layers.ratcheted] baseline: status weakened from enforced to "
-                'ratcheted. Fix: add [rule.downgrade] reason = "..." so the '
-                "downgrade is explicit and reviewable."
+                'ratcheted. Fix: restore status = "enforced"; only a person may '
+                'weaken a rule, by adding [rule.downgrade] with reason = "..." and '
+                "issue = <number of the open issue that tracks restoring the rule>."
             ],
         )
         with_reason = self.registry(
             ratcheted.replace(
                 "[rule.baseline]",
-                '[rule.downgrade]\nreason = "a Pyright upgrade"\n[rule.baseline]',
+                '[rule.downgrade]\nreason = "a Pyright upgrade"\nissue = 912\n'
+                "[rule.baseline]",
             )
         )
         self.assertEqual(check_baselines(with_reason, base)[0], [])

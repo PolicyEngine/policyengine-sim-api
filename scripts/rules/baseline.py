@@ -13,6 +13,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+# How a person, never an agent, records a weaker rule; each fix ends with it.
+PERSON_DOWNGRADE = (
+    'only a person may weaken a rule, by adding [rule.downgrade] with reason = "..." '
+    "and issue = <number of the open issue that tracks restoring the rule>"
+)
+
+
 class BaseUnavailableError(Exception):
     """The base ref could not be read."""
 
@@ -77,9 +84,10 @@ def check_baselines(
         if (
             old.status in (Status.ENFORCED, Status.RATCHETED) and new.status in weaker
         ) or (old.status is Status.ENFORCED and new.status is Status.RATCHETED):
-            if new.downgrade_reason:
+            if new.downgrade:
                 notes.append(
-                    f"rule {new.id} downgraded to {new.status}: {new.downgrade_reason}"
+                    f"rule {new.id} downgraded to {new.status}: "
+                    f"{new.downgrade.reason} (issue #{new.downgrade.issue})"
                 )
             else:
                 violations.append(
@@ -87,8 +95,7 @@ def check_baselines(
                         new.id,
                         "baseline",
                         f"status weakened from {old.status} to {new.status}",
-                        'add [rule.downgrade] reason = "..." so the downgrade is '
-                        "explicit and reviewable",
+                        f'restore status = "{old.status}"; {PERSON_DOWNGRADE}',
                     )
                 )
     notes.extend(

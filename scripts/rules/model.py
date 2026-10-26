@@ -230,6 +230,18 @@ class RuleException:
 
 
 @dataclass(frozen=True)
+class Downgrade:
+    """A ``[rule.downgrade]``: why a person weakened the rule, and its tracking issue.
+
+    ``issue`` is the number of the open issue, in ``Registry.issue_repository``,
+    that tracks restoring the rule.
+    """
+
+    reason: str
+    issue: int
+
+
+@dataclass(frozen=True)
 class Rule:
     """One ``[[rule]]`` registry entry; rules-registry.md explains each field."""
 
@@ -247,7 +259,7 @@ class Rule:
     proof: Proof | None = None
     baseline: Baseline | None = None
     exceptions: tuple[RuleException, ...] = ()
-    downgrade_reason: str | None = None
+    downgrade: Downgrade | None = None
 
     @property
     def blocking(self) -> bool:

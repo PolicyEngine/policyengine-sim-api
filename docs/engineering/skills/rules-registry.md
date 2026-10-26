@@ -58,7 +58,7 @@ gap is visible, rather than leaving it out.
 | `[rule.proof]` | Optional; see "Proof". |
 | `[rule.baseline]` | Only for `ratcheted` rules: `file` listing tolerated violations, and their `count`. |
 | `[[rule.exception]]` | Temporary carve-out: `path`, `reason`, `expires`. |
-| `[rule.downgrade]` | Required `reason` when a rule moves from enforced/ratcheted to advisory/doc-only, or from enforced to ratcheted. |
+| `[rule.downgrade]` | `reason`, and `issue`: the number of the issue that tracks restoring the rule. Required when a rule moves from enforced/ratcheted to advisory/doc-only, or from enforced to ratcheted. |
 
 `blocking` is derived, never declared: a rule blocks merges when its status is
 `enforced` or `ratcheted` and its tier is not `judgment`.
@@ -127,8 +127,10 @@ fail the guard yet.
   `ratcheted` with a baseline file of tolerated violations. Baselines may only
   shrink: the guard compares counts against the base branch.
 - Moving a rule from enforced/ratcheted to advisory/doc-only, or from enforced
-  to ratcheted, needs an explicit `[rule.downgrade] reason`. The guard accepts
-  any non-empty reason; the reason is for the reviewer.
+  to ratcheted, needs a `[rule.downgrade]` section with a `reason` and an
+  `issue`, the number of the issue that tracks restoring the rule. The guard
+  accepts any non-empty reason and any positive issue number; the reason is
+  for the reviewer.
 - **Weakening a rule is a decision for a person, not an agent.** Agents don't
   downgrade a rule, add a `[rule.downgrade]` section, create a baseline or add
   entries to one, or move a package or path out of a rule's scope. When a rule
