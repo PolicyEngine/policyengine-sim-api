@@ -53,8 +53,6 @@ def labels_for(result: SingleYearMacroOutput) -> EconomyResultLabels:
         }
 
     return EconomyResultLabels(
-        model_version=result.model_version,
-        data_version=result.data_version,
         constituencies=labels(
             result.constituency_impact, "constituency_code", "constituency_name"
         ),

@@ -17,8 +17,6 @@ from pydantic import BaseModel, RootModel
 # Stored whole, as one JSON column.
 WHOLE_VALUES = (SPMComparisonProvenance,)
 CATALOG_SOURCES = {
-    "catalog version: model version",
-    "catalog version: data version",
     "region catalog: name",
     "region catalog: map x",
     "region catalog: map y",

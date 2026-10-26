@@ -3,10 +3,11 @@
 ``write_economy_comparison`` runs in the transaction that marks a report run's
 comparison step succeeded (``RunTransitions.complete_comparison``), so a run
 never succeeds without its rows. ``read_economy_comparison`` rebuilds today's
-result format, ``SingleYearMacroOutput``, from the rows and from labels the
-region catalog supplies: the model and data versions of the run's catalog
-version, and the names and map positions of constituencies and local
-authorities by code.
+result format, ``SingleYearMacroOutput``, from the rows and from the labels
+the region catalog supplies: the names and map positions of constituencies and
+local authorities by code. The model and data versions are stored as the
+result reports them, since a run on a non-default dataset (a US state run on
+the ACS-local dataset) reports that dataset's revision.
 
 A result the tables cannot hold exactly is refused before any write by
 ``check_storable``: the average and relative changes of each decile map must
@@ -121,8 +122,8 @@ def _geography_storage(
 
 RESULT_FIELD_STORAGE: dict[str, str] = {
     "spm_provenance": "report_runs.spm_provenance",
-    "model_version": "catalog version: model version",
-    "data_version": "catalog version: data version",
+    "model_version": "report_runs.result_model_version",
+    "data_version": "report_runs.result_data_version",
     **{
         f"budget.{name}": f"budget_impacts.{name}"
         for name in (
@@ -221,12 +222,9 @@ class GeographyLabel:
 class EconomyResultLabels:
     """What a stored result takes from the region catalog when it is read.
 
-    The model and data versions belong to the run's catalog version; the
-    geography labels are looked up by code.
+    Constituency and local-authority names and map positions, by code.
     """
 
-    model_version: str
-    data_version: str
     constituencies: Mapping[str, GeographyLabel] = field(default_factory=dict)
     local_authorities: Mapping[str, GeographyLabel] = field(default_factory=dict)
 
@@ -580,6 +578,8 @@ def write_economy_comparison(
                 if result.spm_provenance is None
                 else result.spm_provenance.model_dump(mode="json")
             ),
+            result_model_version=result.model_version,
+            result_data_version=result.data_version,
         )
     )
 
@@ -956,8 +956,8 @@ def read_economy_comparison(
     return SingleYearMacroOutput.model_validate(
         {
             "spm_provenance": report_run_row["spm_provenance"],
-            "model_version": labels.model_version,
-            "data_version": labels.data_version,
+            "model_version": report_run_row["result_model_version"],
+            "data_version": report_run_row["result_data_version"],
             **_comparison_sections(connection, report_run_id, sections, labels),
             **_simulation_sections(connection, report_run_id, run_ids, sections),
         }

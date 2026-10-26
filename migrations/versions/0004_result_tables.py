@@ -536,6 +536,12 @@ def upgrade() -> None:
         ),
         schema="simulation",
     )
+    for column in ("result_model_version", "result_data_version"):
+        op.add_column(
+            "report_runs",
+            sa.Column(column, sa.Text(), nullable=True),
+            schema="simulation",
+        )
     op.create_check_constraint(
         op.f("ck_report_runs_spm_provenance"),
         "report_runs",
@@ -552,6 +558,8 @@ def downgrade() -> None:
         schema="simulation",
         type_="check",
     )
+    op.drop_column("report_runs", "result_data_version", schema="simulation")
+    op.drop_column("report_runs", "result_model_version", schema="simulation")
     op.drop_column("report_runs", "spm_provenance", schema="simulation")
     op.drop_column("report_runs", "result_sections", schema="simulation")
     op.drop_table("program_budget_impacts", schema="simulation")

@@ -282,9 +282,13 @@ report_runs = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     # Set with an economy comparison's result rows (item 1.07): the optional
-    # sections the result holds, and its SPM provenance, if any.
+    # sections the result holds, its SPM provenance, if any, and the model and
+    # data versions it reports (a US state run reports the revision of the
+    # dataset it loaded, not the release's default data version).
     Column("result_sections", ARRAY(Text), nullable=True),
     Column("spm_provenance", JSONB(none_as_null=True), nullable=True),
+    Column("result_model_version", Text, nullable=True),
+    Column("result_data_version", Text, nullable=True),
     CheckConstraint(f"year BETWEEN {FIRST_YEAR} AND {LAST_YEAR}", name="year"),
     CheckConstraint(f"trigger IN ({_values(RunTrigger)})", name="trigger"),
     CheckConstraint(
