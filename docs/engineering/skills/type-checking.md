@@ -130,9 +130,10 @@ with the base branch. It fails when:
 - a `[rule.downgrade]` section's `issue` isn't an open issue in this
   repository. The guard looks up every section's issue on every run, with
   `gh api` and the token in `GH_TOKEN` or `GITHUB_TOKEN`. In CI, a missing
-  token or a failed lookup fails it. Locally, without a token, it prints a note
-  for each issue it didn't check; to check them, run it with
-  `GH_TOKEN="$(gh auth token)"`.
+  token or a failed lookup fails it, and so does an `issue_repository` at the
+  top of the registry that isn't the repository the workflow runs in. Locally,
+  without a token, it prints a note for each issue it didn't check; to check
+  them, run it with `GH_TOKEN="$(gh auth token)"`.
 
 It doesn't check:
 

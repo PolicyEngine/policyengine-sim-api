@@ -8,6 +8,10 @@ token from ``GH_TOKEN`` or ``GITHUB_TOKEN``.
 On GitHub Actions the check never passes without an answer from GitHub: a
 missing token, or a lookup that fails, is a violation. Elsewhere, without a
 token, it notes each issue it didn't check, and CI checks them.
+
+A pull request can change ``issue_repository``, but not the repository its
+workflow runs in, which the runner sets in ``GITHUB_REPOSITORY``. When that is
+set, the two must match, so a pull request can't name an issue elsewhere.
 """
 
 from __future__ import annotations
@@ -107,6 +111,17 @@ def check_tracking_issues(registry: Registry) -> tuple[list[Violation], list[str
     repository = registry.issue_repository
     if not downgraded or not repository:
         return [], []
+    run_repository = os.environ.get("GITHUB_REPOSITORY")
+    if run_repository and run_repository.lower() != repository.lower():
+        return [
+            Violation(
+                None,
+                CHECK,
+                f"issue_repository is {repository}, but this run is in "
+                f"{run_repository}, whose issues each [rule.downgrade] must name",
+                f'set issue_repository = "{run_repository}"',
+            )
+        ], []
     token_variable = next(
         (name for name in TOKEN_VARIABLES if os.environ.get(name)), None
     )

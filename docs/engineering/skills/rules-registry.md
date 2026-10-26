@@ -136,8 +136,11 @@ fail the guard yet.
   `issue_repository`, set at the top of the registry, that tracks restoring
   the rule. The guard looks up every section's issue on every run, with
   `gh api` and the token in `GH_TOKEN` or `GITHUB_TOKEN`. On GitHub Actions, a
-  missing token or a failed lookup fails it. Elsewhere, without a token, it
-  prints a note for each issue it didn't check. Closing the issue while the
+  missing token or a failed lookup fails it, and so does an
+  `issue_repository` other than the repository the workflow runs in
+  (`GITHUB_REPOSITORY`), so a pull request can't name an issue elsewhere.
+  Elsewhere, without a token, it prints a note for each issue it didn't
+  check. Closing the issue while the
   rule stays weakened fails the guard on every pull request, and an enforced
   rule can't have the section, so the pull request that restores the rule
   removes it. The guard accepts any non-empty reason and any open issue;

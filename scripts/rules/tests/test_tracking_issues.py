@@ -83,7 +83,11 @@ def issue_answer(
 
 
 class TrackingIssueTestCase(unittest.TestCase):
-    """Puts the fake gh first on PATH, outside CI and without a token."""
+    """Puts the fake gh first on PATH, outside CI and without a token.
+
+    The GitHub Actions runner sets GITHUB_REPOSITORY in every step, including
+    the one that runs these tests, so it is cleared too.
+    """
 
     def setUp(self) -> None:
         fake_directory = tempfile.TemporaryDirectory()
@@ -107,7 +111,7 @@ class TrackingIssueTestCase(unittest.TestCase):
         )
         environment.start()
         self.addCleanup(environment.stop)
-        for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_ACTIONS"):
+        for name in ("GH_TOKEN", "GITHUB_TOKEN", "GITHUB_ACTIONS", "GITHUB_REPOSITORY"):
             os.environ.pop(name, None)
 
     def answer(self, number: int, issue: dict[str, object]) -> None:
@@ -286,6 +290,33 @@ class LookupTest(TrackingIssueTestCase):
                     violations[0],
                 )
                 self.assertEqual(self.gh_calls(), [])
+
+    def test_issues_are_looked_up_only_in_the_repository_the_run_is_in(
+        self,
+    ) -> None:
+        # A pull request can change issue_repository, but not the repository
+        # that runs its workflow.
+        os.environ["GITHUB_REPOSITORY"] = "example/other"
+        self.answer(912, issue_answer(912))
+
+        violations, _ = self.check(downgraded_rule("ex.layers.ratcheted", 912))
+
+        self.assertEqual(
+            violations,
+            [
+                "[registry] downgrade: issue_repository is example/repo, but this "
+                "run is in example/other, whose issues each [rule.downgrade] must "
+                'name. Fix: set issue_repository = "example/other".'
+            ],
+        )
+        self.assertEqual(self.gh_calls(), [])
+
+    def test_the_repository_comparison_ignores_case(self) -> None:
+        os.environ["GITHUB_REPOSITORY"] = "Example/Repo"
+        self.answer(912, issue_answer(912))
+
+        self.assertEqual(self.check(downgraded_rule("ex.layers.ratcheted", 912))[0], [])
+        self.assertEqual(len(self.gh_calls()), 1)
 
     def test_a_registry_without_downgrades_looks_nothing_up(self) -> None:
         self.assertEqual(self.check(""), ([], []))
