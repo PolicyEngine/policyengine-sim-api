@@ -314,6 +314,9 @@ def _compile_interval_policy(
     )
 
     compiled = compile_reform(policy, year=year, model_version=country_module.model)
+    if compiled is None:
+        # compile_reform returns None only for an empty policy, returned above.
+        return policy
     parameter_values = []
     for path, periods in compiled.items():
         dated_values = [
@@ -712,7 +715,7 @@ def _build_simulation(
     spm_kwargs: dict[str, Any] = {"spm": selection} if selection is not None else {}
     country = params.get("country", "us")
     country_module = _country_module(country)
-    policy = _compile_interval_policy(
+    runtime_policy = _compile_interval_policy(
         policy, country_module=country_module, year=_parse_year(params)
     )
     scoping_strategy = region.scoping_strategy
@@ -721,7 +724,7 @@ def _build_simulation(
             params,
             country=country,
             dataset_is_default=dataset_selection.is_default,
-            policy=policy,
+            policy=runtime_policy,
             region_code=region.code,
             scoping_strategy=scoping_strategy,
             year=_parse_year(params),
@@ -736,14 +739,14 @@ def _build_simulation(
             id=simulation_id,
             dataset=dataset,
             tax_benefit_model_version=country_module.model,
-            policy=policy,
+            policy=runtime_policy,
             scoping_strategy=scoping_strategy,
         )
     return StageReportingSimulation(
         **spm_kwargs,
         dataset=dataset,
         tax_benefit_model_version=country_module.model,
-        policy=policy,
+        policy=runtime_policy,
         scoping_strategy=scoping_strategy,
     )
 
