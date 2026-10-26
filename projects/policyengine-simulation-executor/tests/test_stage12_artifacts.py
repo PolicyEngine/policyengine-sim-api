@@ -240,6 +240,26 @@ def test_a_simulation_named_by_digest_gets_one_key_per_distinct_output() -> None
     )
 
 
+def test_an_input_named_by_digest_gets_one_key_per_distinct_input() -> None:
+    objects = InMemoryObjectStore()
+    store = Stage12ArtifactStore("private-stage12", store=objects)
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    replanned = simulation.model_copy(
+        update={"policy": {"reform": {"2026-01-01.2026-12-31": 1}}}
+    )
+
+    first = store.write_input_named_by_digest(prefix="run", simulation=simulation)
+    repeated = store.write_input_named_by_digest(prefix="run", simulation=simulation)
+    other = store.write_input_named_by_digest(prefix="run", simulation=replanned)
+
+    assert first.uri == (
+        f"gs://private-stage12/run/inputs/baseline-{first.content_sha256}.json"
+    )
+    assert repeated == first
+    assert other.uri != first.uri
+    assert len(objects.objects) == 2
+
+
 def test_aggregate_write_rejects_an_undeclared_payload_shape() -> None:
     store = Stage12ArtifactStore("private-stage12", store=InMemoryObjectStore())
 

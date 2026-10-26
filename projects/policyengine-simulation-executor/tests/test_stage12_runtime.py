@@ -450,6 +450,8 @@ class FakeArtifacts:
     def write_input(self, *, prefix, simulation):
         self.input_writes.append((prefix, simulation.role))
 
+    write_input_named_by_digest = write_input
+
     def add_simulation(self, simulation, frames=None):
         payload, row_identity = serialize_simulation_frames(frames or _frames())
         digest = sha256(payload).hexdigest()
@@ -504,8 +506,8 @@ class FakeArtifacts:
             update={"calculation_provenance": calculation_provenance}
         )
 
-    # A returned simulation names its output by its digest; this fake keeps
-    # one object per role either way.
+    # A returned simulation names its input and output by their digests; this
+    # fake keeps one of each per role either way.
     write_simulation_named_by_digest = write_simulation
 
     def read(self, uri):

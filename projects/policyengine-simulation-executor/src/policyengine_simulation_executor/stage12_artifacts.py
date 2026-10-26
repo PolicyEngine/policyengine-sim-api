@@ -77,6 +77,21 @@ def input_path(*, prefix: str, role: str) -> str:
     return f"{prefix}/inputs/{role}.json"
 
 
+def content_addressed_input_path(
+    *,
+    prefix: str,
+    role: str,
+    content_sha256: str,
+) -> str:
+    """Return the key of a planned execution input JSON named by its own SHA-256.
+
+    A restart that plans a simulation differently, for example on a
+    redeployed application, stores its input under a new key; an identical
+    input reuses the earlier object.
+    """
+    return f"{prefix}/inputs/{role}-{content_sha256}.json"
+
+
 def simulation_path(*, prefix: str, role: str) -> str:
     """Return the key of the Parquet output for one simulation role."""
     return f"{prefix}/simulations/{role}.parquet"
@@ -334,6 +349,28 @@ class Stage12ArtifactStore:
         return self._write_immutable(
             input_path(prefix=prefix, role=simulation.role.value),
             canonical_json_bytes(simulation.model_dump(mode="json")),
+            content_type=REPORT_MEDIA_TYPE,
+        )
+
+    def write_input_named_by_digest(
+        self,
+        *,
+        prefix: str,
+        simulation: PlannedSimulationExecutionInput,
+    ) -> ArtifactReference:
+        """Store a simulation's planned execution input under a key naming its SHA-256.
+
+        A restarted simulation can always store its input this way (see
+        ``content_addressed_input_path``).
+        """
+        payload = canonical_json_bytes(simulation.model_dump(mode="json"))
+        return self._write_immutable(
+            content_addressed_input_path(
+                prefix=prefix,
+                role=simulation.role.value,
+                content_sha256=sha256(payload).hexdigest(),
+            ),
+            payload,
             content_type=REPORT_MEDIA_TYPE,
         )
 

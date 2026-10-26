@@ -206,11 +206,11 @@ def coordinate_report_for_caller(
     deduplicates. Artifacts go under the Stage 12 layout for the context's
     environment, creation time and report, whatever prefix the caller sent.
     Both children start with the same delivery, so they write no rows either,
-    and each names its output by its digest. A repeated dispatch, or a call
-    Modal restarts after pre-empting it, therefore stores its artifacts beside
-    any an earlier attempt stored, even where its calculation differs in the
-    last bits. No aggregate artifact is written: the aggregate is returned
-    inline.
+    and each names its input and output by their digests. A repeated dispatch,
+    or a call Modal restarts after pre-empting it, therefore stores its
+    artifacts beside any an earlier attempt stored, even where it plans or
+    calculates differently. No aggregate artifact is written: the aggregate is
+    returned inline.
 
     A context that does not ask for the report to return to its caller, or
     that disagrees with the report, raises ``ValueError`` before any child

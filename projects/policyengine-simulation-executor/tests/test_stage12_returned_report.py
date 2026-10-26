@@ -71,6 +71,7 @@ from test_stage12_runtime import (
     _aggregate_payload,
     _assert_log_identifies_child,
     _bundle,
+    _child,
     _context,
     _coordination_log,
     _failure_cause,
@@ -851,6 +852,57 @@ def test_a_restarted_returned_simulation_with_the_same_output_reuses_its_artifac
     )
 
     assert restarted == first_attempt
+
+
+def test_a_restarted_returned_simulation_stores_an_input_that_differs_from_before(
+    forbid_database,
+) -> None:
+    objects = InMemoryObjectStore()
+    artifacts = Stage12ArtifactStore("private", store=objects)
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    # A restart that lands on a redeployed application can plan the same
+    # simulation differently; any change to the planned input stands for it.
+    replanned = simulation.model_copy(
+        update={"policy": {"reform": {"2026-01-01.2026-12-31": 1}}}
+    )
+
+    _run_returned_simulation(
+        simulation, artifacts=artifacts, calculator=lambda _: _frames(100.0)
+    )
+    _run_returned_simulation(
+        replanned, artifacts=artifacts, calculator=lambda _: _frames(100.0)
+    )
+
+    stored_inputs = [key for key in objects.objects if "/inputs/" in key]
+    assert len(stored_inputs) == 2
+
+
+def test_a_stage12_simulation_keeps_its_fixed_artifact_keys() -> None:
+    objects = InMemoryObjectStore()
+    artifacts = Stage12ArtifactStore("private", store=objects)
+    simulation = _planned_simulation(SimulationRole.BASELINE)
+    store = FakeStore()
+    store.children[simulation.simulation_execution_id] = _child(simulation)
+
+    result = run_single_simulation(
+        simulation.model_dump(mode="json"),
+        _context().model_dump(mode="json"),
+        required_country="us",
+        dependencies=SimulationWorkerDependencies(
+            store=store,
+            artifacts=artifacts,
+            calculator=lambda _: _frames(100.0),
+        ),
+    )
+
+    prefix = _context().artifact_prefix
+    assert result["artifact"]["uri"] == (
+        f"gs://private/{prefix}/simulations/baseline.parquet"
+    )
+    assert sorted(objects.objects) == [
+        f"{prefix}/inputs/baseline.json",
+        f"{prefix}/simulations/baseline.parquet",
+    ]
 
 
 class InProcessWorkerCall:
