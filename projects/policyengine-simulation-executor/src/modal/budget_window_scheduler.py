@@ -20,6 +20,7 @@ from policyengine_simulation_contract.budget_window_state import (
     put_batch_job_state,
 )
 from policyengine_simulation_contract.spm import spm_error_detail
+from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_observability.stages import BUDGET_WINDOW_STAGES, Stage
 from src.modal.budget_window_context import (
@@ -71,8 +72,8 @@ def serialize_batch_status(
     runtime: ObservabilityRuntime,
 ) -> dict[str, Any]:
     """Render ``state`` as the JSON-ready batch status response."""
-    with runtime.span(
-        BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
+    with scopes.span(
+        runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATUS_SERIALIZATION)
     ):
         return build_batch_status_response(state).model_dump(mode="json")
 
@@ -83,7 +84,9 @@ def load_or_create_batch_state(
     runtime: ObservabilityRuntime,
 ) -> BudgetWindowBatchState:
     """Return the batch's submit-time seed state, creating and storing it if absent."""
-    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)):
+    with scopes.span(
+        runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_LOAD)
+    ):
         state = get_batch_job_seed(context.batch_job_id)
     if state is None:
         state = create_initial_batch_state(
@@ -94,9 +97,24 @@ def load_or_create_batch_state(
             ),
             bundle=context.bundle,
         )
-        with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)):
+        with scopes.span(
+            runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
+        ):
             put_batch_job_seed(state)
     return state
+
+
+def _child_call(handle: ChildSimulationHandle) -> modal.FunctionCall[Any]:
+    """Return the child's Modal call, raising if the handle has none.
+
+    resolve_child_handle always returns a handle with its call. The poll calls
+    this inside its try, so a missing call would fail the batch like any other
+    poll error.
+    """
+    if handle.call is None:
+        msg = f"the {handle.simulation_year} child has no call handle"
+        raise RuntimeError(msg)
+    return handle.call
 
 
 class BudgetWindowBatchRunner:
@@ -155,8 +173,8 @@ class BudgetWindowBatchRunner:
         failure fails the whole batch.
         """
         mark_batch_running(self.state)
-        with self.runtime.span(
-            BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
+        with scopes.span(
+            self.runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
         ):
             put_batch_job_state(self.state)
 
@@ -196,7 +214,8 @@ class BudgetWindowBatchRunner:
             and self.state.queued_years
         ):
             simulation_year = self.state.queued_years[0]
-            with self.runtime.span(
+            with scopes.span(
+                self.runtime,
                 BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_CHILD_REQUEST_BUILD),
                 attributes={"simulation_year": simulation_year},
             ):
@@ -205,7 +224,8 @@ class BudgetWindowBatchRunner:
                     simulation_year=simulation_year,
                 )
             observability_context = self.runtime.capture_context()
-            with self.runtime.span(
+            with scopes.span(
+                self.runtime,
                 BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_CHILD_SPAWN),
                 attributes={"simulation_year": simulation_year},
             ):
@@ -223,8 +243,8 @@ class BudgetWindowBatchRunner:
                 year=simulation_year,
                 child_job_id=call.object_id,
             )
-            with self.runtime.span(
-                BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
+            with scopes.span(
+                self.runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
             ):
                 put_batch_job_state(self.state)
 
@@ -241,7 +261,7 @@ class BudgetWindowBatchRunner:
 
             poll_started = time.perf_counter()
             try:
-                child_result = handle.call.get(timeout=0)
+                child_result = _child_call(handle).get(timeout=0)
             except TimeoutError:
                 continue
             except Exception as exc:  # noqa: BLE001  # call.get re-raises whatever the child worker raised; every failure fails the batch, logged with its traceback by log_and_redact_exception
@@ -274,7 +294,8 @@ class BudgetWindowBatchRunner:
                 self._publish_poll_stats()
 
             try:
-                with self.runtime.span(
+                with scopes.span(
+                    self.runtime,
                     BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_RESULT_PARSE),
                     attributes={"simulation_year": simulation_year},
                 ):
@@ -313,8 +334,8 @@ class BudgetWindowBatchRunner:
                 year=simulation_year,
                 annual_impact=annual_impact,
             )
-            with self.runtime.span(
-                BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
+            with scopes.span(
+                self.runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
             ):
                 put_batch_job_state(self.state)
             progress_made = True
@@ -357,15 +378,15 @@ class BudgetWindowBatchRunner:
         """Mark the year's child and the whole batch failed and store the state."""
         mark_child_failed(self.state, year=simulation_year, error=error)
         mark_batch_failed(self.state, error=error)
-        with self.runtime.span(
-            BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
+        with scopes.span(
+            self.runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
         ):
             put_batch_job_state(self.state)
 
     def complete_batch(self) -> dict[str, Any]:
         """Aggregate annual impacts, mark the batch complete, and return its status."""
-        with self.runtime.span(
-            BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_AGGREGATION)
+        with scopes.span(
+            self.runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_AGGREGATION)
         ):
             annual_impacts = [
                 self.state.partial_annual_impacts[simulation_year]
@@ -378,8 +399,8 @@ class BudgetWindowBatchRunner:
                 annual_impacts=annual_impacts,
             )
         mark_batch_complete(self.state, result=result)
-        with self.runtime.span(
-            BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
+        with scopes.span(
+            self.runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_STATE_WRITE)
         ):
             put_batch_job_state(self.state)
         return serialize_batch_status(self.state, runtime=self.runtime)

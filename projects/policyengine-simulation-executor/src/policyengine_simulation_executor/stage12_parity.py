@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import TypeGuard
 
 import numpy as np
 import pandas as pd
@@ -100,10 +101,17 @@ def _compare_entity_frames(
         raise ParityMismatchError(error_code, entity)
     for column in expected_frame.columns:
         path = f"{entity}.{column}"
+        expected_values = expected_frame[column]
+        actual_values = actual_frame[column]
+        if not isinstance(expected_values, pd.Series) or not isinstance(
+            actual_values, pd.Series
+        ):
+            msg = f"{entity} has more than one {column!r} column"
+            raise TypeError(msg)
         _compare_column(
             path,
-            expected_frame[column],
-            actual_frame[column],
+            expected_values,
+            actual_values,
             tolerances.get(path, NumericalTolerance()),
         )
 
@@ -148,14 +156,14 @@ def compare_aggregate_reports(
     _compare_report_values(incumbent, candidate, "", tolerances or {})
 
 
-def _is_report_list(value: object) -> bool:
+def _is_report_list(value: object) -> TypeGuard[Sequence[object]]:
     """Whether a report value is a list-like sequence rather than text or bytes."""
     return isinstance(value, Sequence) and not isinstance(
         value, (str, bytes, bytearray)
     )
 
 
-def _is_report_number(value: object) -> bool:
+def _is_report_number(value: object) -> TypeGuard[int | float]:
     """Whether a report value is an int or float; booleans are not numbers here."""
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 

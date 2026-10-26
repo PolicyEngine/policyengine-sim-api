@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import modal
+from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.stages import (
     STAGE12_SIMULATION_STAGES,
     Stage,
@@ -131,7 +132,8 @@ class Stage12SegmentRunner:
         try:
             for segment in segments:
                 call = None
-                with self.runtime.span(
+                with scopes.span(
+                    self.runtime,
                     STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_DISPATCH),
                     attributes={"segment_index": segment.segment_index},
                 ):
@@ -145,16 +147,16 @@ class Stage12SegmentRunner:
             raise
 
         payloads: list[object] | None = None
-        with self.runtime.span(
-            STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_WAIT)
+        with scopes.span(
+            self.runtime, STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_WAIT)
         ):
             payloads = self._collect(handles)
         if payloads is None:
             msg = "Stage 12 segment wait returned no payloads"
             raise RuntimeError(msg)
         merged: SimulationCalculation | None = None
-        with self.runtime.span(
-            STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_MERGE)
+        with scopes.span(
+            self.runtime, STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_MERGE)
         ):
             merged = merge_segment_results(
                 self.simulation,
