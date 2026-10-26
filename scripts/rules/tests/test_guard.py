@@ -1051,6 +1051,54 @@ class BaselineTest(unittest.TestCase):
         )
         self.assertEqual(check_baselines(with_reason, base)[0], [])
 
+    def test_a_new_rule_starts_ratcheted_only_with_a_downgrade(self) -> None:
+        base = self.registry("")
+        current = self.registry(RATCHETED_RULE.format(count=2))
+
+        violations, notes = check_baselines(current, base)
+
+        self.assertEqual(
+            [str(violation) for violation in violations],
+            [
+                "[ex.layers.ratcheted] baseline: new rule starts ratcheted with 2 "
+                "tolerated violations. Fix: fix them and make the rule enforced; "
+                "only a person may weaken a rule, by adding [rule.downgrade] with "
+                'reason = "..." and issue = <number of the open issue that tracks '
+                "restoring the rule>."
+            ],
+        )
+        self.assertEqual(notes, ["rule ex.layers.ratcheted is new"])
+
+    def test_a_downgrade_lets_a_new_rule_start_ratcheted(self) -> None:
+        base = self.registry("")
+        current = self.registry(
+            RATCHETED_RULE.format(count=2).replace(
+                "[rule.baseline]",
+                '[rule.downgrade]\nreason = "a new checker"\nissue = 912\n'
+                "[rule.baseline]",
+            )
+        )
+
+        violations, notes = check_baselines(current, base)
+
+        self.assertEqual(violations, [])
+        self.assertEqual(
+            notes,
+            [
+                "rule ex.layers.ratcheted is new",
+                "rule ex.layers.ratcheted starts ratcheted with 2 tolerated "
+                "violations: a new checker (issue #912)",
+            ],
+        )
+
+    def test_a_new_rule_may_start_ratcheted_with_nothing_tolerated(self) -> None:
+        base = self.registry("")
+        current = self.registry(RATCHETED_RULE.format(count=0))
+
+        self.assertEqual(
+            check_baselines(current, base), ([], ["rule ex.layers.ratcheted is new"])
+        )
+
     def test_compares_against_git_base_ref(self) -> None:
         with Repo(with_rule(RATCHETED_RULE.format(count=1)), render=False) as repo:
             repo.write("rules/baselines/ratcheted.txt", "pkg/routes.py\n")

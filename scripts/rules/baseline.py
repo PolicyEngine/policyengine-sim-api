@@ -105,11 +105,41 @@ def check_baselines(
                         f'restore status = "{old.status}"; {PERSON_DOWNGRADE}',
                     )
                 )
-    notes.extend(
-        f"rule {rule_id} is new"
-        for rule_id in sorted(current_ids - {rule.id for rule in base.rules})
-    )
+    for rule_id in sorted(current_ids - {rule.id for rule in base.rules}):
+        notes.append(f"rule {rule_id} is new")
+        new_violations, new_notes = _check_new_rule(current.rule(rule_id))
+        violations += new_violations
+        notes += new_notes
     return violations, notes
+
+
+def _check_new_rule(rule: Rule | None) -> tuple[list[Violation], list[str]]:
+    """Check a rule the base branch doesn't have; return (violations, notes).
+
+    A new rule that starts ratcheted with tolerated violations is weaker than
+    an enforced one from the start, so it needs ``[rule.downgrade]`` too.
+    """
+    if (
+        rule is None
+        or rule.status is not Status.RATCHETED
+        or rule.baseline is None
+        or rule.baseline.count <= 0
+    ):
+        return [], []
+    starts = f"starts ratcheted with {rule.baseline.count} tolerated violations"
+    if rule.downgrade:
+        return [], [
+            f"rule {rule.id} {starts}: {rule.downgrade.reason} "
+            f"(issue #{rule.downgrade.issue})"
+        ]
+    return [
+        Violation(
+            rule.id,
+            "baseline",
+            f"new rule {starts}",
+            f"fix them and make the rule enforced; {PERSON_DOWNGRADE}",
+        )
+    ], []
 
 
 def _pyright_listings(registry: Registry) -> dict[str, Rule]:

@@ -119,6 +119,8 @@ with the base branch. It fails when:
 - an enforced rule becomes ratcheted without a `[rule.downgrade]` section,
   which gives a `reason` and an `issue`, the number of the issue that tracks
   restoring the rule;
+- a rule that the base branch doesn't have starts ratcheted with a baseline
+  count above 0, without a `[rule.downgrade]` section;
 - a package that an enforced Pyright rule lists on the base branch, and whose
   `pyproject.toml` still exists, isn't listed by an enforced Pyright rule,
   unless the rule that lists it now has a `[rule.downgrade]` section. Moving a
@@ -136,9 +138,10 @@ developers, but `sim.process.rule-machinery-code-owned` is doc-only: merging
 doesn't require their approval. Whoever reviews a pull request that changes a
 baseline, a rule's status or a rule's `enforcer.projects` checks it.
 
-When a person decides to ratchet a package's rule, `--write-baseline` creates
-its baseline: it refuses an error an existing baseline doesn't list, but
-records every current error when the file doesn't exist yet.
+When a person decides to ratchet a package's rule, they add the
+`[rule.downgrade]` section, and `--write-baseline` creates its baseline: it
+refuses an error an existing baseline doesn't list, but records every current
+error when the file doesn't exist yet.
 
 Once a baseline is empty, delete it and make the rule `enforced`.
 
