@@ -19,9 +19,8 @@ report run.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, get_args
+from typing import TYPE_CHECKING
 
-from policyengine_simulation_contract.macro_output import UKGeographyDisclosureTier
 from sqlalchemy import (
     CheckConstraint,
     Column,
@@ -50,7 +49,9 @@ POVERTY_GROUPS = {
     "race": ("white", "black", "hispanic", "other"),
 }
 DECILE_MEASURES = ("income", "wealth")
-UK_AREA_DISCLOSURE_TIERS: tuple[str, ...] = get_args(UKGeographyDisclosureTier)
+# The contract's UKGeographyDisclosureTier values, written out so that a new
+# tier fails a test rather than silently changing the declared table.
+UK_AREA_DISCLOSURE_TIERS = ("reported", "approximate")
 UK_AREA_DISCLOSURE_COLUMNS = (
     "disclosure_tier",
     "average_household_income_change_lower",
