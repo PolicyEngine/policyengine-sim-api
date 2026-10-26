@@ -98,8 +98,9 @@ To fix a failure:
 Automated pull requests follow the rule too. The policyengine package update
 (`update-policyengine-package.sh`) opens an issue for each version. The daily
 dependency update (`dependency-update-create-pr.sh`) reuses the open "Update
-dependencies" issue or opens one, and also puts its `Fixes` line first on an
-update pull request that is already open.
+dependencies" issue or opens one. It also reuses an update pull request that is
+already open, and replaces its description, `Fixes` line first, because each run
+rebuilds the update branch from `main`.
 
 ## PR Title
 

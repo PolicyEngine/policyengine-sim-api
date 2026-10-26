@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
 
-# After an update branch has been pushed, make sure an open dependency-update
-# PR exists and that the first line of its description names its tracking
-# issue, as rule sim.process.pr-tracking-issue requires of every PR.
+# After the dependency update changed files on main, make sure an open
+# dependency-update PR exists and that the first line of its description names
+# its tracking issue, as rule sim.process.pr-tracking-issue requires of every PR.
 #
 # The tracking issue is the oldest open issue titled "Update dependencies", or
 # a new one when none is open. "Fixes #N" closes it when the PR merges, so the
 # next update PR gets a new issue.
 #
-# - Without an open update PR, open one whose description starts with
-#   "Fixes #N".
-# - With one, make "Fixes #N" its first line: replace an earlier "Fixes #"
-#   line, or add the line above a description that has none (such as a PR
-#   opened before the rule).
+# - Without an open update PR, open one.
+# - With one, keep it, and replace its description when it differs from the
+#   current one. Each run rebuilds the branch from main, so the description is
+#   the workflow's, not a reviewer's; this also rewrites the description of a
+#   PR opened before the rule, or before the branch was rebuilt on every run.
+#
+# Either way the description is "Fixes #N", a blank line and the summary.
 #
 # Environment:
 #   GITHUB_REPOSITORY  owner/name of this repository (set by the runner)
@@ -25,7 +27,6 @@ set -euo pipefail
 
 ISSUE_TITLE="Update dependencies"
 ISSUE_BODY="Tracks the automated daily dependency updates from update-dependencies.yml. The update pull request names this issue on the first line of its description and closes it when it merges."
-PR_SUMMARY="Automated daily dependency updates. Subsequent runs append commits to this branch while the pull request remains open."
 
 # Set ISSUE_NUMBER to the oldest open "Update dependencies" issue, opening one
 # when none is open. The issues API lists pull requests too; they have a
@@ -61,35 +62,30 @@ find_or_open_tracking_issue() {
   ISSUE_NUMBER="${issue_number}"
 }
 
-# Print the description with "Fixes #<issue>" as its first line.
-description_naming_issue() {
-  local description="$1"
-  local issue_number="$2"
-  local first_line="${description%%$'\n'*}"
-  local fixes_line="Fixes #${issue_number}"
+# Print the update PR's description, naming the tracking issue first.
+update_pr_description() {
+  printf 'Fixes #%s\n\n' "${ISSUE_NUMBER}"
+  cat <<'EOF'
+Automated daily dependency update by `.github/workflows/update-dependencies.yml`. It runs `./scripts/generate-clients.sh` (the generated clients are not committed), then `make update`, which runs `uv lock --upgrade` in every project, so this pull request changes only `uv.lock` files. CI on this pull request tests the upgraded versions.
 
-  if [[ "${first_line}" =~ ^Fixes\ \#[0-9]+[[:space:]]*$ ]]; then
-    if [[ "${description}" == *$'\n'* ]]; then
-      printf '%s\n%s' "${fixes_line}" "${description#*$'\n'}"
-    else
-      printf '%s' "${fixes_line}"
-    fi
-  else
-    printf '%s\n\n%s' "${fixes_line}" "${description}"
-  fi
+Each run rebuilds `update-dependencies` from `main` and replaces it, so commits pushed to this branch by hand are lost on the next run.
+EOF
 }
 
+# --head matches a branch of the same name in a fork too; only this
+# repository's branch is the update branch.
 open_pr="$(
   gh pr list \
     --repo "${GITHUB_REPOSITORY}" \
     --base main \
     --head update-dependencies \
     --state open \
-    --json number \
-    --jq '.[0].number // empty'
+    --json number,isCrossRepository \
+    --jq 'map(select(.isCrossRepository | not)) | .[0].number // empty'
 )"
 ISSUE_NUMBER=""
 find_or_open_tracking_issue
+description="$(update_pr_description)"
 
 if [[ -z "${open_pr}" ]]; then
   gh pr create \
@@ -98,24 +94,23 @@ if [[ -z "${open_pr}" ]]; then
     --body-file - \
     --base main \
     --head update-dependencies \
-    <<<"Fixes #${ISSUE_NUMBER}"$'\n\n'"${PR_SUMMARY}"
+    <<<"${description}"
   exit 0
 fi
 
-description="$(
+current_description="$(
   gh pr view "${open_pr}" \
     --repo "${GITHUB_REPOSITORY}" \
     --json body \
     --jq '.body'
 )"
-linked_description="$(description_naming_issue "${description}" "${ISSUE_NUMBER}")"
-if [[ "${linked_description}" == "${description}" ]]; then
-  echo "Pull request #${open_pr} already names tracking issue #${ISSUE_NUMBER}."
+if [[ "${current_description}" == "${description}" ]]; then
+  echo "Pull request #${open_pr} already has the current description."
   exit 0
 fi
 
 gh pr edit "${open_pr}" \
   --repo "${GITHUB_REPOSITORY}" \
   --body-file - \
-  <<<"${linked_description}"
-echo "Pull request #${open_pr} now names tracking issue #${ISSUE_NUMBER}."
+  <<<"${description}"
+echo "Pull request #${open_pr} now has the current description, naming tracking issue #${ISSUE_NUMBER}."
