@@ -23,6 +23,10 @@ How the first line is read:
   the line isn't what the author meant.
 - An empty or missing (``null``) description fails.
 - The number is ASCII digits without a leading zero.
+
+``require_open_issue`` is the issue lookup on its own, for other checks that
+need an open issue. Its errors say only what is wrong, and each caller adds its
+own fix.
 """
 
 from __future__ import annotations
@@ -41,6 +45,14 @@ HOW_TO_FIX = (
     "description runs this check again. See docs/engineering/skills/github-prs.md "
     f"(rule {RULE_ID})."
 )
+RETRY_LOOKUP = (
+    "Re-run this job; if it fails again, check the GH_TOKEN the workflow gives it."
+)
+REOPEN_ISSUE = (
+    "If this pull request still fixes it, reopen it and re-run this job; "
+    "otherwise open an issue for this work and edit the first line to name it "
+    f"(rule {RULE_ID})."
+)
 FIXES_LINE = re.compile(r"Fixes #([1-9][0-9]*)")
 # Markdown line endings: CRLF, a carriage return alone, or a line feed.
 LINE_ENDING = re.compile(r"\r\n|\r|\n")
@@ -55,7 +67,29 @@ ANNOTATION_TITLE = "PR description"
 
 
 class DescriptionError(Exception):
-    """The description, or the issue it names, does not satisfy the rule."""
+    """The description's first line does not name an issue as the rule requires."""
+
+
+class IssueLookupError(Exception):
+    """GitHub couldn't be asked about an issue, or its answer wasn't an issue.
+
+    Running the lookup again may succeed. The message says what went wrong,
+    without a fix.
+    """
+
+
+class NotAnOpenIssueError(Exception):
+    """A number names no open issue in the repository.
+
+    ``state`` is the issue's state, such as ``closed``, when the number names an
+    issue in the repository that isn't open, and None when it names no issue
+    there. The message says what the number names, without a fix.
+    """
+
+    def __init__(self, message: str, *, state: str | None = None) -> None:
+        """Keep ``message`` as the error's text, and the issue's ``state``."""
+        super().__init__(message)
+        self.state = state
 
 
 def _shown(line: str) -> str:
@@ -102,7 +136,9 @@ def fetch_issue(repository: str, number: int) -> dict[str, object]:
 
     The issues API also answers for pull requests, and gh follows the redirect
     GitHub sends for an issue transferred to another repository, so the answer
-    still has to be checked with ``check_issue``.
+    still has to be checked with ``check_issue``. Raise ``NotAnOpenIssueError``
+    when GitHub has no issue ``number``, and ``IssueLookupError`` when the
+    lookup fails.
     """
     completed = subprocess.run(
         ["gh", "api", f"repos/{repository}/issues/{number}"],
@@ -112,21 +148,18 @@ def fetch_issue(repository: str, number: int) -> dict[str, object]:
     )
     if completed.returncode != 0:
         if MISSING_ISSUE.search(completed.stderr):
-            msg = f"There is no issue #{number} in {repository}. {HOW_TO_FIX}"
-            raise DescriptionError(msg)
+            msg = f"There is no issue #{number} in {repository}."
+            raise NotAnOpenIssueError(msg)
         reported = completed.stderr.strip() or f"exit status {completed.returncode}"
-        msg = (
-            f"Could not look up #{number} in {repository}: {reported}. Re-run this "
-            "job; if it fails again, check the GH_TOKEN the workflow gives it."
-        )
-        raise DescriptionError(msg)
+        msg = f"Could not look up #{number} in {repository}: {reported}."
+        raise IssueLookupError(msg)
     try:
         issue = json.loads(completed.stdout)
     except json.JSONDecodeError:
         issue = None
     if not isinstance(issue, dict):
-        msg = f"gh api did not print an issue for #{number}. Re-run this job."
-        raise DescriptionError(msg)
+        msg = f"gh api did not print an issue for #{number}."
+        raise IssueLookupError(msg)
     return issue
 
 
@@ -139,30 +172,41 @@ def _repository_of(repository_url: object) -> str | None:
 
 
 def check_issue(repository: str, number: int, issue: dict[str, object]) -> None:
-    """Raise ``DescriptionError`` unless ``issue`` is open issue ``number`` here."""
+    """Return quietly if ``issue``, GitHub's answer for ``number``, is open here.
+
+    Raise ``NotAnOpenIssueError`` when it is a pull request, an issue moved to
+    another repository or an issue that isn't open, and ``IssueLookupError``
+    when the answer names no repository.
+    """
     issue_repository = _repository_of(issue.get("repository_url"))
     if issue_repository is None:
         msg = (
             f"GitHub's answer for #{number} names no repository, so it can't be "
-            f"confirmed as an issue in {repository}. Re-run this job."
+            f"confirmed as an issue in {repository}."
         )
-        raise DescriptionError(msg)
+        raise IssueLookupError(msg)
     if issue_repository.lower() != repository.lower() or issue.get("number") != number:
         msg = (
             f"#{number} is not an issue in {repository}: it moved to "
-            f"{issue_repository}#{issue.get('number')}. {HOW_TO_FIX}"
+            f"{issue_repository}#{issue.get('number')}."
         )
-        raise DescriptionError(msg)
+        raise NotAnOpenIssueError(msg)
     if issue.get("pull_request") is not None:
-        msg = f"#{number} is a pull request, not an issue. {HOW_TO_FIX}"
-        raise DescriptionError(msg)
-    if issue.get("state") != "open":
-        msg = (
-            f"Issue #{number} is {issue.get('state')}. If this pull request still "
-            "fixes it, reopen it and re-run this job; otherwise open an issue for "
-            f"this work and edit the first line to name it (rule {RULE_ID})."
-        )
-        raise DescriptionError(msg)
+        msg = f"#{number} is a pull request, not an issue."
+        raise NotAnOpenIssueError(msg)
+    state = issue.get("state")
+    if state != "open":
+        msg = f"Issue #{number} is {state}."
+        raise NotAnOpenIssueError(msg, state=str(state))
+
+
+def require_open_issue(repository: str, number: int) -> None:
+    """Return quietly if ``number`` is an open issue, not a pull request, here.
+
+    Raise ``NotAnOpenIssueError`` or ``IssueLookupError`` otherwise; see
+    ``fetch_issue`` and ``check_issue``.
+    """
+    check_issue(repository, number, fetch_issue(repository, number))
 
 
 def _required_environment(name: str) -> str:
@@ -198,15 +242,21 @@ def main() -> int:
     description = _description_from_event(_required_environment("GITHUB_EVENT_PATH"))
     try:
         number = issue_number_from_description(description)
-        check_issue(repository, number, fetch_issue(repository, number))
+        require_open_issue(repository, number)
     except DescriptionError as error:
-        print(f"::error title={ANNOTATION_TITLE}::{_annotation_text(str(error))}")
-        return 1
-    print(
-        f"The first line is Fixes #{number}, and #{number} is an open issue in "
-        f"{repository}."
-    )
-    return 0
+        message = str(error)
+    except IssueLookupError as error:
+        message = f"{error} {RETRY_LOOKUP}"
+    except NotAnOpenIssueError as error:
+        message = f"{error} {HOW_TO_FIX if error.state is None else REOPEN_ISSUE}"
+    else:
+        print(
+            f"The first line is Fixes #{number}, and #{number} is an open issue in "
+            f"{repository}."
+        )
+        return 0
+    print(f"::error title={ANNOTATION_TITLE}::{_annotation_text(message)}")
+    return 1
 
 
 if __name__ == "__main__":

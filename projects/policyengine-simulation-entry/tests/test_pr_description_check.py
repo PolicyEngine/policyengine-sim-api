@@ -429,6 +429,111 @@ def test_the_check_requires_a_pull_request_event(fakes, tmp_path):
     assert fakes.calls("gh") == []
 
 
+# --- The issue lookup, for other checks -----------------------------------
+#
+# Other checks can reuse the lookup. Its errors say only what is wrong; each
+# caller adds its own fix, so none of these messages mentions the description.
+
+
+@pytest.fixture
+def in_process_gh(fakes: FakeCommands, monkeypatch: pytest.MonkeyPatch):
+    """Put the fake gh first on PATH for lookups made in this process.
+
+    Return a function that sets what the fake gh prints and how it exits.
+    """
+    fake_environment = fakes.env()
+    monkeypatch.setenv("PATH", fake_environment["PATH"])
+    monkeypatch.setenv("FAKE_CALLS_LOG", fake_environment["FAKE_CALLS_LOG"])
+
+    def answer(**fake_gh_settings: str) -> None:
+        for name, value in fake_gh_settings.items():
+            monkeypatch.setenv(name, value)
+
+    return answer
+
+
+def test_the_lookup_accepts_an_open_issue(check_module, fakes, in_process_gh):
+    in_process_gh(**_gh_answers(_issue()))
+
+    check_module.require_open_issue(REPOSITORY, 861)
+
+    assert fakes.calls("gh") == [
+        ["gh", "api", "repos/PolicyEngine/policyengine-sim-api/issues/861"]
+    ]
+
+
+@pytest.mark.parametrize(
+    ("gh_settings", "expected_message", "expected_state"),
+    [
+        (_gh_answers(_issue(state="closed")), "Issue #861 is closed.", "closed"),
+        (
+            _gh_answers(
+                _issue(
+                    pull_request={
+                        "url": f"https://api.github.com/repos/{REPOSITORY}/pulls/861"
+                    }
+                )
+            ),
+            "#861 is a pull request, not an issue.",
+            None,
+        ),
+        (
+            _gh_answers(
+                _issue(115, state="closed", repository="PolicyEngine/policyengine.py")
+            ),
+            f"#861 is not an issue in {REPOSITORY}: it moved to "
+            "PolicyEngine/policyengine.py#115.",
+            None,
+        ),
+        (
+            {
+                "FAKE_GH_STDOUT": NOT_FOUND_STDOUT,
+                "FAKE_GH_STDERR": NOT_FOUND_STDERR,
+                "FAKE_GH_EXIT": "1",
+            },
+            f"There is no issue #861 in {REPOSITORY}.",
+            None,
+        ),
+    ],
+)
+def test_the_lookup_says_what_a_number_names_without_a_fix(
+    check_module, in_process_gh, gh_settings, expected_message, expected_state
+):
+    in_process_gh(**gh_settings)
+
+    with pytest.raises(check_module.NotAnOpenIssueError) as rejected:
+        check_module.require_open_issue(REPOSITORY, 861)
+
+    assert str(rejected.value) == expected_message
+    assert rejected.value.state == expected_state
+
+
+@pytest.mark.parametrize(
+    ("gh_settings", "expected_message"),
+    [
+        (
+            {"FAKE_GH_STDERR": "gh: Bad credentials (HTTP 401)", "FAKE_GH_EXIT": "1"},
+            f"Could not look up #861 in {REPOSITORY}: gh: Bad credentials (HTTP 401).",
+        ),
+        ({"FAKE_GH_STDOUT": "not JSON"}, "gh api did not print an issue for #861."),
+        (
+            _gh_answers({**_issue(), "repository_url": None}),
+            "GitHub's answer for #861 names no repository, so it can't be "
+            f"confirmed as an issue in {REPOSITORY}.",
+        ),
+    ],
+)
+def test_the_lookup_says_why_it_failed_without_a_fix(
+    check_module, in_process_gh, gh_settings, expected_message
+):
+    in_process_gh(**gh_settings)
+
+    with pytest.raises(check_module.IssueLookupError) as failed:
+        check_module.require_open_issue(REPOSITORY, 861)
+
+    assert str(failed.value) == expected_message
+
+
 # --- The workflow job -----------------------------------------------------
 
 
