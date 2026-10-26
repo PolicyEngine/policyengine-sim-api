@@ -75,6 +75,27 @@ def test_a_stored_result_is_rebuilt_exactly(
     assert rebuilt == result
 
 
+def test_a_result_keeps_the_versions_it_reports(
+    migrated_database, public_api_rows
+) -> None:
+    # A US state run reports the revision of the dataset it loaded (the
+    # ACS-local dataset), not the release's default data version, which is
+    # what the region catalog gives for the run's catalog version.
+    catalog_result = load_sample("us_state_ca_2026")
+    result = catalog_result.model_copy(
+        update={"data_version": "populace-us-acs-local-sample-revision"}
+    )
+    stores = result_stores(migrated_database)
+    report_run = comparison_ready(stores, migrated_database, public_api_rows)
+
+    _write(stores, report_run, RECORDER.validate(result.model_dump(mode="json")))
+
+    rebuilt = _read(migrated_database, report_run.id, labels_for(catalog_result))
+    assert rebuilt.data_version == result.data_version
+    assert rebuilt.model_version == result.model_version
+    assert rebuilt == result
+
+
 UK_AREA_DISCLOSURE_FIELDS = {
     "disclosure_tier",
     "average_household_income_change_lower",
@@ -275,7 +296,7 @@ def test_reading_needs_a_succeeded_comparison(
         _read(
             migrated_database,
             report_run.id,
-            EconomyResultLabels(model_version="1", data_version="1"),
+            EconomyResultLabels(),
         )
 
 
@@ -288,8 +309,6 @@ def test_reading_needs_a_label_for_every_geography(
     _write(stores, report_run, result)
     labels = labels_for(result)
     missing = EconomyResultLabels(
-        model_version=labels.model_version,
-        data_version=labels.data_version,
         constituencies=dict(list(labels.constituencies.items())[1:]),
         local_authorities=labels.local_authorities,
     )

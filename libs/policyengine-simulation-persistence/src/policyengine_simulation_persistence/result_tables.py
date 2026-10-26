@@ -12,9 +12,9 @@ their order in a ``position`` column, so a reader rebuilds the result exactly.
 Constituency and local-authority names and map positions are not stored: they
 come from the region catalog by code. Each area's disclosure tier and 90%
 interval bounds are stored with its figures, null for a result computed before
-disclosure control. The model and data versions are pinned
-by the run's catalog version. The SPM provenance and the list of optional
-sections a result holds are columns on the report run.
+disclosure control. The model and data versions the result reports, its SPM
+provenance and the list of optional sections it holds are columns on the
+report run.
 """
 
 from __future__ import annotations

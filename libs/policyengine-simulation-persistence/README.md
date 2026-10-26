@@ -82,17 +82,19 @@ decile the relative maps leave out (-1, for households with negative
 income). Lists and maps keep their order in a `position`
 column. Result rows are written once and never changed: the runtime role may
 read and insert them but not update or delete them. The report run also
-records which optional sections its result holds (`result_sections`) and its
-SPM provenance. `write_economy_comparison` checks the result can be held
-exactly (`check_storable`) and writes its rows in the transaction that marks
-the comparison step succeeded (`RunTransitions.complete_comparison`);
+records which optional sections its result holds (`result_sections`), its SPM
+provenance, and the model and data versions the result reports (a US state
+run reports the revision of the dataset it loaded, which is not the release's
+default data version). `write_economy_comparison` checks the result can be
+held exactly (`check_storable`) and writes its rows in the transaction that
+marks the comparison step succeeded (`RunTransitions.complete_comparison`);
 `EconomyComparisonRecorder` pairs that writer with validation against the
 result model. `read_economy_comparison` rebuilds the result exactly from the
-rows and from labels the region catalog supplies (`EconomyResultLabels`): the
-model and data versions of the run's catalog version, and constituency and
-local-authority names and map positions by code. Each UK area's disclosure
-tier and the 90% interval bounds of its income changes are stored with its
-figures (null for a result computed before disclosure control).
+rows and from labels the region catalog supplies (`EconomyResultLabels`):
+constituency and local-authority names and map positions by code. Each UK
+area's disclosure tier and the 90% interval bounds of its income changes are
+stored with its figures (null for a result computed before disclosure
+control).
 
 A computed household is one JSON value (`household_outputs`, PostgreSQL
 `json`, so its text, key order included, is kept as written) on its
