@@ -57,9 +57,13 @@ def _load_lookup() -> ModuleType:
 
 
 def _check_issue(
-    lookup: ModuleType, repository: str, rule: Rule, issue: int
+    lookup: ModuleType, repository: str, token_variable: str, rule: Rule, issue: int
 ) -> tuple[Violation | None, str | None]:
-    """Look up one downgrade's issue; return a violation or a note."""
+    """Look up one downgrade's issue; return a violation or a note.
+
+    ``token_variable`` is where gh read its token, for the fix of a lookup
+    that fails.
+    """
     try:
         lookup.require_open_issue(repository, issue)
     except lookup.NotAnOpenIssueError as error:
@@ -84,8 +88,8 @@ def _check_issue(
         rule.id,
         CHECK,
         f"couldn't check that issue #{issue} is open: {problem}",
-        "run the guard again; if it fails again, check the token in GH_TOKEN, "
-        f"which needs read access to the issues of {repository}",
+        f"run the guard again; if it fails again, check the token in "
+        f"{token_variable}, which needs read access to the issues of {repository}",
     ), None
 
 
@@ -103,7 +107,10 @@ def check_tracking_issues(registry: Registry) -> tuple[list[Violation], list[str
     repository = registry.issue_repository
     if not downgraded or not repository:
         return [], []
-    if not any(os.environ.get(name) for name in TOKEN_VARIABLES):
+    token_variable = next(
+        (name for name in TOKEN_VARIABLES if os.environ.get(name)), None
+    )
+    if token_variable is None:
         if os.environ.get("GITHUB_ACTIONS"):
             return [
                 Violation(
@@ -137,7 +144,7 @@ def check_tracking_issues(registry: Registry) -> tuple[list[Violation], list[str
     violations: list[Violation] = []
     notes: list[str] = []
     for rule, issue in downgraded:
-        violation, note = _check_issue(lookup, repository, rule, issue)
+        violation, note = _check_issue(lookup, repository, token_variable, rule, issue)
         if violation is not None:
             violations.append(violation)
         if note is not None:

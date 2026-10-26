@@ -210,6 +210,22 @@ class LookupTest(TrackingIssueTestCase):
             ],
         )
 
+    def test_a_failed_lookup_names_the_variable_gh_read_the_token_from(
+        self,
+    ) -> None:
+        del os.environ["GH_TOKEN"]
+        os.environ["GITHUB_TOKEN"] = "token-for-the-fake-gh"
+        self.fail_lookup(912, "gh: Bad credentials (HTTP 401)")
+
+        violations, _ = self.check(downgraded_rule("ex.layers.ratcheted", 912))
+
+        self.assertEqual(len(violations), 1)
+        self.assertIn(
+            "Fix: run the guard again; if it fails again, check the token in "
+            "GITHUB_TOKEN, which needs read access",
+            violations[0],
+        )
+
     def test_a_missing_gh_fails(self) -> None:
         empty_directory = self.fake_root / "empty"
         empty_directory.mkdir()

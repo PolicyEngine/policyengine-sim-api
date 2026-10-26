@@ -21,7 +21,8 @@ python -m unittest discover -s scripts/rules/tests -t .            # the tool's 
 ```
 
 All commands use only the standard library, so they run without installing the
-project.
+project. When a rule has a `[rule.downgrade]` section, `guard` also runs
+`gh api` to look up its tracking issue; see [Baselines](#baselines).
 
 ## Adding or changing a rule
 
