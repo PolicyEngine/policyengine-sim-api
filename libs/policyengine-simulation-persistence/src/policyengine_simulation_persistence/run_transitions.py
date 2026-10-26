@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from sqlalchemy import and_, exists, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 
 from policyengine_simulation_persistence.run_store import utc_now
 from policyengine_simulation_persistence.runs import (
@@ -187,6 +187,26 @@ class RunTransitions:
                 "completed_at": self._clock(),
             },
         )
+
+    def simulation_runs_hold_call(
+        self, run_ids: Collection[UUID], modal_call_id: str
+    ) -> bool:
+        """Return whether every one of the runs recorded ``modal_call_id``.
+
+        A dispatcher whose record raised reads this to learn whether the
+        record committed all the same, its reply having been lost.
+        """
+        wanted = set(run_ids)
+        with self.engine.connect() as connection:
+            holding = connection.execute(
+                select(func.count())
+                .select_from(simulation_runs)
+                .where(
+                    simulation_runs.c.id.in_(wanted),
+                    simulation_runs.c.modal_call_id == modal_call_id,
+                )
+            ).scalar_one()
+        return bool(wanted) and holding == len(wanted)
 
     def claim_due_simulation_calls(
         self, *, limit: int, lease: timedelta
@@ -414,6 +434,21 @@ class RunTransitions:
                 )
                 is not None
             )
+
+    def comparison_holds_call(self, report_run_id: UUID, modal_call_id: str) -> bool:
+        """Return whether the comparison step recorded ``modal_call_id``.
+
+        As ``simulation_runs_hold_call``, for a comparison step.
+        """
+        with self.engine.connect() as connection:
+            return connection.execute(
+                select(
+                    exists().where(
+                        report_runs.c.id == report_run_id,
+                        report_runs.c.comparison_modal_call_id == modal_call_id,
+                    )
+                )
+            ).scalar_one()
 
     def claim_due_comparisons(
         self, *, limit: int, lease: timedelta

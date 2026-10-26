@@ -162,12 +162,96 @@ async def test_a_failed_cancel_is_logged_without_raising(caplog) -> None:
         raise ConnectionError(msg)
 
     transitions.record_simulation_dispatched = unreachable_database  # type: ignore[method-assign]
-    transitions.record_simulation_dispatch_failure = unreachable_database  # type: ignore[method-assign]
 
     outcome = await service.start_simulation_runs([run_id], SAMPLE_REQUEST)
 
     assert outcome is DispatchOutcome.NOT_RECORDED
     assert "simulation_run_call_not_cancelled" in caplog.text
+
+
+def _commit_then_lose_acknowledgement(record):
+    """Return ``record`` changed to commit and then raise, as a lost reply does."""
+
+    def committed_without_acknowledgement(*arguments, **keywords):
+        assert record(*arguments, **keywords)
+        msg = "connection lost after the commit"
+        raise ConnectionError(msg)
+
+    return committed_without_acknowledgement
+
+
+@pytest.mark.asyncio
+async def test_an_unacknowledged_record_keeps_its_call() -> None:
+    service, transitions, _ = _service()
+    run_id = transitions.add_run()
+    transitions.record_simulation_dispatched = _commit_then_lose_acknowledgement(  # type: ignore[method-assign]
+        transitions.record_simulation_dispatched
+    )
+
+    outcome = await service.start_simulation_runs([run_id], SAMPLE_REQUEST)
+
+    assert outcome is DispatchOutcome.STARTED
+    assert service.dispatcher.cancelled == []
+    run = execution(transitions, run_id)
+    assert run.status is RunStatus.RUNNING
+    assert run.modal_call_id == "fc-1"
+
+
+@pytest.mark.asyncio
+async def test_an_unacknowledged_comparison_record_keeps_its_call() -> None:
+    service, transitions, _ = _service()
+    comparison = transitions.add_comparison()
+    transitions.record_comparison_dispatched = _commit_then_lose_acknowledgement(  # type: ignore[method-assign]
+        transitions.record_comparison_dispatched
+    )
+
+    outcome = await service.start_comparison(comparison, SAMPLE_REQUEST)
+
+    assert outcome is DispatchOutcome.STARTED
+    assert service.dispatcher.cancelled == []
+    assert transitions.comparisons[comparison].status is RunStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_a_failed_record_of_runs_failed_meanwhile_cancels_the_call() -> None:
+    service, transitions, _ = _service()
+    run_id = transitions.add_run()
+
+    def abandoned_meanwhile(*_arguments, **_keywords):
+        transitions.runs[run_id].status = RunStatus.FAILED
+        msg = "connection lost"
+        raise ConnectionError(msg)
+
+    transitions.record_simulation_dispatched = abandoned_meanwhile  # type: ignore[method-assign]
+
+    outcome = await service.start_simulation_runs([run_id], SAMPLE_REQUEST)
+
+    assert outcome is DispatchOutcome.NOT_RECORDED
+    assert service.dispatcher.cancelled == ["fc-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_call_whose_record_cannot_be_read_is_left_running(caplog) -> None:
+    """With the database unreachable, the record may have committed all the same."""
+    service, transitions, _ = _service()
+    run_id = transitions.add_run()
+
+    def unreachable_database(*_arguments, **_keywords):
+        msg = "connection lost"
+        raise ConnectionError(msg)
+
+    transitions.record_simulation_dispatched = unreachable_database  # type: ignore[method-assign]
+    transitions.record_simulation_dispatch_failure = unreachable_database  # type: ignore[method-assign]
+
+    outcome = await service.start_simulation_runs([run_id], SAMPLE_REQUEST)
+
+    assert outcome is DispatchOutcome.RECORD_UNKNOWN
+    assert service.dispatcher.cancelled == []
+    assert any(
+        record.message == "simulation_run_call_record_unknown"
+        and getattr(record, "modal_call_id", None) == "fc-1"
+        for record in caplog.records
+    )
 
 
 def test_the_dispatcher_cancels_a_call_by_its_id(monkeypatch) -> None:
