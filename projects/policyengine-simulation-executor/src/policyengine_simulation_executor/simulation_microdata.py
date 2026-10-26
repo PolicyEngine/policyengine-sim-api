@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
+from policyengine_simulation_executor.output_frames import EntityFrames
+
 if TYPE_CHECKING:
     from policyengine.core import Simulation
 
@@ -45,6 +47,11 @@ def extract_output_microdata(
     ) -> tuple[dict[str, dict[str, list]], dict[str, dict[str, str]]]:
         columns: dict[str, dict[str, list]] = {}
         dtypes: dict[str, dict[str, str]] = {}
+        if simulation.output_dataset is None or not isinstance(
+            simulation.output_dataset.data, EntityFrames
+        ):
+            msg = "the simulation has no output entity frames; run it first"
+            raise TypeError(msg)
         for entity, frame in simulation.output_dataset.data.entity_data.items():
             df = pd.DataFrame(frame)
             columns[entity] = df.to_dict("list")

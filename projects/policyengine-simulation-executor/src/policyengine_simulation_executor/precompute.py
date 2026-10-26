@@ -44,6 +44,7 @@ from policyengine_simulation_executor.artifact_keys import (
     BaselineArtifactIdentity,
     baseline_artifact_filename,
 )
+from policyengine_simulation_executor.output_frames import EntityFrames
 from policyengine_simulation_executor.precompute_models import (
     ArtifactManifest,
     BaselineComputeResult,
@@ -778,6 +779,15 @@ def verify_determinism_impl(
     )
     fresh.run()
 
+    missing_frames = "Determinism gate found a simulation with no output entity frames"
+    if baseline.output_dataset is None or not isinstance(
+        baseline.output_dataset.data, EntityFrames
+    ):
+        raise TypeError(missing_frames)
+    if fresh.output_dataset is None or not isinstance(
+        fresh.output_dataset.data, EntityFrames
+    ):
+        raise TypeError(missing_frames)
     differences = []
     loaded = baseline.output_dataset.data.entity_data
     recomputed = fresh.output_dataset.data.entity_data

@@ -60,6 +60,9 @@ def _output_model_dump(value: object) -> object:
 def _entity_data(simulation: Simulation, entity: str) -> pd.DataFrame:
     if simulation.output_dataset is None or simulation.output_dataset.data is None:
         simulation.ensure()
+    if simulation.output_dataset is None:
+        msg = "ensure() left the simulation without an output dataset"
+        raise RuntimeError(msg)
     return getattr(simulation.output_dataset.data, entity)
 
 
