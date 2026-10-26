@@ -1,9 +1,0 @@
-# Tolerated Pyright errors in projects/policyengine-simulation-executor.
-# This list may only shrink.
-#
-# Rule sim.quality.pyright-executor. Each entry is
-# <path> :: <Pyright rule> :: <first line of the message>, one line per
-# error, sorted. After fixing errors, remove the entries that no longer
-# occur with
-#   python -m scripts.rules pyright projects/policyengine-simulation-executor --write-baseline
-# then set the rule's [rule.baseline] count in rules/registry.toml to match.
