@@ -17,8 +17,8 @@ writes them with DML only.
 | `simulation_runs` | One execution of a simulation for a catalog version and year: the region code and dataset row it resolved in that version (economy runs only), its status, Modal call ID, timings, error, trigger (`initial`, `manual` or `system`) and attempt number |
 | `report_runs` | One calculation of a report: a baseline and a reform simulation run of the same catalog version and year (no reform run for a single-simulation household report), the trigger, and, for an economy report, the comparison step's own status and Modal call |
 
-Both are definitions: the runtime role may read and insert them but not update
-or delete them. Rows migrated from the Public API's v1 database keep their v1
+`simulations` and `reports` are definitions: the runtime role may read and
+insert them but not update or delete them. Rows migrated from the Public API's v1 database keep their v1
 IDs in the unique `legacy_simulation_id` and `legacy_report_id` columns, and
 the stores' `create_migrated` methods return the existing row when the same v1
 ID is migrated again.

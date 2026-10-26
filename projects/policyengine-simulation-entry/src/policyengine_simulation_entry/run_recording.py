@@ -23,7 +23,6 @@ instance's CPU allocated between requests, so the loop runs then too.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -514,10 +513,19 @@ class RunRecordingLoop:
             self._task = asyncio.create_task(self.run())
 
     async def stop(self) -> None:
-        """Cancel the loop and wait for it to end."""
+        """Cancel the loop and wait for it to end.
+
+        A cancellation of the task calling this, such as a shutdown arriving
+        while the loop ends, is passed on rather than taken for the loop's.
+        """
         if self._task is None:
             return
         self._task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        try:
             await self._task
-        self._task = None
+        except asyncio.CancelledError:
+            caller = asyncio.current_task()
+            if caller is not None and caller.cancelling():
+                raise
+        finally:
+            self._task = None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import contextlib
 from datetime import timedelta
 
 import pytest
@@ -459,6 +460,39 @@ def test_the_loop_starts_and_stops_as_a_background_task() -> None:
     asyncio.run(lifetime())
 
     assert scripted.calls > 0
+
+
+class _SlowToStopRecorder:
+    """A pass that takes a while to end once cancelled, as a closing write does."""
+
+    def __init__(self) -> None:
+        self.passing = asyncio.Event()
+
+    async def record_due_outcomes(self) -> RecordingPass:
+        self.passing.set()
+        try:
+            await asyncio.sleep(60)
+        finally:
+            await asyncio.shield(asyncio.sleep(0.05))
+        return RecordingPass()
+
+
+def test_stopping_passes_on_a_cancellation_of_its_caller() -> None:
+    """Stopping the loop never swallows a shutdown of the task that stops it."""
+
+    async def shutdown() -> bool:
+        recorder = _SlowToStopRecorder()
+        loop = RunRecordingLoop(recorder, sleep=lambda _seconds: asyncio.sleep(0))  # type: ignore[arg-type]
+        loop.start()
+        await recorder.passing.wait()
+        stopper = asyncio.create_task(loop.stop())
+        await asyncio.sleep(0.01)
+        stopper.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await stopper
+        return stopper.cancelled()
+
+    assert asyncio.run(shutdown())
 
 
 class _TrackedLoop:
