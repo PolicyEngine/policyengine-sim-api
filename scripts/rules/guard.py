@@ -11,6 +11,7 @@ from scripts.rules.adapters import check_adapters
 from scripts.rules.baseline import (
     BaseUnavailableError,
     check_baselines,
+    check_enforced_packages,
     default_base_ref,
     load_base_registry,
 )
@@ -77,10 +78,9 @@ def run_guard(
     today: date | None = None,
     compare_base: bool = True,
 ) -> GuardResult:
-    """Run every registry check, then compare baselines with the base ref.
+    """Run every registry check, then compare the registry with the base ref.
 
-    Stop after the schema errors if the registry does not load. An unreadable
-    base ref is a violation on GitHub Actions and only a note elsewhere.
+    Stop after the schema errors if the registry does not load.
     """
     clear_caches()
     result = GuardResult()
@@ -99,41 +99,51 @@ def run_guard(
         result.violations += check_adapters(registry.agents, root)
     result.violations += _stale_outputs(registry, root)
 
-    ref = base_ref or default_base_ref()
-    if not compare_base:
-        return result
+    if compare_base:
+        _compare_with_base(registry, root, base_ref or default_base_ref(), result)
+    return result
+
+
+def _compare_with_base(
+    registry: Registry, root: Path, ref: str | None, result: GuardResult
+) -> None:
+    """Add what comparing ``registry`` with the one on ``ref`` finds to ``result``.
+
+    An unreadable base ref is a violation on GitHub Actions and only a note
+    elsewhere.
+    """
     if ref is None:
         result.notes.append(
             "no base ref (set --base-ref or GITHUB_BASE_REF); "
             "baseline comparison skipped"
         )
-    else:
-        try:
-            base = load_base_registry(root, ref)
-        except BaseUnavailableError:
-            if os.environ.get("GITHUB_ACTIONS"):
-                result.violations.append(
-                    Violation(
-                        None,
-                        "baseline",
-                        f"base ref {ref} is not available",
-                        "check out with fetch-depth: 0",
-                    )
+        return
+    try:
+        base = load_base_registry(root, ref)
+    except BaseUnavailableError:
+        if os.environ.get("GITHUB_ACTIONS"):
+            result.violations.append(
+                Violation(
+                    None,
+                    "baseline",
+                    f"base ref {ref} is not available",
+                    "check out with fetch-depth: 0",
                 )
-            else:
-                result.notes.append(
-                    f"base ref {ref} is not available; baseline comparison skipped"
-                )
+            )
         else:
-            if base is None:
-                result.notes.append(
-                    f"{ref} has no registry yet; baseline comparison skipped"
-                )
-            else:
-                violations, notes = check_baselines(registry, base)
-                result.violations += violations
-                result.notes += notes
-    return result
+            result.notes.append(
+                f"base ref {ref} is not available; baseline comparison skipped"
+            )
+        return
+    if base is None:
+        result.notes.append(f"{ref} has no registry yet; baseline comparison skipped")
+        return
+    for violations, notes in (
+        check_baselines(registry, base),
+        check_enforced_packages(registry, base, root),
+    ):
+        result.violations += violations
+        result.notes += notes
 
 
 def check() -> list[str]:

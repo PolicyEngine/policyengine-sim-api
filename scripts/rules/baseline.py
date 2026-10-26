@@ -7,7 +7,14 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from scripts.rules.load import REGISTRY_PATH, load_text
-from scripts.rules.model import Registry, Status, Violation
+from scripts.rules.model import (
+    Kind,
+    Registry,
+    Rule,
+    Status,
+    Violation,
+    normalized_package,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -102,4 +109,75 @@ def check_baselines(
         f"rule {rule_id} is new"
         for rule_id in sorted(current_ids - {rule.id for rule in base.rules})
     )
+    return violations, notes
+
+
+def _pyright_listings(registry: Registry) -> dict[str, Rule]:
+    """Map each package a Pyright rule lists to that rule.
+
+    A package listed twice maps to the first rule, the one the Pyright check
+    holds it to.
+    """
+    listings: dict[str, Rule] = {}
+    for rule in registry.rules:
+        if rule.enforcer.kind is not Kind.PYRIGHT:
+            continue
+        for project in rule.enforcer.get("projects", []):
+            listings.setdefault(normalized_package(str(project)), rule)
+    return listings
+
+
+def check_enforced_packages(
+    current: Registry, base: Registry, root: Path
+) -> tuple[list[Violation], list[str]]:
+    """Check that each package an enforced Pyright rule lists on the base still is.
+
+    Return (violations, notes). A package may move to another enforced Pyright
+    rule, or leave with its ``pyproject.toml`` deleted. Moving it to a rule
+    that isn't enforced weakens its check, so that rule needs
+    ``[rule.downgrade]``. A rule that keeps the package under the same id is
+    left to ``check_baselines``, which compares its status.
+    """
+    violations: list[Violation] = []
+    notes: list[str] = []
+    head_listings = _pyright_listings(current)
+    for package, base_rule in _pyright_listings(base).items():
+        if base_rule.status is not Status.ENFORCED:
+            continue
+        if not (root / package / "pyproject.toml").is_file():
+            continue
+        head_rule = head_listings.get(package)
+        if head_rule is None:
+            violations.append(
+                Violation(
+                    base_rule.id,
+                    "baseline",
+                    f"package {package} left enforced rule {base_rule.id}, and no "
+                    "Pyright rule lists it now",
+                    f"list {package} in an enforced Pyright rule again, or delete "
+                    "the package",
+                )
+            )
+            continue
+        if head_rule.status is Status.ENFORCED or head_rule.id == base_rule.id:
+            continue
+        move = (
+            f"package {package} moved from enforced rule {base_rule.id} to "
+            f"{head_rule.status} rule {head_rule.id}"
+        )
+        if head_rule.downgrade:
+            notes.append(
+                f"{move}: {head_rule.downgrade.reason} "
+                f"(issue #{head_rule.downgrade.issue})"
+            )
+        else:
+            violations.append(
+                Violation(
+                    head_rule.id,
+                    "baseline",
+                    move,
+                    f"list {package} in an enforced Pyright rule again; "
+                    f"{PERSON_DOWNGRADE}",
+                )
+            )
     return violations, notes

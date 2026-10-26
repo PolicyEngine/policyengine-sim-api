@@ -58,7 +58,7 @@ gap is visible, rather than leaving it out.
 | `[rule.proof]` | Optional; see "Proof". |
 | `[rule.baseline]` | Only for `ratcheted` rules: `file` listing tolerated violations, and their `count`. |
 | `[[rule.exception]]` | Temporary carve-out: `path`, `reason`, `expires`. |
-| `[rule.downgrade]` | `reason`, and `issue`: the number of the issue that tracks restoring the rule. Required when a rule moves from enforced/ratcheted to advisory/doc-only, or from enforced to ratcheted. |
+| `[rule.downgrade]` | `reason`, and `issue`: the number of the issue that tracks restoring the rule. Required when a rule moves from enforced/ratcheted to advisory/doc-only, or from enforced to ratcheted, and on a rule that lists a package an enforced rule listed on the base branch. |
 
 `blocking` is derived, never declared: a rule blocks merges when its status is
 `enforced` or `ratcheted` and its tier is not `judgment`.
@@ -131,6 +131,11 @@ fail the guard yet.
   `issue`, the number of the issue that tracks restoring the rule. The guard
   accepts any non-empty reason and any positive issue number; the reason is
   for the reviewer.
+- A package in an enforced rule's `enforcer.projects` on the base branch (only
+  `pyright` enforcers list packages) stays in an enforced rule of the same
+  kind while its `pyproject.toml` exists. If it moves to a rule that isn't
+  enforced, that rule needs a `[rule.downgrade]` section. Moving it between
+  enforced rules, or deleting it, passes.
 - **Weakening a rule is a decision for a person, not an agent.** Agents don't
   downgrade a rule, add a `[rule.downgrade]` section, create a baseline or add
   entries to one, or move a package or path out of a rule's scope. When a rule

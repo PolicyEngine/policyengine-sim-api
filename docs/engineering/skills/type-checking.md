@@ -111,20 +111,25 @@ After fixing errors:
 2. set the rule's `[rule.baseline] count` in `rules/registry.toml` to the
    number of entries left.
 
-What stops a baseline growing is the rules guard, which compares each existing
-rule's status and baseline count with the base branch. It fails when the count
-doesn't match the file, when the count is higher than on the base branch, and
-when an enforced rule becomes ratcheted without a `[rule.downgrade]` section,
-which gives a `reason` and an `issue`, the number of the issue that tracks
-restoring the rule. It doesn't check:
+What stops a baseline growing is the rules guard, which compares the registry
+with the base branch. It fails when:
+
+- a rule's baseline count doesn't match its file, or is higher than on the
+  base branch;
+- an enforced rule becomes ratcheted without a `[rule.downgrade]` section,
+  which gives a `reason` and an `issue`, the number of the issue that tracks
+  restoring the rule;
+- a package that an enforced Pyright rule lists on the base branch, and whose
+  `pyproject.toml` still exists, isn't listed by an enforced Pyright rule,
+  unless the rule that lists it now has a `[rule.downgrade]` section. Moving a
+  package to another enforced Pyright rule, or deleting it, passes.
+
+It doesn't check:
 
 - what the reason says, or which issue the number names: any non-empty reason
   and any positive number pass;
 - which entries changed: a change that fixes one error and adds another keeps
-  the count and passes;
-- which packages a rule lists: moving a package from an enforced rule into a
-  new ratcheted rule passes without a reason, because a new rule has no status
-  on the base branch to compare with.
+  the count and passes.
 
 Review is what catches these. `.github/CODEOWNERS` assigns `rules/` to the core
 developers, but `sim.process.rule-machinery-code-owned` is doc-only: merging
