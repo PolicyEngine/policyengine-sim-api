@@ -121,11 +121,16 @@ class ModalCallDispatcher:
 
 
 # Where Modal raises a finished call's own outcome in this process: the
-# worker's exception (whatever its type), the call's timeout, or a failure
-# Modal records for the call. Anything raised elsewhere came from this
-# process's own request to Modal.
+# worker's exception (whatever its type, followed in the traceback by the
+# worker's own frames), the call's timeout, a failure Modal records for the
+# call, or an output that cannot be decoded. Anything raised elsewhere came
+# from this process's own request to Modal.
 _CALL_RESULT_MODULE = "modal._utils.function_utils"
 _CALL_RESULT_FUNCTION = "_process_result"
+# Before raising anything, that function fetches an output Modal stored as a
+# blob (any spawned call's output over 8 KiB) with this process's own
+# requests; an error raised in them is not the call's outcome.
+_OUTPUT_DOWNLOAD_MODULE = "modal._utils.blob_utils"
 # Signals to this process itself, which must never be taken for an outcome.
 OWN_PROCESS_SIGNALS: tuple[type[BaseException], ...] = (
     asyncio.CancelledError,
@@ -136,12 +141,25 @@ OWN_PROCESS_SIGNALS: tuple[type[BaseException], ...] = (
 
 
 def raised_from_call_result(error: BaseException) -> bool:
-    """Return whether Modal raised ``error`` from a finished call's result."""
-    return any(
-        frame.f_globals.get("__name__") == _CALL_RESULT_MODULE
-        and frame.f_code.co_name == _CALL_RESULT_FUNCTION
-        for frame, _ in traceback.walk_tb(error.__traceback__)
-    )
+    """Return whether Modal raised ``error`` as a finished call's outcome.
+
+    That is so when Modal's result processing raised it, or re-raised the
+    worker's exception, but not when the error came from the output download
+    that processing makes first.
+    """
+    frames = [frame for frame, _ in traceback.walk_tb(error.__traceback__)]
+    for position, frame in enumerate(frames):
+        if (
+            frame.f_globals.get("__name__") == _CALL_RESULT_MODULE
+            and frame.f_code.co_name == _CALL_RESULT_FUNCTION
+        ):
+            # The frame it called, if any: a download, or the worker's own.
+            callee = frames[position + 1] if position + 1 < len(frames) else None
+            return (
+                callee is None
+                or callee.f_globals.get("__name__") != _OUTPUT_DOWNLOAD_MODULE
+            )
+    return False
 
 
 def _failed(code: RunErrorCode, message: str) -> CallFailed:
