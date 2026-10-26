@@ -48,9 +48,10 @@ class SimulationDatabase:
     def recording_loop(self) -> RunRecordingLoop:
         """Return the loop that records Modal call outcomes on runs.
 
-        No kind of run has a result recorder yet, so a finished call would
-        stay running until a revision with a recorder records it; no route
-        creates runs yet.
+        No kind of run has a result recorder yet, so a finished call is
+        checked again until a revision with a recorder records it, or until
+        Modal no longer holds its output and the run fails as result_expired;
+        no route creates runs yet.
         """
         return RunRecordingLoop(
             RunRecorder(
