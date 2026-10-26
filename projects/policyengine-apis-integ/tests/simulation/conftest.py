@@ -6,16 +6,13 @@ from http import HTTPStatus
 import httpx
 import pytest
 from policyengine_api_simulation_client import AuthenticatedClient, Client
-from policyengine_api_simulation_client.api.default import (
-    get_budget_window_job_status_budget_window_jobs_batch_job_id_get,
-    submit_budget_window_batch_simulate_economy_budget_window_post,
-)
 from policyengine_api_simulation_client.models import (
     BudgetWindowBatchRequest,
     BudgetWindowBatchStatusResponse,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from . import endpoint_calls
 from .polling import poll_retry_delay_seconds
 
 BUDGET_WINDOW_YEARS = ["2026", "2027"]
@@ -97,11 +94,8 @@ def _poll_budget_window_batch(
     last_status_code: HTTPStatus | None = None
     last_content = b""
 
-    status_endpoint = get_budget_window_job_status_budget_window_jobs_batch_job_id_get
     while time.monotonic() < deadline:
-        response = status_endpoint.sync_detailed(
-            batch_job_id=batch_job_id, client=client
-        )
+        response = endpoint_calls.budget_window_status(client, batch_job_id)
         last_status_code = response.status_code
         last_content = response.content
 
@@ -202,13 +196,9 @@ def decode_response_content():
 @pytest.fixture
 def submit_budget_window_batch(client: Client | AuthenticatedClient):
     """Submit a budget-window batch through the generated client."""
-    submit_endpoint = submit_budget_window_batch_simulate_economy_budget_window_post
 
     def submit(request: BudgetWindowBatchRequest):
-        return submit_endpoint.sync_detailed(
-            client=client,
-            body=request,
-        )
+        return endpoint_calls.submit_budget_window(client, request)
 
     return submit
 
