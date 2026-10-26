@@ -200,6 +200,36 @@ class RuleTableTest(unittest.TestCase):
         )
 
 
+class ExceptionIssueTest(unittest.TestCase):
+    def test_an_exception_issue_must_be_a_positive_whole_number(self) -> None:
+        for issue in (0, -5, "5", True, 5.0):
+            with self.subTest(issue=issue):
+                raw = tomllib.loads(REGISTRY)
+                raw["rule"] = [
+                    {
+                        **SINGLE_TABLES_RULE,
+                        "exception": {
+                            "path": "pkg/*.py",
+                            "reason": "legacy",
+                            "issue": issue,
+                        },
+                    }
+                ]
+
+                registry, violations = parse(raw)
+
+                self.assertIn(
+                    "[ex.layers.single-tables] schema: ex.layers.single-tables"
+                    ".exception.issue must be a positive issue number. "
+                    "Fix: write issue = <number>.",
+                    [str(violation) for violation in violations],
+                )
+                assert registry is not None
+                rule = registry.rule("ex.layers.single-tables")
+                assert rule is not None
+                self.assertIsNone(rule.exceptions[0].issue)
+
+
 class DowngradeTest(unittest.TestCase):
     """A [rule.downgrade] says why the rule is weaker and which issue restores it."""
 

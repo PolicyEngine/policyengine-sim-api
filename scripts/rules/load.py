@@ -336,7 +336,7 @@ def _exceptions(
             else None
         )
         issue = entry.get("issue")
-        if issue is not None and (not isinstance(issue, int) or issue <= 0):
+        if issue is not None and _issue_number(issue) is None:
             c.add(
                 rule_id,
                 f"{label}.exception.issue must be a positive issue number",
