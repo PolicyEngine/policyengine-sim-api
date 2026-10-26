@@ -144,7 +144,7 @@ async def test_a_call_that_cannot_be_recorded_is_cancelled_and_its_runs_failed(
     run = execution(transitions, run_id)
     assert run.status is RunStatus.FAILED
     assert run.error.code is RunErrorCode.DISPATCH_FAILED
-    assert "could not be recorded" in run.error.message
+    assert run.error.message == "The Modal call could not be recorded."
     assert any(
         getattr(record, "modal_call_id", None) == "fc-1" for record in caplog.records
     )
