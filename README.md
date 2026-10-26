@@ -147,8 +147,9 @@ See [AGENTS.md](AGENTS.md) and
 for the canonical same-repository draft PR workflow.
 
 1. Create a feature branch (never commit to `main`).
-2. Open a GitHub issue for non-trivial work; put `Fixes #ISSUE_NUMBER` as the
-   first line of the PR description.
+2. Open a GitHub issue for the work; put `Fixes #ISSUE_NUMBER` as the first
+   line of the PR description. Every PR needs one: the `PR description` check
+   fails otherwise.
 3. Make changes and run the relevant tests locally.
 4. Open a same-repository draft PR: `make push-pr-branch`, then
    `gh pr create --draft`.
