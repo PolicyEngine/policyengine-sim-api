@@ -107,6 +107,11 @@ jobs:
     # Full CI runs only on the lowest unmerged pull request in a stack.
     if: ${{ !github.event.pull_request.stack || github.event.pull_request.stack.base.ref == github.event.pull_request.base.ref }}
     runs-on: ubuntu-latest
+    # The checkout reads the repository, and the rules guard looks up the
+    # tracking issue of each [rule.downgrade] with the job's token.
+    permissions:
+      contents: read
+      issues: read
 
     steps:
     - uses: actions/checkout@v6
@@ -129,6 +134,10 @@ jobs:
       run: pip install "shellcheck-py==0.11.0.1"
 
     - name: Run quality guards
+      env:
+        # Read by gh, which the rules guard runs to confirm that each
+        # [rule.downgrade] names an open issue; without it the guard fails.
+        GH_TOKEN: ${{ github.token }}
       run: python scripts/run_quality_guards.py
 
   pyright:
