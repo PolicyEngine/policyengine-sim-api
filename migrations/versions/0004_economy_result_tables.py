@@ -147,6 +147,15 @@ def upgrade() -> None:
         sa.Column("average_household_income_change", sa.Double(), nullable=False),
         sa.Column("relative_household_income_change", sa.Double(), nullable=False),
         sa.Column("population", sa.Double(), nullable=False),
+        sa.Column("disclosure_tier", sa.Text(), nullable=True),
+        sa.Column("average_household_income_change_lower", sa.Double(), nullable=True),
+        sa.Column("average_household_income_change_upper", sa.Double(), nullable=True),
+        sa.Column("relative_household_income_change_lower", sa.Double(), nullable=True),
+        sa.Column("relative_household_income_change_upper", sa.Double(), nullable=True),
+        sa.CheckConstraint(
+            "disclosure_tier IS NULL OR disclosure_tier IN ('reported', 'approximate')",
+            name=op.f("ck_constituency_impacts_disclosure_tier"),
+        ),
         sa.CheckConstraint(
             "position >= 0", name=op.f("ck_constituency_impacts_position")
         ),
@@ -291,6 +300,15 @@ def upgrade() -> None:
         sa.Column("average_household_income_change", sa.Double(), nullable=False),
         sa.Column("relative_household_income_change", sa.Double(), nullable=False),
         sa.Column("population", sa.Double(), nullable=False),
+        sa.Column("disclosure_tier", sa.Text(), nullable=True),
+        sa.Column("average_household_income_change_lower", sa.Double(), nullable=True),
+        sa.Column("average_household_income_change_upper", sa.Double(), nullable=True),
+        sa.Column("relative_household_income_change_lower", sa.Double(), nullable=True),
+        sa.Column("relative_household_income_change_upper", sa.Double(), nullable=True),
+        sa.CheckConstraint(
+            "disclosure_tier IS NULL OR disclosure_tier IN ('reported', 'approximate')",
+            name=op.f("ck_local_authority_impacts_disclosure_tier"),
+        ),
         sa.CheckConstraint(
             "position >= 0", name=op.f("ck_local_authority_impacts_position")
         ),

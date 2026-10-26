@@ -82,7 +82,9 @@ the comparison step succeeded (`RunTransitions.complete_comparison`);
 result model. `read_economy_comparison` rebuilds the result exactly from the
 rows and from labels the region catalog supplies (`EconomyResultLabels`): the
 model and data versions of the run's catalog version, and constituency and
-local-authority names and map positions by code.
+local-authority names and map positions by code. Each UK area's disclosure
+tier and the 90% interval bounds of its income changes are stored with its
+figures (null for a result computed before disclosure control).
 
 ## Ownership rules
 
