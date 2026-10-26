@@ -10,6 +10,8 @@
 
 schema_version = 1
 repo = "policyengine-sim-api"
+# Each [rule.downgrade] names an open issue here that tracks restoring the rule.
+issue_repository = "PolicyEngine/policyengine-sim-api"
 
 [[category]]
 id = "boundaries"

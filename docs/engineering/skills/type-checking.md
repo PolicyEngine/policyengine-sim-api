@@ -124,26 +124,39 @@ with the base branch. It fails when:
 - a package that an enforced Pyright rule lists on the base branch, and whose
   `pyproject.toml` still exists, isn't listed by an enforced Pyright rule,
   unless the rule that lists it now has a `[rule.downgrade]` section. Moving a
-  package to another enforced Pyright rule, or deleting it, passes.
+  package to another enforced Pyright rule, or deleting it, passes;
+- a `[rule.downgrade]` section's `issue` isn't an open issue in this
+  repository. The guard looks up every section's issue on every run, with
+  `gh api` and the token in `GH_TOKEN` or `GITHUB_TOKEN`. In CI, a missing
+  token or a failed lookup fails it. Locally, without a token, it prints a note
+  for each issue it didn't check; to check them, run it with
+  `GH_TOKEN="$(gh auth token)"`.
 
 It doesn't check:
 
-- what the reason says, or which issue the number names: any non-empty reason
-  and any positive number pass;
+- what the reason says, or whether the issue is about restoring this rule: any
+  non-empty reason and any open issue pass;
 - which entries changed: a change that fixes one error and adds another keeps
-  the count and passes.
+  the count and passes;
+- whether a `[rule.downgrade]` section is new: a section already on the base
+  branch also covers a further weakening of its rule, such as another package
+  moving into it.
 
 Review is what catches these. `.github/CODEOWNERS` assigns `rules/` to the core
 developers, but `sim.process.rule-machinery-code-owned` is doc-only: merging
 doesn't require their approval. Whoever reviews a pull request that changes a
-baseline, a rule's status or a rule's `enforcer.projects` checks it.
+baseline, a rule's status, a rule's `enforcer.projects` or a
+`[rule.downgrade]` section checks it.
 
 When a person decides to ratchet a package's rule, they add the
 `[rule.downgrade]` section, and `--write-baseline` creates its baseline: it
 refuses an error an existing baseline doesn't list, but records every current
 error when the file doesn't exist yet.
 
-Once a baseline is empty, delete it and make the rule `enforced`.
+Once a baseline is empty, delete it, make the rule `enforced` and remove its
+`[rule.downgrade]` section, which an enforced rule can't have. That pull
+request can then close the tracking issue. Closing the issue while the rule
+stays weakened fails the guard on every pull request.
 
 ## Fixing errors
 

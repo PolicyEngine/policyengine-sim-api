@@ -58,7 +58,7 @@ gap is visible, rather than leaving it out.
 | `[rule.proof]` | Optional; see "Proof". |
 | `[rule.baseline]` | Only for `ratcheted` rules: `file` listing tolerated violations, and their `count`. |
 | `[[rule.exception]]` | Temporary carve-out: `path`, `reason`, `expires`. |
-| `[rule.downgrade]` | `reason`, and `issue`: the number of the issue that tracks restoring the rule. Required when a rule moves from enforced/ratcheted to advisory/doc-only, or from enforced to ratcheted; on a new rule that starts ratcheted with a baseline count above 0; and on a rule that lists a package an enforced rule listed on the base branch. |
+| `[rule.downgrade]` | `reason`, and `issue`: the number of an open issue in the registry's `issue_repository` that tracks restoring the rule. Not allowed on an enforced rule. Required when a rule moves from enforced/ratcheted to advisory/doc-only, or from enforced to ratcheted; on a new rule that starts ratcheted with a baseline count above 0; and on a rule that lists a package an enforced rule listed on the base branch. |
 
 `blocking` is derived, never declared: a rule blocks merges when its status is
 `enforced` or `ratcheted` and its tier is not `judgment`.
@@ -130,9 +130,17 @@ fail the guard yet.
   against the base branch.
 - Moving a rule from enforced/ratcheted to advisory/doc-only, or from enforced
   to ratcheted, needs a `[rule.downgrade]` section with a `reason` and an
-  `issue`, the number of the issue that tracks restoring the rule. The guard
-  accepts any non-empty reason and any positive issue number; the reason is
-  for the reviewer.
+  `issue`.
+- A `[rule.downgrade]` section's `issue` is an open issue in
+  `issue_repository`, set at the top of the registry, that tracks restoring
+  the rule. The guard looks up every section's issue on every run, with
+  `gh api` and the token in `GH_TOKEN` or `GITHUB_TOKEN`. On GitHub Actions, a
+  missing token or a failed lookup fails it. Elsewhere, without a token, it
+  prints a note for each issue it didn't check. Closing the issue while the
+  rule stays weakened fails the guard on every pull request, and an enforced
+  rule can't have the section, so the pull request that restores the rule
+  removes it. The guard accepts any non-empty reason and any open issue;
+  whether the issue is about this rule is for the reviewer.
 - A package in an enforced rule's `enforcer.projects` on the base branch (only
   `pyright` enforcers list packages) stays in an enforced rule of the same
   kind while its `pyproject.toml` exists. If it moves to a rule that isn't

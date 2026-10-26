@@ -24,9 +24,10 @@ How the first line is read:
 - An empty or missing (``null``) description fails.
 - The number is ASCII digits without a leading zero.
 
-``require_open_issue`` is the issue lookup on its own, for other checks that
-need an open issue. Its errors say only what is wrong, and each caller adds its
-own fix.
+``require_open_issue`` is the issue lookup on its own. The rules guard
+(``scripts/rules/tracking_issues.py``) loads this file to check that each
+``[rule.downgrade]`` names an open issue. Its errors say only what is wrong, and
+each caller adds its own fix.
 """
 
 from __future__ import annotations

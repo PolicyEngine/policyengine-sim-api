@@ -31,6 +31,7 @@ from scripts.rules.resolve import (
     resolve_enforcer,
     resolve_proof_ci,
 )
+from scripts.rules.tracking_issues import check_tracking_issues
 from scripts.rules.validate import validate
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -98,6 +99,9 @@ def run_guard(
     if registry.agents is not None:
         result.violations += check_adapters(registry.agents, root)
     result.violations += _stale_outputs(registry, root)
+    violations, notes = check_tracking_issues(registry)
+    result.violations += violations
+    result.notes += notes
 
     if compare_base:
         _compare_with_base(registry, root, base_ref or default_base_ref(), result)
@@ -146,6 +150,13 @@ def _compare_with_base(
         result.notes += notes
 
 
-def check() -> list[str]:
-    """Adapter for scripts/run_quality_guards.py."""
-    return [str(v) for v in run_guard(REPO_ROOT).violations]
+def check(root: Path = REPO_ROOT) -> list[str]:
+    """Adapter for scripts/run_quality_guards.py: print the notes, return failures.
+
+    The notes say what the guard didn't check, such as a tracking issue it
+    had no token to look up.
+    """
+    result = run_guard(root)
+    for note in result.notes:
+        print(f"note: {note}")
+    return [str(violation) for violation in result.violations]

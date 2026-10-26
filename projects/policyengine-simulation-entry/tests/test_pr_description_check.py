@@ -431,8 +431,10 @@ def test_the_check_requires_a_pull_request_event(fakes, tmp_path):
 
 # --- The issue lookup, for other checks -----------------------------------
 #
-# Other checks can reuse the lookup. Its errors say only what is wrong; each
-# caller adds its own fix, so none of these messages mentions the description.
+# The rules guard reuses the lookup to check that each [rule.downgrade] names
+# an open issue (scripts/rules/tracking_issues.py). Its errors say only what
+# is wrong; each caller adds its own fix, so none of these messages mentions
+# the description.
 
 
 @pytest.fixture

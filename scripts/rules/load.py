@@ -6,6 +6,7 @@ as violations instead of raising, so one run shows every problem at once.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from datetime import date
 from enum import Enum
@@ -44,7 +45,10 @@ _TOP_KEYS = {
     "rule",
     "agents",
     "ci_scripts",
+    "issue_repository",
 }
+# A GitHub repository's owner/name.
+_REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 _AGENTS_KEYS = {"instructions", "adapters", "max_adapter_lines"}
 _CI_SCRIPTS_KEYS = {
     "workflows",
@@ -452,6 +456,22 @@ def _rule(c: _Collector, raw: object, index: int) -> Rule | None:
     )
 
 
+def _issue_repository(c: _Collector, raw: dict[str, Any]) -> str:
+    """Read ``issue_repository``, which is optional but must be owner/name."""
+    value = raw.get("issue_repository")
+    if value is None:
+        return ""
+    if isinstance(value, str) and _REPOSITORY.fullmatch(value):
+        return value
+    c.add(
+        None,
+        "registry.issue_repository must be <owner>/<name>, the GitHub repository "
+        "that tracks issues",
+        'set issue_repository = "<owner>/<name>"',
+    )
+    return ""
+
+
 def parse(raw: dict[str, Any]) -> tuple[Registry | None, list[Violation]]:
     """Turn raw TOML data into a ``Registry``, collecting every schema problem."""
     c = _Collector()
@@ -485,6 +505,7 @@ def parse(raw: dict[str, Any]) -> tuple[Registry | None, list[Violation]]:
         rules=tuple(rule for rule in rules if rule is not None),
         agents=_agents(c, raw.get("agents")),
         ci_scripts=_ci_scripts(c, raw.get("ci_scripts")),
+        issue_repository=_issue_repository(c, raw),
     )
     return registry, c.violations
 

@@ -281,6 +281,8 @@ class Registry:
     rules: tuple[Rule, ...]
     agents: Agents | None = None
     ci_scripts: CiScripts | None = None
+    # The GitHub repository, as owner/name, whose issues downgrades name.
+    issue_repository: str = ""
 
     def rule(self, rule_id: str) -> Rule | None:
         """Return the rule with ``rule_id``, or None if the registry has none."""
