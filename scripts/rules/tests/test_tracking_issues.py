@@ -392,8 +392,12 @@ class RepositoryLookupTest(unittest.TestCase):
         self.assertEqual(registry.issue_repository, "PolicyEngine/policyengine-sim-api")
 
 
-class RegistrySchemaTest(unittest.TestCase):
-    """Where tracking issues live, and which rules may have a downgrade."""
+class RegistrySchemaTest(TrackingIssueTestCase):
+    """Where tracking issues live, and which rules may have a downgrade.
+
+    The guard runs on registries with a downgrade, so these tests also use the
+    fake gh, without a token.
+    """
 
     def test_the_issue_repository_is_owner_and_name(self) -> None:
         for value in ('"repo"', '"a/b/c"', '"owner/"', "912"):
