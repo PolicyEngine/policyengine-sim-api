@@ -6,7 +6,8 @@ run, and links to each run's stored files. A simulation's own figures
 (poverty rates, inequality, cliff exposure) belong to its simulation run; the
 comparison of a baseline and a reform (budget, programs, deciles, labour
 supply, geographies) belongs to the report run. Each report run also records
-the optional sections its result holds and its SPM provenance. Rows are
+the optional sections its result holds, its SPM provenance, and the model and
+data versions the result reports. Rows are
 written in the transaction that marks a run succeeded and never change: the
 runtime role may read and insert them but not update or delete them. A
 simulation's own figures are keyed by the report run that computed them too,

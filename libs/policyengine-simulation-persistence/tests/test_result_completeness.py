@@ -5,13 +5,17 @@ from __future__ import annotations
 import types
 import typing
 
-from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
+from policyengine_simulation_contract.macro_output import (
+    SingleYearMacroOutput,
+    UKGeographyDisclosureTier,
+)
 from policyengine_simulation_contract.spm import SPMComparisonProvenance
 from policyengine_simulation_persistence import (
     RESULT_FIELD_STORAGE,
     simulation_metadata,
 )
 from policyengine_simulation_persistence.economy_results import REFUSED_OTHER_KIND
+from policyengine_simulation_persistence.result_tables import UK_AREA_DISCLOSURE_TIERS
 from pydantic import BaseModel, RootModel
 
 # Stored whole, as one JSON column.
@@ -72,3 +76,8 @@ def test_every_storage_location_exists() -> None:
         table_name, column_name = location.split(".")
         table = simulation_metadata.tables[f"simulation.{table_name}"]
         assert column_name in table.c, path
+
+
+def test_the_tables_accept_every_disclosure_tier_the_contract_names() -> None:
+    """A new tier needs a migration of the UK area tables' check."""
+    assert typing.get_args(UKGeographyDisclosureTier) == UK_AREA_DISCLOSURE_TIERS
