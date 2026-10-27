@@ -178,3 +178,37 @@ def test_a_pass_without_the_modal_environment_only_records() -> None:
 
     assert status == 0
     assert inner.passes == 1
+
+
+def test_the_job_starts_economy_calls_in_its_own_modal_environment() -> None:
+    environment = {
+        "SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT": "staging",
+        "APP_ENVIRONMENT": "Staging",
+    }
+
+    configured = safety_check._database_recorder(DATABASE_URL, environment=environment)
+    unconfigured = safety_check._database_recorder(DATABASE_URL, environment={})
+
+    assert configured.waiting is not None
+    assert configured.waiting.artifact_environment == "staging"
+    assert configured.waiting.dispatch.dispatcher._environment == "staging"
+    assert unconfigured.waiting is None
+
+
+def test_the_default_pass_reads_the_environment_main_was_given(monkeypatch) -> None:
+    built_with = []
+    recorder = _OnePass(RecordingPass(checked=1))
+
+    def build(database_url, *, environment):
+        built_with.append((database_url, environment))
+        return recorder
+
+    monkeypatch.setattr(safety_check, "_database_recorder", build)
+    environment = {"SIMULATION_DATABASE_URL": DATABASE_URL, "APP_ENVIRONMENT": "x"}
+
+    status = safety_check.main(
+        environment=environment, start_observability=_Telemetry().start
+    )
+
+    assert status == 0
+    assert built_with == [(DATABASE_URL, environment)]

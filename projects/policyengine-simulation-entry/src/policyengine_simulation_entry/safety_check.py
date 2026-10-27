@@ -31,6 +31,7 @@ import logging
 import os
 import sys
 from dataclasses import asdict, dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Protocol
 
 from policyengine_simulation_observability.observability import (
@@ -108,13 +109,15 @@ class SafetyCheckPass:
         return recording
 
 
-def _database_recorder(database_url: str) -> DueOutcomeRecorder:
+def _database_recorder(
+    database_url: str, *, environment: Mapping[str, str]
+) -> DueOutcomeRecorder:
     """Build the pass; it starts waiting work when the Modal environment is set."""
     database = SimulationDatabase.from_url(database_url)
-    modal_environment = os.environ.get("SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT", "")
+    modal_environment = environment.get("SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT", "")
     waiting = (
         database.economy_routes(
-            artifact_environment=os.environ.get("APP_ENVIRONMENT", "local").lower(),
+            artifact_environment=environment.get("APP_ENVIRONMENT", "local").lower(),
             modal_environment=modal_environment,
         ).reports
         if modal_environment
@@ -126,19 +129,21 @@ def _database_recorder(database_url: str) -> DueOutcomeRecorder:
 def main(
     *,
     environment: Mapping[str, str] | None = None,
-    build_recorder: Callable[[str], DueOutcomeRecorder] = _database_recorder,
+    build_recorder: Callable[[str], DueOutcomeRecorder] | None = None,
     start_observability: Callable[[str], Telemetry] = _start_observability,
 ) -> int:
     """Run one pass and return the process exit status.
 
     Logs go through the observability runtime, as the web service's do. Only
     a signal to this process propagates; any other error fails the
-    execution, and the next scheduled execution tries again.
+    execution, and the next scheduled execution tries again. Without
+    ``build_recorder``, the pass reads its settings from ``environment``.
     """
     values = os.environ if environment is None else environment
+    builder = build_recorder or partial(_database_recorder, environment=values)
     telemetry = start_observability(values.get("APP_ENVIRONMENT", "local"))
     try:
-        return _run_pass(values, build_recorder)
+        return _run_pass(values, builder)
     finally:
         telemetry.shutdown()
 
