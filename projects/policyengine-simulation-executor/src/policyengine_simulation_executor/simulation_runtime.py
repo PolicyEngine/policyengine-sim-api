@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any
 from policyengine_simulation_contract.dataset_uri import runtime_dataset_uri
 from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_contract.spm import SPMInputError, spm_error_detail
-from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.stages import ANNUAL_IMPACT_STAGES, Stage
 from policyengine_simulation_observability.telemetry import split_internal_payload
 
@@ -352,8 +351,7 @@ def _uk_area_simulations(
     )
 
     area_role = {"dataset_role": "uk_area"}
-    with scopes.span(
-        runtime,
+    with runtime.span(
         ANNUAL_IMPACT_STAGES.name(Stage.DATASET_RESOLUTION),
         attributes=area_role,
     ):
@@ -363,8 +361,8 @@ def _uk_area_simulations(
                 code=region.code, dataset_reference=routed_uk_area_dataset_name()
             ),
         )
-    with scopes.span(
-        runtime, ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD), attributes=area_role
+    with runtime.span(
+        ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD), attributes=area_role
     ):
         dataset = _load_dataset(
             params, selection=selection, country_module=country_module
@@ -376,8 +374,7 @@ def _uk_area_simulations(
     for kind, policy in zip(
         ("uk_area_baseline", "uk_area_reform"), policies, strict=True
     ):
-        with scopes.span(
-            runtime,
+        with runtime.span(
             ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_BUILD),
             attributes={"simulation_kind": kind},
         ):
@@ -414,16 +411,16 @@ def _run_local_area_breakdown_core(
     impacts only (``LocalAreaBreakdownOutput``).
     """
     require_local_area_breakdown(simulation_params, country=country)
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.COUNTRY_MODULE_LOAD)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.COUNTRY_MODULE_LOAD)):
         country_module = _country_module(country)
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.REGION_RESOLUTION)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REGION_RESOLUTION)):
         region_resolution = resolve_region(
             country_module=country_module,
             country=country,
             params=simulation_params,
         )
     runtime.set_context(region=region_resolution.code)
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.POLICY_NORMALIZATION)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.POLICY_NORMALIZATION)):
         policies = (
             normalise_policy(simulation_params.get("baseline")),
             normalise_policy(simulation_params.get("reform")),
@@ -463,7 +460,7 @@ def _run_simulation_impl_core(
     runtime: ObservabilityRuntime,
     progress: JobProgressReporter = NULL_JOB_PROGRESS,
 ) -> dict:
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REQUEST_PARSE)):
         simulation_params, telemetry, metadata = split_internal_payload(params)
     metadata = metadata or {}
     from policyengine_simulation_executor.spm import (
@@ -490,20 +487,20 @@ def _run_simulation_impl_core(
             simulation_params, runtime=runtime, progress=progress, country=country
         )
 
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.COUNTRY_MODULE_LOAD)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.COUNTRY_MODULE_LOAD)):
         country_module = _country_module(country)
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.REGION_RESOLUTION)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.REGION_RESOLUTION)):
         region_resolution = resolve_region(
             country_module=country_module,
             country=country,
             params=simulation_params,
         )
     runtime.set_context(region=region_resolution.code)
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.DATASET_RESOLUTION)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.DATASET_RESOLUTION)):
         dataset_selection = _resolve_dataset_selection(
             simulation_params, region_resolution=region_resolution
         )
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.DATASET_LOAD)):
         baked_folder = state_datasets.baked_state_data_folder(
             country=country,
             selection=dataset_selection,
@@ -536,13 +533,12 @@ def _run_simulation_impl_core(
         region_code=region_resolution.code,
         dataset_name=dataset_selection.name,
     )
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.POLICY_NORMALIZATION)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.POLICY_NORMALIZATION)):
         baseline_policy = normalise_policy(simulation_params.get("baseline"))
         reform_policy = normalise_policy(simulation_params.get("reform"))
 
     logger.info("Initialising baseline and reform simulations")
-    with scopes.span(
-        runtime,
+    with runtime.span(
         ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_BUILD),
         attributes={"simulation_kind": "baseline"},
     ):
@@ -553,8 +549,7 @@ def _run_simulation_impl_core(
             policy=baseline_policy,
             region=region_resolution,
         )
-    with scopes.span(
-        runtime,
+    with runtime.span(
         ANNUAL_IMPACT_STAGES.name(Stage.SIMULATION_BUILD),
         attributes={"simulation_kind": "reform"},
     ):

@@ -9,7 +9,6 @@ import os
 import tempfile
 from typing import TYPE_CHECKING
 
-from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.stages import ANNUAL_IMPACT_STAGES, Stage
 
 if TYPE_CHECKING:
@@ -62,7 +61,7 @@ def setup_gcp_credentials(
     with contextlib.ExitStack() as credentials_file_stack:
         try:
             credential_span = (
-                scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.CREDENTIAL_SETUP))
+                runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.CREDENTIAL_SETUP))
                 if runtime is not None
                 else contextlib.nullcontext()
             )

@@ -173,12 +173,14 @@ section is still in the registry fails the guard on every pull request.
   same line: `# pyright: ignore[reportAttributeAccessIssue]  # <reason>`.
 - If an error shows a real bug, first write a test that demonstrates it, then
   fix it.
-- Open observability spans and operations with `scopes.span(runtime, ...)` and
-  `scopes.operation(runtime, ...)` from
-  `policyengine_simulation_observability.scopes`, not `runtime.span(...)` or
-  `runtime.operation(...)`. policyengine-observability types its scope
-  managers as possibly suppressing exceptions, so after `with runtime.span(...)`
-  Pyright reports each variable the block assigned as possibly unbound.
+- Open observability spans and operations with `runtime.span(...)` and
+  `runtime.operation(...)`. policyengine-observability 3.0.4 types them
+  correctly: their `__exit__` and `__aexit__` return `Literal[False]`, so
+  Pyright knows they never suppress an exception and doesn't report a variable
+  the block assigns as possibly unbound after it. Every package that depends
+  on policyengine-observability requires 3.0.4 or later, and
+  `libs/policyengine-simulation-observability/tests/test_scope_exit_typing.py`
+  fails if an older release is installed.
 - Before reading a simulation's output frames, narrow
   `<simulation>.output_dataset.data` with the `EntityFrames` protocol in
   `policyengine_simulation_executor.output_frames`, and keep reading through

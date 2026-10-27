@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.stages import BUDGET_WINDOW_STAGES, Stage
 from src.modal.budget_window_context import build_batch_context
 from src.modal.budget_window_scheduler import BudgetWindowBatchRunner
@@ -37,7 +36,7 @@ def run_budget_window_batch_impl(
         msg = "run_budget_window_batch must run inside a Modal function call"
         raise RuntimeError(msg)
     runtime.set_context(batch_job_id=batch_job_id)
-    with scopes.span(runtime, BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_CONTEXT)):
+    with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.BUDGET_WINDOW_CONTEXT)):
         context = build_batch_context(
             params,
             batch_job_id=batch_job_id,

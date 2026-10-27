@@ -24,7 +24,6 @@ from policyengine_simulation_contract.stage12_manifest import (
     V2ManifestLoader,
     V2WorkerVersion,
 )
-from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.identifiers import (
     normalize_observability_id,
 )
@@ -493,8 +492,7 @@ class Stage12ComparisonBackend:
             else STAGE12_CANONICAL_REPORT_STAGES
         )
         try:
-            with scopes.span(
-                self._runtime,
+            with self._runtime.span(
                 stage_plan.name(Stage.STAGE12_ENTRY_DISPATCH),
                 attributes={
                     "evaluation_id": str(parent.evaluation_id),
