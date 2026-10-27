@@ -163,7 +163,8 @@ The entrypoint runs economy reports on v2 itself, without the old gateway:
   succeeded and the runs a submitter left pending for ten minutes.
 - After each staging promotion, the `economy_staging_check` job submits a
   report on Wales, current law compared with itself, to the stable URL, runs
-  it again with fresh runs, and reads the result back
+  it again with fresh runs when the submission reused runs an earlier
+  deployment finished, and reads the result back
   (`authenticated_tests/test_staging_economy_report.py`). It needs a staging
   catalog version for the deployed PolicyEngine.py version. Its failure is
   shown in the run without stopping the production deployment.

@@ -2,10 +2,12 @@
 
 The staging deployment runs this after promoting the revision it tested, so
 it reaches that revision through the stable URL: it submits a report on
-Wales, current law compared with itself, runs it again with fresh runs so
-this deployment's Modal functions calculate it (about a minute or two of
-Modal time), waits until the run's comparison is recorded, and reads the
-result back. It needs the staging simulation database, sim's Modal token,
+Wales, current law compared with itself, waits until a run this
+deployment's Modal functions calculated has its comparison recorded, and
+reads the result back. When the submission reused runs an earlier
+deployment finished, it runs the report again with fresh runs; either way
+it costs one simulation call and one comparison call, about a minute or
+two of Modal time. It needs the staging simulation database, sim's Modal token,
 and a staging catalog version for the deployed PolicyEngine.py version.
 
 The deployed-auth runs collect this directory too; the test runs only where
@@ -71,6 +73,16 @@ def headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def needs_fresh_run(submitted: dict) -> bool:
+    """Return whether the submission reused runs an earlier deployment finished.
+
+    Only a reused run can have succeeded when the submission answers. A run
+    the submission created is calculated by this deployment's functions; a
+    run an earlier deployment is still calculating is waited for as it is.
+    """
+    return submitted["run"]["baseline_run"]["status"] == "succeeded"
+
+
 def _wait_for_run(base_url: str, headers: dict[str, str], report_id: str, run_id: str):
     deadline = time.monotonic() + FINISH_WITHIN_SECONDS
     while True:
@@ -93,7 +105,7 @@ def _wait_for_run(base_url: str, headers: dict[str, str], report_id: str, run_id
 def test_a_small_economy_report_runs_and_reads_back(
     base_url: str, headers: dict[str, str]
 ) -> None:
-    """Submit, run again with fresh runs, wait, and read the result back."""
+    """Submit, run again if needed, wait, and read the result back."""
     policyengine_version = _required("SIMULATION_STAGING_ECONOMY_POLICYENGINE_VERSION")
     submitted = httpx.post(
         f"{base_url}/v2/economy-reports",
@@ -110,22 +122,22 @@ def test_a_small_economy_report_runs_and_reads_back(
     )
     assert submitted.status_code == 201, submitted.text
     report_id = submitted.json()["id"]
+    run_id = submitted.json()["run"]["id"]
+    if needs_fresh_run(submitted.json()):
+        rerun = httpx.post(
+            f"{base_url}/v2/economy-reports/{report_id}/runs",
+            json={
+                "policyengine_version": policyengine_version,
+                "trigger": "manual",
+                "force": True,
+            },
+            headers=headers,
+            timeout=120,
+        )
+        assert rerun.status_code == 201, rerun.text
+        run_id = rerun.json()["id"]
 
-    # The submission can reuse an earlier deployment's run; a forced run is
-    # calculated by this deployment's functions.
-    rerun = httpx.post(
-        f"{base_url}/v2/economy-reports/{report_id}/runs",
-        json={
-            "policyengine_version": policyengine_version,
-            "trigger": "manual",
-            "force": True,
-        },
-        headers=headers,
-        timeout=120,
-    )
-    assert rerun.status_code == 201, rerun.text
-
-    report = _wait_for_run(base_url, headers, report_id, rerun.json()["id"])
+    report = _wait_for_run(base_url, headers, report_id, run_id)
 
     assert report["status"] == "succeeded", report["run"]["error"]
     result = SingleYearMacroOutput.model_validate(report["result"])

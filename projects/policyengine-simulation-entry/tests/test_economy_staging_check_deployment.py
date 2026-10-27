@@ -105,3 +105,28 @@ def test_the_staging_deployment_promotes_so_the_check_runs() -> None:
         ]
         assert staging, workflow
         assert all(job["with"]["promote_entrypoint"] is True for job in staging)
+
+
+def _staging_check_module():
+    import importlib.util
+
+    path = REPOSITORY_ROOT / "projects" / "policyengine-simulation-entry" / CHECK
+    spec = importlib.util.spec_from_file_location("staging_economy_check", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_check_runs_again_only_when_the_submission_reused_finished_runs() -> None:
+    check = _staging_check_module()
+
+    def submitted(status: str) -> dict:
+        return {"run": {"baseline_run": {"status": status}}}
+
+    # A submission that calculates its own run already uses this
+    # deployment's functions; one that reused finished runs does not.
+    assert check.needs_fresh_run(submitted("running")) is False
+    assert check.needs_fresh_run(submitted("pending")) is False
+    assert check.needs_fresh_run(submitted("succeeded")) is True

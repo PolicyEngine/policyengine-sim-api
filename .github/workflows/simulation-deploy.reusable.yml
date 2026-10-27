@@ -1031,9 +1031,10 @@ jobs:
     name: Run a small v2 economy report on staging
     # After the staging promotion, the stable URL serves the revision this
     # deployment tested: submit a small report there, run it again with
-    # fresh runs on this deployment's Modal functions, and read it back once
-    # its comparison is recorded. The v2 economy path serves no user yet, so
-    # a failure is reported without holding back the production deployment.
+    # fresh runs if the submission reused runs an earlier deployment
+    # finished, and read it back once its comparison is recorded. The v2
+    # economy path serves no user yet, so a failure is reported without
+    # holding back the production deployment.
     if: >-
       ${{
         !cancelled() &&
