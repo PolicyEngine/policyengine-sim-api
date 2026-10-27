@@ -210,22 +210,38 @@ def _status_difference(where: str, gateway: Answer, manifest: Answer) -> Differe
     return Difference(where, "status", gateway.describe(), manifest.describe())
 
 
+def _describe_body(body: object) -> str:
+    if isinstance(body, dict):
+        return "JSON object"
+    return f"not a JSON object ({type(body).__name__})"
+
+
+def _uncomparable(where: str, gateway: Answer, manifest: Answer) -> Difference | None:
+    """Return why two answers cannot be compared as JSON objects, or None.
+
+    Both must be HTTP 200 with a JSON object body. Two answers that fail the
+    same way were still not compared, so they are reported too.
+    """
+    if gateway.status != HTTP_OK or manifest.status != HTTP_OK:
+        return _status_difference(where, gateway, manifest)
+    if not isinstance(gateway.body, dict) or not isinstance(manifest.body, dict):
+        return Difference(
+            where, "body", _describe_body(gateway.body), _describe_body(manifest.body)
+        )
+    return None
+
+
 def compare_sources(base_url: str, fetch_answer: Fetch = fetch) -> list[Difference]:
     """Fetch both sources' answers from ``base_url`` and list their differences."""
     differences: list[Difference] = []
     gateway_whole = fetch_answer(f"{base_url}/versions")
     manifest_whole = fetch_answer(f"{base_url}/internal/v2/versions")
-    if (
-        gateway_whole.status == manifest_whole.status == HTTP_OK
-        and isinstance(gateway_whole.body, dict)
-        and isinstance(manifest_whole.body, dict)
-    ):
+    whole_problem = _uncomparable("GET /versions", gateway_whole, manifest_whole)
+    if whole_problem is not None:
+        differences.append(whole_problem)
+    elif isinstance(gateway_whole.body, dict) and isinstance(manifest_whole.body, dict):
         differences.extend(
             compare_whole_answers(gateway_whole.body, manifest_whole.body)
-        )
-    else:
-        differences.append(
-            _status_difference("GET /versions", gateway_whole, manifest_whole)
         )
 
     kind_answers = {
@@ -244,18 +260,19 @@ def compare_sources(base_url: str, fetch_answer: Fetch = fetch) -> list[Differen
     )
     for kind, (gateway_kind, manifest_kind) in kind_answers.items():
         where = f"GET /versions/{kind}"
-        if gateway_kind.status == manifest_kind.status == HTTP_OK:
-            differences.extend(
-                compare_routes(
-                    where,
-                    gateway_kind.body,
-                    manifest_kind.body,
-                    gateway_versions=gateway_versions,
-                    manifest_versions=manifest_versions,
-                )
+        kind_problem = _uncomparable(where, gateway_kind, manifest_kind)
+        if kind_problem is not None:
+            differences.append(kind_problem)
+            continue
+        differences.extend(
+            compare_routes(
+                where,
+                gateway_kind.body,
+                manifest_kind.body,
+                gateway_versions=gateway_versions,
+                manifest_versions=manifest_versions,
             )
-        else:
-            differences.append(_status_difference(where, gateway_kind, manifest_kind))
+        )
 
     where = f"GET /versions/{UNKNOWN_KIND}"
     gateway_unknown = fetch_answer(f"{base_url}/versions/{UNKNOWN_KIND}")

@@ -208,6 +208,47 @@ def test_a_route_that_does_not_answer_is_reported_by_status(compare_module):
     ] == [("GET /versions", "status", "HTTP 200", "HTTP 503")]
 
 
+@pytest.mark.parametrize(
+    ("gateway_body", "manifest_body", "gateway_description", "manifest_description"),
+    [
+        ([], [], "not a JSON object (list)", "not a JSON object (list)"),
+        (None, None, "not a JSON object (NoneType)", "not a JSON object (NoneType)"),
+        ({"latest": "1.700.0"}, "text", "JSON object", "not a JSON object (str)"),
+    ],
+)
+def test_a_kind_answer_that_is_not_a_json_object_is_never_a_match(
+    compare_module,
+    gateway_body,
+    manifest_body,
+    gateway_description,
+    manifest_description,
+):
+    routes = route_answers(GATEWAY_ANSWER, manifest_answer_for(GATEWAY_ANSWER))
+    routes["/versions/us"] = (200, gateway_body)
+    routes["/internal/v2/versions/us"] = (200, manifest_body)
+
+    differences = differences_between(compare_module, routes)
+
+    assert [
+        (difference.where, difference.key, difference.gateway, difference.manifest)
+        for difference in differences
+    ] == [("GET /versions/us", "body", gateway_description, manifest_description)]
+
+
+def test_a_whole_answer_that_is_not_a_json_object_is_reported_by_body(
+    compare_module,
+):
+    routes = route_answers(GATEWAY_ANSWER, manifest_answer_for(GATEWAY_ANSWER))
+    routes["/versions"] = (200, [])
+
+    differences = differences_between(compare_module, routes)
+
+    assert [
+        (difference.where, difference.key, difference.gateway, difference.manifest)
+        for difference in differences
+    ] == [("GET /versions", "body", "not a JSON object (list)", "JSON object")]
+
+
 def test_an_unknown_kind_must_be_rejected_the_same_way(compare_module):
     routes = route_answers(GATEWAY_ANSWER, manifest_answer_for(GATEWAY_ANSWER))
     routes["/internal/v2/versions/unknown-kind"] = (404, {"detail": "Not Found"})
