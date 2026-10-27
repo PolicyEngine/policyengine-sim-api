@@ -17,12 +17,13 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 
 from policyengine_simulation_persistence import RunError, RunErrorCode
 from policyengine_simulation_persistence.run_store import utc_now
+
+from policyengine_simulation_entry.run_recording import SAFETY_CHECK_INTERVAL
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Collection
@@ -39,8 +40,9 @@ def _event_name(prefix: str, outcome: str) -> str:
     return f"{prefix}_{outcome}"
 
 
-# The first check of a new call; a recording pass backs off from there.
-FIRST_CHECK_DELAY = timedelta(seconds=2)
+# A call reports when it ends; the safety check first looks at one that has
+# not reported after this long.
+FIRST_CHECK_DELAY = SAFETY_CHECK_INTERVAL
 
 
 class DispatchOutcome(StrEnum):
