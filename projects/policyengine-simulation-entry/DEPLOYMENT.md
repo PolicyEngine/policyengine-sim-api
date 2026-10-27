@@ -81,6 +81,16 @@ missing. The service already allows unauthenticated requests through Cloud
 Run (`--allow-unauthenticated`): callers prove who they are to the
 entrypoint, so Modal needs no Google credentials.
 
+The reports come from the v2 Modal app's `report_call_ended` function, which
+the v2 functions start as their last step (`src/modal/call_reports.py` in the
+executor). It posts to the entrypoint's main URL: the v2 deploy job reads the
+service's stable URL (`status.url`) with
+`.github/scripts/simulation-entry-main-url.sh` and passes it to `modal deploy`
+as `SIMULATION_ENTRY_URL`. Only the revision that serves traffic receives
+these requests. `beta` does not promote its candidate yet, so in staging the
+main URL reaches an older revision until it does (plan item 1.39), and
+staging calls are recorded by the safety check only once it exists there.
+
 ## Safety check
 
 A call whose report never arrives is recorded by the safety check, the Cloud
