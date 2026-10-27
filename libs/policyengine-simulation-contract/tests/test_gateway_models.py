@@ -507,6 +507,8 @@ class TestOperationalResponses:
             "us": {"latest": "1.500.0"},
             "uk": {"latest": "2.66.0"},
             "bundles": {},
+            "published_at": {},
+            "latest_since": None,
         }
 
     def test_health_and_readiness_statuses_are_constrained(self):

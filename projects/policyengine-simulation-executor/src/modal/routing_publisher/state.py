@@ -3,7 +3,8 @@
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, TypedDict
+from datetime import UTC, datetime
+from typing import Any, NotRequired, TypedDict
 
 from packaging.version import InvalidVersion, Version
 from src.modal.routing_publisher.bundles import build_bundle_manifest_metadata
@@ -52,6 +53,18 @@ class RoutingState(TypedDict):
     # its manifests are only known to be mappings until validate_routing_state
     # checks them against their routes.
     bundles: dict[str, Mapping[str, Any]]
+    # When each policyengine version's route was first published, as an ISO
+    # 8601 UTC time. Republishing a version keeps its date. States written
+    # before this field existed have no entry until their next publish.
+    published_at: NotRequired[dict[str, str]]
+    # When latest.policyengine last changed: a publish that advanced it, a
+    # forced latest or a rollback.
+    latest_since: NotRequired[str]
+
+
+def utc_now() -> str:
+    """Return the current UTC time as the routing state records it."""
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def is_newer_version(candidate: str, current: str | None) -> bool:
@@ -124,6 +137,13 @@ def coerce_routing_state(value: object) -> RoutingState:
             for key, value in bundles.items()
             if isinstance(key, str) and isinstance(value, dict)
         }
+
+    published_at = _routing_map(value.get("published_at"))
+    if published_at:
+        coerced["published_at"] = published_at
+    latest_since = value.get("latest_since")
+    if isinstance(latest_since, str) and latest_since:
+        coerced["latest_since"] = latest_since
 
     return coerced
 
@@ -229,12 +249,17 @@ def build_next_routing_state(
     current_state: object,
     deployed: DeployedAppVersions,
     force_latest: bool = False,
+    now: str | None = None,
 ) -> RoutingState:
     """Return ``current_state`` with routes and the bundle manifest for a new app added.
 
     ``latest`` advances only to a newer policyengine version, unless
     ``force_latest`` (an intentional rollback). Raises ValueError when the US
     or UK version differs from the installed bundle's model version.
+
+    A publish that adds a policyengine version's route records
+    ``published_at`` for it, and a change of ``latest.policyengine`` records
+    ``latest_since``; both take ``now`` (default: the current UTC time).
     """
     app_name = deployed.app_name
     policyengine_version = deployed.policyengine_version
@@ -256,11 +281,18 @@ def build_next_routing_state(
     )
 
     state = coerce_routing_state(current_state)
+    newly_routed = policyengine_version not in state["routes"]["policyengine"]
     state["generation"] = f"{policyengine_version}:{app_name}"
     state["routes"]["policyengine"][policyengine_version] = app_name
     state["routes"]["us"][us_version] = app_name
     state["routes"]["uk"][uk_version] = app_name
     state["bundles"][policyengine_version] = manifest
+    timestamp = now or utc_now()
+    # Dates are recorded only when this publish is the event: a route that did
+    # not exist, or a change of latest. A state from before dates were recorded
+    # has no date for what it already routes, rather than a later, wrong one.
+    if newly_routed:
+        state.setdefault("published_at", {})[policyengine_version] = timestamp
 
     previous_latest = state["latest"].get("policyengine")
     should_advance = (
@@ -272,6 +304,8 @@ def build_next_routing_state(
             "us": us_version,
             "uk": uk_version,
         }
+        if previous_latest != policyengine_version:
+            state["latest_since"] = timestamp
 
     validate_routing_state(
         state,
@@ -285,6 +319,7 @@ def build_restored_routing_state(
     current_state: object,
     policyengine_version: str,
     expected_latest: str | None = None,
+    now: str | None = None,
 ) -> RoutingState:
     """Point ``latest`` back at a policyengine.py version that was already published.
 
@@ -297,6 +332,9 @@ def build_restored_routing_state(
     ``expected_latest`` makes the rollback conditional: it is refused unless
     ``latest.policyengine`` is still that version (the release being rolled
     back), so a rollback never overwrites a newer release published meanwhile.
+
+    A rollback that moves ``latest.policyengine`` records ``latest_since``
+    (``now``, default: the current UTC time).
 
     To undo a release completely (its routes as well as ``latest``), restore
     the routing plan its deployment recorded (:func:`restore_routing_plan`):
@@ -335,6 +373,8 @@ def build_restored_routing_state(
         "us": restored_models["us"],
         "uk": restored_models["uk"],
     }
+    if current_latest != policyengine_version:
+        state["latest_since"] = now or utc_now()
     state["generation"] = f"rollback:{policyengine_version}:{app_name}"
     validate_routing_state(
         state,

@@ -50,6 +50,24 @@ def routing_state_bundles(state: dict) -> dict:
     return bundles if isinstance(bundles, dict) else {}
 
 
+def routing_state_published_at(state: dict) -> dict[str, str]:
+    """Return when each policyengine version's route was first published."""
+    published_at = state.get("published_at")
+    if not isinstance(published_at, dict):
+        return {}
+    return {
+        version: timestamp
+        for version, timestamp in published_at.items()
+        if isinstance(version, str) and isinstance(timestamp, str)
+    }
+
+
+def routing_state_latest_since(state: dict) -> str | None:
+    """Return when latest.policyengine last changed, or None."""
+    latest_since = state.get("latest_since")
+    return latest_since if isinstance(latest_since, str) and latest_since else None
+
+
 def _bundle_manifest(state: dict, policyengine_version: str | None) -> dict:
     if policyengine_version is None:
         return {}

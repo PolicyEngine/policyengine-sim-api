@@ -61,6 +61,11 @@ def routing_state() -> dict:
         "latest": {"policyengine": "6.2.7", "us": "1.700.0", "uk": "2.126.8"},
         "routes": {"policyengine": {}, "us": {}, "uk": {}},
         "bundles": {},
+        "published_at": {
+            "6.2.6": "2026-09-01T10:00:00Z",
+            "6.2.7": "2026-09-08T10:00:00Z",
+        },
+        "latest_since": "2026-09-08T10:00:00Z",
     }
     for version, (us, uk, sha) in releases.items():
         state["routes"]["policyengine"][version] = _app(version)
@@ -84,6 +89,8 @@ def test_smoke_fixture_is_the_gateway_versions_response(mock_modal, client):
     assert body["policyengine"]["latest"] == "6.2.7"
     assert body["policyengine"]["6.2.7"] == _app("6.2.7")
     assert body["uk"]["latest"] == "2.126.8"
+    assert body["latest_since"] == "2026-09-08T10:00:00Z"
+    assert body["published_at"]["6.2.6"] == "2026-09-01T10:00:00Z"
     if os.environ.get("REGENERATE_VERSIONS_FIXTURE"):
         FIXTURE.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n")
     assert json.loads(FIXTURE.read_text()) == body
