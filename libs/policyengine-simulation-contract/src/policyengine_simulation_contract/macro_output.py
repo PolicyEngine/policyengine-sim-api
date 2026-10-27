@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, RootModel
 
 from policyengine_simulation_contract.spm import SPMComparisonProvenance
 
@@ -237,10 +237,6 @@ class CliffImpactOutput(MacroOutputModel):
 UKGeographyDisclosureTier = Literal["reported", "approximate"]
 
 
-def _is_none(value: object) -> bool:
-    return value is None
-
-
 class UKAreaDisclosureFields(MacroOutputModel):
     """Disclosure tier and 90% intervals of a published UK area's income changes.
 
@@ -269,16 +265,10 @@ class ConstituencyImpactRecord(UKAreaDisclosureFields):
     ``relative_household_income_change`` the relative change in the area's total
     household net income, both rounded to the order of their standard error.
     ``population`` is the weighted number of households.
-
-    ``x`` and ``y`` are the area's integer map position. Results from apps
-    deployed for older policyengine.py versions still carry them; current
-    results leave both out rather than sending them as null.
     """
 
     constituency_code: str
     constituency_name: str
-    x: int | None = Field(default=None, exclude_if=_is_none)
-    y: int | None = Field(default=None, exclude_if=_is_none)
     average_household_income_change: float
     relative_household_income_change: float
     population: float
@@ -292,8 +282,6 @@ class LocalAuthorityImpactRecord(UKAreaDisclosureFields):
 
     local_authority_code: str
     local_authority_name: str
-    x: int | None = Field(default=None, exclude_if=_is_none)
-    y: int | None = Field(default=None, exclude_if=_is_none)
     average_household_income_change: float
     relative_household_income_change: float
     population: float

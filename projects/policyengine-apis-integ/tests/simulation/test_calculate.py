@@ -4,6 +4,7 @@ These tests run against the staging Modal deployment and verify
 that economy-wide simulations complete successfully.
 """
 
+import inspect
 import json
 import time
 from collections.abc import Mapping
@@ -14,10 +15,12 @@ from typing import Protocol, TypeGuard, cast
 import pytest
 from policyengine_api_simulation_client import AuthenticatedClient, Client
 from policyengine_api_simulation_client.models import (
+    ConstituencyImpactRecord,
     JobStage,
     JobStatusResponse,
     JobSubmitResponse,
     LocalAreaBreakdownOutput,
+    LocalAuthorityImpactRecord,
     SimulationRequest,
 )
 
@@ -373,26 +376,10 @@ def test_breakdown_assertions_accept_generated_client_objects() -> None:
 
 
 @pytest.mark.parametrize(
-    "map_position",
-    [
-        pytest.param({}, id="current-app"),
-        pytest.param({"x": 56, "y": -40}, id="older-app"),
-    ],
+    "record_model", [ConstituencyImpactRecord, LocalAuthorityImpactRecord]
 )
-def test_generated_client_reads_area_records_with_and_without_x_and_y(
-    map_position: dict[str, int],
-) -> None:
-    # Apps deployed for older policyengine.py versions still send x and y.
-    breakdown = {
-        **_BREAKDOWN_RESULT,
-        "constituency_impact": [{**_BREAKDOWN_CONSTITUENCY, **map_position}],
-        "local_authority_impact": [{**_BREAKDOWN_LOCAL_AUTHORITY, **map_position}],
-    }
-
-    status = JobStatusResponse.from_dict({"status": "complete", "result": breakdown})
-
-    assert isinstance(status.result, LocalAreaBreakdownOutput)
-    assert status.result.to_dict() == breakdown
+def test_generated_client_area_records_have_no_x_or_y(record_model: type) -> None:
+    assert {"x", "y"}.isdisjoint(inspect.signature(record_model).parameters)
 
 
 @pytest.mark.parametrize(

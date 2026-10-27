@@ -8,7 +8,7 @@ authors = [
 license = {file = "../../LICENSE"}
 requires-python = ">=3.13"
 dependencies = [
-    "pydantic>=2.12",
+    "pydantic>=2.0",
     "packaging>=24",
     # gateway_models embeds the TelemetryEnvelope from the observability lib.
     "policyengine-simulation-observability",

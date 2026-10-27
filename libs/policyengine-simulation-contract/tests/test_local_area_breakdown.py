@@ -23,8 +23,6 @@ from pydantic import ValidationError
 CONSTITUENCY = {
     "constituency_code": "E14001063",
     "constituency_name": "Aldershot",
-    "x": 56,
-    "y": -40,
     "average_household_income_change": -150.0,
     "relative_household_income_change": -0.0026,
     "population": 40_530.0,
@@ -37,8 +35,6 @@ CONSTITUENCY = {
 LOCAL_AUTHORITY = {
     "local_authority_code": "E06000063",
     "local_authority_name": "Cumberland",
-    "x": 4,
-    "y": 18,
     "average_household_income_change": -120.0,
     "relative_household_income_change": -0.002,
     "population": 120_000.0,
@@ -203,43 +199,42 @@ def test_each_area_level_reads_its_records_as_its_own_type():
     ]
 
 
-def _without_map_position(record: dict[str, object]) -> dict[str, object]:
-    return {key: value for key, value in record.items() if key not in {"x", "y"}}
-
-
-# Newer executors leave out each area's map position (x and y).
-BREAKDOWN_WITHOUT_MAP_POSITIONS = {
-    **BREAKDOWN,
-    "constituency_impact": [_without_map_position(CONSTITUENCY)],
-    "local_authority_impact": [_without_map_position(LOCAL_AUTHORITY)],
-}
-
-
-def test_a_breakdown_without_map_positions_round_trips_without_them():
-    output = LocalAreaBreakdownOutput.model_validate(BREAKDOWN_WITHOUT_MAP_POSITIONS)
-
-    assert output.model_dump(mode="json") == BREAKDOWN_WITHOUT_MAP_POSITIONS
-
-
-def test_a_job_status_reads_a_breakdown_without_map_positions():
-    response = JobStatusResponse(
-        status="complete", result=BREAKDOWN_WITHOUT_MAP_POSITIONS
-    )
-
-    assert isinstance(response.result, LocalAreaBreakdownOutput)
-    assert response.model_dump(mode="json")["result"] == (
-        BREAKDOWN_WITHOUT_MAP_POSITIONS
-    )
-
-
-def test_a_national_result_reads_area_lists_without_map_positions():
+def test_a_national_result_reads_its_area_lists():
     national = {
         **NATIONAL,
-        "constituency_impact": [_without_map_position(CONSTITUENCY)],
-        "local_authority_impact": [_without_map_position(LOCAL_AUTHORITY)],
+        "constituency_impact": [CONSTITUENCY],
+        "local_authority_impact": [LOCAL_AUTHORITY],
     }
 
     response = JobStatusResponse(status="complete", result=national)
 
     assert isinstance(response.result, SingleYearMacroOutput)
     assert response.model_dump(mode="json")["result"] == national
+
+
+# Apps deployed for older policyengine.py versions still send each area's map
+# position as x and y. The contract has no such fields, so their results are
+# refused: this contract is deployed only once no such app is routed.
+@pytest.mark.parametrize(
+    "result",
+    [
+        pytest.param(
+            {**BREAKDOWN, "constituency_impact": [{**CONSTITUENCY, "x": 56, "y": -40}]},
+            id="breakdown-constituency",
+        ),
+        pytest.param(
+            {
+                **BREAKDOWN,
+                "local_authority_impact": [{**LOCAL_AUTHORITY, "x": 4, "y": 18}],
+            },
+            id="breakdown-local-authority",
+        ),
+        pytest.param(
+            {**NATIONAL, "constituency_impact": [{**CONSTITUENCY, "x": 56, "y": -40}]},
+            id="national-constituency",
+        ),
+    ],
+)
+def test_a_job_status_refuses_area_records_with_x_and_y(result):
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        JobStatusResponse(status="complete", result=result)
