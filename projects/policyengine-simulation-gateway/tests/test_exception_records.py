@@ -5,13 +5,19 @@ request the gateway answers with a 4xx already gets a ``request.completed``
 record whose outcome is ``client_error``, so an exception record for it adds
 only a false alarm to the daily error report. A server failure (5xx) keeps
 its exception record.
+
+An uncoded error while describing the route's bundle comes from the deployed
+bundle manifest, not from the request, so it is a server failure.
 """
 
+import re
 from typing import NamedTuple
 
 import pytest
 from fastapi.testclient import TestClient
+from policyengine_simulation_contract.hf_dataset import HuggingFaceDatasetReferenceError
 from policyengine_simulation_gateway import job_creation_routes
+from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 
 # The country the deploy pipeline's authentication test sends, expecting 400.
 AUTHENTICATION_PROBE_COUNTRY = "__authentication_probe__"
@@ -89,17 +95,20 @@ def test__given_unknown_country__then_returns_400_without_exception_record(
 
 
 @pytest.mark.parametrize("submission", SUBMISSIONS)
-def test__given_bundle_lookup_error__then_returns_400_without_exception_record(
+def test__given_bundle_lookup_error__then_records_it_and_returns_redacted_500(
     mock_modal,
     client: TestClient,
     recorded_exceptions: list[RecordedException],
     monkeypatch: pytest.MonkeyPatch,
     submission: Submission,
 ):
-    bundle_lookup_message = "The requested bundle has no dataset for this request"
+    malformed_dataset_reference = "hf://policyengine/internal-repo/missing.h5"
+    manifest_error = HuggingFaceDatasetReferenceError(
+        f"Malformed dataset reference in bundle manifest: {malformed_dataset_reference}"
+    )
 
     def reject_bundle_lookup(*_arguments: object) -> None:
-        raise ValueError(bundle_lookup_message)
+        raise manifest_error
 
     monkeypatch.setattr(
         job_creation_routes, "build_policyengine_bundle", reject_bundle_lookup
@@ -109,9 +118,19 @@ def test__given_bundle_lookup_error__then_returns_400_without_exception_record(
         submission.path, json={"country": "us", **submission.request_fields}
     )
 
-    assert response.status_code == 400
-    assert response.json() == {"detail": bundle_lookup_message}
-    assert recorded_exceptions == []
+    assert response.status_code == 500
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["result"] is None
+    assert "errors" not in body
+    assert re.fullmatch(
+        r"Simulation failed \(correlation_id=[0-9a-f]{32}\)", body["error"]
+    )
+    assert malformed_dataset_reference not in response.text
+    assert OBSERVABILITY_ID_HEADER in response.headers
+    assert recorded_exceptions == [
+        (manifest_error, {"handled": True, "status_code": 500}),
+    ]
     assert mock_modal["func"].calls == []
 
 
