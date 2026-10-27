@@ -102,6 +102,7 @@ required_variables=(
   SIMULATION_DATABASE_URL_SECRET_NAME
   MODAL_TOKEN_ID_SECRET_NAME
   MODAL_TOKEN_SECRET_SECRET_NAME
+  MODAL_WORKSPACE_ID_VALUE
   OBSERVABILITY_SERVICE_NAMESPACE
   OBSERVABILITY_TRACE_PROJECT_ID
   OTEL_EXPORTER_OTLP_ENDPOINT
@@ -128,6 +129,10 @@ esac
   || fail "TAG is invalid"
 [[ "${ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.gserviceaccount\.com$ ]] \
   || fail "ENTRYPOINT_RUNTIME_SERVICE_ACCOUNT is invalid"
+# The Modal workspace whose call-report function may report that calls
+# ended (the entrypoint also checks the environment, MODAL_ENVIRONMENT).
+[[ "${MODAL_WORKSPACE_ID_VALUE}" =~ ^ac-[A-Za-z0-9]+$ ]] \
+  || fail "MODAL_WORKSPACE_ID_VALUE must be a Modal workspace ID"
 [[ "${ENTRYPOINT_MIN_INSTANCES}" =~ ^[0-9]+$ ]] \
   || fail "ENTRYPOINT_MIN_INSTANCES must be a non-negative integer"
 [[ "${ENTRYPOINT_MAX_INSTANCES}" =~ ^[0-9]+$ ]] \
@@ -191,6 +196,8 @@ jq -n '
     OTEL_METRICS_EXPORTER: "otlp",
     OTEL_TRACES_SAMPLER_ARG: "1.0",
     POLICYENGINE_OTEL_GOOGLE_AUDIENCE: env.POLICYENGINE_OTEL_GOOGLE_AUDIENCE,
+    SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID: env.MODAL_WORKSPACE_ID_VALUE,
+    SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT: env.MODAL_ENVIRONMENT,
     STAGE12_ENABLED: (
       if env.DEPLOY_STAGE12_V2 == "true" then env.STAGE12_ENABLED_VALUE else "0" end
     )
