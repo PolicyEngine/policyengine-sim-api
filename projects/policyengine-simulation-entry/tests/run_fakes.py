@@ -286,15 +286,6 @@ class FakeRunTransitions:
             if run.modal_call_id == modal_call_id and run.status is RunStatus.RUNNING
         ]
 
-    def record_simulation_call_running(
-        self, modal_call_id: str, *, next_check_at: datetime
-    ) -> bool:
-        """Set the next check of a call's running runs."""
-        runs = self._call_runs(modal_call_id)
-        for run in runs:
-            run.next_check_at = next_check_at
-        return bool(runs)
-
     def complete_simulation_call(self, modal_call_id: str, write_results) -> bool:
         """Mark a call's runs succeeded after the writer succeeds."""
         runs = self._call_runs(modal_call_id)
@@ -350,17 +341,6 @@ class FakeRunTransitions:
             )
             for comparison in due
         ]
-
-    def record_comparison_running(
-        self, report_run_id: UUID, *, next_check_at: datetime
-    ) -> bool:
-        """Set a running comparison step's next check."""
-        return (
-            self._change_comparison(
-                report_run_id, RunStatus.RUNNING, next_check_at=next_check_at
-            )
-            is not None
-        )
 
     def complete_comparison(self, report_run_id: UUID, write_results) -> bool:
         """Mark a running comparison step succeeded after the writer succeeds."""

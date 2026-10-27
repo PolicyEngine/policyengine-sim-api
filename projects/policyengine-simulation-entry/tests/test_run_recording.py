@@ -21,7 +21,6 @@ from policyengine_simulation_entry.run_recording import (
     RecordingPass,
     ResultRecorders,
     RunRecorder,
-    next_check_delay,
 )
 from policyengine_simulation_persistence import (
     HEAD_REVISION,
@@ -38,6 +37,9 @@ from run_fakes import FakeInspector, FakeRunTransitions, ManualClock
 
 class BudgetResult(BaseModel):
     budgetary_impact: float
+
+
+WORKER_ERROR = RunError(RunErrorCode.WORKER_ERROR, "The Modal call raised KeyError.")
 
 
 class RecordingRecorder:
@@ -73,25 +75,7 @@ def _run(recorder) -> RecordingPass:
     return asyncio.run(recorder.record_due_outcomes())
 
 
-@pytest.mark.parametrize(
-    ("check_count", "seconds"),
-    [
-        (0, 2),
-        (1, 2),
-        (2, 4),
-        (3, 8),
-        (5, 32),
-        (6, 60),
-        (40, 60),
-        (47, 60),
-        (10_000, 60),
-    ],
-)
-def test_checks_back_off_up_to_a_minute(check_count, seconds) -> None:
-    assert next_check_delay(check_count) == timedelta(seconds=seconds)
-
-
-def test_a_running_call_is_checked_again_later() -> None:
+def test_a_running_call_is_checked_again_after_its_claims_lease() -> None:
     recorder, transitions, inspector, clock = _recorder()
     (run_id,) = transitions.running_call("fc-1")
 
@@ -102,8 +86,10 @@ def test_a_running_call_is_checked_again_later() -> None:
     run = transitions.runs[run_id]
     assert run.status is RunStatus.RUNNING
     assert run.check_count == 1
-    assert run.next_check_at == clock() + timedelta(seconds=2)
+    assert run.next_check_at == clock() + CHECK_LEASE
     assert _run(recorder).checked == 0
+    clock.advance(CHECK_LEASE)
+    assert _run(recorder).checked == 1
 
 
 def test_a_failed_call_fails_its_runs() -> None:
@@ -169,7 +155,7 @@ def test_a_kind_without_a_recorder_waits_for_an_instance_with_one() -> None:
     run = transitions.runs[run_id]
     assert run.status is RunStatus.RUNNING
     assert run.error is None
-    assert run.next_check_at == clock() + timedelta(seconds=2)
+    assert run.next_check_at == clock() + CHECK_LEASE
 
 
 def test_an_invalid_output_fails_its_runs_without_repeating_it() -> None:
@@ -263,9 +249,7 @@ def test_comparison_steps_are_checked_and_recorded() -> None:
     assert recording.still_running == 1
     assert transitions.comparisons[finished].status is RunStatus.SUCCEEDED
     assert [record.id for _, record, _ in comparisons.writes] == [finished]
-    assert transitions.comparisons[waiting].next_check_at == clock() + timedelta(
-        seconds=2
-    )
+    assert transitions.comparisons[waiting].next_check_at == clock() + CHECK_LEASE
 
 
 def test_dispatches_left_for_ten_minutes_are_failed_by_a_pass() -> None:
@@ -322,18 +306,17 @@ def test_a_database_error_in_one_check_ends_with_its_pass(caplog) -> None:
     recorder, transitions, inspector, clock = _recorder()
     (broken_run,) = transitions.running_call("fc-broken")
     (failed_run,) = transitions.running_call("fc-failed")
-    inspector.outcomes["fc-failed"] = CallFailed(
-        RunError(RunErrorCode.WORKER_ERROR, "The Modal call raised KeyError.")
-    )
-    keep_running = transitions.record_simulation_call_running
+    for call_id in ("fc-broken", "fc-failed"):
+        inspector.outcomes[call_id] = CallFailed(WORKER_ERROR)
+    fail_call = transitions.fail_simulation_call
 
-    def drop_one_connection(modal_call_id, *, next_check_at):
+    def drop_one_connection(modal_call_id, error):
         if modal_call_id == "fc-broken":
             msg = "connection lost"
             raise ConnectionError(msg)
-        return keep_running(modal_call_id, next_check_at=next_check_at)
+        return fail_call(modal_call_id, error)
 
-    transitions.record_simulation_call_running = drop_one_connection  # type: ignore[method-assign]
+    transitions.fail_simulation_call = drop_one_connection  # type: ignore[method-assign]
 
     recording = _run(recorder)
 
@@ -363,14 +346,15 @@ class _NotAnException(BaseException):
 
 
 def test_a_non_exception_error_in_one_check_ends_with_its_pass(caplog) -> None:
-    recorder, transitions, _, clock = _recorder()
+    recorder, transitions, inspector, clock = _recorder()
     (run_id,) = transitions.running_call("fc-broken")
+    inspector.outcomes["fc-broken"] = CallFailed(WORKER_ERROR)
 
-    def raise_a_group(modal_call_id, *, next_check_at):
+    def raise_a_group(modal_call_id, error):
         message = "writes"
         raise builtins.BaseExceptionGroup(message, [_NotAnException()])
 
-    transitions.record_simulation_call_running = raise_a_group  # type: ignore[method-assign]
+    transitions.fail_simulation_call = raise_a_group  # type: ignore[method-assign]
 
     recording = _run(recorder)
 
@@ -382,13 +366,14 @@ def test_a_non_exception_error_in_one_check_ends_with_its_pass(caplog) -> None:
 
 
 def test_a_signal_to_this_process_stops_a_check() -> None:
-    recorder, transitions, _, _ = _recorder()
+    recorder, transitions, inspector, _ = _recorder()
     transitions.running_call("fc-1")
+    inspector.outcomes["fc-1"] = CallFailed(WORKER_ERROR)
 
-    def interrupted(modal_call_id, *, next_check_at):
+    def interrupted(modal_call_id, error):
         raise KeyboardInterrupt
 
-    transitions.record_simulation_call_running = interrupted  # type: ignore[method-assign]
+    transitions.fail_simulation_call = interrupted  # type: ignore[method-assign]
 
     with pytest.raises(KeyboardInterrupt):
         _run(recorder)

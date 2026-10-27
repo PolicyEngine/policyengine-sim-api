@@ -282,17 +282,6 @@ class RunTransitions:
         )
         return tuple(SimulationRunRecord.from_row(row) for row in rows)
 
-    def record_simulation_call_running(
-        self, modal_call_id: str, *, next_check_at: datetime
-    ) -> bool:
-        """Set the next check of a call's runs that are still running."""
-        with self.engine.begin() as connection:
-            return bool(
-                self._change_simulation_call(
-                    connection, modal_call_id, {"next_check_at": next_check_at}
-                )
-            )
-
     def complete_simulation_call(
         self, modal_call_id: str, write_results: SimulationResultWriter
     ) -> bool:
@@ -486,21 +475,6 @@ class RunTransitions:
                 .all()
             )
         return [ReportRunRecord.from_row(row) for row in rows]
-
-    def record_comparison_running(
-        self, report_run_id: UUID, *, next_check_at: datetime
-    ) -> bool:
-        """Set the next check of a comparison step that is still running."""
-        with self.engine.begin() as connection:
-            return (
-                self._change_comparison(
-                    connection,
-                    report_run_id,
-                    expected=RunStatus.RUNNING,
-                    values={"comparison_next_check_at": next_check_at},
-                )
-                is not None
-            )
 
     def complete_comparison(
         self, report_run_id: UUID, write_results: ComparisonResultWriter
