@@ -116,6 +116,9 @@ def _check_output_path(output: Path) -> None:
     if not output.parent.is_dir():
         msg = f"{output.parent} is not a directory"
         raise CommandRefusedError(msg)
+    if not os.access(output.parent, os.W_OK | os.X_OK):
+        msg = f"cannot write to {output.parent}"
+        raise CommandRefusedError(msg)
 
 
 def _validation_lines(error: ValidationError) -> list[str]:

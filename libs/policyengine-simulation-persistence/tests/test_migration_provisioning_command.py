@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from typing import TYPE_CHECKING, Any
@@ -524,3 +525,27 @@ def test_a_dry_run_that_finds_conflicts_exits_with_one(
             "reason": "v1 report 4512 is already migrated with a different year",
         }
     ]
+
+
+@pytest.mark.skipif(
+    os.geteuid() == 0, reason="the superuser may write to any directory"
+)
+def test_an_output_directory_it_cannot_write_to_is_refused_first(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    definitions = _write_definitions(tmp_path, economy_report_definition())
+    read_only = tmp_path / "read-only"
+    read_only.mkdir()
+    read_only.chmod(0o500)
+    try:
+        exit_code = _run(
+            definitions,
+            "--output",
+            str(read_only / "report-mapping.json"),
+            database_url=UNREACHABLE_URL,
+        )
+    finally:
+        read_only.chmod(0o700)
+
+    assert exit_code == 2
+    assert f"cannot write to {read_only}" in capsys.readouterr().err

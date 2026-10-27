@@ -376,7 +376,8 @@ def test_a_dry_run_reports_a_report_migrated_with_other_simulations(
             ),
         )
     ]
-    assert (result.new_simulations, result.new_reports) == (2, 0)
+    # A run creates nothing for a report that conflicts, so neither does this.
+    assert (result.new_simulations, result.new_reports) == (0, 0)
 
 
 @pytest.mark.parametrize(
@@ -463,3 +464,57 @@ def test_a_later_run_reuses_the_simulations_a_failed_report_left(
     assert second.failures == []
     assert (second.new_simulations, second.existing_simulations) == (1, 1)
     assert (second.new_reports, second.existing_reports) == (1, 0)
+
+
+def test_a_report_that_conflicts_with_an_existing_row_creates_nothing(
+    migrated_database, public_api_rows
+) -> None:
+    # The runtime role cannot delete a row, so a run checks every existing row
+    # a report needs before it creates any of them.
+    simulation_store(migrated_database).create_migrated(
+        economy_simulation(
+            public_api_rows, region_code="state/ny", legacy_simulation_id=9002
+        )
+    )
+
+    result = _provision(migrated_database, economy_report_for_rows(public_api_rows))
+
+    assert result.failures == [
+        ProvisioningFailure(
+            legacy_report_id=4512,
+            reason=(
+                "v1 simulation 9002 is already migrated with a different region_code"
+            ),
+        )
+    ]
+    assert simulation_store(migrated_database).get_by_legacy_simulation_id(9001) is None
+    assert _row_counts(migrated_database) == (1, 0)
+    assert (result.new_simulations, result.existing_simulations) == (0, 0)
+
+
+def test_a_run_creates_no_simulation_for_a_report_migrated_with_others(
+    migrated_database, public_api_rows
+) -> None:
+    _provision(migrated_database, economy_report_for_rows(public_api_rows))
+
+    result = _provision(
+        migrated_database,
+        economy_report_for_rows(
+            public_api_rows,
+            baseline=economy_simulation_definition(9101),
+            reform=economy_simulation_definition(
+                9102, policy_id=str(public_api_rows.us_policy_id)
+            ),
+        ),
+    )
+
+    assert result.failures == [
+        ProvisioningFailure(
+            legacy_report_id=4512,
+            reason=(
+                "v1 report 4512 is already migrated, "
+                "with simulations this run would create"
+            ),
+        )
+    ]
+    assert _row_counts(migrated_database) == (2, 1)

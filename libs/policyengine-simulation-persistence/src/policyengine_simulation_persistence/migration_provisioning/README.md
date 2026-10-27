@@ -157,7 +157,8 @@ route and runs nowhere else.
 Before it reads or writes a row, the command checks:
 
 - the definitions file, listing up to 20 errors;
-- for a run, that the output file does not exist yet and its directory does;
+- for a run, that the output file does not exist yet and that its directory
+  exists and can be written to;
 - that `SIMULATION_DATABASE_URL` is set, uses `postgresql://` and logs in as
   the runtime role, `simulation_runtime`, never the migrator;
 - that the database is at the schema revision this code expects.
@@ -172,9 +173,11 @@ Public API does not have, one of another country, or a value it cannot store,
 such as text holding a NUL character), fails that report alone; the other
 reports continue.
 
-Each row is committed on its own. If a report fails after some of its
-simulations were created, they stay, keyed by their v1 IDs, and a later run
-reuses them.
+Before it creates any of a report's rows, a run reads every row the report
+needs that already exists and checks it against the definition, so a report
+that conflicts with an existing row creates nothing. Each row is committed on
+its own: if the database rejects a report after some of its simulations were
+created, they stay, keyed by their v1 IDs, and a later run reuses them.
 
 The dry run only reads. It counts the simulations and reports a run would
 create and those that already exist, and reports conflicts with existing rows.

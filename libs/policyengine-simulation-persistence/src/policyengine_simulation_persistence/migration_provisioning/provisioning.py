@@ -6,12 +6,15 @@ through the stores' ``create_migrated`` methods. A row that already exists is
 reused if it matches the definition, so running the same export again creates
 nothing. A row that exists with a different definition, or a definition the
 database rejects (such as a policy the Public API does not have), fails that
-report alone; the other reports continue. So does a value the database cannot
-store, such as text holding a NUL character.
+report alone; the other reports continue. So does a value the database rejects
+as data; the file check already rejects those it knows, such as text holding a
+NUL character.
 
-The stores commit each row on its own. A report that fails after some of its
-simulations were created leaves those simulations in place, keyed by their v1
-IDs, and a later run reuses them.
+Before it creates any of a report's rows, a run reads every row the report
+needs that already exists and checks it against the definition, so a conflict
+creates nothing. The stores commit each row on its own: a report the database
+rejects after some of its simulations were created leaves those simulations in
+place, keyed by their v1 IDs, and a later run reuses them.
 
 A dry run only reads: it counts the rows a run would create and the rows that
 already exist, and reports the definitions that conflict with existing rows. It
@@ -156,8 +159,8 @@ def _create[RecordT](create: Callable[[], RecordT], subject: str) -> RecordT:
     try:
         return create()
     except (IntegrityError, DataError) as error:
-        # A constraint the row breaks, or a value the database cannot store,
-        # such as text holding a NUL character.
+        # A constraint the row breaks, or a value the database rejects as data
+        # that the file check does not know of.
         msg = f"the database rejected {subject}: {database_error_summary(error)}"
         raise DefinitionRejectedError(msg) from error
 
@@ -174,17 +177,24 @@ class _Provisioner:
         self.report_store = report_store
         self.dry_run = dry_run
         self.result = ProvisioningResult(dry_run=dry_run)
-        # v2 simulation IDs by v1 simulation ID, for simulations reports share.
-        # In a dry run, None marks a simulation a run would create.
-        self.simulation_ids: dict[int, UUID | None] = {}
+        # v2 simulation IDs by v1 simulation ID: rows found or created so far.
+        self.simulation_ids: dict[int, UUID] = {}
+        # v1 simulation IDs a dry run found missing, which a run would create.
+        self.simulations_to_create: set[int] = set()
 
     def provision(self, definition: ReportDefinition) -> None:
         try:
-            simulation_ids = [
-                self._simulation_id(definition, simulation)
+            known_ids = [
+                self._existing_simulation_id(definition, simulation)
                 for simulation in definition.simulations()
             ]
-            self._report(definition, simulation_ids)
+            existing_report = self._existing_report(definition, known_ids)
+            if existing_report is not None:
+                self._record(definition, existing_report.id, created=False)
+            elif self.dry_run:
+                self._count_creations(definition, known_ids)
+            else:
+                self._create_rows(definition, known_ids)
         except DefinitionRejectedError as rejection:
             self.result.failures.append(
                 ProvisioningFailure(
@@ -193,74 +203,115 @@ class _Provisioner:
                 )
             )
 
-    def _simulation_id(
+    def _existing_simulation_id(
         self, definition: ReportDefinition, simulation: SimulationDefinition
     ) -> UUID | None:
+        """Return the existing simulation's v2 ID, or None if a run creates it.
+
+        Reads only, and rejects the report if the row differs from the
+        definition.
+        """
         legacy_id = simulation.legacy_simulation_id
         if legacy_id in self.simulation_ids:
             return self.simulation_ids[legacy_id]
-        subject = f"v1 simulation {legacy_id}"
-        new_simulation = definition.new_simulation(simulation)
-        record = self.simulation_store.get_by_legacy_simulation_id(legacy_id)
-        if record is not None:
-            _check_matches(record, new_simulation, subject)
-            self.result.existing_simulations += 1
-        elif self.dry_run:
-            self.result.new_simulations += 1
-            self.simulation_ids[legacy_id] = None
+        if legacy_id in self.simulations_to_create:
             return None
-        else:
-            record = _create(
-                lambda: self.simulation_store.create_migrated(new_simulation), subject
-            )
-            _check_matches(record, new_simulation, subject)
-            self.result.new_simulations += 1
+        record = self.simulation_store.get_by_legacy_simulation_id(legacy_id)
+        if record is None:
+            return None
+        _check_matches(
+            record, definition.new_simulation(simulation), f"v1 simulation {legacy_id}"
+        )
         self.simulation_ids[legacy_id] = record.id
+        self.result.existing_simulations += 1
         return record.id
 
-    def _report(
-        self, definition: ReportDefinition, simulation_ids: list[UUID | None]
-    ) -> None:
+    def _existing_report(
+        self, definition: ReportDefinition, known_ids: list[UUID | None]
+    ) -> ReportRecord | None:
+        """Return the existing report, if it matches the definition. Reads only."""
         legacy_id = definition.legacy_report_id
         subject = f"v1 report {legacy_id}"
         record = self.report_store.get_by_legacy_report_id(legacy_id)
-        existing_ids = [
-            simulation_id
-            for simulation_id in simulation_ids
-            if simulation_id is not None
+        if record is None:
+            return None
+        simulation_ids = [
+            simulation_id for simulation_id in known_ids if simulation_id is not None
         ]
-        if self.dry_run and len(existing_ids) < len(simulation_ids):
-            # A run would create some of this report's simulations.
-            if record is not None:
-                msg = (
-                    f"{subject} is already migrated, "
-                    "with simulations this run would create"
-                )
-                raise DefinitionRejectedError(msg)
-            self.result.new_reports += 1
-            return
-        new_report = definition.new_report(
-            existing_ids[0], existing_ids[1] if len(existing_ids) > 1 else None
-        )
-        if record is not None:
-            _check_matches(record, new_report, subject)
-            self.result.existing_reports += 1
-            created = False
-        elif self.dry_run:
-            self.result.new_reports += 1
-            return
-        else:
-            record = _create(
-                lambda: self.report_store.create_migrated(new_report), subject
+        if len(simulation_ids) < len(known_ids):
+            msg = (
+                f"{subject} is already migrated, with simulations this run would create"
             )
-            _check_matches(record, new_report, subject)
-            self.result.new_reports += 1
-            created = True
+            raise DefinitionRejectedError(msg)
+        _check_matches(record, _new_report(definition, simulation_ids), subject)
+        return record
+
+    def _count_creations(
+        self, definition: ReportDefinition, known_ids: list[UUID | None]
+    ) -> None:
+        for simulation, known_id in zip(
+            definition.simulations(), known_ids, strict=True
+        ):
+            legacy_id = simulation.legacy_simulation_id
+            if known_id is None and legacy_id not in self.simulations_to_create:
+                self.simulations_to_create.add(legacy_id)
+                self.result.new_simulations += 1
+        self.result.new_reports += 1
+
+    def _create_rows(
+        self, definition: ReportDefinition, known_ids: list[UUID | None]
+    ) -> None:
+        simulation_ids = [
+            known_id
+            if known_id is not None
+            else self._created_simulation_id(definition, simulation)
+            for simulation, known_id in zip(
+                definition.simulations(), known_ids, strict=True
+            )
+        ]
+        subject = f"v1 report {definition.legacy_report_id}"
+        new_report = _new_report(definition, simulation_ids)
+        record = _create(lambda: self.report_store.create_migrated(new_report), subject)
+        # Another writer may have created the report since it was read.
+        _check_matches(record, new_report, subject)
+        self.result.new_reports += 1
+        self._record(definition, record.id, created=True)
+
+    def _created_simulation_id(
+        self, definition: ReportDefinition, simulation: SimulationDefinition
+    ) -> UUID:
+        legacy_id = simulation.legacy_simulation_id
+        if legacy_id in self.simulation_ids:
+            # The same v1 simulation is this report's baseline and reform.
+            return self.simulation_ids[legacy_id]
+        subject = f"v1 simulation {legacy_id}"
+        new_simulation = definition.new_simulation(simulation)
+        record = _create(
+            lambda: self.simulation_store.create_migrated(new_simulation), subject
+        )
+        _check_matches(record, new_simulation, subject)
+        self.simulation_ids[legacy_id] = record.id
+        self.result.new_simulations += 1
+        return record.id
+
+    def _record(
+        self, definition: ReportDefinition, report_id: UUID, *, created: bool
+    ) -> None:
+        if not created:
+            self.result.existing_reports += 1
         self.result.reports.append(
             ProvisionedReport(
-                legacy_report_id=legacy_id, report_id=record.id, created=created
+                legacy_report_id=definition.legacy_report_id,
+                report_id=report_id,
+                created=created,
             )
         )
+
+
+def _new_report(definition: ReportDefinition, simulation_ids: list[UUID]) -> NewReport:
+    return definition.new_report(
+        simulation_ids[0], simulation_ids[1] if len(simulation_ids) > 1 else None
+    )
 
 
 def provision_reports(
