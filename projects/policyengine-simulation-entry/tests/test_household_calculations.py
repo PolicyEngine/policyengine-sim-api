@@ -32,6 +32,7 @@ from policyengine_simulation_entry.modal_calls import (
     ModalTarget,
 )
 from policyengine_simulation_persistence import (
+    SUCCEEDED_RUN_REUSE_WINDOW,
     NewSimulationRun,
     RunError,
     RunErrorCode,
@@ -236,3 +237,20 @@ def test_a_saved_null_spm_choice_is_no_choice() -> None:
 
     assert "spm" not in harness.dispatcher.requests[0].arguments[0]
     assert not harness.sent_request().spm_requested
+
+
+def test_a_calculation_that_succeeded_too_long_ago_runs_again() -> None:
+    """Runs are reused only while their output files are kept."""
+    harness = Harness()
+    submitted = harness.submit()
+    call_id = harness.transitions.runs[submitted.run.id].modal_call_id
+    harness.inspector.outcomes[call_id] = CallSucceeded(
+        succeeded_outcome([submitted.run.id])
+    )
+    harness.report_call_ended(submitted.run.id)
+
+    harness.clock.advance(SUCCEEDED_RUN_REUSE_WINDOW + timedelta(days=1))
+    again = harness.submit()
+
+    assert again.run.id != submitted.run.id
+    assert again.run.attempt == 2

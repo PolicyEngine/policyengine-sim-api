@@ -3,8 +3,8 @@
 ``FakeHouseholdStore`` keeps household simulations and run setups and leaves
 each run's status to ``FakeRunTransitions``, so the dispatcher, the recorder
 and the reader all see one copy of every run. It reuses runs by the same
-rules as ``RunStore``: an unfinished run, or one that succeeded, is reused
-unless forced; a failed one never is.
+rules as ``RunStore``: an unfinished run, or one that succeeded within the
+reuse window, is reused unless forced; a failed one never is.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 from policyengine_simulation_contract.stage12_manifest import publish_v2_manifest
 from policyengine_simulation_entry.household_workers import ManifestHouseholdWorkers
 from policyengine_simulation_persistence import (
+    SUCCEEDED_RUN_REUSE_WINDOW,
     HouseholdCalculation,
     HouseholdReport,
     ReportKind,
@@ -31,6 +32,8 @@ from sqlalchemy.exc import IntegrityError
 from stage12_fixtures import worker
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from policyengine_simulation_persistence import (
         HouseholdOutput,
         NewReport,
@@ -67,6 +70,8 @@ class FakeHouseholdStore:
         self.simulations: dict[UUID, SimulationRecord] = {}
         self.setups: dict[UUID, RunSetup] = {}
         self.outputs: dict[UUID, HouseholdOutput] = {}
+        # When each succeeded run's household was written, with its success.
+        self.succeeded_at: dict[UUID, datetime] = {}
         self.reports: dict[UUID, ReportRecord] = {}
         self.report_runs: list[ReportRunRecord] = []
         # Households the Public API does not have: creating their simulations
@@ -138,11 +143,7 @@ class FakeHouseholdStore:
         latest = max(
             attempts, key=lambda run_id: self.setups[run_id].attempt, default=None
         )
-        if (
-            latest is not None
-            and not force
-            and self.transitions.runs[latest].status is not RunStatus.FAILED
-        ):
+        if latest is not None and not force and self._reusable(latest):
             return StartedSimulationRun(run=self.run_record(latest), created=False)
         run_id = self.transitions.add_run("household", updated_at=self.clock())
         self.setups[run_id] = RunSetup(
@@ -153,6 +154,14 @@ class FakeHouseholdStore:
             trigger=new_run.trigger,
         )
         return StartedSimulationRun(run=self.run_record(run_id), created=True)
+
+    def _reusable(self, run_id: UUID) -> bool:
+        status = self.transitions.runs[run_id].status
+        if status is RunStatus.SUCCEEDED:
+            return self.succeeded_at[run_id] >= (
+                self.clock() - SUCCEEDED_RUN_REUSE_WINDOW
+            )
+        return status is not RunStatus.FAILED
 
     def run_record(self, run_id: UUID) -> SimulationRunRecord:
         """Return the run as the database would, from its fake execution."""
@@ -281,6 +290,7 @@ class FakeHouseholdStore:
     def write_output(self, _connection, run, output: HouseholdOutput) -> None:
         """Keep a run's household, as the result writer stores it."""
         self.outputs[run.id] = output
+        self.succeeded_at[run.id] = self.clock()
 
 
 def manifest_workers() -> ManifestHouseholdWorkers:
