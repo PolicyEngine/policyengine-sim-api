@@ -228,7 +228,8 @@ class Stage12ComparisonBackend:
 
         The evaluation ID is derived from the environment, production job and
         worker version, so a repeat dispatch maps to the same report. Requests
-        the adapter cannot represent are skipped with a telemetry event.
+        the adapter cannot represent, and US state requests, are skipped with
+        a telemetry event.
         Raise ValueError if the production response has no ``job_id`` and
         TemporaryStage12DispatchFailed if Modal does not accept the spawn.
         """
