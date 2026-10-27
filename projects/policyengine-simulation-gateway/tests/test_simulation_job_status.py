@@ -9,6 +9,21 @@ from fixtures.gateway_responses import (
 )
 from policyengine_simulation_observability.identifiers import OBSERVABILITY_ID_HEADER
 
+DATASET_YEAR_MESSAGE = (
+    "UK results are available for 2024 to 2032. 2033 is outside the years the "
+    "current UK model and data cover."
+)
+
+
+class WorkerDatasetYearError(ValueError):
+    """A worker error carrying the stable ``DATASET_YEAR_UNAVAILABLE`` code.
+
+    Services recognise a caller-correctable error by its stable code, as they
+    recognise the SPM input errors, whatever class carried it across Modal.
+    """
+
+    code = "DATASET_YEAR_UNAVAILABLE"
+
 
 class TestSubmitSimulationEndpoint:
     """Tests for POST /simulate/economy/comparison endpoint."""
@@ -270,3 +285,32 @@ class TestSubmitSimulationEndpoint:
         assert body["error"].startswith("Simulation failed")
         assert "correlation_id=" in body["error"]
         assert "worker crashed" not in body["error"]
+
+    def test__given_unsupported_dataset_year__then_polling_returns_400_with_the_code(
+        self, mock_modal, client: TestClient
+    ):
+        submit_response = client.post(
+            "/simulate/economy/comparison",
+            json={
+                "country": "uk",
+                "scope": "macro",
+                "region": "uk",
+                "time_period": "2033",
+                "reform": {},
+            },
+        )
+        job_id = submit_response.json()["job_id"]
+        mock_modal["func"].last_call.error = WorkerDatasetYearError(
+            DATASET_YEAR_MESSAGE
+        )
+
+        response = client.get(f"/jobs/{job_id}")
+
+        assert response.status_code == 400
+        body = response.json()
+        assert body["status"] == "failed"
+        assert body["result"] is None
+        assert body["error"] == DATASET_YEAR_MESSAGE
+        assert body["errors"] == [
+            {"code": "DATASET_YEAR_UNAVAILABLE", "message": DATASET_YEAR_MESSAGE}
+        ]
