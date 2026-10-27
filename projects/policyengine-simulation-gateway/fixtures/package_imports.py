@@ -16,10 +16,25 @@ GATEWAY_ENDPOINTS_MODULE = "policyengine_simulation_gateway.endpoints"
 GATEWAY_PACKAGE_MODULE = "policyengine_simulation_gateway"
 FASTAPI_MODULE = "fastapi"
 
+# endpoints.py re-exports the routes and their helpers from these modules.
+GATEWAY_ROUTE_MODULES = tuple(
+    f"{GATEWAY_PACKAGE_MODULE}.{module}"
+    for module in (
+        "bundle_payloads",
+        "job_creation_routes",
+        "job_status_routes",
+        "modal_routing",
+        "route_resolution",
+        "routes_common",
+        "version_routes",
+    )
+)
+
 GATEWAY_MODEL_IMPORT_MODULES = (
     FASTAPI_MODULE,
     GATEWAY_PACKAGE_MODULE,
     GATEWAY_ENDPOINTS_MODULE,
+    *GATEWAY_ROUTE_MODULES,
     GATEWAY_MODEL_MODULE,
 )
 

@@ -223,7 +223,7 @@ class TestStageReportingFailuresAreHarmless:
     def test__unreadable_store_drops_stage_fields(
         self, stage_reporting_worker, client: TestClient, monkeypatch
     ):
-        from policyengine_simulation_gateway import endpoints
+        from policyengine_simulation_gateway import job_status_routes
 
         job_id = _submit(client)
         stage_reporting_worker["func"].last_call.running = True
@@ -232,7 +232,7 @@ class TestStageReportingFailuresAreHarmless:
             msg = "modal unavailable"
             raise ConnectionError(msg)
 
-        monkeypatch.setattr(endpoints, "get_job_progress", failing_read)
+        monkeypatch.setattr(job_status_routes, "get_job_progress", failing_read)
 
         response = client.get(f"/jobs/{job_id}")
 
