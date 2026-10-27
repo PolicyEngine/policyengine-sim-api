@@ -31,7 +31,9 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    Text,
     Uuid,
+    cast,
     select,
 )
 
@@ -68,6 +70,8 @@ regions = Table(
     Column("id", Uuid(as_uuid=True), primary_key=True),
     Column("code", String(255)),
     Column("label", String(255)),
+    # A PostgreSQL enum (``v2_region_type``) in the Public API; compared only
+    # through ``REGION_TYPE_TEXT``.
     Column("region_type", String(64)),
     Column("requires_filter", Boolean),
     Column("filter_field", String(128)),
@@ -104,6 +108,10 @@ parameter_values = Table(
 )
 # The Public API tables the runtime role reads; the operator grants SELECT.
 CATALOG_READ_TABLES = tuple(catalog_metadata.tables)
+# PostgreSQL has no comparison between the ``v2_region_type`` enum and a text
+# value, so region types are compared as text. Reads then need neither the
+# enum's list of values nor a change when the Public API adds one.
+REGION_TYPE_TEXT = cast(regions.c.region_type, Text)
 
 ROW_FILTER = "row_filter"
 STATE_REGION_TYPE = "state"
@@ -330,7 +338,7 @@ class CatalogReader:
             select(regions)
             .where(
                 regions.c.tax_benefit_model_version_id == version.id,
-                regions.c.region_type == STATE_REGION_TYPE,
+                REGION_TYPE_TEXT == STATE_REGION_TYPE,
             )
             .order_by(regions.c.code)
         ).mappings()
@@ -421,7 +429,7 @@ class CatalogReader:
             rows = connection.execute(
                 select(regions.c.code, regions.c.label, regions.c.region_type).where(
                     regions.c.tax_benefit_model_version_id == catalog_version_id,
-                    regions.c.region_type.in_(UK_AREA_REGION_TYPES),
+                    REGION_TYPE_TEXT.in_(UK_AREA_REGION_TYPES),
                 )
             ).all()
         labels: dict[str, dict[str, GeographyLabel]] = {

@@ -140,7 +140,7 @@ class _Inserts:
         self.add(
             "INSERT INTO public.parameter_values (id, parameter_id, value_json, "
             "start_date, end_date, policy_id, dynamic_id) VALUES (gen_random_uuid(), "
-            ":parameter, CAST(:value AS jsonb), :start, :end, :policy, :dynamic)",
+            ":parameter, CAST(:value AS json), :start, :end, :policy, :dynamic)",
             parameter=parameter_id,
             value=json.dumps(value),
             start=_datetime(start),

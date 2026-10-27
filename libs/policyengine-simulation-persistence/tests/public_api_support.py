@@ -6,6 +6,11 @@ and unique constraints the simulation schema's foreign keys use, with the
 Public API's constraint names, owned by the superuser, and grant the migrator
 ``REFERENCES`` on them, as the operator does in production. The runtime role
 may only read the catalog and policy tables (``CATALOG_READ_TABLES``).
+
+Every column the catalog reads use has the type and nullability the Public
+API's migrations give it: ``regions.region_type`` is the PostgreSQL enum
+``v2_region_type``, which has no comparison with text values, and
+``parameter_values.value_json`` is ``json``, not ``jsonb``.
 """
 
 from __future__ import annotations
@@ -22,7 +27,21 @@ from sqlalchemy import create_engine, text
 if TYPE_CHECKING:
     from sqlalchemy import Engine
 
+# The values and order of the Public API's baseline migration.
+REGION_TYPES = (
+    "national",
+    "country",
+    "state",
+    "congressional_district",
+    "constituency",
+    "local_authority",
+    "city",
+    "place",
+)
 PUBLIC_API_TABLE_STATEMENTS = (
+    "CREATE TYPE public.v2_region_type AS ENUM ("
+    + ", ".join(f"'{region_type}'" for region_type in REGION_TYPES)
+    + ")",
     "CREATE TABLE public.tax_benefit_models ("
     " id uuid PRIMARY KEY,"
     " name varchar(32) NOT NULL UNIQUE)",
@@ -45,8 +64,8 @@ PUBLIC_API_TABLE_STATEMENTS = (
     " tax_benefit_model_version_id uuid NOT NULL"
     " REFERENCES public.tax_benefit_model_versions (id),"
     " default_dataset_id uuid NOT NULL,"
-    " label varchar(255),"
-    " region_type varchar(64),"
+    " label varchar(255) NOT NULL,"
+    " region_type public.v2_region_type NOT NULL,"
     " requires_filter boolean NOT NULL DEFAULT false,"
     " filter_field varchar(128),"
     " filter_value varchar(255),"
@@ -75,7 +94,7 @@ PUBLIC_API_TABLE_STATEMENTS = (
     "CREATE TABLE public.parameter_values ("
     " id uuid PRIMARY KEY,"
     " parameter_id uuid NOT NULL REFERENCES public.parameters (id),"
-    " value_json jsonb NOT NULL,"
+    " value_json json NOT NULL,"
     " start_date timestamptz NOT NULL,"
     " end_date timestamptz,"
     " policy_id uuid REFERENCES public.policies (id),"
@@ -171,10 +190,12 @@ def _catalog_statements(rows: PublicApiRows) -> tuple[tuple[str, dict], ...]:
             },
         ),
         (
-            "INSERT INTO public.regions "
-            "(id, code, tax_benefit_model_version_id, default_dataset_id) VALUES "
-            "(gen_random_uuid(), 'state/ca', :version, :dataset), "
-            "(gen_random_uuid(), 'state/ca', :newer_version, :newer_dataset)",
+            "INSERT INTO public.regions (id, code, tax_benefit_model_version_id, "
+            "default_dataset_id, label, region_type) VALUES "
+            "(gen_random_uuid(), 'state/ca', :version, :dataset, 'California', "
+            "'state'), "
+            "(gen_random_uuid(), 'state/ca', :newer_version, :newer_dataset, "
+            "'California', 'state')",
             {
                 "version": rows.catalog_version_id,
                 "newer_version": rows.newer_catalog_version_id,
