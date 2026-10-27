@@ -133,6 +133,12 @@ def _status_checks(prefix: str, *, optional: bool) -> tuple[CheckConstraint, ...
             f"{unless_absent}({status} = 'failed') = ({prefix}error_code IS NOT NULL)",
             name=f"{prefix}error",
         ),
+        # Only a failure carries a detail document, and it is a JSON object.
+        CheckConstraint(
+            f"{prefix}error_detail IS NULL OR ({status} = 'failed' "
+            f"AND jsonb_typeof({prefix}error_detail) = 'object')",
+            name=f"{prefix}error_detail",
+        ),
         # Only a running call is checked, and every running call is due a check.
         CheckConstraint(
             f"{unless_absent}"
@@ -150,6 +156,9 @@ def _execution_columns(prefix: str, *, required: bool) -> list[Column[Any]]:
         Column(f"{prefix}modal_call_id", Text, nullable=True),
         Column(f"{prefix}error_code", Text, nullable=True),
         Column(f"{prefix}error_message", Text, nullable=True),
+        # What the failure reported beyond its code and message, such as a
+        # household calculation's rejected inputs; null for most failures.
+        Column(f"{prefix}error_detail", JSONB(none_as_null=True), nullable=True),
         Column(
             f"{prefix}check_count",
             Integer,
@@ -432,6 +441,7 @@ class SimulationRunRecord:
     modal_call_id: str | None
     error_code: str | None
     error_message: str | None
+    error_detail: dict[str, Any] | None
     check_count: int
     dispatched_at: datetime | None
     next_check_at: datetime | None
@@ -474,6 +484,7 @@ class ReportRunRecord:
     comparison_modal_call_id: str | None
     comparison_error_code: str | None
     comparison_error_message: str | None
+    comparison_error_detail: dict[str, Any] | None
     comparison_check_count: int
     comparison_dispatched_at: datetime | None
     comparison_next_check_at: datetime | None

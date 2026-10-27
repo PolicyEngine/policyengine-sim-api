@@ -63,6 +63,11 @@ and takes the catalog version and year from them; a report's status is its
 newest report run's. The runtime role may read, insert and update runs but
 not delete them.
 
+A failure records its error code, a message that carries no user data,
+and optionally a detail document (`error_detail`, or
+`comparison_error_detail` for a comparison step), such as the inputs a
+household calculation rejected; only a failed run or step has one.
+
 `RunTransitions` makes every status change one conditional update on the
 expected status, so a second writer changes nothing: only the caller that
 moves runs from `pending` to `dispatching` starts their Modal call, the runs
