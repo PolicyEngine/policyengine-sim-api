@@ -116,6 +116,7 @@ def cloud_run_deploy_environment(tmp_path: Path) -> dict[str, str]:
         "STAGE12_DATABASE_URL_SECRET_NAME": "stage12-staging-database-url",
         "MODAL_TOKEN_ID_SECRET_NAME": "modal-token-id",
         "MODAL_TOKEN_SECRET_SECRET_NAME": "modal-token-secret",
+        "MODAL_WORKSPACE_ID_VALUE": "ac-workspace0001",
         "SIMULATION_DATABASE_URL_SECRET_NAME": (
             "simulation-staging-runtime-database-url"
         ),

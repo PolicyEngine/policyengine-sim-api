@@ -273,6 +273,7 @@ jobs:
           STAGE12_DATABASE_URL_SECRET_NAME: ${{ vars.STAGE12_DATABASE_URL_SECRET_NAME }}
           MODAL_TOKEN_ID_SECRET_NAME: ${{ vars.MODAL_TOKEN_ID_SECRET_NAME }}
           MODAL_TOKEN_SECRET_SECRET_NAME: ${{ vars.MODAL_TOKEN_SECRET_SECRET_NAME }}
+          MODAL_WORKSPACE_ID_VALUE: ${{ vars.MODAL_WORKSPACE_ID }}
         run: .github/scripts/deploy-cloud-run-simulation-entry.sh
 
       - name: Resolve exact candidate metadata

@@ -68,6 +68,19 @@ environment variables `MODAL_TOKEN_ID_SECRET_NAME` and
 service account must be able to read both secrets. The Stage 12 comparison
 path's Modal calls use the same token until it is removed.
 
+A Modal call reports that it ended on `POST /internal/modal-calls/ended`
+(`policyengine_simulation_entry.call_report_route`), with the Modal identity
+token of the `report_call_ended` function as a bearer token. The entrypoint
+checks the token against Modal's published keys and accepts only that
+function, in a v2 app, of the workspace in the `beta`/`prod` environment
+variable `MODAL_WORKSPACE_ID` and of the deployment's own Modal environment;
+the deploy passes both to the runtime as
+`SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID` and
+`SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT`, and stops when the workspace ID is
+missing. The service already allows unauthenticated requests through Cloud
+Run (`--allow-unauthenticated`): callers prove who they are to the
+entrypoint, so Modal needs no Google credentials.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`
