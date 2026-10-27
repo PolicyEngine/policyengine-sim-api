@@ -113,3 +113,81 @@ def test_a_household_output_is_a_json_object_with_a_schema_version() -> None:
         HouseholdOutput(schema_version=0, household={})
     with pytest.raises(ValueError, match="household"):
         HouseholdOutput.model_validate({"schema_version": 1, "household": ["people"]})
+
+
+SPM_CONFIG = {
+    "forecast_scenario": "central",
+    "geography": "national",
+    "information_date": "2026-01-01",
+}
+SPM_PROVENANCE = {
+    "status": "certified",
+    "forecast": {"release": "2026-09", "years": [2026]},
+}
+BUNDLE = {
+    "policyengine_version": "6.10.0",
+    "core_package_version": "3.20.0",
+    "country_package_name": "policyengine-us",
+    "country_package_version": "1.450.0",
+    "bundle_manifest_sha256": "a" * 64,
+}
+
+
+def test_a_household_is_stored_with_its_warnings_spm_choice_and_bundle(
+    migrated_database, public_api_rows
+) -> None:
+    stores = clocked_stores(migrated_database)
+    runs = _running_household_pair(stores, migrated_database, public_api_rows)
+    output = _sample().model_copy(
+        update={
+            "warnings": ("The input age_group is deprecated and was ignored.",),
+            "spm_config": SPM_CONFIG,
+            "spm_provenance": SPM_PROVENANCE,
+            "bundle": BUNDLE,
+        }
+    )
+
+    def write_both(connection, succeeded_runs) -> None:
+        for run in succeeded_runs:
+            write_household_output(connection, run, output)
+
+    assert stores.transitions.complete_simulation_call("fc-household", write_both)
+
+    with stores.transitions.engine.connect() as connection:
+        stored = read_household_output(connection, runs[0].id)
+    assert stored == output
+    assert stored.warnings == ("The input age_group is deprecated and was ignored.",)
+    assert stored.spm_config == SPM_CONFIG
+    assert stored.spm_provenance == SPM_PROVENANCE
+    assert stored.bundle == BUNDLE
+
+
+def test_a_household_without_warnings_or_spm_reads_back_without_them(
+    migrated_database, public_api_rows
+) -> None:
+    stores = clocked_stores(migrated_database)
+    runs = _running_household_pair(stores, migrated_database, public_api_rows)
+
+    def write_both(connection, succeeded_runs) -> None:
+        for run in succeeded_runs:
+            write_household_output(connection, run, _sample())
+
+    stores.transitions.complete_simulation_call("fc-household", write_both)
+
+    with stores.transitions.engine.connect() as connection:
+        stored = read_household_output(connection, runs[1].id)
+    assert stored.warnings == ()
+    assert stored.spm_config is None
+    assert stored.spm_provenance is None
+    assert stored.bundle is None
+
+
+def test_household_output_documents_must_be_json_objects() -> None:
+    with pytest.raises(ValueError, match=r"spm_config\n.*valid dictionary"):
+        HouseholdOutput.model_validate(
+            {"schema_version": 1, "household": {}, "spm_config": ["central"]}
+        )
+    with pytest.raises(ValueError, match=r"warnings\.0\n.*valid string"):
+        HouseholdOutput.model_validate(
+            {"schema_version": 1, "household": {}, "warnings": [{"text": "x"}]}
+        )

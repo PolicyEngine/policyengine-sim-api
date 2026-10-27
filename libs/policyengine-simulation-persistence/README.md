@@ -112,8 +112,12 @@ A computed household is one JSON value (`household_outputs`, PostgreSQL
 simulation run, with its schema version. `write_household_output` stores it
 in the transaction that marks the run succeeded
 (`RunTransitions.complete_simulation_call`); a household report's two runs
-share one Modal call and each gets its own household. `read_household_output`
-returns it unchanged.
+share one Modal call and each gets its own household. Next to it are the
+calculation's warnings, in order, and three `jsonb` documents, each null when
+it does not apply: the complete SPM selection the calculation applied
+(`spm_config`), its SPM receipt (`spm_provenance`) and the PolicyEngine.py
+bundle it ran with (`bundle`). `read_household_output` returns it all
+unchanged.
 
 `output_files` links each stored file (its role, URI and SHA-256) to the one
 simulation run or report run that wrote it. `available_output_files` offers a
