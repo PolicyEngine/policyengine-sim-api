@@ -23,7 +23,7 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -99,14 +99,25 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
+@dataclass(frozen=True)
+class _Arguments:
+    definitions: Path
+    # Where a run writes the report mapping; None for a dry run.
+    output: Path | None
+
+    @property
+    def dry_run(self) -> bool:
+        return self.output is None
+
+
+def _parse_arguments(argv: Sequence[str] | None) -> _Arguments:
     parser = _parser()
-    arguments = parser.parse_args(argv)
-    if arguments.dry_run and arguments.output is not None:
+    parsed = parser.parse_args(argv)
+    if parsed.dry_run and parsed.output is not None:
         parser.error("--dry-run writes no file, so it takes no --output")
-    if not arguments.dry_run and arguments.output is None:
+    if not parsed.dry_run and parsed.output is None:
         parser.error("a run needs --output, or use --dry-run")
-    return arguments
+    return _Arguments(definitions=parsed.definitions, output=parsed.output)
 
 
 def _check_output_path(output: Path) -> None:
@@ -217,7 +228,7 @@ def main(
     """Run the command and return its exit status."""
     arguments = _parse_arguments(argv)
     try:
-        if not arguments.dry_run:
+        if arguments.output is not None:
             _check_output_path(arguments.output)
         definitions = _read_definitions(arguments.definitions)
         engine = _runtime_engine(os.environ if environ is None else environ)
@@ -253,7 +264,7 @@ def main(
     finally:
         engine.dispose()
     sys.stdout.write(_summary(result) + "\n")
-    if not arguments.dry_run:
+    if arguments.output is not None:
         try:
             _write_mapping(arguments.output, result)
         except OSError as error:

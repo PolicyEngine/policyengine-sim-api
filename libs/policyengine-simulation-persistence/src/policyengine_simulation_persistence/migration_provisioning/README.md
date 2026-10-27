@@ -26,7 +26,7 @@ Each report definition:
 | `legacy_report_id` | positive integer, at most 2^63 − 1 | The v1 report ID. |
 | `country` | two lowercase letters | The report's country, and its simulations'. |
 | `year` | integer, 1900 to 2200 | The year the report calculates. |
-| `options` | JSON object | The report's options, stored as given. |
+| `options` | JSON object | The report's options, stored as given. Numbers are read as integers or 64-bit floats, so a decimal with more digits than a float holds is stored rounded. |
 | `baseline` | simulation | The baseline simulation. |
 | `reform` | simulation, or `null` for a household report | The reform simulation. An economy report must have one. |
 
@@ -36,8 +36,8 @@ Each simulation of an economy report:
 | --- | --- | --- |
 | `legacy_simulation_id` | positive integer, at most 2^63 − 1 | The v1 simulation ID. |
 | `policy_id` | UUID or `null` | The v2 policy that `legacy_policy_mappings` maps the v1 policy to, or `null` for current law. |
-| `region_code` | text, no whitespace | The v2 region code the Public API's region reference files map the v1 region to: `us`, `state/ca`, `country/northern_ireland`, `constituency/E14001063`. |
-| `dataset_name` | text, no whitespace, or `null` | A catalog dataset name, or `null` for the region's default dataset in each catalog version. |
+| `region_code` | text, 1 to 255 characters, no whitespace | The v2 region code the Public API's region reference files map the v1 region to: `us`, `state/ca`, `country/northern_ireland`, `constituency/E14001063`. |
+| `dataset_name` | text, 1 to 255 characters, no whitespace, or `null` | A catalog dataset name, or `null` for the region's default dataset in each catalog version. |
 
 Each simulation of a household report:
 
@@ -169,9 +169,9 @@ through the stores' `create_migrated` methods. A row that already exists is
 reused if it matches the definition, so running the same export again creates
 nothing and maps the same reports. A row that exists with a different
 definition, or a definition the database rejects (a policy or household the
-Public API does not have, one of another country, or a value it cannot store,
-such as text holding a NUL character), fails that report alone; the other
-reports continue.
+Public API does not have, one of another country, or another value it rejects
+as data), fails that report alone; the other reports continue. The file check
+already rejects the values it knows the database cannot store.
 
 Before it creates any of a report's rows, a run reads every row the report
 needs that already exists and checks it against the definition, so a report

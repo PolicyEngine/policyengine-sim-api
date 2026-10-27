@@ -79,7 +79,7 @@ def test_a_run_needs_an_output_file(tmp_path: Path) -> None:
     assert exit_info.value.code == 2
 
 
-def test_a_dry_run_writes_no_output_file(tmp_path: Path) -> None:
+def test_a_dry_run_takes_no_output_file(tmp_path: Path) -> None:
     definitions = _write_definitions(tmp_path)
 
     with pytest.raises(SystemExit) as exit_info:

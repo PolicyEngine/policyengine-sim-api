@@ -518,3 +518,25 @@ def test_a_run_creates_no_simulation_for_a_report_migrated_with_others(
         )
     ]
     assert _row_counts(migrated_database) == (2, 1)
+
+
+def test_a_dry_run_finds_an_existing_single_simulation_economy_report(
+    migrated_database, public_api_rows
+) -> None:
+    single = economy_simulation_definition(
+        9001, policy_id=str(public_api_rows.us_policy_id)
+    )
+    definition = economy_report_for_rows(
+        public_api_rows, baseline=single, reform=single
+    )
+    first = _provision(migrated_database, definition)
+
+    dry_run = _provision(migrated_database, definition, dry_run=True)
+
+    assert dry_run.failures == []
+    assert dry_run.reports == [
+        ProvisionedReport(
+            legacy_report_id=4512, report_id=first.reports[0].report_id, created=False
+        )
+    ]
+    assert (dry_run.new_simulations, dry_run.existing_simulations) == (0, 1)

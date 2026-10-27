@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -21,12 +23,14 @@ from policyengine_simulation_persistence import (
     NewSimulation,
     ReportKind,
     SimulationKind,
+    migration_provisioning,
 )
 from policyengine_simulation_persistence.migration_provisioning import (
     REPORT_DEFINITIONS_SCHEMA_VERSION,
     EconomyReportDefinition,
     HouseholdReportDefinition,
     ReportDefinitionsFile,
+    ReportMappingFile,
 )
 from pydantic import ValidationError
 
@@ -390,3 +394,16 @@ def test_text_never_holds_a_nul_character(overrides: dict[str, Any]) -> None:
         parse_definitions(economy_report_definition(**overrides))
 
     assert "must not contain a NUL character" in _error_messages(error)
+
+
+def test_the_readme_examples_follow_the_formats() -> None:
+    readme = Path(migration_provisioning.__file__).with_name("README.md").read_text()
+    definitions_example, mapping_example = re.findall(
+        r"```json\n(.*?)```", readme, flags=re.DOTALL
+    )
+
+    definitions = ReportDefinitionsFile.model_validate_json(definitions_example)
+    mapping = ReportMappingFile.model_validate_json(mapping_example)
+
+    assert [report.kind for report in definitions.reports] == ["economy", "household"]
+    assert [mapped.legacy_report_id for mapped in mapping.reports] == [4512]
