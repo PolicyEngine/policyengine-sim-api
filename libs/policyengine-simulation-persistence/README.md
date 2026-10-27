@@ -12,7 +12,7 @@ writes them with DML only.
 
 | Table | Holds |
 | --- | --- |
-| `simulations` | What to run, independent of model versions: kind (`economy` or `household`), country, policy (null for current law), dynamic, and either a household or a region code (`state/ca`) with an optional dataset name (null means the region's default dataset in each catalog version) |
+| `simulations` | What to run, independent of model versions: kind (`economy` or `household`), country, policy (null for current law), dynamic, either a household or a region code (`state/ca`) with an optional dataset name (null means the region's default dataset in each catalog version), and `options`, whatever else changes what it calculates, such as a household's axes (empty unless set) |
 | `reports` | Which two simulations a report compares (an economy report needs a reform; a household report may have only a baseline), both of the report's own country and kind, with its year and options |
 | `simulation_runs` | One execution of a simulation for a catalog version and year: the region code and dataset row it resolved in that version (economy runs only), its status, Modal call ID, timings, error, trigger (`initial`, `manual` or `system`) and attempt number |
 | `report_runs` | One calculation of a report: a baseline and a reform simulation run of the same catalog version and year (no reform run for a single-simulation household report), the trigger, and, for an economy report, the comparison step's own status and Modal call |
@@ -29,6 +29,17 @@ Foreign keys into the Public API's tables in the same database (`policies` and
 its catalog version) are `ON DELETE RESTRICT`. Creating them needs
 `REFERENCES` on those tables for the migrator role; the runtime role needs no
 privilege on them.
+
+### Household calculations
+
+A household calculation is one simulation run of a household simulation.
+`HouseholdCalculationStore.find_or_create_simulation` returns the oldest
+household simulation with the same country, household, policy, dynamic and
+options (compared by value), or creates it. The Public API's households and
+policies never change once stored, so a calculation submitted again finds
+the same simulation, and `RunStore.start_simulation_run` reuses its run.
+Two racing submissions may each create the simulation; later ones find the
+older row.
 
 ### Runs
 

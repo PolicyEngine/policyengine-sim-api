@@ -19,6 +19,9 @@ from policyengine_simulation_persistence.engine import (
     normalized_database_url,
     read_schema_revision,
 )
+from policyengine_simulation_persistence.household_calculations import (
+    HouseholdCalculationStore,
+)
 from policyengine_simulation_persistence.household_results import (
     HouseholdOutput,
     read_household_output,
@@ -85,6 +88,7 @@ __all__ = [
     "EconomyComparisonRecorder",
     "EconomyResultLabels",
     "GeographyLabel",
+    "HouseholdCalculationStore",
     "HouseholdOutput",
     "NewReport",
     "NewReportRun",
