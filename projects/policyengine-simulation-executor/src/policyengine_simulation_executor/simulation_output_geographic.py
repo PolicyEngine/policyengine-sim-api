@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -82,7 +81,7 @@ def _complete_uk_geography_output(
     code_field: str,
     name_field: str,
 ) -> GeographicImpactOutput:
-    """Require every UK geography record to contain lookup-owned metadata.
+    """Require every UK geography record to carry its code and lookup name.
 
     An empty list is valid: disclosure control may withhold every area.
     """
@@ -99,9 +98,6 @@ def _complete_uk_geography_output(
             raise ValueError(msg)
         if not isinstance(name, str) or not name.strip() or name == code:
             msg = f"UK geography {code!r} is missing a lookup name"
-            raise ValueError(msg)
-        if record_values.get("x") is None or record_values.get("y") is None:
-            msg = f"UK geography {code!r} is missing lookup coordinates"
             raise ValueError(msg)
     return output
 
@@ -646,10 +642,12 @@ def compute_uk_geography_disclosure_output(
     )
 
 
-def _uk_constituency_lookup(
-    lookup_csv_path: str,
-) -> dict[str, tuple[str, int | None, int | None]]:
-    """Return each constituency's name and map coordinates, in lookup order."""
+def _uk_constituency_lookup(lookup_csv_path: str) -> dict[str, str]:
+    """Return each constituency's name, in lookup order.
+
+    The lookup's other columns, such as its x and y map positions, are not
+    read: sim-api results no longer carry an area's map position.
+    """
     lookup = pd.read_csv(lookup_csv_path)
     if "code" not in lookup.columns:
         msg = (
@@ -657,28 +655,13 @@ def _uk_constituency_lookup(
             f"{lookup_csv_path}"
         )
         raise ValueError(msg)
-    entries: dict[str, tuple[str, int | None, int | None]] = {}
+    names: dict[str, str] = {}
     for row in lookup.to_dict("records"):
         code = _normalised_area_code(row.get("code"))
         if not code:
             continue
-        name = _normalised_area_code(row.get("name")) or code
-        entries[code] = (
-            name,
-            _lookup_coordinate(row.get("x")),
-            _lookup_coordinate(row.get("y")),
-        )
-    return entries
-
-
-def _lookup_coordinate(value: object) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int | float | str):
-        return None
-    try:
-        number = float(value)
-    except ValueError:
-        return None
-    return int(number) if math.isfinite(number) else None
+        names[code] = _normalised_area_code(row.get("name")) or code
+    return names
 
 
 def _require_uk_disclosure_output(
@@ -699,7 +682,7 @@ def build_uk_constituency_impact(
 
     Areas that disclosure control withholds are left out. Downloads the
     constituency lookup if needed and raises when a published area lacks a
-    lookup name or coordinates.
+    lookup name.
     """
     if country != "uk":
         return None
@@ -712,18 +695,14 @@ def build_uk_constituency_impact(
     ordered = [code for code in lookup if code in changes] + sorted(
         set(changes) - set(lookup)
     )
-    records: list[dict[str, object]] = []
-    for code in ordered:
-        name, x, y = lookup.get(code, (code, None, None))
-        records.append(
-            {
-                "constituency_code": code,
-                "constituency_name": name,
-                "x": x,
-                "y": y,
-                **changes[code].record_fields(),
-            }
-        )
+    records: list[dict[str, object]] = [
+        {
+            "constituency_code": code,
+            "constituency_name": lookup.get(code, code),
+            **changes[code].record_fields(),
+        }
+        for code in ordered
+    ]
     return _complete_uk_geography_output(
         records,
         code_field="constituency_code",
@@ -737,7 +716,7 @@ def build_uk_local_authority_impact(
     *,
     uk_local_authority_metadata: UKLocalAuthorityMetadata | None = None,
 ) -> GeographicImpactOutput | None:
-    """Return the published UK local authorities, named and placed for the boundaries.
+    """Return the published UK local authorities, named for the boundary version.
 
     None for other countries. For the UK, ``uk_local_authority_metadata`` is
     required, and a code outside its boundary version raises ``ValueError``.
@@ -773,8 +752,6 @@ def build_uk_local_authority_impact(
             {
                 "local_authority_code": code,
                 "local_authority_name": metadata.name,
-                "x": metadata.x,
-                "y": metadata.y,
                 **changes[code].record_fields(),
             }
         )
