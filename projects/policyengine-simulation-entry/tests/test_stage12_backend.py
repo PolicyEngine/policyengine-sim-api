@@ -632,6 +632,106 @@ def test_automatic_dispatch_skips_unsupported_requests_with_an_event() -> None:
     )
 
 
+def _dispatch_automatically(backend, request_payload: dict) -> None:
+    asyncio.run(
+        backend.dispatch_after_production(
+            request_payload=request_payload,
+            production_response=_response(),
+            request_id="request-1",
+            observability_id=OBSERVABILITY_ID,
+        )
+    )
+
+
+def _event_names(backend) -> list[str]:
+    return [event_call.args[0] for event_call in backend._runtime.event.call_args_list]
+
+
+@pytest.mark.parametrize("region", ["state/ca", "State/CA", "ca", " ca "])
+def test_automatic_dispatch_starts_no_report_for_a_us_state(region) -> None:
+    # The app runs every state for a nationwide report's district view, and
+    # Stage 12 is being replaced, so a state run gets no shadow report.
+    invoker = FakeInvoker()
+    backend = _backend(FakeStore(), invoker)
+
+    _dispatch_automatically(backend, {**eligible_payload(), "region": region})
+
+    assert invoker.calls == []
+    backend._runtime.event.assert_called_once_with(
+        "stage12_comparison_run_skipped",
+        attributes={
+            "request_id": "request-1",
+            "production_identity": "job-1",
+            "reason": "excluded_us_state_region",
+        },
+    )
+
+
+def test_an_unsupported_us_state_request_keeps_its_unsupported_reason() -> None:
+    # The exclusion is counted only for state runs that would otherwise have
+    # been compared.
+    invoker = FakeInvoker()
+    backend = _backend(FakeStore(), invoker)
+
+    _dispatch_automatically(
+        backend, {**eligible_payload(), "region": "state/ca", "scope": "household"}
+    )
+
+    assert invoker.calls == []
+    skipped_attributes = backend._runtime.event.call_args.kwargs["attributes"]
+    assert skipped_attributes["reason"] == "unsupported_scope"
+
+
+@pytest.mark.parametrize(
+    ("country", "region", "country_package_version"),
+    [
+        ("us", "us", "1.764.6"),
+        ("us", "congressional_district/CA-12", "1.764.6"),
+        ("us", "place/CA-44000", "1.764.6"),
+        ("uk", "uk", "2.90.2"),
+        ("uk", "country/scotland", "2.90.2"),
+    ],
+)
+def test_automatic_dispatch_still_compares_every_other_region(
+    country, region, country_package_version
+) -> None:
+    invoker = FakeInvoker()
+    backend = _backend(FakeStore(), invoker)
+
+    _dispatch_automatically(
+        backend,
+        {
+            **eligible_payload(),
+            "country": country,
+            "region": region,
+            "version": country_package_version,
+        },
+    )
+
+    assert len(invoker.calls) == 1
+    report = invoker.calls[0]["report_payload"]
+    assert report["baseline"]["geography"]["region"] == region
+    assert _event_names(backend) == ["stage12_comparison_run_dispatched"]
+
+
+def test_an_operator_submission_still_compares_a_us_state() -> None:
+    # Only automatic shadow reports exclude state runs; an operator can still
+    # submit one directly.
+    invoker = FakeInvoker()
+
+    asyncio.run(
+        _backend(FakeStore(), invoker).submit_temporary_report(
+            request_payload={**eligible_payload(), "region": "state/ca"},
+            request_id="request-1",
+            observability_id=OBSERVABILITY_ID,
+        )
+    )
+
+    assert len(invoker.calls) == 1
+    report = invoker.calls[0]["report_payload"]
+    assert report["baseline"]["geography"]["region"] == "state/ca"
+
+
 @pytest.mark.parametrize("response", [b"[]", b'{"job_id": ""}', b'{"job_id": 7}'])
 def test_automatic_dispatch_requires_a_production_job_identifier(response) -> None:
     invoker = FakeInvoker()

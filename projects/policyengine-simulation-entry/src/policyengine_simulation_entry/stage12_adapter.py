@@ -7,6 +7,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid5
 
+from policyengine_simulation_contract.stage12_bundle import region_type_of
 from policyengine_simulation_contract.stage12_execution import (
     BundleProvenance,
     DatasetArtifactMediaType,
@@ -37,6 +38,8 @@ class ComparisonSkipReason(StrEnum):
 
     The value is reported as the skip event's ``reason`` attribute and in the
     422 body of the temporary direct-submission route.
+    ``EXCLUDED_US_STATE_REGION`` is the exception: it applies only to
+    automatic shadow reports, so only the skip event reports it.
     """
 
     UNSUPPORTED_FLOW = "unsupported_flow"
@@ -47,6 +50,7 @@ class ComparisonSkipReason(StrEnum):
     MISSING_BUNDLE_PROVENANCE = "missing_bundle_provenance"
     UNSUPPORTED_OPTIONS = "unsupported_options"
     UNSUPPORTED_REQUEST_SHAPE = "unsupported_request_shape"
+    EXCLUDED_US_STATE_REGION = "excluded_us_state_region"
 
 
 @dataclass(frozen=True)
@@ -228,6 +232,34 @@ def adapt_annual_comparison(
         ),
         skip_reason=None,
     )
+
+
+def adapt_automatic_comparison(
+    payload: dict[str, Any],
+    *,
+    evaluation_id: UUID,
+    worker: V2WorkerVersion,
+) -> AdaptedComparisonRun:
+    """Adapt an accepted production request into a shadow report, if one runs.
+
+    A US state request gets none (``EXCLUDED_US_STATE_REGION``). The app runs
+    every state for a nationwide report's district view, and Stage 12 is
+    being replaced, so shadowing them would start two simulations per state
+    for results nothing reads. The check follows the adapter's own, so the
+    reason counts only state requests that would otherwise have been
+    compared. Operator direct submissions use ``adapt_annual_comparison`` and
+    still accept state regions.
+    """
+    adapted = adapt_annual_comparison(
+        payload, evaluation_id=evaluation_id, worker=worker
+    )
+    if (
+        adapted.report is not None
+        and payload["country"] == "us"
+        and region_type_of("us", payload["region"]) == "state"
+    ):
+        return _skip(ComparisonSkipReason.EXCLUDED_US_STATE_REGION)
+    return adapted
 
 
 def _report_input(

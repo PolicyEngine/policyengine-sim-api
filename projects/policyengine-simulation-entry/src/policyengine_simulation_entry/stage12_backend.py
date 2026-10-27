@@ -35,7 +35,10 @@ from policyengine_simulation_observability.stages import (
 )
 from policyengine_stage12_persistence import Stage12PersistenceStore
 
-from policyengine_simulation_entry.stage12_adapter import adapt_annual_comparison
+from policyengine_simulation_entry.stage12_adapter import (
+    adapt_annual_comparison,
+    adapt_automatic_comparison,
+)
 
 if TYPE_CHECKING:
     from policyengine_observability import ObservabilityRuntime
@@ -225,7 +228,8 @@ class Stage12ComparisonBackend:
 
         The evaluation ID is derived from the environment, production job and
         worker version, so a repeat dispatch maps to the same report. Requests
-        the adapter cannot represent are skipped with a telemetry event.
+        the adapter cannot represent, and US state requests, are skipped with
+        a telemetry event.
         Raise ValueError if the production response has no ``job_id`` and
         TemporaryStage12DispatchFailed if Modal does not accept the spawn.
         """
@@ -414,7 +418,7 @@ class Stage12ComparisonBackend:
             AUTOMATIC_REPORT_NAMESPACE,
             f"{self._settings.environment}|economy|{production_identity}|{version}|{manifest_sha256}",
         )
-        adapted = adapt_annual_comparison(
+        adapted = adapt_automatic_comparison(
             request_payload,
             evaluation_id=evaluation_id,
             worker=worker,

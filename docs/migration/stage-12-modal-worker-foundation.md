@@ -163,6 +163,17 @@ unchanged. Only a newly accepted supported production job may create one
 corresponding comparison run; polls, cached results, and repeated submissions
 that resolve the same production job do not create another comparison.
 
+US state requests (a `state/*` region, in any case, or a bare two-letter state
+code) get no shadow comparison, even when the adapter supports them. The app
+runs every state for a nationwide report's congressional district view, and
+Stage 12 is being replaced, so comparing them would start two simulations per
+state for results nothing reads. The entry logs
+`stage12_comparison_run_skipped` with reason `excluded_us_state_region`, and
+only for state requests the adapter would otherwise have compared. US
+national, congressional district and place requests, and every UK request
+the adapter supports, are still compared. The operator direct-submission
+route still accepts state regions.
+
 The Simulation Entrypoint, Modal report coordinator, and single-simulation
 functions use each environment's existing `policyengine_v2_runtime` PostgreSQL
 credential. They share one SQLAlchemy Core persistence package for the two
