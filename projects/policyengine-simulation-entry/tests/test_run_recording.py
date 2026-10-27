@@ -10,7 +10,7 @@ import pytest
 from conftest import FakeBackend, make_settings
 from fastapi.testclient import TestClient
 from policyengine_simulation_entry import run_recording
-from policyengine_simulation_entry.app import create_app
+from policyengine_simulation_entry.app import RunServices, create_app
 from policyengine_simulation_entry.modal_calls import (
     CallFailed,
     CallInspectionError,
@@ -396,7 +396,7 @@ def test_an_instance_runs_nothing_in_the_background() -> None:
         ),
         backend=FakeBackend(),
         auth_dependency=lambda: None,
-        simulation_database=_DatabaseThatOnlyReadsItsRevision(),
+        run_services=RunServices(database=_DatabaseThatOnlyReadsItsRevision()),
     )
 
     with TestClient(app) as client:
