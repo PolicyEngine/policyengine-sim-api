@@ -50,7 +50,9 @@ too, and are not in the OpenAPI document. They give the answers `/versions`
 and `/versions/{kind}` would give from the v2 version manifest
 (`policyengine_simulation_entry.v2_versions`), in the same response models,
 while `/versions` still forwards to the old gateway. A manifest that cannot be
-read gives a 503.
+read gives a 503. Each staging deploy compares the candidate's two answers
+with `.github/scripts/compare_versions_sources.py` and writes the differences
+to the job summary; the comparison never fails the deploy.
 
 A caller holds a permission when it appears in the token's `permissions` claim
 (Auth0 RBAC). For a client-credentials (machine) token, an entry in its

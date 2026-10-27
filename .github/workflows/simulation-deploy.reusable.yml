@@ -746,6 +746,17 @@ jobs:
           EXPECTED_LATEST: ${{ inputs.deploy_existing_stack && needs.update_routing.outputs.advances_latest == 'true' && 'true' || '' }}
         run: .github/scripts/cloud-run-simulation-entry-smoke.sh "${{ needs.deploy_entrypoint.outputs.candidate_url }}" "${{ needs.deploy_entrypoint.outputs.revision }}"
 
+      # /versions still forwards to the old gateway, which reads v1's routing
+      # state; /internal/v2/versions gives the v2 version manifest's answers.
+      # The report goes to the job summary and never fails the deploy: the
+      # sources are known to differ until the manifest records everything
+      # the gateway reports.
+      - name: Compare /versions with the v2 manifest's answers (report only)
+        if: ${{ inputs.deployment_environment == 'staging' }}
+        env:
+          CANDIDATE_URL: ${{ needs.deploy_entrypoint.outputs.candidate_url }}
+        run: python .github/scripts/compare_versions_sources.py "${CANDIDATE_URL}"
+
       - name: Download the numerical release sentinel
         if: ${{ inputs.deploy_existing_stack }}
         uses: actions/download-artifact@v4
