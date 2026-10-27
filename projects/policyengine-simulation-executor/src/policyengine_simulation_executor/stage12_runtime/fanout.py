@@ -42,14 +42,6 @@ POLL_INTERVAL_BACKOFF_FACTOR = 2.0
 CONSECUTIVE_POLL_ERROR_LIMIT = 2
 
 
-def _require_call(call: modal.FunctionCall | None) -> modal.FunctionCall:
-    """Return ``call``, raising ``RuntimeError`` when a dispatch returned none."""
-    if call is None:
-        msg = "Stage 12 segment dispatch returned no call"
-        raise RuntimeError(msg)
-    return call
-
-
 def _next_backoff(current: float, *, maximum: float) -> float:
     return min(current * POLL_INTERVAL_BACKOFF_FACTOR, maximum)
 
@@ -130,7 +122,6 @@ class Stage12SegmentRunner:
         handles: list[tuple[int, Any]] = []
         try:
             for segment in segments:
-                call = None
                 with self.runtime.span(
                     STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_DISPATCH),
                     attributes={"segment_index": segment.segment_index},
@@ -139,32 +130,23 @@ class Stage12SegmentRunner:
                         segment.model_dump(mode="python"),
                         observability_context=self.runtime.capture_context(),
                     )
-                handles.append((segment.segment_index, _require_call(call)))
+                handles.append((segment.segment_index, call))
         except Exception:
             self._cancel_all(handles)
             raise
 
-        payloads: list[object] | None = None
         with self.runtime.span(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_WAIT)
         ):
             payloads = self._collect(handles)
-        if payloads is None:
-            msg = "Stage 12 segment wait returned no payloads"
-            raise RuntimeError(msg)
-        merged: SimulationCalculation | None = None
         with self.runtime.span(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SEGMENT_MERGE)
         ):
-            merged = merge_segment_results(
+            return merge_segment_results(
                 self.simulation,
                 payloads,
                 groups=groups,
             )
-        if merged is None:
-            msg = "Stage 12 segment merge returned no calculation"
-            raise RuntimeError(msg)
-        return merged
 
     def _collect(self, handles: list[tuple[int, Any]]) -> list[object]:
         results: list[object | None] = [None] * len(handles)

@@ -21,6 +21,10 @@ from policyengine_simulation_executor.stage12_runtime import (
 from policyengine_simulation_executor.stage12_runtime.partition import (
     US_REGION_GROUPS,
 )
+from policyengine_simulation_observability.stages import (
+    STAGE12_SIMULATION_STAGES,
+    Stage,
+)
 from stage12_runtime_support import planned_simulation
 
 if TYPE_CHECKING:
@@ -106,7 +110,11 @@ def _results(simulation) -> list[dict]:
     ]
 
 
-def _runner(*, errors: dict[int, list[Exception]] | None = None):
+def _runner(
+    *,
+    errors: dict[int, list[Exception]] | None = None,
+    runtime: object | None = None,
+):
     simulation = planned_simulation(SimulationRole.BASELINE)
     function = FakeFunction(_results(simulation), errors or {})
 
@@ -117,12 +125,12 @@ def _runner(*, errors: dict[int, list[Exception]] | None = None):
             assert function_name == "run_single_simulation_segment_us"
             return function
 
-    runtime = FakeRuntime()
+    span_runtime = runtime if runtime is not None else FakeRuntime()
     sleeps: list[float] = []
     runner = Stage12SegmentRunner(
         simulation,
         app_name="stage12-app",
-        runtime=cast("ObservabilityRuntime", runtime),
+        runtime=cast("ObservabilityRuntime", span_runtime),
         seams=SegmentRunnerSeams(
             modal_module=SimpleNamespace(Function=FunctionLookup),
             groups=US_REGION_GROUPS,
@@ -131,7 +139,24 @@ def _runner(*, errors: dict[int, list[Exception]] | None = None):
             poll_interval_max_seconds=2.0,
         ),
     )
-    return runner, function, runtime, sleeps
+    return runner, function, span_runtime, sleeps
+
+
+def _fail_dispatch_of_segment_five(function: FakeFunction) -> None:
+    spawn = function.spawn
+
+    def fail_during_dispatch(payload, *, observability_context):
+        if payload["segment_index"] == 5:
+            msg = "dispatch failed"
+            raise ConnectionError(msg)
+        return spawn(payload, observability_context=observability_context)
+
+    function.spawn = fail_during_dispatch
+
+
+def _return_segment_zero_for_segment_one(function: FakeFunction) -> None:
+    # The merge then reads segment index 0 twice and refuses the result set.
+    function.results[1] = function.results[0]
 
 
 def test_starts_twenty_segments_and_merges_them_in_partition_order() -> None:
@@ -190,15 +215,7 @@ def test_second_poll_error_cancels_all_started_segments() -> None:
 
 def test_dispatch_error_cancels_segments_that_already_started() -> None:
     runner, function, _, _ = _runner()
-    spawn = function.spawn
-
-    def fail_during_dispatch(payload, *, observability_context):
-        if payload["segment_index"] == 5:
-            msg = "dispatch failed"
-            raise ConnectionError(msg)
-        return spawn(payload, observability_context=observability_context)
-
-    function.spawn = fail_during_dispatch
+    _fail_dispatch_of_segment_five(function)
 
     with pytest.raises(ConnectionError, match="dispatch failed"):
         runner.run()
@@ -219,3 +236,65 @@ def test_persisted_parent_cancellation_cancels_all_segments() -> None:
 
     assert sleeps == [0.5]
     assert all(call.cancelled == 1 for call in function.calls)
+
+
+def test_merge_error_is_raised_from_the_merge_span() -> None:
+    runner, function, runtime, _ = _runner()
+    _return_segment_zero_for_segment_one(function)
+
+    with pytest.raises(ValueError, match="duplicate index"):
+        runner.run()
+
+    assert runtime.spans[-1][0] == STAGE12_SIMULATION_STAGES.name(
+        Stage.STAGE12_SEGMENT_MERGE
+    )
+    assert not any(call.cancelled for call in function.calls)
+
+
+def test_segments_are_dispatched_collected_and_merged_in_the_real_spans(
+    real_observability_runtime,
+) -> None:
+    runner, function, _, _ = _runner(runtime=real_observability_runtime)
+
+    result = runner.run()
+
+    assert len(function.spawns) == 20
+    assert result.frames["household"]["household_id"].tolist() == list(range(20))
+
+
+def test_dispatch_error_is_raised_from_the_real_dispatch_span(
+    real_observability_runtime,
+) -> None:
+    runner, function, _, _ = _runner(runtime=real_observability_runtime)
+    _fail_dispatch_of_segment_five(function)
+
+    with pytest.raises(ConnectionError, match="dispatch failed"):
+        runner.run()
+
+    assert len(function.calls) == 5
+    assert all(call.cancelled == 1 for call in function.calls)
+
+
+def test_poll_error_is_raised_from_the_real_wait_span(
+    real_observability_runtime,
+) -> None:
+    runner, function, _, _ = _runner(
+        errors={0: [ConnectionError("first"), RuntimeError("second")]},
+        runtime=real_observability_runtime,
+    )
+
+    with pytest.raises(Stage12ExecutionError) as error:
+        runner.run()
+
+    assert error.value.detail.error_code == "segment_execution_failed"
+    assert all(call.cancelled == 1 for call in function.calls)
+
+
+def test_merge_error_is_raised_from_the_real_merge_span(
+    real_observability_runtime,
+) -> None:
+    runner, function, _, _ = _runner(runtime=real_observability_runtime)
+    _return_segment_zero_for_segment_one(function)
+
+    with pytest.raises(ValueError, match="duplicate index"):
+        runner.run()
