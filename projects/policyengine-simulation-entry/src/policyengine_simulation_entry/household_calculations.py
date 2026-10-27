@@ -84,9 +84,6 @@ if TYPE_CHECKING:
     )
     from policyengine_simulation_entry.household_workers import HouseholdWorker
 
-    # Each of a report's simulations with the policy it calculates.
-    type ReportSides = Sequence[tuple[SimulationRecord, HouseholdPolicyInput]]
-
 UNKNOWN_REFERENCE_MESSAGE = (
     "The household, policy or catalog version does not exist for this country."
 )
@@ -205,24 +202,19 @@ class ReportRunInputs:
     options: HouseholdCalculationOptions
 
 
-def _check_report_sides(
-    report: ReportRecord,
-    sides: ReportSides,
-    submission: HouseholdReportRunSubmission,
+def _check_report_policies(
+    simulations: Sequence[SimulationRecord],
+    policies: Sequence[HouseholdPolicyInput],
+    household_id: UUID,
 ) -> None:
-    """Refuse a run that names another household or other policies."""
-    submitted = [submission.baseline] + (
-        [] if submission.reform is None else [submission.reform]
-    )
-    if (
-        len(submitted) != len(sides)
-        or (report.reform_simulation_id is None) != (submission.reform is None)
-        or any(
-            simulation.household_id != submission.household_id
-            or simulation.policy_id != policy.policy_id
-            for (simulation, _), policy in zip(sides, submitted, strict=False)
-        )
-    ):
+    """Refuse a run whose household or policies are not the report's own.
+
+    ``simulations`` are the report's baseline and, if it has one, reform;
+    ``policies`` the submitted baseline and reform, in the same order.
+    """
+    if [simulation.policy_id for simulation in simulations] != [
+        policy.policy_id for policy in policies
+    ] or any(simulation.household_id != household_id for simulation in simulations):
         raise ReportPoliciesMismatchError(MISMATCHED_REPORT_MESSAGE)
 
 
@@ -404,9 +396,7 @@ class HouseholdCalculationService:
         policies = [submission.baseline] + (
             [] if submission.reform is None else [submission.reform]
         )
-        _check_report_sides(
-            report, list(zip(simulations, policies, strict=False)), submission
-        )
+        _check_report_policies(simulations, policies, submission.household_id)
         worker = await asyncio.to_thread(
             self.workers.resolve, report.country, submission.policyengine_version
         )
