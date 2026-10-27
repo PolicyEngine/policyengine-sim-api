@@ -269,3 +269,18 @@ def test_the_modal_source_reads_on_its_own_thread():
 
     assert reading_threads
     assert all(name.startswith("v2-version-manifest") for name in reading_threads)
+
+
+def test_an_injected_source_is_used_even_when_it_is_falsy():
+    class EmptySizedVersionsSource(FakeVersionsSource):
+        def __len__(self):
+            return 0
+
+    source = EmptySizedVersionsSource()
+    client, _ = versions_client(source)
+
+    with client:
+        result = client.get("/internal/v2/versions")
+
+    assert result.status_code == 200
+    assert source.loads == 1

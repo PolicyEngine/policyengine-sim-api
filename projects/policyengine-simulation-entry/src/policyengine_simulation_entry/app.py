@@ -1002,10 +1002,10 @@ def create_app(
         reader=simulation_reader,
     )
     _register_service_routes(app, entry)
-    _register_v2_version_routes(
-        app,
-        v2_versions_source or ModalV2VersionsSource.from_settings(runtime_settings),
-    )
+    runtime_versions_source = v2_versions_source
+    if runtime_versions_source is None:
+        runtime_versions_source = ModalV2VersionsSource.from_settings(runtime_settings)
+    _register_v2_version_routes(app, runtime_versions_source)
     return app
 
 
