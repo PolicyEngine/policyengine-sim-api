@@ -7,7 +7,9 @@ Makefile target, a Dockerfile, a Compose file or a Modal image definition.
 Every project directory (`projects/*`, `libs/*`) is its own uv project with its
 own `uv.lock`. The repository root has no project. Four rules keep every
 environment on the locked versions. The `locked-installs` quality guard
-(`scripts/rules/locked_installs.py`) checks all four on every pull request.
+(`scripts/rules/locked_installs.py`) checks all four on every pull request. A
+fifth rule, [checked by the `uv-version` guard](#we-pin-one-uv-version), makes
+every install use the same uv release.
 
 ## We use uv.lock
 
@@ -100,3 +102,45 @@ condition nor both a review date (`expires`) and a tracking issue (`issue`), or
 matches no site (a stale exception). The
 current exceptions are listed in `docs/generated/rules.md` under "Exceptions
 and review dates".
+
+## We pin one uv version
+
+`sim.dependencies.uv-version-pinned`: every place that installs uv installs the
+one release written in `.uv-version` at the repository root, so lock checks,
+installs, the daily relock and the images all run the same uv, whichever
+release is newest that day:
+
+- each `astral-sh/setup-uv` step sets `with: version: "<release>"`; without it
+  the action installs the newest release;
+- each Dockerfile copies uv from `ghcr.io/astral-sh/uv:<release>`, never
+  `:latest`; a tag may add a variant, as in `<release>-python3.13-bookworm`;
+- each Modal `uv_sync` or `uv_pip_install` call passes
+  `uv_version="<release>"`; without it Modal copies uv from the image's
+  `latest` tag;
+- a uv install script or release download names the release in its URL
+  (`https://astral.sh/uv/<release>/install.sh`), a `pip`, `pipx` or `uv tool`
+  install of uv pins `uv==<release>`, and `uv self update` names the release.
+
+A workflow's `with:` input can't be read from a file, and Modal imports its
+image definitions inside containers that don't hold the repository root, so
+each install writes the release itself. The `uv-version` quality guard
+(`scripts/rules/uv_version.py`) keeps every copy equal to `.uv-version`. It
+reads every workflow, composite action, shell script, Makefile, Dockerfile and
+Compose file, skipping comment lines, and the Modal image calls in Python
+modules outside tests and fixtures, and fails when an install pins no release
+or another one.
+
+Use the same release on your own machine, so that `uv lock` writes what CI
+checks; the guard can't check the uv you run locally.
+
+To upgrade uv:
+
+1. Change the release in `.uv-version`.
+2. Run `python scripts/run_quality_guards.py`. The `uv-version` guard lists
+   every install that still pins the old release; change each one.
+3. Run `.github/scripts/check-uv-locks.sh` with the new uv. If a lock fails,
+   relock that project with the new uv and commit the lock in the same pull
+   request.
+
+Changing `uv_version` changes the Modal images' `uv_sync` layer, so Modal
+rebuilds each image from that layer on the next time it is built.

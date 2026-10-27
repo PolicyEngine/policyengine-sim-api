@@ -50,3 +50,18 @@ does a baseline entry that no longer applies, so each list only shrinks. When
 you convert an existing multi-line block into a script, or add a missing test,
 remove its baseline entry and lower the rule's `baseline.count` in
 `rules/registry.toml`.
+
+## Installing uv
+
+A step that installs uv with `astral-sh/setup-uv` sets `with: version:` to the
+release in `.uv-version`:
+
+```yaml
+- name: Install uv
+  uses: astral-sh/setup-uv@v8.1.0
+  with:
+    version: "0.13.6"
+```
+
+Rule `sim.dependencies.uv-version-pinned` requires it; see
+[the dependency locking skill](dependencies.md#we-pin-one-uv-version).

@@ -207,6 +207,8 @@ def build_runtime_simulation_image() -> modal.Image:
             uv_project_dir=_UV_PROJECT_DIR,
             frozen=True,
             extra_options="--only-group modal-simulation-image",
+            # The repository's uv release, from .uv-version.
+            uv_version="0.13.6",
         )
         # Packages are already installed from the frozen lock. The wrapper CLI
         # downloads only the certified datasets and writes their receipt.
