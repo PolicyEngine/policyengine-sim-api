@@ -44,6 +44,12 @@ older row. `start_run` starts or reuses its run, as `RunStore` does, and
 detail), its simulation and, once it succeeded, the computed household; an
 economy run is not a household calculation and reads as none.
 
+A household report compares a baseline household simulation with an
+optional reform. Each report run joins one run of each, and one Modal call
+computes both households. `create_report` and `create_report_run` add them,
+and `read_report` returns the report with a report run (its newest, unless
+one is named) and both runs as calculations; an economy report reads as none.
+
 ### Runs
 
 A simulation run's setup is its catalog version (one policyengine.py bundle

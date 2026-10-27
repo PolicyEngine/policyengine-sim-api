@@ -22,6 +22,7 @@ from policyengine_simulation_persistence.engine import (
 from policyengine_simulation_persistence.household_calculations import (
     HouseholdCalculation,
     HouseholdCalculationStore,
+    HouseholdReport,
 )
 from policyengine_simulation_persistence.household_results import (
     HouseholdOutput,
@@ -92,6 +93,7 @@ __all__ = [
     "HouseholdCalculation",
     "HouseholdCalculationStore",
     "HouseholdOutput",
+    "HouseholdReport",
     "NewReport",
     "NewReportRun",
     "NewSimulation",

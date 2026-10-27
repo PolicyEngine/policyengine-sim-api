@@ -14,6 +14,11 @@ calculation and no wrong result, so no unique constraint is needed.
 ``read_calculation`` returns a calculation as its reader sees it: the run's
 status, timings and error (with its detail), its simulation, and, once it
 succeeded, the computed household.
+
+A household report compares a baseline household simulation with an
+optional reform. Each report run joins one run of each, and one Modal call
+computes both households; ``read_report`` returns the report with a report
+run (its newest, unless another is named) and both runs as calculations.
 """
 
 from __future__ import annotations
@@ -28,10 +33,18 @@ from policyengine_simulation_persistence.household_results import (
     HouseholdOutput,
     read_household_output,
 )
+from policyengine_simulation_persistence.reports import (
+    ReportKind,
+    ReportRecord,
+    ReportStore,
+    reports,
+)
 from policyengine_simulation_persistence.run_store import RunStore, utc_now
 from policyengine_simulation_persistence.runs import (
+    ReportRunRecord,
     RunStatus,
     SimulationRunRecord,
+    report_runs,
     simulation_runs,
 )
 from policyengine_simulation_persistence.simulations import (
@@ -46,9 +59,11 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
-    from sqlalchemy import Engine
+    from sqlalchemy import Connection, Engine
 
+    from policyengine_simulation_persistence.reports import NewReport
     from policyengine_simulation_persistence.runs import (
+        NewReportRun,
         NewSimulationRun,
         StartedSimulationRun,
     )
@@ -67,6 +82,20 @@ class HouseholdCalculation:
     output: HouseholdOutput | None
 
 
+@dataclass(frozen=True)
+class HouseholdReport:
+    """A household report, one of its runs, and that run's two calculations.
+
+    ``report_run``, ``baseline`` and ``reform`` are None before the report's
+    first run; ``reform`` is None for a report with only a baseline.
+    """
+
+    report: ReportRecord
+    report_run: ReportRunRecord | None
+    baseline: HouseholdCalculation | None
+    reform: HouseholdCalculation | None
+
+
 class HouseholdCalculationStore:
     """Typed SQLAlchemy Core reads and inserts for household calculations."""
 
@@ -79,6 +108,7 @@ class HouseholdCalculationStore:
         """Use ``engine`` (the runtime role) and ``clock`` for run timestamps."""
         self.engine = engine
         self._simulations = SimulationStore(engine)
+        self._reports = ReportStore(engine)
         self._runs = RunStore(engine, clock=clock)
 
     def find_or_create_simulation(
@@ -129,40 +159,122 @@ class HouseholdCalculationStore:
         """
         return self._runs.start_simulation_run(new_run, force=force)
 
+    def get_simulation(self, simulation_id: UUID) -> SimulationRecord | None:
+        """Return the simulation with this ID, or None."""
+        return self._simulations.get(simulation_id)
+
     def read_calculation(self, run_id: UUID) -> HouseholdCalculation | None:
         """Return the household calculation run ``run_id``, or None.
 
         An economy run is not a household calculation, so it reads as None.
         """
         with self.engine.connect() as connection:
-            row = (
+            return _read_calculation(connection, run_id)
+
+    # --- Household reports --------------------------------------------------
+
+    def create_report(self, new_report: NewReport) -> ReportRecord:
+        """Insert one report and return it."""
+        return self._reports.create(new_report)
+
+    def get_report(self, report_id: UUID) -> ReportRecord | None:
+        """Return the household report with this ID, or None."""
+        report = self._reports.get(report_id)
+        if report is None or report.kind is not ReportKind.HOUSEHOLD:
+            return None
+        return report
+
+    def create_report_run(self, new_report_run: NewReportRun) -> ReportRunRecord:
+        """Add a report run joining runs of the report's simulations."""
+        return self._runs.create_report_run(new_report_run)
+
+    def read_report(
+        self, report_id: UUID, *, report_run_id: UUID | None = None
+    ) -> HouseholdReport | None:
+        """Return a household report with a run and its two calculations.
+
+        The run is ``report_run_id`` when given, and the report's newest run
+        otherwise. Return None for an economy report, an unknown report, or a
+        run of another report.
+        """
+        with self.engine.connect() as connection:
+            report_row = (
                 connection.execute(
-                    select(simulation_runs).where(
-                        simulation_runs.c.id == run_id,
-                        simulation_runs.c.simulation_kind
-                        == SimulationKind.HOUSEHOLD.value,
+                    select(reports).where(
+                        reports.c.id == report_id,
+                        reports.c.kind == ReportKind.HOUSEHOLD.value,
                     )
                 )
                 .mappings()
                 .first()
             )
-            if row is None:
+            if report_row is None:
                 return None
-            run = SimulationRunRecord.from_row(row)
-            simulation_row = (
+            run_query = select(report_runs).where(report_runs.c.report_id == report_id)
+            if report_run_id is not None:
+                run_query = run_query.where(report_runs.c.id == report_run_id)
+            run_row = (
                 connection.execute(
-                    select(simulations).where(simulations.c.id == run.simulation_id)
+                    run_query.order_by(
+                        report_runs.c.created_at.desc(), report_runs.c.id.desc()
+                    ).limit(1)
                 )
                 .mappings()
-                .one()
+                .first()
             )
-            output = (
-                read_household_output(connection, run.id)
-                if run.status is RunStatus.SUCCEEDED
-                else None
+            if run_row is None and report_run_id is not None:
+                return None
+            report_run = None if run_row is None else ReportRunRecord.from_row(run_row)
+            baseline = (
+                None
+                if report_run is None
+                else _read_calculation(
+                    connection, report_run.baseline_simulation_run_id
+                )
             )
-        return HouseholdCalculation(
-            run=run,
-            simulation=SimulationRecord.from_row(simulation_row),
-            output=output,
+            reform = (
+                None
+                if report_run is None or report_run.reform_simulation_run_id is None
+                else _read_calculation(connection, report_run.reform_simulation_run_id)
+            )
+        return HouseholdReport(
+            report=ReportRecord.from_row(report_row),
+            report_run=report_run,
+            baseline=baseline,
+            reform=reform,
         )
+
+
+def _read_calculation(
+    connection: Connection, run_id: UUID
+) -> HouseholdCalculation | None:
+    row = (
+        connection.execute(
+            select(simulation_runs).where(
+                simulation_runs.c.id == run_id,
+                simulation_runs.c.simulation_kind == SimulationKind.HOUSEHOLD.value,
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        return None
+    run = SimulationRunRecord.from_row(row)
+    simulation_row = (
+        connection.execute(
+            select(simulations).where(simulations.c.id == run.simulation_id)
+        )
+        .mappings()
+        .one()
+    )
+    output = (
+        read_household_output(connection, run.id)
+        if run.status is RunStatus.SUCCEEDED
+        else None
+    )
+    return HouseholdCalculation(
+        run=run,
+        simulation=SimulationRecord.from_row(simulation_row),
+        output=output,
+    )
