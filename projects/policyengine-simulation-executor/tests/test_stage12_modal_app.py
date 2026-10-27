@@ -326,6 +326,7 @@ def test_v2_app_declares_validation_workers_and_non_http_coordinator(
         "run_single_simulation_us",
         "run_single_simulation_uk",
         "coordinate_report",
+        "report_call_ended",
     }
     assert functions["run_single_simulation_us"]["image"] is module.us_worker_image
     assert functions["run_single_simulation_uk"]["image"] is module.uk_worker_image

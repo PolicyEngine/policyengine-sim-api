@@ -653,12 +653,22 @@ jobs:
           STAGE12_CACHE_BUCKET: ${{ vars.STAGE12_CACHE_BUCKET }}
         run: ../../.github/scripts/stage12-cache-precompute.sh "${{ inputs.modal_environment }}"
 
+      # The v2 functions report to sim's main URL that a call ended.
+      - name: Find the Simulation Entrypoint's main URL
+        id: entry_url
+        env:
+          PROJECT_ID: ${{ vars.SIMULATION_ENTRYPOINT_GCP_PROJECT_ID }}
+          REGION: ${{ vars.SIMULATION_ENTRYPOINT_GCP_REGION || 'us-central1' }}
+          SERVICE: ${{ inputs.entrypoint_service }}
+        run: .github/scripts/simulation-entry-main-url.sh
+
       - name: Deploy the additional versioned v2 Modal application
         working-directory: projects/policyengine-simulation-executor
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           MODAL_APP_NAME: ${{ steps.application.outputs.name }}
+          SIMULATION_ENTRY_URL: ${{ steps.entry_url.outputs.url }}
           STAGE12_EXPECT_POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
           STAGE12_EXPECT_US_VERSION: ${{ needs.prepare.outputs.us_version }}
           STAGE12_EXPECT_UK_VERSION: ${{ needs.prepare.outputs.uk_version }}
