@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from uuid import uuid4
 
@@ -16,7 +18,7 @@ from policyengine_simulation_persistence import (
     SimulationRunRecord,
     create_simulation_engine,
 )
-from public_api_support import delete_public_api_row
+from public_api_support import delete_public_api_row, superuser_engine
 from report_support import (
     economy_pair,
     economy_report,
@@ -96,6 +98,78 @@ def test_a_forced_rerun_adds_the_next_attempt(
         baseline.id, public_api_rows.catalog_version_id, 2026
     )
     assert latest == forced.run
+
+
+LOCK_WAIT_TIMEOUT_SECONDS = 10
+
+
+def _wait_until_a_statement_waits_for_a_lock(database) -> None:
+    engine = superuser_engine(database.superuser_url)
+    deadline = time.monotonic() + LOCK_WAIT_TIMEOUT_SECONDS
+    try:
+        with engine.connect() as connection:
+            while time.monotonic() < deadline:
+                waiting = connection.execute(
+                    text(
+                        "SELECT count(*) FROM pg_stat_activity "
+                        "WHERE datname = current_database() "
+                        "AND wait_event_type = 'Lock'"
+                    )
+                ).scalar_one()
+                connection.rollback()
+                if waiting:
+                    return
+                time.sleep(0.05)
+    finally:
+        engine.dispose()
+    msg = "no statement waited for a lock"
+    raise AssertionError(msg)
+
+
+def test_a_forced_start_that_loses_the_insert_adds_the_attempt_after(
+    migrated_database, public_api_rows
+) -> None:
+    """A forced caller always starts a run of its own.
+
+    Another caller adds the attempt the forced caller read as next, between
+    that read and the forced caller's insert. A forced start (a labour supply
+    report's) must not receive the other caller's run, which may have been
+    started without what the forced caller needs.
+    """
+    baseline, _ = economy_pair(migrated_database, public_api_rows)
+    store = run_store(migrated_database)
+    first = store.start_simulation_run(economy_run(baseline, public_api_rows))
+    other_caller_engine = superuser_engine(migrated_database.superuser_url)
+    try:
+        with other_caller_engine.connect() as other_caller:
+            other_transaction = other_caller.begin()
+            other_caller.execute(
+                text(
+                    "INSERT INTO simulation.simulation_runs (id, simulation_id, "
+                    "simulation_kind, tax_benefit_model_version_id, year, attempt, "
+                    "region_code, dataset_id, trigger, status, created_at, "
+                    "updated_at) SELECT gen_random_uuid(), simulation_id, "
+                    "simulation_kind, tax_benefit_model_version_id, year, "
+                    "attempt + 1, region_code, dataset_id, 'initial', 'pending', "
+                    "now(), now() FROM simulation.simulation_runs WHERE id = :run_id"
+                ),
+                {"run_id": first.run.id},
+            )
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                forced_start = pool.submit(
+                    store.start_simulation_run,
+                    economy_run(baseline, public_api_rows, trigger=RunTrigger.MANUAL),
+                    force=True,
+                )
+                _wait_until_a_statement_waits_for_a_lock(migrated_database)
+                other_transaction.commit()
+                forced = forced_start.result(timeout=LOCK_WAIT_TIMEOUT_SECONDS)
+    finally:
+        other_caller_engine.dispose()
+
+    assert forced.created is True
+    assert forced.run.attempt == first.run.attempt + 2
+    assert forced.run.trigger is RunTrigger.MANUAL
 
 
 def test_a_failed_run_is_not_reused(migrated_database, public_api_rows) -> None:

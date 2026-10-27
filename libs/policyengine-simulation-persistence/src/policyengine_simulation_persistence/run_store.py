@@ -3,8 +3,9 @@
 Starting a simulation run reuses the newest attempt for the same simulation,
 catalog version and year while it is unfinished, or succeeded within the
 reuse window; otherwise, and always when forced, it adds the next attempt.
-Concurrent starts settle on one row through the unique attempt number: the
-loser of the insert returns the winner's run.
+Concurrent starts settle on one row through the unique attempt number: an
+unforced loser of the insert returns the winner's run, and a forced one adds
+the attempt after it, so a forced caller always starts a run of its own.
 """
 
 from __future__ import annotations
@@ -45,6 +46,9 @@ if TYPE_CHECKING:
 # Output files are kept 30 days. A succeeded run is reused only if it finished
 # within the last 28, so its files outlive the comparison step that reads them.
 SUCCEEDED_RUN_REUSE_WINDOW = timedelta(days=28)
+# Each lost insert means another caller committed an attempt; a forced start
+# gives up after this many, which only a runaway of concurrent starts reaches.
+FORCED_START_INSERT_LIMIT = 10
 
 
 def utc_now() -> datetime:
@@ -120,9 +124,10 @@ class RunStore:
         """Return the reusable run for this setup, or create the next attempt.
 
         A run is reused while it is unfinished, or when it succeeded within
-        ``SUCCEEDED_RUN_REUSE_WINDOW``; a failed run never is. ``force`` always
-        adds the next attempt, unless another caller added it at the same
-        time, in which case that run is returned. Raise LookupError when the
+        ``SUCCEEDED_RUN_REUSE_WINDOW``; a failed run never is. When another
+        caller adds the same attempt at the same time, an unforced start
+        returns that run. ``force`` always adds an attempt of its own, after
+        any attempt another caller added. Raise LookupError when the
         simulation does not exist.
         """
         now = self._clock()
@@ -148,55 +153,72 @@ class RunStore:
             )
             if latest is not None and not force and self._reusable(latest, now):
                 return StartedSimulationRun(run=latest, created=False)
-            attempt = 1 if latest is None else latest.attempt + 1
-            created = (
-                connection.execute(
-                    postgres_insert(simulation_runs)
-                    .values(
-                        id=uuid4(),
-                        simulation_id=new_run.simulation_id,
-                        simulation_kind=simulation["kind"],
-                        tax_benefit_model_version_id=(
-                            new_run.tax_benefit_model_version_id
-                        ),
-                        year=new_run.year,
-                        attempt=attempt,
-                        region_code=new_run.region_code,
-                        dataset_id=new_run.dataset_id,
-                        trigger=new_run.trigger.value,
-                        status=RunStatus.PENDING.value,
-                        created_at=now,
-                        updated_at=now,
-                    )
-                    .on_conflict_do_nothing(
-                        index_elements=[
-                            simulation_runs.c.simulation_id,
-                            simulation_runs.c.tax_benefit_model_version_id,
-                            simulation_runs.c.year,
-                            simulation_runs.c.attempt,
-                        ]
-                    )
-                    .returning(*simulation_runs.c)
+            for _ in range(FORCED_START_INSERT_LIMIT):
+                attempt = 1 if latest is None else latest.attempt + 1
+                created = self._insert_attempt(
+                    connection, new_run, simulation["kind"], attempt, now
                 )
-                .mappings()
-                .first()
-            )
-            if created is not None:
-                return StartedSimulationRun(
-                    run=SimulationRunRecord.from_row(created), created=True
+                if created is not None:
+                    return StartedSimulationRun(run=created, created=True)
+                # Another caller added this attempt after the read above; the
+                # insert waited for it to commit, so it is visible now.
+                latest = self._latest_simulation_run(
+                    connection,
+                    new_run.simulation_id,
+                    new_run.tax_benefit_model_version_id,
+                    new_run.year,
                 )
-            # Another caller added this attempt after the read above; the
-            # insert waited for it to commit, so it is visible now.
-            concurrent = self._latest_simulation_run(
-                connection,
-                new_run.simulation_id,
-                new_run.tax_benefit_model_version_id,
-                new_run.year,
+                if latest is None:  # pragma: no cover - the conflict proves a row
+                    msg = "the conflicting simulation run disappeared"
+                    raise RuntimeError(msg)
+                if not force:
+                    return StartedSimulationRun(run=latest, created=False)
+        msg = (
+            f"{FORCED_START_INSERT_LIMIT} concurrent starts of simulation "
+            f"{new_run.simulation_id} took every attempt a forced start tried"
+        )
+        raise RuntimeError(msg)
+
+    @staticmethod
+    def _insert_attempt(
+        connection: Connection,
+        new_run: NewSimulationRun,
+        simulation_kind: str,
+        attempt: int,
+        now: datetime,
+    ) -> SimulationRunRecord | None:
+        """Insert this attempt, or return None when another caller has it."""
+        row = (
+            connection.execute(
+                postgres_insert(simulation_runs)
+                .values(
+                    id=uuid4(),
+                    simulation_id=new_run.simulation_id,
+                    simulation_kind=simulation_kind,
+                    tax_benefit_model_version_id=new_run.tax_benefit_model_version_id,
+                    year=new_run.year,
+                    attempt=attempt,
+                    region_code=new_run.region_code,
+                    dataset_id=new_run.dataset_id,
+                    trigger=new_run.trigger.value,
+                    status=RunStatus.PENDING.value,
+                    created_at=now,
+                    updated_at=now,
+                )
+                .on_conflict_do_nothing(
+                    index_elements=[
+                        simulation_runs.c.simulation_id,
+                        simulation_runs.c.tax_benefit_model_version_id,
+                        simulation_runs.c.year,
+                        simulation_runs.c.attempt,
+                    ]
+                )
+                .returning(*simulation_runs.c)
             )
-        if concurrent is None:  # pragma: no cover - the conflict proves a row
-            msg = "the conflicting simulation run disappeared"
-            raise RuntimeError(msg)
-        return StartedSimulationRun(run=concurrent, created=False)
+            .mappings()
+            .first()
+        )
+        return None if row is None else SimulationRunRecord.from_row(row)
 
     @staticmethod
     def _reusable(run: SimulationRunRecord, now: datetime) -> bool:
