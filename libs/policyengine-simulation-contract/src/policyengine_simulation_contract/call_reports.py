@@ -90,7 +90,8 @@ class CallReportStatus(StrEnum):
     NOT_CONFIGURED = "not_configured"
     # No run, or not every run, the report names exists.
     UNKNOWN_RUNS = "unknown_runs"
-    # The runs hold another Modal call.
+    # The runs hold another Modal call, or finished without holding one (for
+    # example failed as abandoned before the call's ID was stored).
     OTHER_CALL = "other_call"
 
 

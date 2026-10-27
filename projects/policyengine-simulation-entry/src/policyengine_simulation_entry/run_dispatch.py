@@ -5,11 +5,12 @@ Starting a call takes three conditional writes around Modal's ``spawn``:
 1. claim: move the runs from ``pending`` to ``dispatching``. Only the instance
    whose claim changes them goes on; every other caller stops here.
 2. spawn the Modal call and wait only for Modal's acknowledgement.
-3. record the call ID, moving the runs to ``running`` with their first check
-   due shortly; or, when Modal refused the call, fail them.
+3. record the call ID, moving the runs to ``running``, with the safety
+   check's first look due one interval later (the call itself reports when
+   it ends); or, when starting the call raised, fail them.
 
-If the instance stops between 1 and 3, the runs stay ``dispatching`` until a
-recording pass fails them as abandoned. No route starts calls yet.
+If the instance stops between 1 and 3, the runs stay ``dispatching`` until the
+safety check fails them as abandoned. No route starts calls yet.
 """
 
 from __future__ import annotations
@@ -59,8 +60,9 @@ class DispatchOutcome(StrEnum):
     # cancelled.
     NOT_RECORDED = "not_recorded"
     # Recording the call raised and the database could not say whether the
-    # record committed; the call is left running. If it did, the recording
-    # loop collects the call; if not, the runs are failed as abandoned.
+    # record committed; the call is left running. If it did, the call's report
+    # or the safety check records its outcome; if not, the safety check fails
+    # the runs as abandoned.
     RECORD_UNKNOWN = "record_unknown"
 
 
