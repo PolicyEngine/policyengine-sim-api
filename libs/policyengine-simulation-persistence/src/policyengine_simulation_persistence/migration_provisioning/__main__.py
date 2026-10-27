@@ -2,4 +2,5 @@
 
 from policyengine_simulation_persistence.migration_provisioning.command import main
 
-raise SystemExit(main())
+if __name__ == "__main__":
+    raise SystemExit(main())
