@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -12,10 +13,15 @@ from policyengine_simulation_contract.stage12_manifest import (
     assert_separate_manifest_names,
 )
 
+from policyengine_simulation_entry.modal_identity import ExpectedModalCaller
+
 PRODUCTION_ENVIRONMENTS = frozenset({"main", "prod", "production"})
 MODAL_GATEWAY_HOST_SUFFIX = ".modal.run"
 # Stage 12 comparison artifacts and rows are kept for exactly this many days.
 REQUIRED_STAGE12_RETENTION_DAYS = 30
+# Modal workspace IDs and environment names, as Modal prints them.
+MODAL_WORKSPACE_ID_PATTERN = re.compile(r"ac-[A-Za-z0-9]+")
+MODAL_ENVIRONMENT_NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 
 
 class ConfigurationError(RuntimeError):
@@ -96,6 +102,10 @@ class Settings:
     # outside deployed environments; nothing on the old-gateway or Stage 12
     # paths reads it.
     simulation_database_url: str = ""
+    # The Modal workspace and environment whose call-report function may
+    # report that calls ended. Both empty: the reporting route answers 503.
+    call_report_modal_workspace_id: str = ""
+    call_report_modal_environment: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -147,12 +157,30 @@ class Settings:
             stage12_artifact_bucket=os.getenv("STAGE12_ARTIFACT_BUCKET", ""),
             stage12_retention_days=int(os.getenv("STAGE12_RETENTION_DAYS", "30")),
             simulation_database_url=os.getenv("SIMULATION_DATABASE_URL", ""),
+            call_report_modal_workspace_id=os.getenv(
+                "SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID", ""
+            ),
+            call_report_modal_environment=os.getenv(
+                "SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT", ""
+            ),
         )
 
     @property
     def production(self) -> bool:
         """Whether this is a production environment, where auth must stay on."""
         return self.environment in PRODUCTION_ENVIRONMENTS
+
+    @property
+    def expected_modal_caller(self) -> ExpectedModalCaller | None:
+        """The Modal caller whose call-ended reports are accepted, if configured."""
+        if not (
+            self.call_report_modal_workspace_id and self.call_report_modal_environment
+        ):
+            return None
+        return ExpectedModalCaller(
+            workspace_id=self.call_report_modal_workspace_id,
+            environment_name=self.call_report_modal_environment,
+        )
 
     @property
     def stage12_resources_configured(self) -> bool:
@@ -176,6 +204,7 @@ class Settings:
         self._validate_old_gateway()
         self._validate_stage12()
         self._validate_simulation_database()
+        self._validate_call_reports()
 
     def _validate_caller_auth(self) -> None:
         """Require caller authentication in production, with an HTTPS issuer."""
@@ -280,4 +309,23 @@ class Settings:
             "postgresql://"
         ):
             msg = "SIMULATION_DATABASE_URL must use the canonical postgresql:// scheme."
+            raise ConfigurationError(msg)
+
+    def _validate_call_reports(self) -> None:
+        """Require one Modal workspace ID and environment name, or neither."""
+        workspace = self.call_report_modal_workspace_id
+        environment = self.call_report_modal_environment
+        if not workspace and not environment:
+            return
+        if not MODAL_WORKSPACE_ID_PATTERN.fullmatch(workspace):
+            msg = (
+                "SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID must be a Modal "
+                "workspace ID."
+            )
+            raise ConfigurationError(msg)
+        if not MODAL_ENVIRONMENT_NAME_PATTERN.fullmatch(environment):
+            msg = (
+                "SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT must be a Modal "
+                "environment name."
+            )
             raise ConfigurationError(msg)
