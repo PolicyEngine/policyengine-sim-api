@@ -5,7 +5,7 @@ the same database as the simulation schema. The tests create only the columns
 and unique constraints the simulation schema's foreign keys use, with the
 Public API's constraint names, owned by the superuser, and grant the migrator
 ``REFERENCES`` on them, as the operator does in production. The runtime role
-gets no privilege on them.
+may only read the catalog and policy tables (``CATALOG_READ_TABLES``).
 """
 
 from __future__ import annotations
@@ -15,13 +15,21 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from migration_support import MIGRATOR_ROLE
+from policyengine_simulation_persistence.catalog_reads import CATALOG_READ_TABLES
+from policyengine_simulation_persistence.schema import RUNTIME_ROLE
 from sqlalchemy import create_engine, text
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
 
 PUBLIC_API_TABLE_STATEMENTS = (
-    "CREATE TABLE public.tax_benefit_model_versions (id uuid PRIMARY KEY)",
+    "CREATE TABLE public.tax_benefit_models ("
+    " id uuid PRIMARY KEY,"
+    " name varchar(32) NOT NULL UNIQUE)",
+    "CREATE TABLE public.tax_benefit_model_versions ("
+    " id uuid PRIMARY KEY,"
+    " model_id uuid REFERENCES public.tax_benefit_models (id),"
+    " version varchar(128))",
     "CREATE TABLE public.datasets ("
     " id uuid PRIMARY KEY,"
     " name varchar(255) NOT NULL,"
@@ -37,17 +45,41 @@ PUBLIC_API_TABLE_STATEMENTS = (
     " tax_benefit_model_version_id uuid NOT NULL"
     " REFERENCES public.tax_benefit_model_versions (id),"
     " default_dataset_id uuid NOT NULL,"
+    " label varchar(255),"
+    " region_type varchar(64),"
+    " requires_filter boolean NOT NULL DEFAULT false,"
+    " filter_field varchar(128),"
+    " filter_value varchar(255),"
+    " filter_strategy varchar(64),"
+    " state_code varchar(16),"
     " CONSTRAINT uq_regions_model_version_code"
     " UNIQUE (tax_benefit_model_version_id, code))",
     "CREATE TABLE public.policies ("
     " id uuid PRIMARY KEY,"
     " country_id varchar(2) NOT NULL,"
+    " tax_benefit_model_version_id uuid"
+    " REFERENCES public.tax_benefit_model_versions (id),"
     " CONSTRAINT uq_policies_id_country UNIQUE (id, country_id))",
     "CREATE TABLE public.households ("
     " id uuid PRIMARY KEY,"
     " country_id varchar(2) NOT NULL,"
     " CONSTRAINT uq_households_id_country UNIQUE (id, country_id))",
     "CREATE TABLE public.dynamics (id uuid PRIMARY KEY)",
+    "CREATE TABLE public.parameters ("
+    " id uuid PRIMARY KEY,"
+    " name varchar(512) NOT NULL,"
+    " tax_benefit_model_version_id uuid NOT NULL"
+    " REFERENCES public.tax_benefit_model_versions (id),"
+    " CONSTRAINT uq_parameters_model_version_name"
+    " UNIQUE (tax_benefit_model_version_id, name))",
+    "CREATE TABLE public.parameter_values ("
+    " id uuid PRIMARY KEY,"
+    " parameter_id uuid NOT NULL REFERENCES public.parameters (id),"
+    " value_json jsonb NOT NULL,"
+    " start_date timestamptz NOT NULL,"
+    " end_date timestamptz,"
+    " policy_id uuid REFERENCES public.policies (id),"
+    " dynamic_id uuid REFERENCES public.dynamics (id))",
 )
 REFERENCED_TABLES = (
     "tax_benefit_model_versions",
@@ -68,17 +100,27 @@ def superuser_engine(superuser_url: str, **options: object) -> Engine:
 
 
 def create_public_api_tables(superuser_url: str, *, grant_references: bool) -> None:
-    """Create the referenced Public API tables in a new test database."""
+    """Create the referenced Public API tables in a new test database.
+
+    The runtime role may read the catalog and policy tables a v2 economy run
+    resolves its region, dataset and policy from, as the operator grants in
+    production (``CATALOG_READ_TABLES``).
+    """
     engine = superuser_engine(superuser_url, isolation_level="AUTOCOMMIT")
     grant = (
         "GRANT REFERENCES ON "
         + ", ".join(f"public.{table}" for table in REFERENCED_TABLES)
         + f" TO {MIGRATOR_ROLE}"
     )
+    read_grant = (
+        "GRANT SELECT ON "
+        + ", ".join(f"public.{table}" for table in CATALOG_READ_TABLES)
+        + f" TO {RUNTIME_ROLE}"
+    )
     statements = (
-        (*PUBLIC_API_TABLE_STATEMENTS, grant)
+        (*PUBLIC_API_TABLE_STATEMENTS, grant, read_grant)
         if grant_references
-        else PUBLIC_API_TABLE_STATEMENTS
+        else (*PUBLIC_API_TABLE_STATEMENTS, read_grant)
     )
     try:
         with engine.connect() as connection:

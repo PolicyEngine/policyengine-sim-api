@@ -109,6 +109,32 @@ simulation run or report run that wrote it. `available_output_files` offers a
 link for 30 days after its file was written (`OUTPUT_FILE_RETENTION`), as long
 as the artifact bucket keeps it; result rows stay for good.
 
+### Catalog reads
+
+A v2 economy run uses the region, dataset and policy rows of its catalog
+version, which the Public API owns in the same database. `CatalogReader`
+reads them with typed SQLAlchemy Core selects:
+
+- `catalog_version`: a country's catalog version for a policyengine.py
+  version (`tax_benefit_models`, `tax_benefit_model_versions`);
+- `population`: the run's region, its default dataset or the one the
+  simulation names, and the household column and value that select the
+  region (a row filter; a region selected any other way cannot run), with
+  each state's filter for a US national run (`regions`, `datasets`);
+- `parameter_changes`: the values the run's policy, and its dynamic, set, by
+  parameter name and period (a date, or an inclusive `start.end` range); a
+  parameter the run's catalog version does not have refuses the run
+  (`parameters`, `parameter_values`);
+- `area_labels`: UK constituency and local-authority names by code, which a
+  stored result is read back with. The catalog has no map positions, so
+  they are read back empty.
+
+The runtime role needs `SELECT` on these tables (`CATALOG_READ_TABLES`).
+The owner of the Public API's tables grants it, as an operator step:
+`GRANT SELECT ON public.tax_benefit_models, public.tax_benefit_model_versions,
+public.regions, public.datasets, public.parameters, public.parameter_values
+TO simulation_runtime;`
+
 ## Ownership rules
 
 These rules are registered in `rules/registry.toml` and checked by
@@ -141,7 +167,7 @@ These rules are registered in `rules/registry.toml` and checked by
 | Role | Used by | Privileges |
 | --- | --- | --- |
 | `simulation_migrator` | The deploy workflow's migration job, through `SIMULATION_MIGRATION_DATABASE_URL` | Creates the `simulation` schema if it is missing, and owns every object in it; `REFERENCES` on the Public API tables its foreign keys point to |
-| `simulation_runtime` | The Simulation Entrypoint, through `SIMULATION_DATABASE_URL` | `USAGE` on the schema, `SELECT` on the version table, and `SELECT`, `INSERT` and `UPDATE` on the tables the migrations create, except `UPDATE` on the definition tables (`simulations`, `reports`) and the result tables; never `DELETE`, and nothing on the Public API tables |
+| `simulation_runtime` | The Simulation Entrypoint, through `SIMULATION_DATABASE_URL` | `USAGE` on the schema, `SELECT` on the version table, and `SELECT`, `INSERT` and `UPDATE` on the tables the migrations create, except `UPDATE` on the definition tables (`simulations`, `reports`) and the result tables; never `DELETE`; and `SELECT` only on the Public API tables in `CATALOG_READ_TABLES` (see "Catalog reads") |
 
 The initial revision grants the runtime role its privileges, including default
 privileges on tables the migrator creates later; revision 0002 revokes

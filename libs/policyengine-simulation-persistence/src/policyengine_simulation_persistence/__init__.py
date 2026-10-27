@@ -4,6 +4,15 @@ Importing the package registers every table in ``simulation_metadata``, which
 the migration environment compares with the database.
 """
 
+from policyengine_simulation_persistence.catalog_reads import (
+    CATALOG_READ_TABLES,
+    CatalogError,
+    CatalogReader,
+    CatalogVersion,
+    PolicyParametersMissingError,
+    RegionFilter,
+    RegionPopulation,
+)
 from policyengine_simulation_persistence.economy_results import (
     OPTIONAL_SECTIONS,
     RESULT_FIELD_STORAGE,
@@ -73,6 +82,7 @@ from policyengine_simulation_persistence.simulations import (
 
 __all__ = [
     "ALEMBIC_VERSION_TABLE",
+    "CATALOG_READ_TABLES",
     "HEAD_REVISION",
     "OPTIONAL_SECTIONS",
     "OUTPUT_FILE_RETENTION",
@@ -81,6 +91,9 @@ __all__ = [
     "SIMULATION_SCHEMA",
     "SUCCEEDED_RUN_REUSE_WINDOW",
     "AbandonedDispatches",
+    "CatalogError",
+    "CatalogReader",
+    "CatalogVersion",
     "DueSimulationCall",
     "EconomyComparisonRecorder",
     "EconomyResultLabels",
@@ -92,6 +105,9 @@ __all__ = [
     "NewSimulationRun",
     "OutputFile",
     "OutputFileRecord",
+    "PolicyParametersMissingError",
+    "RegionFilter",
+    "RegionPopulation",
     "ReportKind",
     "ReportRecord",
     "ReportRunRecord",
