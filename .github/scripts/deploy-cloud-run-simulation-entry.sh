@@ -145,9 +145,9 @@ add_runtime_secret OLD_GATEWAY_AUTH_CLIENT_SECRET \
 # The runtime role's URL for the entrypoint's own simulation schema. The
 # migration job, which uses a separate migrator URL, runs before this deploy.
 add_runtime_secret SIMULATION_DATABASE_URL "${SIMULATION_DATABASE_URL_SECRET_NAME}"
-# sim's own Modal token: the entrypoint starts runs' Modal calls and its
-# background loop asks Modal about them, on every deploy. Until the Stage 12
-# comparison path is removed, its Modal calls use the same token.
+# sim's own Modal token, on every deploy: the entrypoint starts runs' Modal
+# calls and asks Modal about a call when Modal reports that it ended. Until
+# the Stage 12 comparison path is removed, its Modal calls use the same token.
 add_runtime_secret MODAL_TOKEN_ID "${MODAL_TOKEN_ID_SECRET_NAME}"
 add_runtime_secret MODAL_TOKEN_SECRET "${MODAL_TOKEN_SECRET_SECRET_NAME}"
 
@@ -214,7 +214,6 @@ gcloud run deploy "${ENTRYPOINT_SERVICE}" \
   --env-vars-file "${runtime_environment_file}" \
   --set-secrets "${runtime_secrets_csv}" \
   --cpu 1 \
-  --no-cpu-throttling \
   --memory 512Mi \
   --concurrency 80 \
   --timeout 60 \

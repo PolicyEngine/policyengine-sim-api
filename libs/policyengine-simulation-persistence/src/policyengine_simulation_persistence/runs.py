@@ -247,7 +247,7 @@ Index(
     simulation_runs.c.modal_call_id,
     postgresql_where=simulation_runs.c.modal_call_id.is_not(None),
 )
-# The recording loop reads only running runs that are due a check, and
+# A recording pass reads only running runs that are due a check, and
 # dispatches that stopped.
 Index(
     "ix_simulation_runs_due_checks",

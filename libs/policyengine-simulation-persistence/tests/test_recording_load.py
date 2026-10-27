@@ -1,8 +1,8 @@
-"""A load check of the recording loop's conditional writes on PostgreSQL.
+"""A load check of the recording passes' conditional writes on PostgreSQL.
 
 Several simulated Simulation Entrypoint instances, each on its own engine,
 repeatedly fail stalled dispatches, claim due calls and record an outcome for
-each, as the recording loop does, until every run has finished. A third of
+each, as recording passes do, until every run has finished. A third of
 the calls are household pairs (two runs under one call). Every call must be
 recorded once, its results written once and all of its runs finished once,
 and every stalled dispatch failed once, whatever the interleaving. The

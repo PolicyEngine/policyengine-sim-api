@@ -1,8 +1,9 @@
-"""Deployment settings the background recording loop needs.
+"""The entrypoint's Modal token, and no CPU kept outside requests.
 
-The loop runs between requests, so Cloud Run must keep the instance's CPU
-allocated outside them; and it asks Modal about calls, so every deploy mounts
-sim's own Modal token, whether or not it also deploys the Stage 12 path.
+The entrypoint starts runs' Modal calls and asks Modal about a call when
+Modal reports that it ended, so every deploy mounts sim's own Modal token,
+whether or not it also deploys the Stage 12 path. It records outcomes only
+within requests, so Cloud Run keeps no CPU allocated between them.
 """
 
 from __future__ import annotations
@@ -38,14 +39,13 @@ def _run_deploy(tmp_path, **overrides):
 
 
 @pytest.mark.parametrize("deploy_stage12", ["true", "false"])
-def test_every_deploy_keeps_cpu_allocated_between_requests(
+def test_no_deploy_keeps_cpu_allocated_outside_requests(
     tmp_path, deploy_stage12
 ) -> None:
     result, arguments = _run_deploy(tmp_path, DEPLOY_STAGE12_V2=deploy_stage12)
 
     assert result.returncode == 0, result.stderr
-    assert "--no-cpu-throttling" in arguments
-    assert "--cpu-throttling" not in arguments
+    assert "--no-cpu-throttling" not in arguments
 
 
 @pytest.mark.parametrize("deploy_stage12", ["true", "false"])

@@ -1,10 +1,9 @@
-"""The background loop that records Modal call outcomes on runs."""
+"""Recording each Modal call's outcome on its runs, one pass at a time."""
 
 from __future__ import annotations
 
 import asyncio
 import builtins
-import contextlib
 from datetime import timedelta
 
 import pytest
@@ -18,13 +17,10 @@ from policyengine_simulation_entry.modal_calls import (
     CallSucceeded,
 )
 from policyengine_simulation_entry.run_recording import (
-    BUSY_PASS_INTERVAL_SECONDS,
     CHECK_LEASE,
-    IDLE_PASS_INTERVAL_SECONDS,
     RecordingPass,
     ResultRecorders,
     RunRecorder,
-    RunRecordingLoop,
     next_check_delay,
 )
 from policyengine_simulation_persistence import (
@@ -398,152 +394,24 @@ def test_a_signal_to_this_process_stops_a_check() -> None:
         _run(recorder)
 
 
-class _ScriptedRecorder:
-    """Return scripted passes, or raise, and count how often it ran."""
-
-    def __init__(self, passes) -> None:
-        self.passes = list(passes)
-        self.calls = 0
-
-    async def record_due_outcomes(self) -> RecordingPass:
-        self.calls += 1
-        outcome = self.passes.pop(0) if self.passes else RecordingPass()
-        if isinstance(outcome, BaseException):
-            raise outcome
-        return outcome
-
-
-def test_the_loop_waits_less_while_there_is_work_and_survives_failures() -> None:
-    scripted = _ScriptedRecorder(
-        [
-            RecordingPass(checked=3),
-            RecordingPass(),
-            RuntimeError("database down"),
-            builtins.BaseExceptionGroup("pass", [_NotAnException()]),
-        ]
-    )
-    waits = []
-
-    async def sleep(seconds: float) -> None:
-        waits.append(seconds)
-        if len(waits) == 6:
-            raise asyncio.CancelledError
-
-    loop = RunRecordingLoop(scripted, sleep=sleep)  # type: ignore[arg-type]
-
-    with pytest.raises(asyncio.CancelledError):
-        asyncio.run(loop.run())
-
-    assert waits == [
-        IDLE_PASS_INTERVAL_SECONDS,
-        BUSY_PASS_INTERVAL_SECONDS,
-        IDLE_PASS_INTERVAL_SECONDS,
-        IDLE_PASS_INTERVAL_SECONDS,
-        IDLE_PASS_INTERVAL_SECONDS,
-        IDLE_PASS_INTERVAL_SECONDS,
-    ]
-    assert scripted.calls == 5
-
-
-def test_a_signal_to_this_process_stops_the_loop() -> None:
-    scripted = _ScriptedRecorder([KeyboardInterrupt()])
-
-    async def sleep(_seconds: float) -> None:
-        return None
-
-    loop = RunRecordingLoop(scripted, sleep=sleep)  # type: ignore[arg-type]
-
-    with pytest.raises(KeyboardInterrupt):
-        asyncio.run(loop.run())
-
-
-def test_the_loop_starts_and_stops_as_a_background_task() -> None:
-    scripted = _ScriptedRecorder([])
-
-    async def lifetime() -> None:
-        loop = RunRecordingLoop(scripted, sleep=lambda _seconds: asyncio.sleep(0))  # type: ignore[arg-type]
-        loop.start()
-        await asyncio.sleep(0.01)
-        await loop.stop()
-        await loop.stop()
-
-    asyncio.run(lifetime())
-
-    assert scripted.calls > 0
-
-
-class _SlowToStopRecorder:
-    """A pass that takes a while to end once cancelled, as a closing write does."""
-
-    def __init__(self) -> None:
-        self.passing = asyncio.Event()
-
-    async def record_due_outcomes(self) -> RecordingPass:
-        self.passing.set()
-        try:
-            await asyncio.sleep(60)
-        finally:
-            await asyncio.shield(asyncio.sleep(0.05))
-        return RecordingPass()
-
-
-def test_stopping_passes_on_a_cancellation_of_its_caller() -> None:
-    """Stopping the loop never swallows a shutdown of the task that stops it."""
-
-    async def shutdown() -> bool:
-        recorder = _SlowToStopRecorder()
-        loop = RunRecordingLoop(recorder, sleep=lambda _seconds: asyncio.sleep(0))  # type: ignore[arg-type]
-        loop.start()
-        await recorder.passing.wait()
-        stopper = asyncio.create_task(loop.stop())
-        await asyncio.sleep(0.01)
-        stopper.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await stopper
-        return stopper.cancelled()
-
-    assert asyncio.run(shutdown())
-
-
-class _TrackedLoop:
-    def __init__(self) -> None:
-        self.started = False
-        self.stopped = False
-
-    def start(self) -> None:
-        self.started = True
-
-    async def stop(self) -> None:
-        self.stopped = True
-
-
-class _DatabaseWithLoop:
-    def __init__(self) -> None:
-        self.loop = _TrackedLoop()
-
+class _DatabaseThatOnlyReadsItsRevision:
     async def read_revision(self):
         return HEAD_REVISION
-
-    def recording_loop(self):
-        return self.loop
 
     def dispose(self) -> None:
         return None
 
 
-def test_each_instance_runs_the_loop_for_its_lifetime() -> None:
-    database = _DatabaseWithLoop()
+def test_an_instance_runs_nothing_in_the_background() -> None:
+    """Outcomes are recorded when Modal reports them, within a request."""
     app = create_app(
         settings=make_settings(
             simulation_database_url="postgresql://runtime:secret@db.example/postgres"
         ),
         backend=FakeBackend(),
         auth_dependency=lambda: None,
-        simulation_database=database,
+        simulation_database=_DatabaseThatOnlyReadsItsRevision(),
     )
 
-    with TestClient(app):
-        assert database.loop.started is True
-        assert database.loop.stopped is False
-
-    assert database.loop.stopped is True
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
