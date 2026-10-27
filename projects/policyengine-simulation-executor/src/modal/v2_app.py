@@ -12,7 +12,6 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from policyengine_simulation_contract.call_reports import CALL_REPORT_FUNCTION_NAME
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
 from policyengine_simulation_executor import stage12_runtime
 from policyengine_simulation_executor.hf_access_validation import (
@@ -525,8 +524,3 @@ def report_call_ended(report: dict) -> str:
     )
 
     return send_call_ended_report_from_container(report)
-
-
-if report_call_ended.__name__ != CALL_REPORT_FUNCTION_NAME:
-    msg = "report_call_ended must keep the name sim accepts reports from"
-    raise RuntimeError(msg)

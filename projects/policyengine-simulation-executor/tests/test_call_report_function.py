@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from policyengine_simulation_contract.call_reports import CALL_REPORT_FUNCTION_NAME
 from src.modal import call_reports
 from test_stage12_modal_app import _load
 
 ENTRY_URL = "https://policyengine-simulation-entry-abc.a.run.app"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_the_v2_app_declares_the_function_sim_accepts_reports_from(
@@ -51,3 +57,28 @@ def test_a_deploy_with_a_url_that_is_not_https_stops(monkeypatch, url) -> None:
 
     with pytest.raises(RuntimeError, match="SIMULATION_ENTRY_URL"):
         _load(monkeypatch)
+
+
+def test_the_v2_app_imports_with_the_real_modal_package() -> None:
+    """`modal deploy` imports the module with Modal's own decorators.
+
+    There a declared function is a ``modal.Function``, not the decorated
+    Python function, so nothing at import may rely on its Python attributes.
+    """
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith(("MODAL_", "STAGE12_", "SIMULATION_ENTRY_"))
+    }
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import src.modal.v2_app"],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=300,
+    )
+
+    assert result.returncode == 0, result.stderr[-2000:]
