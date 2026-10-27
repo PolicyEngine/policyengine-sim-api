@@ -218,6 +218,13 @@ jobs:
             .github/scripts/set-cloud-run-simulation-entry-revision.sh
           fi
 
+      - name: Point the safety check at the restored revision
+        if: ${{ inputs.entrypoint_revision != '' }}
+        env:
+          SAFETY_CHECK_REVISION: ${{ inputs.entrypoint_revision }}
+          SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.SIMULATION_SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT }}
+        run: .github/scripts/deploy-cloud-run-simulation-safety-check.sh
+
       - name: Verify the stable service serves the restored release
         if: ${{ !inputs.resolve_pending_publication }}
         env:

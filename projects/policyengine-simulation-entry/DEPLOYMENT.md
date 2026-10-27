@@ -81,6 +81,44 @@ missing. The service already allows unauthenticated requests through Cloud
 Run (`--allow-unauthenticated`): callers prove who they are to the
 entrypoint, so Modal needs no Google credentials.
 
+## Safety check
+
+A call whose report never arrives is recorded by the safety check, the Cloud
+Run job `<entrypoint service>-safety-check`. Each execution runs one recording
+pass (`python -m policyengine_simulation_entry.safety_check`) and exits: it
+fails runs left `dispatching` for ten minutes and records what Modal reports
+for calls dispatched, or last checked, at least five minutes ago. Cloud
+Scheduler starts it every five minutes (`*/5 * * * *`, UTC): a lost report is
+recorded within about ten minutes, and each execution is a single short
+container start, so the job costs little when every call reports.
+
+`.github/scripts/deploy-cloud-run-simulation-safety-check.sh` points the job
+at one entrypoint revision. It copies that revision's image digest, service
+account, the secret versions it pins for `SIMULATION_DATABASE_URL`,
+`MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`, and its plain telemetry settings,
+then creates or updates the schedule. Only two places call it, so the job
+only ever runs a revision that serves traffic and a rejected candidate never
+records anything:
+
+- the promotion job, after the promoted revision passes every check; if this
+  step fails, the previous revision is restored and the job is pointed back
+  at it;
+- the rollback workflow, after it restores entrypoint traffic. A restored
+  revision without the simulation database predates the safety check, so the
+  schedule is paused.
+
+`beta` does not promote its candidate yet, so staging has no safety check
+until it does (plan item 1.39).
+
+One-time operator steps, in each environment: enable the Cloud Scheduler
+API; create the scheduler's service account, give it `roles/run.invoker`
+on the job (or the project), and set its email in the GitHub environment
+variable `SIMULATION_SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT`; give the deploy
+service account permission to deploy Cloud Run jobs and manage Cloud
+Scheduler jobs, and `iam.serviceAccounts.actAs` on the scheduler's service
+account. The job uses the entrypoint's runtime service account, which can
+already read its secrets.
+
 ## Candidate qualification
 
 For each eligible revision, the workflow first deploys `beta`
