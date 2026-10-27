@@ -31,11 +31,6 @@ from policyengine_simulation_contract.stage12_execution import (
     MAX_COMPARISON_RUN_ARTIFACT_RETENTION,
     ArtifactMediaType,
     ArtifactReference,
-    BundleProvenance,
-    DatasetArtifactMediaType,
-    DatasetArtifactReference,
-    DatasetPopulationInput,
-    DatasetProvenance,
     GeographySelection,
     PlannedSimulationExecutionInput,
     ReportResultDelivery,
@@ -46,6 +41,9 @@ from policyengine_simulation_contract.stage12_execution import (
     Stage12OutputPlan,
 )
 
+from policyengine_simulation_executor.economy_runs.provenance import (
+    catalog_bundle_provenance,
+)
 from policyengine_simulation_executor.stage12_artifacts import (
     canonical_json_bytes,
     comparison_run_prefix,
@@ -58,7 +56,6 @@ from policyengine_simulation_executor.stage12_runtime import (
 )
 from policyengine_simulation_executor.stage12_runtime.catalog_population import (
     CATALOG_POPULATION_OPTION,
-    catalog_dataset,
 )
 from policyengine_simulation_executor.stage12_runtime.dependencies import (
     artifact_store,
@@ -70,10 +67,7 @@ from policyengine_simulation_executor.stage12_runtime.output_planning import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from policyengine_simulation_contract.stage12_bundle import (
-        CountryId,
-        ResolvedStage12Bundle,
-    )
+    from policyengine_simulation_contract.stage12_bundle import CountryId
 
     from policyengine_simulation_executor.stage12_artifacts import (
         Stage12ArtifactStore,
@@ -91,48 +85,6 @@ class EconomyRunInvocation:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-def _bundle_provenance(
-    call: EconomySimulationCall, resolved: ResolvedStage12Bundle
-) -> tuple[BundleProvenance, DatasetPopulationInput]:
-    """Return the provenance and population of the catalog's dataset.
-
-    Raise ValueError when this application installs another policyengine.py
-    version, or a release without the dataset the catalog names.
-    """
-    installed = resolved.bundle.policyengine_version
-    if installed != call.policyengine_version:
-        msg = (
-            f"the call names PolicyEngine.py {call.policyengine_version}, but this "
-            f"application installs PolicyEngine.py {installed}"
-        )
-        raise ValueError(msg)
-    country = next(
-        item for item in resolved.bundle.countries if item.country == call.country
-    )
-    dataset = catalog_dataset(country, call.population)
-    provenance = BundleProvenance(
-        policyengine_version=installed,
-        country_package_name=country.country_package_name,
-        country_package_version=country.country_package_version,
-        dataset=DatasetProvenance(
-            identity=dataset.identity,
-            uri=dataset.uri,
-            artifact_revision=dataset.artifact_revision,
-            data_package_name=country.data_package_name,
-            data_package_version=country.data_package_version,
-        ),
-        bundle_manifest_sha256=resolved.bundle_manifest_sha256,
-    )
-    population = DatasetPopulationInput(
-        artifact=DatasetArtifactReference(
-            uri=dataset.uri,
-            media_type=DatasetArtifactMediaType.HDF5,
-            content_sha256=dataset.sha256,
-        )
-    )
-    return provenance, population
 
 
 def _input_reference(
@@ -189,7 +141,12 @@ def run_economy_simulation(
     if call.country != required_country:
         msg = "the call was sent to another country's simulation function"
         raise ValueError(msg)
-    provenance, population = _bundle_provenance(call, load_stage12_bundle())
+    provenance, population = catalog_bundle_provenance(
+        country=call.country,
+        policyengine_version=call.policyengine_version,
+        population=call.population,
+        resolved=load_stage12_bundle(),
+    )
     simulation = SimulationExecutionInput(
         evaluation_id=call.simulation_run_id,
         simulation_execution_id=call.simulation_run_id,
