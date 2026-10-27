@@ -10,8 +10,9 @@ A pass:
 3. asks Modal about each claimed call without waiting, and records what it
    found with conditional writes: a finished call's result is validated and
    its result rows are written in the transaction that marks its runs
-   ``succeeded``; a failed or timed-out call is marked ``failed`` with its
-   error; a call still running, or finished but of a kind this revision has
+   ``succeeded``; a failed or timed-out call, or one whose output reports
+   that its calculation failed, is marked ``failed`` with its error; a call
+   still running, or finished but of a kind this revision has
    no recorder for, is checked again once its claim's lease ends.
 
 Pre-emption is never a failure: Modal re-runs a pre-empted call under the
@@ -85,11 +86,29 @@ CLAIM_BATCH_SIZE = 50
 INSPECTION_CONCURRENCY = 3
 
 
+class CalculationFailedError(Exception):
+    """A finished call's output reports that its calculation failed.
+
+    A result recorder's ``validate`` raises it for a valid failure document,
+    such as a household function's typed failure; the runs are then failed
+    with ``error``, its detail included, rather than as an invalid result.
+    """
+
+    def __init__(self, error: RunError) -> None:
+        """Keep the failure to record on the runs."""
+        super().__init__(error.message)
+        self.error = error
+
+
 class SimulationResultRecorder(Protocol):
     """Validate one kind of simulation call's output and write its result rows."""
 
     def validate(self, output: object) -> object:
-        """Return the validated result; raise ValueError when it is invalid."""
+        """Return the validated result.
+
+        Raise ValueError when it is invalid, and CalculationFailedError when
+        it validly reports that the calculation failed.
+        """
         ...
 
     def write(
@@ -534,6 +553,8 @@ class RunRecorder:
         """Validate a finished call's output and write it with its success."""
         try:
             result = await asyncio.to_thread(steps.validate, output)
+        except CalculationFailedError as failure:
+            return await self._fail(handlers, failure.error)
         except ValueError as error:
             return await self._fail(handlers, _invalid_result(error))
         try:

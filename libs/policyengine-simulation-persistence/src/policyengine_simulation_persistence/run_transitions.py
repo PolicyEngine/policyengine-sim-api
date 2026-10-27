@@ -71,6 +71,9 @@ class RunErrorCode(StrEnum):
     CALL_NOT_FOUND = "call_not_found"
     # The output failed validation against its result model.
     INVALID_RESULT = "invalid_result"
+    # The household function returned a typed failure, such as inputs the
+    # country model does not know; the run's error detail holds it.
+    HOUSEHOLD_CALCULATION_FAILED = "household_calculation_failed"
     # A comparison step whose baseline or reform simulation run failed.
     SIMULATION_RUN_FAILED = "simulation_run_failed"
 

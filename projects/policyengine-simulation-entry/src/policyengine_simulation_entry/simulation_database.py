@@ -8,10 +8,14 @@ from typing import TYPE_CHECKING
 from policyengine_simulation_persistence import (
     RunStore,
     RunTransitions,
+    SimulationKind,
     create_simulation_engine,
     read_schema_revision,
 )
 
+from policyengine_simulation_entry.household_recording import (
+    HouseholdResultRecorder,
+)
 from policyengine_simulation_entry.modal_calls import ModalCallInspector
 from policyengine_simulation_entry.run_recording import ResultRecorders, RunRecorder
 
@@ -45,15 +49,17 @@ class SimulationDatabase:
     def call_recorder(self) -> RunRecorder:
         """Return what records a reported call's outcome on its runs.
 
-        No kind of run has a result recorder yet (stage 2 registers them), so
-        a finished call is answered no_result_recorder and left for the
-        safety check; no route creates runs yet.
+        Household calls have a result recorder. A finished call of a kind
+        without one (economy runs and comparisons, until their path registers
+        them) is answered no_result_recorder and left for the safety check.
         """
         return RunRecorder(
             transitions=RunTransitions(self.engine),
             runs=RunStore(self.engine),
             inspector=ModalCallInspector(),
-            recorders=ResultRecorders(),
+            recorders=ResultRecorders(
+                simulations={SimulationKind.HOUSEHOLD: HouseholdResultRecorder()}
+            ),
         )
 
     def dispose(self) -> None:
