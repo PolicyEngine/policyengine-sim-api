@@ -22,6 +22,8 @@ from policyengine_simulation_persistence import (
     RegionFilter,
     create_simulation_engine,
 )
+from public_api_support import superuser_engine
+from sqlalchemy import text
 
 pytestmark = pytest.mark.postgres
 
@@ -191,3 +193,30 @@ def test_uk_area_results_take_their_names_from_the_catalog(
             "E06000063": GeographyLabel(name="Cumberland", x=None, y=None)
         },
     )
+
+
+def test_period_keys_are_utc_dates_whatever_the_sessions_time_zone(
+    migrated_database, catalog_rows
+) -> None:
+    engine = superuser_engine(
+        migrated_database.superuser_url, isolation_level="AUTOCOMMIT"
+    )
+    try:
+        with engine.connect() as connection:
+            connection.execute(
+                text(
+                    f'ALTER DATABASE "{migrated_database.name}" '
+                    "SET timezone TO 'America/Los_Angeles'"
+                )
+            )
+    finally:
+        engine.dispose()
+    reader = CatalogReader(create_simulation_engine(migrated_database.runtime_url))
+
+    changes = reader.parameter_changes(
+        catalog_rows.us_version_id, policy_id=catalog_rows.policy_id, dynamic_id=None
+    )
+
+    assert changes == {
+        CTC_AMOUNT: {"2025-01-01.2025-12-31": 2500, "2026-01-01": 3000},
+    }

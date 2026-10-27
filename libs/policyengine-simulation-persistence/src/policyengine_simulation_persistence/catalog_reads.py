@@ -20,6 +20,7 @@ the columns read, in a metadata object of their own; nothing here writes them.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
@@ -170,10 +171,15 @@ def _country(model_name: str) -> str:
 
 
 def _period_key(start: datetime, end: datetime | None) -> str:
-    """Return the policy period key .py reads: a date, or an inclusive range."""
+    """Return the policy period key .py reads: a date, or an inclusive range.
+
+    The Public API stores each date as midnight UTC; the dates are read in
+    UTC whatever the database session's time zone.
+    """
+    start_date = start.astimezone(UTC)
     if end is None:
-        return f"{start:%Y-%m-%d}"
-    return f"{start:%Y-%m-%d}.{end:%Y-%m-%d}"
+        return f"{start_date:%Y-%m-%d}"
+    return f"{start_date:%Y-%m-%d}.{end.astimezone(UTC):%Y-%m-%d}"
 
 
 def _row_filter(row: RowMapping) -> RegionFilter | None:
