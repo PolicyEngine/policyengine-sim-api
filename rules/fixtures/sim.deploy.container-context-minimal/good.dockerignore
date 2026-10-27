@@ -1,0 +1,6 @@
+# Proof fixture: the context includes every library the project installs.
+libs/*
+!libs/fixture-contract/
+!libs/fixture-contract/**
+!libs/fixture-persistence/
+!libs/fixture-persistence/**

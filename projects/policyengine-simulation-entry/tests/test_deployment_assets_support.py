@@ -128,7 +128,22 @@ def write_fake_smoke_curl(tmp_path: Path, revisions: list[str]) -> tuple[Path, P
                 printf '{"status":"healthy"}' > "${body_file}"
                 ;;
               */ready)
-                printf '{"status":"ready"}'
+                ready_body='{"status":"ready"}'
+                if [ -n "${FAKE_CURL_READY_BODIES:-}" ]; then
+                  # One body per line, served in order; the last one repeats.
+                  ready_count=0
+                  if [ -f "${FAKE_CURL_READY_BODIES}.count" ]; then
+                    ready_count="$(cat "${FAKE_CURL_READY_BODIES}.count")"
+                  fi
+                  ready_count=$((ready_count + 1))
+                  printf '%s' "${ready_count}" > "${FAKE_CURL_READY_BODIES}.count"
+                  line_count="$(wc -l < "${FAKE_CURL_READY_BODIES}")"
+                  if [ "${ready_count}" -gt "${line_count}" ]; then
+                    ready_count="${line_count}"
+                  fi
+                  ready_body="$(sed -n "${ready_count}p" "${FAKE_CURL_READY_BODIES}")"
+                fi
+                printf '%s' "${FAKE_CURL_READY:-${ready_body}}"
                 ;;
               */versions)
                 versions='{}'

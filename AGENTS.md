@@ -120,7 +120,11 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Stage 12 persistence
 
-- Checked: `sim.stage12.deployment-scope`, `sim.stage12.deployment-uses-api-schema`, `sim.stage12.no-migration-chain`, `sim.stage12.no-production-user-associations`, `sim.stage12.no-schema-ddl`, `sim.stage12.persistence-typed-dml-only`, `sim.stage12.production-lock-has-db-runtime`
+- Checked: `sim.stage12.deployment-scope`, `sim.stage12.deployment-uses-api-schema`, `sim.stage12.no-production-user-associations`, `sim.stage12.no-schema-ddl`, `sim.stage12.persistence-typed-dml-only`, `sim.stage12.production-lock-has-db-runtime`
+
+### Simulation persistence
+
+- Checked: `sim.persistence.executor-independent`, `sim.persistence.migrate-before-entrypoint`, `sim.persistence.migration-cycle`, `sim.persistence.no-modal-database-credentials`, `sim.persistence.one-migration-chain`
 
 ### Deployment pipeline
 

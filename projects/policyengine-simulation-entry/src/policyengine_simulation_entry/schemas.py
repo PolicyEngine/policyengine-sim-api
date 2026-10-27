@@ -115,3 +115,28 @@ class TemporaryStage12ReportResponse(BaseModel):
 
     report: ComparisonReportRecord
     simulations: tuple[ComparisonSimulationRecord, ...]
+
+
+class SimulationDatabaseReadiness(BaseModel):
+    """The Simulation Entrypoint's own database, as the readiness check found it.
+
+    ``revision`` is the migration revision the database has applied, or null
+    when it was unreachable or has no migrations yet; ``expected_revision`` is
+    the newest revision this image knows. Neither changes ``status``: no
+    old-gateway or Stage 12 route uses this database.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    reachable: bool
+    revision: str | None
+    expected_revision: str
+
+
+class SimulationEntrypointReadinessResponse(BaseModel):
+    """Old-gateway readiness, plus the database revision when one is configured."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    status: Literal["ready", "not_ready"]
+    simulation_database: SimulationDatabaseReadiness | None = None

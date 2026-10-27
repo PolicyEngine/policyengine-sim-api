@@ -1,0 +1,16 @@
+# Proof fixture: Modal receives only the Stage 12 secret name; the simulation
+# migration URL reaches the migration step alone.
+name: Good deployment
+on: workflow_dispatch
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Synchronize the separate Stage 12 runtime secret
+        env:
+          STAGE12_DATABASE_URL_SECRET_NAME: ${{ vars.STAGE12_DATABASE_URL_SECRET_NAME }}
+        run: uv run modal secret create stage12-runtime "STAGE12_DATABASE_URL_SECRET_NAME=${STAGE12_DATABASE_URL_SECRET_NAME}" --force
+      - name: Apply simulation schema migrations
+        env:
+          SIMULATION_MIGRATION_DATABASE_URL: ${{ secrets.SIMULATION_MIGRATION_DATABASE_URL }}
+        run: .github/scripts/simulation-database-migrate.sh

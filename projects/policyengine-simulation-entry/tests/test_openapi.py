@@ -122,6 +122,22 @@ def test_local_area_breakdowns_are_public():
     ]["properties"]["result"]["anyOf"]
 
 
+def test_readiness_documents_the_simulation_database_revision():
+    spec = create_app().openapi()
+    readiness = spec["paths"]["/ready"]["get"]["responses"]["200"]
+    schema = readiness["content"]["application/json"]["schema"]
+    database = spec["components"]["schemas"]["SimulationDatabaseReadiness"]
+
+    assert schema == {
+        "$ref": "#/components/schemas/SimulationEntrypointReadinessResponse"
+    }
+    assert set(database["properties"]) == {
+        "reachable",
+        "revision",
+        "expected_revision",
+    }
+
+
 def test_route_table_is_frozen():
     assert methods(cast("OpenAPIDocument", create_app().openapi())) == EXPECTED_ROUTES
 
@@ -161,7 +177,9 @@ def test_normalized_contract_matches_old_gateway():
         cloud_run_spec
     ) == normalized_compatibility_paths(gateway_spec)
     cloud_run_schemas = deepcopy(cloud_run_spec["components"]["schemas"])
-    cloud_run_schemas.pop("ReadinessResponse")
+    # The entrypoint's readiness response adds its own database's revision.
+    cloud_run_schemas.pop("SimulationEntrypointReadinessResponse")
+    cloud_run_schemas.pop("SimulationDatabaseReadiness")
     cloud_run_schemas.pop("SimulationErrorResponse")
     assert cloud_run_schemas == gateway_spec["components"]["schemas"]
     gateway_operation_ids = operation_ids(gateway_spec)
