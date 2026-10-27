@@ -68,9 +68,14 @@ def _event_name(prefix: str, outcome: str) -> str:
     return f"{prefix}_{outcome}"
 
 
-# A claimed call is not checked by another instance for this long; if the
-# claiming instance stops, the call becomes due again afterwards.
-CHECK_LEASE = timedelta(minutes=1)
+# Cloud Scheduler starts the safety check this often (the deploy's
+# schedule): a call that has not reported is checked about this long after
+# its dispatch, then once per interval while it runs.
+SAFETY_CHECK_INTERVAL = timedelta(minutes=5)
+# A claimed call is not checked by another pass for this long, so each
+# execution of the safety check checks a running call once; if the pass
+# stops, the call becomes due again afterwards.
+CHECK_LEASE = SAFETY_CHECK_INTERVAL
 # A run left dispatching this long was claimed by an instance that stopped.
 DISPATCH_ABANDONED_AFTER = timedelta(minutes=10)
 CLAIM_BATCH_SIZE = 50
