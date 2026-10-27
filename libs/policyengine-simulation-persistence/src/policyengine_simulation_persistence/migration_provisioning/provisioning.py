@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy.exc import DataError, DBAPIError, IntegrityError, SQLAlchemyError
@@ -93,6 +94,26 @@ class DefinitionRejectedError(Exception):
         self.reason = reason
 
 
+def _as_stored(value: object) -> object:
+    """Return ``value`` with every JSON number as the exact decimal stored.
+
+    JSONB keeps a number as an exact decimal, so the float 1e23 reads back as
+    the integer 100000000000000000000000, which is not equal to the float. A
+    float is stored as its shortest decimal form, which ``repr`` gives.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return Decimal(value)
+    if isinstance(value, float):
+        return Decimal(repr(value))
+    if isinstance(value, dict):
+        return {key: _as_stored(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_as_stored(item) for item in value]
+    return value
+
+
 def _check_matches(
     record: SimulationRecord | ReportRecord,
     expected: NewSimulation | NewReport,
@@ -101,7 +122,8 @@ def _check_matches(
     differing = [
         field.name
         for field in fields(expected)
-        if getattr(record, field.name) != getattr(expected, field.name)
+        if _as_stored(getattr(record, field.name))
+        != _as_stored(getattr(expected, field.name))
     ]
     if differing:
         msg = f"{subject} is already migrated with a different {', '.join(differing)}"

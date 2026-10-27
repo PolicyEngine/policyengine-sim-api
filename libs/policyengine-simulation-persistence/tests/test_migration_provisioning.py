@@ -414,3 +414,27 @@ def test_a_value_the_database_cannot_store_fails_its_report_only(
     assert failure.reason.startswith(f"the database rejected {subject}: ")
     assert "\n" not in failure.reason
     assert [mapped.legacy_report_id for mapped in result.reports] == [4513]
+
+
+def test_options_compare_as_the_json_numbers_the_database_stores(
+    migrated_database, public_api_rows
+) -> None:
+    # JSONB keeps numbers as exact decimals, so 1e23 reads back as the integer
+    # 100000000000000000000000, which is not the float 1e23.
+    options = {
+        "threshold": 1e23,
+        "rate": 0.1,
+        "nested": {"limits": [1.2345678901234567e19, 1e300, 5e-324, -0.0, 7]},
+        "flag": True,
+    }
+    definition = _economy_report(public_api_rows, options=options)
+
+    first = _provision(migrated_database, definition)
+    second = _provision(migrated_database, definition)
+
+    assert first.failures == []
+    assert second.failures == []
+    assert [mapped.created for mapped in first.reports + second.reports] == [
+        True,
+        False,
+    ]
