@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         ReportRecord,
         ReportRunRecord,
         RunError,
+        SimulationKind,
         SimulationRecord,
         SimulationRunRecord,
         StartedSimulationRun,
@@ -137,7 +138,11 @@ class EconomyRuns(Protocol):
         ...
 
     def pending_simulation_runs(
-        self, *, created_before: datetime, limit: int = 100
+        self,
+        *,
+        created_before: datetime,
+        simulation_kind: SimulationKind | None = None,
+        limit: int = 100,
     ) -> list[SimulationRunRecord]:
         """Return runs still pending that were created before a time."""
         ...

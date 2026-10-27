@@ -66,9 +66,10 @@ from policyengine_simulation_entry.economy_report_types import (
     catalog_population,
 )
 from policyengine_simulation_entry.modal_calls import ModalRequest, ModalTarget
+from policyengine_simulation_entry.run_dispatch import DispatchOutcome
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Collection, Coroutine
     from datetime import datetime
     from uuid import UUID
 
@@ -350,20 +351,19 @@ class EconomyReports:
         version: CatalogVersion,
         *,
         labor_supply_response: bool,
-    ) -> None:
-        """Start the run's call if it has not started; fail it if it cannot run."""
+    ) -> bool:
+        """Start the run's call if it has not started; fail it if it cannot run.
+
+        Return whether this call started it.
+        """
         if simulation_run.status is not RunStatus.PENDING:
-            return
+            return False
         if planned.changes is None:
-            if await asyncio.to_thread(
-                self.transitions.claim_simulation_dispatch, [simulation_run.id]
-            ):
-                await asyncio.to_thread(
-                    self.transitions.record_simulation_dispatch_failure,
-                    [simulation_run.id],
-                    RunError(RunErrorCode.INVALID_INPUT, planned.refusal or ""),
-                )
-            return
+            await self._fail_simulation_run(
+                simulation_run.id,
+                RunError(RunErrorCode.INVALID_INPUT, planned.refusal or ""),
+            )
+            return False
         call = EconomySimulationCall(
             simulation_run_id=simulation_run.id,
             country=cast("CountryId", planned.simulation.country),
@@ -374,7 +374,7 @@ class EconomyReports:
             labor_supply_response=labor_supply_response,
             artifact_environment=self.artifact_environment,
         )
-        await self.dispatch.start_simulation_runs(
+        outcome = await self.dispatch.start_simulation_runs(
             [simulation_run.id],
             ModalRequest(
                 target=ModalTarget(
@@ -384,6 +384,7 @@ class EconomyReports:
                 arguments=(call.model_dump(mode="json"),),
             ),
         )
+        return outcome is DispatchOutcome.STARTED
 
     # --- Work left waiting -------------------------------------------------
 
@@ -399,18 +400,43 @@ class EconomyReports:
         ready = await asyncio.to_thread(
             lambda: self.runs.comparisons_ready_to_start(limit=WAITING_WORK_BATCH_SIZE)
         )
+        comparisons_started = 0
         for report_run in ready:
-            await self.start_comparison(report_run)
+            comparisons_started += await self._resume(
+                self.start_comparison(report_run), report_run_id=str(report_run.id)
+            )
         stranded = await asyncio.to_thread(
             lambda: self.runs.pending_simulation_runs(
                 created_before=now - PENDING_RUN_START_AFTER,
+                simulation_kind=SimulationKind.ECONOMY,
                 limit=WAITING_WORK_BATCH_SIZE,
             )
         )
-        started = 0
+        runs_started = 0
         for simulation_run in stranded:
-            started += await self._start_stranded_run(simulation_run)
-        return ResumedWork(comparisons_started=len(ready), runs_started=started)
+            runs_started += await self._resume(
+                self._start_stranded_run(simulation_run),
+                simulation_run_id=str(simulation_run.id),
+            )
+        return ResumedWork(
+            comparisons_started=comparisons_started, runs_started=runs_started
+        )
+
+    @staticmethod
+    async def _resume(start: Coroutine[Any, Any, bool], **subject: str) -> int:
+        """Start one piece of waiting work; return 1 if its call started.
+
+        A failure is logged and leaves the item for the next pass, so one
+        item cannot stop the others.
+        """
+        try:
+            return int(await start)
+        except Exception as error:  # noqa: BLE001  # logged; the next pass tries again
+            logger.warning(
+                "economy_work_not_resumed",
+                extra={**subject, "error_type": type(error).__name__},
+            )
+            return 0
 
     async def _labor_supply_needed(
         self, report_runs: list[ReportRunRecord], version: CatalogVersion
@@ -442,8 +468,12 @@ class EconomyReports:
                     return True
         return False
 
-    async def _start_stranded_run(self, simulation_run: SimulationRunRecord) -> int:
-        """Start a run left pending; return 1 if a report run compares it."""
+    async def _start_stranded_run(self, simulation_run: SimulationRunRecord) -> bool:
+        """Start a run left pending; return whether its call started.
+
+        A run no report run compares, or that its catalog version can no
+        longer resolve, is failed, so the safety check stops picking it.
+        """
         version = await asyncio.to_thread(
             self.catalog.catalog_version_by_id,
             simulation_run.tax_benefit_model_version_id,
@@ -451,19 +481,42 @@ class EconomyReports:
         simulation = await asyncio.to_thread(
             self.simulations.get, simulation_run.simulation_id
         )
+        if version is None or simulation is None:  # pragma: no cover - foreign keys
+            return False
         report_runs = await asyncio.to_thread(
             self.runs.report_runs_using, simulation_run.id
         )
-        if version is None or simulation is None or not report_runs:
-            return 0
-        labor_supply_response = await self._labor_supply_needed(report_runs, version)
-        await self._start_simulation_run(
+        if not report_runs:
+            await self._fail_simulation_run(
+                simulation_run.id,
+                RunError(
+                    RunErrorCode.DISPATCH_ABANDONED,
+                    "No report run compares the run, so no call was started.",
+                ),
+            )
+            return False
+        try:
+            planned = await self._plan(version, simulation)
+        except EconomyRequestError as error:
+            await self._fail_simulation_run(
+                simulation_run.id, RunError(RunErrorCode.INVALID_INPUT, str(error))
+            )
+            return False
+        return await self._start_simulation_run(
             simulation_run,
-            await self._plan(version, simulation),
+            planned,
             version,
-            labor_supply_response=labor_supply_response,
+            labor_supply_response=await self._labor_supply_needed(report_runs, version),
         )
-        return 1
+
+    async def _fail_simulation_run(self, run_id: UUID, error: RunError) -> None:
+        """Fail a pending run that cannot start, if no one else has claimed it."""
+        if await asyncio.to_thread(
+            self.transitions.claim_simulation_dispatch, [run_id]
+        ):
+            await asyncio.to_thread(
+                self.transitions.record_simulation_dispatch_failure, [run_id], error
+            )
 
     # --- Comparisons -------------------------------------------------------
 
@@ -479,7 +532,7 @@ class EconomyReports:
         for report_run in ready:
             await self.start_comparison(report_run)
 
-    async def start_comparison(self, report_run: ReportRunRecord) -> None:
+    async def start_comparison(self, report_run: ReportRunRecord) -> bool:
         """Start a report run's comparison step with both runs' stored outputs.
 
         A step whose output files are no longer offered, or whose report can
@@ -494,7 +547,7 @@ class EconomyReports:
             or version is None
             or report_run.reform_simulation_run_id is None
         ):
-            return
+            return False
         sides = []
         for simulation_id, run_id in (
             (report.baseline_simulation_id, report_run.baseline_simulation_run_id),
@@ -516,20 +569,20 @@ class EconomyReports:
                         "A simulation run's stored output is no longer offered.",
                     ),
                 )
-                return
+                return False
             try:
                 planned = await self._plan(version, simulation)
             except EconomyRequestError as error:
                 await self._fail_comparison(
                     report_run.id, RunError(RunErrorCode.INVALID_INPUT, str(error))
                 )
-                return
+                return False
             if planned.changes is None:
                 await self._fail_comparison(
                     report_run.id,
                     RunError(RunErrorCode.INVALID_INPUT, planned.refusal or ""),
                 )
-                return
+                return False
             sides.append((planned, run_id, output))
         (
             (baseline, baseline_run_id, baseline_output),
@@ -559,7 +612,7 @@ class EconomyReports:
                 output_sha256=reform_output.sha256,
             ),
         )
-        await self.dispatch.start_comparison(
+        outcome = await self.dispatch.start_comparison(
             report_run.id,
             ModalRequest(
                 target=ModalTarget(
@@ -569,6 +622,7 @@ class EconomyReports:
                 arguments=(call.model_dump(mode="json"),),
             ),
         )
+        return outcome is DispatchOutcome.STARTED
 
     async def _fail_comparison(self, report_run_id: UUID, error: RunError) -> None:
         if await asyncio.to_thread(

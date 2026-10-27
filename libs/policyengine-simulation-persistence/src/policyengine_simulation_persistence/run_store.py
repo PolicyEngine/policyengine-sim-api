@@ -385,20 +385,30 @@ class RunStore:
             return [ReportRunRecord.from_row(row) for row in rows]
 
     def pending_simulation_runs(
-        self, *, created_before: datetime, limit: int = 100
+        self,
+        *,
+        created_before: datetime,
+        simulation_kind: SimulationKind | None = None,
+        limit: int = 100,
     ) -> list[SimulationRunRecord]:
         """Return runs still pending that were created before ``created_before``.
 
         A run whose submitting instance stopped before starting its call stays
-        pending; the safety check starts it.
+        pending; the safety check starts it. ``simulation_kind`` keeps only
+        runs of that kind.
         """
+        conditions = [
+            simulation_runs.c.status == RunStatus.PENDING.value,
+            simulation_runs.c.created_at < created_before,
+        ]
+        if simulation_kind is not None:
+            conditions.append(
+                simulation_runs.c.simulation_kind == simulation_kind.value
+            )
         with self.engine.connect() as connection:
             rows = connection.execute(
                 select(simulation_runs)
-                .where(
-                    simulation_runs.c.status == RunStatus.PENDING.value,
-                    simulation_runs.c.created_at < created_before,
-                )
+                .where(*conditions)
                 .order_by(simulation_runs.c.created_at)
                 .limit(limit)
             ).mappings()

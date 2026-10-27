@@ -11,6 +11,7 @@ from policyengine_simulation_persistence import (
     OutputFile,
     RunErrorCode,
     RunTrigger,
+    SimulationKind,
     create_simulation_engine,
     record_output_files,
 )
@@ -194,3 +195,21 @@ def test_the_report_runs_comparing_a_simulation_run_are_found(
         report_run.id
     ]
     assert store.report_runs_using(uuid4()) == []
+
+
+def test_pending_runs_can_be_narrowed_to_one_kind(
+    migrated_database, public_api_rows
+) -> None:
+    _, baseline_run, _, _ = _report_run(migrated_database, public_api_rows)
+    store = run_store(migrated_database)
+    later = datetime.now(UTC) + timedelta(minutes=11)
+
+    economy = store.pending_simulation_runs(
+        created_before=later, simulation_kind=SimulationKind.ECONOMY
+    )
+    household = store.pending_simulation_runs(
+        created_before=later, simulation_kind=SimulationKind.HOUSEHOLD
+    )
+
+    assert baseline_run.id in {run.id for run in economy}
+    assert household == []

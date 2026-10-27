@@ -316,11 +316,15 @@ class FakeRuns:
         ]
         return ready[:limit]
 
-    def pending_simulation_runs(self, *, created_before, limit=100):
+    def pending_simulation_runs(
+        self, *, created_before, simulation_kind=None, limit=100
+    ):
         return [
             run
             for run in self.simulation_runs.values()
-            if run.status is RunStatus.PENDING and run.created_at < created_before
+            if run.status is RunStatus.PENDING
+            and run.created_at < created_before
+            and simulation_kind in {None, run.simulation_kind}
         ][:limit]
 
     def report_runs_using(self, simulation_run_id: UUID) -> list[ReportRunRecord]:

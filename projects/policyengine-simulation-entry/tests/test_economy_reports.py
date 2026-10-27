@@ -35,6 +35,7 @@ from policyengine_simulation_persistence import (
     RunErrorCode,
     RunStatus,
     RunTrigger,
+    SimulationKind,
 )
 from run_fakes import FakeDispatcher
 
@@ -422,3 +423,87 @@ def test_a_run_a_labour_supply_report_waits_for_keeps_its_columns() -> None:
     calls = {call.simulation_run_id: call for call in path.simulation_calls()}
     assert calls[baseline_id].labor_supply_response is True
     assert calls[ordinary.reform_simulation_run_id].labor_supply_response is False
+
+
+def _strand(path: _Path, run_id) -> None:
+    path.runs.simulation_runs[run_id] = replace(
+        path.runs.simulation_runs[run_id],
+        status=RunStatus.PENDING,
+        modal_call_id=None,
+        next_check_at=None,
+    )
+    _age(path, run_id, 11)
+
+
+def test_one_run_that_cannot_resume_does_not_stop_the_others() -> None:
+    path = _Path()
+    _, first = path.submit()
+    _, second = path.submit(reform=SimulationChoice(policy_id=OTHER_POLICY))
+    for run_id in (first.reform_simulation_run_id, second.reform_simulation_run_id):
+        _strand(path, run_id)
+    # The first reform's region has since left the catalog.
+    first_reform = path.simulations.rows[
+        path.runs.simulation_runs[first.reform_simulation_run_id].simulation_id
+    ]
+    path.simulations.rows[first_reform.id] = replace(
+        first_reform, region_code="state/zz"
+    )
+    path.dispatcher.requests.clear()
+
+    resumed = asyncio.run(path.economy.resume_waiting_work(now=path.runs.clock()))
+
+    assert resumed.runs_started == 1
+    assert [call.simulation_run_id for call in path.simulation_calls()] == [
+        second.reform_simulation_run_id
+    ]
+    unresolvable = path.runs.simulation_runs[first.reform_simulation_run_id]
+    assert unresolvable.status is RunStatus.FAILED
+    assert unresolvable.error_code == RunErrorCode.INVALID_INPUT.value
+
+
+def test_a_pending_run_no_report_compares_is_failed_not_kept_waiting() -> None:
+    path = _Path()
+    _, report_run = path.submit()
+    run_id = report_run.reform_simulation_run_id
+    _strand(path, run_id)
+    path.runs.report_runs_by_id.clear()
+    path.dispatcher.requests.clear()
+
+    resumed = asyncio.run(path.economy.resume_waiting_work(now=path.runs.clock()))
+
+    assert resumed.runs_started == 0
+    run = path.runs.simulation_runs[run_id]
+    assert run.status is RunStatus.FAILED
+    assert run.error_code == RunErrorCode.DISPATCH_ABANDONED.value
+    assert path.dispatcher.requests == []
+
+
+def test_a_pending_household_run_is_left_to_the_household_path() -> None:
+    path = _Path()
+    _, report_run = path.submit()
+    run_id = report_run.reform_simulation_run_id
+    _strand(path, run_id)
+    path.runs.simulation_runs[run_id] = replace(
+        path.runs.simulation_runs[run_id], simulation_kind=SimulationKind.HOUSEHOLD
+    )
+    path.dispatcher.requests.clear()
+
+    resumed = asyncio.run(path.economy.resume_waiting_work(now=path.runs.clock()))
+
+    assert resumed.runs_started == 0
+    assert path.runs.simulation_runs[run_id].status is RunStatus.PENDING
+
+
+def test_only_comparisons_whose_call_started_are_counted() -> None:
+    path = _Path()
+    _, report_run = path.submit()
+    path.runs.succeed(report_run.baseline_simulation_run_id)
+    path.runs.succeed(report_run.reform_simulation_run_id)
+    del path.runs.files[(report_run.reform_simulation_run_id, "simulation_output")]
+
+    resumed = asyncio.run(path.economy.resume_waiting_work(now=path.runs.clock()))
+
+    assert resumed.comparisons_started == 0
+    assert path.runs.report_runs_by_id[report_run.id].comparison_status is (
+        RunStatus.FAILED
+    )
