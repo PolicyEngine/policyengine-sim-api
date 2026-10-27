@@ -18,14 +18,12 @@ from policyengine_simulation_executor.stage12_runtime import (
 from policyengine_simulation_executor.stage12_runtime.failure_causes import (
     StageProgress,
 )
-from test_stage12_runtime import (
+from stage12_fake_stores import FakeArtifacts, FakeStore, simulation_frames
+from stage12_runtime_support import (
     NOW,
-    FakeArtifacts,
-    FakeStore,
-    _child,
-    _context,
-    _frames,
-    _planned_simulation,
+    child_record,
+    invocation_context,
+    planned_simulation,
 )
 
 
@@ -39,13 +37,13 @@ class SpanRecordingRuntime:
 
 
 def _run(store, artifacts, *, calculator=None, runtime=None):
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     seams = {"store": store, "artifacts": artifacts, "runtime": runtime}
     if calculator is not None:
         seams["calculator"] = calculator
     return run_single_simulation(
         simulation.model_dump(mode="json"),
-        _context().model_dump(mode="json"),
+        invocation_context().model_dump(mode="json"),
         required_country="us",
         dependencies=SimulationWorkerDependencies(**seams),
     )
@@ -54,9 +52,9 @@ def _run(store, artifacts, *, calculator=None, runtime=None):
 def test_succeeded_child_returns_its_stored_descriptor_without_recalculating():
     store = FakeStore()
     artifacts = FakeArtifacts()
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     descriptor = artifacts.add_simulation(simulation)
-    succeeded = _child(simulation).model_copy(
+    succeeded = child_record(simulation).model_copy(
         update={
             "status": ComparisonRunLifecycleStatus.SUCCEEDED,
             "output_uri": descriptor.artifact.uri,
@@ -83,14 +81,14 @@ def test_succeeded_child_returns_its_stored_descriptor_without_recalculating():
 
 def test_default_calculator_receives_the_runtime_and_times_itself(monkeypatch):
     store = FakeStore()
-    simulation = _planned_simulation(SimulationRole.BASELINE)
-    store.children[simulation.simulation_execution_id] = _child(simulation)
+    simulation = planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = child_record(simulation)
     runtime = SpanRecordingRuntime()
     calls = []
 
     def calculate(planned, *, runtime=None, progress=None):
         calls.append((planned.role, runtime, progress))
-        return _frames()
+        return simulation_frames()
 
     monkeypatch.setattr(simulation_module, "calculate_simulation_frames", calculate)
 
@@ -110,14 +108,14 @@ def test_default_calculator_receives_the_runtime_and_times_itself(monkeypatch):
 
 def test_injected_calculator_is_timed_by_the_worker():
     store = FakeStore()
-    simulation = _planned_simulation(SimulationRole.BASELINE)
-    store.children[simulation.simulation_execution_id] = _child(simulation)
+    simulation = planned_simulation(SimulationRole.BASELINE)
+    store.children[simulation.simulation_execution_id] = child_record(simulation)
     runtime = SpanRecordingRuntime()
     calls = []
 
     def calculate(planned):
         calls.append(planned.role)
-        return _frames()
+        return simulation_frames()
 
     _run(store, FakeArtifacts(), calculator=calculate, runtime=runtime)
 

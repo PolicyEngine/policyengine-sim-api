@@ -21,21 +21,20 @@ from policyengine_simulation_executor.stage12_runtime import (
     parent_claim,
     report_coordination,
 )
-from test_stage12_runtime import (
+from stage12_child_call_support import ConcurrentInvoker
+from stage12_fake_stores import FakeArtifacts, FakeStore
+from stage12_runtime_support import (
     BASELINE_ID,
     EVALUATION_ID,
     NOW,
     REFORM_ID,
-    ConcurrentInvoker,
-    FakeArtifacts,
-    FakeStore,
-    _aggregate_payload,
-    _child,
-    _context,
-    _output_plan,
-    _parent,
-    _report,
+    aggregate_payload,
+    child_record,
     coordinate_report,
+    invocation_context,
+    parent_record,
+    report_execution_input,
+    shared_output_plan,
 )
 
 CLAIMED_AT = datetime(2026, 9, 15, 1, 0, tzinfo=UTC)
@@ -113,23 +112,23 @@ class FailingSpawnInvoker:
 
 
 def _coordinate(context=None, parent=None, **dependencies):
-    context = context or _context()
+    context = context or invocation_context()
     dependencies.setdefault("application_name", context.modal_application)
     dependencies.setdefault("coordinator_invocation_id", "coordinator-1")
-    dependencies.setdefault("aggregator", lambda **_: _aggregate_payload())
+    dependencies.setdefault("aggregator", lambda **_: aggregate_payload())
     dependencies.setdefault("artifacts", FakeArtifacts())
     dependencies.setdefault("invoker", ConcurrentInvoker(dependencies["artifacts"]))
     return coordinate_report(
-        _report().model_dump(mode="json"),
+        report_execution_input().model_dump(mode="json"),
         context.model_dump(mode="json"),
-        (parent or _parent()).model_dump(mode="json"),
+        (parent or parent_record()).model_dump(mode="json"),
         **dependencies,
     )
 
 
 def _succeeded_child(simulation, artifacts):
     descriptor = artifacts.add_simulation(simulation)
-    return _child(simulation).model_copy(
+    return child_record(simulation).model_copy(
         update={
             "status": ComparisonRunLifecycleStatus.SUCCEEDED,
             "output_uri": descriptor.artifact.uri,
@@ -167,7 +166,7 @@ def test_dispatch_context_must_match_the_report(
     context_update, application_name, message
 ):
     store = FakeStore()
-    context = _context().model_copy(update=context_update)
+    context = invocation_context().model_copy(update=context_update)
 
     with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
         _coordinate(
@@ -225,7 +224,9 @@ def test_submitted_direct_parent_must_describe_the_invocation(field, value):
     message = messages.get(field, f"submitted parent {field} does not match invocation")
 
     with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
-        _coordinate(parent=_parent().model_copy(update={field: value}), store=store)
+        _coordinate(
+            parent=parent_record().model_copy(update={field: value}), store=store
+        )
 
     assert store.parent is None
 
@@ -240,10 +241,10 @@ def test_submitted_direct_parent_must_describe_the_invocation(field, value):
 )
 def test_submitted_automatic_parent_must_name_the_production_job(update):
     store = FakeStore()
-    context = _context().model_copy(
+    context = invocation_context().model_copy(
         update={"production_function_call_id": "production-job-1"}
     )
-    parent = _parent().model_copy(
+    parent = parent_record().model_copy(
         update={
             "production_identity": "production-job-1",
             "incumbent_execution_id": "production-job-1",
@@ -263,7 +264,7 @@ def test_submitted_automatic_parent_must_name_the_production_job(update):
 
 def test_existing_parent_with_another_identifier_is_rejected_unwrapped():
     store = FakeStore()
-    store.parent = _parent().model_copy(
+    store.parent = parent_record().model_copy(
         update={"evaluation_id": UUID("00000000-0000-0000-0000-0000000000aa")}
     )
 
@@ -279,7 +280,7 @@ def test_existing_parent_with_another_identifier_is_rejected_unwrapped():
 def test_failed_parent_is_reclaimed_keeping_its_first_start(previous_start):
     store = FakeStore()
     artifacts = FakeArtifacts()
-    store.parent = _parent().model_copy(
+    store.parent = parent_record().model_copy(
         update={
             "status": ComparisonRunLifecycleStatus.FAILED,
             "aggregation_status": ComparisonRunAggregationStatus.FAILED,
@@ -323,7 +324,9 @@ def test_failed_parent_is_reclaimed_keeping_its_first_start(previous_start):
 )
 def test_claimed_or_finished_parent_is_deduplicated(status):
     store = FakeStore()
-    existing = _parent().model_copy(update={"status": status, "error_code": "skipped"})
+    existing = parent_record().model_copy(
+        update={"status": status, "error_code": "skipped"}
+    )
     if status is ComparisonRunLifecycleStatus.SUCCEEDED:
         existing = existing.model_copy(
             update={
@@ -349,7 +352,7 @@ def test_claimed_or_finished_parent_is_deduplicated(status):
 
 
 def test_retained_child_with_a_changed_artifact_fails_the_report():
-    report = _report()
+    report = report_execution_input()
     store = FakeStore()
     artifacts = FakeArtifacts()
     succeeded = _succeeded_child(report.baseline, artifacts)
@@ -394,7 +397,7 @@ def test_dispatch_failure_marks_the_child_and_report_failed():
 
 
 def test_dispatch_failure_keeps_a_child_that_succeeded_meanwhile():
-    report = _report()
+    report = report_execution_input()
     store = FakeStore()
     artifacts = FakeArtifacts()
     succeeded = _succeeded_child(report.baseline, artifacts)
@@ -408,7 +411,9 @@ def test_dispatch_failure_keeps_a_child_that_succeeded_meanwhile():
 
 
 def test_default_output_plan_resolver_measures_its_own_stages(monkeypatch):
-    from test_stage12_runtime import coordinate_report_impl
+    from policyengine_simulation_executor.stage12_runtime import (
+        coordinate_report as coordinate_report_impl,
+    )
 
     store = FakeStore()
     artifacts = FakeArtifacts()
@@ -418,23 +423,23 @@ def test_default_output_plan_resolver_measures_its_own_stages(monkeypatch):
     def resolve(report, *, stage_scope):
         with stage_scope(coordination.Stage.STAGE12_OUTPUT_PLANNING, {"probe": 1}):
             resolved.append(report.evaluation_id)
-        return _output_plan()
+        return shared_output_plan()
 
     monkeypatch.setattr(report_coordination, "resolve_report_output_plan", resolve)
 
     coordinate_report_impl(
-        _report().model_dump(mode="json"),
-        _context().model_dump(mode="json"),
-        _parent().model_dump(mode="json"),
+        report_execution_input().model_dump(mode="json"),
+        invocation_context().model_dump(mode="json"),
+        parent_record().model_dump(mode="json"),
         invocation=CoordinatorInvocation(
-            application_name=_context().modal_application,
+            application_name=invocation_context().modal_application,
             invocation_id="coordinator-1",
         ),
         dependencies=CoordinatorDependencies(
             store=store,
             artifacts=artifacts,
             invoker=ConcurrentInvoker(artifacts),
-            aggregator=lambda **_: _aggregate_payload(),
+            aggregator=lambda **_: aggregate_payload(),
             runtime=runtime,
         ),
     )
@@ -452,7 +457,7 @@ def test_successful_coordination_records_every_stage_and_state():
 
     def aggregate(**values):
         aggregated.append(sorted(values))
-        return _aggregate_payload({"budget": 1})
+        return aggregate_payload({"budget": 1})
 
     result = _coordinate(
         store=store,
@@ -489,12 +494,14 @@ def test_successful_coordination_records_every_stage_and_state():
         "artifact": aggregate_artifact,
         "baseline_artifact_sha256": result["baseline_artifact_sha256"],
         "reform_artifact_sha256": result["reform_artifact_sha256"],
-        "bundle": _report().baseline.bundle.model_dump(mode="json"),
+        "bundle": report_execution_input().baseline.bundle.model_dump(mode="json"),
     }
-    aggregate_uri = f"gs://private/{_context().artifact_prefix}/reports/aggregate.json"
+    aggregate_uri = (
+        f"gs://private/{invocation_context().artifact_prefix}/reports/aggregate.json"
+    )
     assert aggregate_artifact["uri"] == aggregate_uri
     parent = store.parent.model_dump(mode="json")
-    expected_parent = _parent().model_dump(mode="json")
+    expected_parent = parent_record().model_dump(mode="json")
     expected_parent.update(
         {
             "status": "succeeded",
@@ -579,10 +586,10 @@ def test_modal_child_invoker_spawns_and_restores_deployed_functions(monkeypatch)
 
 
 def _shadow_run(store, artifacts, invoker, runtime=None):
-    context = _context().model_copy(
+    context = invocation_context().model_copy(
         update={"production_function_call_id": "production-job-1"}
     )
-    parent = _parent().model_copy(
+    parent = parent_record().model_copy(
         update={
             "production_identity": "production-job-1",
             "incumbent_execution_id": "production-job-1",
@@ -595,7 +602,7 @@ def _shadow_run(store, artifacts, invoker, runtime=None):
         store=store,
         artifacts=artifacts,
         invoker=invoker,
-        aggregator=lambda **_: _aggregate_payload({"budget": {"total": 100.0}}),
+        aggregator=lambda **_: aggregate_payload({"budget": {"total": 100.0}}),
         runtime=runtime,
     )
 

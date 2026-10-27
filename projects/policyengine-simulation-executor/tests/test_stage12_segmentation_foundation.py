@@ -17,7 +17,7 @@ from policyengine_simulation_executor.stage12_runtime.segment_contracts import (
     Stage12SegmentInput,
 )
 from pydantic import ValidationError
-from test_stage12_runtime import _planned_simulation
+from stage12_runtime_support import planned_simulation
 
 PROJECT = Path(__file__).resolve().parents[1]
 PACKAGE = PROJECT / "src" / "policyengine_simulation_executor"
@@ -74,7 +74,7 @@ def test_new_model_regions_are_added_to_the_final_group_in_canonical_order() -> 
 
 
 def test_segment_input_rejects_duplicate_or_non_state_regions() -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
 
     with pytest.raises(ValidationError, match="must be unique"):
         Stage12SegmentInput(

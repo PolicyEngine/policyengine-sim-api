@@ -26,7 +26,7 @@ from policyengine_simulation_executor.stage12_runtime.cached_simulation import (
     Stage12CachedSimulation,
     qualifying_cache_identity,
 )
-from test_stage12_runtime import _planned_simulation
+from stage12_runtime_support import planned_simulation
 
 # A resolved selection, as normalize_runtime_spm returns for every US request.
 SPM_SELECTION = {
@@ -84,7 +84,7 @@ def _strategy():
 
 
 def test_cache_writer_and_reader_share_full_identity() -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE).model_copy(
+    simulation = planned_simulation(SimulationRole.BASELINE).model_copy(
         update={"options": {"region_group": ["state/ca"]}}
     )
     resolved = _resolved()
@@ -121,7 +121,7 @@ def test_dataset_and_baseline_inputs_rotate_cache_identity() -> None:
     later = collect_dataset_identity(resolved, country="us", year=2027)
     assert first.digest != later.digest
 
-    simulation = _planned_simulation(SimulationRole.BASELINE).model_copy(
+    simulation = planned_simulation(SimulationRole.BASELINE).model_copy(
         update={"options": {"region_group": ["state/ca"]}}
     )
     ca = collect_baseline_identity(
@@ -177,7 +177,7 @@ def test_dataset_and_baseline_inputs_rotate_cache_identity() -> None:
 
 
 def test_only_current_law_default_dataset_baseline_qualifies() -> None:
-    baseline = _planned_simulation(SimulationRole.BASELINE).model_copy(
+    baseline = planned_simulation(SimulationRole.BASELINE).model_copy(
         update={"options": {"region_group": ["state/ca"]}}
     )
     kwargs = {
@@ -256,7 +256,7 @@ def _scoping_strategy(name):
 def test_only_a_state_region_group_with_a_scope_cache_key_qualifies(
     options, strategy_name
 ) -> None:
-    baseline = _planned_simulation(SimulationRole.BASELINE).model_copy(
+    baseline = planned_simulation(SimulationRole.BASELINE).model_copy(
         update={"options": options}
     )
 
@@ -284,7 +284,7 @@ def _cached_model() -> Stage12CachedSimulation:
         dynamic=None,
     )
     model.configure_stage12_cache(
-        _planned_simulation(SimulationRole.BASELINE).output_plan
+        planned_simulation(SimulationRole.BASELINE).output_plan
     )
     return model
 

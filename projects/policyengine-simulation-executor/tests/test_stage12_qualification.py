@@ -25,7 +25,7 @@ from policyengine_simulation_executor.stage12_runtime import (
 from policyengine_simulation_executor.stage12_runtime.partition import (
     US_REGION_GROUPS,
 )
-from test_stage12_runtime import _planned_simulation, _report
+from stage12_runtime_support import planned_simulation, report_execution_input
 
 
 def _frames(value: float) -> dict[str, pd.DataFrame]:
@@ -56,7 +56,7 @@ class _Simulation:
 
 
 def _existing_request() -> dict[str, Any]:
-    report = _report()
+    report = report_execution_input()
     return {
         "country": "us",
         "scope": "macro",
@@ -70,7 +70,7 @@ def _existing_request() -> dict[str, Any]:
 
 
 def test_qualification_runner_exercises_all_segments_and_exact_merge() -> None:
-    simulation = _planned_simulation(SimulationRole.BASELINE)
+    simulation = planned_simulation(SimulationRole.BASELINE)
     calls = []
 
     def run_segment(segment):
@@ -108,7 +108,7 @@ def test_qualification_runner_exercises_all_segments_and_exact_merge() -> None:
 
 
 def test_qualification_runs_matching_inputs_through_both_complete_paths() -> None:
-    report = _report()
+    report = report_execution_input()
     baseline = _frames(100.0)
     reform = _frames(120.0)
     simulation_calls = []
@@ -173,7 +173,7 @@ def test_qualification_runs_matching_inputs_through_both_complete_paths() -> Non
 
 
 def test_qualification_fails_with_bounded_diagnostic_without_output_values() -> None:
-    report = _report()
+    report = report_execution_input()
     baseline = _frames(100.0)
     reform = _frames(120.0)
 
@@ -221,14 +221,14 @@ def test_qualification_rejects_different_input_provenance(field, value, code) ->
     request = {**_existing_request(), field: value}
 
     with pytest.raises(ParityMismatchError) as error:
-        qualify_report_parity(request, _report())
+        qualify_report_parity(request, report_execution_input())
 
     assert error.value.code == code
     assert error.value.path == field
 
 
 def test_qualification_rejects_existing_executor_provenance_mismatch() -> None:
-    report = _report()
+    report = report_execution_input()
     baseline = _frames(100.0)
     reform = _frames(120.0)
 
@@ -282,7 +282,7 @@ def _matching_single_runner(baseline, reform, calls=None):
 def test_qualification_receipt_records_every_digest_and_tolerance_field() -> None:
     from policyengine_simulation_executor.stage12_parity import NumericalTolerance
 
-    report = _report()
+    report = report_execution_input()
     baseline = _frames(100.0)
     reform = _frames(120.0)
 
@@ -362,7 +362,7 @@ def test_qualification_receipt_records_every_digest_and_tolerance_field() -> Non
 def test_existing_result_is_checked_before_v2_simulations_run(
     overrides, code, path
 ) -> None:
-    report = _report()
+    report = report_execution_input()
     baseline = _frames(100.0)
     reform = _frames(120.0)
     calls = []
@@ -385,7 +385,7 @@ def test_existing_result_is_checked_before_v2_simulations_run(
 
 @pytest.mark.parametrize("v2_report", [{}, {"result": None}, {"result": []}])
 def test_v2_aggregate_without_a_result_object_is_rejected(v2_report) -> None:
-    report = _report()
+    report = report_execution_input()
     baseline = _frames(100.0)
     reform = _frames(120.0)
 
@@ -415,7 +415,7 @@ def test_default_existing_runner_uses_and_shuts_down_a_local_runtime(
         stage12_qualification,
     )
 
-    report = _report()
+    report = report_execution_input()
     baseline = _frames(100.0)
     reform = _frames(120.0)
     events = []
