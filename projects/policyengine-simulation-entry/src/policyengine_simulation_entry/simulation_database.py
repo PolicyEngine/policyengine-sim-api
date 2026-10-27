@@ -12,8 +12,9 @@ from policyengine_simulation_persistence import (
     read_schema_revision,
 )
 
+from policyengine_simulation_entry.economy_recorders import economy_result_recorders
 from policyengine_simulation_entry.modal_calls import ModalCallInspector
-from policyengine_simulation_entry.run_recording import ResultRecorders, RunRecorder
+from policyengine_simulation_entry.run_recording import RunRecorder
 
 if TYPE_CHECKING:
     from sqlalchemy import Engine
@@ -45,15 +46,15 @@ class SimulationDatabase:
     def call_recorder(self) -> RunRecorder:
         """Return what records a reported call's outcome on its runs.
 
-        No kind of run has a result recorder yet (stage 2 registers them), so
-        a finished call is answered no_result_recorder and left for the
-        safety check; no route creates runs yet.
+        Economy simulation runs and comparison steps have result recorders. A
+        finished call of another kind is answered no_result_recorder and left
+        for a revision that records it.
         """
         return RunRecorder(
             transitions=RunTransitions(self.engine),
             runs=RunStore(self.engine),
             inspector=ModalCallInspector(),
-            recorders=ResultRecorders(),
+            recorders=economy_result_recorders(),
         )
 
     def dispose(self) -> None:
