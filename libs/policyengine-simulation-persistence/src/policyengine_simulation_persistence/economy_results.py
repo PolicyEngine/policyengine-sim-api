@@ -21,7 +21,7 @@ lists must hold records of their own kind, each area once.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_contract.macro_output import (
@@ -33,11 +33,21 @@ from policyengine_simulation_contract.macro_output import (
     LocalAuthorityImpactRecord,
     SingleYearMacroOutput,
 )
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 
+from policyengine_simulation_persistence.economy_result_reader import (
+    read_economy_comparison,
+)
+from policyengine_simulation_persistence.economy_result_storage import (
+    OPTIONAL_SECTIONS,
+    REFUSED_OTHER_KIND,
+    RESULT_FIELD_STORAGE,
+    SIDES,
+    EconomyResultLabels,
+    GeographyLabel,
+)
 from policyengine_simulation_persistence.result_tables import (
-    POVERTY_GROUPS,
     UK_AREA_DISCLOSURE_COLUMNS,
     budget_impacts,
     cliff_impacts,
@@ -54,181 +64,26 @@ from policyengine_simulation_persistence.result_tables import (
 )
 from policyengine_simulation_persistence.runs import (
     ReportRunRecord,
-    RunStatus,
     report_runs,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
     from uuid import UUID
 
-    from sqlalchemy import Connection, RowMapping, Table
+    from sqlalchemy import Connection, Table
 
-# The sections a result may leave null. Which of them a stored result holds is
-# recorded on its report run, so a reader returns null exactly where the
-# writer received null, including for empty lists.
-OPTIONAL_SECTIONS = (
-    "poverty_by_race",
-    "wealth_decile",
-    "intra_wealth_decile",
-    "labor_supply_response",
-    "constituency_impact",
-    "local_authority_impact",
-    "congressional_district_impact",
-    "cliff_impact",
-)
-SIDES = ("baseline", "reform")
-
-
-# Where each field of SingleYearMacroOutput is kept. "{key}" stands for a map
-# key and "[]" for a list item; per-simulation figures are kept on the
-# baseline's or the reform's own simulation run, keyed by the report run and
-# the side too. Labels come from the catalog
-# when the result is read. A test requires this to name every field.
-REFUSED_OTHER_KIND = "refused by check_storable: a record of the other kind"
-_GEOGRAPHY_FIELDS = (
-    "average_household_income_change",
-    "relative_household_income_change",
-    "population",
-    *UK_AREA_DISCLOSURE_COLUMNS,
-)
-
-
-def _poverty_storage() -> dict[str, str]:
-    paths = {}
-    for section, measures, groups in (
-        ("poverty", ("poverty", "deep_poverty"), POVERTY_GROUPS["age"]),
-        ("poverty_by_gender", ("poverty", "deep_poverty"), POVERTY_GROUPS["gender"]),
-        ("poverty_by_race", ("poverty",), POVERTY_GROUPS["race"]),
-    ):
-        for measure in measures:
-            for group in groups:
-                for side in SIDES:
-                    paths[f"{section}.{measure}.{group}.{side}"] = "poverty_rates.rate"
-    return paths
-
-
-def _geography_storage(
-    section: str, own: str, other: str, table: str
-) -> dict[str, str]:
-    paths = {f"{section}[].{name}": f"{table}.{name}" for name in _GEOGRAPHY_FIELDS}
-    paths[f"{section}[].{own}_code"] = f"{table}.{own}_code"
-    paths[f"{section}[].{own}_name"] = "region catalog: name"
-    paths[f"{section}[].x"] = "region catalog: map x"
-    paths[f"{section}[].y"] = "region catalog: map y"
-    paths[f"{section}[].{other}_code"] = REFUSED_OTHER_KIND
-    paths[f"{section}[].{other}_name"] = REFUSED_OTHER_KIND
-    return paths
-
-
-RESULT_FIELD_STORAGE: dict[str, str] = {
-    "spm_provenance": "report_runs.spm_provenance",
-    "model_version": "report_runs.result_model_version",
-    "data_version": "report_runs.result_data_version",
-    **{
-        f"budget.{name}": f"budget_impacts.{name}"
-        for name in (
-            "budgetary_impact",
-            "tax_revenue_impact",
-            "state_tax_revenue_impact",
-            "benefit_spending_impact",
-            "households",
-            "baseline_net_income",
-        )
-    },
-    **{
-        f"detailed_budget.{{key}}.{name}": f"program_budget_impacts.{name}"
-        for name in ("baseline", "reform", "difference")
-    },
-    **{
-        f"{section}.{statistic}.{{key}}": f"decile_impacts.{statistic}_change"
-        for section in ("decile", "wealth_decile")
-        for statistic in ("average", "relative")
-    },
-    **{
-        path: "intra_decile_impacts.share"
-        for section in ("intra_decile", "intra_wealth_decile")
-        for path in (f"{section}.deciles.{{key}}[]", f"{section}.all.{{key}}")
-    },
-    **{
-        f"inequality.{name}.{side}": f"inequality.{name}"
-        for name in ("gini", "top_10_pct_share", "top_1_pct_share")
-        for side in SIDES
-    },
-    **_poverty_storage(),
-    **{
-        f"cliff_impact.{side}.{name}": f"cliff_impacts.{name}"
-        for side in SIDES
-        for name in ("cliff_gap", "cliff_share")
-    },
-    **{
-        f"labor_supply_response.{path}": f"labor_supply_responses.{column}"
-        for path, column in (
-            ("substitution_lsr", "substitution_lsr"),
-            ("income_lsr", "income_lsr"),
-            ("relative_lsr.income", "relative_income_response"),
-            ("relative_lsr.substitution", "relative_substitution_response"),
-            ("total_change", "total_change"),
-            ("revenue_change", "revenue_change"),
-            ("hours.baseline", "baseline_hours"),
-            ("hours.reform", "reform_hours"),
-            ("hours.change", "hours_change"),
-            ("hours.income_effect", "hours_income_effect"),
-            ("hours.substitution_effect", "hours_substitution_effect"),
-        )
-    },
-    **{
-        f"labor_supply_response.decile.{statistic}.{effect}.{{key}}": (
-            f"labor_supply_decile_impacts.{statistic}_{effect}_effect"
-        )
-        for statistic in ("average", "relative")
-        for effect in ("income", "substitution")
-    },
-    **{
-        f"congressional_district_impact.districts[].{name}": (
-            f"congressional_district_impacts.{name}"
-        )
-        for name in (
-            "district",
-            "average_household_income_change",
-            "relative_household_income_change",
-            "winner_percentage",
-            "loser_percentage",
-            "no_change_percentage",
-            "population",
-        )
-    },
-    **_geography_storage(
-        "constituency_impact", "constituency", "local_authority", "constituency_impacts"
-    ),
-    **_geography_storage(
-        "local_authority_impact",
-        "local_authority",
-        "constituency",
-        "local_authority_impacts",
-    ),
-}
-
-
-@dataclass(frozen=True)
-class GeographyLabel:
-    """A constituency's or local authority's name and map position."""
-
-    name: str
-    x: int | None
-    y: int | None
-
-
-@dataclass(frozen=True)
-class EconomyResultLabels:
-    """What a stored result takes from the region catalog when it is read.
-
-    Constituency and local-authority names and map positions, by code.
-    """
-
-    constituencies: Mapping[str, GeographyLabel] = field(default_factory=dict)
-    local_authorities: Mapping[str, GeographyLabel] = field(default_factory=dict)
-
+__all__ = [
+    "OPTIONAL_SECTIONS",
+    "REFUSED_OTHER_KIND",
+    "RESULT_FIELD_STORAGE",
+    "SIDES",
+    "EconomyComparisonRecorder",
+    "EconomyResultLabels",
+    "GeographyLabel",
+    "check_storable",
+    "read_economy_comparison",
+    "write_economy_comparison",
+]
 
 # --- Checks before writing ------------------------------------------------
 
@@ -601,365 +456,3 @@ class EconomyComparisonRecorder:
             msg = "the comparison recorder writes only validated economy results"
             raise TypeError(msg)
         write_economy_comparison(connection, report_run, result)
-
-
-# --- Reading ----------------------------------------------------------------
-
-
-def _rows(
-    connection: Connection,
-    table: Table,
-    key_column: str,
-    key: UUID,
-    order: Sequence[str] = (),
-) -> list[RowMapping]:
-    statement = select(table).where(table.c[key_column] == key)
-    if order:
-        statement = statement.order_by(*(table.c[name] for name in order))
-    return list(connection.execute(statement).mappings())
-
-
-def _one(
-    connection: Connection, table: Table, key_column: str, key: UUID
-) -> RowMapping:
-    rows = _rows(connection, table, key_column, key)
-    if len(rows) != 1:
-        msg = f"{table.name} has no row for {key}"
-        raise LookupError(msg)
-    return rows[0]
-
-
-def _poverty(rows_by_side: dict[str, list[RowMapping]]) -> dict[str, Any]:
-    sections: dict[tuple[str, str], dict[str, dict[str, float]]] = {}
-    for side, side_rows in rows_by_side.items():
-        for row in side_rows:
-            group = sections.setdefault((row["group_dimension"], row["measure"]), {})
-            group.setdefault(row["group_value"], {})[side] = row["rate"]
-    return {
-        "poverty": {
-            "poverty": sections[("age", "poverty")],
-            "deep_poverty": sections[("age", "deep_poverty")],
-        },
-        "poverty_by_gender": {
-            "poverty": sections[("gender", "poverty")],
-            "deep_poverty": sections[("gender", "deep_poverty")],
-        },
-        "poverty_by_race": (
-            {"poverty": sections[("race", "poverty")]}
-            if ("race", "poverty") in sections
-            else None
-        ),
-    }
-
-
-def _figures(
-    connection: Connection,
-    table: Table,
-    report_run_id: UUID,
-    run_id: UUID,
-    side: str,
-) -> list[RowMapping]:
-    """Return one side's own figures as one report run computed them."""
-    return list(
-        connection.execute(
-            select(table).where(
-                table.c.report_run_id == report_run_id,
-                table.c.simulation_run_id == run_id,
-                table.c.side == side,
-            )
-        ).mappings()
-    )
-
-
-def _one_figure(
-    connection: Connection,
-    table: Table,
-    report_run_id: UUID,
-    run_id: UUID,
-    side: str,
-) -> RowMapping:
-    rows = _figures(connection, table, report_run_id, run_id, side)
-    if len(rows) != 1:
-        msg = (
-            f"{table.name} has no {side} row for run {run_id} "
-            f"in report run {report_run_id}"
-        )
-        raise LookupError(msg)
-    return rows[0]
-
-
-def _simulation_sections(
-    connection: Connection,
-    report_run_id: UUID,
-    run_ids: tuple[UUID, UUID],
-    sections: set[str],
-) -> dict[str, Any]:
-    by_side = {
-        side: _figures(connection, poverty_rates, report_run_id, run_id, side)
-        for side, run_id in zip(SIDES, run_ids, strict=True)
-    }
-    payload = _poverty(by_side)
-    if "poverty_by_race" not in sections:
-        payload["poverty_by_race"] = None
-    inequality_rows = [
-        _one_figure(connection, inequality, report_run_id, run_id, side)
-        for side, run_id in zip(SIDES, run_ids, strict=True)
-    ]
-    payload["inequality"] = {
-        name: {
-            side: row[name] for side, row in zip(SIDES, inequality_rows, strict=True)
-        }
-        for name in ("gini", "top_10_pct_share", "top_1_pct_share")
-    }
-    payload["cliff_impact"] = None
-    if "cliff_impact" in sections:
-        cliff_rows = [
-            _one_figure(connection, cliff_impacts, report_run_id, run_id, side)
-            for side, run_id in zip(SIDES, run_ids, strict=True)
-        ]
-        payload["cliff_impact"] = {
-            side: {name: row[name] for name in ("cliff_gap", "cliff_share")}
-            for side, row in zip(SIDES, cliff_rows, strict=True)
-        }
-    return payload
-
-
-def _deciles(rows: list[RowMapping], measure: str) -> dict[str, dict[str, float]]:
-    measured = [row for row in rows if row["measure"] == measure]
-    return {
-        "average": {row["decile"]: row["average_change"] for row in measured},
-        "relative": {row["decile"]: row["relative_change"] for row in measured},
-    }
-
-
-def _intra_deciles(rows: list[RowMapping], measure: str) -> dict[str, Any]:
-    """Rebuild one breakdown; its categories come from their average rows.
-
-    A category whose decile shares are missing (the breakdown failed) gets an
-    empty list, as it was written.
-    """
-    measured = [row for row in rows if row["measure"] == measure]
-    averages = sorted(
-        (row for row in measured if row["decile"] is None),
-        key=lambda row: row["outcome_position"],
-    )
-    deciles: dict[str, list[float]] = {row["outcome"]: [] for row in averages}
-    for row in sorted(
-        (row for row in measured if row["decile"] is not None),
-        key=lambda row: (row["outcome_position"], row["decile"]),
-    ):
-        deciles[row["outcome"]].append(row["share"])
-    return {
-        "deciles": deciles,
-        "all": {row["outcome"]: row["share"] for row in averages},
-    }
-
-
-def _labor_supply_decile_maps(
-    rows: list[RowMapping], statistic: str
-) -> dict[str, dict[int, float]]:
-    """Rebuild one pair of labour supply decile maps in its own order."""
-    named = sorted(
-        (row for row in rows if row[f"{statistic}_position"] is not None),
-        key=lambda row: row[f"{statistic}_position"],
-    )
-    return {
-        effect: {row["decile"]: row[f"{statistic}_{effect}_effect"] for row in named}
-        for effect in ("income", "substitution")
-    }
-
-
-def _labor_supply(connection: Connection, report_run_id: UUID) -> dict[str, Any]:
-    response = _one(connection, labor_supply_responses, "report_run_id", report_run_id)
-    deciles = _rows(
-        connection, labor_supply_decile_impacts, "report_run_id", report_run_id
-    )
-    return {
-        "substitution_lsr": response["substitution_lsr"],
-        "income_lsr": response["income_lsr"],
-        "relative_lsr": {
-            "income": response["relative_income_response"],
-            "substitution": response["relative_substitution_response"],
-        },
-        "total_change": response["total_change"],
-        "revenue_change": response["revenue_change"],
-        "decile": {
-            statistic: _labor_supply_decile_maps(deciles, statistic)
-            for statistic in ("average", "relative")
-        },
-        "hours": {
-            "baseline": response["baseline_hours"],
-            "reform": response["reform_hours"],
-            "change": response["hours_change"],
-            "income_effect": response["hours_income_effect"],
-            "substitution_effect": response["hours_substitution_effect"],
-        },
-    }
-
-
-def _labelled_geographies(
-    rows: list[RowMapping],
-    code_field: str,
-    name_field: str,
-    labels: Mapping[str, GeographyLabel],
-) -> list[dict[str, Any]]:
-    records = []
-    for row in rows:
-        code = row[code_field]
-        label = labels.get(code)
-        if label is None:
-            msg = f"the region catalog has no label for {code}"
-            raise LookupError(msg)
-        records.append(
-            {
-                code_field: code,
-                name_field: label.name,
-                "x": label.x,
-                "y": label.y,
-                "average_household_income_change": row[
-                    "average_household_income_change"
-                ],
-                "relative_household_income_change": row[
-                    "relative_household_income_change"
-                ],
-                "population": row["population"],
-                **{name: row[name] for name in UK_AREA_DISCLOSURE_COLUMNS},
-            }
-        )
-    return records
-
-
-def _geography_sections(
-    connection: Connection,
-    report_run_id: UUID,
-    sections: set[str],
-    labels: EconomyResultLabels,
-) -> dict[str, Any]:
-    def ordered(table: Table) -> list[RowMapping]:
-        return _rows(
-            connection, table, "report_run_id", report_run_id, order=("position",)
-        )
-
-    payload: dict[str, Any] = {
-        "congressional_district_impact": None,
-        "constituency_impact": None,
-        "local_authority_impact": None,
-    }
-    if "congressional_district_impact" in sections:
-        payload["congressional_district_impact"] = {
-            "districts": [
-                {
-                    name: row[name]
-                    for name in row.keys()  # noqa: SIM118  # RowMapping keys
-                    if name not in {"report_run_id", "position"}
-                }
-                for row in ordered(congressional_district_impacts)
-            ]
-        }
-    if "constituency_impact" in sections:
-        payload["constituency_impact"] = _labelled_geographies(
-            ordered(constituency_impacts),
-            "constituency_code",
-            "constituency_name",
-            labels.constituencies,
-        )
-    if "local_authority_impact" in sections:
-        payload["local_authority_impact"] = _labelled_geographies(
-            ordered(local_authority_impacts),
-            "local_authority_code",
-            "local_authority_name",
-            labels.local_authorities,
-        )
-    return payload
-
-
-def _comparison_sections(
-    connection: Connection,
-    report_run_id: UUID,
-    sections: set[str],
-    labels: EconomyResultLabels,
-) -> dict[str, Any]:
-    budget = _one(connection, budget_impacts, "report_run_id", report_run_id)
-    deciles = _rows(
-        connection,
-        decile_impacts,
-        "report_run_id",
-        report_run_id,
-        order=("measure", "position"),
-    )
-    intra = _rows(connection, intra_decile_impacts, "report_run_id", report_run_id)
-    programs = _rows(
-        connection,
-        program_budget_impacts,
-        "report_run_id",
-        report_run_id,
-        order=("position",),
-    )
-    return {
-        "budget": {
-            name: value for name, value in budget.items() if name != "report_run_id"
-        },
-        "detailed_budget": {
-            row["program"]: {
-                "baseline": row["baseline"],
-                "reform": row["reform"],
-                "difference": row["difference"],
-            }
-            for row in programs
-        },
-        "decile": _deciles(deciles, "income"),
-        "wealth_decile": (
-            _deciles(deciles, "wealth") if "wealth_decile" in sections else None
-        ),
-        "intra_decile": _intra_deciles(intra, "income"),
-        "intra_wealth_decile": (
-            _intra_deciles(intra, "wealth")
-            if "intra_wealth_decile" in sections
-            else None
-        ),
-        "labor_supply_response": (
-            _labor_supply(connection, report_run_id)
-            if "labor_supply_response" in sections
-            else None
-        ),
-        **_geography_sections(connection, report_run_id, sections, labels),
-    }
-
-
-def read_economy_comparison(
-    connection: Connection, report_run_id: UUID, labels: EconomyResultLabels
-) -> SingleYearMacroOutput:
-    """Rebuild a succeeded economy report run's result from its rows.
-
-    Raise LookupError when the report run has no succeeded comparison, or
-    when the labels lack a constituency or local authority the result names.
-    """
-    report_run_row = (
-        connection.execute(select(report_runs).where(report_runs.c.id == report_run_id))
-        .mappings()
-        .first()
-    )
-    if report_run_row is None:
-        msg = f"no report run {report_run_id}"
-        raise LookupError(msg)
-    report_run = ReportRunRecord.from_row(report_run_row)
-    if (
-        report_run.comparison_status is not RunStatus.SUCCEEDED
-        or report_run.reform_simulation_run_id is None
-    ):
-        msg = f"report run {report_run_id} has no succeeded economy comparison"
-        raise LookupError(msg)
-    sections: set[str] = set(report_run_row["result_sections"] or ())
-    run_ids = (
-        report_run.baseline_simulation_run_id,
-        report_run.reform_simulation_run_id,
-    )
-    return SingleYearMacroOutput.model_validate(
-        {
-            "spm_provenance": report_run_row["spm_provenance"],
-            "model_version": report_run_row["result_model_version"],
-            "data_version": report_run_row["result_data_version"],
-            **_comparison_sections(connection, report_run_id, sections, labels),
-            **_simulation_sections(connection, report_run_id, run_ids, sections),
-        }
-    )
