@@ -11,9 +11,11 @@ API's US catalog version for the deployed PolicyEngine.py version (or, when
 the Public API has not published that version yet, its current one) and
 stores a one-person household there, which returns the same household each
 time. It then submits that household, as stored, forced so each deploy
-starts a new Modal call, polls until it succeeds or fails within a bounded
-time, and reads the result back. An answer asking to retry (503 with
-``Retry-After``) is retried after its wait, within the same time bound.
+starts a new Modal call, polls until it succeeds or fails, and reads the
+result back, all within one ten-minute limit. An answer asking to retry (503
+with ``Retry-After``) is retried after its wait, within that limit; a
+submission retried after it was partly written may leave a pending run
+behind, which nothing reuses, since each retry is forced too.
 """
 
 from __future__ import annotations
@@ -73,23 +75,41 @@ STORED_HOUSEHOLD = {
     "spm_unit": [{"id": "your spm unit", "values": {}}],
     "marital_unit": [{"id": "your marital unit", "values": {}}],
 }
-# The same household in the situation shape the household functions take.
-SITUATION = {
-    "people": {
-        "you": {"age": {str(YEAR): 40}, "employment_income": {str(YEAR): 30_000}}
-    },
-    "families": {"your family": {"members": ["you"]}},
-    "tax_units": {"your tax unit": {"members": ["you"]}},
-    "spm_units": {"your spm unit": {"members": ["you"]}},
-    "marital_units": {"your marital unit": {"members": ["you"]}},
-    "households": {
-        "your household": {
-            "members": ["you"],
-            "state_name": {str(YEAR): "CA"},
-            "household_net_income": {str(YEAR): None},
-        }
-    },
+# The plural each stored group collection has in the situation shape.
+SITUATION_COLLECTIONS = {
+    "household": "households",
+    "family": "families",
+    "tax_unit": "tax_units",
+    "spm_unit": "spm_units",
+    "marital_unit": "marital_units",
 }
+
+
+def situation_from_stored(stored: dict[str, Any]) -> dict[str, Any]:
+    """Return a stored household in the situation shape the household functions take.
+
+    Each record's ``id`` names it, and each group lists the people whose
+    memberships name it, so both shapes hold the same household.
+    """
+    situation: dict[str, Any] = {
+        "people": {person["id"]: dict(person["values"]) for person in stored["people"]}
+    }
+    for collection, plural in SITUATION_COLLECTIONS.items():
+        situation[plural] = {
+            group["id"]: {
+                "members": [
+                    person["id"]
+                    for person in stored["people"]
+                    if person["memberships"][collection] == group["id"]
+                ],
+                **group["values"],
+            }
+            for group in stored[collection]
+        }
+    return situation
+
+
+SITUATION = situation_from_stored(STORED_HOUSEHOLD)
 
 
 def _required(name: str) -> str:
@@ -185,10 +205,13 @@ def answer_within(
 
 
 def poll_until_finished(
-    base_url: str, calculation_id: str, authorization: dict[str, str]
+    base_url: str,
+    calculation_id: str,
+    authorization: dict[str, str],
+    *,
+    deadline: float,
 ) -> dict[str, Any]:
-    """Poll the calculation until it succeeds or fails, within the deadline."""
-    deadline = time.monotonic() + CALCULATION_DEADLINE_SECONDS
+    """Poll the calculation until it succeeds or fails, before ``deadline``."""
     while True:
         response = answer_within(
             lambda: httpx.get(
@@ -203,8 +226,8 @@ def poll_until_finished(
         if calculation["status"] in {"succeeded", "failed"}:
             return calculation
         assert time.monotonic() < deadline, (
-            f"calculation {calculation_id} still {calculation['status']} after "
-            f"{CALCULATION_DEADLINE_SECONDS} seconds"
+            f"calculation {calculation_id} still {calculation['status']} at the "
+            f"{CALCULATION_DEADLINE_SECONDS}-second limit"
         )
         time.sleep(POLL_INTERVAL_SECONDS)
 
@@ -212,6 +235,7 @@ def poll_until_finished(
 def test_a_household_calculation_succeeds_and_reads_back(
     base_url: str, public_api_url: str, authorization: dict[str, str]
 ) -> None:
+    deadline = time.monotonic() + CALCULATION_DEADLINE_SECONDS
     catalog = catalog_version(
         public_api_url, _required("SIMULATION_STAGING_TEST_POLICYENGINE_VERSION")
     )
@@ -230,12 +254,14 @@ def test_a_household_calculation_succeeds_and_reads_back(
             headers=authorization,
             timeout=60,
         ),
-        time.monotonic() + CALCULATION_DEADLINE_SECONDS,
+        deadline,
     )
     assert submitted.status_code == httpx.codes.ACCEPTED, submitted.text
     calculation_id = submitted.json()["calculation_id"]
 
-    finished = poll_until_finished(base_url, calculation_id, authorization)
+    finished = poll_until_finished(
+        base_url, calculation_id, authorization, deadline=deadline
+    )
 
     assert finished["status"] == "succeeded", finished["error"]
     result = finished["result"]

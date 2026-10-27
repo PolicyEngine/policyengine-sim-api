@@ -11,6 +11,7 @@ import importlib.util
 from pathlib import Path
 
 import httpx
+import pytest
 from test_deployment_assets_support import REUSABLE_DEPLOY_WORKFLOW, workflow_jobs
 
 JOB_NAME = "staging_household_test"
@@ -101,14 +102,23 @@ def _staging_test_module():
     return module
 
 
-def test_the_stored_household_requests_the_same_values_it_calculates() -> None:
+def test_the_calculated_household_is_the_stored_one_in_the_situation_shape() -> None:
     """The calculation sends the stored household as stored, in its other shape."""
     module = _staging_test_module()
-    stored = module.STORED_HOUSEHOLD["household"][0]["values"]
-    calculated = module.SITUATION["households"]["your household"]
 
-    assert stored == {
-        name: values for name, values in calculated.items() if name != "members"
+    assert module.situation_from_stored(module.STORED_HOUSEHOLD) == {
+        "people": {"you": {"age": {"2026": 40}, "employment_income": {"2026": 30_000}}},
+        "households": {
+            "your household": {
+                "members": ["you"],
+                "state_name": {"2026": "CA"},
+                "household_net_income": {"2026": None},
+            }
+        },
+        "families": {"your family": {"members": ["you"]}},
+        "tax_units": {"your tax unit": {"members": ["you"]}},
+        "spm_units": {"your spm unit": {"members": ["you"]}},
+        "marital_units": {"your marital unit": {"members": ["you"]}},
     }
 
 
@@ -145,8 +155,28 @@ def test_polling_waits_out_a_service_that_asks_to_retry(monkeypatch) -> None:
         module.httpx, "get", httpx.Client(transport=httpx.MockTransport(answers)).get
     )
 
-    finished = module.poll_until_finished("https://stable.example", "id", {})
+    finished = module.poll_until_finished(
+        "https://stable.example", "id", {}, deadline=module.time.monotonic() + 60
+    )
 
     assert finished["status"] == "succeeded"
     assert len(answers.requests) == 3
     assert waits == [1.0, module.POLL_INTERVAL_SECONDS]
+
+
+def test_a_retry_that_would_pass_the_deadline_returns_the_refusal(
+    monkeypatch,
+) -> None:
+    module = _staging_test_module()
+    answers = ScriptedAnswers([(503, {"detail": "unavailable"})])
+    monkeypatch.setattr(module.time, "sleep", pytest.fail)
+
+    response = module.answer_within(
+        lambda: httpx.Client(transport=httpx.MockTransport(answers)).get(
+            "https://stable.example/v2/household-calculations/id"
+        ),
+        deadline=module.time.monotonic() + 0.5,
+    )
+
+    assert response.status_code == httpx.codes.SERVICE_UNAVAILABLE
+    assert len(answers.requests) == 1

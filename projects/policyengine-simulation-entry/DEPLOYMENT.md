@@ -107,7 +107,8 @@ After each staging deployment promotes its revision, with the v2 application
 deployed, the `staging_household_test` job runs
 `authenticated_tests/test_staging_household_calculation.py` against the
 staging stable URL: it submits a US household calculation, polls until it
-succeeds or fails within ten minutes, and reads the result back. It runs
+succeeds or fails, and reads the result back, all within ten minutes; an
+answer asking to retry (503) is retried after its wait within that limit. It runs
 after promotion because the household function reports the call's end to the
 stable URL. A failure fails the deployment run, so production does not
 deploy.

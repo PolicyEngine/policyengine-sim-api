@@ -241,3 +241,13 @@ def test_an_unknown_catalog_version_leaves_no_report_behind() -> None:
 
     assert harness.store.reports == {}
     assert harness.dispatcher.requests == []
+
+
+def test_a_baseline_only_reports_run_takes_no_reform() -> None:
+    harness = Harness()
+    report = submit_report(harness, reform=None)
+
+    with pytest.raises(ReportPoliciesMismatchError):
+        rerun_report(harness, report.report.id)
+
+    assert len(harness.dispatcher.requests) == 1
