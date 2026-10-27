@@ -60,7 +60,7 @@ class RunErrorCode(StrEnum):
     # Modal refused the call or never acknowledged it, or the acknowledged
     # call could not be recorded (the entrypoint then tries to cancel it).
     DISPATCH_FAILED = "dispatch_failed"
-    # The instance stopped between claiming the dispatch and recording the call.
+    # No Modal call was recorded in time after the dispatch was claimed.
     DISPATCH_ABANDONED = "dispatch_abandoned"
     # The Modal function raised.
     WORKER_ERROR = "worker_error"
@@ -570,15 +570,13 @@ class RunTransitions:
     ) -> AbandonedDispatches:
         """Fail runs and comparison steps left in ``dispatching``.
 
-        A run stays ``dispatching`` only if the instance that claimed it
-        stopped before recording its Modal call. Failing it, with
+        A run stays ``dispatching`` when no Modal call was recorded for it:
+        the instance that claimed it stopped, or could not tell whether its
+        record committed and left the call running. Failing it, with
         ``dispatch_abandoned``, lets the same simulation be run again.
         """
         now = self._clock()
-        message = (
-            "The instance that claimed the dispatch stopped before it recorded "
-            "the Modal call."
-        )
+        message = "No Modal call was recorded for the dispatch in time."
         with self.engine.begin() as connection:
             failed_runs = connection.execute(
                 update(simulation_runs)

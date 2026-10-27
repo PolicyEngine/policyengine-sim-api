@@ -507,6 +507,11 @@ def test_dispatches_left_for_ten_minutes_are_failed(
     failed_run = stores.runs.get_simulation_run(stalled.id)
     assert failed_run.status is RunStatus.FAILED
     assert failed_run.error_code == "dispatch_abandoned"
+    # The claimer may have stopped, or may not know whether its record
+    # committed; the message says only what is known.
+    assert failed_run.error_message == (
+        "No Modal call was recorded for the dispatch in time."
+    )
     assert (
         stores.runs.get_report_run(report_run.id).comparison_error_code
         == "dispatch_abandoned"

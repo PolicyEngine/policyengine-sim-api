@@ -103,6 +103,9 @@ async def test_a_refused_call_fails_the_runs_without_raising() -> None:
     assert run.error.code is RunErrorCode.DISPATCH_FAILED
     assert "NotFoundError" in run.error.message
     assert "no such function" not in run.error.message
+    # Modal may have created the call before the error, so the message says
+    # only that starting it raised.
+    assert run.error.message == "Starting the Modal call raised NotFoundError."
 
 
 @pytest.mark.asyncio
