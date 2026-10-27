@@ -10,7 +10,6 @@ from policyengine_simulation_contract.gateway_models import (
     VersionsResponse,
 )
 from policyengine_simulation_contract.spm import SPMCapability
-from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.stages import ANNUAL_IMPACT_STAGES, Stage
 
 from policyengine_simulation_gateway.bundle_payloads import bundle_identities
@@ -39,7 +38,7 @@ from policyengine_simulation_gateway.routes_common import (
 async def list_versions(request: Request) -> VersionsResponse:
     """List all available routing versions."""
     runtime = observability_runtime(request)
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
         state = active_routing_state()
     if state:
         capabilities = {}
@@ -62,7 +61,7 @@ async def list_versions(request: Request) -> VersionsResponse:
 
     # ``Dict.from_name`` is a lazy handle; the RPCs fire during the
     # ``dict(...)`` iterations, so those are what the segment must cover.
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_DICT_READ)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_DICT_READ)):
         policyengine_dict = optional_modal_dict(POLICYENGINE_VERSION_DICT_NAME)
         us_dict = modal.Dict.from_name("simulation-api-us-versions")
         uk_dict = modal.Dict.from_name("simulation-api-uk-versions")
@@ -96,7 +95,7 @@ async def get_country_versions(kind: str, request: Request) -> VersionMap:
         record_not_found(runtime, f"Unknown version kind: {kind}")
         raise HTTPException(status_code=404, detail=f"Unknown version kind: {kind}")
 
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.ROUTE_RESOLUTION)):
         state = active_routing_state()
     if state:
         return _version_map_from_state(state, kind_lower)
@@ -104,11 +103,11 @@ async def get_country_versions(kind: str, request: Request) -> VersionMap:
     # The ``dict(...)`` iteration is where the Modal Dict RPCs happen; the
     # from_name handle itself is lazy and free.
     if kind_lower == "policyengine":
-        with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_DICT_READ)):
+        with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_DICT_READ)):
             version_dict = optional_modal_dict(POLICYENGINE_VERSION_DICT_NAME)
             return VersionMap(dict(version_dict) if version_dict is not None else {})
 
-    with scopes.span(runtime, ANNUAL_IMPACT_STAGES.name(Stage.MODAL_DICT_READ)):
+    with runtime.span(ANNUAL_IMPACT_STAGES.name(Stage.MODAL_DICT_READ)):
         version_dict = modal.Dict.from_name(f"simulation-api-{kind_lower}-versions")
         return VersionMap(dict(version_dict))
 
