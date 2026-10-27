@@ -148,10 +148,9 @@ def _instance(database, clock, outcomes, barrier, seed: int) -> int:
             for call in calls:
                 outcome = chooser.random()
                 if outcome < 0.3:
-                    transitions.record_simulation_call_running(
-                        call.modal_call_id, next_check_at=clock()
-                    )
-                elif outcome < 0.5:
+                    # Still running: checked again once the claim's lease ends.
+                    continue
+                if outcome < 0.5:
                     late.append((call.modal_call_id, outcome < 0.45))
                 else:
                     _record(

@@ -260,21 +260,6 @@ def test_concurrent_instances_claim_disjoint_calls(
     assert len(claimed_calls) == len(set(claimed_calls)) == len(run_ids)
 
 
-def test_a_running_call_gets_its_next_check(migrated_database, public_api_rows) -> None:
-    stores = clocked_stores(migrated_database)
-    run = _running_run(stores, migrated_database, public_api_rows)
-    later = stores.clock() + timedelta(seconds=30)
-
-    assert stores.transitions.record_simulation_call_running(
-        "fc-economy", next_check_at=later
-    )
-
-    assert stores.runs.get_simulation_run(run.id).next_check_at == later
-    assert not stores.transitions.record_simulation_call_running(
-        "fc-unknown", next_check_at=later
-    )
-
-
 def test_results_are_written_in_the_transaction_that_marks_success(
     migrated_database, public_api_rows
 ) -> None:
@@ -393,9 +378,6 @@ def test_a_comparison_runs_and_records_its_results_once(
     assert [due.id for due in claimed] == [report_run.id]
     assert claimed[0].comparison_check_count == 1
     assert transitions.claim_due_comparisons(limit=10, lease=LEASE) == []
-    assert transitions.record_comparison_running(
-        report_run.id, next_check_at=stores.clock() + LEASE
-    )
     assert transitions.complete_comparison(
         report_run.id, lambda _connection, record: written.append(record)
     )

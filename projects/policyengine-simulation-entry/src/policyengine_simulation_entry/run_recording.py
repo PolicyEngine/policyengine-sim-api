@@ -12,7 +12,7 @@ A pass:
    its result rows are written in the transaction that marks its runs
    ``succeeded``; a failed or timed-out call is marked ``failed`` with its
    error; a call still running, or finished but of a kind this revision has
-   no recorder for, gets a later check.
+   no recorder for, is checked again once its claim's lease ends.
 
 Pre-emption is never a failure: Modal re-runs a pre-empted call under the
 same call ID, so it reads as still running. No caller polls, and Modal holds
@@ -66,24 +66,11 @@ def _event_name(prefix: str, outcome: str) -> str:
 CHECK_LEASE = timedelta(minutes=1)
 # A run left dispatching this long was claimed by an instance that stopped.
 DISPATCH_ABANDONED_AFTER = timedelta(minutes=10)
-FIRST_BACKOFF = timedelta(seconds=2)
-LONGEST_BACKOFF = timedelta(seconds=60)
 CLAIM_BATCH_SIZE = 50
 # Each check writes through the runtime engine's small pool, which requests
 # share (policyengine_simulation_persistence.engine: 2 connections plus 3
 # overflow), so a pass uses at most three at once.
 INSPECTION_CONCURRENCY = 3
-
-
-# Past this many doublings the wait is LONGEST_BACKOFF anyway; capping the
-# exponent keeps the product within timedelta's range for a long call.
-_MOST_DOUBLINGS = 16
-
-
-def next_check_delay(check_count: int) -> timedelta:
-    """Return the wait before the next check of a call checked ``check_count`` times."""
-    doublings = min(max(check_count - 1, 0), _MOST_DOUBLINGS)
-    return min(FIRST_BACKOFF * 2**doublings, LONGEST_BACKOFF)
 
 
 class SimulationResultRecorder(Protocol):
@@ -142,12 +129,6 @@ class RecordingTransitions(Protocol):
         """Claim running simulation calls that are due a check."""
         ...
 
-    def record_simulation_call_running(
-        self, modal_call_id: str, *, next_check_at: datetime
-    ) -> bool:
-        """Set a running call's next check."""
-        ...
-
     def complete_simulation_call(
         self,
         modal_call_id: str,
@@ -164,12 +145,6 @@ class RecordingTransitions(Protocol):
         self, *, limit: int, lease: timedelta
     ) -> list[ReportRunRecord]:
         """Claim running comparison steps that are due a check."""
-        ...
-
-    def record_comparison_running(
-        self, report_run_id: UUID, *, next_check_at: datetime
-    ) -> bool:
-        """Set a running comparison step's next check."""
         ...
 
     def complete_comparison(
@@ -232,10 +207,8 @@ class _CallHandlers:
     subject: dict[str, object]
     # "simulation_run" or "report_run_comparison": the log event names' start.
     event_prefix: str
-    check_count: int
     result_steps: _ResultSteps | None
     fail: Callable[[RunError], bool]
-    keep_running: Callable[[datetime], bool]
 
 
 def _invalid_result(error: ValueError) -> RunError:
@@ -347,14 +320,8 @@ class RunRecorder:
                 "simulation_run_ids": [str(run.id) for run in call.runs],
             },
             event_prefix="simulation_run",
-            check_count=max(run.check_count for run in call.runs),
             result_steps=result_steps,
             fail=lambda error: self.transitions.fail_simulation_call(call_id, error),
-            keep_running=lambda next_check_at: (
-                self.transitions.record_simulation_call_running(
-                    call_id, next_check_at=next_check_at
-                )
-            ),
         )
 
     def _comparison_handlers(
@@ -376,14 +343,8 @@ class RunRecorder:
         return call_id, _CallHandlers(
             subject={"modal_call_id": call_id, "report_run_id": str(report_run_id)},
             event_prefix="report_run_comparison",
-            check_count=report_run.comparison_check_count,
             result_steps=result_steps,
             fail=lambda error: self.transitions.fail_comparison(report_run_id, error),
-            keep_running=lambda next_check_at: (
-                self.transitions.record_comparison_running(
-                    report_run_id, next_check_at=next_check_at
-                )
-            ),
         )
 
     async def _check(
@@ -410,9 +371,9 @@ class RunRecorder:
     async def _record(
         self, outcome: CallOutcome, handlers: _CallHandlers, recording: RecordingPass
     ) -> None:
+        # A call still running, or of a kind with no recorder here, is checked
+        # again once its claim's lease ends; nothing is written.
         if isinstance(outcome, CallRunning):
-            next_check_at = self.clock() + next_check_delay(handlers.check_count)
-            await asyncio.to_thread(handlers.keep_running, next_check_at)
             recording.still_running += 1
             return
         if isinstance(outcome, CallFailed):
@@ -420,11 +381,8 @@ class RunRecorder:
             return
         steps = handlers.result_steps
         if steps is None:
-            # During a deploy an older revision runs beside the new one. A
-            # revision without a recorder for this kind leaves the call for
+            # A revision without a recorder for this kind leaves the call for
             # one that has it; Modal's output retention bounds the wait.
-            next_check_at = self.clock() + next_check_delay(handlers.check_count)
-            await asyncio.to_thread(handlers.keep_running, next_check_at)
             recording.without_recorder += 1
             logger.warning(
                 _event_name(handlers.event_prefix, "without_result_recorder"),
