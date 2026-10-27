@@ -1331,6 +1331,33 @@ workflow = ".github/workflows/pr.yml"
 job = "quality-guards"
 invocation = "unittest discover -s scripts/rules/tests"
 
+[[rule]]
+id = "sim.dependencies.uv-version-pinned"
+category = "dependencies"
+statement = "Every uv install pins the one uv release written in .uv-version: each astral-sh/setup-uv step sets with: version:, each uv container image reference (such as a Dockerfile's COPY --from=ghcr.io/astral-sh/uv) is tagged with the release, each Modal uv_sync or uv_pip_install call passes uv_version=, and any uv install script, release download, pip, pipx or uv tool install of uv, or uv self update names the release."
+rationale = "docs/engineering/skills/dependencies.md#we-pin-one-uv-version"
+scope = [".uv-version", ".github/workflows/*.yml", ".github/scripts/*.sh", "scripts/*.sh", "Makefile", "projects/*/Dockerfile", "projects/*/src/**/*.py"]
+tier = "mechanical"
+status = "enforced"
+autofix = false
+[rule.enforcer]
+kind = "quality-guard"
+name = "uv-version"
+[[rule.ci]]
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "run_quality_guards.py"
+[rule.proof]
+# The bad fixture holds the unpinned setup-uv step from pr.yml and the
+# ghcr.io/astral-sh/uv:latest copy from the two Dockerfiles, as they were
+# before uv was pinned.
+bad_fixture = "rules/fixtures/sim.dependencies.uv-version-pinned/bad"
+good_fixture = "rules/fixtures/sim.dependencies.uv-version-pinned/good"
+test = "scripts/rules/tests/test_uv_version.py::TestUvVersionProof::test_rule_proof_uv_version_pinned"
+workflow = ".github/workflows/pr.yml"
+job = "quality-guards"
+invocation = "unittest discover -s scripts/rules/tests"
+
 # --- CI workflows and scripts ----------------------------------------------
 
 [[rule]]

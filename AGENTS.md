@@ -152,7 +152,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Dependency locking
 
-- Checked: `sim.dependencies.install-from-lock`, `sim.dependencies.lock-committed`, `sim.dependencies.scheduled-relock`, `sim.dependencies.test-from-lock`
+- Checked: `sim.dependencies.install-from-lock`, `sim.dependencies.lock-committed`, `sim.dependencies.scheduled-relock`, `sim.dependencies.test-from-lock`, `sim.dependencies.uv-version-pinned`
 
 ### CI workflows and scripts
 

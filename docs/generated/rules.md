@@ -8,11 +8,11 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 | Tier | enforced | ratcheted | advisory | doc-only | Total |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| mechanical | 53 | 2 | 0 | 14 | 69 |
+| mechanical | 54 | 2 | 0 | 14 | 70 |
 | metric | 1 | 0 | 0 | 0 | 1 |
 | judgment | 0 | 0 | 0 | 0 | 0 |
 
-**Blocking:** 56 of 70 rules.
+**Blocking:** 57 of 71 rules.
 
 ## Gaps
 
@@ -406,6 +406,7 @@ flowchart LR
 | `sim.dependencies.lock-committed` | Every project directory with a pyproject.toml commits a uv.lock that matches it, and PR CI checks every lock with uv lock --check. | mechanical | enforced | yes | quality guard `locked-installs` | `pr.yml:quality-guards`, `pr.yml:test-integration` | yes |
 | `sim.dependencies.scheduled-relock` | A scheduled workflow relocks every project's uv.lock with upgrades (uv lock --upgrade) and opens or updates a pull request with the result. | mechanical | enforced | yes | quality guard `locked-installs` | `pr.yml:quality-guards` | yes |
 | `sim.dependencies.test-from-lock` | Every test command (pytest, coverage run, python -m unittest) in workflows, scripts, Makefiles, Dockerfiles and Compose files runs through uv run --frozen, in the project's locked environment; any other test run is a registered exception for that one site. | mechanical | enforced | yes | quality guard `locked-installs` | `pr.yml:quality-guards` | yes |
+| `sim.dependencies.uv-version-pinned` | Every uv install pins the one uv release written in .uv-version: each astral-sh/setup-uv step sets with: version:, each uv container image reference (such as a Dockerfile's COPY --from=ghcr.io/astral-sh/uv) is tagged with the release, each Modal uv_sync or uv_pip_install call passes uv_version=, and any uv install script, release download, pip, pipx or uv tool install of uv, or uv self update names the release. | mechanical | enforced | yes | quality guard `uv-version` | `pr.yml:quality-guards` | yes |
 
 ```mermaid
 flowchart LR
@@ -416,12 +417,16 @@ flowchart LR
   j_CI_pr_yml_test_integration["CI pr.yml:test-integration"]
   r_sim_dependencies_scheduled_relock("sim.dependencies.scheduled-relock (enforced)")
   r_sim_dependencies_test_from_lock("sim.dependencies.test-from-lock (enforced)")
+  r_sim_dependencies_uv_version_pinned("sim.dependencies.uv-version-pinned (enforced)")
+  e_quality_guard_uv_version["quality guard uv-version"]
   r_sim_dependencies_install_from_lock --> e_quality_guard_locked_installs
   e_quality_guard_locked_installs --> j_CI_pr_yml_quality_guards
   r_sim_dependencies_lock_committed --> e_quality_guard_locked_installs
   e_quality_guard_locked_installs --> j_CI_pr_yml_test_integration
   r_sim_dependencies_scheduled_relock --> e_quality_guard_locked_installs
   r_sim_dependencies_test_from_lock --> e_quality_guard_locked_installs
+  r_sim_dependencies_uv_version_pinned --> e_quality_guard_uv_version
+  e_quality_guard_uv_version --> j_CI_pr_yml_quality_guards
 ```
 
 ## CI workflows and scripts
