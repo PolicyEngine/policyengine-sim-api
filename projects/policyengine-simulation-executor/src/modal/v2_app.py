@@ -30,7 +30,6 @@ from policyengine_simulation_executor.stage12_timeouts import (
     UK_SIMULATION_TIMEOUT_SECONDS,
     US_SIMULATION_TIMEOUT_SECONDS,
 )
-from policyengine_simulation_observability import scopes
 from policyengine_simulation_observability.observability import (
     init_process_observability,
     modal_image_environment,
@@ -281,8 +280,7 @@ def run_single_simulation_segment_us(
     try:
         propagated = normalize_observability_context(observability_context)
         result = None
-        with scopes.operation(
-            runtime,
+        with runtime.operation(
             STAGE12_SEGMENT_STAGES.name(Stage.STAGE12_SEGMENT_EXECUTION),
             attributes={
                 "runner_name": "stage12",
@@ -339,8 +337,7 @@ def run_single_simulation_us(
     try:
         propagated = normalize_observability_context(observability_context)
         result = None
-        with scopes.operation(
-            runtime,
+        with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
                 "runner_name": "stage12",
@@ -390,8 +387,7 @@ def run_single_simulation_uk(
     try:
         propagated = normalize_observability_context(observability_context)
         result = None
-        with scopes.operation(
-            runtime,
+        with runtime.operation(
             STAGE12_SIMULATION_STAGES.name(Stage.STAGE12_SIMULATION_EXECUTION),
             attributes={
                 "runner_name": "stage12",
@@ -457,8 +453,7 @@ def coordinate_report(
     try:
         propagated = normalize_observability_context(observability_context)
         result = None
-        with scopes.operation(
-            runtime,
+        with runtime.operation(
             stage_plan.name(Stage.STAGE12_COORDINATOR_EXECUTION),
             attributes={
                 "runner_name": "stage12",
