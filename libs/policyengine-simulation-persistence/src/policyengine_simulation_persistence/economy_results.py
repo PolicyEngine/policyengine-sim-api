@@ -587,7 +587,7 @@ def write_economy_comparison(
 
 @dataclass(frozen=True)
 class EconomyComparisonRecorder:
-    """Validate a comparison's output and write it, for the recording loop."""
+    """Validate a comparison's output and write it, as RunRecorder expects."""
 
     def validate(self, output: object) -> SingleYearMacroOutput:
         """Return the output as a result the tables can hold; else raise ValueError."""
