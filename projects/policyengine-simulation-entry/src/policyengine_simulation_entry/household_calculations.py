@@ -7,9 +7,10 @@ year. Submitting one:
 1. finds the household function the calculation's PolicyEngine.py version
    deployed, in the v2 version manifest, before anything is written;
 2. finds or creates the simulation, then reuses its run for that catalog
-   version and year (while unfinished, or once it succeeded) or starts the
-   next attempt; the database refuses a household, policy or catalog version
-   the Public API does not have;
+   version and year (while unfinished, or for 28 days after it succeeded,
+   ``SUCCEEDED_RUN_REUSE_WINDOW``) or starts the next attempt; the database
+   refuses a household, policy or catalog version the Public API does not
+   have;
 3. starts the run's Modal call if the run is pending, whoever created it, so
    a run another submitter left pending runs too. Only the submitter whose
    claim moves the run to ``dispatching`` starts the call

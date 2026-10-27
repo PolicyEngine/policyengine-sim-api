@@ -152,7 +152,8 @@ class HouseholdCalculationSubmission(StoredHouseholdInputs):
     caller sends the year those periods name. ``policyengine_version`` must
     be the catalog version's: the Simulation Entrypoint cannot read the
     catalog to check it. A calculation submitted again reuses its run while
-    it is unfinished or once it succeeded, unless ``force``.
+    it is unfinished or for 28 days after it succeeded, unless ``force``;
+    after that, it runs again under a new calculation ID.
     """
 
     country: CountryId
@@ -199,8 +200,8 @@ class HouseholdReportRunSubmission(StoredHouseholdInputs):
 
     The household and both policies must be the report's own: the Public API
     sends their contents again, because the Simulation Entrypoint cannot
-    read them. The runs are reused while unfinished or once they succeeded,
-    unless ``force``.
+    read them. The runs are reused while unfinished or for 28 days after
+    they succeeded, unless ``force``.
     """
 
     baseline: HouseholdPolicyInput = Field(default_factory=HouseholdPolicyInput)

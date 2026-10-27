@@ -3,7 +3,8 @@
 - ``POST /v2/household-calculations`` (permission ``simulation:submit``)
   records the calculation and starts its Modal call, answering 202 with the
   calculation as it stands. Submitting the same calculation again returns
-  the same one while it is unfinished or once it succeeded, unless forced.
+  the same one while it is unfinished or for 28 days after it succeeded,
+  unless forced; after that, it runs again under a new calculation ID.
 - ``GET /v2/household-calculations/{calculation_id}`` (``simulation:read``)
   returns it: its status, and its household once it succeeded or its error
   once it failed. Poll until the status is ``succeeded`` or ``failed``.
@@ -294,8 +295,8 @@ def _add_report_run(
         summary="Run a household report again",
         description=(
             "Start another run of a stored household report on a catalog "
-            "version, reusing runs that are unfinished or succeeded unless "
-            "forced. The answer describes the new run."
+            "version, reusing runs that are unfinished or succeeded within the "
+            "last 28 days unless forced. The answer describes the new run."
         ),
         operation_id="run_household_report",
         status_code=status.HTTP_202_ACCEPTED,

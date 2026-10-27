@@ -41,8 +41,8 @@ catalog version exist.
 
 Each calculation is a simulation run of a household simulation (household,
 policy and options such as axes), so the same calculation submitted again
-reuses its run while it is unfinished or once it succeeded, unless `force`
-is set. The household function comes from the v2 version manifest for the
+reuses its run while it is unfinished or for 28 days after it succeeded,
+unless `force` is set; after that, it runs again under a new calculation ID. The household function comes from the v2 version manifest for the
 calculation's PolicyEngine.py version, in the v2 application's Modal
 environment (`SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT`). The function
 reports when its call ends, and the outcome is recorded then
