@@ -20,6 +20,7 @@ from policyengine_simulation_contract.spm import (
     validate_spm_calculation_provenance,
 )
 from policyengine_simulation_contract.stage12_execution import (
+    SimulationRole,
     UKLocalAuthorityBoundaryVersion,
     UKLocalAuthorityMetadata,
 )
@@ -32,6 +33,7 @@ from policyengine_simulation_executor.stage12_artifacts import (
     serialize_simulation_frames,
 )
 from pydantic import ValidationError
+from stage12_runtime_support import planned_simulation
 
 
 def _frames():
@@ -203,6 +205,59 @@ def test_immutable_retry_accepts_identical_bytes_and_rejects_other_bytes() -> No
 
     with pytest.raises(RuntimeError, match="other data"):
         store._write_immutable("path", b"different", content_type="application/json")
+
+
+def test_a_simulation_named_by_digest_gets_one_key_per_distinct_output() -> None:
+    store = Stage12ArtifactStore("private-stage12", store=InMemoryObjectStore())
+    simulation = planned_simulation(SimulationRole.BASELINE)
+    other_frames = _frames()
+    other_frames["household"]["household_net_income"] = np.array(
+        [20, 11], dtype=np.float32
+    )
+
+    first = store.write_simulation_named_by_digest(
+        prefix="run", simulation=simulation, frames=_frames()
+    )
+    repeated = store.write_simulation_named_by_digest(
+        prefix="run", simulation=simulation, frames=_frames()
+    )
+    other = store.write_simulation_named_by_digest(
+        prefix="run", simulation=simulation, frames=other_frames
+    )
+    fixed_key = store.write_simulation(
+        prefix="run", simulation=simulation, frames=_frames()
+    )
+
+    assert first.artifact.uri == (
+        "gs://private-stage12/run/simulations/"
+        f"baseline-{first.artifact.content_sha256}.parquet"
+    )
+    assert repeated == first
+    assert other.artifact.uri != first.artifact.uri
+    # The comparison path keeps its fixed key.
+    assert fixed_key.artifact.uri == (
+        "gs://private-stage12/run/simulations/baseline.parquet"
+    )
+
+
+def test_an_input_named_by_digest_gets_one_key_per_distinct_input() -> None:
+    objects = InMemoryObjectStore()
+    store = Stage12ArtifactStore("private-stage12", store=objects)
+    simulation = planned_simulation(SimulationRole.BASELINE)
+    replanned = simulation.model_copy(
+        update={"policy": {"reform": {"2026-01-01.2026-12-31": 1}}}
+    )
+
+    first = store.write_input_named_by_digest(prefix="run", simulation=simulation)
+    repeated = store.write_input_named_by_digest(prefix="run", simulation=simulation)
+    other = store.write_input_named_by_digest(prefix="run", simulation=replanned)
+
+    assert first.uri == (
+        f"gs://private-stage12/run/inputs/baseline-{first.content_sha256}.json"
+    )
+    assert repeated == first
+    assert other.uri != first.uri
+    assert len(objects.objects) == 2
 
 
 def test_aggregate_write_rejects_an_undeclared_payload_shape() -> None:

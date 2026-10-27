@@ -118,6 +118,8 @@ class FakeArtifacts:
     def write_input(self, *, prefix, simulation):
         self.input_writes.append((prefix, simulation.role))
 
+    write_input_named_by_digest = write_input
+
     def add_simulation(self, simulation, frames=None):
         payload, row_identity = serialize_simulation_frames(
             frames or simulation_frames()
@@ -173,6 +175,10 @@ class FakeArtifacts:
         return descriptor.model_copy(
             update={"calculation_provenance": calculation_provenance}
         )
+
+    # A returned simulation names its input and output by their digests; this
+    # fake keeps one of each per role either way.
+    write_simulation_named_by_digest = write_simulation
 
     def read(self, uri):
         if uri in self.payloads:

@@ -296,6 +296,28 @@ class ScriptedChildInvoker:
         return call
 
 
+class ReformDispatchFailureInvoker(ScriptedChildInvoker):
+    def spawn(self, request):
+        role = PlannedSimulationExecutionInput.model_validate(request.simulation).role
+        if role is SimulationRole.REFORM:
+            self.events.append("spawn:reform")
+            msg = "dispatch contains sensitive details"
+            raise ConnectionError(msg)
+        return super().spawn(request)
+
+
+class ContextRecordingInvoker(ConcurrentInvoker):
+    """Record the dispatch context each child simulation receives."""
+
+    def __init__(self, artifacts, **options):
+        super().__init__(artifacts, **options)
+        self.child_contexts = []
+
+    def spawn(self, request):
+        self.child_contexts.append(request.context)
+        return super().spawn(request)
+
+
 class PlaceholderWriteFailingStore(FakeStore):
     def __init__(self, failing_simulation_id):
         super().__init__()
