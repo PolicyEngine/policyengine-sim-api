@@ -409,20 +409,44 @@ and coordinator images do not contain these files. Deployment validation runs
 one real 2026 region-group baseline and requires it to load the precomputed
 file without recalculation.
 
-Readers released before cache releases reject fields they do not know, and
+Manifest schema version 2 records, for each country a worker application
+serves, whether it is economy-capable (it has a single-simulation worker, so
+its reports may be given to the report coordinator) and which function
+calculates its households. The Simulation Entrypoint's comparison adapter
+skips any country the manifest does not mark as economy-capable, with the
+reason `unsupported_country`, so the coordinator receives only those
+countries' reports.
+
+Readers released before a schema change reject fields they do not know, and
 the manifest is published before the Cloud Run revision that reads it is
-promoted. The publisher therefore writes the whole manifest under the
-`active-with-region-datasets` key, the same manifest without each country
-bundle's `region_datasets` under the `active-with-cache` key, and without cache
-releases either under the `active` key; readers released before each field keep
-reading the key that lacks it. Current readers use the
-`active-with-region-datasets` copy only while it, with its region datasets
-removed, equals the manifest under `active-with-cache`; otherwise they read
-`active-with-cache`, falling back to `active` before the first publish that
-writes it. Code released before region datasets republishes only the two older
-keys, so after a rollback the out-of-date region dataset copy stops matching and
-is no longer read. Removing the older copies needs a later change, once no
-deployed or rollback revision reads them.
+promoted. The publisher therefore writes the whole schema version 2 manifest
+under the `active-schema-2` key and, in schema version 1 form (without the
+capability and household fields), the same manifest under the
+`active-with-region-datasets` key, without each country bundle's
+`region_datasets` under the `active-with-cache` key, and without cache releases
+either under the `active` key; readers released before each field keep reading
+the key that lacks it. A schema version 1 document marks every listed country
+economy-capable, with no household function.
+
+Current readers use the `active-schema-2` document while each older key holds
+its schema version 1 form. Schema version 1 cannot describe a country that is
+not economy-capable, so a manifest holding one is written only under
+`active-schema-2` and the older keys keep the last manifest written there; such
+a document is used unless the document under the older keys was validated
+later. Otherwise readers use the `active-with-region-datasets` copy only while
+it, with its region datasets removed, equals the manifest under
+`active-with-cache`; otherwise they read `active-with-cache`, falling back to
+`active` before the first publish that writes it. Code released before schema
+version 2 or before region datasets republishes only the older keys it knows, so
+after a rollback the out-of-date copies stop matching and are no longer read,
+and the next publish starts from what the older code wrote. That document has
+no household functions, so the manifest names none for versions published
+before the rollback until each is published again, and it lacks whatever only
+`active-schema-2` held, such as a version with a household-only country. Code
+released before cache releases writes only `active`, which current readers do
+not read while `active-with-cache` exists; a rollback that far needs the newer
+keys deleted from the Modal Dict first. Removing the older copies needs a later
+change, once no deployed or rollback revision reads them.
 
 A rollback to code released before region datasets has one window: the older
 worker is deployed before its publish job runs, and until that publish the
@@ -430,8 +454,9 @@ region dataset copy still matches, so updated entry services keep sending
 regional provenance for state and district runs, which the older worker refuses.
 Only Stage 12 comparison runs fail in that window, never production responses;
 if the older deploy's validation fails, the window lasts until a later publish.
-To avoid it, delete the `active-with-region-datasets` key from the
-`simulation-api-v2-version-manifest` Modal Dict before deploying the older code.
+To avoid it, delete the `active-schema-2` and `active-with-region-datasets` keys
+from the `simulation-api-v2-version-manifest` Modal Dict before deploying the
+older code.
 
 `region_datasets` names the dataset each region type loads. The entry service
 records that dataset as a state or district run's dataset provenance, and the
@@ -446,6 +471,43 @@ compute. Missing cache files fall back to calculation; a loaded file that does
 not satisfy the requested output plan is recalculated. Each region-group log
 records whether it loaded a complete file, recalculated an incomplete file, or
 computed because no file existed.
+
+## v2 household functions
+
+The versioned v2 application also defines a household function for each
+country, `calculate_household_us` and `calculate_household_uk`. Each call
+calculates one household, in the Public API's situation shape and with
+optional axes, under one to ten policies, so a baseline and its reform are
+calculated in one call. It takes a `HouseholdExecutionRequest` and returns a
+`HouseholdExecutionResult` or a typed `HouseholdExecutionFailure` from
+`policyengine_simulation_contract.household_execution`, as JSON. The
+calculation follows the Public API's household calculation, including its
+input errors, warnings and SPM receipt. A function refuses a request for
+another country, and returns a `bundle_mismatch` failure for a request that
+names another bundle. Nothing calls these functions until the Simulation
+Entrypoint has household routes.
+
+- Image: the CA store, the frozen `modal-simulation-image` dependency group
+  and the source packages, without the bundle's datasets or the Stage 12
+  cache. Building it needs no secret.
+- Secrets: none. A household calculation reads no private data, Cloud
+  Storage or database. Telemetry authenticates with the identity token Modal
+  gives every container (`MODAL_IDENTITY_TOKEN`) and the workload identity
+  settings baked into the image at deployment.
+- Limits: 2 CPUs, 4,096 MiB of reserved and 16,384 MiB of maximum memory, a
+  900-second timeout, no retries, and a Modal `max_containers` value of 20.
+- Each container loads a country model the first time it calculates that
+  country and keeps it for later calls.
+
+Deployment validation calls each household function with a one-adult,
+current-law household and requires a successful calculation with the deployed
+bundle, reported by that function, with a number for the household's net
+income. The validation record keeps each invocation ID, and the manifest
+publisher records a country's `household_callable` only when the record shows
+its function was validated. A failed household validation fails v2 worker
+validation like any other validation failure: the manifest is not published,
+and, as described under "Release and deployment constraints", the deployment
+does not promote the new Simulation Entrypoint revision.
 
 ## Temporary direct runner endpoint
 

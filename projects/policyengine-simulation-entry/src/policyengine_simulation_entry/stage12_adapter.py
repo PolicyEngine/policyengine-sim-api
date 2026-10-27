@@ -26,10 +26,7 @@ if TYPE_CHECKING:
         Stage12CountryBundle,
         Stage12Dataset,
     )
-    from policyengine_simulation_contract.stage12_manifest import (
-        V2CountryWorker,
-        V2WorkerVersion,
-    )
+    from policyengine_simulation_contract.stage12_manifest import V2WorkerVersion
 
 
 class ComparisonSkipReason(StrEnum):
@@ -90,13 +87,6 @@ _YEAR_DIGIT_COUNT = 4
 
 def _skip(reason: ComparisonSkipReason) -> AdaptedComparisonRun:
     return AdaptedComparisonRun(report=None, skip_reason=reason)
-
-
-def _country_worker(worker: V2WorkerVersion, country: str) -> V2CountryWorker | None:
-    return next(
-        (item for item in worker.countries if item.country == country),
-        None,
-    )
 
 
 def _options_skip_reason(payload: dict[str, Any]) -> ComparisonSkipReason | None:
@@ -189,12 +179,16 @@ def adapt_annual_comparison(
     evaluation_id: UUID,
     worker: V2WorkerVersion,
 ) -> AdaptedComparisonRun:
-    """Convert only the reviewed production request shape without guessing."""
+    """Convert only the reviewed production request shape without guessing.
+
+    Only a country the manifest marks as economy-capable is converted; any
+    other country is skipped as unsupported.
+    """
     skip_reason = _options_skip_reason(payload)
     if skip_reason is not None:
         return _skip(skip_reason)
     country = payload.get("country")
-    if not isinstance(country, str) or _country_worker(worker, country) is None:
+    if not isinstance(country, str) or worker.economy_worker(country) is None:
         return _skip(ComparisonSkipReason.UNSUPPORTED_COUNTRY)
     bundle_country = next(
         item for item in worker.bundle.countries if item.country == country

@@ -38,6 +38,36 @@ def test_publisher_uses_only_packaged_bundle_values() -> None:
     )
 
 
+def test_publisher_records_every_bundle_country_as_economy_capable() -> None:
+    worker = publisher.build_worker(_validation().model_dump(mode="json"))
+
+    assert [
+        (
+            country.country,
+            country.economy_capable,
+            country.single_simulation_callable,
+            country.household_callable,
+        )
+        for country in worker.countries
+    ] == [
+        (country.country, True, f"run_single_simulation_{country.country}", None)
+        for country in publisher.load_stage12_bundle().bundle.countries
+    ]
+
+
+def test_publisher_records_each_validated_household_function() -> None:
+    payload = _validation().model_dump(mode="json")
+    payload["household_validation_invocation_ids"] = {"uk": "household-uk-1"}
+
+    worker = publisher.build_worker(payload)
+
+    assert {
+        country.country: country.household_callable for country in worker.countries
+    } == {"us": None, "uk": "calculate_household_uk"}
+    assert worker.household_worker("uk") is not None
+    assert worker.household_worker("us") is None
+
+
 def test_publisher_rejects_validation_for_another_application() -> None:
     payload = _validation().model_dump(mode="json")
     payload["application_name"] = "policyengine-simulation-v2-py-another"
