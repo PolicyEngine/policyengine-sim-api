@@ -415,7 +415,13 @@ its reports may be given to the report coordinator) and which function
 calculates its households. The Simulation Entrypoint's comparison adapter
 skips any country the manifest does not mark as economy-capable, with the
 reason `unsupported_country`, so the coordinator receives only those
-countries' reports.
+countries' reports. Its household calculation routes look a calculation's
+household function up by its PolicyEngine.py version and country, and pass
+the simulation runs the call computes as the function's second argument; the
+function's last step then reports the call's end to the entrypoint
+(`src/modal/call_reports.py`), which records its outcome. Release validation
+and the image check call the household functions without runs, and nothing is
+reported for them.
 
 Readers released before a schema change reject fields they do not know, and
 the manifest is published before the Cloud Run revision that reads it is

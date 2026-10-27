@@ -13,9 +13,12 @@ existing ``policyengine-simulation-py{version}`` applications.
 from __future__ import annotations
 
 import json
+import logging
 import os
+from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from policyengine_simulation_contract.household_execution import (
     household_callable_name,
@@ -62,6 +65,7 @@ import modal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
 
     from policyengine_simulation_contract.stage12_bundle import (
         CountryId,
@@ -543,6 +547,38 @@ HOUSEHOLD_FUNCTION_TIMEOUT_SECONDS = 900
 HOUSEHOLD_FUNCTION_MAX_CONTAINERS = 20
 
 
+def _reporting_household_call(
+    simulation_run_ids: list[str] | None,
+) -> AbstractContextManager[None]:
+    """Report the call's end to sim when it computes runs sim started.
+
+    sim passes the runs a call computes; release validation and the image
+    check pass none, and nothing is reported. The report is the last step:
+    it starts ``report_call_ended`` once the calculation and its telemetry
+    have finished, whether the calculation returned or raised, but not when
+    Modal pre-empts the call, which Modal runs again under the same ID.
+    """
+    if simulation_run_ids is None:
+        return nullcontext()
+    try:
+        run_ids = [UUID(run_id) for run_id in simulation_run_ids]
+    except (TypeError, ValueError):
+        logging.getLogger(__name__).warning(
+            "call_report_malformed",
+            extra={"modal_call_id": modal.current_function_call_id()},
+        )
+        return nullcontext()
+    from src.modal.call_reports import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
+        reporting_call_end,
+    )
+
+    return reporting_call_end(
+        modal_call_id=modal.current_function_call_id(),
+        simulation_run_ids=run_ids,
+        start_report=report_call_ended.spawn,
+    )
+
+
 def _run_household_calculation(
     country: CountryId,
     payload: dict,
@@ -606,11 +642,17 @@ def _run_household_calculation(
 )
 def calculate_household_us(
     payload: dict,
+    simulation_run_ids: list[str] | None = None,
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    """Calculate one US household under each requested policy."""
-    return _run_household_calculation("us", payload, observability_context)
+    """Calculate one US household under each requested policy.
+
+    ``simulation_run_ids`` names the runs sim started this call for; the
+    call's last step reports their end to sim.
+    """
+    with _reporting_household_call(simulation_run_ids):
+        return _run_household_calculation("us", payload, observability_context)
 
 
 @app.function(
@@ -624,11 +666,17 @@ def calculate_household_us(
 )
 def calculate_household_uk(
     payload: dict,
+    simulation_run_ids: list[str] | None = None,
     *,
     observability_context: dict | None = None,
 ) -> dict:
-    """Calculate one UK household under each requested policy."""
-    return _run_household_calculation("uk", payload, observability_context)
+    """Calculate one UK household under each requested policy.
+
+    ``simulation_run_ids`` names the runs sim started this call for; the
+    call's last step reports their end to sim.
+    """
+    with _reporting_household_call(simulation_run_ids):
+        return _run_household_calculation("uk", payload, observability_context)
 
 
 @app.function(
