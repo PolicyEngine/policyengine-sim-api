@@ -15,6 +15,7 @@ from policyengine_simulation_observability.stages import (
 
 from policyengine_simulation_executor.simulation_runtime import _country_module
 
+from .catalog_population import catalog_population, catalog_region_groups
 from .failure_recording import FailureSite, report_failure
 from .failures import Stage12CancellationError, Stage12ExecutionError
 from .partition import stage12_region_groups_for_model
@@ -108,6 +109,10 @@ class Stage12SegmentRunner:
     def _groups(self) -> list[list[str]]:
         if self.groups is not None:
             return self.groups
+        # A v2 economy run segments the states its catalog population filters.
+        population = catalog_population(self.simulation)
+        if population is not None:
+            return catalog_region_groups(population)
         country = self.simulation.geography.country
         return stage12_region_groups_for_model(
             country,

@@ -36,6 +36,12 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 )
 
 from .cached_simulation import Stage12CachedSimulation, qualifying_cache_identity
+from .catalog_population import (
+    catalog_dataset,
+    catalog_population,
+    resolve_catalog_dataset,
+    resolve_catalog_region,
+)
 from .dependencies import ComparisonStore, artifact_store, runtime_store
 from .failure_causes import (
     StageProgress,
@@ -66,7 +72,10 @@ if TYPE_CHECKING:
     from policyengine.core import Dataset
     from policyengine_observability import ObservabilityRuntime
     from policyengine_simulation_contract.spm import SPMProvenance
-    from policyengine_simulation_contract.stage12_bundle import CountryId
+    from policyengine_simulation_contract.stage12_bundle import (
+        CountryId,
+        Stage12CountryBundle,
+    )
     from policyengine_simulation_contract.uk_geography import UKLocalAuthorityMetadata
 
     from policyengine_simulation_executor.simulation_runtime import (
@@ -203,15 +212,24 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
         for item in resolved.bundle.countries
         if item.country == simulation.geography.country
     )
-    # A region loads the dataset the bundle names for its region type. Entry
-    # services released before regional provenance name the default dataset
-    # for every region, so the default stays accepted until they are updated.
-    regional = country.dataset_for_region(simulation.geography.region)
+    # A v2 economy run loads the dataset its catalog population names. A
+    # Stage 12 region loads the dataset the bundle names for its region type.
+    # Entry services released before regional provenance name the default
+    # dataset for every region, so the default stays accepted until they are
+    # updated.
+    population = catalog_population(simulation)
+    regional = (
+        country.dataset_for_region(simulation.geography.region)
+        if population is None
+        else catalog_dataset(country, population).identity
+    )
     named = simulation.bundle.dataset.identity
     regional_entry = next(
         (item for item in country.datasets if item.identity == regional), None
     )
-    if regional_entry is not None and named == regional_entry.identity:
+    if regional_entry is not None and (
+        population is not None or named == regional_entry.identity
+    ):
         expected_dataset = {
             "dataset_identity": regional_entry.identity,
             "dataset_uri": regional_entry.uri,
@@ -238,6 +256,15 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
     if actual != expected:
         msg = "simulation provenance differs from the installed bundle"
         raise RuntimeError(msg)
+
+
+def _installed_country_bundle(country: CountryId) -> Stage12CountryBundle:
+    """Return the installed release's bundle entry for ``country``."""
+    return next(
+        item
+        for item in load_stage12_bundle().bundle.countries
+        if item.country == country
+    )
 
 
 def _require_loaded_dataset_matches_provenance(
@@ -310,16 +337,29 @@ def calculate_simulation_frames(
     ):
         with stage_span(Stage.COUNTRY_MODULE_LOAD):
             country_module = _country_module(country)
+        # A v2 economy run's catalog population names its region's filter and
+        # dataset; a Stage 12 run looks its region up in the registry.
+        population = catalog_population(simulation)
         with stage_span(Stage.REGION_RESOLUTION):
-            region = resolve_region(
-                country_module=country_module,
-                country=country,
-                params=params,
+            region = (
+                resolve_region(
+                    country_module=country_module,
+                    country=country,
+                    params=params,
+                )
+                if population is None
+                else resolve_catalog_region(simulation, population)
             )
         with stage_span(Stage.DATASET_RESOLUTION):
-            dataset_selection = _resolve_dataset_selection(
-                params,
-                region_resolution=region,
+            dataset_selection = (
+                _resolve_dataset_selection(
+                    params,
+                    region_resolution=region,
+                )
+                if population is None
+                else resolve_catalog_dataset(
+                    _installed_country_bundle(country), population
+                )
             )
         _require_loaded_dataset_matches_provenance(simulation, dataset_selection)
         with stage_span(Stage.DATASET_LOAD):
