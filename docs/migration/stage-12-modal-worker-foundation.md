@@ -255,21 +255,29 @@ configuration, an unknown code, or a dataset without a distinguishing code
 fails the Stage 12 run. Dataset names and release labels do not select a
 boundary version, and there is no fallback to the newest known configuration.
 
-The executor temporarily packages three display-only resources under its
-expandable `static_runtime_files/uk_local_authorities/` directory. The v2 Modal
-image copies that directory explicitly because Modal's Python-source layer does
-not include non-Python files by default:
+The executor temporarily packages three resources under its expandable
+`static_runtime_files/uk_local_authorities/` directory. The v2 Modal image
+copies that directory explicitly because Modal's Python-source layer does not
+include non-Python files by default:
 
-- one common `code,name` file containing the union of supported authority
-  codes;
-- one `code,x,y` file for the 374-authority LAD22 configuration; and
-- one `code,x,y` file for the 361-authority LAD23 configuration.
+- one common `code,name` file, `names.csv`, containing the union of supported
+  authority codes;
+- one `code` file, `codes_lad22.csv`, listing the 374-authority LAD22
+  configuration; and
+- one `code` file, `codes_lad23.csv`, listing the 361-authority LAD23
+  configuration.
+
+The two code lists replaced `coordinates_lad22.csv` and
+`coordinates_lad23.csv`, which also gave each authority an integer map
+position (`x` and `y`). Results no longer carry a map position, so the
+executor no longer ships one; the code lists keep exactly the codes those
+files listed.
 
 The Enhanced FRS geography is LAD22: its 2021 output areas are crosswalked to
 2022 local-authority boundaries. The output-area vintage does not make the
-local-authority boundary version LAD21. Names and coordinates are attached only
-after numeric local-authority impacts have been calculated; these resources
-never assign a household to an authority.
+local-authority boundary version LAD21. Names are attached only after numeric
+local-authority impacts have been calculated; these resources never assign a
+household to an authority.
 
 The detected boundary version is stored as typed metadata in both child Parquet
 artifacts. The coordinator requires baseline and reform to agree before it
@@ -277,9 +285,9 @@ enriches the aggregate output. Existing non-Stage-12 calculations continue to
 use the existing GCS lookup and are not changed by this path.
 
 This resource ownership is temporary. A future boundary version must add its
-codes to the common names file, add a distinct coordinate file, and register a
-typed detector definition. Longer term, display-coordinate rendering should
-move to the front end, and Stage 14 or later work should remove these temporary
+codes to the common names file, add a distinct code file, and register a typed
+detector definition. Map positions are now the front end's to draw from its
+own layout files, and Stage 14 or later work should remove these temporary
 executor resources when the authoritative v2 report architecture supersedes
 Stage 12.
 

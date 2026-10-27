@@ -736,13 +736,11 @@ def build_uk_local_authority_impact(
     )
 
     boundary_version = uk_local_authority_metadata.boundary_version
-    display_metadata = load_uk_local_authority_resources().metadata_for(
-        boundary_version
-    )
+    names = load_uk_local_authority_resources().names_for(boundary_version)
     records: list[dict[str, object]] = []
     for code in sorted(changes):
-        metadata = display_metadata.get(code)
-        if metadata is None:
+        name = names.get(code)
+        if name is None:
             msg = (
                 f"UK local-authority code {code!r} is not part of the detected "
                 f"{boundary_version.value.upper()} boundary version"
@@ -751,7 +749,7 @@ def build_uk_local_authority_impact(
         records.append(
             {
                 "local_authority_code": code,
-                "local_authority_name": metadata.name,
+                "local_authority_name": name,
                 **changes[code].record_fields(),
             }
         )
