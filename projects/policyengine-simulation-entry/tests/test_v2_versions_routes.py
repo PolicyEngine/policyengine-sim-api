@@ -27,7 +27,7 @@ from policyengine_simulation_entry.v2_versions import (
     version_map_from_manifest,
     versions_from_manifest,
 )
-from test_v2_versions import TWO_RELEASES, manifest_worker
+from v2_versions_support import TWO_RELEASES, manifest_worker
 
 UNAVAILABLE_DETAIL = "The v2 version manifest is unavailable."
 
