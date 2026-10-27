@@ -497,8 +497,10 @@ def report_call_ended(report: dict) -> str:
     """Tell sim that the call in ``report`` ended; return how that went.
 
     The v2 functions start this as their last step
-    (``src.modal.call_reports.reporting_call_end``), so the reported call
-    has returned by the time sim asks Modal for its outcome.
+    (``src.modal.call_reports.reporting_call_end``) and then return, so the
+    reported call has usually returned by the time sim asks Modal for its
+    outcome; when it has not, sim answers still_running and this reports
+    again after a wait.
     """
     from src.modal.call_reports import (  # noqa: PLC0415  # Modal function body: loaded in the worker container, not at deploy time
         send_call_ended_report_from_container,
