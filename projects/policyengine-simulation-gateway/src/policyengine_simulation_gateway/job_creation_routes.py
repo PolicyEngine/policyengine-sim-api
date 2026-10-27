@@ -226,7 +226,6 @@ async def submit_simulation(
             )
         _require_route_serves_breakdown(request, route)
     except ValueError as e:
-        runtime.record_exception(e, handled=True, status_code=400)
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     runtime.set_context(
@@ -259,7 +258,6 @@ async def submit_simulation(
                 errors=[detail.model_dump()],
                 headers=observability_headers(observability_id),
             )
-        runtime.record_exception(exc, handled=True, status_code=400)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if request.spm is not None:
@@ -336,7 +334,6 @@ async def submit_budget_window_batch(
                 request.policyengine_version,
             )
     except ValueError as e:
-        runtime.record_exception(e, handled=True, status_code=400)
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     runtime.set_context(
@@ -360,7 +357,6 @@ async def submit_budget_window_batch(
                 errors=[detail.model_dump()],
                 headers=observability_headers(observability_id),
             )
-        runtime.record_exception(exc, handled=True, status_code=400)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     with runtime.span(BUDGET_WINDOW_STAGES.name(Stage.REQUEST_PARSE)):
         payload = _build_budget_window_parent_payload(

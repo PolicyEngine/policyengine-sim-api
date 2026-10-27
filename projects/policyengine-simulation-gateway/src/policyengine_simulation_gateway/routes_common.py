@@ -25,11 +25,6 @@ def observability_runtime(request: Request) -> ObservabilityRuntime:
     return runtime
 
 
-def record_not_found(runtime: ObservabilityRuntime, message: str) -> None:
-    """Record a handled not-found lookup (status 404) on the request's telemetry."""
-    runtime.record_exception(LookupError(message), handled=True, status_code=404)
-
-
 def bind_observability_id(
     http_request: Request,
     runtime: ObservabilityRuntime,
