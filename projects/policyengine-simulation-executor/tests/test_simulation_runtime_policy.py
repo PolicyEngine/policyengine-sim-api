@@ -12,10 +12,10 @@ from policyengine_simulation_executor.simulation_runtime import (
     DatasetSelection,
     RegionResolution,
     _build_simulation,
-    _compile_interval_policy,
     _country_module,
-    _normalise_policy,
-    _parse_year,
+    compile_interval_policy,
+    normalise_policy,
+    parse_year,
 )
 
 UK_RATE = "gov.hmrc.income_tax.rates.uk[0].rate"
@@ -60,8 +60,8 @@ def test_uk_interval_policy_preserves_inclusive_stop_date(uk, stop):
     key = f"2027-04-06.{stop}"
     raw = {UK_RATE: {key: 0.21}}
 
-    policy = _compile_interval_policy(
-        _normalise_policy(raw), country_module=uk, year=2027
+    policy = compile_interval_policy(
+        normalise_policy(raw), country_module=uk, year=2027
     )
 
     assert isinstance(policy, Policy)
@@ -86,7 +86,7 @@ def test_mixed_effective_dates_and_intervals_are_chronological(uk, reverse):
     if reverse:
         entries.reverse()
 
-    policy = _compile_interval_policy(
+    policy = compile_interval_policy(
         {UK_RATE: dict(entries)}, country_module=uk, year=2027
     )
 
@@ -114,7 +114,7 @@ def test_unknown_parameter_retains_wrapper_error_and_close_match_hint(uk):
     with pytest.raises(ValueError, match=re.escape(unknown)) as expected:
         wrapper_reform.compile_reform(raw, year=2027, model_version=uk.model)
     with pytest.raises(ValueError, match=re.escape(unknown)) as actual:
-        _compile_interval_policy(raw, country_module=uk, year=2027)
+        compile_interval_policy(raw, country_module=uk, year=2027)
 
     assert str(actual.value) == str(expected.value)
     assert unknown in str(actual.value)
@@ -136,9 +136,9 @@ def test_invalid_policy_period_names_key_in_error(uk, key):
     raw = {UK_RATE: {"2026-04-06.2027-04-05": 0.20, key: 0.21}}
 
     with pytest.raises(ValueError, match=re.escape(key)) as normalise_error:
-        _normalise_policy(raw)
+        normalise_policy(raw)
     with pytest.raises(ValueError, match=re.escape(key)) as compile_error:
-        _compile_interval_policy(raw, country_module=uk, year=2027)
+        compile_interval_policy(raw, country_module=uk, year=2027)
 
     assert key in str(normalise_error.value)
     assert key in str(compile_error.value)
@@ -171,7 +171,7 @@ def test_scalar_in_interval_policy_uses_request_year(period, year):
         region=RegionResolution(code="uk"),
     )
 
-    assert _parse_year(params) == year
+    assert parse_year(params) == year
     scalar = next(
         value
         for value in simulation.policy.parameter_values
@@ -192,7 +192,7 @@ def test_us_interval_policy_uses_same_public_parameter_values():
     assert US_SALT_CAP in us.model.parameters_by_name
     raw = {US_SALT_CAP: {"2027-01-01.2027-12-31": 50000}}
 
-    policy = _compile_interval_policy(raw, country_module=us, year=2027)
+    policy = compile_interval_policy(raw, country_module=us, year=2027)
 
     assert isinstance(policy, Policy)
     assert len(policy.parameter_values) == 1
@@ -223,7 +223,7 @@ def test_policy_without_intervals_keeps_original_wrapper_compilation(
         return original_compiler(reform, year=year, model_version=model_version)
 
     monkeypatch.setattr(wrapper_reform, "compile_reform_to_policy", recording_compiler)
-    assert _compile_interval_policy(raw, country_module=uk, year=2027) is raw
+    assert compile_interval_policy(raw, country_module=uk, year=2027) is raw
 
     simulation = _build_simulation(
         {"country": "uk", "scope": "macro", "time_period": "2027"},
@@ -260,9 +260,9 @@ def test_policy_without_intervals_keeps_original_wrapper_compilation(
 def test_unpadded_dates_are_accepted_as_the_wrapper_always_accepted_them(
     key, start, stop
 ):
-    from policyengine_simulation_executor.simulation_runtime import (
+    from policyengine_simulation_executor.request_policy import (
         _parse_policy_period,
     )
 
-    assert _normalise_policy({UK_RATE: {key: 0.21}}) == {UK_RATE: {key: 0.21}}
+    assert normalise_policy({UK_RATE: {key: 0.21}}) == {UK_RATE: {key: 0.21}}
     assert _parse_policy_period(key) == (start, stop)

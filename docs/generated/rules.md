@@ -66,7 +66,7 @@ Every rule that governs `policyengine-sim-api` is listed here with how it is enf
 
 - `sim.ci.multiline-run-is-script`: 13 remaining in `rules/baselines/ci-multiline-run.txt`
 - `sim.microdata.weight-stripping-confined`: 0 remaining in `rules/baselines/sim-microdata-weight-stripping.txt`
-- `sim.quality.python-file-length`: 4 remaining in `rules/baselines/python-file-length.txt`
+- `sim.quality.python-file-length`: 2 remaining in `rules/baselines/python-file-length.txt`
 
 ### Exceptions and review dates
 

@@ -13,11 +13,18 @@ class TestWriterReaderContract:
 
     @pytest.fixture
     def identity_stubs(self, monkeypatch):
+        from policyengine_simulation_executor import region_resolution
         from policyengine_simulation_executor import simulation_runtime as sr
 
         state = install_identity_stubs(monkeypatch)
+        # Both modules read the release bundle: dataset selection and regions.
         monkeypatch.setattr(
             sr, "get_country_release_bundle", lambda _country: state.bundle
+        )
+        monkeypatch.setattr(
+            region_resolution,
+            "get_country_release_bundle",
+            lambda _country: state.bundle,
         )
 
     @pytest.fixture
@@ -54,7 +61,7 @@ class TestWriterReaderContract:
         writer_identity = precompute.cohort_identity(2026, group)
 
         params = precompute.cohort_params(2026, group)
-        resolution = sr._resolve_region(
+        resolution = sr.resolve_region(
             country_module=sr._country_module("us"), country="us", params=params
         )
         dataset_selection = sr._resolve_dataset_selection(
@@ -416,7 +423,7 @@ class TestCohortIdentityGuard:
         monkeypatch.setattr(sr, "_country_module", lambda _country: SimpleNamespace())
         monkeypatch.setattr(
             sr,
-            "_resolve_region",
+            "resolve_region",
             lambda **_kwargs: SimpleNamespace(
                 code="x", dataset_reference=None, scoping_strategy=None
             ),

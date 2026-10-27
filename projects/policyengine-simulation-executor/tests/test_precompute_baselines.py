@@ -98,7 +98,7 @@ class TestComputeBaselineImpl:
         monkeypatch.setattr(sr, "_country_module", lambda _country: SimpleNamespace())
         monkeypatch.setattr(
             sr,
-            "_resolve_region",
+            "resolve_region",
             lambda **_kwargs: SimpleNamespace(
                 code="state/ca+state/wv",
                 scoping_strategy="scoping",

@@ -1029,7 +1029,7 @@ def test_planned_baseline_file_is_the_one_the_worker_saves_and_loads(
     )
     params = simulation_module.simulation_runtime_params(planned)
     country_module = simulation_runtime._country_module("us")
-    region = simulation_runtime._resolve_region(
+    region = simulation_runtime.resolve_region(
         country_module=country_module, country="us", params=params
     )
     dataset_path = "/opt/policyengine/stage12-data/populace_year_2026.h5"

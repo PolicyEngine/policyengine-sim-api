@@ -312,7 +312,7 @@ def run_until_dataset_loaded(
     monkeypatch.setattr(
         simulation_runtime, "_country_module", lambda _country: object()
     )
-    monkeypatch.setattr(simulation_runtime, "_resolve_region", lambda **_: region)
+    monkeypatch.setattr(simulation_runtime, "resolve_region", lambda **_: region)
     monkeypatch.setattr(
         simulation_runtime,
         "_resolve_dataset_selection",
