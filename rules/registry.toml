@@ -1178,8 +1178,8 @@ category = "quality"
 statement = "No tracked Python file has more than 800 lines, or more than 1,500 lines if it is test code: a file under a tests or fixtures directory, or a conftest.py."
 rationale = "docs/engineering/skills/file-length.md#the-rule"
 scope = ["**/*.py"]
-tier = "mechanical"
-status = "ratcheted"
+tier = "metric"
+status = "enforced"
 autofix = false
 [rule.enforcer]
 kind = "quality-guard"
@@ -1188,19 +1188,16 @@ name = "file-length"
 workflow = ".github/workflows/pr.yml"
 job = "quality-guards"
 invocation = "run_quality_guards.py"
-[rule.baseline]
-file = "rules/baselines/python-file-length.txt"
-count = 0
 [rule.proof]
-bad_fixture = "rules/fixtures/sim.quality.python-file-length/bad_files.toml"
-good_fixture = "rules/fixtures/sim.quality.python-file-length/good_files.toml"
+# Files at their limit (below) pass, and files one line over it (above) fail.
+below_fixture = "rules/fixtures/sim.quality.python-file-length/good_files.toml"
+above_fixture = "rules/fixtures/sim.quality.python-file-length/bad_files.toml"
+# The source limit; both fixtures also cover the 1,500-line limit for test code.
+threshold = 800
 test = "scripts/rules/tests/test_file_length.py::TestFileLengthProof::test_rule_proof_python_file_length"
 workflow = ".github/workflows/pr.yml"
 job = "quality-guards"
 invocation = "unittest discover -s scripts/rules/tests"
-[rule.downgrade]
-reason = "Authorized by Anthony (anth-volk) on 2026-10-27: the rule starts ratcheted with the 14 files that were over their limit on main when it was added, and the pull requests stacked on #920 split them and shrink the baseline to empty."
-issue = 921
 
 # --- Dependency locking -----------------------------------------------------
 
