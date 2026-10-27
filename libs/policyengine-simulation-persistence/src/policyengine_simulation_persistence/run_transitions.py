@@ -9,9 +9,9 @@ changes nothing. So no lease table or advisory lock is needed:
   starts its Modal call, and it then records the call ID (``running``);
 - the runs that share one Modal call, such as a household report's baseline
   and reform, change status together, all or none;
-- the recording loop claims a running call's next check by moving its
-  ``next_check_at`` forward, so instances do not check the same call at once,
-  and only one of them records its outcome;
+- a recording pass claims a running call's next check by moving its
+  ``next_check_at`` forward, so two passes do not check the same call at
+  once, and only one of them records its outcome;
 - a call's results are written in the same transaction that marks its runs
   ``succeeded``, so a run never succeeds without its results;
 - a run left in ``dispatching`` (the instance stopped between claiming it and

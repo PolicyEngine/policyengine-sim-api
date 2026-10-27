@@ -1,23 +1,22 @@
-"""The background loop that records each Modal call's outcome on its runs.
+"""Record each Modal call's outcome on its runs, one pass of due checks at a time.
 
-Each Simulation Entrypoint instance runs one loop. On every pass it:
+A pass:
 
 1. fails runs and comparison steps left ``dispatching`` for ten minutes, so
    they can be submitted again, and pending comparison steps whose baseline
    or reform run failed, since they can never start;
 2. claims the running calls that are due a check, by moving their next check
-   one lease ahead, so instances do not check the same call at once;
+   one lease ahead, so two passes do not check the same call at once;
 3. asks Modal about each claimed call without waiting, and records what it
    found with conditional writes: a finished call's result is validated and
    its result rows are written in the transaction that marks its runs
    ``succeeded``; a failed or timed-out call is marked ``failed`` with its
    error; a call still running, or finished but of a kind this revision has
-   no recorder for, gets a later check, backing off.
+   no recorder for, gets a later check.
 
 Pre-emption is never a failure: Modal re-runs a pre-empted call under the
 same call ID, so it reads as still running. No caller polls, and Modal holds
-no database credentials: this loop writes every outcome. Cloud Run keeps the
-instance's CPU allocated between requests, so the loop runs then too.
+no database credentials: sim writes every outcome.
 """
 
 from __future__ import annotations
@@ -38,7 +37,7 @@ from policyengine_simulation_entry.modal_calls import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping
+    from collections.abc import Callable, Mapping
     from datetime import datetime
     from uuid import UUID
 
@@ -72,10 +71,8 @@ LONGEST_BACKOFF = timedelta(seconds=60)
 CLAIM_BATCH_SIZE = 50
 # Each check writes through the runtime engine's small pool, which requests
 # share (policyengine_simulation_persistence.engine: 2 connections plus 3
-# overflow), so the loop uses at most three at once.
+# overflow), so a pass uses at most three at once.
 INSPECTION_CONCURRENCY = 3
-BUSY_PASS_INTERVAL_SECONDS = 1.0
-IDLE_PASS_INTERVAL_SECONDS = 5.0
 
 
 # Past this many doublings the wait is LONGEST_BACKOFF anyway; capping the
@@ -137,7 +134,7 @@ class ResultRecorders:
 
 
 class RecordingTransitions(Protocol):
-    """The ``RunTransitions`` writes the loop needs."""
+    """The ``RunTransitions`` writes a recording pass needs."""
 
     def claim_due_simulation_calls(
         self, *, limit: int, lease: timedelta
@@ -423,8 +420,7 @@ class RunRecorder:
             return
         steps = handlers.result_steps
         if steps is None:
-            # During a deploy an older revision runs beside the new one, and
-            # with CPU always allocated its loop keeps checking calls. A
+            # During a deploy an older revision runs beside the new one. A
             # revision without a recorder for this kind leaves the call for
             # one that has it; Modal's output retention bounds the wait.
             next_check_at = self.clock() + next_check_delay(handlers.check_count)
@@ -467,71 +463,3 @@ class RunRecorder:
                 _event_name(handlers.event_prefix, "failed"),
                 extra={**handlers.subject, "error_code": error.code.value},
             )
-
-
-class RunRecordingLoop:
-    """Run recording passes in the background until stopped.
-
-    A pass that raises is logged and the loop goes on: recording problems
-    never stop the instance or fail a request.
-    """
-
-    def __init__(
-        self,
-        recorder: RunRecorder,
-        *,
-        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-    ) -> None:
-        """Run passes of ``recorder``, waiting between them with ``sleep``."""
-        self.recorder = recorder
-        self._sleep = sleep
-        self._task: asyncio.Task[None] | None = None
-
-    async def run(self) -> None:
-        """Record outcomes until cancelled; wait less while there is work."""
-        while True:
-            await self._sleep(IDLE_PASS_INTERVAL_SECONDS)
-            recording = await self._pass()
-            while recording is not None and recording.found_work:
-                await self._sleep(BUSY_PASS_INTERVAL_SECONDS)
-                recording = await self._pass()
-
-    async def _pass(self) -> RecordingPass | None:
-        """Run one pass; log and return None if it raised anything.
-
-        Only a signal to this process, such as the cancellation that stops
-        the loop at shutdown, passes through.
-        """
-        try:
-            return await self.recorder.record_due_outcomes()
-        except BaseException as error:
-            if isinstance(error, OWN_PROCESS_SIGNALS):
-                raise
-            logger.exception(
-                "simulation_run_recording_pass_failed",
-                extra={"error_type": type(error).__name__},
-            )
-            return None
-
-    def start(self) -> None:
-        """Start the loop as a background task of the running event loop."""
-        if self._task is None:
-            self._task = asyncio.create_task(self.run())
-
-    async def stop(self) -> None:
-        """Cancel the loop and wait for it to end.
-
-        A cancellation of the task calling this, such as a shutdown arriving
-        while the loop ends, is passed on rather than taken for the loop's.
-        """
-        if self._task is None:
-            return
-        self._task.cancel()
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            caller = asyncio.current_task()
-            if caller is not None and caller.cancelling():
-                raise
-        finally:
-            self._task = None

@@ -55,7 +55,7 @@ not delete them.
 `RunTransitions` makes every status change one conditional update on the
 expected status, so a second writer changes nothing: only the caller that
 moves runs from `pending` to `dispatching` starts their Modal call, the runs
-one call computes change together, the recording loop claims a due call by
+one call computes change together, a recording pass claims a due call by
 moving its next check time, results are written in the transaction that
 marks a run succeeded, and dispatches left `dispatching` (and comparison
 steps whose simulation run failed) are failed so the work can be submitted

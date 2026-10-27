@@ -8,8 +8,8 @@ Starting a call takes three conditional writes around Modal's ``spawn``:
 3. record the call ID, moving the runs to ``running`` with their first check
    due shortly; or, when Modal refused the call, fail them.
 
-If the instance stops between 1 and 3, the runs stay ``dispatching`` until the
-recording loop fails them as abandoned. No route starts calls yet.
+If the instance stops between 1 and 3, the runs stay ``dispatching`` until a
+recording pass fails them as abandoned. No route starts calls yet.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _event_name(prefix: str, outcome: str) -> str:
     return f"{prefix}_{outcome}"
 
 
-# The first check of a new call; the recording loop backs off from there.
+# The first check of a new call; a recording pass backs off from there.
 FIRST_CHECK_DELAY = timedelta(seconds=2)
 
 
@@ -245,7 +245,7 @@ class RunDispatchService:
             return await self._settle_failed_record(steps, modal_call_id, context)
         if not recorded:
             # The runs stopped dispatching while Modal acknowledged the call,
-            # for example because the recording loop failed them as abandoned.
+            # for example because a recording pass failed them as abandoned.
             logger.warning(
                 _event_name(steps.event_prefix, "call_not_recorded"), extra=context
             )
