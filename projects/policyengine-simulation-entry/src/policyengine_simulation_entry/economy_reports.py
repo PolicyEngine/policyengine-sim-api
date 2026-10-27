@@ -6,7 +6,7 @@ Running it on a catalog version and year:
 1. finds or creates a run of each simulation for that version and year,
    reusing one that is unfinished or succeeded within 28 days (the
    current-law baseline, most often), and records a report run joining them;
-2. starts one Modal call per run that has not started, with the region and
+2. starts one Modal call per run it created, with the region and
    dataset rows of the run's catalog version and its policy's parameter
    values by name (``EconomySimulationCall``); a policy changing a parameter
    the version lacks fails its run as ``invalid_input``;
@@ -314,30 +314,22 @@ class EconomyReports:
                 trigger=trigger,
             ),
         )
+        # Only the submission that created a run starts it. A reused run
+        # still pending belongs to the submission that created it, which may
+        # be a labour supply report asking for more columns; if that
+        # submitter stopped, the safety check starts it for every report
+        # run comparing it.
         dispatched: set[UUID] = set()
         for run in planned:
             started_run = started[run.simulation.id]
-            simulation_run = started_run.run
-            if simulation_run.id in dispatched:
+            if not started_run.created or started_run.run.id in dispatched:
                 continue
-            dispatched.add(simulation_run.id)
-            # A reused run still pending may be one a labour supply report
-            # forced and is waiting for, so it keeps their columns.
+            dispatched.add(started_run.run.id)
             await self._start_simulation_run(
-                simulation_run,
+                started_run.run,
                 run,
                 version,
-                labor_supply_response=labor_supply_response
-                or (
-                    not started_run.created
-                    and simulation_run.status is RunStatus.PENDING
-                    and await self._labor_supply_needed(
-                        await asyncio.to_thread(
-                            self.runs.report_runs_using, simulation_run.id
-                        ),
-                        version,
-                    )
-                ),
+                labor_supply_response=labor_supply_response,
             )
         await self.start_comparisons_after([baseline.id, reform.id])
         return report_run

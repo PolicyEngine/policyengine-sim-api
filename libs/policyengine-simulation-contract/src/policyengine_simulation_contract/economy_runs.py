@@ -19,8 +19,8 @@ A simulation's output columns do not depend on the report it is compared in,
 so a run can be reused by any report, except for the labour supply response
 columns: they are calculated only when ``labor_supply_response`` is set,
 because calculating them in the UK runs the simulation again. The entrypoint
-sets it when either policy of the report changes an elasticity
-(``policy_affects_labor_supply``).
+sets it when a policy of any report run comparing the run changes an
+elasticity (``policy_affects_labor_supply``).
 """
 
 from __future__ import annotations

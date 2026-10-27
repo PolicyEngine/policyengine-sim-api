@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 from economy_fakes import (
+    CALIFORNIA,
     CTC_REFORM,
     LABOR_SUPPLY_REFORM,
     US_VERSION,
@@ -31,6 +32,8 @@ from policyengine_simulation_entry.economy_report_types import (
 from policyengine_simulation_entry.economy_reports import EconomyReports
 from policyengine_simulation_entry.run_dispatch import RunDispatchService
 from policyengine_simulation_persistence import (
+    NewSimulation,
+    NewSimulationRun,
     PolicyParametersMissingError,
     RunErrorCode,
     RunStatus,
@@ -419,10 +422,45 @@ def test_a_run_a_labour_supply_report_waits_for_keeps_its_columns() -> None:
 
     _, ordinary = path.submit(reform=SimulationChoice(policy_id=OTHER_POLICY))
 
+    # The ordinary report reuses the run but leaves starting it to its
+    # submitter, or to the safety check, which asks for the columns.
     assert ordinary.baseline_simulation_run_id == baseline_id
+    assert baseline_id not in {
+        call.simulation_run_id for call in path.simulation_calls()
+    }
+    _age(path, baseline_id, 11)
+    asyncio.run(path.economy.resume_waiting_work(now=path.runs.clock()))
     calls = {call.simulation_run_id: call for call in path.simulation_calls()}
     assert calls[baseline_id].labor_supply_response is True
     assert calls[ordinary.reform_simulation_run_id].labor_supply_response is False
+
+
+def test_a_report_never_starts_a_pending_run_another_submitter_created() -> None:
+    path = _Path()
+    current_law = path.simulations.find_or_create(
+        NewSimulation(kind=SimulationKind.ECONOMY, country="us", region_code="state/ca")
+    )
+    # A labour supply report has created its forced run and not yet recorded
+    # its report run or started the run's call.
+    forced = path.runs.start_simulation_run(
+        NewSimulationRun(
+            simulation_id=current_law.id,
+            tax_benefit_model_version_id=US_VERSION.id,
+            year=2026,
+            trigger=RunTrigger.INITIAL,
+            region_code="state/ca",
+            dataset_id=CALIFORNIA.dataset_id,
+        ),
+        force=True,
+    ).run
+
+    _, ordinary = path.submit(reform=SimulationChoice(policy_id=OTHER_POLICY))
+
+    assert ordinary.baseline_simulation_run_id == forced.id
+    assert [call.simulation_run_id for call in path.simulation_calls()] == [
+        ordinary.reform_simulation_run_id
+    ]
+    assert path.runs.simulation_runs[forced.id].status is RunStatus.PENDING
 
 
 def _strand(path: _Path, run_id) -> None:
