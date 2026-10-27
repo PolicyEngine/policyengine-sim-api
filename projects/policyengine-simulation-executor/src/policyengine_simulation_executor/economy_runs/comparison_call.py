@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid5
 
 from policyengine_simulation_contract.economy_runs import (
-    CatalogPopulation,
     EconomyComparisonCall,
     policy_affects_labor_supply,
 )
@@ -173,9 +172,7 @@ class _Comparison:
         provenance, population = catalog_bundle_provenance(
             country=call.country,
             policyengine_version=call.policyengine_version,
-            population=CatalogPopulation(
-                region_code=call.region_code, dataset_name=call.dataset_name
-            ),
+            dataset_name=call.dataset_name,
             resolved=load_stage12_bundle(),
         )
         self.report = ReportExecutionInput(

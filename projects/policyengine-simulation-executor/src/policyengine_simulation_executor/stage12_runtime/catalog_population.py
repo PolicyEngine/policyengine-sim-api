@@ -102,26 +102,16 @@ def resolve_catalog_region(
     )
 
 
-def catalog_dataset(
-    country_bundle: Stage12CountryBundle, population: CatalogPopulation
-) -> Stage12Dataset:
-    """Return the installed release's dataset the catalog population names.
+def catalog_dataset(country_bundle: Stage12CountryBundle, name: str) -> Stage12Dataset:
+    """Return the installed release's dataset the catalog names ``name``.
 
     Raise ValueError when the release has no dataset of that name.
     """
     dataset = next(
-        (
-            item
-            for item in country_bundle.datasets
-            if item.identity == population.dataset_name
-        ),
-        None,
+        (item for item in country_bundle.datasets if item.identity == name), None
     )
     if dataset is None:
-        msg = (
-            f"the installed release has no dataset {population.dataset_name!r}, "
-            "which the catalog names"
-        )
+        msg = f"the installed release has no dataset {name!r}, which the catalog names"
         raise ValueError(msg)
     return dataset
 
@@ -134,7 +124,7 @@ def resolve_catalog_dataset(
         DatasetSelection,
     )
 
-    dataset = catalog_dataset(country_bundle, population)
+    dataset = catalog_dataset(country_bundle, population.dataset_name)
     return DatasetSelection(
         name=dataset.identity,
         uri=dataset.uri,

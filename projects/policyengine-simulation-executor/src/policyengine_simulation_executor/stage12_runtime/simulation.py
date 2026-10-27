@@ -221,7 +221,7 @@ def _require_installed_bundle(simulation: SimulationExecutionInput) -> None:
     regional = (
         country.dataset_for_region(simulation.geography.region)
         if population is None
-        else catalog_dataset(country, population).identity
+        else catalog_dataset(country, population.dataset_name).identity
     )
     named = simulation.bundle.dataset.identity
     regional_entry = next(

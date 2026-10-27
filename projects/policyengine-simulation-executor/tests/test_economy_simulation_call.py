@@ -236,7 +236,9 @@ def test_a_restarted_call_stores_output_that_differs_in_its_last_bits(
         (
             {
                 "population": CatalogPopulation(
-                    region_code="state/ca", dataset_name="populace_us_2023"
+                    region_code="state/ca",
+                    dataset_name="populace_us_2023",
+                    row_filter=CatalogRowFilter(field="state_fips", value="6"),
                 )
             },
             "no dataset 'populace_us_2023'",

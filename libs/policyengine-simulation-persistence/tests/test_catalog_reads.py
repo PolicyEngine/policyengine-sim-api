@@ -124,6 +124,7 @@ def test_a_uk_nation_keeps_the_list_of_regions_it_covers(reader, catalog_rows) -
         ("state/zz", None, "no region state/zz"),
         ("state/ca", "populace_us_2019", "no dataset populace_us_2019"),
         ("place/CA-57000", None, "weight_replacement"),
+        ("place/CA-44000", None, "no household filter"),
     ],
 )
 def test_a_region_or_dataset_the_version_cannot_run_is_refused(

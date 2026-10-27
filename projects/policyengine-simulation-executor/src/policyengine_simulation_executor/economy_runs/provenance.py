@@ -17,7 +17,6 @@ from policyengine_simulation_executor.stage12_runtime.catalog_population import 
 )
 
 if TYPE_CHECKING:
-    from policyengine_simulation_contract.economy_runs import CatalogPopulation
     from policyengine_simulation_contract.stage12_bundle import (
         CountryId,
         ResolvedStage12Bundle,
@@ -28,7 +27,7 @@ def catalog_bundle_provenance(
     *,
     country: CountryId,
     policyengine_version: str,
-    population: CatalogPopulation,
+    dataset_name: str,
     resolved: ResolvedStage12Bundle,
 ) -> tuple[BundleProvenance, DatasetPopulationInput]:
     """Return the provenance and population of the dataset the catalog names.
@@ -46,7 +45,7 @@ def catalog_bundle_provenance(
     country_bundle = next(
         item for item in resolved.bundle.countries if item.country == country
     )
-    dataset = catalog_dataset(country_bundle, population)
+    dataset = catalog_dataset(country_bundle, dataset_name)
     provenance = BundleProvenance(
         policyengine_version=installed,
         country_package_name=country_bundle.country_package_name,

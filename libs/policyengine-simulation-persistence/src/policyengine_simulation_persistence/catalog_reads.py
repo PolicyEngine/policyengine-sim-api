@@ -263,6 +263,13 @@ class CatalogReader:
                     f"{version.country} has no region {region_code}"
                 )
                 raise CatalogError(msg)
+            row_filter = _row_filter(region)
+            if row_filter is None and region["region_type"] != NATIONAL_REGION_TYPE:
+                msg = (
+                    f"the region {region_code} has no household filter, so it "
+                    "cannot run"
+                )
+                raise CatalogError(msg)
             dataset = self._dataset(connection, version, region, dataset_name)
             state_filters = (
                 self._state_filters(connection, version)
@@ -275,7 +282,7 @@ class CatalogReader:
             region_type=region["region_type"],
             dataset_id=dataset["id"],
             dataset_name=dataset["name"],
-            row_filter=_row_filter(region),
+            row_filter=row_filter,
             state_code=region["state_code"],
             state_filters=state_filters,
         )

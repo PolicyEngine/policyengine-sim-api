@@ -184,6 +184,15 @@ def _us_regions(
         row_filter=("congressional_district_geoid", "601"),
         state_code="CA",
     )
+    # The current catalog publishes US places with no household filter.
+    inserts.region(
+        version_id,
+        "place/CA-44000",
+        national,
+        label="A place without a household filter",
+        region_type="place",
+        state_code="CA",
+    )
     inserts.region(
         version_id,
         "place/CA-57000",

@@ -74,6 +74,8 @@ LABOR_SUPPLY_RESPONSE_PARAMETER_PREFIXES: Mapping[str, tuple[str, ...]] = {
 # them.
 type PolicyChanges = dict[str, dict[str, JsonValue]]
 FilterValue = Annotated[str, Field(min_length=1, max_length=4096)]
+# The region catalog's code for each country as a whole.
+NATIONAL_REGION_CODES = frozenset({"us", "uk"})
 YEAR_RANGE = (1900, 2200)
 _INTEGER = re.compile(r"-?\d+")
 
@@ -149,6 +151,18 @@ class CatalogPopulation(StrictContractModel):
     row_filter: CatalogRowFilter | None = None
     state_code: Annotated[str, Field(pattern=r"^[A-Z]{2}$")] | None = None
     state_filters: dict[str, CatalogRowFilter] | None = None
+
+    @model_validator(mode="after")
+    def _filtered_unless_national(self) -> Self:
+        """Refuse a region below the country that selects no households.
+
+        Without a filter the whole country's dataset would be calculated and
+        stored as the region's result.
+        """
+        if self.row_filter is None and self.region_code not in NATIONAL_REGION_CODES:
+            msg = f"the region {self.region_code} has no household filter"
+            raise ValueError(msg)
+        return self
 
     @model_validator(mode="after")
     def _state_filters_for_a_national_region(self) -> Self:

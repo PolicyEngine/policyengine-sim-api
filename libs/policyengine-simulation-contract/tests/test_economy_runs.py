@@ -189,3 +189,10 @@ def test_a_comparison_side_names_its_output_by_a_cloud_storage_uri() -> None:
             output_uri="https://example.org/run.parquet",
             output_sha256=OUTPUT_SHA256,
         )
+
+
+def test_only_a_national_region_runs_without_a_household_filter() -> None:
+    CatalogPopulation(region_code="uk", dataset_name="enhanced_frs_2023_24")
+
+    with pytest.raises(ValidationError, match="household filter"):
+        CatalogPopulation(region_code="place/CA-44000", dataset_name="populace_us_2024")

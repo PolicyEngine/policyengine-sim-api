@@ -144,7 +144,7 @@ def run_economy_simulation(
     provenance, population = catalog_bundle_provenance(
         country=call.country,
         policyengine_version=call.policyengine_version,
-        population=call.population,
+        dataset_name=call.population.dataset_name,
         resolved=load_stage12_bundle(),
     )
     simulation = SimulationExecutionInput(
