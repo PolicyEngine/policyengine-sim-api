@@ -28,8 +28,6 @@ LOCAL_AREA_BREAKDOWN_RESULT = {
         {
             "constituency_code": "E14001063",
             "constituency_name": "Aldershot",
-            "x": 56,
-            "y": -40,
             "average_household_income_change": -150.0,
             "relative_household_income_change": -0.0026,
             "population": 40530.0,
@@ -42,10 +40,6 @@ LOCAL_AREA_BREAKDOWN_RESULT = {
     ],
     "local_authority_impact": [],
 }
-
-
-def _without_x_and_y(record: dict[str, object]) -> dict[str, object]:
-    return {key: value for key, value in record.items() if key not in {"x", "y"}}
 
 
 def expected_bundle(
@@ -1015,21 +1009,10 @@ class TestSubmitSimulationEndpoint:
         assert response.json()["status"] == "complete"
         assert response.json()["result"] == LOCAL_AREA_BREAKDOWN_RESULT
 
-    @pytest.mark.parametrize(
-        "map_position",
-        [
-            pytest.param({}, id="left-out"),
-            pytest.param({"x": None, "y": None}, id="null"),
-        ],
-    )
     def test__given_breakdown_records_without_x_and_y__then_json_has_no_x_or_y(
-        self, mock_modal, client: TestClient, map_position: dict[str, None]
+        self, mock_modal, client: TestClient
     ):
-        # Executors built for the current policyengine.py version send no
-        # x or y on UK area records; the JSON must not invent null keys.
-        constituency = _without_x_and_y(
-            LOCAL_AREA_BREAKDOWN_RESULT["constituency_impact"][0]
-        )
+        constituency = LOCAL_AREA_BREAKDOWN_RESULT["constituency_impact"][0]
         local_authority = {
             "local_authority_code": "E06000063",
             "local_authority_name": "Cumberland",
@@ -1048,8 +1031,7 @@ class TestSubmitSimulationEndpoint:
         )
         mock_modal["func"].last_call.result = {
             **LOCAL_AREA_BREAKDOWN_RESULT,
-            "constituency_impact": [{**constituency, **map_position}],
-            "local_authority_impact": [{**local_authority, **map_position}],
+            "local_authority_impact": [local_authority],
         }
 
         response = client.get(f"/jobs/{submit_response.json()['job_id']}")
@@ -1062,9 +1044,7 @@ class TestSubmitSimulationEndpoint:
     def test__given_national_records_without_x_and_y__then_json_has_no_x_or_y(
         self, mock_modal, client: TestClient
     ):
-        constituency = _without_x_and_y(
-            LOCAL_AREA_BREAKDOWN_RESULT["constituency_impact"][0]
-        )
+        constituency = LOCAL_AREA_BREAKDOWN_RESULT["constituency_impact"][0]
         submit_response = client.post(
             "/simulate/economy/comparison",
             json={"country": "uk", "scope": "macro", "region": "uk", "reform": {}},
@@ -1076,6 +1056,27 @@ class TestSubmitSimulationEndpoint:
 
         assert response.status_code == 200
         assert response.json()["result"]["constituency_impact"] == [constituency]
+
+    def test__given_records_with_x_and_y_from_an_older_app__then_the_job_fails(
+        self, mock_modal, client: TestClient
+    ):
+        # Apps deployed for older policyengine.py versions still send x and y,
+        # which the contract no longer has: their results fail validation.
+        # This is why the contract change waits until no such app is routed.
+        constituency = LOCAL_AREA_BREAKDOWN_RESULT["constituency_impact"][0]
+        submit_response = client.post(
+            "/simulate/economy/comparison",
+            json={"country": "uk", "scope": "macro", "region": "uk", "reform": {}},
+        )
+        mock_modal["func"].last_call.result = {
+            **LOCAL_AREA_BREAKDOWN_RESULT,
+            "constituency_impact": [{**constituency, "x": 56, "y": -40}],
+        }
+
+        response = client.get(f"/jobs/{submit_response.json()['job_id']}")
+
+        assert response.status_code == 500
+        assert response.json()["status"] == "failed"
 
     def test__given_running_job__then_polling_returns_202(
         self, mock_modal, client: TestClient
