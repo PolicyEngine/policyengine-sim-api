@@ -337,3 +337,53 @@ def test_ids_beyond_the_database_s_bigint_range_are_rejected(overrides) -> None:
         parse_definitions(economy_report_definition(**overrides))
 
     assert "less than or equal to 9223372036854775807" in _error_messages(error)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"limit": float("nan")},
+        {"limits": [1, float("inf")]},
+        {"nested": {"floor": float("-inf")}},
+    ],
+    ids=["NaN", "Infinity in a list", "-Infinity in an object"],
+)
+def test_options_hold_only_finite_numbers(options: dict) -> None:
+    with pytest.raises(ValidationError) as error:
+        parse_definitions(economy_report_definition(options=options))
+
+    assert "options must not hold NaN or Infinity" in _error_messages(error)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {
+            "baseline": economy_simulation_definition(9001, region_code="state/\x00ca"),
+            "reform": economy_simulation_definition(
+                9002, policy_id=str(US_REFORM_POLICY_ID), region_code="state/\x00ca"
+            ),
+        },
+        {
+            "baseline": economy_simulation_definition(9001, dataset_name="cps\x00"),
+            "reform": economy_simulation_definition(
+                9002, policy_id=str(US_REFORM_POLICY_ID), dataset_name="cps\x00"
+            ),
+        },
+        {"options": {"note": "a\x00b"}},
+        {"options": {"a\x00b": 1}},
+        {"options": {"notes": [{"text": "\x00"}]}},
+    ],
+    ids=[
+        "region code",
+        "dataset name",
+        "option value",
+        "option key",
+        "nested option value",
+    ],
+)
+def test_text_never_holds_a_nul_character(overrides: dict) -> None:
+    with pytest.raises(ValidationError) as error:
+        parse_definitions(economy_report_definition(**overrides))
+
+    assert "must not contain a NUL character" in _error_messages(error)

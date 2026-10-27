@@ -12,7 +12,11 @@ from migration_provisioning_support import (
     household_simulation_definition,
     parse_definitions,
 )
-from policyengine_simulation_persistence import ReportKind
+from policyengine_simulation_persistence import (
+    ReportKind,
+    ReportStore,
+    SimulationStore,
+)
 from policyengine_simulation_persistence.migration_provisioning import (
     ProvisionedReport,
     ProvisioningFailure,
@@ -22,6 +26,7 @@ from public_api_support import superuser_engine
 from report_support import report_store
 from simulation_support import economy_simulation, simulation_store
 from sqlalchemy import text
+from sqlalchemy.exc import DataError
 
 pytestmark = pytest.mark.postgres
 
@@ -379,40 +384,41 @@ def test_a_dry_run_reports_a_report_migrated_with_other_simulations(
 
 
 @pytest.mark.parametrize(
-    ("unstorable_value", "subject"),
-    [
-        ("nul region", "v1 simulation 9001"),
-        ("nul options", "v1 report 4512"),
-    ],
-    ids=["a region code with a NUL character", "options with a NUL character"],
+    ("store_type", "subject"),
+    [(SimulationStore, "v1 simulation 9001"), (ReportStore, "v1 report 4512")],
+    ids=["a simulation", "a report"],
 )
 def test_a_value_the_database_cannot_store_fails_its_report_only(
-    migrated_database, public_api_rows, unstorable_value, subject
+    migrated_database, public_api_rows, monkeypatch, store_type, subject
 ) -> None:
-    nul_region = "state/\x00ca"
-    unstorable = (
-        {
-            "baseline": economy_simulation_definition(9001, region_code=nul_region),
-            "reform": economy_simulation_definition(
-                9002,
-                policy_id=str(public_api_rows.us_policy_id),
-                region_code=nul_region,
-            ),
-        }
-        if unstorable_value == "nul region"
-        else {"options": {"note": "\x00"}}
-    )
+    # The file check rejects the values known to be unstorable; any other
+    # value the database rejects as data fails its report in the same way.
+    create_migrated = store_type.create_migrated
+
+    def reject_the_first_report(store, new_row):
+        if getattr(new_row, "legacy_simulation_id", None) == 9001 or (
+            getattr(new_row, "legacy_report_id", None) == 4512
+        ):
+            statement = "INSERT"
+            raise DataError(
+                statement, {}, ValueError("value out of range\nDETAIL: more")
+            )
+        return create_migrated(store, new_row)
+
+    monkeypatch.setattr(store_type, "create_migrated", reject_the_first_report)
 
     result = _provision(
         migrated_database,
-        _economy_report(public_api_rows, **unstorable),
+        _economy_report(public_api_rows),
         _household_report(public_api_rows),
     )
 
-    (failure,) = result.failures
-    assert failure.legacy_report_id == 4512
-    assert failure.reason.startswith(f"the database rejected {subject}: ")
-    assert "\n" not in failure.reason
+    assert result.failures == [
+        ProvisioningFailure(
+            legacy_report_id=4512,
+            reason=f"the database rejected {subject}: value out of range",
+        )
+    ]
     assert [mapped.legacy_report_id for mapped in result.reports] == [4513]
 
 

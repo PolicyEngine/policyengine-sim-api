@@ -10,16 +10,20 @@ describes the format with an example.
 
 Every field is required, even where null is allowed, so a field the export
 leaves out is an error rather than a silent default. Numbers are never
-converted from text.
+converted from text. Values the database cannot store, such as text holding a
+NUL character or NaN in the options, are rejected here, before anything is
+written.
 """
 
 from __future__ import annotations
 
+import math
 from collections import Counter
 from typing import TYPE_CHECKING, Annotated, Literal
 from uuid import UUID
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -48,6 +52,39 @@ LARGEST_LEGACY_ID = 2**63 - 1
 type LegacyId = Annotated[int, Field(gt=0, le=LARGEST_LEGACY_ID)]
 
 
+def _reject_nul(text: str) -> str:
+    if "\x00" in text:
+        msg = "text must not contain a NUL character, which the database cannot store"
+        raise ValueError(msg)
+    return text
+
+
+def _check_storable(value: object) -> None:
+    if isinstance(value, float) and not math.isfinite(value):
+        msg = "options must not hold NaN or Infinity, which JSON does not allow"
+        raise ValueError(msg)
+    if isinstance(value, str):
+        _reject_nul(value)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _reject_nul(str(key))
+            _check_storable(item)
+    elif isinstance(value, list):
+        for item in value:
+            _check_storable(item)
+
+
+def _storable_options(options: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    _check_storable(options)
+    return options
+
+
+type StorableText = Annotated[str, AfterValidator(_reject_nul)]
+type StorableOptions = Annotated[
+    dict[str, JsonValue], AfterValidator(_storable_options)
+]
+
+
 class _DefinitionModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -59,9 +96,9 @@ class EconomySimulationDefinition(_DefinitionModel):
     # The v2 policy ID, or null for current law.
     policy_id: UUID | None
     # The v2 region code, such as ``state/ca`` or ``constituency/E14001063``.
-    region_code: str
+    region_code: StorableText
     # A dataset name in the catalog, or null for the region's default dataset.
-    dataset_name: str | None
+    dataset_name: StorableText | None
 
     def new_simulation(self, country: str) -> NewSimulation:
         """Return the simulation to create for this v1 simulation."""
@@ -102,7 +139,7 @@ class _ReportDefinition(_DefinitionModel):
     legacy_report_id: LegacyId
     country: str
     year: Annotated[int, Field(ge=FIRST_YEAR, le=LAST_YEAR)]
-    options: dict[str, JsonValue]
+    options: StorableOptions
 
     def simulations(self) -> tuple[SimulationDefinition, ...]:
         """Return the baseline, then the reform if the report has one."""

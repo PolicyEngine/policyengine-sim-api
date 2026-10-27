@@ -53,6 +53,9 @@ Rules the file must follow, checked before anything is written:
   field is allowed.
 - Numbers are JSON numbers and IDs are JSON strings; nothing is converted from
   text.
+- Nothing holds a value the database cannot store: no text, including the
+  options' keys and values, contains a NUL character, and the options hold no
+  NaN or Infinity.
 - An economy report's two simulations have the same `region_code` and
   `dataset_name`; a household report's have the same `household_id`.
 - A v1 simulation that several reports use is described the same way in each.
