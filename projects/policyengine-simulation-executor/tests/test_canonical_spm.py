@@ -932,6 +932,7 @@ def test_as_of_presence_survives_budget_parent(date_fields, expected_as_of):
 def test_versions_http_retains_capability_contract_version(monkeypatch):
     from policyengine_simulation_gateway import endpoints
     from policyengine_simulation_gateway.testing import create_gateway_app
+    from src.modal.routing_publisher import state as routing_state
     from src.modal.utils import update_version_registry as registry
 
     metadata = {
@@ -942,7 +943,7 @@ def test_versions_http_retains_capability_contract_version(monkeypatch):
         "spm": CAPABILITY,
     }
     monkeypatch.setattr(
-        registry, "build_bundle_manifest_metadata", lambda **_kwargs: metadata
+        routing_state, "build_bundle_manifest_metadata", lambda **_kwargs: metadata
     )
     state = registry.build_next_routing_state(
         current_state=None,

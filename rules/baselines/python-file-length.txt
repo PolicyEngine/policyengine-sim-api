@@ -7,7 +7,6 @@
 libs/policyengine-simulation-contract/src/policyengine_simulation_contract/stage12_execution.py
 projects/policyengine-simulation-entry/src/policyengine_simulation_entry/app.py
 projects/policyengine-simulation-entry/tests/test_deployment_assets.py
-projects/policyengine-simulation-executor/src/modal/utils/update_version_registry.py
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/precompute.py
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/simulation_runtime.py
 projects/policyengine-simulation-executor/src/policyengine_simulation_executor/stage12_cache/precompute.py
@@ -15,6 +14,5 @@ projects/policyengine-simulation-executor/src/policyengine_simulation_executor/s
 projects/policyengine-simulation-executor/tests/test_precompute.py
 projects/policyengine-simulation-executor/tests/test_simulation_output_builder.py
 projects/policyengine-simulation-executor/tests/test_stage12_runtime.py
-projects/policyengine-simulation-executor/tests/test_update_version_registry.py
 projects/policyengine-simulation-gateway/src/policyengine_simulation_gateway/endpoints.py
 projects/policyengine-simulation-gateway/tests/test_endpoints.py
