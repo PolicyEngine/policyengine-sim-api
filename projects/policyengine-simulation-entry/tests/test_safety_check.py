@@ -142,3 +142,39 @@ def test_a_call_is_first_checked_one_interval_after_dispatch() -> None:
     assert timedelta(minutes=5) == SAFETY_CHECK_INTERVAL
     assert FIRST_CHECK_DELAY == SAFETY_CHECK_INTERVAL
     assert CHECK_LEASE == SAFETY_CHECK_INTERVAL
+
+
+class _Waiting:
+    """Stands in for the economy path's waiting work."""
+
+    def __init__(self) -> None:
+        self.resumed = 0
+
+    async def resume_waiting_work(self, *, now):
+        del now
+        self.resumed += 1
+        return safety_check.ResumedWork(comparisons_started=2, runs_started=1)
+
+
+def test_a_pass_also_starts_the_economy_work_left_waiting(caplog) -> None:
+    caplog.set_level("INFO")
+    waiting = _Waiting()
+    recorder = safety_check.SafetyCheckPass(_OnePass(RecordingPass(checked=1)), waiting)
+
+    status, _ = _run({"SIMULATION_DATABASE_URL": DATABASE_URL}, recorder)
+
+    assert status == 0
+    assert waiting.resumed == 1
+    (record,) = [r for r in caplog.records if r.getMessage() == "safety_check_pass"]
+    assert record.policyengine_attributes["comparisons_started"] == 2
+    assert record.policyengine_attributes["runs_started"] == 1
+
+
+def test_a_pass_without_the_modal_environment_only_records() -> None:
+    inner = _OnePass(RecordingPass(checked=1))
+    recorder = safety_check.SafetyCheckPass(inner, None)
+
+    status, _ = _run({"SIMULATION_DATABASE_URL": DATABASE_URL}, recorder)
+
+    assert status == 0
+    assert inner.passes == 1

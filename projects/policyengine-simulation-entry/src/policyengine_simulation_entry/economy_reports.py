@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from policyengine_simulation_contract.economy_runs import (
@@ -63,6 +64,7 @@ from policyengine_simulation_entry.modal_calls import ModalRequest, ModalTarget
 
 if TYPE_CHECKING:
     from collections.abc import Collection, Mapping
+    from datetime import datetime
     from uuid import UUID
 
     from policyengine_simulation_contract.stage12_bundle import CountryId
@@ -83,6 +85,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 RERUN_TRIGGERS = frozenset({RunTrigger.MANUAL, RunTrigger.SYSTEM})
+# A run still pending this long after it was created was left by a submitter
+# that stopped before starting its call; the safety check starts it.
+PENDING_RUN_START_AFTER = timedelta(minutes=10)
+WAITING_WORK_BATCH_SIZE = 50
 
 
 class EconomyRequestError(ValueError):
@@ -91,6 +97,14 @@ class EconomyRequestError(ValueError):
 
 class ReportNotFoundError(LookupError):
     """No report has this ID."""
+
+
+@dataclass(frozen=True)
+class ResumedWork:
+    """What one safety-check pass started of the work left waiting."""
+
+    comparisons_started: int = 0
+    runs_started: int = 0
 
 
 @dataclass(frozen=True)
@@ -171,6 +185,16 @@ class EconomyRuns(Protocol):
         self, simulation_run_id: UUID, role: str
     ) -> OutputFileRecord | None:
         """Return a run's stored file of ``role`` while it is offered."""
+        ...
+
+    def pending_simulation_runs(
+        self, *, created_before: datetime, limit: int = 100
+    ) -> list[SimulationRunRecord]:
+        """Return runs still pending that were created before a time."""
+        ...
+
+    def report_runs_using(self, simulation_run_id: UUID) -> list[ReportRunRecord]:
+        """Return the report runs comparing a simulation run."""
         ...
 
 
@@ -521,6 +545,76 @@ class EconomyReports:
                 arguments=(call.model_dump(mode="json"),),
             ),
         )
+
+    # --- Work left waiting -------------------------------------------------
+
+    async def resume_waiting_work(self, *, now: datetime) -> ResumedWork:
+        """Start what a stopped instance or a lost report left waiting.
+
+        The safety check runs this after recording due calls: comparison
+        steps whose runs both succeeded, and runs still pending
+        ``PENDING_RUN_START_AFTER`` after they were created. A run's call
+        asks for labour supply columns when any report run comparing it
+        needs them.
+        """
+        ready = await asyncio.to_thread(
+            lambda: self.runs.comparisons_ready_to_start(limit=WAITING_WORK_BATCH_SIZE)
+        )
+        for report_run in ready:
+            await self.start_comparison(report_run)
+        stranded = await asyncio.to_thread(
+            lambda: self.runs.pending_simulation_runs(
+                created_before=now - PENDING_RUN_START_AFTER,
+                limit=WAITING_WORK_BATCH_SIZE,
+            )
+        )
+        started = 0
+        for simulation_run in stranded:
+            started += await self._start_stranded_run(simulation_run)
+        return ResumedWork(comparisons_started=len(ready), runs_started=started)
+
+    async def _start_stranded_run(self, simulation_run: SimulationRunRecord) -> int:
+        """Start a run left pending; return 1 if a report run compares it."""
+        version = await asyncio.to_thread(
+            self.catalog.catalog_version_by_id,
+            simulation_run.tax_benefit_model_version_id,
+        )
+        simulation = await asyncio.to_thread(
+            self.simulations.get, simulation_run.simulation_id
+        )
+        report_runs = await asyncio.to_thread(
+            self.runs.report_runs_using, simulation_run.id
+        )
+        if version is None or simulation is None or not report_runs:
+            return 0
+        labor_supply_response = False
+        for report_run in report_runs:
+            report = await asyncio.to_thread(self.reports.get, report_run.report_id)
+            if report is None:  # pragma: no cover - a foreign key keeps it
+                continue
+            for simulation_id in (
+                report.baseline_simulation_id,
+                report.reform_simulation_id,
+            ):
+                compared = (
+                    None
+                    if simulation_id is None
+                    else await asyncio.to_thread(self.simulations.get, simulation_id)
+                )
+                if compared is None:  # pragma: no cover - a foreign key keeps it
+                    continue
+                planned = await self._plan(version, compared)
+                labor_supply_response = labor_supply_response or (
+                    planned.changes is not None
+                    and policy_affects_labor_supply(report.country, planned.changes)
+                )
+        await self._start_simulation_run(
+            simulation_run,
+            await self._plan(version, simulation),
+            version,
+            labor_supply_response=labor_supply_response,
+        )
+        return 1
 
     # --- Comparisons -------------------------------------------------------
 

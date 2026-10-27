@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -347,3 +349,53 @@ def test_a_comparison_whose_output_is_no_longer_offered_fails_clearly() -> None:
     assert comparison.comparison_status is RunStatus.FAILED
     assert comparison.comparison_error_code == RunErrorCode.RESULT_EXPIRED.value
     assert path.comparison_calls() == []
+
+
+def _age(path: _Path, run_id, minutes: int) -> None:
+    run = path.runs.simulation_runs[run_id]
+    path.runs.simulation_runs[run_id] = replace(
+        run, created_at=run.created_at - timedelta(minutes=minutes)
+    )
+
+
+def test_the_safety_check_starts_comparisons_and_runs_left_waiting() -> None:
+    path = _Path()
+    _, compared = path.submit()
+    path.runs.succeed(compared.baseline_simulation_run_id)
+    path.runs.succeed(compared.reform_simulation_run_id)
+    path.dispatcher.requests.clear()
+    # A submitter that stopped after recording its runs left this one pending.
+    _, stranded = path.submit(reform=SimulationChoice(policy_id=LABOR_SUPPLY_POLICY))
+    reform_id = stranded.reform_simulation_run_id
+    path.runs.simulation_runs[reform_id] = replace(
+        path.runs.simulation_runs[reform_id],
+        status=RunStatus.PENDING,
+        modal_call_id=None,
+        next_check_at=None,
+    )
+    _age(path, reform_id, 11)
+    path.dispatcher.requests.clear()
+
+    resumed = asyncio.run(path.economy.resume_waiting_work(now=path.runs.clock()))
+
+    assert resumed.comparisons_started == 1
+    assert resumed.runs_started == 1
+    assert [call.report_run_id for call in path.comparison_calls()] == [compared.id]
+    (call,) = path.simulation_calls()
+    assert call.simulation_run_id == reform_id
+    assert call.labor_supply_response is True
+
+
+def test_the_safety_check_leaves_a_run_its_submitter_is_still_starting() -> None:
+    path = _Path()
+    _, report_run = path.submit()
+    run_id = report_run.reform_simulation_run_id
+    path.runs.simulation_runs[run_id] = replace(
+        path.runs.simulation_runs[run_id], status=RunStatus.PENDING
+    )
+    path.dispatcher.requests.clear()
+
+    resumed = asyncio.run(path.economy.resume_waiting_work(now=path.runs.clock()))
+
+    assert resumed.runs_started == 0
+    assert path.dispatcher.requests == []

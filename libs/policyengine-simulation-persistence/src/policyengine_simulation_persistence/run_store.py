@@ -404,6 +404,19 @@ class RunStore:
             ).mappings()
             return [SimulationRunRecord.from_row(row) for row in rows]
 
+    def report_runs_using(self, simulation_run_id: UUID) -> list[ReportRunRecord]:
+        """Return the report runs comparing this simulation run, oldest first."""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(report_runs)
+                .where(
+                    (report_runs.c.baseline_simulation_run_id == simulation_run_id)
+                    | (report_runs.c.reform_simulation_run_id == simulation_run_id)
+                )
+                .order_by(report_runs.c.created_at, report_runs.c.id)
+            ).mappings()
+            return [ReportRunRecord.from_row(row) for row in rows]
+
     def simulation_output_file(
         self,
         simulation_run_id: UUID,

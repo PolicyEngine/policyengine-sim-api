@@ -179,3 +179,18 @@ def test_a_simulation_runs_stored_files_are_read_by_role(
 
 def test_a_run_the_catalog_cannot_run_fails_as_invalid_input() -> None:
     assert RunErrorCode.INVALID_INPUT.value == "invalid_input"
+
+
+def test_the_report_runs_comparing_a_simulation_run_are_found(
+    migrated_database, public_api_rows
+) -> None:
+    _, baseline_run, reform_run, report_run = _report_run(
+        migrated_database, public_api_rows
+    )
+    store = run_store(migrated_database)
+
+    assert [run.id for run in store.report_runs_using(reform_run.id)] == [report_run.id]
+    assert [run.id for run in store.report_runs_using(baseline_run.id)] == [
+        report_run.id
+    ]
+    assert store.report_runs_using(uuid4()) == []
