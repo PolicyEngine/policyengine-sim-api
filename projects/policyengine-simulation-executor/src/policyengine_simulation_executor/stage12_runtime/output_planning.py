@@ -12,6 +12,11 @@ from policyengine.outputs import (
     configure_labor_supply_response_variables,
     labor_supply_response_is_active,
 )
+from policyengine.outputs.extra_variables import add_extra_variables
+from policyengine.outputs.labor_supply_response import (
+    UK_ACTIVE_LSR_VARIABLES,
+    US_ACTIVE_LSR_VARIABLES,
+)
 from policyengine_simulation_contract.stage12_execution import (
     EntityOutputPlan,
     PlannedSimulationExecutionInput,
@@ -221,6 +226,68 @@ def resolve_report_output_plan(
         country=country,
         requirements=requirements,
         entities=tuple(entities),
+    )
+
+
+def _labor_supply_variables(country: CountryId) -> dict[str, list[str]]:
+    return US_ACTIVE_LSR_VARIABLES if country == "us" else UK_ACTIVE_LSR_VARIABLES
+
+
+def resolve_simulation_output_plan(
+    simulation: SimulationExecutionInput,
+    *,
+    labor_supply_response: bool,
+) -> Stage12OutputPlan:
+    """Resolve one v2 economy simulation's output schema, for any report it is in.
+
+    A simulation run can be compared in many reports, so its columns are the
+    ones a report plans for it, every aggregate requested, without cliff
+    impacts. The labour supply response columns are the exception: a report
+    plans them for both simulations when either policy changes an
+    elasticity, and they are planned here only when ``labor_supply_response``
+    asks for them, because calculating them in the UK runs the simulation
+    again.
+    """
+    country = simulation.geography.country
+    model = _country_model(country)
+    planning = _planning_simulation(simulation, model=model)
+    if labor_supply_response:
+        add_extra_variables(planning, _labor_supply_variables(country))
+    if country == "us":
+        from policyengine.tax_benefit_models.us.analysis import (
+            configure_budgetary_impact_variables,
+        )
+
+        configure_budgetary_impact_variables(planning, planning)
+    aggregates = tuple(ReportAggregate)
+    variables = model.resolve_entity_variables(planning)
+    dataset_variables = _required_dataset_variables(
+        country=country,
+        region=simulation.geography.region,
+        aggregates=aggregates,
+    )
+    extras = planning.extra_variables or {}
+    return Stage12OutputPlan(
+        country=country,
+        requirements=ReportOutputRequirements(
+            aggregates=aggregates,
+            include_cliff_impacts=False,
+            labor_supply_response_active=labor_supply_response,
+        ),
+        entities=tuple(
+            EntityOutputPlan(
+                entity=entity,
+                materialized_variables=tuple(
+                    sorted(
+                        set(variables.get(entity, ()))
+                        | set(dataset_variables.get(entity, ()))
+                    )
+                ),
+                additional_variables=tuple(sorted(set(extras.get(entity, ())))),
+                dataset_variables=dataset_variables.get(entity, ()),
+            )
+            for entity in sorted(set(variables) | set(dataset_variables))
+        ),
     )
 
 
