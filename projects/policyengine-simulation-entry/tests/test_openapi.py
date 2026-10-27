@@ -37,7 +37,28 @@ EXPECTED_ROUTES = {
     ("POST", "/ping"),
     ("POST", "/simulate/economy/budget-window"),
     ("POST", "/simulate/economy/comparison"),
+    ("GET", "/v2/economy-reports/by-legacy-id/{legacy_report_id}"),
+    ("GET", "/v2/economy-reports/{report_id}"),
+    ("GET", "/v2/economy-reports/{report_id}/runs"),
+    ("GET", "/v2/simulations/{simulation_id}"),
+    ("POST", "/v2/economy-reports"),
+    ("POST", "/v2/economy-reports/{report_id}/runs"),
 }
+# The v2 economy report routes are the entrypoint's own; the old gateway has
+# none of them or their bodies.
+V2_SCHEMAS = (
+    "ComparisonResponse",
+    "EconomyReportResponse",
+    "EconomyReportRunRequest",
+    "EconomyReportRunResponse",
+    "EconomyReportRunsResponse",
+    "EconomyReportSubmissionRequest",
+    "ReportStatus",
+    "RunErrorResponse",
+    "SimulationChoiceRequest",
+    "SimulationResponse",
+    "SimulationRunResponse",
+)
 
 
 def methods(spec: OpenAPIDocument) -> set[tuple[str, str]]:
@@ -62,6 +83,8 @@ def normalized_compatibility_paths(spec: OpenAPIDocument) -> OpenAPIPathMap:
     """Remove intentional Cloud Run and additive SPM error documentation."""
     paths = deepcopy(spec["paths"])
     paths.pop("/ready", None)
+    for path in [path for path in paths if path.startswith("/v2/")]:
+        paths.pop(path)
     for operations in paths.values():
         for method, operation in operations.items():
             if method.lower() in {"get", "post", "put", "patch", "delete"}:
@@ -181,9 +204,23 @@ def test_normalized_contract_matches_old_gateway():
     cloud_run_schemas.pop("SimulationEntrypointReadinessResponse")
     cloud_run_schemas.pop("SimulationDatabaseReadiness")
     cloud_run_schemas.pop("SimulationErrorResponse")
+    for schema in V2_SCHEMAS:
+        cloud_run_schemas.pop(schema)
     assert cloud_run_schemas == gateway_spec["components"]["schemas"]
     gateway_operation_ids = operation_ids(gateway_spec)
     cloud_run_operation_ids = operation_ids(cloud_run_spec)
     assert {
         key: cloud_run_operation_ids[key] for key in gateway_operation_ids
     } == gateway_operation_ids
+
+
+def test_v2_economy_routes_are_public_for_the_generated_client():
+    spec = cast("OpenAPIDocument", create_app().openapi())
+    ids = operation_ids(spec)
+
+    assert ids[("POST", "/v2/economy-reports")] == "submit_economy_report"
+    assert ids[("GET", "/v2/economy-reports/{report_id}")] == "get_economy_report"
+    assert ids[("POST", "/v2/economy-reports/{report_id}/runs")] == (
+        "run_economy_report"
+    )
+    assert set(V2_SCHEMAS) <= set(spec["components"]["schemas"])

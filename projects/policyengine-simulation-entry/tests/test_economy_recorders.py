@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from policyengine_simulation_contract.call_reports import (
+    CallEndedReport,
+    CallReportStatus,
+)
 from policyengine_simulation_entry.economy_recorders import (
     SIMULATION_INPUT_ROLE,
     SIMULATION_OUTPUT_ROLE,
+    ComparisonStartingRecorder,
     EconomySimulationRecorder,
     economy_result_recorders,
 )
@@ -123,4 +129,91 @@ def test_the_simulation_database_records_economy_outcomes() -> None:
 
     assert SimulationKind.ECONOMY in recorders.simulations
     assert ReportKind.ECONOMY in recorders.comparisons
+    database.dispose()
+
+
+class _Recorder:
+    def __init__(self, answer: CallReportStatus) -> None:
+        self.answer = answer
+        self.reports: list[CallEndedReport] = []
+
+    async def record_reported_call(self, report: CallEndedReport) -> CallReportStatus:
+        self.reports.append(report)
+        return self.answer
+
+
+class _Comparisons:
+    def __init__(self, failure: Exception | None = None) -> None:
+        self.failure = failure
+        self.started_after: list[tuple] = []
+
+    async def start_comparisons_after(self, simulation_run_ids) -> None:
+        self.started_after.append(tuple(simulation_run_ids))
+        if self.failure is not None:
+            raise self.failure
+
+
+SIMULATION_REPORT = CallEndedReport(
+    modal_call_id="fc-sim", simulation_run_ids=(RUN_ID,)
+)
+COMPARISON_REPORT = CallEndedReport(modal_call_id="fc-cmp", report_run_id=uuid4())
+
+
+@pytest.mark.parametrize(
+    "answer", [CallReportStatus.RECORDED, CallReportStatus.ALREADY_RECORDED]
+)
+def test_a_recorded_simulation_call_starts_the_comparisons_it_completes(
+    answer,
+) -> None:
+    comparisons = _Comparisons()
+    recorder = ComparisonStartingRecorder(_Recorder(answer), comparisons)
+
+    assert asyncio.run(recorder.record_reported_call(SIMULATION_REPORT)) is answer
+    assert comparisons.started_after == [(RUN_ID,)]
+
+
+@pytest.mark.parametrize(
+    ("report", "answer"),
+    [
+        (SIMULATION_REPORT, CallReportStatus.STILL_RUNNING),
+        (SIMULATION_REPORT, CallReportStatus.NOT_WRITTEN),
+        (COMPARISON_REPORT, CallReportStatus.RECORDED),
+    ],
+)
+def test_nothing_starts_until_a_simulation_calls_outcome_is_recorded(
+    report, answer
+) -> None:
+    comparisons = _Comparisons()
+    recorder = ComparisonStartingRecorder(_Recorder(answer), comparisons)
+
+    asyncio.run(recorder.record_reported_call(report))
+
+    assert comparisons.started_after == []
+
+
+def test_a_comparison_that_cannot_start_leaves_the_answer_unchanged(caplog) -> None:
+    comparisons = _Comparisons(failure=ConnectionError("database"))
+    recorder = ComparisonStartingRecorder(
+        _Recorder(CallReportStatus.RECORDED), comparisons
+    )
+
+    answer = asyncio.run(recorder.record_reported_call(SIMULATION_REPORT))
+
+    assert answer is CallReportStatus.RECORDED
+    assert "report_run_comparisons_not_started" in caplog.text
+
+
+def test_the_simulation_database_starts_economy_calls_in_its_modal_environment() -> (
+    None
+):
+    database = SimulationDatabase.from_url(
+        "postgresql://simulation_runtime:secret@db.example:5432/postgres"
+    )
+
+    services = database.economy_routes(
+        artifact_environment="staging", modal_environment="staging"
+    )
+
+    assert services.reports.artifact_environment == "staging"
+    assert services.reports.dispatch.dispatcher._environment == "staging"
     database.dispose()

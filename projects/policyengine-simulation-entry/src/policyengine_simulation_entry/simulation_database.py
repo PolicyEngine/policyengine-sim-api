@@ -3,21 +3,59 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from policyengine_simulation_persistence import (
+    CatalogReader,
+    EconomyResultLabels,
+    ReportStore,
     RunStore,
     RunTransitions,
+    SimulationStore,
     create_simulation_engine,
+    read_economy_comparison,
     read_schema_revision,
 )
 
 from policyengine_simulation_entry.economy_recorders import economy_result_recorders
-from policyengine_simulation_entry.modal_calls import ModalCallInspector
+from policyengine_simulation_entry.economy_reports import EconomyReports
+from policyengine_simulation_entry.economy_routes import (
+    EconomyReportReads,
+    EconomyRouteServices,
+)
+from policyengine_simulation_entry.modal_calls import (
+    ModalCallDispatcher,
+    ModalCallInspector,
+)
+from policyengine_simulation_entry.run_dispatch import RunDispatchService
 from policyengine_simulation_entry.run_recording import RunRecorder
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
+    from policyengine_simulation_contract.macro_output import SingleYearMacroOutput
     from sqlalchemy import Engine
+
+
+@dataclass(frozen=True)
+class DatabaseResultReader:
+    """Rebuild a comparison's result from its rows, with UK area names."""
+
+    engine: Engine
+    catalog: CatalogReader
+
+    def read_result(
+        self, report_run_id: UUID, catalog_version_id: UUID, country: str
+    ) -> SingleYearMacroOutput:
+        """Return the result in today's format; raise LookupError if it cannot be."""
+        labels = (
+            self.catalog.area_labels(catalog_version_id)
+            if country == "uk"
+            else EconomyResultLabels()
+        )
+        with self.engine.connect() as connection:
+            return read_economy_comparison(connection, report_run_id, labels)
 
 
 class SimulationDatabase:
@@ -55,6 +93,41 @@ class SimulationDatabase:
             runs=RunStore(self.engine),
             inspector=ModalCallInspector(),
             recorders=economy_result_recorders(),
+        )
+
+    def economy_routes(
+        self, *, artifact_environment: str, modal_environment: str
+    ) -> EconomyRouteServices:
+        """Return the economy path, starting calls in ``modal_environment``.
+
+        ``artifact_environment`` names the deployment in stored files' paths.
+        """
+        engine = self.engine
+        simulations = SimulationStore(engine)
+        reports = ReportStore(engine)
+        runs = RunStore(engine)
+        catalog = CatalogReader(engine)
+        transitions = RunTransitions(engine)
+        return EconomyRouteServices(
+            reports=EconomyReports(
+                simulations=simulations,
+                reports=reports,
+                runs=runs,
+                catalog=catalog,
+                transitions=transitions,
+                dispatch=RunDispatchService(
+                    transitions=transitions,
+                    dispatcher=ModalCallDispatcher(modal_environment),
+                ),
+                artifact_environment=artifact_environment,
+            ),
+            reads=EconomyReportReads(
+                simulations=simulations,
+                reports=reports,
+                runs=runs,
+                catalog=catalog,
+                results=DatabaseResultReader(engine, catalog),
+            ),
         )
 
     def dispose(self) -> None:
