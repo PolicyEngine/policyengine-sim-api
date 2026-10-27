@@ -1027,6 +1027,49 @@ jobs:
         if: ${{ failure() && steps.safety_check_restore.outcome == 'failure' }}
         run: .github/scripts/deploy-cloud-run-simulation-safety-check.sh pause
 
+  economy_staging_check:
+    name: Run a small v2 economy report on staging
+    # After the staging promotion, the stable URL serves the revision this
+    # deployment tested: submit a small report there, run it again with
+    # fresh runs on this deployment's Modal functions, and read it back once
+    # its comparison is recorded. The v2 economy path serves no user yet, so
+    # a failure is reported without holding back the production deployment.
+    if: >-
+      ${{
+        !cancelled() &&
+        inputs.deployment_environment == 'staging' &&
+        needs.promote_entrypoint.result == 'success'
+      }}
+    needs: [prepare, deploy_entrypoint, promote_entrypoint]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    environment: ${{ inputs.release_environment }}
+    env:
+      SIMULATION_ENTRYPOINT_TEST_BASE_URL: ${{ needs.deploy_entrypoint.outputs.stable_url }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_ISSUER: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_ISSUER }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_AUDIENCE: ${{ secrets.SIMULATION_ENTRYPOINT_AUTH_AUDIENCE }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_ID }}
+      SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET: ${{ secrets.SIMULATION_ENTRYPOINT_TEST_AUTH_CLIENT_SECRET }}
+      SIMULATION_STAGING_ECONOMY_POLICYENGINE_VERSION: ${{ needs.prepare.outputs.policyengine_version }}
+      SIMULATION_STAGING_ECONOMY_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Install staging check dependencies
+        working-directory: projects/policyengine-simulation-entry
+        run: uv sync --extra test --frozen
+
+      - name: Run a small economy report on staging and read it back
+        working-directory: projects/policyengine-simulation-entry
+        run: uv run --frozen pytest authenticated_tests/test_staging_economy_report.py -v
+
   finalize_routing:
     name: Finalize the Modal routing publication
     # Finish the durable journal after every gate, including failed uploads
