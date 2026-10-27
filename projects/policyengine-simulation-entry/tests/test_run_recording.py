@@ -64,6 +64,7 @@ def _recorder(recorders=None):
     inspector = FakeInspector()
     recorder = RunRecorder(
         transitions=transitions,
+        runs=transitions,
         inspector=inspector,
         recorders=recorders or ResultRecorders(),
         clock=clock,

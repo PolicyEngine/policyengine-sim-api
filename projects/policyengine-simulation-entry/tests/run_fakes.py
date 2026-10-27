@@ -74,6 +74,7 @@ class FakeRunRecord:
     simulation_kind: SimulationKind
     modal_call_id: str | None
     check_count: int
+    status: RunStatus = RunStatus.RUNNING
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,7 @@ class FakeReportRunRecord:
     report_kind: str
     comparison_modal_call_id: str | None
     comparison_check_count: int
+    comparison_status: RunStatus | None = RunStatus.RUNNING
 
 
 class FakeRunTransitions:
@@ -246,6 +248,34 @@ class FakeRunTransitions:
         """Return whether the comparison step recorded ``modal_call_id``."""
         with self.lock:
             return self.comparisons[report_run_id].modal_call_id == modal_call_id
+
+    # --- Reading -------------------------------------------------------
+
+    def get_simulation_run(self, run_id: UUID) -> FakeRunRecord | None:
+        """Return the run as a record, or None when there is no such run."""
+        run = self.runs.get(run_id)
+        if run is None:
+            return None
+        return FakeRunRecord(
+            id=run.id,
+            simulation_kind=SimulationKind(run.kind),
+            modal_call_id=run.modal_call_id,
+            check_count=run.check_count,
+            status=run.status,
+        )
+
+    def get_report_run(self, report_run_id: UUID) -> FakeReportRunRecord | None:
+        """Return the comparison step's report run, or None when there is none."""
+        comparison = self.comparisons.get(report_run_id)
+        if comparison is None:
+            return None
+        return FakeReportRunRecord(
+            id=comparison.id,
+            report_kind=comparison.kind,
+            comparison_modal_call_id=comparison.modal_call_id,
+            comparison_check_count=comparison.check_count,
+            comparison_status=comparison.status,
+        )
 
     # --- Recording -------------------------------------------------------
 
