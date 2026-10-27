@@ -27,7 +27,7 @@ for those still pending, so a new report's two households are calculated
 together. When another submitter claimed one of them first, it starts that
 one's call, and this submitter starts a call for the rest.
 
-This is v2 code: the main path's ``run_simulation`` does not use it.
+This is v2 code: the v1 ``run_simulation`` code does not use it.
 """
 
 from __future__ import annotations

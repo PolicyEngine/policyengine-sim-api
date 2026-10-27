@@ -6,7 +6,7 @@ saved SPM choice, and each policy's parameter values. The Simulation
 Entrypoint records the calculation against the Public API's IDs (household,
 policy, catalog version), whose rows the database checks exist.
 
-This is v2 code: the main path's ``run_simulation`` does not use it.
+This is v2 code: the v1 ``run_simulation`` code does not use it.
 """
 
 from __future__ import annotations
@@ -147,8 +147,12 @@ class StoredHouseholdInputs(StrictRouteModel):
 class HouseholdCalculationSubmission(StoredHouseholdInputs):
     """One household under one policy, to calculate for a catalog version and year.
 
-    A calculation submitted again reuses its run while it is unfinished or
-    once it succeeded, unless ``force``.
+    ``year`` is the household's calculation year, part of what identifies
+    the run; the household's own periods decide what is calculated, so the
+    caller sends the year those periods name. ``policyengine_version`` must
+    be the catalog version's: the Simulation Entrypoint cannot read the
+    catalog to check it. A calculation submitted again reuses its run while
+    it is unfinished or once it succeeded, unless ``force``.
     """
 
     country: CountryId

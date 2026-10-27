@@ -95,6 +95,11 @@ start the v2 household functions' calls in the same Modal environment,
 `SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT`, with the same token, and read the
 v2 version manifest there; they need no other setting. Their outcomes are
 recorded like any other call's: on the call's report, or by the safety check.
+The household functions take the runs a call computes as their second
+argument. A v2 application deployed before they did (for an older
+PolicyEngine.py version) refuses that argument, so its calls fail as worker
+errors, recorded by the safety check; redeploying that version's v2
+application fixes it.
 
 ### Staging household test
 

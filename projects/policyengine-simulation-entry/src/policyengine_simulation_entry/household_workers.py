@@ -7,7 +7,7 @@ worker application, which names each country's household function and the
 bundle it runs. The calculation's request carries that bundle, and the
 household function refuses any other.
 
-This is v2 code: the main path's ``run_simulation`` does not use it.
+This is v2 code: the v1 ``run_simulation`` code does not use it.
 """
 
 from __future__ import annotations

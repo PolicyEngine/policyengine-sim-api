@@ -14,7 +14,7 @@ bundle, or a failure inside the calculation) fails the runs with
 and the household error document is the run's error detail, which the
 calculation's reader returns.
 
-This is v2 code: the main path's ``run_simulation`` does not use it.
+This is v2 code: the v1 ``run_simulation`` code does not use it.
 """
 
 from __future__ import annotations

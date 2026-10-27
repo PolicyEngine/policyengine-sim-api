@@ -19,7 +19,7 @@ version or country without a household function, a household, policy or
 catalog version the Public API does not have, or, for a report's run,
 another household or other policies than the report's, gets 400.
 
-This is v2 code: the main path's ``run_simulation`` does not use it.
+This is v2 code: the v1 ``run_simulation`` code does not use it.
 """
 
 from __future__ import annotations
