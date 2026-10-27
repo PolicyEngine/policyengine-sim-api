@@ -11,6 +11,11 @@ report alone; the other reports continue.
 The stores commit each row on its own. A report that fails after some of its
 simulations were created leaves those simulations in place, keyed by their v1
 IDs, and a later run reuses them.
+
+A dry run only reads: it counts the rows a run would create and the rows that
+already exist, and reports the definitions that conflict with existing rows. It
+cannot see the Public API's tables, so it does not find a policy or household
+the database would reject.
 """
 
 from __future__ import annotations
@@ -62,8 +67,13 @@ class ProvisioningFailure:
 
 @dataclass
 class ProvisioningResult:
-    """What one run did, in the order of the export's definitions."""
+    """What one run did, or would do, in the order of the export's definitions.
 
+    In a dry run, ``reports`` lists only the reports that already exist, and
+    the ``new_`` counts are the rows a run would create.
+    """
+
+    dry_run: bool
     reports: list[ProvisionedReport] = dataclass_field(default_factory=list)
     failures: list[ProvisioningFailure] = dataclass_field(default_factory=list)
     # A simulation several reports use is counted once.
@@ -109,13 +119,19 @@ def _create[RecordT](create: Callable[[], RecordT], subject: str) -> RecordT:
 
 class _Provisioner:
     def __init__(
-        self, simulation_store: SimulationStore, report_store: ReportStore
+        self,
+        simulation_store: SimulationStore,
+        report_store: ReportStore,
+        *,
+        dry_run: bool,
     ) -> None:
         self.simulation_store = simulation_store
         self.report_store = report_store
-        self.result = ProvisioningResult()
+        self.dry_run = dry_run
+        self.result = ProvisioningResult(dry_run=dry_run)
         # v2 simulation IDs by v1 simulation ID, for simulations reports share.
-        self.simulation_ids: dict[int, UUID] = {}
+        # In a dry run, None marks a simulation a run would create.
+        self.simulation_ids: dict[int, UUID | None] = {}
 
     def provision(self, definition: ReportDefinition) -> None:
         try:
@@ -134,7 +150,7 @@ class _Provisioner:
 
     def _simulation_id(
         self, definition: ReportDefinition, simulation: SimulationDefinition
-    ) -> UUID:
+    ) -> UUID | None:
         legacy_id = simulation.legacy_simulation_id
         if legacy_id in self.simulation_ids:
             return self.simulation_ids[legacy_id]
@@ -144,6 +160,10 @@ class _Provisioner:
         if record is not None:
             _check_matches(record, new_simulation, subject)
             self.result.existing_simulations += 1
+        elif self.dry_run:
+            self.result.new_simulations += 1
+            self.simulation_ids[legacy_id] = None
+            return None
         else:
             record = _create(
                 lambda: self.simulation_store.create_migrated(new_simulation), subject
@@ -153,15 +173,35 @@ class _Provisioner:
         self.simulation_ids[legacy_id] = record.id
         return record.id
 
-    def _report(self, definition: ReportDefinition, simulation_ids: list[UUID]) -> None:
+    def _report(
+        self, definition: ReportDefinition, simulation_ids: list[UUID | None]
+    ) -> None:
         legacy_id = definition.legacy_report_id
         subject = f"v1 report {legacy_id}"
-        new_report = definition.new_report(
-            simulation_ids[0], simulation_ids[1] if len(simulation_ids) > 1 else None
-        )
         record = self.report_store.get_by_legacy_report_id(legacy_id)
+        existing_ids = [
+            simulation_id
+            for simulation_id in simulation_ids
+            if simulation_id is not None
+        ]
+        if len(existing_ids) < len(simulation_ids):
+            # Only in a dry run: a run would create some of the simulations.
+            if record is not None:
+                msg = (
+                    f"{subject} is already migrated, "
+                    "with simulations this run would create"
+                )
+                raise DefinitionRejectedError(msg)
+            self.result.new_reports += 1
+            return
+        new_report = definition.new_report(
+            existing_ids[0], existing_ids[1] if len(existing_ids) > 1 else None
+        )
         created = record is None
         if record is None:
+            if self.dry_run:
+                self.result.new_reports += 1
+                return
             record = _create(
                 lambda: self.report_store.create_migrated(new_report), subject
             )
@@ -181,12 +221,15 @@ def provision_reports(
     definitions: ReportDefinitionsFile,
     simulation_store: SimulationStore,
     report_store: ReportStore,
+    *,
+    dry_run: bool = False,
 ) -> ProvisioningResult:
     """Create every definition's simulations and report, and return the result.
 
-    Both stores must connect as the runtime role.
+    With ``dry_run``, write nothing and return what a run would do. Both stores
+    must connect as the runtime role.
     """
-    provisioner = _Provisioner(simulation_store, report_store)
+    provisioner = _Provisioner(simulation_store, report_store, dry_run=dry_run)
     for definition in definitions.reports:
         provisioner.provision(definition)
     return provisioner.result

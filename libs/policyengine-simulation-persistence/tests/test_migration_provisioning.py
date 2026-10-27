@@ -48,11 +48,12 @@ def _household_report(rows, legacy_report_id=4513, **overrides):
     return household_report_definition(legacy_report_id, **values)
 
 
-def _provision(database, *report_definitions):
+def _provision(database, *report_definitions, dry_run=False):
     return provision_reports(
         parse_definitions(*report_definitions),
         simulation_store(database),
         report_store(database),
+        dry_run=dry_run,
     )
 
 
@@ -111,6 +112,7 @@ def test_each_report_gets_its_simulations_and_then_the_report(
     assert result.failures == []
     assert (result.new_simulations, result.existing_simulations) == (4, 0)
     assert (result.new_reports, result.existing_reports) == (2, 0)
+    assert result.dry_run is False
 
 
 def test_running_again_creates_nothing_and_maps_the_same_reports(
@@ -256,3 +258,121 @@ def test_a_definition_the_database_rejects_fails_and_the_rest_continue(
     assert [mapped.legacy_report_id for mapped in result.reports] == [4513]
     # The baseline was created before the reform failed; a later run reuses it.
     assert (result.new_simulations, result.new_reports) == (3, 1)
+
+
+def test_a_dry_run_writes_nothing_and_counts_what_a_run_would_create(
+    migrated_database, public_api_rows
+) -> None:
+    result = _provision(
+        migrated_database,
+        _economy_report(public_api_rows, 4512),
+        _economy_report(public_api_rows, 4515),
+        _household_report(public_api_rows),
+        dry_run=True,
+    )
+
+    assert _row_counts(migrated_database) == (0, 0)
+    assert result.dry_run is True
+    assert result.reports == []
+    assert result.failures == []
+    assert (result.new_simulations, result.existing_simulations) == (4, 0)
+    assert (result.new_reports, result.existing_reports) == (3, 0)
+
+
+def test_a_dry_run_after_a_run_maps_every_existing_report(
+    migrated_database, public_api_rows
+) -> None:
+    definitions = (_economy_report(public_api_rows), _household_report(public_api_rows))
+    first = _provision(migrated_database, *definitions)
+
+    dry_run = _provision(migrated_database, *definitions, dry_run=True)
+
+    assert dry_run.reports == [
+        ProvisionedReport(
+            legacy_report_id=mapped.legacy_report_id,
+            report_id=mapped.report_id,
+            created=False,
+        )
+        for mapped in first.reports
+    ]
+    assert (dry_run.new_simulations, dry_run.existing_simulations) == (0, 4)
+    assert (dry_run.new_reports, dry_run.existing_reports) == (0, 2)
+
+
+def test_a_dry_run_counts_a_report_whose_simulations_all_exist(
+    migrated_database, public_api_rows
+) -> None:
+    _provision(migrated_database, _economy_report(public_api_rows, 4512))
+
+    result = _provision(
+        migrated_database, _economy_report(public_api_rows, 4515), dry_run=True
+    )
+
+    assert (result.new_simulations, result.existing_simulations) == (0, 2)
+    assert (result.new_reports, result.existing_reports) == (1, 0)
+    assert _row_counts(migrated_database) == (2, 1)
+
+
+def test_a_dry_run_reports_rows_already_migrated_differently(
+    migrated_database, public_api_rows
+) -> None:
+    _provision(migrated_database, _economy_report(public_api_rows))
+    simulation_store(migrated_database).create_migrated(
+        economy_simulation(
+            public_api_rows,
+            policy_id=None,
+            region_code="state/ny",
+            legacy_simulation_id=9003,
+        )
+    )
+
+    result = _provision(
+        migrated_database,
+        _economy_report(public_api_rows, year=2027),
+        _household_report(public_api_rows),
+        dry_run=True,
+    )
+
+    assert result.failures == [
+        ProvisioningFailure(
+            legacy_report_id=4512,
+            reason="v1 report 4512 is already migrated with a different year",
+        ),
+        ProvisioningFailure(
+            legacy_report_id=4513,
+            reason=(
+                "v1 simulation 9003 is already migrated with a different kind, "
+                "household_id, region_code"
+            ),
+        ),
+    ]
+    assert _row_counts(migrated_database) == (3, 1)
+
+
+def test_a_dry_run_reports_a_report_migrated_with_other_simulations(
+    migrated_database, public_api_rows
+) -> None:
+    _provision(migrated_database, _economy_report(public_api_rows))
+
+    result = _provision(
+        migrated_database,
+        _economy_report(
+            public_api_rows,
+            baseline=economy_simulation_definition(9101),
+            reform=economy_simulation_definition(
+                9102, policy_id=str(public_api_rows.us_policy_id)
+            ),
+        ),
+        dry_run=True,
+    )
+
+    assert result.failures == [
+        ProvisioningFailure(
+            legacy_report_id=4512,
+            reason=(
+                "v1 report 4512 is already migrated, "
+                "with simulations this run would create"
+            ),
+        )
+    ]
+    assert (result.new_simulations, result.new_reports) == (2, 0)
