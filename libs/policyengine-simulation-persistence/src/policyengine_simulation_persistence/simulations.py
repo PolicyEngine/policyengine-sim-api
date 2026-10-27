@@ -278,6 +278,51 @@ class SimulationStore:
             )
         return SimulationRecord.from_row(row)
 
+    def find_or_create(self, new_simulation: NewSimulation) -> SimulationRecord:
+        """Return the oldest simulation with this definition, or create it.
+
+        Runs are reused per simulation, so a submission that describes a
+        simulation already defined, such as current law in California, uses
+        that simulation and can reuse its runs. Two concurrent submissions of
+        a new definition can each create one; both work, and later
+        submissions use the older.
+        """
+        values = _new_simulation_values(new_simulation)
+        definition = [
+            simulations.c[name].is_not_distinct_from(values[name])
+            for name in (
+                "kind",
+                "country",
+                "policy_id",
+                "dynamic_id",
+                "household_id",
+                "region_code",
+                "dataset_name",
+            )
+        ]
+        with self.engine.begin() as connection:
+            row = (
+                connection.execute(
+                    select(simulations)
+                    .where(*definition)
+                    .order_by(simulations.c.created_at, simulations.c.id)
+                    .limit(1)
+                )
+                .mappings()
+                .first()
+            )
+            if row is None:
+                row = (
+                    connection.execute(
+                        postgres_insert(simulations)
+                        .values(**values)
+                        .returning(*simulations.c)
+                    )
+                    .mappings()
+                    .one()
+                )
+        return SimulationRecord.from_row(row)
+
     def create_migrated(self, new_simulation: NewSimulation) -> SimulationRecord:
         """Create a simulation for a v1 simulation, or return the existing one.
 

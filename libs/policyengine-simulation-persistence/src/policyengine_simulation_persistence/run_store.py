@@ -16,6 +16,10 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 
+from policyengine_simulation_persistence.output_files import (
+    OutputFileRecord,
+    available_output_files,
+)
 from policyengine_simulation_persistence.reports import ReportKind, reports
 from policyengine_simulation_persistence.runs import (
     UNFINISHED_STATUSES,
@@ -34,7 +38,7 @@ from policyengine_simulation_persistence.simulations import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Collection
 
     from sqlalchemy import ColumnElement, Connection, Engine, RowMapping
 
@@ -332,6 +336,90 @@ class RunStore:
             .mappings()
             .first()
         )
+
+    def report_runs(self, report_id: UUID) -> list[ReportRunRecord]:
+        """Return the report's runs, newest first."""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(report_runs)
+                .where(report_runs.c.report_id == report_id)
+                .order_by(report_runs.c.created_at.desc(), report_runs.c.id.desc())
+            ).mappings()
+            return [ReportRunRecord.from_row(row) for row in rows]
+
+    def comparisons_ready_to_start(
+        self,
+        *,
+        simulation_run_ids: Collection[UUID] | None = None,
+        limit: int = 100,
+    ) -> list[ReportRunRecord]:
+        """Return pending comparison steps whose two simulation runs succeeded.
+
+        ``simulation_run_ids`` keeps only the report runs that compare one of
+        those runs, such as the runs a call just finished.
+        """
+        baseline = simulation_runs.alias("baseline_run")
+        reform = simulation_runs.alias("reform_run")
+        conditions = [
+            report_runs.c.comparison_status == RunStatus.PENDING.value,
+            baseline.c.status == RunStatus.SUCCEEDED.value,
+            reform.c.status == RunStatus.SUCCEEDED.value,
+        ]
+        if simulation_run_ids is not None:
+            wanted = set(simulation_run_ids)
+            conditions.append(
+                report_runs.c.baseline_simulation_run_id.in_(wanted)
+                | report_runs.c.reform_simulation_run_id.in_(wanted)
+            )
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(report_runs)
+                .join(
+                    baseline, baseline.c.id == report_runs.c.baseline_simulation_run_id
+                )
+                .join(reform, reform.c.id == report_runs.c.reform_simulation_run_id)
+                .where(*conditions)
+                .order_by(report_runs.c.created_at)
+                .limit(limit)
+            ).mappings()
+            return [ReportRunRecord.from_row(row) for row in rows]
+
+    def pending_simulation_runs(
+        self, *, created_before: datetime, limit: int = 100
+    ) -> list[SimulationRunRecord]:
+        """Return runs still pending that were created before ``created_before``.
+
+        A run whose submitting instance stopped before starting its call stays
+        pending; the safety check starts it.
+        """
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(simulation_runs)
+                .where(
+                    simulation_runs.c.status == RunStatus.PENDING.value,
+                    simulation_runs.c.created_at < created_before,
+                )
+                .order_by(simulation_runs.c.created_at)
+                .limit(limit)
+            ).mappings()
+            return [SimulationRunRecord.from_row(row) for row in rows]
+
+    def simulation_output_file(
+        self,
+        simulation_run_id: UUID,
+        role: str,
+        *,
+        now: datetime | None = None,
+    ) -> OutputFileRecord | None:
+        """Return the newest file of ``role`` the run stored that is still offered."""
+        with self.engine.connect() as connection:
+            files = available_output_files(
+                connection,
+                now=self._clock() if now is None else now,
+                simulation_run_id=simulation_run_id,
+            )
+        matching = [file for file in files if file.role == role]
+        return matching[-1] if matching else None
 
     def get_report_run(self, report_run_id: UUID) -> ReportRunRecord | None:
         """Return the report run with this ID, or None."""
