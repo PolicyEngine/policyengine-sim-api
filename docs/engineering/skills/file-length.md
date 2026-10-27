@@ -17,17 +17,14 @@ complexity, branch, statement and argument rules each measure one function, so
 a module can keep growing while every function in it passes. A long module
 usually holds several responsibilities, and is hard to review.
 
-## The baseline
+## No exceptions
 
-While the rule is ratcheted, `rules/baselines/python-file-length.txt` lists the
-files that were already over their limit when the rule was added. The guard
-fails on a file over its limit that the baseline doesn't list, and on a listed
-file that is now within its limit or no longer tracked. The pull request that
-splits a listed file therefore removes its entry and lowers the rule's baseline
-`count`.
+The rule is enforced: every tracked Python file is within its limit, and there
+is no baseline of tolerated files. A file that grows past its limit fails the
+`quality-guards` job, so split it in the same pull request.
 
-Never add an entry, or move a file out of the rule's scope: that weakens the
-rule, which only a person may decide (see
+Never add a baseline or an exception, or move a file out of the rule's scope:
+that weakens the rule, which only a person may decide (see
 [the registry's baselines](rules-registry.md#baselines)). Split the file
 instead.
 
