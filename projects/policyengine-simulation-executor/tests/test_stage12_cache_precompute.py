@@ -9,7 +9,12 @@ import pandas as pd
 import pytest
 from google.api_core.exceptions import NotFound, PreconditionFailed
 from policyengine_simulation_executor import simulation_runtime
-from policyengine_simulation_executor.stage12_cache import precompute
+from policyengine_simulation_executor.stage12_cache import (
+    precompute,
+    precompute_baselines,
+    precompute_datasets,
+    precompute_planning,
+)
 from policyengine_simulation_executor.stage12_cache.models import (
     BaselinePlanEntry,
     CacheBundleIdentity,
@@ -153,11 +158,18 @@ class _FakeClient:
 
 
 def _use_store(monkeypatch, client: _FakeClient) -> None:
-    monkeypatch.setattr(
+    # Every precompute module that opens the cache store.
+    for module in (
         precompute,
-        "Stage12CacheStore",
-        lambda bucket: Stage12CacheStore(bucket, client=client),
-    )
+        precompute_planning,
+        precompute_datasets,
+        precompute_baselines,
+    ):
+        monkeypatch.setattr(
+            module,
+            "Stage12CacheStore",
+            lambda bucket: Stage12CacheStore(bucket, client=client),
+        )
 
 
 def _store_every_planned_file(client: _FakeClient, plan: PrecomputePlan) -> None:
@@ -228,10 +240,10 @@ def stubbed_planning(monkeypatch):
     """Stub everything plan_artifacts_impl reads except the state targets."""
     client = _FakeClient()
     _use_store(monkeypatch, client)
-    monkeypatch.setattr(precompute, "load_stage12_bundle", lambda: "resolved")
-    monkeypatch.setattr(precompute, "_bundle_identity", _bundle)
+    monkeypatch.setattr(precompute_planning, "load_stage12_bundle", lambda: "resolved")
+    monkeypatch.setattr(precompute_planning, "_bundle_identity", _bundle)
     monkeypatch.setattr(
-        precompute,
+        precompute_planning,
         "collect_dataset_identity",
         lambda _resolved, *, country, year: SimpleNamespace(
             digest=f"dataset-{year}",
@@ -239,10 +251,10 @@ def stubbed_planning(monkeypatch):
             filename=f"populace_year_{year}.h5",
         ),
     )
-    monkeypatch.setattr(precompute, "US_REGION_GROUPS", (("state/ca",),))
+    monkeypatch.setattr(precompute_planning, "US_REGION_GROUPS", (("state/ca",),))
     monkeypatch.setattr(
-        precompute,
-        "_baseline_identity",
+        precompute_planning,
+        "baseline_identity",
         lambda year, _group: (
             SimpleNamespace(output_plan=None),
             SimpleNamespace(
@@ -253,7 +265,9 @@ def stubbed_planning(monkeypatch):
             ),
         ),
     )
-    monkeypatch.setattr(precompute, "stage12_output_plan_sha256", lambda _: "b" * 64)
+    monkeypatch.setattr(
+        precompute_planning, "stage12_output_plan_sha256", lambda _: "b" * 64
+    )
 
     def fake_state_identity(resolved, *, country, year, dataset, **state_filter):
         assert resolved == "resolved"
@@ -268,7 +282,7 @@ def stubbed_planning(monkeypatch):
         )
 
     monkeypatch.setattr(
-        precompute, "collect_state_dataset_identity", fake_state_identity
+        precompute_planning, "collect_state_dataset_identity", fake_state_identity
     )
     targets = [
         precompute.StateDatasetTarget(
@@ -286,7 +300,9 @@ def stubbed_planning(monkeypatch):
             dataset=REGIONAL_DATASET,
         ),
     ]
-    monkeypatch.setattr(precompute, "state_dataset_targets", lambda: tuple(targets))
+    monkeypatch.setattr(
+        precompute_planning, "state_dataset_targets", lambda: tuple(targets)
+    )
     return SimpleNamespace(client=client, targets=targets)
 
 
@@ -326,7 +342,7 @@ def test_plan_lists_every_state_dataset_year_major_with_presence(
 def test_states_on_the_default_dataset_add_no_state_datasets(
     stubbed_planning, monkeypatch
 ) -> None:
-    monkeypatch.setattr(precompute, "state_dataset_targets", tuple)
+    monkeypatch.setattr(precompute_planning, "state_dataset_targets", tuple)
 
     assert precompute.plan_artifacts_impl("cache-bucket").state_datasets == ()
 
@@ -366,7 +382,9 @@ def test_state_targets_follow_how_a_request_for_the_state_resolves(
             ),
         )
     )
-    monkeypatch.setattr(precompute, "_country_module", lambda _country: country_module)
+    monkeypatch.setattr(
+        precompute_planning, "_country_module", lambda _country: country_module
+    )
 
     targets = precompute.state_dataset_targets()
 
@@ -850,10 +868,10 @@ def test_determinism_check_records_only_a_pass_that_loaded_the_stored_file(
     probe = plan.baselines[0]
     (tmp_path / probe.filename).write_bytes(b"h5")
     monkeypatch.setattr(simulation_runtime, "resolve_data_folder", lambda: tmp_path)
-    monkeypatch.setattr(precompute, "_ensure_dataset_file", lambda *_: None)
+    monkeypatch.setattr(precompute_baselines, "_ensure_dataset_file", lambda *_: None)
     monkeypatch.setattr(
-        precompute,
-        "_scoped_planned_simulation",
+        precompute_baselines,
+        "scoped_planned_simulation",
         lambda _year, _group, *, reform=False: "reform" if reform else "baseline",
     )
     calculations = {
@@ -880,10 +898,10 @@ def test_determinism_check_records_only_a_pass_that_loaded_the_stored_file(
 
 def _use_determinism_calculations(monkeypatch, tmp_path, cached, fresh) -> None:
     monkeypatch.setattr(simulation_runtime, "resolve_data_folder", lambda: tmp_path)
-    monkeypatch.setattr(precompute, "_ensure_dataset_file", lambda *_: None)
+    monkeypatch.setattr(precompute_baselines, "_ensure_dataset_file", lambda *_: None)
     monkeypatch.setattr(
-        precompute,
-        "_scoped_planned_simulation",
+        precompute_baselines,
+        "scoped_planned_simulation",
         lambda _year, _group, *, reform=False: "reform" if reform else "baseline",
     )
     calculations = {
@@ -954,7 +972,7 @@ def test_determinism_check_downloads_the_stored_baseline_only_when_missing(
         def write_json(self, *_):
             pass
 
-    monkeypatch.setattr(precompute, "Stage12CacheStore", RecordingStore)
+    monkeypatch.setattr(precompute_baselines, "Stage12CacheStore", RecordingStore)
     plan = _plan(exists=True, verified=False)
     probe = plan.baselines[0]
     if already_local:
@@ -1006,7 +1024,9 @@ def test_planned_baseline_file_is_the_one_the_worker_saves_and_loads(
     _use_store(monkeypatch, client)
     plan = precompute.plan_artifacts_impl("cache-bucket")
     entry = plan.baselines[0]
-    planned = precompute._scoped_planned_simulation(entry.year, entry.region_codes)
+    planned = precompute_planning.scoped_planned_simulation(
+        entry.year, entry.region_codes
+    )
     params = simulation_module.simulation_runtime_params(planned)
     country_module = simulation_runtime._country_module("us")
     region = simulation_runtime._resolve_region(
@@ -1078,9 +1098,11 @@ class TestBuildStateDatasetsImpl:
             target("WY", sources.WYOMING_FIPS),
         ]
         monkeypatch.setattr(
-            precompute, "state_dataset_targets", lambda: tuple(state.targets)
+            precompute_datasets, "state_dataset_targets", lambda: tuple(state.targets)
         )
-        monkeypatch.setattr(precompute, "load_stage12_bundle", lambda: "resolved")
+        monkeypatch.setattr(
+            precompute_datasets, "load_stage12_bundle", lambda: "resolved"
+        )
 
         def fake_state_identity(resolved, *, country, year, dataset, **state_filter):
             digest = f"state-{year}-{state_filter['state_code']}"
@@ -1091,7 +1113,7 @@ class TestBuildStateDatasetsImpl:
             )
 
         monkeypatch.setattr(
-            precompute, "collect_state_dataset_identity", fake_state_identity
+            precompute_datasets, "collect_state_dataset_identity", fake_state_identity
         )
 
         def fake_ensure_datasets(*, datasets, years, data_folder):
@@ -1116,7 +1138,7 @@ class TestBuildStateDatasetsImpl:
             for geoid in (4901, 4902, 4903, 4904, 5600)
         ]
         monkeypatch.setattr(
-            precompute,
+            precompute_datasets,
             "_country_module",
             lambda _country: SimpleNamespace(
                 ensure_datasets=fake_ensure_datasets,
