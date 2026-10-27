@@ -223,12 +223,16 @@ def _integer_record_value(record: Mapping[str, Any], key: str) -> int | None:
 
 
 def _should_build_us_congressional_district_impact(region_code: str | None) -> bool:
-    if region_code is None:
-        return True
-    normalized_region_code = region_code.lower()
-    return normalized_region_code == "us" or normalized_region_code.startswith(
-        ("state/", "region_group/")
-    )
+    """Return whether a US run for this region computes congressional districts.
+
+    Only state runs do, such as ``state/ca`` in any case. National runs (no
+    region, or ``us``) and region-group runs compute none, so neither do
+    segmented national runs, their reduce or Stage 12 aggregation: a
+    nationwide report takes its districts from a separate run of each state
+    on that state's dataset, which gives each district the same figures as
+    its state's own report. District and place runs compute none either.
+    """
+    return region_code is not None and region_code.lower().startswith("state/")
 
 
 def build_congressional_district_impact(
@@ -238,10 +242,11 @@ def build_congressional_district_impact(
     *,
     region_code: str | None = None,
 ) -> CongressionalDistrictImpactOutput | None:
-    """Compute US congressional district impacts for national, state or group runs.
+    """Compute US congressional district impacts for a state run.
 
-    None for other countries or regions, and when the calculation fails (the
-    failure is logged; SPM selection errors still propagate).
+    None for other countries and other regions, including national and
+    region-group runs, and when the calculation fails (the failure is logged;
+    SPM selection errors still propagate).
     """
     if country != "us":
         return None

@@ -1,4 +1,4 @@
-"""Unit tests for region-group resolution (B2) and the CD-impact gate (B3)."""
+"""Unit tests for region-group resolution (B2) and the district-impact regions (B3)."""
 
 from unittest.mock import MagicMock
 
@@ -11,7 +11,7 @@ from policyengine.core.scoping_strategy import (
 from policyengine_simulation_executor import region_resolution
 from policyengine_simulation_executor import simulation_runtime as sr
 from policyengine_simulation_executor.simulation_output_geographic import (
-    _should_build_us_congressional_district_impact as gate,
+    _should_build_us_congressional_district_impact as should_build_districts,
 )
 
 
@@ -119,13 +119,16 @@ class TestResolveRegionGroup:
         assert isinstance(res.scoping_strategy, RegionGroupStrategy)
 
 
-class TestCongressionalDistrictGate:
-    def test__allows_national_state_and_group(self):
-        assert gate(None) is True
-        assert gate("us") is True
-        assert gate("state/ca") is True
-        assert gate("region_group/state/hi+state/ia") is True
+class TestCongressionalDistrictRegions:
+    def test__allows_states(self):
+        assert should_build_districts("state/ca") is True
+        assert should_build_districts("STATE/CA") is True
+
+    def test__rejects_national_and_group(self):
+        assert should_build_districts(None) is False
+        assert should_build_districts("us") is False
+        assert should_build_districts("region_group/state/hi+state/ia") is False
 
     def test__rejects_district_and_place(self):
-        assert gate("congressional_district/CA-01") is False
-        assert gate("place/CA-12345") is False
+        assert should_build_districts("congressional_district/CA-01") is False
+        assert should_build_districts("place/CA-12345") is False
