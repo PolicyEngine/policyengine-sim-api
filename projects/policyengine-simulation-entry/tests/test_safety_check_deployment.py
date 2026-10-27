@@ -56,6 +56,10 @@ def _revision(*, service=SERVICE, environment=None):
                     if environment is not None
                     else [
                         {"name": "APP_ENVIRONMENT", "value": "production"},
+                        {
+                            "name": "SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID",
+                            "value": "ac-workspace0001",
+                        },
                         {"name": "OLD_GATEWAY_URL", "value": "https://legacy.example"},
                         {"name": "OBSERVABILITY_SERVICE_NAMESPACE", "value": "sim"},
                         {"name": "CLOUD_RUN_REGION", "value": "us-central1"},
@@ -286,3 +290,68 @@ def test_a_rollback_points_the_job_at_the_restored_revision() -> None:
     assert steps[safety]["env"]["SAFETY_CHECK_REVISION"] == (
         "${{ inputs.entrypoint_revision }}"
     )
+
+
+def test_a_revision_from_before_the_safety_check_pauses_the_schedule(tmp_path) -> None:
+    """A 1.04 or 1.05 revision mounts the database and token but has no job code."""
+    environment = [
+        entry
+        for entry in _revision()["spec"]["containers"][0]["env"]
+        if entry["name"] != "SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID"
+    ]
+
+    result, fakes, _ = _deploy(
+        tmp_path, _revision(environment=environment), schedule_exists=True
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert [call[1:4] for call in fakes.calls("gcloud")] == [
+        ["run", "revisions", "describe"],
+        ["scheduler", "jobs", "describe"],
+        ["scheduler", "jobs", "pause"],
+    ]
+
+
+@pytest.mark.parametrize("schedule_exists", [True, False])
+def test_pausing_stops_the_schedule_without_a_revision(
+    tmp_path, schedule_exists
+) -> None:
+    fakes, _ = _fakes(tmp_path, _revision(), schedule_exists=schedule_exists)
+    settings = {
+        "PROJECT_ID": "policyengine",
+        "REGION": "us-central1",
+        "SERVICE": SERVICE,
+    }
+
+    result = run_script(SCRIPT, "pause", env=fakes.env(**settings))
+
+    assert result.returncode == 0, result.stderr
+    expected = [["scheduler", "jobs", "describe"]]
+    if schedule_exists:
+        expected.append(["scheduler", "jobs", "pause"])
+    assert [call[1:4] for call in fakes.calls("gcloud")] == expected
+
+
+def test_a_failed_update_in_a_rollback_pauses_the_safety_check() -> None:
+    """The job must not keep running the image traffic just moved away from."""
+    steps = _steps(workflow_jobs(ROLLBACK_WORKFLOW)["rollback"])
+    safety = _step_named(steps, "Point the safety check at the restored revision")
+    pause = _step_named(steps, "Pause the safety check after a failed update")
+
+    assert safety < pause
+    assert steps[safety]["id"] == "safety_check"
+    assert steps[pause]["if"] == (
+        "${{ failure() && steps.safety_check.outcome == 'failure' }}"
+    )
+    assert steps[pause]["run"] == f".github/scripts/{SCRIPT} pause"
+
+
+def test_a_failed_restore_in_a_promotion_pauses_the_safety_check() -> None:
+    steps = _steps(workflow_jobs(REUSABLE_DEPLOY_WORKFLOW)["promote_entrypoint"])
+    restore = _step_named(steps, "Point the safety check back at the previous revision")
+    pause = _step_named(steps, "Pause the safety check after a failed restore")
+
+    assert restore < pause
+    assert steps[restore]["id"] == "safety_check_restore"
+    assert "steps.safety_check_restore.outcome == 'failure'" in steps[pause]["if"]
+    assert steps[pause]["run"] == f".github/scripts/{SCRIPT} pause"

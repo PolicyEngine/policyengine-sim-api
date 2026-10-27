@@ -1042,11 +1042,16 @@ jobs:
         run: .github/scripts/set-cloud-run-simulation-entry-revision.sh
 
       - name: Point the safety check back at the previous revision
+        id: safety_check_restore
         if: ${{ failure() && steps.safety_check.outcome == 'failure' && env.PREVIOUS_REVISION != '' }}
         env:
           SAFETY_CHECK_REVISION: ${{ env.PREVIOUS_REVISION }}
           SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.SIMULATION_SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT }}
         run: .github/scripts/deploy-cloud-run-simulation-safety-check.sh
+
+      - name: Pause the safety check after a failed restore
+        if: ${{ failure() && steps.safety_check_restore.outcome == 'failure' }}
+        run: .github/scripts/deploy-cloud-run-simulation-safety-check.sh pause
 
   finalize_routing:
     name: Finalize the Modal routing publication
