@@ -30,8 +30,7 @@ from policyengine_simulation_contract.job_progress import JobStage
 from policyengine_simulation_persistence import RunStatus, RunTrigger
 from sqlalchemy.exc import DBAPIError
 
-from policyengine_simulation_entry.economy_reports import (
-    EconomyReports,
+from policyengine_simulation_entry.economy_report_types import (
     EconomyReportSubmission,
     EconomyRequestError,
     ReportDefinitions,
@@ -63,10 +62,11 @@ if TYPE_CHECKING:
     )
 
     from policyengine_simulation_entry.auth import AuthorizationDependency
-    from policyengine_simulation_entry.economy_reports import (
+    from policyengine_simulation_entry.economy_report_types import (
         EconomyCatalog,
         SimulationDefinitions,
     )
+    from policyengine_simulation_entry.economy_reports import EconomyReports
 
 logger = logging.getLogger(__name__)
 

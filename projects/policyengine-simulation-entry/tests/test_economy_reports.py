@@ -22,13 +22,13 @@ from policyengine_simulation_contract.economy_runs import (
     EconomySimulationCall,
 )
 from policyengine_simulation_contract.stage12_manifest import v2_application_name
-from policyengine_simulation_entry.economy_reports import (
-    EconomyReports,
+from policyengine_simulation_entry.economy_report_types import (
     EconomyReportSubmission,
     EconomyRequestError,
     ReportNotFoundError,
     SimulationChoice,
 )
+from policyengine_simulation_entry.economy_reports import EconomyReports
 from policyengine_simulation_entry.run_dispatch import RunDispatchService
 from policyengine_simulation_persistence import (
     PolicyParametersMissingError,

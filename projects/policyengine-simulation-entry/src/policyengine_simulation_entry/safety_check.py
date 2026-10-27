@@ -38,7 +38,7 @@ from policyengine_simulation_observability.observability import (
 )
 from policyengine_simulation_persistence.run_store import utc_now
 
-from policyengine_simulation_entry.economy_reports import ResumedWork
+from policyengine_simulation_entry.economy_report_types import ResumedWork
 from policyengine_simulation_entry.modal_calls import OWN_PROCESS_SIGNALS
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
 
