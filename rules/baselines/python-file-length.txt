@@ -1,8 +1,0 @@
-# Tolerated existing violations. This list may only shrink.
-#
-# Rule sim.quality.python-file-length. Each entry is the path of a tracked
-# Python file that was already over its line limit (800 lines, or 1,500 for
-# test code) when the rule was added. Remove an entry, and lower the rule's
-# baseline count, in the pull request that splits the file.
-projects/policyengine-simulation-entry/src/policyengine_simulation_entry/app.py
-projects/policyengine-simulation-entry/tests/test_deployment_assets.py
