@@ -18,8 +18,14 @@ dependencies = [
 migrations = [
     "alembic>=1.17.1,<2",
 ]
+# The one-time migration provisioning command (migration_provisioning) reads
+# its input file with Pydantic; nothing else in the library needs it.
+provisioning = [
+    "pydantic>=2.11,<3",
+]
 test = [
     "alembic>=1.17.1,<2",
+    "pydantic>=2.11,<3",
     "pytest>=8.3.4",
     "pytest-cov>=6.1.1",
     "pyyaml>=6.0.2",
