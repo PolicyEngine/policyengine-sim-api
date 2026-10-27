@@ -7,16 +7,26 @@
 # promoted (or restored by a rollback), so a rejected candidate never records
 # anything. It copies the revision's image digest, service account, Modal
 # token and database URL (at the secret versions the revision pins) and its
-# plain telemetry settings; nothing else. A revision without the simulation
-# database URL predates the safety check, so its schedule is paused.
+# plain telemetry settings; nothing else. A revision deployed before the
+# safety check existed has no job code, so its schedule is paused instead.
 #
-# Environment: PROJECT_ID, REGION, SERVICE, SAFETY_CHECK_REVISION,
-# SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT, RUNNER_TEMP.
+# With the argument `pause`, only pause the schedule: a workflow does this
+# when pointing the job at a revision failed part way, so the job never keeps
+# running the image traffic just moved away from.
+#
+# Environment: PROJECT_ID, REGION, SERVICE, and unless pausing,
+# SAFETY_CHECK_REVISION, SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT, RUNNER_TEMP.
 set -euo pipefail
 
 fail() {
   printf '%s\n' "$*" >&2
   exit 1
+}
+
+pause_schedule() {
+  if gcloud scheduler jobs describe "${job}" "${scheduler_location[@]}" >/dev/null 2>&1; then
+    gcloud scheduler jobs pause "${job}" "${scheduler_location[@]}" --quiet
+  fi
 }
 
 # Every five minutes: SAFETY_CHECK_INTERVAL in
@@ -25,32 +35,46 @@ SCHEDULE="*/5 * * * *"
 SECRETS=(SIMULATION_DATABASE_URL MODAL_TOKEN_ID MODAL_TOKEN_SECRET)
 PLAIN_VARIABLES_FILTER='^(APP_ENVIRONMENT|CLOUD_RUN_REGION|OBSERVABILITY_[A-Z_]+|OTEL_[A-Z_]+|POLICYENGINE_OTEL_GOOGLE_AUDIENCE)$'
 
-for variable_name in PROJECT_ID REGION SERVICE SAFETY_CHECK_REVISION \
-  SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT RUNNER_TEMP; do
+for variable_name in PROJECT_ID REGION SERVICE; do
   [[ -n "${!variable_name:-}" ]] || fail "${variable_name} is required"
 done
 [[ "${PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]] || fail "PROJECT_ID is invalid"
 [[ "${REGION}" =~ ^[a-z]+-[a-z]+[0-9]+$ ]] || fail "REGION is invalid"
 [[ "${SERVICE}" =~ ^[a-z]([a-z0-9-]{0,47}[a-z0-9])?$ ]] || fail "SERVICE is invalid"
-[[ "${SAFETY_CHECK_REVISION}" =~ ^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$ ]] \
-  || fail "SAFETY_CHECK_REVISION is invalid"
-[[ "${SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.gserviceaccount\.com$ ]] \
-  || fail "SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT is invalid"
 
 job="${SERVICE}-safety-check"
 location=(--project "${PROJECT_ID}" --region "${REGION}")
 scheduler_location=(--project "${PROJECT_ID}" --location "${REGION}")
+
+if [[ "${1:-}" == "pause" ]]; then
+  pause_schedule
+  printf 'The safety check schedule for %s is paused.\n' "${SERVICE}"
+  exit 0
+fi
+
+for variable_name in SAFETY_CHECK_REVISION SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT RUNNER_TEMP; do
+  [[ -n "${!variable_name:-}" ]] || fail "${variable_name} is required"
+done
+[[ "${SAFETY_CHECK_REVISION}" =~ ^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$ ]] \
+  || fail "SAFETY_CHECK_REVISION is invalid"
+[[ "${SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.gserviceaccount\.com$ ]] \
+  || fail "SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT is invalid"
 
 revision_json="$(gcloud run revisions describe "${SAFETY_CHECK_REVISION}" "${location[@]}" --format=json)"
 revision_service="$(jq -r '.metadata.labels["serving.knative.dev/service"] // ""' <<<"${revision_json}")"
 [[ "${revision_service}" == "${SERVICE}" ]] \
   || fail "${SAFETY_CHECK_REVISION} belongs to ${revision_service:-no service}, not ${SERVICE}"
 
-if ! jq -e '.spec.containers[0].env // [] | any(.name == "SIMULATION_DATABASE_URL")' >/dev/null <<<"${revision_json}"; then
-  if gcloud scheduler jobs describe "${job}" "${scheduler_location[@]}" >/dev/null 2>&1; then
-    gcloud scheduler jobs pause "${job}" "${scheduler_location[@]}" --quiet
-  fi
-  printf '%s has no simulation database, so the safety check is paused.\n' "${SAFETY_CHECK_REVISION}"
+# Every revision deployed with the safety check has the simulation database
+# and the expected Modal caller (SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID,
+# which the deploy has required since then); an older one has no job code.
+if ! jq -e '
+  .spec.containers[0].env // []
+  | any(.name == "SIMULATION_DATABASE_URL")
+    and any(.name == "SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID")
+' >/dev/null <<<"${revision_json}"; then
+  pause_schedule
+  printf '%s predates the safety check, so its schedule is paused.\n' "${SAFETY_CHECK_REVISION}"
   exit 0
 fi
 

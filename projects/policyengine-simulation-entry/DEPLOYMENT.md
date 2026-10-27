@@ -112,10 +112,14 @@ records anything:
 
 - the promotion job, after the promoted revision passes every check; if this
   step fails, the previous revision is restored and the job is pointed back
-  at it;
-- the rollback workflow, after it restores entrypoint traffic. A restored
-  revision without the simulation database predates the safety check, so the
-  schedule is paused.
+  at it, and if that fails too, the schedule is paused;
+- the rollback workflow, after it restores entrypoint traffic; if this step
+  fails, the schedule is paused, so the job never keeps running the image
+  traffic just moved away from.
+
+A revision deployed before the safety check existed (without
+`SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID`) has no job code, so pointing the
+job at it pauses the schedule instead.
 
 `beta` does not promote its candidate yet, so staging has no safety check
 until it does (plan item 1.39).

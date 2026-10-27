@@ -217,11 +217,17 @@ jobs:
           fi
 
       - name: Point the safety check at the restored revision
+        id: safety_check
         if: ${{ inputs.entrypoint_revision != '' }}
         env:
           SAFETY_CHECK_REVISION: ${{ inputs.entrypoint_revision }}
           SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.SIMULATION_SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT }}
         run: .github/scripts/deploy-cloud-run-simulation-safety-check.sh
+
+      # The job must not keep running the image traffic just moved away from.
+      - name: Pause the safety check after a failed update
+        if: ${{ failure() && steps.safety_check.outcome == 'failure' }}
+        run: .github/scripts/deploy-cloud-run-simulation-safety-check.sh pause
 
       - name: Verify the stable service serves the restored release
         if: ${{ !inputs.resolve_pending_publication }}
