@@ -147,3 +147,39 @@ def test_unreachable_modal_keys_are_not_a_refusal() -> None:
 
     with pytest.raises(ModalKeysUnavailableError):
         verifier.verify(_token())
+
+
+class _BrokenJwks:
+    """Modal's key set answered, but not with a key set PyJWT could read."""
+
+    def __init__(self, failure: Exception) -> None:
+        self.failure = failure
+
+    def get_signing_key_from_jwt(self, _token: str):
+        raise self.failure
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ValueError("Expecting value: line 1 column 1 (char 0)"),
+        ConnectionResetError("reset while reading the key set"),
+        OSError("truncated response"),
+    ],
+    ids=["not-json", "reset", "truncated"],
+)
+def test_any_failure_to_fetch_modal_keys_is_not_a_refusal(failure) -> None:
+    verifier = ModalIdentityVerifier(EXPECTED, signing_keys=_BrokenJwks(failure))
+
+    with pytest.raises(ModalKeysUnavailableError):
+        verifier.verify(_token())
+
+
+def test_a_token_naming_no_published_key_is_still_refused() -> None:
+    verifier = ModalIdentityVerifier(
+        EXPECTED,
+        signing_keys=_BrokenJwks(jwt.PyJWKClientError("Unable to find a signing key")),
+    )
+
+    with pytest.raises(ModalIdentityError):
+        verifier.verify(_token())

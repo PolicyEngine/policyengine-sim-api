@@ -104,6 +104,28 @@ def _bearer_token(request: Request) -> str | None:
     return header[len(_BEARER_PREFIX) :].strip() or None
 
 
+async def _caller(
+    request: Request, verifier: ModalCallerVerifier
+) -> ModalIdentity | JSONResponse:
+    """Return the verified Modal caller, or the answer that refuses or defers it."""
+    token = _bearer_token(request)
+    if token is None:
+        return _unauthorized()
+    try:
+        return await asyncio.to_thread(verifier.verify, token)
+    except ModalKeysUnavailableError:
+        logger.warning("call_report_modal_keys_unavailable")
+        return _answer(CallReportStatus.MODAL_UNREACHABLE)
+    except ModalIdentityError as error:
+        logger.warning("call_report_refused", extra={"reason": str(error)})
+        return _unauthorized()
+    # Anything else is this instance's own problem, not a refusal: the sender
+    # reports again after the wait.
+    except Exception:
+        logger.exception("call_report_token_not_checked")
+        return _answer(CallReportStatus.MODAL_UNREACHABLE)
+
+
 def register_call_report_route(
     app: FastAPI,
     *,
@@ -116,17 +138,9 @@ def register_call_report_route(
     async def report_call_ended(request: Request) -> JSONResponse:
         if verifier is None or recorder is None:
             return _answer(CallReportStatus.NOT_CONFIGURED)
-        token = _bearer_token(request)
-        if token is None:
-            return _unauthorized()
-        try:
-            identity = await asyncio.to_thread(verifier.verify, token)
-        except ModalKeysUnavailableError:
-            logger.warning("call_report_modal_keys_unavailable")
-            return _answer(CallReportStatus.MODAL_UNREACHABLE)
-        except ModalIdentityError as error:
-            logger.warning("call_report_refused", extra={"reason": str(error)})
-            return _unauthorized()
+        identity = await _caller(request, verifier)
+        if isinstance(identity, JSONResponse):
+            return identity
         try:
             report = CallEndedReport.model_validate_json(await request.body())
         except ValidationError as error:
