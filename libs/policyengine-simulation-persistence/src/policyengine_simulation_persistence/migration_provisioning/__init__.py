@@ -19,6 +19,12 @@ from policyengine_simulation_persistence.migration_provisioning.definitions impo
     ReportDefinitionsFile,
     SimulationDefinition,
 )
+from policyengine_simulation_persistence.migration_provisioning.provisioning import (
+    ProvisionedReport,
+    ProvisioningFailure,
+    ProvisioningResult,
+    provision_reports,
+)
 
 __all__ = [
     "REPORT_DEFINITIONS_SCHEMA_VERSION",
@@ -26,7 +32,11 @@ __all__ = [
     "EconomySimulationDefinition",
     "HouseholdReportDefinition",
     "HouseholdSimulationDefinition",
+    "ProvisionedReport",
+    "ProvisioningFailure",
+    "ProvisioningResult",
     "ReportDefinition",
     "ReportDefinitionsFile",
     "SimulationDefinition",
+    "provision_reports",
 ]
