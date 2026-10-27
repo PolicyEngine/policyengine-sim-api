@@ -3,7 +3,7 @@
 FROM --platform=$BUILDPLATFORM python:3.13-slim AS base
 
 # Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /uvx /bin/
 
 # Set common environment variables
 ENV ENVIRONMENT="production"

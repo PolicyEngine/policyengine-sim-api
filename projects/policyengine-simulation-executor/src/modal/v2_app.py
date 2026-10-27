@@ -161,6 +161,8 @@ def build_v2_image(
             uv_project_dir=_UV_PROJECT_DIR,
             frozen=True,
             extra_options="--only-group modal-simulation-image",
+            # The repository's uv release, from .uv-version.
+            uv_version="0.13.6",
         )
         .run_commands(
             bundle_data_install_command(

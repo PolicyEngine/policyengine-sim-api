@@ -65,6 +65,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v8.1.0
       with:
+        version: "0.13.6"
         enable-cache: true
 
     - name: Install dependencies
@@ -91,6 +92,8 @@ jobs:
 
     - name: Install uv
       uses: astral-sh/setup-uv@v8.1.0
+      with:
+        version: "0.13.6"
 
     - name: Install ruff
       # Pinned so a ruff release cannot change CI results; see ruff.toml.
@@ -126,6 +129,8 @@ jobs:
 
     - name: Install uv (the Pyright check's tests run the pinned Pyright)
       uses: astral-sh/setup-uv@v8.1.0
+      with:
+        version: "0.13.6"
 
     - name: Test the rules registry tool
       run: python -m unittest discover -s scripts/rules/tests -t .
@@ -175,6 +180,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v8.1.0
       with:
+        version: "0.13.6"
         enable-cache: true
 
     - name: Generate API clients
@@ -228,6 +234,7 @@ jobs:
     - name: Install uv
       uses: astral-sh/setup-uv@v8.1.0
       with:
+        version: "0.13.6"
         enable-cache: true
 
     - name: Set up Docker Buildx
