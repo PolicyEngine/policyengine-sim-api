@@ -8,7 +8,10 @@ from test_deployment_assets_support import (
     DEPLOY_WORKFLOW,
     DEPLOYMENT_READY_SCRIPT,
     REUSABLE_DEPLOY_WORKFLOW,
+    REUSABLE_DEPLOY_WORKFLOW_REFERENCE,
     STAGE12_DEPLOY_WORKFLOW,
+    STAGING_PROMOTION_FIXTURES,
+    WORKFLOWS_DIRECTORY,
     job_section,
     sentinel_check_step,
     workflow_jobs,
@@ -267,3 +270,78 @@ def test_deployed_stack_must_reproduce_the_numerical_sentinel():
         for index, name in enumerate(names)
         if name.startswith("Restore previous revision")
     )
+
+
+def _staging_deployment_job_ids(jobs: dict) -> list[str]:
+    """Return the jobs that run the reusable deployment workflow for staging."""
+    return [
+        job_id
+        for job_id, job in jobs.items()
+        if job.get("uses") == REUSABLE_DEPLOY_WORKFLOW_REFERENCE
+        and (job.get("with") or {}).get("deployment_environment") == "staging"
+    ]
+
+
+def staging_promotion_violations(jobs: dict) -> list[str]:
+    """Return each staging deployment job that leaves stable traffic unchanged.
+
+    Rule sim.deploy.staging-promotes-tested-revision: a staging deployment must
+    pass ``promote_entrypoint: true`` to the reusable deployment workflow, as
+    production deployments do. Any other value, including an expression,
+    counts as a violation.
+    """
+    return [
+        f"{job_id} must pass promote_entrypoint: true"
+        for job_id in _staging_deployment_job_ids(jobs)
+        if jobs[job_id]["with"].get("promote_entrypoint") is not True
+    ]
+
+
+def test_staging_deployments_promote_their_tested_entrypoint_revision():
+    """Staging's stable URL serves the revision that passed staging's tests.
+
+    Callers such as the Public API's staging service use the staging stable
+    URL, so a staging deployment that left stable traffic on an older revision
+    would leave them calling a build that the deployment did not test.
+    """
+    staging_jobs_by_workflow = {}
+    violations = []
+    for workflow_path in sorted(WORKFLOWS_DIRECTORY.glob("*.yml")):
+        jobs = workflow_jobs(workflow_path)
+        staging_job_ids = _staging_deployment_job_ids(jobs)
+        if staging_job_ids:
+            staging_jobs_by_workflow[workflow_path.name] = staging_job_ids
+        violations.extend(
+            f"{workflow_path.name}: {violation}"
+            for violation in staging_promotion_violations(jobs)
+        )
+
+    # The check must find the two known staging deployments, so that a renamed
+    # input or reusable workflow cannot make it pass by finding nothing.
+    assert "beta" in staging_jobs_by_workflow.get(DEPLOY_WORKFLOW.name, [])
+    assert "deploy-stage12-staging" in staging_jobs_by_workflow.get(
+        STAGE12_DEPLOY_WORKFLOW.name, []
+    )
+    for workflow_name, staging_job_ids in staging_jobs_by_workflow.items():
+        jobs = workflow_jobs(WORKFLOWS_DIRECTORY / workflow_name)
+        for job_id in staging_job_ids:
+            assert (
+                jobs[job_id]["with"]["entrypoint_service"]
+                == "policyengine-simulation-entry-staging"
+            )
+    assert violations == []
+
+
+def test_rule_proof_staging_promotes_tested_revision():
+    """Proof for rule sim.deploy.staging-promotes-tested-revision.
+
+    The bad fixture is the `beta` deployment as it was before the rule: it
+    tested a tagged candidate but never moved staging's stable traffic to it.
+    """
+    bad_jobs = workflow_jobs(STAGING_PROMOTION_FIXTURES / "bad_simulation_deploy.yml")
+    good_jobs = workflow_jobs(STAGING_PROMOTION_FIXTURES / "good_simulation_deploy.yml")
+
+    assert staging_promotion_violations(bad_jobs) == [
+        "beta must pass promote_entrypoint: true"
+    ]
+    assert staging_promotion_violations(good_jobs) == []
