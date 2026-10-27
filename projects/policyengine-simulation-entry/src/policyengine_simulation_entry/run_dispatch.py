@@ -218,7 +218,7 @@ class RunDispatchService:
                 steps.fail,
                 RunError(
                     RunErrorCode.DISPATCH_FAILED,
-                    f"Modal did not accept the call ({type(error).__name__}).",
+                    f"Starting the Modal call raised {type(error).__name__}.",
                 ),
             )
             return DispatchOutcome.DISPATCH_FAILED
