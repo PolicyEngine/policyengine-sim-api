@@ -15,10 +15,19 @@ so the tests follow the installed model version.
 
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 from dataset_year_sources import (
     model_projected_years,
     write_synthetic_source,
+)
+from policyengine_simulation_executor.dataset_years import (
+    dataset_data_year,
+    model_projection_end_year,
+    supported_dataset_years,
+)
+from policyengine_simulation_executor.release_bundle import (
+    get_country_release_bundle,
 )
 from policyengine_simulation_executor.simulation_runtime import (
     _load_dataset,
@@ -72,6 +81,7 @@ def country_source(request, tmp_path, monkeypatch):
         country=country,
         projected_years=model_projected_years(country, source_path),
         materialized=materialized,
+        materialized_path=source_path,
         data_folder=tmp_path / "data",
     )
 
@@ -159,3 +169,67 @@ def test_an_unsupported_year_never_reaches_ensure_datasets(country_source):
         )
 
     assert country_module.ensure_calls == []
+
+
+def test_a_supported_year_is_prepared_by_py(country_source):
+    requested_year = max(country_source.projected_years)
+
+    dataset, country_module = load_year(country_source, requested_year)
+
+    assert dataset is country_module.dataset
+    assert country_module.ensure_calls == [
+        {"years": [requested_year], "data_folder": str(country_source.data_folder)}
+    ]
+    # The source is materialized where .py's create_datasets looks for it.
+    ((country, dataset_name, options),) = country_source.materialized
+    assert country == country_source.country
+    assert dataset_name == get_country_release_bundle(country).default_dataset
+    assert options == {"data_dir": country_source.data_folder}
+
+
+def test_a_year_file_prepared_earlier_is_loaded_without_reading_the_source(
+    country_source,
+):
+    from policyengine.provenance.manifest import (
+        dataset_logical_name,
+        resolve_dataset_reference,
+    )
+
+    country = country_source.country
+    stem = dataset_logical_name(
+        resolve_dataset_reference(
+            country, get_country_release_bundle(country).default_dataset
+        )
+    )
+    requested_year = max(country_source.projected_years)
+    country_source.data_folder.mkdir()
+    (country_source.data_folder / f"{stem}_year_{requested_year}.h5").write_bytes(
+        b"year file"
+    )
+
+    dataset, country_module = load_year(country_source, requested_year)
+
+    assert dataset is country_module.dataset
+    assert country_source.materialized == []
+
+
+def test_supported_years_match_the_models_own_projection(country_source):
+    country = country_source.country
+    source_path = country_source.materialized_path
+
+    data_year = dataset_data_year(country, source_path)
+    supported = supported_dataset_years(country, data_year)
+
+    assert data_year == SYNTHETIC_DATA_YEAR
+    assert list(range(supported.first, supported.last + 1)) == (
+        country_source.projected_years
+    )
+    assert model_projection_end_year(country) == max(country_source.projected_years)
+
+
+def test_a_source_without_a_data_year_is_not_checked(country_source, tmp_path):
+    unlabelled_source = tmp_path / "unlabelled.h5"
+    with pd.HDFStore(unlabelled_source, mode="w") as store:
+        store.put("household", pd.DataFrame({"household_id": [1]}))
+
+    assert dataset_data_year(country_source.country, unlabelled_source) is None

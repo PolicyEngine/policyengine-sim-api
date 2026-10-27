@@ -19,7 +19,7 @@ from policyengine_simulation_contract.budget_window_state import (
     put_batch_job_seed,
     put_batch_job_state,
 )
-from policyengine_simulation_contract.spm import spm_error_detail
+from policyengine_simulation_contract.input_errors import input_error_detail
 from policyengine_simulation_observability.errors import log_and_redact_exception
 from policyengine_simulation_observability.stages import BUDGET_WINDOW_STAGES, Stage
 from src.modal.budget_window_context import (
@@ -258,7 +258,7 @@ class BudgetWindowBatchRunner:
             except TimeoutError:
                 continue
             except Exception as exc:  # noqa: BLE001  # call.get re-raises whatever the child worker raised; every failure fails the batch, logged with its traceback by log_and_redact_exception
-                detail = spm_error_detail(exc)
+                detail = input_error_detail(exc)
                 if detail:
                     self.state.errors = [detail]
                     self.fail_batch_for_child_error(
@@ -297,7 +297,7 @@ class BudgetWindowBatchRunner:
                         spm=self.state.request_payload.get("spm"),
                     )
             except Exception as exc:  # noqa: BLE001  # any unparseable child result fails the batch, logged with its traceback by log_and_redact_exception
-                detail = spm_error_detail(exc)
+                detail = input_error_detail(exc)
                 if detail:
                     self.state.errors = [detail]
                     self.fail_batch_for_child_error(

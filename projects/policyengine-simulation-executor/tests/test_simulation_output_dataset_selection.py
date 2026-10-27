@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from policyengine_simulation_executor import simulation_runtime
 from policyengine_simulation_executor.release_bundle import (
     BUNDLE_RECEIPT_FILENAME,
     get_country_release_bundle,
@@ -18,6 +19,24 @@ from policyengine_simulation_executor.simulation_runtime import (
 from policyengine_simulation_executor.simulation_runtime import (
     _load_dataset as _load_selected_dataset,
 )
+
+
+@pytest.fixture(autouse=True)
+def checked_dataset_years(monkeypatch):
+    """Skip the supported-year check, which reads a source dataset.
+
+    These tests cover which dataset and folder a request loads; the check has
+    its own tests in ``test_dataset_years``.
+    """
+    checked_years = []
+
+    def accept_dataset_year(country, year, *, dataset_name, data_folder):
+        checked_years.append((country, year, dataset_name, data_folder))
+
+    monkeypatch.setattr(
+        simulation_runtime, "require_supported_dataset_year", accept_dataset_year
+    )
+    return checked_years
 
 
 def _load_dataset(params, *, country_module=None, region_resolution=None):
@@ -276,6 +295,7 @@ def test_nondefault_dataset_cache_is_distinct_for_shared_filename_stem():
 def test_load_dataset_reads_a_nondefault_dataset_from_the_folder_it_is_given(
     tmp_path,
     monkeypatch,
+    checked_dataset_years,
 ):
     monkeypatch.setenv("POLICYENGINE_DATA_FOLDER", str(tmp_path / "image-data"))
     bundle = get_country_release_bundle("us")
@@ -302,6 +322,8 @@ def test_load_dataset_reads_a_nondefault_dataset_from_the_folder_it_is_given(
     assert ensure_calls == [
         {"datasets": [nondefault], "years": [2026], "data_folder": state_folder}
     ]
+    # The year is checked against the same dataset, in the same folder.
+    assert checked_dataset_years == [("us", 2026, nondefault, state_folder)]
 
 
 def test_load_dataset_without_a_folder_keeps_the_temporary_nondefault_folder(

@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any, NoReturn
 
-from policyengine_simulation_contract.spm import spm_error_detail
+from policyengine_simulation_contract.input_errors import input_error_detail
 from policyengine_simulation_observability.errors import make_correlation_id
 from pydantic import BaseModel, ConfigDict
 
@@ -106,11 +106,11 @@ def redacted_failure_detail(
             error_summary=error.message,
             segment_index=segment_index,
         )
-    spm = spm_error_detail(error)
-    if spm is not None:
+    input_error = input_error_detail(error)
+    if input_error is not None:
         return _safe_detail(
-            error_code=spm.code,
-            error_summary=spm.message,
+            error_code=input_error.code,
+            error_summary=input_error.message,
             segment_index=segment_index,
         )
 
