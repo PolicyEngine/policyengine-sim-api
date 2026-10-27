@@ -1140,14 +1140,12 @@
         "required": [
           "constituency_code",
           "constituency_name",
-          "x",
-          "y",
           "average_household_income_change",
           "relative_household_income_change",
           "population"
         ],
         "title": "ConstituencyImpactRecord",
-        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income, both rounded to the order of their standard error.\n``population`` is the weighted number of households. ``x`` and ``y`` are\ninteger map-rendering coordinates."
+        "description": "Reform impact on household net income in one UK parliamentary constituency.\n\n``average_household_income_change`` is the average change per household and\n``relative_household_income_change`` the relative change in the area's total\nhousehold net income, both rounded to the order of their standard error.\n``population`` is the weighted number of households.\n\n``x`` and ``y`` are the area's integer map position. Results from apps\ndeployed for older policyengine.py versions still carry them; current\nresults leave both out rather than sending them as null."
       },
       "DecileOutput": {
         "properties": {
@@ -1904,8 +1902,6 @@
         "required": [
           "local_authority_code",
           "local_authority_name",
-          "x",
-          "y",
           "average_household_income_change",
           "relative_household_income_change",
           "population"

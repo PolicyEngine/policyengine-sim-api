@@ -201,3 +201,45 @@ def test_each_area_level_reads_its_records_as_its_own_type():
     assert [type(record) for record in output.local_authority_impact] == [
         LocalAuthorityImpactRecord
     ]
+
+
+def _without_map_position(record: dict[str, object]) -> dict[str, object]:
+    return {key: value for key, value in record.items() if key not in {"x", "y"}}
+
+
+# Newer executors leave out each area's map position (x and y).
+BREAKDOWN_WITHOUT_MAP_POSITIONS = {
+    **BREAKDOWN,
+    "constituency_impact": [_without_map_position(CONSTITUENCY)],
+    "local_authority_impact": [_without_map_position(LOCAL_AUTHORITY)],
+}
+
+
+def test_a_breakdown_without_map_positions_round_trips_without_them():
+    output = LocalAreaBreakdownOutput.model_validate(BREAKDOWN_WITHOUT_MAP_POSITIONS)
+
+    assert output.model_dump(mode="json") == BREAKDOWN_WITHOUT_MAP_POSITIONS
+
+
+def test_a_job_status_reads_a_breakdown_without_map_positions():
+    response = JobStatusResponse(
+        status="complete", result=BREAKDOWN_WITHOUT_MAP_POSITIONS
+    )
+
+    assert isinstance(response.result, LocalAreaBreakdownOutput)
+    assert response.model_dump(mode="json")["result"] == (
+        BREAKDOWN_WITHOUT_MAP_POSITIONS
+    )
+
+
+def test_a_national_result_reads_area_lists_without_map_positions():
+    national = {
+        **NATIONAL,
+        "constituency_impact": [_without_map_position(CONSTITUENCY)],
+        "local_authority_impact": [_without_map_position(LOCAL_AUTHORITY)],
+    }
+
+    response = JobStatusResponse(status="complete", result=national)
+
+    assert isinstance(response.result, SingleYearMacroOutput)
+    assert response.model_dump(mode="json")["result"] == national
