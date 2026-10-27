@@ -24,7 +24,7 @@ from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
 from typing import TYPE_CHECKING
 
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -107,13 +107,23 @@ def _check_matches(
         raise DefinitionRejectedError(msg)
 
 
+def database_error_summary(error: SQLAlchemyError) -> str:
+    """Return the first line of the database's own message for ``error``.
+
+    The driver's message names the constraint or the connection problem, and
+    never the password. SQLAlchemy's longer text adds the statement and its
+    parameters.
+    """
+    original = error.orig if isinstance(error, DBAPIError) else None
+    lines = str(original if original is not None else error).strip().splitlines()
+    return lines[0] if lines else type(error).__name__
+
+
 def _create[RecordT](create: Callable[[], RecordT], subject: str) -> RecordT:
     try:
         return create()
     except IntegrityError as error:
-        detail = str(error.orig if error.orig is not None else error)
-        first_line = detail.strip().splitlines()[0] if detail.strip() else ""
-        msg = f"the database rejected {subject}: {first_line}"
+        msg = f"the database rejected {subject}: {database_error_summary(error)}"
         raise DefinitionRejectedError(msg) from error
 
 

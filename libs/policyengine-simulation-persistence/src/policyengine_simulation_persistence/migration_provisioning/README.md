@@ -104,3 +104,115 @@ Example:
   ]
 }
 ```
+
+## Running it
+
+An operator runs it from a checkout of `main`, once per environment, after
+the Public API's migration command has written the export. It is not an HTTP
+route and runs nowhere else.
+
+1. Install the library with its `provisioning` extra:
+
+   ```bash
+   cd libs/policyengine-simulation-persistence
+   uv sync --frozen --extra provisioning
+   ```
+
+2. Put the runtime role's URL in `SIMULATION_DATABASE_URL`, the variable the
+   Simulation Entrypoint reads. It is the newest enabled version of the Secret
+   Manager secret that the `SIMULATION_DATABASE_URL_SECRET_NAME` variable of
+   sim's GitHub environment names (`beta` for staging, `prod` for
+   production): a secret name in the project named by
+   `SIMULATION_ENTRYPOINT_GCP_PROJECT_ID`, or a full
+   `projects/<project>/secrets/<name>` reference. Only the entrypoint's runtime
+   service account can read it today, so the operator needs read access to it
+   first.
+
+   ```bash
+   SIMULATION_DATABASE_URL="$(gcloud secrets versions access latest \
+     --secret="$SECRET_NAME" --project="$PROJECT_ID")"
+   export SIMULATION_DATABASE_URL
+   ```
+
+3. Dry run, then review its counts and failures:
+
+   ```bash
+   uv run --frozen --extra provisioning \
+     python -m policyengine_simulation_persistence.migration_provisioning \
+     --definitions report-definitions.json --dry-run
+   ```
+
+4. Run, writing the report mapping to a new file:
+
+   ```bash
+   uv run --frozen --extra provisioning \
+     python -m policyengine_simulation_persistence.migration_provisioning \
+     --definitions report-definitions.json --output report-mapping.json
+   ```
+
+Before it reads or writes a row, the command checks:
+
+- the definitions file, listing up to 20 errors;
+- for a run, that the output file does not exist yet and its directory does;
+- that `SIMULATION_DATABASE_URL` is set, uses `postgresql://` and logs in as
+  the runtime role, `simulation_runtime`, never the migrator;
+- that the database is at the schema revision this code expects.
+
+For each definition it creates the simulations, keyed by
+`legacy_simulation_id`, and then the report, keyed by `legacy_report_id`,
+through the stores' `create_migrated` methods. A row that already exists is
+reused if it matches the definition, so running the same export again creates
+nothing and maps the same reports. A row that exists with a different
+definition, or a definition the database rejects (a policy or household the
+Public API does not have, or one of another country), fails that report
+alone; the other reports continue.
+
+Each row is committed on its own. If a report fails after some of its
+simulations were created, they stay, keyed by their v1 IDs, and a later run
+reuses them.
+
+The dry run only reads. It counts the simulations and reports a run would
+create and those that already exist, and reports conflicts with existing rows.
+The runtime role cannot read the Public API's tables, so a dry run does not
+find a policy or household the database would reject; the run reports those.
+
+Both print a JSON summary: `dry_run`, `new_simulations`,
+`existing_simulations`, `new_reports`, `existing_reports` (in a dry run, the
+`new_` counts are what a run would create) and `failures`.
+
+| Exit status | Meaning |
+| --- | --- |
+| 0 | Every report was provisioned, or in a dry run would be. |
+| 1 | Some reports failed. The output file and the summary list them; the others are provisioned. |
+| 2 | The command refused to start. Nothing was written. |
+| 3 | The database stopped the run partway. No output file was written; running the command again reuses the rows already created. |
+
+## Output file: report mapping, schema version 1
+
+A run writes it at the end; `mapping.py` defines it. The Public API's migration
+command reads it and sets each account row's v2 report ID.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schema_version` | `1` | The format's version. |
+| `reports` | array | Each provisioned report: `legacy_report_id`, its v2 `report_id`, and `created` (`false` when an earlier run had created it). |
+| `failures` | array | Each failed report: `legacy_report_id` and a one-line `reason`. |
+
+```json
+{
+  "schema_version": 1,
+  "reports": [
+    {
+      "legacy_report_id": 4512,
+      "report_id": "6c1d7f0a-8f5e-4a3b-9c2d-1e4f7a9b3c55",
+      "created": true
+    }
+  ],
+  "failures": [
+    {
+      "legacy_report_id": 4513,
+      "reason": "the database rejected v1 simulation 9003: insert or update on table \"simulations\" violates foreign key constraint \"fk_simulations_household_country\""
+    }
+  ]
+}
+```

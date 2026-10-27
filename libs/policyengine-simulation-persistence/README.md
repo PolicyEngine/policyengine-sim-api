@@ -58,7 +58,7 @@ These rules are registered in `rules/registry.toml` and checked by
 | Role | Used by | Privileges |
 | --- | --- | --- |
 | `simulation_migrator` | The deploy workflow's migration job, through `SIMULATION_MIGRATION_DATABASE_URL` | Creates the `simulation` schema if it is missing, and owns every object in it; `REFERENCES` on the Public API tables its foreign keys point to |
-| `simulation_runtime` | The Simulation Entrypoint, through `SIMULATION_DATABASE_URL` | `USAGE` on the schema, `SELECT` on the version table, and `SELECT`, `INSERT` and `UPDATE` on the tables the migrations create, except `UPDATE` on the definition tables (`simulations`, `reports`); never `DELETE`, and nothing on the Public API tables |
+| `simulation_runtime` | The Simulation Entrypoint, and the one-time migration provisioning command an operator runs, through `SIMULATION_DATABASE_URL` | `USAGE` on the schema, `SELECT` on the version table, and `SELECT`, `INSERT` and `UPDATE` on the tables the migrations create, except `UPDATE` on the definition tables (`simulations`, `reports`); never `DELETE`, and nothing on the Public API tables |
 
 The initial revision grants the runtime role its privileges, including default
 privileges on tables the migrator creates later; revision 0002 revokes
@@ -88,6 +88,15 @@ that receives `SIMULATION_MIGRATION_DATABASE_URL`. If it fails, the entrypoint
 is not deployed. The Simulation Entrypoint's readiness check (`GET /ready`) reports
 the database's revision next to `HEAD_REVISION`, the revision its image
 expects, and the candidate check requires the two to match.
+
+## Migration provisioning
+
+`src/policyengine_simulation_persistence/migration_provisioning/` holds the
+command an operator runs once per environment during the one-time migration:
+it creates the simulations and reports of the Public API's exported v1 report
+definitions, with no run, and writes each v1 report's v2 report ID. It needs
+the `provisioning` extra. Its README describes the input and output files and
+how to run it. Item 5.04 removes it.
 
 ## Connections
 
