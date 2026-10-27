@@ -986,6 +986,15 @@ jobs:
           SIMULATION_ENTRYPOINT_TEST_ENFORCE_PERMISSIONS: ${{ vars.SIMULATION_ENTRYPOINT_ENFORCE_PERMISSIONS }}
         run: uv run --frozen pytest authenticated_tests/ -v
 
+      # Only a verified, promoted revision records outcomes in the safety
+      # check, so a rejected candidate never records anything.
+      - name: Point the safety check at the promoted revision
+        id: safety_check
+        env:
+          SAFETY_CHECK_REVISION: ${{ env.TARGET_REVISION }}
+          SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.SIMULATION_SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT }}
+        run: .github/scripts/deploy-cloud-run-simulation-safety-check.sh
+
       - name: Restore previous revision after failed verification
         if: ${{ failure() && steps.promote.outcome == 'success' }}
         env:
@@ -995,6 +1004,13 @@ jobs:
           SIMULATION_ENTRYPOINT_TARGET_REVISION: ${{ env.PREVIOUS_REVISION }}
           SIMULATION_ENTRYPOINT_EXPECTED_CURRENT_REVISION: ${{ env.TARGET_REVISION }}
         run: .github/scripts/set-cloud-run-simulation-entry-revision.sh
+
+      - name: Point the safety check back at the previous revision
+        if: ${{ failure() && steps.safety_check.outcome == 'failure' && env.PREVIOUS_REVISION != '' }}
+        env:
+          SAFETY_CHECK_REVISION: ${{ env.PREVIOUS_REVISION }}
+          SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.SIMULATION_SAFETY_CHECK_SCHEDULER_SERVICE_ACCOUNT }}
+        run: .github/scripts/deploy-cloud-run-simulation-safety-check.sh
 
   finalize_routing:
     name: Finalize the Modal routing publication
