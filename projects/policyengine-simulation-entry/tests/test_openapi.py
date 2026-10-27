@@ -249,6 +249,15 @@ V2_ERROR_ANSWERS = {
         )
     },
 }
+# The reads that rebuild a stored result also answer 500 when it cannot be.
+for _result_read in (
+    ("GET", "/v2/economy-reports/{report_id}"),
+    ("GET", "/v2/economy-reports/by-legacy-id/{legacy_report_id}"),
+):
+    V2_ERROR_ANSWERS[_result_read] = {
+        **V2_ERROR_ANSWERS[_result_read],
+        "500": "EconomyErrorResponse",
+    }
 
 
 def test_v2_routes_declare_each_error_answer_with_its_body():

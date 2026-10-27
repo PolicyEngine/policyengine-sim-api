@@ -19,7 +19,9 @@ environment sim starts calls in, every route answers 503.
 Each route declares its error answers in the OpenAPI document, so the
 generated client parses them: 404 and 503 as ``EconomyErrorResponse``, and
 422 as ``EconomyRefusalResponse``, whose ``detail`` is sim's reason as text
-or FastAPI's list of refused fields.
+or FastAPI's list of refused fields. The report reads also answer 500, as
+``EconomyErrorResponse``, when a succeeded run's stored result cannot be
+rebuilt, for example when it names an area its catalog version lacks.
 """
 
 from __future__ import annotations
@@ -92,6 +94,12 @@ NOT_FOUND: dict[int | str, dict[str, Any]] = {
         "description": "No such economy report or simulation",
     },
 }
+RESULT_UNREADABLE: dict[int | str, dict[str, Any]] = {
+    status.HTTP_500_INTERNAL_SERVER_ERROR: {
+        "model": EconomyErrorResponse,
+        "description": "The report's stored result cannot be read back",
+    },
+}
 UNAVAILABLE: dict[int | str, dict[str, Any]] = {
     status.HTTP_503_SERVICE_UNAVAILABLE: {
         "model": EconomyErrorResponse,
@@ -101,6 +109,15 @@ UNAVAILABLE: dict[int | str, dict[str, Any]] = {
         ),
     },
 }
+
+
+class StoredResultError(Exception):
+    """A succeeded report run's stored result cannot be rebuilt."""
+
+    def __init__(self, report_run_id: UUID, cause: LookupError) -> None:
+        """Name the report run and keep the reader's error as the cause."""
+        super().__init__(f"report run {report_run_id}: {cause}")
+        self.report_run_id = report_run_id
 
 
 class ResultReader(Protocol):
@@ -266,9 +283,12 @@ class EconomyReportReads:
         latest = self.report_run(runs[0]) if runs else None
         result = None
         if latest is not None and latest.status is ReportStatus.SUCCEEDED:
-            result = self.results.read_result(
-                latest.id, latest.catalog_version_id, report.country
-            )
+            try:
+                result = self.results.read_result(
+                    latest.id, latest.catalog_version_id, report.country
+                )
+            except LookupError as error:
+                raise StoredResultError(latest.id, error) from error
         return EconomyReportResponse(
             id=report.id,
             country=report.country,
@@ -336,6 +356,18 @@ async def _answer[ResultT](call: Callable[[], Awaitable[ResultT]]) -> ResultT:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(error)) from None
     except EconomyRequestError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(error)) from None
+    except StoredResultError as error:
+        logger.error(  # noqa: TRY400  # result failure logs carry only the run ID and the error type; a traceback could expose stored result data
+            "economy_report_result_unreadable",
+            extra={
+                "report_run_id": str(error.report_run_id),
+                "error_type": type(error.__cause__).__name__,
+            },
+        )
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "The report's stored result cannot be read back.",
+        ) from None
     except DBAPIError as error:
         logger.warning(
             "economy_report_database_unavailable",
@@ -399,7 +431,7 @@ def register_economy_routes(
         "/v2/economy-reports/by-legacy-id/{legacy_report_id}",
         response_model=EconomyReportResponse,
         operation_id="get_economy_report_by_legacy_id",
-        responses={**NOT_FOUND, **REFUSED, **UNAVAILABLE},
+        responses={**NOT_FOUND, **REFUSED, **RESULT_UNREADABLE, **UNAVAILABLE},
         dependencies=[Depends(reader)],
     )
     async def get_economy_report_by_legacy_id(
@@ -416,7 +448,7 @@ def register_economy_routes(
         "/v2/economy-reports/{report_id}",
         response_model=EconomyReportResponse,
         operation_id="get_economy_report",
-        responses={**NOT_FOUND, **REFUSED, **UNAVAILABLE},
+        responses={**NOT_FOUND, **REFUSED, **RESULT_UNREADABLE, **UNAVAILABLE},
         dependencies=[Depends(reader)],
     )
     async def get_economy_report(report_id: UUID) -> EconomyReportResponse:

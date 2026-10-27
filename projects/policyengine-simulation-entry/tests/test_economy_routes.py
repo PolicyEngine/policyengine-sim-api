@@ -63,7 +63,7 @@ class _Path:
         self.dispatcher = FakeDispatcher()
         self.results = _Results()
         self.backend = FakeBackend()
-        services = EconomyRouteServices(
+        self.services = services = EconomyRouteServices(
             reports=EconomyReports(
                 simulations=self.simulations,
                 reports=self.reports,
@@ -149,6 +149,35 @@ def test_a_report_is_read_back_with_its_result_once_compared(economy_path) -> No
         mode="json"
     )
     assert economy_path.results.read == [(record.id, US_VERSION.id, "us")]
+
+
+class _UnreadableResults:
+    """A stored result naming an area the catalog version no longer has."""
+
+    def read_result(self, report_run_id, catalog_version_id, country):
+        msg = "the catalog has no constituency E14009999"
+        raise LookupError(msg)
+
+
+def test_a_stored_result_that_cannot_be_rebuilt_is_a_declared_500(
+    economy_path,
+) -> None:
+    report = economy_path.submit()
+    runs = economy_path.runs
+    for side in ("baseline_run", "reform_run"):
+        runs.succeed(runs.simulation_runs[_uuid(report["run"][side]["id"])].id)
+    record = runs.report_runs_by_id[_uuid(report["run"]["id"])]
+    runs.report_runs_by_id[record.id] = replace(
+        record, comparison_status=RunStatus.SUCCEEDED, comparison_modal_call_id="fc-c"
+    )
+    economy_path.services.reads.results = _UnreadableResults()
+
+    by_id = economy_path.client.get(f"/v2/economy-reports/{report['id']}")
+
+    assert by_id.status_code == 500
+    assert EconomyErrorResponse.model_validate(by_id.json()).detail == (
+        "The report's stored result cannot be read back."
+    )
 
 
 def test_a_failed_simulation_run_fails_the_report_with_its_error(economy_path) -> None:
