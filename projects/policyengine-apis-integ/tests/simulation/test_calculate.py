@@ -34,7 +34,6 @@ _REQUIRED_DISTRICT_RESULT_KEYS = {
     "no_change_percentage",
     "population",
 }
-_AT_LARGE_DISTRICT_IDS = {"AK-01", "DC-01", "DE-01", "ND-01", "SD-01", "VT-01", "WY-01"}
 # From the generated client, so a stage added to the schema is accepted here.
 _JOB_STAGES = frozenset(stage.value for stage in JobStage)
 
@@ -196,7 +195,6 @@ def assert_congressional_district_results(
     economy_result: object,
     *,
     expected_district_prefix: str | None = None,
-    expected_district_ids: set[str] | None = None,
 ) -> None:
     economy_result = _as_mapping(economy_result, label="economy result")
     assert "congressional_district_impact" in economy_result, (
@@ -237,13 +235,22 @@ def assert_congressional_district_results(
             f"got {district_ids}"
         )
 
-    if expected_district_ids is not None:
-        district_ids = set(_district_ids(district_results))
-        missing = expected_district_ids - district_ids
-        assert not missing, (
-            f"Missing expected district IDs {sorted(missing)} "
-            f"from result IDs: {sorted(district_ids)}"
-        )
+
+def assert_no_congressional_district_results(economy_result: object) -> None:
+    """Check a US national result has congressional_district_impact set to null.
+
+    Only state runs compute districts: nationwide reports take them from a
+    separate run of each state.
+    """
+    economy_result = _as_mapping(economy_result, label="economy result")
+    assert "congressional_district_impact" in economy_result, (
+        f"Missing 'congressional_district_impact' in result: {economy_result.keys()}"
+    )
+    district_impact = economy_result["congressional_district_impact"]
+    assert district_impact is None, (
+        "Expected no congressional_district_impact in a US national result, "
+        f"got {district_impact!r}"
+    )
 
 
 _UK_AREA_RESULT_KEYS = ("constituency_impact", "local_authority_impact")
@@ -321,6 +328,34 @@ def test_result_assertions_accept_generated_client_objects() -> None:
 
     assert_economy_result_sections(result)
     assert_congressional_district_results(result, expected_district_prefix="UT-")
+
+
+def test_national_us_assertions_accept_a_result_without_districts() -> None:
+    assert_no_congressional_district_results(
+        _GeneratedClientObject({"budget": {}, "congressional_district_impact": None})
+    )
+    assert_no_congressional_district_results({"congressional_district_impact": None})
+
+
+@pytest.mark.parametrize(
+    "district_impact",
+    [
+        {"districts": []},
+        {"districts": [{"district": "UT-01"}]},
+        _GeneratedClientObject({"districts": [{"district": "UT-01"}]}),
+    ],
+    ids=["no-districts-listed", "districts-listed", "generated-client-object"],
+)
+def test_national_us_assertions_reject_district_results(district_impact) -> None:
+    with pytest.raises(AssertionError, match="congressional_district_impact"):
+        assert_no_congressional_district_results(
+            {"congressional_district_impact": district_impact}
+        )
+
+
+def test_national_us_assertions_reject_a_result_without_the_district_field() -> None:
+    with pytest.raises(AssertionError, match="congressional_district_impact"):
+        assert_no_congressional_district_results({"budget": {}})
 
 
 _BREAKDOWN_CONSTITUENCY = {
@@ -613,9 +648,10 @@ def test_calculate_default_model(
 ):
     """A simulation on the default model version returns economic impact data.
 
-    Given a simulation request with default model version
+    Given a US national simulation request with default model version
     When the simulation is submitted and polled to completion
-    Then the result contains expected economic impact data.
+    Then the result contains expected economic impact data and no
+    congressional districts, which only state runs compute.
     """
     # Given
     request = SimulationRequest.from_dict(
@@ -649,10 +685,7 @@ def test_calculate_default_model(
 
     economy_result = result.result
     assert_economy_result_sections(economy_result)
-    assert_congressional_district_results(
-        economy_result,
-        expected_district_ids=_AT_LARGE_DISTRICT_IDS,
-    )
+    assert_no_congressional_district_results(economy_result)
 
 
 @pytest.mark.beta_only
