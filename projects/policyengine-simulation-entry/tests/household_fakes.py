@@ -72,6 +72,9 @@ class FakeHouseholdStore:
         # Households the Public API does not have: creating their simulations
         # breaks a foreign key.
         self.unknown_households: set[UUID] = set()
+        # Catalog versions the Public API does not have: starting a run on one
+        # breaks a foreign key.
+        self.unknown_catalog_versions: set[UUID] = set()
 
     def find_or_create_simulation(
         self, new_simulation: NewSimulation
@@ -117,6 +120,11 @@ class FakeHouseholdStore:
         self, new_run: NewSimulationRun, *, force: bool = False
     ) -> StartedSimulationRun:
         """Reuse the newest attempt for this setup, or add the next one."""
+        if new_run.tax_benefit_model_version_id in self.unknown_catalog_versions:
+            statement = "INSERT INTO simulation.simulation_runs"
+            raise IntegrityError(
+                statement, {}, LookupError(new_run.tax_benefit_model_version_id)
+            )
         attempts = [
             run_id
             for run_id, setup in self.setups.items()

@@ -324,6 +324,8 @@ class HouseholdCalculationService:
     ) -> HouseholdReport:
         """Create a household report and start its first run.
 
+        The runs start before the report is created, so a household, policy
+        or catalog version the database refuses leaves no report behind.
         Raise as ``submit`` does.
         """
         worker = await asyncio.to_thread(
@@ -333,13 +335,19 @@ class HouseholdCalculationService:
             [] if submission.reform is None else [submission.reform]
         )
 
-        def create() -> tuple[ReportRecord, list[SimulationRecord]]:
+        def create() -> tuple[ReportRecord, list[SimulationRunRecord]]:
             simulations = [
                 self.store.find_or_create_simulation(
                     submission.simulation_definition(policy)
                 )
                 for policy in policies
             ]
+            runs = self._start_side_runs(
+                simulations,
+                catalog_version_id=submission.catalog_version_id,
+                year=submission.year,
+                submission=submission,
+            )
             report = self.store.create_report(
                 NewReport(
                     kind=ReportKind.HOUSEHOLD,
@@ -351,15 +359,15 @@ class HouseholdCalculationService:
                     year=submission.year,
                 )
             )
-            return report, simulations
+            return report, runs
 
-        report, simulations = await self._write(create)
-        return await self._run_report(
+        report, runs = await self._write(create)
+        return await self._join_and_start(
             worker,
             report,
             inputs=submission,
-            sides=list(zip(simulations, policies, strict=True)),
-            submission=submission,
+            sides=list(zip(runs, policies, strict=True)),
+            trigger=submission.trigger,
         )
 
     async def rerun_report(
@@ -395,68 +403,86 @@ class HouseholdCalculationService:
         policies = [submission.baseline] + (
             [] if submission.reform is None else [submission.reform]
         )
-        sides = list(zip(simulations, policies, strict=False))
-        _check_report_sides(report, sides, submission)
+        _check_report_sides(
+            report, list(zip(simulations, policies, strict=False)), submission
+        )
         worker = await asyncio.to_thread(
             self.workers.resolve, report.country, submission.policyengine_version
         )
-        inputs = ReportRunInputs(
-            country=report.country,
-            household=submission.household,
-            spm=submission.spm,
-            spm_requested=submission.spm_requested,
-            options=HouseholdCalculationOptions.model_validate(simulations[0].options),
+        runs = await self._write(
+            lambda: self._start_side_runs(
+                simulations,
+                catalog_version_id=submission.catalog_version_id,
+                year=report.year,
+                submission=submission,
+            )
         )
-        return await self._run_report(
-            worker, report, inputs=inputs, sides=sides, submission=submission
+        return await self._join_and_start(
+            worker,
+            report,
+            inputs=ReportRunInputs(
+                country=report.country,
+                household=submission.household,
+                spm=submission.spm,
+                spm_requested=submission.spm_requested,
+                options=HouseholdCalculationOptions.model_validate(
+                    simulations[0].options
+                ),
+            ),
+            sides=list(zip(runs, policies, strict=True)),
+            trigger=submission.trigger,
         )
 
     async def read_report(self, report_id: UUID) -> HouseholdReport | None:
         """Return a household report with its newest run, or None."""
         return await asyncio.to_thread(self.store.read_report, report_id)
 
-    async def _run_report(
+    def _start_side_runs(
+        self,
+        simulations: Sequence[SimulationRecord],
+        *,
+        catalog_version_id: UUID,
+        year: int,
+        submission: HouseholdReportSubmission | HouseholdReportRunSubmission,
+    ) -> list[SimulationRunRecord]:
+        """Start or reuse a run of each side; a simulation on both sides runs once."""
+        started: dict[UUID, SimulationRunRecord] = {}
+        for simulation in simulations:
+            if simulation.id not in started:
+                started[simulation.id] = self.store.start_run(
+                    NewSimulationRun(
+                        simulation_id=simulation.id,
+                        tax_benefit_model_version_id=catalog_version_id,
+                        year=year,
+                        trigger=submission.trigger,
+                    ),
+                    force=submission.force,
+                ).run
+        return [started[simulation.id] for simulation in simulations]
+
+    async def _join_and_start(
         self,
         worker: HouseholdWorker,
         report: ReportRecord,
         *,
         inputs: HouseholdInputs,
-        sides: ReportSides,
-        submission: HouseholdReportSubmission | HouseholdReportRunSubmission,
+        sides: Sequence[tuple[SimulationRunRecord, HouseholdPolicyInput]],
+        trigger: RunTrigger,
     ) -> HouseholdReport:
-        """Start or reuse a run of each side, join them, and start the pending."""
-        trigger: RunTrigger = submission.trigger
-
-        def start() -> tuple[list[SimulationRunRecord], ReportRunRecord]:
-            # A report comparing a simulation with itself runs it once.
-            started: dict[UUID, SimulationRunRecord] = {}
-            for simulation, _ in sides:
-                if simulation.id not in started:
-                    started[simulation.id] = self.store.start_run(
-                        NewSimulationRun(
-                            simulation_id=simulation.id,
-                            tax_benefit_model_version_id=submission.catalog_version_id,
-                            year=report.year,
-                            trigger=trigger,
-                        ),
-                        force=submission.force,
-                    ).run
-            runs = [started[simulation.id] for simulation, _ in sides]
-            report_run = self.store.create_report_run(
+        """Join the sides' runs in a report run, and start those still pending."""
+        report_run = await self._write(
+            lambda: self.store.create_report_run(
                 NewReportRun(
                     report_id=report.id,
-                    baseline_simulation_run_id=runs[0].id,
-                    reform_simulation_run_id=runs[1].id if len(runs) > 1 else None,
+                    baseline_simulation_run_id=sides[0][0].id,
+                    reform_simulation_run_id=(
+                        sides[1][0].id if len(sides) > 1 else None
+                    ),
                     trigger=trigger,
                 )
             )
-            return runs, report_run
-
-        runs, report_run = await self._write(start)
-        unique_runs = {
-            run.id: (run, policy.parameters)
-            for run, (_, policy) in zip(runs, sides, strict=True)
-        }
+        )
+        unique_runs = {run.id: (run, policy.parameters) for run, policy in sides}
         await self._start_pending_runs(
             worker,
             calculation_id=report_run.id,

@@ -23,6 +23,7 @@ from policyengine_simulation_entry.household_api_models import (
 )
 from policyengine_simulation_entry.household_calculations import (
     ReportPoliciesMismatchError,
+    UnknownHouseholdReferenceError,
 )
 from policyengine_simulation_entry.household_recording import policy_key_for_run
 from policyengine_simulation_entry.modal_calls import CallSucceeded
@@ -229,3 +230,14 @@ def test_an_unknown_report_has_no_runs_to_start() -> None:
 
     assert rerun_report(harness, uuid4()) is None
     assert asyncio.run(harness.service.read_report(uuid4())) is None
+
+
+def test_an_unknown_catalog_version_leaves_no_report_behind() -> None:
+    harness = Harness()
+    harness.store.unknown_catalog_versions.add(CATALOG_VERSION_ID)
+
+    with pytest.raises(UnknownHouseholdReferenceError):
+        submit_report(harness)
+
+    assert harness.store.reports == {}
+    assert harness.dispatcher.requests == []
