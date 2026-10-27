@@ -23,7 +23,8 @@ deployment checks can prove which revision a tagged or stable URL serves.
 Live caller/backend authentication checks are isolated in `authenticated_tests`.
 They qualify tagged Cloud Run candidates before an environment's stable traffic
 changes and verify its stable endpoint immediately after promotion, in both
-staging and production.
+staging and production. The staging household test there runs only in its own
+job after a staging promotion (`DEPLOYMENT.md`, "Staging household test").
 
 ## Household calculations
 

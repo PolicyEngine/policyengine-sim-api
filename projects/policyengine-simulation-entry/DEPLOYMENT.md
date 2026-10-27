@@ -87,15 +87,37 @@ executor). It posts to the entrypoint's main URL: the v2 deploy job reads the
 service's stable URL (`status.url`) with
 `.github/scripts/simulation-entry-main-url.sh` and passes it to `modal deploy`
 as `SIMULATION_ENTRY_URL`. Only the revision that serves traffic receives
-these requests. `beta` does not promote its candidate yet, so in staging the
-main URL reaches an older revision until it does (plan item 1.39), and
-staging calls are recorded by the safety check only once it exists there.
+these requests; staging and production deployments both promote the revision
+they tested, so the main URL reaches it once promotion succeeds.
 
 Household calculations (`POST /v2/household-calculations`, see the README)
 start the v2 household functions' calls in the same Modal environment,
 `SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT`, with the same token, and read the
 v2 version manifest there; they need no other setting. Their outcomes are
 recorded like any other call's: on the call's report, or by the safety check.
+
+### Staging household test
+
+After each staging deployment promotes its revision, with the v2 application
+deployed, the `staging_household_test` job runs
+`authenticated_tests/test_staging_household_calculation.py` against the
+staging stable URL: it submits a US household calculation, polls until it
+succeeds or fails within ten minutes, and reads the result back. It runs
+after promotion because the household function reports the call's end to the
+stable URL. A failure fails the deployment run, so production does not
+deploy.
+
+The calculation refers to rows the Public API owns in the same database, so
+the test first reads the staging Public API's US catalog version for the
+deployed PolicyEngine.py version (or its current one, when the Public API
+has not published that version yet) and stores a one-person household there
+(`POST /v2/households`, which returns the same household every time). The
+`beta` environment variable `PUBLIC_API_URL` names the staging Public API's
+URL. The test authenticates as the deployed-test client
+(`SIMULATION_ENTRYPOINT_TEST_AUTH_*`), which needs `simulation:submit` and
+`simulation:read` when permissions are enforced. The other runs of
+`authenticated_tests` skip it: only this job sets
+`SIMULATION_STAGING_HOUSEHOLD_TEST=1`.
 
 ## Safety check
 
@@ -127,8 +149,8 @@ A revision deployed before the safety check existed (without
 `SIMULATION_CALL_REPORT_MODAL_WORKSPACE_ID`) has no job code, so pointing the
 job at it pauses the schedule instead.
 
-`beta` does not promote its candidate yet, so staging has no safety check
-until it does (plan item 1.39).
+Staging deployments promote their tested revision too, so staging has the
+safety check as production does.
 
 One-time operator steps, in each environment: enable the Cloud Scheduler
 API; create the scheduler's service account, give it `roles/run.invoker`

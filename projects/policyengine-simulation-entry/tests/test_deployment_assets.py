@@ -210,9 +210,9 @@ def _assert_beta_then_prod_release(
 
 def _assert_deployment_environment_settings(reusable_workflow: str) -> None:
     assert (
-        # Sentinel, restore, final routing acknowledgement and the simulation
-        # database migration use secrets too.
-        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 16
+        # Sentinel, restore, final routing acknowledgement, the simulation
+        # database migration and the staging household test use secrets too.
+        reusable_workflow.count("environment: ${{ inputs.release_environment }}") == 17
     )
     assert "APP_ENVIRONMENT: ${{ inputs.deployment_environment }}" in reusable_workflow
     assert "STAGE12_ENABLED_VALUE: ${{ vars.STAGE12_ENABLED }}" in reusable_workflow
