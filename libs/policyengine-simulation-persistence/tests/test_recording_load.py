@@ -1,13 +1,16 @@
-"""A load check of the recording passes' conditional writes on PostgreSQL.
+"""A load check of the conditional writes that record outcomes, on PostgreSQL.
 
-Several simulated Simulation Entrypoint instances, each on its own engine,
-repeatedly fail stalled dispatches, claim due calls and record an outcome for
-each, as recording passes do, until every run has finished. A third of
-the calls are household pairs (two runs under one call). Every call must be
-recorded once, its results written once and all of its runs finished once,
-and every stalled dispatch failed once, whatever the interleaving. The
-elapsed time and the number of passes are printed, as a measurement; nothing
-depends on them.
+Several simulated writers, each on its own engine, repeatedly fail stalled
+dispatches, claim due calls and record an outcome for each, as safety-check
+passes do, until every run has finished. Some outcomes are written late,
+after another writer could claim the same call and record it, as a report
+from Modal can arrive while a pass checks the same call. A third of the calls
+are household pairs (two runs under one call). Every call must be recorded
+once, its results written once and all of its runs finished once, and every
+stalled dispatch failed once, whatever the interleaving. The elapsed time and
+the number of passes are printed, as a measurement; nothing depends on them.
+The same check of the reporting route against the staging database is an
+operator step.
 """
 
 from __future__ import annotations
