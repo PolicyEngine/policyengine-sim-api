@@ -109,11 +109,12 @@ def test_nothing_is_written_when_the_output_misses_one_of_the_runs() -> None:
     covered, missing = uuid4(), uuid4()
     result = recorder.validate(succeeded_outcome([covered]))
 
-    with pytest.raises(ValueError, match="no result for run"):
+    with pytest.raises(CalculationFailedError) as raised:
         recorder.write(
             object(), (household_run(covered), household_run(missing)), result
         )
 
+    assert raised.value.error.code is RunErrorCode.INVALID_RESULT
     assert capture.written == {}
 
 
@@ -195,3 +196,26 @@ def test_the_database_recorder_records_household_calls() -> None:
     assert isinstance(
         recorders.simulations[SimulationKind.HOUSEHOLD], HouseholdResultRecorder
     )
+
+
+def test_an_outcome_missing_one_of_the_calls_runs_fails_them_at_once() -> None:
+    """Such an output is invalid for these runs; waiting would never fix it."""
+    capture = OutputCapture()
+    recorder, transitions, inspector = _recorder(capture)
+    run_ids = transitions.running_call("fc-household", "household", "household")
+    inspector.outcomes["fc-household"] = CallSucceeded(succeeded_outcome(run_ids[:1]))
+
+    status = asyncio.run(
+        recorder.record_reported_call(
+            CallEndedReport(
+                modal_call_id="fc-household", simulation_run_ids=tuple(run_ids)
+            )
+        )
+    )
+
+    assert status is CallReportStatus.RECORDED
+    for run_id in run_ids:
+        run = transitions.runs[run_id]
+        assert run.status is RunStatus.FAILED
+        assert run.error.code is RunErrorCode.INVALID_RESULT
+    assert capture.written == {}

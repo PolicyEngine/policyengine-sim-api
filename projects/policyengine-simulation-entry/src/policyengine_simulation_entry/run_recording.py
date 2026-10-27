@@ -87,11 +87,12 @@ INSPECTION_CONCURRENCY = 3
 
 
 class CalculationFailedError(Exception):
-    """A finished call's output reports that its calculation failed.
+    """A finished call's output says its runs failed; record that failure.
 
     A result recorder's ``validate`` raises it for a valid failure document,
-    such as a household function's typed failure; the runs are then failed
-    with ``error``, its detail included, rather than as an invalid result.
+    such as a household function's typed failure, and its ``write`` for an
+    output that cannot describe the runs it is written for. Nothing is
+    written, and the runs are failed with ``error``, its detail included.
     """
 
     def __init__(self, error: RunError) -> None:
@@ -559,6 +560,9 @@ class RunRecorder:
             return await self._fail(handlers, _invalid_result(error))
         try:
             completed = await asyncio.to_thread(steps.complete, result)
+        # The transaction rolled back; the output cannot describe the runs.
+        except CalculationFailedError as failure:
+            return await self._fail(handlers, failure.error)
         # Writing the result rows failed, for example because the database
         # was unreachable: nothing was recorded, and the call is checked again.
         except Exception as error:

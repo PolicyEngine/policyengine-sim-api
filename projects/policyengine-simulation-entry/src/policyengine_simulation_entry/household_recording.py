@@ -109,8 +109,9 @@ class HouseholdResultRecorder:
     ) -> None:
         """Write each run's household in the transaction that succeeds them.
 
-        Raise ValueError, writing nothing, when the outcome has no result for
-        one of the runs.
+        Raise CalculationFailedError, writing nothing, when the outcome has no
+        result for one of the runs: the output cannot describe those runs, so
+        they fail as an invalid result instead of waiting for it to change.
         """
         if not isinstance(result, HouseholdExecutionResult):
             msg = "a household result recorder writes household results only"
@@ -123,8 +124,13 @@ class HouseholdResultRecorder:
         for run in runs:
             policy_result = by_policy_key.get(policy_key_for_run(run.id))
             if policy_result is None:
-                msg = f"the household outcome has no result for run {run.id}"
-                raise ValueError(msg)
+                raise CalculationFailedError(
+                    RunError(
+                        RunErrorCode.INVALID_RESULT,
+                        "The household outcome has no result for one of the "
+                        "call's runs.",
+                    )
+                )
             outputs.append((run, _household_output(result, policy_result)))
         for run, output in outputs:
             self._write_output(connection, run, output)
