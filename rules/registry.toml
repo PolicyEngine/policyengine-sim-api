@@ -1190,7 +1190,7 @@ job = "quality-guards"
 invocation = "run_quality_guards.py"
 [rule.baseline]
 file = "rules/baselines/python-file-length.txt"
-count = 7
+count = 4
 [rule.proof]
 bad_fixture = "rules/fixtures/sim.quality.python-file-length/bad_files.toml"
 good_fixture = "rules/fixtures/sim.quality.python-file-length/good_files.toml"

@@ -22,9 +22,9 @@ from policyengine_simulation_executor.stage12_cache import (
     precompute as cache_precompute,
 )
 from policyengine_simulation_executor.stage12_cache.models import CacheManifest
-from policyengine_simulation_executor.stage12_cache.precompute import (
-    PRECOMPUTE_YEARS,
-    _scoped_planned_simulation,
+from policyengine_simulation_executor.stage12_cache.precompute import PRECOMPUTE_YEARS
+from policyengine_simulation_executor.stage12_cache.precompute_planning import (
+    scoped_planned_simulation,
 )
 from policyengine_simulation_executor.stage12_runtime.partition import (
     US_REGION_GROUPS,
@@ -200,7 +200,7 @@ def _check_installed_cache(expected_manifest_sha256: str) -> dict[str, Any]:
     probe_path = data_folder / probe.filename
     _check_dataset_access(str(probe_path), probe.content_sha256)
     calculation = calculate_simulation_frames(
-        _scoped_planned_simulation(STAGE12_CACHE_PROBE_YEAR, US_REGION_GROUPS[0])
+        scoped_planned_simulation(STAGE12_CACHE_PROBE_YEAR, US_REGION_GROUPS[0])
     )
     if calculation.cache_outcome != "hit":
         msg = "deployed Stage 12 cache probe did not load a cache hit"
