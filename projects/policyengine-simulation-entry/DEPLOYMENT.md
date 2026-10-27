@@ -105,8 +105,9 @@ container start, so the job costs little when every call reports.
 `.github/scripts/deploy-cloud-run-simulation-safety-check.sh` points the job
 at one entrypoint revision. It copies that revision's image digest, service
 account, the secret versions it pins for `SIMULATION_DATABASE_URL`,
-`MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`, and its plain telemetry settings,
-then creates or updates the schedule. Only two places call it, so the job
+`MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`, its plain telemetry settings and
+its `APP_ENVIRONMENT` and `SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT`, then
+creates or updates the schedule. Only two places call it, so the job
 only ever runs a revision that serves traffic and a rejected candidate never
 records anything:
 
@@ -132,6 +133,40 @@ service account permission to deploy Cloud Run jobs and manage Cloud
 Scheduler jobs, and `iam.serviceAccounts.actAs` on the scheduler's service
 account. The job uses the entrypoint's runtime service account, which can
 already read its secrets.
+
+## v2 economy reports
+
+The entrypoint runs economy reports on v2 itself, without the old gateway:
+
+- `POST /v2/economy-reports` creates a report's two economy simulations (or
+  finds them, so their runs can be reused), the report and its first run;
+  `POST /v2/economy-reports/{report_id}/runs` runs it again. Each run of a
+  simulation has its own Modal call, `run_economy_simulation_us` or `_uk` in
+  the v2 app of the run's PolicyEngine.py version, and each report run's
+  comparison step another, `compare_economy_simulations`, which starts once
+  both runs have succeeded. Calls start in the Modal environment named by
+  `SIMULATION_CALL_REPORT_MODAL_ENVIRONMENT`; without it the routes answer
+  503.
+- `GET /v2/economy-reports/{report_id}`, `GET
+  /v2/economy-reports/by-legacy-id/{legacy_report_id}` and `GET
+  /v2/economy-reports/{report_id}/runs` read a report, its runs and, once
+  compared, its result rebuilt from its rows; `GET
+  /v2/simulations/{simulation_id}` reads a simulation. Submissions need
+  `simulation:submit` and reads `simulation:read`.
+- A run's region, dataset and policy come from the Public API's catalog rows
+  of the run's catalog version, which the runtime role reads. The owner of
+  the Public API's tables must grant it `SELECT` on `tax_benefit_models`,
+  `tax_benefit_model_versions`, `regions`, `datasets`, `parameters` and
+  `parameter_values` in each environment (see
+  `libs/policyengine-simulation-persistence/README.md`).
+- Each safety-check pass also starts the comparisons whose runs have
+  succeeded and the runs a submitter left pending for ten minutes.
+- After each staging promotion, the `economy_staging_check` job submits a
+  report on Wales, current law compared with itself, to the stable URL, runs
+  it again with fresh runs, and reads the result back
+  (`authenticated_tests/test_staging_economy_report.py`). It needs a staging
+  catalog version for the deployed PolicyEngine.py version. Its failure is
+  shown in the run without stopping the production deployment.
 
 ## Candidate qualification
 
