@@ -4,11 +4,14 @@ The staging deployment runs this after promoting the revision it tested, so
 it reaches that revision through the stable URL: it submits a report on
 Wales, current law compared with itself, waits until a run this
 deployment's Modal functions calculated has its comparison recorded, and
-reads the result back. When the submission reused runs an earlier
-deployment finished, it runs the report again with fresh runs; either way
-it costs one simulation call and one comparison call, about a minute or
-two of Modal time. It needs the staging simulation database, sim's Modal token,
-and a staging catalog version for the deployed PolicyEngine.py version.
+reads the result back. Current law compared with itself is one simulation
+run, so a submission with a fresh run costs one simulation call and one
+comparison call, about a minute or two of Modal time. When the submission
+reused a run an earlier deployment finished, the submission compares that
+run at once, and the check runs the report again with a fresh run: one
+simulation call and two comparison calls. It needs the staging simulation
+database, sim's Modal token, and a staging catalog version for the deployed
+PolicyEngine.py version.
 
 The deployed-auth runs collect this directory too; the test runs only where
 ``SIMULATION_STAGING_ECONOMY_CHECK`` is 1.

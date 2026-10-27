@@ -160,7 +160,19 @@ The entrypoint runs economy reports on v2 itself, without the old gateway:
   `parameter_values` in each environment (see
   `libs/policyengine-simulation-persistence/README.md`).
 - Each safety-check pass also starts the comparisons whose runs have
-  succeeded and the runs a submitter left pending for ten minutes.
+  succeeded and the runs a submitter left pending for ten minutes. A
+  submission starts only the runs it created; a report that reuses a run
+  another submission created waits for that submission to start it. If that
+  submitter stopped before starting it, the run's calculation starts only
+  after those ten minutes, plus up to one five-minute interval of the
+  safety check's schedule.
+- Opening a report migrated from v1 without a run starts its first run with
+  the `system` trigger. A `system` run returns the report's newest run when
+  it has one, so simultaneous first openings share one run.
+- Each route declares its error answers in the OpenAPI document, so the
+  generated client parses them: 404 and 503 with a text `detail`, 422 with
+  sim's reason as text or FastAPI's list of refused fields, and, on the
+  report reads, 500 when a stored result cannot be rebuilt.
 - After each staging promotion, the `economy_staging_check` job submits a
   report on Wales, current law compared with itself, to the stable URL, runs
   it again with fresh runs when the submission reused runs an earlier
