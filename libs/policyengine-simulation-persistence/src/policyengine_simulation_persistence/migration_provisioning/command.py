@@ -10,10 +10,11 @@ does not exist yet. A run writes the output file at the end; a dry run writes
 nothing. Both print a JSON summary on standard output.
 
 Exit status: 0 when every report was provisioned (or, in a dry run, would be);
-1 when some reports failed, which the output file and summary list; 2 when the
-command refused to start, and nothing was written; 3 when the database stopped
-the run partway, and no output file was written. Rows created before a stop are
-kept, and running the command again reuses them.
+1 when some reports failed (or would fail), which the summary and a run's
+output file list; 2 when the command refused to start, and nothing was
+written; 3 when a run stopped before writing its output file, because the
+database stopped it partway or the file could not be written. Rows created
+before a stop are kept, and running the command again reuses them.
 """
 
 from __future__ import annotations
@@ -240,7 +241,16 @@ def main(
         return EXIT_STOPPED
     finally:
         engine.dispose()
-    if not arguments.dry_run:
-        _write_mapping(arguments.output, result)
     sys.stdout.write(_summary(result) + "\n")
+    if not arguments.dry_run:
+        try:
+            _write_mapping(arguments.output, result)
+        except OSError as error:
+            sys.stderr.write(
+                f"cannot write {arguments.output}: {error.strerror}\n"
+                "The run finished, but no output file was written. Running the "
+                "command again with a new --output reuses every row it created "
+                "and writes the mapping.\n"
+            )
+            return EXIT_STOPPED
     return EXIT_REPORTS_FAILED if result.failures else EXIT_PROVISIONED

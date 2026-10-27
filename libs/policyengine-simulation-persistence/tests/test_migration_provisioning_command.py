@@ -439,3 +439,42 @@ def test_a_run_the_database_stops_writes_no_mapping_and_exits_with_three(
         simulation_store(migrated_database).get_by_legacy_simulation_id(9001)
         is not None
     )
+
+
+@pytest.mark.postgres
+def test_an_output_file_that_cannot_be_written_exits_with_three(
+    tmp_path: Path,
+    migrated_database,
+    public_api_rows,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from policyengine_simulation_persistence.migration_provisioning import (
+        command as command_module,
+    )
+
+    output = tmp_path / "report-mapping.json"
+    provision_reports = command_module.provision_reports
+
+    def provision_while_another_process_writes_the_output(*arguments, **options):
+        result = provision_reports(*arguments, **options)
+        output.write_text("written meanwhile")
+        return result
+
+    monkeypatch.setattr(
+        command_module,
+        "provision_reports",
+        provision_while_another_process_writes_the_output,
+    )
+    definitions = _write_definitions(tmp_path, _economy_report(public_api_rows))
+
+    exit_code = _run(
+        definitions, "--output", str(output), database_url=migrated_database.runtime_url
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 3
+    assert output.read_text() == "written meanwhile"
+    assert f"cannot write {output}" in captured.err
+    assert "with a new --output" in captured.err
+    assert json.loads(captured.out)["new_reports"] == 1

@@ -185,9 +185,9 @@ Both print a JSON summary: `dry_run`, `new_simulations`,
 | Exit status | Meaning |
 | --- | --- |
 | 0 | Every report was provisioned, or in a dry run would be. |
-| 1 | Some reports failed. The output file and the summary list them; the others are provisioned. |
+| 1 | Some reports failed, or in a dry run would fail. The summary lists them, and so does a run's output file; the other reports are provisioned. |
 | 2 | The command refused to start. Nothing was written. |
-| 3 | The database stopped the run partway. No output file was written; running the command again reuses the rows already created. |
+| 3 | A run stopped before writing its output file: the database stopped it partway, or the file could not be written. Running the command again, with a new output file, reuses the rows already created. |
 
 ## Output file: report mapping, schema version 1
 
