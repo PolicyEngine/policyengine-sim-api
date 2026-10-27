@@ -478,3 +478,33 @@ def test_an_output_file_that_cannot_be_written_exits_with_three(
     assert f"cannot write {output}" in captured.err
     assert "with a new --output" in captured.err
     assert json.loads(captured.out)["new_reports"] == 1
+
+
+@pytest.mark.postgres
+def test_a_dry_run_the_database_stops_says_it_wrote_nothing(
+    tmp_path: Path,
+    migrated_database,
+    public_api_rows,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def lose_the_connection(store, legacy_report_id):
+        statement = "SELECT FROM simulation.reports"
+        raise OperationalError(
+            statement, {}, ConnectionError("server closed the connection")
+        )
+
+    monkeypatch.setattr(ReportStore, "get_by_legacy_report_id", lose_the_connection)
+    definitions = _write_definitions(tmp_path, _economy_report(public_api_rows))
+
+    exit_code = _run(
+        definitions, "--dry-run", database_url=migrated_database.runtime_url
+    )
+
+    error_output = capsys.readouterr().err
+    assert exit_code == 3
+    assert "the database stopped the dry run: server closed the connection" in (
+        error_output
+    )
+    assert "The dry run wrote nothing." in error_output
+    assert "kept" not in error_output

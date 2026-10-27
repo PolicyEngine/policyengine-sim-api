@@ -12,9 +12,9 @@ nothing. Both print a JSON summary on standard output.
 Exit status: 0 when every report was provisioned (or, in a dry run, would be);
 1 when some reports failed (or would fail), which the summary and a run's
 output file list; 2 when the command refused to start, and nothing was
-written; 3 when a run stopped before writing its output file, because the
-database stopped it partway or the file could not be written. Rows created
-before a stop are kept, and running the command again reuses them.
+written; 3 when the database stopped the command partway, or a run's output
+file could not be written. Rows a run created before a stop are kept, and
+running the command again reuses them; a dry run writes nothing.
 """
 
 from __future__ import annotations
@@ -233,11 +233,19 @@ def main(
         sys.stderr.write(f"{refusal}\n")
         return EXIT_REFUSED
     except SQLAlchemyError as error:
-        sys.stderr.write(
-            f"the database stopped the run: {database_error_summary(error)}\n"
-            "No output file was written. The rows created so far are kept, "
-            "and running the command again reuses them.\n"
-        )
+        summary = database_error_summary(error)
+        if arguments.dry_run:
+            message = (
+                f"the database stopped the dry run: {summary}\n"
+                "The dry run wrote nothing.\n"
+            )
+        else:
+            message = (
+                f"the database stopped the run: {summary}\n"
+                "No output file was written. The rows created so far are kept, "
+                "and running the command again reuses them.\n"
+            )
+        sys.stderr.write(message)
         return EXIT_STOPPED
     finally:
         engine.dispose()
