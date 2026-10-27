@@ -179,3 +179,20 @@ def test_the_route_is_not_in_the_public_openapi_document() -> None:
     document = _client(_Verifier(), _Recorder()).get("/openapi.json").json()
 
     assert CALL_ENDED_PATH not in document["paths"]
+
+
+class _FailingVerifier:
+    def verify(self, token: str) -> ModalIdentity:
+        msg = "an error the verifier did not expect"
+        raise RuntimeError(msg)
+
+
+def test_an_unexpected_verifier_failure_is_answered_with_a_wait() -> None:
+    """The sender reports again, instead of taking a 500 as a refusal."""
+    recorder = _Recorder()
+
+    response = _post(_client(_FailingVerifier(), recorder))
+
+    assert response.status_code == 503
+    assert response.json() == {"status": "modal_unreachable"}
+    assert recorder.reports == []

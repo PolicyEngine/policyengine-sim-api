@@ -111,6 +111,12 @@ class ModalIdentityVerifier:
         except jwt.PyJWTError as error:
             msg = f"the token names no key Modal publishes: {type(error).__name__}"
             raise ModalIdentityError(msg) from error
+        # PyJWKClient wraps only URLError and TimeoutError; a key set that
+        # arrives truncated, reset or not as JSON raises something else, and
+        # is no more the caller's fault.
+        except Exception as error:
+            msg = f"Modal's signing keys could not be read: {type(error).__name__}"
+            raise ModalKeysUnavailableError(msg) from error
         try:
             claims = jwt.decode(
                 token,
