@@ -37,6 +37,8 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
 
 from .cached_simulation import Stage12CachedSimulation, qualifying_cache_identity
 from .catalog_population import (
+    CatalogDatasetChoice,
+    CatalogRegion,
     catalog_dataset,
     catalog_population,
     resolve_catalog_dataset,
@@ -267,6 +269,28 @@ def _installed_country_bundle(country: CountryId) -> Stage12CountryBundle:
     )
 
 
+def _region_resolution(region: CatalogRegion) -> RegionResolution:
+    """Hand a catalog region to the calculation as the region type it reads."""
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call, as the calculation's other helpers are
+        RegionResolution,
+    )
+
+    return RegionResolution(
+        code=region.code,
+        scoping_strategy=region.scoping_strategy,
+        state_code=region.state_code,
+    )
+
+
+def _dataset_selection(choice: CatalogDatasetChoice) -> DatasetSelection:
+    """Hand a catalog dataset to the calculation as the selection type it reads."""
+    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # resolved per call, as the calculation's other helpers are
+        DatasetSelection,
+    )
+
+    return DatasetSelection(choice.name, choice.uri, choice.is_default)
+
+
 def _require_loaded_dataset_matches_provenance(
     simulation: SimulationExecutionInput, selection: DatasetSelection
 ) -> None:
@@ -348,7 +372,7 @@ def calculate_simulation_frames(
                     params=params,
                 )
                 if population is None
-                else resolve_catalog_region(simulation, population)
+                else _region_resolution(resolve_catalog_region(simulation, population))
             )
         with stage_span(Stage.DATASET_RESOLUTION):
             dataset_selection = (
@@ -357,8 +381,10 @@ def calculate_simulation_frames(
                     region_resolution=region,
                 )
                 if population is None
-                else resolve_catalog_dataset(
-                    _installed_country_bundle(country), population
+                else _dataset_selection(
+                    resolve_catalog_dataset(
+                        _installed_country_bundle(country), population
+                    )
                 )
             )
         _require_loaded_dataset_matches_provenance(simulation, dataset_selection)

@@ -10,7 +10,8 @@ Starting a call takes three conditional writes around Modal's ``spawn``:
    it ends); or, when starting the call raised, fail them.
 
 If the instance stops between 1 and 3, the runs stay ``dispatching`` until the
-safety check fails them as abandoned. No route starts calls yet.
+safety check fails them as abandoned. The economy report routes and the
+safety check start calls through it (``economy_reports``).
 """
 
 from __future__ import annotations

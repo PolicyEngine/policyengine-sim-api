@@ -12,7 +12,8 @@ resolve their regions as before.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from policyengine_simulation_contract.economy_runs import CatalogPopulation
 
@@ -29,13 +30,32 @@ if TYPE_CHECKING:
         SimulationExecutionInput,
     )
 
-    from policyengine_simulation_executor.simulation_runtime import (
-        DatasetSelection,
-        RegionResolution,
-    )
 
 CATALOG_POPULATION_OPTION = "catalog_population"
 REGION_GROUP_OPTION = "region_group"
+
+
+@dataclass(frozen=True)
+class CatalogRegion:
+    """The region a calculation simulates: its code and how it is scoped.
+
+    ``scoping_strategy`` is None for a national region; ``state_code`` names
+    the US state of a state or district region. The Stage 12 calculation
+    reads the same three fields of its own region type.
+    """
+
+    code: str
+    scoping_strategy: Any | None = None
+    state_code: str | None = None
+
+
+@dataclass(frozen=True)
+class CatalogDatasetChoice:
+    """The release dataset a calculation loads, and whether it is the default."""
+
+    name: str
+    uri: str
+    is_default: bool
 
 
 def catalog_population(
@@ -62,7 +82,7 @@ def _row_filter(row_filter: CatalogRowFilter) -> RowFilterStrategy:
 
 def resolve_catalog_region(
     simulation: SimulationExecutionInput, population: CatalogPopulation
-) -> RegionResolution:
+) -> CatalogRegion:
     """Return the region the catalog population describes, as the worker scopes it.
 
     A segment of a national run (``region_group`` in its options) is scoped to
@@ -73,10 +93,6 @@ def resolve_catalog_region(
         RegionGroupStrategy,
     )
 
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # the region type the Stage 12 calculation consumes
-        RegionResolution,
-    )
-
     group = simulation.options.get(REGION_GROUP_OPTION)
     if isinstance(group, list) and group:
         codes = [str(code) for code in group]
@@ -85,13 +101,13 @@ def resolve_catalog_region(
         if missing:
             msg = f"the catalog population has no filter for {', '.join(missing)}"
             raise ValueError(msg)
-        return RegionResolution(
+        return CatalogRegion(
             code="region_group/" + "+".join(sorted(codes)),
             scoping_strategy=RegionGroupStrategy(
                 members=[_row_filter(filters[code]) for code in codes]
             ),
         )
-    return RegionResolution(
+    return CatalogRegion(
         code=population.region_code,
         scoping_strategy=(
             None
@@ -118,14 +134,10 @@ def catalog_dataset(country_bundle: Stage12CountryBundle, name: str) -> Stage12D
 
 def resolve_catalog_dataset(
     country_bundle: Stage12CountryBundle, population: CatalogPopulation
-) -> DatasetSelection:
+) -> CatalogDatasetChoice:
     """Return the dataset selection the calculation loads for the population."""
-    from policyengine_simulation_executor.simulation_runtime import (  # noqa: PLC0415  # the selection type the Stage 12 calculation consumes
-        DatasetSelection,
-    )
-
     dataset = catalog_dataset(country_bundle, population.dataset_name)
-    return DatasetSelection(
+    return CatalogDatasetChoice(
         name=dataset.identity,
         uri=dataset.uri,
         is_default=dataset.identity == country_bundle.default_dataset,
