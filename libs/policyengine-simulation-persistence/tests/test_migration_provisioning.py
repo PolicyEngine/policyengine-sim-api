@@ -376,3 +376,41 @@ def test_a_dry_run_reports_a_report_migrated_with_other_simulations(
         )
     ]
     assert (result.new_simulations, result.new_reports) == (2, 0)
+
+
+@pytest.mark.parametrize(
+    ("unstorable_value", "subject"),
+    [
+        ("nul region", "v1 simulation 9001"),
+        ("nul options", "v1 report 4512"),
+    ],
+    ids=["a region code with a NUL character", "options with a NUL character"],
+)
+def test_a_value_the_database_cannot_store_fails_its_report_only(
+    migrated_database, public_api_rows, unstorable_value, subject
+) -> None:
+    nul_region = "state/\x00ca"
+    unstorable = (
+        {
+            "baseline": economy_simulation_definition(9001, region_code=nul_region),
+            "reform": economy_simulation_definition(
+                9002,
+                policy_id=str(public_api_rows.us_policy_id),
+                region_code=nul_region,
+            ),
+        }
+        if unstorable_value == "nul region"
+        else {"options": {"note": "\x00"}}
+    )
+
+    result = _provision(
+        migrated_database,
+        _economy_report(public_api_rows, **unstorable),
+        _household_report(public_api_rows),
+    )
+
+    (failure,) = result.failures
+    assert failure.legacy_report_id == 4512
+    assert failure.reason.startswith(f"the database rejected {subject}: ")
+    assert "\n" not in failure.reason
+    assert [mapped.legacy_report_id for mapped in result.reports] == [4513]

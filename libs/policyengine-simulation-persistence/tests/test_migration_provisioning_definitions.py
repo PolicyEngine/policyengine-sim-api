@@ -322,3 +322,18 @@ def test_policy_and_household_ids_are_uuids() -> None:
         )
 
     assert _error_messages(error).startswith("reports.0.economy.reform.policy_id:")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"legacy_report_id": 2**63},
+        {"baseline": economy_simulation_definition(2**63)},
+    ],
+    ids=["report ID", "simulation ID"],
+)
+def test_ids_beyond_the_database_s_bigint_range_are_rejected(overrides) -> None:
+    with pytest.raises(ValidationError) as error:
+        parse_definitions(economy_report_definition(**overrides))
+
+    assert "less than or equal to 9223372036854775807" in _error_messages(error)

@@ -23,7 +23,7 @@ Each report definition:
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `kind` | `"economy"` or `"household"` | The report's kind, and its simulations' kind. |
-| `legacy_report_id` | positive integer | The v1 report ID. |
+| `legacy_report_id` | positive integer, at most 2^63 − 1 | The v1 report ID. |
 | `country` | two lowercase letters | The report's country, and its simulations'. |
 | `year` | integer, 1900 to 2200 | The year the report calculates. |
 | `options` | JSON object | The report's options, stored as given. |
@@ -34,7 +34,7 @@ Each simulation of an economy report:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `legacy_simulation_id` | positive integer | The v1 simulation ID. |
+| `legacy_simulation_id` | positive integer, at most 2^63 − 1 | The v1 simulation ID. |
 | `policy_id` | UUID or `null` | The v2 policy that `legacy_policy_mappings` maps the v1 policy to, or `null` for current law. |
 | `region_code` | text, no whitespace | The v2 region code the Public API's region reference files map the v1 region to: `us`, `state/ca`, `country/northern_ireland`, `constituency/E14001063`. |
 | `dataset_name` | text, no whitespace, or `null` | A catalog dataset name, or `null` for the region's default dataset in each catalog version. |
@@ -43,7 +43,7 @@ Each simulation of a household report:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `legacy_simulation_id` | positive integer | The v1 simulation ID. |
+| `legacy_simulation_id` | positive integer, at most 2^63 − 1 | The v1 simulation ID. |
 | `policy_id` | UUID or `null` | As for an economy simulation. |
 | `household_id` | UUID | The v2 household that `legacy_household_mappings` maps the v1 household to. |
 
@@ -119,14 +119,15 @@ route and runs nowhere else.
    ```
 
 2. Put the runtime role's URL in `SIMULATION_DATABASE_URL`, the variable the
-   Simulation Entrypoint reads. It is the newest enabled version of the Secret
-   Manager secret that the `SIMULATION_DATABASE_URL_SECRET_NAME` variable of
-   sim's GitHub environment names (`beta` for staging, `prod` for
+   Simulation Entrypoint reads. The deploy mounts the newest enabled version
+   of the Secret Manager secret that the `SIMULATION_DATABASE_URL_SECRET_NAME`
+   variable of sim's GitHub environment names (`beta` for staging, `prod` for
    production): a secret name in the project named by
    `SIMULATION_ENTRYPOINT_GCP_PROJECT_ID`, or a full
    `projects/<project>/secrets/<name>` reference. Only the entrypoint's runtime
    service account can read it today, so the operator needs read access to it
-   first.
+   first. `latest` below names the newest version; if that version is
+   disabled, give the newest enabled version's number instead.
 
    ```bash
    SIMULATION_DATABASE_URL="$(gcloud secrets versions access latest \
@@ -164,8 +165,9 @@ through the stores' `create_migrated` methods. A row that already exists is
 reused if it matches the definition, so running the same export again creates
 nothing and maps the same reports. A row that exists with a different
 definition, or a definition the database rejects (a policy or household the
-Public API does not have, or one of another country), fails that report
-alone; the other reports continue.
+Public API does not have, one of another country, or a value it cannot store,
+such as text holding a NUL character), fails that report alone; the other
+reports continue.
 
 Each row is committed on its own. If a report fails after some of its
 simulations were created, they stay, keyed by their v1 IDs, and a later run

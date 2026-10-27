@@ -6,7 +6,8 @@ through the stores' ``create_migrated`` methods. A row that already exists is
 reused if it matches the definition, so running the same export again creates
 nothing. A row that exists with a different definition, or a definition the
 database rejects (such as a policy the Public API does not have), fails that
-report alone; the other reports continue.
+report alone; the other reports continue. So does a value the database cannot
+store, such as text holding a NUL character.
 
 The stores commit each row on its own. A report that fails after some of its
 simulations were created leaves those simulations in place, keyed by their v1
@@ -24,7 +25,7 @@ from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
 from typing import TYPE_CHECKING
 
-from sqlalchemy.exc import DBAPIError, IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import DataError, DBAPIError, IntegrityError, SQLAlchemyError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -122,7 +123,9 @@ def database_error_summary(error: SQLAlchemyError) -> str:
 def _create[RecordT](create: Callable[[], RecordT], subject: str) -> RecordT:
     try:
         return create()
-    except IntegrityError as error:
+    except (IntegrityError, DataError) as error:
+        # A constraint the row breaks, or a value the database cannot store,
+        # such as text holding a NUL character.
         msg = f"the database rejected {subject}: {database_error_summary(error)}"
         raise DefinitionRejectedError(msg) from error
 

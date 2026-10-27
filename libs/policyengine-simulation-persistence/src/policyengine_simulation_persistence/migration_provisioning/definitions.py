@@ -24,7 +24,6 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
-    PositiveInt,
     model_validator,
 )
 
@@ -43,6 +42,10 @@ if TYPE_CHECKING:
     from typing import Self
 
 REPORT_DEFINITIONS_SCHEMA_VERSION = 1
+# The legacy ID columns are bigint, so a larger ID could not be stored.
+LARGEST_LEGACY_ID = 2**63 - 1
+
+type LegacyId = Annotated[int, Field(gt=0, le=LARGEST_LEGACY_ID)]
 
 
 class _DefinitionModel(BaseModel):
@@ -52,7 +55,7 @@ class _DefinitionModel(BaseModel):
 class EconomySimulationDefinition(_DefinitionModel):
     """One v1 economy simulation: a policy applied to a region."""
 
-    legacy_simulation_id: PositiveInt
+    legacy_simulation_id: LegacyId
     # The v2 policy ID, or null for current law.
     policy_id: UUID | None
     # The v2 region code, such as ``state/ca`` or ``constituency/E14001063``.
@@ -75,7 +78,7 @@ class EconomySimulationDefinition(_DefinitionModel):
 class HouseholdSimulationDefinition(_DefinitionModel):
     """One v1 household simulation: a policy applied to a household."""
 
-    legacy_simulation_id: PositiveInt
+    legacy_simulation_id: LegacyId
     # The v2 policy ID, or null for current law.
     policy_id: UUID | None
     # The v2 household ID.
@@ -96,7 +99,7 @@ type SimulationDefinition = EconomySimulationDefinition | HouseholdSimulationDef
 
 
 class _ReportDefinition(_DefinitionModel):
-    legacy_report_id: PositiveInt
+    legacy_report_id: LegacyId
     country: str
     year: Annotated[int, Field(ge=FIRST_YEAR, le=LAST_YEAR)]
     options: dict[str, JsonValue]
