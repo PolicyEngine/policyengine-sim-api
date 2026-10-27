@@ -265,3 +265,17 @@ def _uuid(value: str):
     from uuid import UUID
 
     return UUID(value)
+
+
+def test_a_household_report_is_not_an_economy_report(economy_path) -> None:
+    report = economy_path.submit()
+    stored = economy_path.reports.rows[_uuid(report["id"])]
+    from policyengine_simulation_persistence import ReportKind
+
+    economy_path.reports.rows[stored.id] = replace(stored, kind=ReportKind.HOUSEHOLD)
+
+    read = economy_path.client.get(f"/v2/economy-reports/{report['id']}")
+    runs = economy_path.client.get(f"/v2/economy-reports/{report['id']}/runs")
+
+    assert read.status_code == 404
+    assert runs.status_code == 404

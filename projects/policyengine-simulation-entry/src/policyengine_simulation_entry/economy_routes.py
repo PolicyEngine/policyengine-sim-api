@@ -27,7 +27,7 @@ from uuid import UUID  # noqa: TC003  # FastAPI evaluates the handlers' path par
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from policyengine_simulation_contract.job_progress import JobStage
-from policyengine_simulation_persistence import RunStatus, RunTrigger
+from policyengine_simulation_persistence import ReportKind, RunStatus, RunTrigger
 from sqlalchemy.exc import DBAPIError
 
 from policyengine_simulation_entry.economy_report_types import (
@@ -281,7 +281,8 @@ class EconomyReportReads:
 
     @staticmethod
     def _report(record: ReportRecord | None, identifier: object) -> ReportRecord:
-        if record is None:
+        """Return an economy report; a household report is not one."""
+        if record is None or record.kind is not ReportKind.ECONOMY:
             msg = f"no economy report {identifier}"
             raise ReportNotFoundError(msg)
         return record
