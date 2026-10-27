@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import pytest
 from migration_provisioning_support import (
-    economy_report_definition,
+    economy_report_for_rows,
     economy_simulation_definition,
-    household_report_definition,
-    household_simulation_definition,
+    household_report_for_rows,
     parse_definitions,
 )
 from policyengine_simulation_persistence import (
@@ -28,32 +28,20 @@ from simulation_support import economy_simulation, simulation_store
 from sqlalchemy import text
 from sqlalchemy.exc import DataError
 
+if TYPE_CHECKING:
+    from conftest import DisposableDatabase
+    from policyengine_simulation_persistence.migration_provisioning import (
+        ProvisioningResult,
+    )
+
 pytestmark = pytest.mark.postgres
 
 
-def _economy_report(rows, legacy_report_id=4512, **overrides):
-    """Return an economy report of the US reform in California."""
-    values = {
-        "reform": economy_simulation_definition(9002, policy_id=str(rows.us_policy_id))
-    }
-    values.update(overrides)
-    return economy_report_definition(legacy_report_id, **values)
-
-
-def _household_report(rows, legacy_report_id=4513, **overrides):
-    """Return a report comparing the US reform with current law for the household."""
-    household_id = str(rows.us_household_id)
-    values = {
-        "baseline": household_simulation_definition(9003, household_id=household_id),
-        "reform": household_simulation_definition(
-            9004, household_id=household_id, policy_id=str(rows.us_policy_id)
-        ),
-    }
-    values.update(overrides)
-    return household_report_definition(legacy_report_id, **values)
-
-
-def _provision(database, *report_definitions, dry_run=False):
+def _provision(
+    database: DisposableDatabase,
+    *report_definitions: dict[str, Any],
+    dry_run: bool = False,
+) -> ProvisioningResult:
     return provision_reports(
         parse_definitions(*report_definitions),
         simulation_store(database),
@@ -62,7 +50,7 @@ def _provision(database, *report_definitions, dry_run=False):
     )
 
 
-def _row_counts(database) -> tuple[int, int]:
+def _row_counts(database: DisposableDatabase) -> tuple[int, int]:
     engine = superuser_engine(database.superuser_url)
     try:
         with engine.connect() as connection:
@@ -83,8 +71,8 @@ def test_each_report_gets_its_simulations_and_then_the_report(
 ) -> None:
     result = _provision(
         migrated_database,
-        _economy_report(public_api_rows, options={"target": "cliff"}),
-        _household_report(public_api_rows),
+        economy_report_for_rows(public_api_rows, options={"target": "cliff"}),
+        household_report_for_rows(public_api_rows),
     )
 
     simulations = simulation_store(migrated_database)
@@ -123,7 +111,10 @@ def test_each_report_gets_its_simulations_and_then_the_report(
 def test_running_again_creates_nothing_and_maps_the_same_reports(
     migrated_database, public_api_rows
 ) -> None:
-    definitions = (_economy_report(public_api_rows), _household_report(public_api_rows))
+    definitions = (
+        economy_report_for_rows(public_api_rows),
+        household_report_for_rows(public_api_rows),
+    )
     first = _provision(migrated_database, *definitions)
     counts_after_first_run = _row_counts(migrated_database)
 
@@ -144,8 +135,8 @@ def test_a_simulation_several_reports_use_is_created_once(
 ) -> None:
     result = _provision(
         migrated_database,
-        _economy_report(public_api_rows, 4512),
-        _economy_report(
+        economy_report_for_rows(public_api_rows, 4512),
+        economy_report_for_rows(
             public_api_rows,
             4514,
             reform=economy_simulation_definition(
@@ -153,7 +144,7 @@ def test_a_simulation_several_reports_use_is_created_once(
             ),
             baseline=economy_simulation_definition(9006, dataset_name="cps"),
         ),
-        _economy_report(public_api_rows, 4515),
+        economy_report_for_rows(public_api_rows, 4515),
     )
 
     reports = report_store(migrated_database)
@@ -176,7 +167,7 @@ def test_a_single_simulation_economy_report_compares_it_with_itself(
 
     result = _provision(
         migrated_database,
-        _economy_report(public_api_rows, baseline=single, reform=single),
+        economy_report_for_rows(public_api_rows, baseline=single, reform=single),
     )
 
     report = report_store(migrated_database).get_by_legacy_report_id(4512)
@@ -199,8 +190,8 @@ def test_a_simulation_already_migrated_differently_fails_its_report_only(
 
     result = _provision(
         migrated_database,
-        _economy_report(public_api_rows),
-        _household_report(public_api_rows),
+        economy_report_for_rows(public_api_rows),
+        household_report_for_rows(public_api_rows),
     )
 
     assert result.failures == [
@@ -219,9 +210,11 @@ def test_a_simulation_already_migrated_differently_fails_its_report_only(
 def test_a_report_already_migrated_differently_fails(
     migrated_database, public_api_rows
 ) -> None:
-    _provision(migrated_database, _economy_report(public_api_rows))
+    _provision(migrated_database, economy_report_for_rows(public_api_rows))
 
-    result = _provision(migrated_database, _economy_report(public_api_rows, year=2027))
+    result = _provision(
+        migrated_database, economy_report_for_rows(public_api_rows, year=2027)
+    )
 
     assert result.failures == [
         ProvisioningFailure(
@@ -248,11 +241,11 @@ def test_a_definition_the_database_rejects_fails_and_the_rest_continue(
 
     result = _provision(
         migrated_database,
-        _economy_report(
+        economy_report_for_rows(
             public_api_rows,
             reform=economy_simulation_definition(9002, policy_id=str(policy_id)),
         ),
-        _household_report(public_api_rows),
+        household_report_for_rows(public_api_rows),
     )
 
     (failure,) = result.failures
@@ -270,9 +263,9 @@ def test_a_dry_run_writes_nothing_and_counts_what_a_run_would_create(
 ) -> None:
     result = _provision(
         migrated_database,
-        _economy_report(public_api_rows, 4512),
-        _economy_report(public_api_rows, 4515),
-        _household_report(public_api_rows),
+        economy_report_for_rows(public_api_rows, 4512),
+        economy_report_for_rows(public_api_rows, 4515),
+        household_report_for_rows(public_api_rows),
         dry_run=True,
     )
 
@@ -287,7 +280,10 @@ def test_a_dry_run_writes_nothing_and_counts_what_a_run_would_create(
 def test_a_dry_run_after_a_run_maps_every_existing_report(
     migrated_database, public_api_rows
 ) -> None:
-    definitions = (_economy_report(public_api_rows), _household_report(public_api_rows))
+    definitions = (
+        economy_report_for_rows(public_api_rows),
+        household_report_for_rows(public_api_rows),
+    )
     first = _provision(migrated_database, *definitions)
 
     dry_run = _provision(migrated_database, *definitions, dry_run=True)
@@ -307,10 +303,10 @@ def test_a_dry_run_after_a_run_maps_every_existing_report(
 def test_a_dry_run_counts_a_report_whose_simulations_all_exist(
     migrated_database, public_api_rows
 ) -> None:
-    _provision(migrated_database, _economy_report(public_api_rows, 4512))
+    _provision(migrated_database, economy_report_for_rows(public_api_rows, 4512))
 
     result = _provision(
-        migrated_database, _economy_report(public_api_rows, 4515), dry_run=True
+        migrated_database, economy_report_for_rows(public_api_rows, 4515), dry_run=True
     )
 
     assert (result.new_simulations, result.existing_simulations) == (0, 2)
@@ -321,7 +317,7 @@ def test_a_dry_run_counts_a_report_whose_simulations_all_exist(
 def test_a_dry_run_reports_rows_already_migrated_differently(
     migrated_database, public_api_rows
 ) -> None:
-    _provision(migrated_database, _economy_report(public_api_rows))
+    _provision(migrated_database, economy_report_for_rows(public_api_rows))
     simulation_store(migrated_database).create_migrated(
         economy_simulation(
             public_api_rows,
@@ -333,8 +329,8 @@ def test_a_dry_run_reports_rows_already_migrated_differently(
 
     result = _provision(
         migrated_database,
-        _economy_report(public_api_rows, year=2027),
-        _household_report(public_api_rows),
+        economy_report_for_rows(public_api_rows, year=2027),
+        household_report_for_rows(public_api_rows),
         dry_run=True,
     )
 
@@ -357,11 +353,11 @@ def test_a_dry_run_reports_rows_already_migrated_differently(
 def test_a_dry_run_reports_a_report_migrated_with_other_simulations(
     migrated_database, public_api_rows
 ) -> None:
-    _provision(migrated_database, _economy_report(public_api_rows))
+    _provision(migrated_database, economy_report_for_rows(public_api_rows))
 
     result = _provision(
         migrated_database,
-        _economy_report(
+        economy_report_for_rows(
             public_api_rows,
             baseline=economy_simulation_definition(9101),
             reform=economy_simulation_definition(
@@ -409,8 +405,8 @@ def test_a_value_the_database_cannot_store_fails_its_report_only(
 
     result = _provision(
         migrated_database,
-        _economy_report(public_api_rows),
-        _household_report(public_api_rows),
+        economy_report_for_rows(public_api_rows),
+        household_report_for_rows(public_api_rows),
     )
 
     assert result.failures == [
@@ -433,7 +429,7 @@ def test_options_compare_as_the_json_numbers_the_database_stores(
         "nested": {"limits": [1.2345678901234567e19, 1e300, 5e-324, -0.0, 7]},
         "flag": True,
     }
-    definition = _economy_report(public_api_rows, options=options)
+    definition = economy_report_for_rows(public_api_rows, options=options)
 
     first = _provision(migrated_database, definition)
     second = _provision(migrated_database, definition)
@@ -444,3 +440,26 @@ def test_options_compare_as_the_json_numbers_the_database_stores(
         True,
         False,
     ]
+
+
+def test_a_later_run_reuses_the_simulations_a_failed_report_left(
+    migrated_database, public_api_rows
+) -> None:
+    missing_policy = economy_simulation_definition(9002, policy_id=str(uuid4()))
+    first = _provision(
+        migrated_database,
+        economy_report_for_rows(public_api_rows, reform=missing_policy),
+    )
+    baseline = simulation_store(migrated_database).get_by_legacy_simulation_id(9001)
+
+    # The export is corrected and the command runs again.
+    second = _provision(migrated_database, economy_report_for_rows(public_api_rows))
+
+    report = report_store(migrated_database).get_by_legacy_report_id(4512)
+    assert [failure.legacy_report_id for failure in first.failures] == [4512]
+    assert baseline is not None
+    assert report is not None
+    assert report.baseline_simulation_id == baseline.id
+    assert second.failures == []
+    assert (second.new_simulations, second.existing_simulations) == (1, 1)
+    assert (second.new_reports, second.existing_reports) == (1, 0)

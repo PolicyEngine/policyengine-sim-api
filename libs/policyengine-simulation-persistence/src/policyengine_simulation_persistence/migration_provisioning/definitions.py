@@ -18,6 +18,7 @@ written.
 from __future__ import annotations
 
 import math
+from abc import ABC, abstractmethod
 from collections import Counter
 from typing import TYPE_CHECKING, Annotated, Literal
 from uuid import UUID
@@ -135,19 +136,19 @@ class HouseholdSimulationDefinition(_DefinitionModel):
 type SimulationDefinition = EconomySimulationDefinition | HouseholdSimulationDefinition
 
 
-class _ReportDefinition(_DefinitionModel):
+class _ReportDefinition(_DefinitionModel, ABC):
     legacy_report_id: LegacyId
     country: str
     year: Annotated[int, Field(ge=FIRST_YEAR, le=LAST_YEAR)]
     options: StorableOptions
 
+    @abstractmethod
     def simulations(self) -> tuple[SimulationDefinition, ...]:
         """Return the baseline, then the reform if the report has one."""
-        raise NotImplementedError
 
+    @abstractmethod
     def report_kind(self) -> ReportKind:
         """Return the kind of the report and of its simulations."""
-        raise NotImplementedError
 
     def new_simulation(self, simulation: SimulationDefinition) -> NewSimulation:
         """Return the simulation to create for one of this report's simulations."""

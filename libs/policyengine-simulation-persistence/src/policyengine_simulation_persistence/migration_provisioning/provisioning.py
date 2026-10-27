@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 from dataclasses import field as dataclass_field
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 from sqlalchemy.exc import DataError, DBAPIError, IntegrityError, SQLAlchemyError
 
@@ -112,6 +112,16 @@ def _as_stored(value: object) -> object:
     if isinstance(value, list):
         return [_as_stored(item) for item in value]
     return value
+
+
+@overload
+def _check_matches(
+    record: SimulationRecord, expected: NewSimulation, subject: str
+) -> None: ...
+
+
+@overload
+def _check_matches(record: ReportRecord, expected: NewReport, subject: str) -> None: ...
 
 
 def _check_matches(
@@ -219,8 +229,8 @@ class _Provisioner:
             for simulation_id in simulation_ids
             if simulation_id is not None
         ]
-        if len(existing_ids) < len(simulation_ids):
-            # Only in a dry run: a run would create some of the simulations.
+        if self.dry_run and len(existing_ids) < len(simulation_ids):
+            # A run would create some of this report's simulations.
             if record is not None:
                 msg = (
                     f"{subject} is already migrated, "
@@ -232,19 +242,20 @@ class _Provisioner:
         new_report = definition.new_report(
             existing_ids[0], existing_ids[1] if len(existing_ids) > 1 else None
         )
-        created = record is None
-        if record is None:
-            if self.dry_run:
-                self.result.new_reports += 1
-                return
+        if record is not None:
+            _check_matches(record, new_report, subject)
+            self.result.existing_reports += 1
+            created = False
+        elif self.dry_run:
+            self.result.new_reports += 1
+            return
+        else:
             record = _create(
                 lambda: self.report_store.create_migrated(new_report), subject
             )
-        _check_matches(record, new_report, subject)
-        if created:
+            _check_matches(record, new_report, subject)
             self.result.new_reports += 1
-        else:
-            self.result.existing_reports += 1
+            created = True
         self.result.reports.append(
             ProvisionedReport(
                 legacy_report_id=legacy_id, report_id=record.id, created=created

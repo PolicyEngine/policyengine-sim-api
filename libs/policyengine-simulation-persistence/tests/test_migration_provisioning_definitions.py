@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -170,7 +171,7 @@ def test_an_unknown_report_kind_is_rejected() -> None:
     ],
 )
 def test_a_report_must_have_the_fields_of_its_kind(
-    report_definition: dict, location: str
+    report_definition: dict[str, Any], location: str
 ) -> None:
     with pytest.raises(ValidationError) as error:
         parse_definitions(report_definition)
@@ -223,7 +224,7 @@ def test_nullable_simulation_fields_must_still_be_given(field_name: str) -> None
         "options",
     ],
 )
-def test_malformed_values_are_rejected(overrides: dict, message: str) -> None:
+def test_malformed_values_are_rejected(overrides: dict[str, Any], message: str) -> None:
     with pytest.raises(ValidationError) as error:
         parse_definitions(economy_report_definition(**overrides))
 
@@ -240,7 +241,7 @@ def test_malformed_values_are_rejected(overrides: dict, message: str) -> None:
     ],
     ids=["report ID as text", "report ID as a boolean", "year as text", "float ID"],
 )
-def test_numbers_are_not_converted(overrides: dict) -> None:
+def test_numbers_are_not_converted(overrides: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         parse_definitions(economy_report_definition(**overrides))
 
@@ -332,7 +333,9 @@ def test_policy_and_household_ids_are_uuids() -> None:
     ],
     ids=["report ID", "simulation ID"],
 )
-def test_ids_beyond_the_database_s_bigint_range_are_rejected(overrides) -> None:
+def test_ids_beyond_the_database_s_bigint_range_are_rejected(
+    overrides: dict[str, Any],
+) -> None:
     with pytest.raises(ValidationError) as error:
         parse_definitions(economy_report_definition(**overrides))
 
@@ -348,7 +351,7 @@ def test_ids_beyond_the_database_s_bigint_range_are_rejected(overrides) -> None:
     ],
     ids=["NaN", "Infinity in a list", "-Infinity in an object"],
 )
-def test_options_hold_only_finite_numbers(options: dict) -> None:
+def test_options_hold_only_finite_numbers(options: dict[str, Any]) -> None:
     with pytest.raises(ValidationError) as error:
         parse_definitions(economy_report_definition(options=options))
 
@@ -382,7 +385,7 @@ def test_options_hold_only_finite_numbers(options: dict) -> None:
         "nested option value",
     ],
 )
-def test_text_never_holds_a_nul_character(overrides: dict) -> None:
+def test_text_never_holds_a_nul_character(overrides: dict[str, Any]) -> None:
     with pytest.raises(ValidationError) as error:
         parse_definitions(economy_report_definition(**overrides))
 

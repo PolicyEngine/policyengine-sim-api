@@ -5,15 +5,15 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from alembic import command
 from migration_provisioning_support import (
     definitions_json,
     economy_report_definition,
-    economy_simulation_definition,
-    household_report_definition,
+    economy_report_for_rows,
+    household_report_for_rows,
     household_simulation_definition,
 )
 from migration_support import alembic_config
@@ -41,26 +41,10 @@ UNREACHABLE_URL = (
 )
 
 
-def _write_definitions(tmp_path: Path, *report_definitions) -> Path:
+def _write_definitions(tmp_path: Path, *report_definitions: dict[str, Any]) -> Path:
     path = tmp_path / "report-definitions.json"
     path.write_text(definitions_json(*report_definitions))
     return path
-
-
-def _economy_report(rows, legacy_report_id=4512):
-    return economy_report_definition(
-        legacy_report_id,
-        reform=economy_simulation_definition(9002, policy_id=str(rows.us_policy_id)),
-    )
-
-
-def _household_report(rows, legacy_report_id=4513, **overrides):
-    household_id = str(rows.us_household_id)
-    values = {
-        "baseline": household_simulation_definition(9003, household_id=household_id)
-    }
-    values.update(overrides)
-    return household_report_definition(legacy_report_id, **values)
 
 
 def _run(definitions: Path, *options: str, database_url: str | None) -> int:
@@ -68,7 +52,7 @@ def _run(definitions: Path, *options: str, database_url: str | None) -> int:
     return main(["--definitions", str(definitions), *options], environ=environ)
 
 
-def _summary(capsys: pytest.CaptureFixture[str]) -> dict:
+def _summary(capsys: pytest.CaptureFixture[str]) -> dict[str, Any]:
     return json.loads(capsys.readouterr().out)
 
 
@@ -252,7 +236,9 @@ def test_a_run_writes_the_mapping_of_each_v1_report(
     tmp_path: Path, migrated_database, public_api_rows, capsys
 ) -> None:
     definitions = _write_definitions(
-        tmp_path, _economy_report(public_api_rows), _household_report(public_api_rows)
+        tmp_path,
+        economy_report_for_rows(public_api_rows),
+        household_report_for_rows(public_api_rows),
     )
     output = tmp_path / "report-mapping.json"
 
@@ -277,7 +263,7 @@ def test_a_run_writes_the_mapping_of_each_v1_report(
     assert exit_code == 0
     assert _summary(capsys) == {
         "dry_run": False,
-        "new_simulations": 3,
+        "new_simulations": 4,
         "existing_simulations": 0,
         "new_reports": 2,
         "existing_reports": 0,
@@ -289,7 +275,7 @@ def test_a_run_writes_the_mapping_of_each_v1_report(
 def test_running_again_maps_the_same_reports(
     tmp_path: Path, migrated_database, public_api_rows
 ) -> None:
-    definitions = _write_definitions(tmp_path, _economy_report(public_api_rows))
+    definitions = _write_definitions(tmp_path, economy_report_for_rows(public_api_rows))
     first_output = tmp_path / "first.json"
     second_output = tmp_path / "second.json"
     _run(
@@ -321,12 +307,13 @@ def test_failed_reports_are_listed_and_the_run_exits_with_one(
 ) -> None:
     definitions = _write_definitions(
         tmp_path,
-        _economy_report(public_api_rows),
-        _household_report(
+        economy_report_for_rows(public_api_rows),
+        household_report_for_rows(
             public_api_rows,
             baseline=household_simulation_definition(
                 9003, household_id=str(public_api_rows.uk_household_id)
             ),
+            reform=None,
         ),
     )
     output = tmp_path / "report-mapping.json"
@@ -350,7 +337,7 @@ def test_failed_reports_are_listed_and_the_run_exits_with_one(
 def test_a_dry_run_prints_what_a_run_would_do(
     tmp_path: Path, migrated_database, public_api_rows, capsys
 ) -> None:
-    definitions = _write_definitions(tmp_path, _economy_report(public_api_rows))
+    definitions = _write_definitions(tmp_path, economy_report_for_rows(public_api_rows))
 
     exit_code = _run(
         definitions, "--dry-run", database_url=migrated_database.runtime_url
@@ -373,7 +360,7 @@ def test_a_dry_run_prints_what_a_run_would_do(
 def test_only_the_runtime_role_may_run_it(
     tmp_path: Path, migrated_database, public_api_rows, capsys
 ) -> None:
-    definitions = _write_definitions(tmp_path, _economy_report(public_api_rows))
+    definitions = _write_definitions(tmp_path, economy_report_for_rows(public_api_rows))
     output = tmp_path / "report-mapping.json"
 
     exit_code = _run(
@@ -422,7 +409,7 @@ def test_a_run_the_database_stops_writes_no_mapping_and_exits_with_three(
         )
 
     monkeypatch.setattr(ReportStore, "create_migrated", lose_the_connection)
-    definitions = _write_definitions(tmp_path, _economy_report(public_api_rows))
+    definitions = _write_definitions(tmp_path, economy_report_for_rows(public_api_rows))
     output = tmp_path / "report-mapping.json"
 
     exit_code = _run(
@@ -466,7 +453,7 @@ def test_an_output_file_that_cannot_be_written_exits_with_three(
         "provision_reports",
         provision_while_another_process_writes_the_output,
     )
-    definitions = _write_definitions(tmp_path, _economy_report(public_api_rows))
+    definitions = _write_definitions(tmp_path, economy_report_for_rows(public_api_rows))
 
     exit_code = _run(
         definitions, "--output", str(output), database_url=migrated_database.runtime_url
@@ -495,7 +482,7 @@ def test_a_dry_run_the_database_stops_says_it_wrote_nothing(
         )
 
     monkeypatch.setattr(ReportStore, "get_by_legacy_report_id", lose_the_connection)
-    definitions = _write_definitions(tmp_path, _economy_report(public_api_rows))
+    definitions = _write_definitions(tmp_path, economy_report_for_rows(public_api_rows))
 
     exit_code = _run(
         definitions, "--dry-run", database_url=migrated_database.runtime_url
@@ -508,3 +495,32 @@ def test_a_dry_run_the_database_stops_says_it_wrote_nothing(
     )
     assert "The dry run wrote nothing." in error_output
     assert "kept" not in error_output
+
+
+@pytest.mark.postgres
+def test_a_dry_run_that_finds_conflicts_exits_with_one(
+    tmp_path: Path, migrated_database, public_api_rows, capsys
+) -> None:
+    first = _write_definitions(tmp_path, economy_report_for_rows(public_api_rows))
+    _run(
+        first,
+        "--output",
+        str(tmp_path / "report-mapping.json"),
+        database_url=migrated_database.runtime_url,
+    )
+    capsys.readouterr()
+    changed = tmp_path / "changed" / "report-definitions.json"
+    changed.parent.mkdir()
+    changed.write_text(
+        definitions_json(economy_report_for_rows(public_api_rows, year=2027))
+    )
+
+    exit_code = _run(changed, "--dry-run", database_url=migrated_database.runtime_url)
+
+    assert exit_code == 1
+    assert _summary(capsys)["failures"] == [
+        {
+            "legacy_report_id": 4512,
+            "reason": "v1 report 4512 is already migrated with a different year",
+        }
+    ]
