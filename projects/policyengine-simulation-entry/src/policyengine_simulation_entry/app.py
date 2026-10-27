@@ -73,11 +73,20 @@ from policyengine_simulation_entry.stage12_backend import (
     TemporaryStage12DispatchFailed,
     TemporaryStage12UnsupportedRequestError,
 )
+from policyengine_simulation_entry.v2_versions import (
+    ModalV2VersionsSource,
+    UnknownVersionKindError,
+    V2VersionsSource,
+    is_version_kind,
+    version_map_from_manifest,
+    versions_from_manifest,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from policyengine_observability import ObservabilityRuntime
+    from policyengine_simulation_contract.stage12_manifest import V2VersionManifest
     from starlette.middleware.base import RequestResponseEndpoint
 
 logger = logging.getLogger(__name__)
@@ -87,6 +96,9 @@ BACKEND_RESPONSE_HEADER = {
 _json_object_adapter = TypeAdapter(JsonObject)
 type ResponseIdentifier = Literal["job_id", "batch_job_id"]
 STAGE12_MODAL_SUBMISSION_TIMEOUT_SECONDS = 5.0
+# How long the internal v2 version routes wait for the manifest's Modal Dict.
+V2_MANIFEST_READ_TIMEOUT_SECONDS = 5.0
+V2_MANIFEST_UNAVAILABLE_DETAIL = "The v2 version manifest is unavailable."
 
 
 class ComparisonBackend(Protocol):
@@ -645,6 +657,72 @@ def _register_temporary_stage12_status(
         )
 
 
+def _v2_manifest_unavailable_response() -> JSONResponse:
+    """Return the 503 the internal v2 version routes send without a manifest."""
+    return JSONResponse(
+        status_code=503,
+        content={"detail": V2_MANIFEST_UNAVAILABLE_DETAIL},
+        headers={"Retry-After": "10"},
+    )
+
+
+def _register_v2_version_routes(
+    app: FastAPI,
+    versions_source: V2VersionsSource | None,
+) -> None:
+    """Add the internal routes that answer ``/versions`` from the v2 manifest.
+
+    They answer as ``GET /versions`` and ``GET /versions/{kind}`` would from
+    the v2 version manifest, so a staging deploy can compare those answers
+    with the old gateway's while ``/versions`` still forwards to it. Like
+    ``/versions`` they are public, and they are left out of OpenAPI. They
+    never call the old gateway.
+    """
+
+    async def read_manifest(request: Request) -> V2VersionManifest | None:
+        if versions_source is None:
+            return None
+        try:
+            return await asyncio.wait_for(
+                versions_source.load_manifest(),
+                timeout=V2_MANIFEST_READ_TIMEOUT_SECONDS,
+            )
+        # A missing, invalid or unreachable manifest, or a timeout, becomes a
+        # 503 rather than an unhandled error.
+        except Exception as error:  # noqa: BLE001  # every manifest read failure becomes a 503
+            logger.error(  # noqa: TRY400  # the error type describes the failure; a traceback adds only Modal client internals
+                "v2_version_manifest_read_failed",
+                extra={
+                    "request_id": request.state.request_id,
+                    "error_type": type(error).__name__,
+                },
+            )
+            return None
+
+    @app.get("/internal/v2/versions", include_in_schema=False)
+    async def list_v2_manifest_versions(request: Request) -> Response:
+        manifest = await read_manifest(request)
+        if manifest is None:
+            return _v2_manifest_unavailable_response()
+        return JSONResponse(versions_from_manifest(manifest).model_dump(mode="json"))
+
+    @app.get("/internal/v2/versions/{kind}", include_in_schema=False)
+    async def get_v2_manifest_kind_versions(kind: str, request: Request) -> Response:
+        # As in the old gateway, an unknown kind is a 404 whether or not the
+        # manifest can be read.
+        if not is_version_kind(kind):
+            return JSONResponse(
+                status_code=404,
+                content={"detail": UnknownVersionKindError(kind).detail},
+            )
+        manifest = await read_manifest(request)
+        if manifest is None:
+            return _v2_manifest_unavailable_response()
+        return JSONResponse(
+            version_map_from_manifest(manifest, kind).model_dump(mode="json")
+        )
+
+
 def _register_simulation_routes(
     app: FastAPI,
     entry: _EntryRuntime,
@@ -857,8 +935,13 @@ def create_app(
     backend: SimulationBackend | None = None,
     auth_dependency: AuthenticationDependency | None = None,
     comparison_backend: ComparisonBackend | None = None,
+    v2_versions_source: V2VersionsSource | None = None,
 ) -> FastAPI:
-    """Build the app with injectable auth/backend seams for hermetic tests."""
+    """Build the app with injectable auth/backend seams for hermetic tests.
+
+    Without ``v2_versions_source``, the internal v2 version routes read the
+    manifest Dict the settings name, when they name one.
+    """
     runtime_settings = settings or Settings.from_env()
 
     @asynccontextmanager
@@ -919,6 +1002,10 @@ def create_app(
         reader=simulation_reader,
     )
     _register_service_routes(app, entry)
+    _register_v2_version_routes(
+        app,
+        v2_versions_source or ModalV2VersionsSource.from_settings(runtime_settings),
+    )
     return app
 
 

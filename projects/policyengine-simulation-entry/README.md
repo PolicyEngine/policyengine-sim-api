@@ -45,6 +45,13 @@ Auth0 permission:
 entrypoint itself: `/ping` returns the request's `value` plus one as
 `incremented`, as the old gateway does, without calling it.
 
+`GET /internal/v2/versions` and `GET /internal/v2/versions/{kind}` are public
+too, and are not in the OpenAPI document. They give the answers `/versions`
+and `/versions/{kind}` would give from the v2 version manifest
+(`policyengine_simulation_entry.v2_versions`), in the same response models,
+while `/versions` still forwards to the old gateway. A manifest that cannot be
+read gives a 503.
+
 A caller holds a permission when it appears in the token's `permissions` claim
 (Auth0 RBAC). For a client-credentials (machine) token, an entry in its
 space-delimited `scope` claim also counts. A user token's `scope` never does,
