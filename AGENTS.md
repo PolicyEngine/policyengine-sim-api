@@ -32,6 +32,9 @@ When adding, changing, or removing a rule, a guard test, a checker
 configuration, or a CI job that enforces one, read
 `docs/engineering/skills/rules-registry.md`.
 
+Before splitting a long Python module, or when the file-length quality guard
+fails, read `docs/engineering/skills/file-length.md`.
+
 Never weaken a rule yourself: don't downgrade a rule's status, add a
 `[rule.downgrade]` section, create or grow a baseline, or move a package or
 path out of a rule's scope. When a rule reports violations you can't fix, stop
@@ -143,7 +146,7 @@ To add or change a rule, read `docs/engineering/skills/rules-registry.md`.
 
 ### Code quality and tests
 
-- Checked: `sim.quality.ci-cd-scripts-ruff-exemptions`, `sim.quality.command-line-scripts-ruff-exemptions`, `sim.quality.deployed-tests-ruff-exemptions`, `sim.quality.every-package-type-checked`, `sim.quality.pyright-apis-integ`, `sim.quality.pyright-executor`, `sim.quality.pyright-gateway`, `sim.quality.pyright-libraries-and-entry`, `sim.quality.ruff-format-src`, `sim.quality.ruff-lint`, `sim.quality.runtime-evaluated-models-resolve`, `sim.quality.src-programs-ruff-exemptions`, `sim.quality.tests-pass`, `sim.quality.tests-ruff-exemptions`, `sim.quality.unittest-ruff-exemptions`
+- Checked: `sim.quality.ci-cd-scripts-ruff-exemptions`, `sim.quality.command-line-scripts-ruff-exemptions`, `sim.quality.deployed-tests-ruff-exemptions`, `sim.quality.every-package-type-checked`, `sim.quality.pyright-apis-integ`, `sim.quality.pyright-executor`, `sim.quality.pyright-gateway`, `sim.quality.pyright-libraries-and-entry`, `sim.quality.python-file-length`, `sim.quality.ruff-format-src`, `sim.quality.ruff-lint`, `sim.quality.runtime-evaluated-models-resolve`, `sim.quality.src-programs-ruff-exemptions`, `sim.quality.tests-pass`, `sim.quality.tests-ruff-exemptions`, `sim.quality.unittest-ruff-exemptions`
 - `sim.quality.every-project-tested`: Every project and library with unit tests runs them in the PR test matrix. (doc-only, not checked: follow it yourself)
 - `sim.quality.ruff-format-tests`: Test code is formatted with ruff format too; CI currently checks only src directories. (doc-only, not checked: follow it yourself)
 
