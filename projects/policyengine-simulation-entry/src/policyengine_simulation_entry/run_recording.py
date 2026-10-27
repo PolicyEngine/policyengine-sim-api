@@ -25,9 +25,16 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
+from enum import StrEnum
 from typing import TYPE_CHECKING, Protocol
 
-from policyengine_simulation_persistence import RunError, RunErrorCode
+from policyengine_simulation_contract.call_reports import CallReportStatus
+from policyengine_simulation_persistence import (
+    DueSimulationCall,
+    RunError,
+    RunErrorCode,
+    RunStatus,
+)
 from policyengine_simulation_persistence.run_store import utc_now
 
 from policyengine_simulation_entry.modal_calls import (
@@ -41,9 +48,9 @@ if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
 
+    from policyengine_simulation_contract.call_reports import CallEndedReport
     from policyengine_simulation_persistence import (
         AbandonedDispatches,
-        DueSimulationCall,
         ReportKind,
         ReportRunRecord,
         SimulationKind,
@@ -170,6 +177,42 @@ class RecordingTransitions(Protocol):
         ...
 
 
+class RunReader(Protocol):
+    """The ``RunStore`` reads a reported call needs."""
+
+    def get_simulation_run(self, run_id: UUID) -> SimulationRunRecord | None:
+        """Return the simulation run with this ID, or None."""
+        ...
+
+    def get_report_run(self, report_run_id: UUID) -> ReportRunRecord | None:
+        """Return the report run with this ID, or None."""
+        ...
+
+
+class _Recorded(StrEnum):
+    """What recording one call's outcome did."""
+
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    STILL_RUNNING = "still_running"
+    WITHOUT_RECORDER = "without_recorder"
+    NOT_WRITTEN = "not_written"
+    # Another writer recorded the outcome first.
+    UNCHANGED = "unchanged"
+
+
+_REPORT_STATUSES = {
+    _Recorded.SUCCEEDED: CallReportStatus.RECORDED,
+    _Recorded.FAILED: CallReportStatus.RECORDED,
+    _Recorded.STILL_RUNNING: CallReportStatus.STILL_RUNNING,
+    _Recorded.WITHOUT_RECORDER: CallReportStatus.NO_RESULT_RECORDER,
+    _Recorded.NOT_WRITTEN: CallReportStatus.NOT_WRITTEN,
+    _Recorded.UNCHANGED: CallReportStatus.ALREADY_RECORDED,
+}
+# A run or comparison step in these statuses may not hold its call ID yet.
+_NOT_YET_DISPATCHED = frozenset({RunStatus.PENDING, RunStatus.DISPATCHING})
+
+
 @dataclass
 class RecordingPass:
     """What one pass found and recorded."""
@@ -187,6 +230,19 @@ class RecordingPass:
     def found_work(self) -> bool:
         """Whether the pass checked or failed anything."""
         return bool(self.checked or self.abandoned or self.comparisons_without_runs)
+
+    def count(self, recorded: _Recorded) -> None:
+        """Count what recording one checked call did."""
+        counters = {
+            _Recorded.SUCCEEDED: "succeeded",
+            _Recorded.FAILED: "failed",
+            _Recorded.STILL_RUNNING: "still_running",
+            _Recorded.WITHOUT_RECORDER: "without_recorder",
+            _Recorded.NOT_WRITTEN: "not_reached",
+        }
+        counter = counters.get(recorded)
+        if counter is not None:
+            setattr(self, counter, getattr(self, counter) + 1)
 
 
 @dataclass(frozen=True)
@@ -222,9 +278,10 @@ def _invalid_result(error: ValueError) -> RunError:
 
 @dataclass
 class RunRecorder:
-    """Record the outcomes of due Modal calls, one pass at a time."""
+    """Record Modal call outcomes: one reported call, or a pass of due checks."""
 
     transitions: RecordingTransitions
+    runs: RunReader
     inspector: CallInspector
     recorders: ResultRecorders = field(default_factory=ResultRecorders)
     clock: Callable[[], datetime] = utc_now
@@ -353,7 +410,7 @@ class RunRecorder:
         recording.checked += 1
         try:
             outcome = await self.inspector.inspect(modal_call_id)
-            await self._record(outcome, handlers, recording)
+            recorded = await self._record(outcome, handlers)
         # Modal could not be reached, or a database write failed (for example
         # a dropped connection). Each check ends here, whatever was raised
         # (only a signal to this process passes), so a pass returns only once
@@ -365,59 +422,170 @@ class RunRecorder:
             recording.not_reached += 1
             logger.warning(
                 _event_name(handlers.event_prefix, "check_failed"),
-                extra={**handlers.subject, "error_type": type(error).__name__},
+                extra={**handlers.subject, **_error_fields(error)},
             )
+            return
+        recording.count(recorded)
 
-    async def _record(
-        self, outcome: CallOutcome, handlers: _CallHandlers, recording: RecordingPass
-    ) -> None:
+    async def record_reported_call(self, report: CallEndedReport) -> CallReportStatus:
+        """Record the outcome of a call whose Modal function reported its end.
+
+        The report is only a hint: the runs are read, Modal is asked about the
+        call without waiting, and the outcome is recorded with the same
+        conditional writes as a recording pass, so a repeated report changes
+        nothing. While the outcome cannot be recorded yet, the answer is one
+        of ``RETRY_LATER_STATUSES`` and nothing is written; the sender
+        reports again, and the safety check finds the call otherwise. Only a
+        signal to this process propagates.
+        """
+        try:
+            found = await asyncio.to_thread(self._reported_call, report)
+        except Exception as error:  # the database could not be read
+            logger.exception(
+                "call_report_not_read",
+                extra={"modal_call_id": report.modal_call_id, **_error_fields(error)},
+            )
+            return CallReportStatus.NOT_WRITTEN
+        if isinstance(found, CallReportStatus):
+            return found
+        try:
+            outcome = await self.inspector.inspect(report.modal_call_id)
+        except BaseException as error:
+            if isinstance(error, OWN_PROCESS_SIGNALS):
+                raise
+            logger.warning(
+                _event_name(found.event_prefix, "check_failed"),
+                extra={**found.subject, **_error_fields(error)},
+            )
+            return CallReportStatus.MODAL_UNREACHABLE
+        try:
+            recorded = await self._record(outcome, found)
+        except BaseException as error:
+            if isinstance(error, OWN_PROCESS_SIGNALS):
+                raise
+            logger.warning(
+                _event_name(found.event_prefix, "outcome_not_written"),
+                extra={**found.subject, **_error_fields(error)},
+            )
+            return CallReportStatus.NOT_WRITTEN
+        return _REPORT_STATUSES[recorded]
+
+    def _reported_call(
+        self, report: CallEndedReport
+    ) -> CallReportStatus | _CallHandlers:
+        """Return how to record the reported call, or why it cannot be yet."""
+        call_id = report.modal_call_id
+        if report.simulation_run_ids is not None:
+            runs = [
+                self.runs.get_simulation_run(run_id)
+                for run_id in report.simulation_run_ids
+            ]
+            known = [run for run in runs if run is not None]
+            if len(known) != len(runs):
+                return CallReportStatus.UNKNOWN_RUNS
+            state = _reported_state(
+                call_id, [(run.modal_call_id, run.status) for run in known]
+            )
+            if state is not None:
+                return state
+            due = DueSimulationCall(modal_call_id=call_id, runs=tuple(known))
+            return self._simulation_handlers(due)[1]
+        report_run = (
+            None
+            if report.report_run_id is None
+            else self.runs.get_report_run(report.report_run_id)
+        )
+        if report_run is None or report_run.comparison_status is None:
+            return CallReportStatus.UNKNOWN_RUNS
+        state = _reported_state(
+            call_id,
+            [(report_run.comparison_modal_call_id, report_run.comparison_status)],
+        )
+        if state is not None:
+            return state
+        return self._comparison_handlers(report_run)[1]
+
+    async def _record(self, outcome: CallOutcome, handlers: _CallHandlers) -> _Recorded:
         # A call still running, or of a kind with no recorder here, is checked
         # again once its claim's lease ends; nothing is written.
         if isinstance(outcome, CallRunning):
-            recording.still_running += 1
-            return
+            return _Recorded.STILL_RUNNING
         if isinstance(outcome, CallFailed):
-            await self._fail(handlers, outcome.error, recording)
-            return
+            return await self._fail(handlers, outcome.error)
         steps = handlers.result_steps
         if steps is None:
             # A revision without a recorder for this kind leaves the call for
             # one that has it; Modal's output retention bounds the wait.
-            recording.without_recorder += 1
             logger.warning(
                 _event_name(handlers.event_prefix, "without_result_recorder"),
                 extra=handlers.subject,
             )
-            return
+            return _Recorded.WITHOUT_RECORDER
+        return await self._record_result(outcome.output, steps, handlers)
+
+    async def _record_result(
+        self, output: object, steps: _ResultSteps, handlers: _CallHandlers
+    ) -> _Recorded:
+        """Validate a finished call's output and write it with its success."""
         try:
-            result = await asyncio.to_thread(steps.validate, outcome.output)
+            result = await asyncio.to_thread(steps.validate, output)
         except ValueError as error:
-            await self._fail(handlers, _invalid_result(error), recording)
-            return
+            return await self._fail(handlers, _invalid_result(error))
         try:
             completed = await asyncio.to_thread(steps.complete, result)
         # Writing the result rows failed, for example because the database
-        # was unreachable: nothing was recorded, and the lease makes the call
-        # due again.
+        # was unreachable: nothing was recorded, and the call is checked again.
         except Exception as error:
-            recording.not_reached += 1
             logger.exception(
                 _event_name(handlers.event_prefix, "result_not_written"),
-                extra={**handlers.subject, "error_type": type(error).__name__},
+                extra={**handlers.subject, **_error_fields(error)},
             )
-            return
-        if completed:
-            recording.succeeded += 1
-            logger.info(
-                _event_name(handlers.event_prefix, "succeeded"), extra=handlers.subject
-            )
+            return _Recorded.NOT_WRITTEN
+        if not completed:
+            return _Recorded.UNCHANGED
+        logger.info(
+            _event_name(handlers.event_prefix, "succeeded"), extra=handlers.subject
+        )
+        return _Recorded.SUCCEEDED
 
-    async def _fail(
-        self, handlers: _CallHandlers, error: RunError, recording: RecordingPass
-    ) -> None:
-        if await asyncio.to_thread(handlers.fail, error):
-            recording.failed += 1
-            logger.warning(
-                _event_name(handlers.event_prefix, "failed"),
-                extra={**handlers.subject, "error_code": error.code.value},
-            )
+    async def _fail(self, handlers: _CallHandlers, error: RunError) -> _Recorded:
+        if not await asyncio.to_thread(handlers.fail, error):
+            return _Recorded.UNCHANGED
+        logger.warning(
+            _event_name(handlers.event_prefix, "failed"),
+            extra={**handlers.subject, "error_code": error.code.value},
+        )
+        return _Recorded.FAILED
+
+
+def _reported_state(
+    modal_call_id: str, executions: list[tuple[str | None, RunStatus]]
+) -> CallReportStatus | None:
+    """Return why a reported call cannot be recorded, or None if it can.
+
+    ``executions`` holds each reported run's (or the comparison step's) call
+    ID and status.
+    """
+    held_call_ids = {held for held, _ in executions}
+    if held_call_ids == {modal_call_id}:
+        if any(status is RunStatus.RUNNING for _, status in executions):
+            return None
+        return CallReportStatus.ALREADY_RECORDED
+    if held_call_ids - {modal_call_id, None}:
+        return CallReportStatus.OTHER_CALL
+    # Some runs hold no call ID yet. While they are being dispatched, the
+    # dispatcher is about to store it; a finished run without it (failed as
+    # abandoned, say) never will.
+    if all(
+        status in _NOT_YET_DISPATCHED for held, status in executions if held is None
+    ):
+        return CallReportStatus.NOT_DISPATCHED_YET
+    return CallReportStatus.OTHER_CALL
+
+
+def _error_fields(error: BaseException) -> dict[str, str]:
+    """Name an error, and the error it was raised from, for a log record."""
+    fields = {"error_type": type(error).__name__}
+    if error.__cause__ is not None:
+        fields["error_cause_type"] = type(error.__cause__).__name__
+    return fields
