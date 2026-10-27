@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
+import shutil
+from importlib.resources import files
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pandas as pd
 import pytest
 from policyengine_simulation_contract.uk_geography import (
     UKLocalAuthorityBoundaryVersion,
 )
+from policyengine_simulation_executor import uk_local_authority_metadata
 from policyengine_simulation_executor.uk_local_authority_metadata import (
     detect_uk_area_dataset_metadata,
     detect_uk_local_authority_boundary_version,
@@ -21,6 +27,10 @@ from policyengine_simulation_executor.uk_local_authority_metadata import (
     uk_area_regions_routed,
     uk_hdf_household_has_local_authority_codes,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+    from pathlib import Path
 
 LAD22_ONLY_CODES = {
     "E07000026",
@@ -49,41 +59,139 @@ LAD23_ONLY_CODES = {
 }
 
 
+# SHA-256 of each boundary version's sorted codes, one per line, as listed by
+# coordinates_lad22.csv and coordinates_lad23.csv before the executor stopped
+# shipping local-authority map positions. The code lists that replaced those
+# files must keep exactly these codes.
+RETIRED_COORDINATE_FILE_CODE_DIGESTS = {
+    UKLocalAuthorityBoundaryVersion.LAD22: (
+        "36b51d2d163e3e094eebd838daf3417a416ded29cd4d3b54af4901ae9c58e37f"
+    ),
+    UKLocalAuthorityBoundaryVersion.LAD23: (
+        "9a313a86a8b4542d4020cc50d613fcce8d09dd806253f1716ff3e126a8ed1ab2"
+    ),
+}
+PACKAGED_RESOURCE_DIRECTORY = files("policyengine_simulation_executor").joinpath(
+    "static_runtime_files", "uk_local_authorities"
+)
+
+
 def test_packaged_resources_cover_the_exact_supported_boundary_versions() -> None:
     resources = load_uk_local_authority_resources()
-    lad22 = resources.coordinates[UKLocalAuthorityBoundaryVersion.LAD22]
-    lad23 = resources.coordinates[UKLocalAuthorityBoundaryVersion.LAD23]
+    lad22 = resources.codes[UKLocalAuthorityBoundaryVersion.LAD22]
+    lad23 = resources.codes[UKLocalAuthorityBoundaryVersion.LAD23]
 
     assert len(resources.names) == 378
     assert len(lad22) == 374
     assert len(lad23) == 361
-    assert len(lad22.keys() & lad23.keys()) == 357
-    assert lad22.keys() - lad23.keys() == LAD22_ONLY_CODES
-    assert lad23.keys() - lad22.keys() == LAD23_ONLY_CODES
-    assert resources.names.keys() == lad22.keys() | lad23.keys()
+    assert len(lad22 & lad23) == 357
+    assert lad22 - lad23 == LAD22_ONLY_CODES
+    assert lad23 - lad22 == LAD23_ONLY_CODES
+    assert resources.names.keys() == lad22 | lad23
 
 
-def test_shared_authorities_have_identical_coordinates() -> None:
+@pytest.mark.parametrize(
+    ("boundary_version", "digest"), RETIRED_COORDINATE_FILE_CODE_DIGESTS.items()
+)
+def test_each_boundary_version_keeps_the_codes_its_coordinate_file_listed(
+    boundary_version: UKLocalAuthorityBoundaryVersion, digest: str
+) -> None:
+    codes = load_uk_local_authority_resources().codes[boundary_version]
+
+    listed = "\n".join(sorted(codes)).encode()
+    assert hashlib.sha256(listed).hexdigest() == digest
+
+
+def test_the_executor_ships_names_and_code_lists_without_map_positions() -> None:
+    packaged = sorted(entry.name for entry in PACKAGED_RESOURCE_DIRECTORY.iterdir())
+
+    assert packaged == ["codes_lad22.csv", "codes_lad23.csv", "names.csv"]
+
+
+def test_names_for_a_boundary_version_cover_exactly_its_codes() -> None:
     resources = load_uk_local_authority_resources()
-    lad22 = resources.coordinates[UKLocalAuthorityBoundaryVersion.LAD22]
-    lad23 = resources.coordinates[UKLocalAuthorityBoundaryVersion.LAD23]
 
-    for code in lad22.keys() & lad23.keys():
-        assert lad22[code] == lad23[code]
+    for boundary_version in UKLocalAuthorityBoundaryVersion:
+        names = resources.names_for(boundary_version)
+        assert names.keys() == resources.codes[boundary_version]
+    lad23_names = resources.names_for(UKLocalAuthorityBoundaryVersion.LAD23)
+    assert lad23_names["E06000063"] == "Cumberland"
+    assert "E06000063" not in resources.names_for(UKLocalAuthorityBoundaryVersion.LAD22)
 
 
-def test_resource_lookup_combines_names_with_boundary_coordinates() -> None:
-    resources = load_uk_local_authority_resources()
-
-    cumberland = resources.metadata_for(UKLocalAuthorityBoundaryVersion.LAD23)[
-        "E06000063"
-    ]
-    assert cumberland.name == "Cumberland"
-    assert isinstance(cumberland.x, int)
-    assert isinstance(cumberland.y, int)
-    assert "E06000063" not in resources.metadata_for(
-        UKLocalAuthorityBoundaryVersion.LAD22
+@pytest.fixture
+def editable_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[Path]:
+    """Load the packaged resources from copies a test may change."""
+    for entry in PACKAGED_RESOURCE_DIRECTORY.iterdir():
+        with entry.open("rb") as source, (tmp_path / entry.name).open("wb") as copy:
+            shutil.copyfileobj(source, copy)
+    monkeypatch.setattr(
+        uk_local_authority_metadata, "_resource_path", lambda name: tmp_path / name
     )
+    load_uk_local_authority_resources.cache_clear()
+    yield tmp_path
+    load_uk_local_authority_resources.cache_clear()
+
+
+def _rewrite_lines(path: Path, change: Callable[[list[str]], list[str]]) -> None:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join(change(lines)) + "\n", encoding="utf-8")
+
+
+def test_resources_load_from_unchanged_copies(editable_resources: Path) -> None:
+    resources = load_uk_local_authority_resources()
+
+    assert len(resources.codes[UKLocalAuthorityBoundaryVersion.LAD22]) == 374
+
+
+def test_resources_refuse_names_that_miss_a_supported_code(
+    editable_resources: Path,
+) -> None:
+    _rewrite_lines(
+        editable_resources / "names.csv",
+        lambda lines: [line for line in lines if not line.startswith("E06000063,")],
+    )
+
+    with pytest.raises(ValueError, match="must exactly cover"):
+        load_uk_local_authority_resources()
+
+
+def test_resources_refuse_a_code_list_with_other_distinguishing_codes(
+    editable_resources: Path,
+) -> None:
+    _rewrite_lines(
+        editable_resources / "codes_lad23.csv",
+        # E07000026 is one of the codes only LAD22 has.
+        lambda lines: [lines[0], *sorted([*lines[1:], "E07000026"])],
+    )
+
+    with pytest.raises(ValueError, match="LAD22 distinguishing codes"):
+        load_uk_local_authority_resources()
+
+
+def test_resources_refuse_a_repeated_code(editable_resources: Path) -> None:
+    _rewrite_lines(
+        editable_resources / "codes_lad22.csv", lambda lines: [*lines, lines[1]]
+    )
+
+    with pytest.raises(ValueError, match="repeats 'E06000001'"):
+        load_uk_local_authority_resources()
+
+
+def test_resources_refuse_a_code_list_that_carries_map_positions(
+    editable_resources: Path,
+) -> None:
+    _rewrite_lines(
+        editable_resources / "codes_lad22.csv",
+        lambda lines: ["code,x,y", *(f"{code},0,0" for code in lines[1:])],
+    )
+
+    with pytest.raises(
+        ValueError, match=re.escape("'codes_lad22.csv' has invalid columns")
+    ):
+        load_uk_local_authority_resources()
 
 
 def test_detector_identifies_lad22_from_a_predecessor_code() -> None:

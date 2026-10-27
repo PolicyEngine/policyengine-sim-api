@@ -22,8 +22,6 @@ def _complete_constituency_record() -> dict[str, object]:
     return {
         "constituency_code": "E14001063",
         "constituency_name": "Aldershot",
-        "x": 56,
-        "y": -40,
         "average_household_income_change": -150.95,
         "relative_household_income_change": -0.0026,
         "population": 40_530.65,
@@ -85,8 +83,8 @@ def test_complete_uk_geography_output_accepts_lookup_metadata() -> None:
 
     record = result.root[0].model_dump(mode="python")
     assert record["constituency_name"] == "Aldershot"
-    assert record["x"] == 56
-    assert record["y"] == -40
+    assert "x" not in record
+    assert "y" not in record
 
 
 def test_complete_uk_geography_output_accepts_an_empty_list() -> None:
@@ -114,8 +112,6 @@ def test_complete_uk_geography_output_rejects_a_missing_list() -> None:
     [
         ("constituency_name", "E14001063", "missing a lookup name"),
         ("constituency_name", "", "missing a lookup name"),
-        ("x", None, "missing lookup coordinates"),
-        ("y", None, "missing lookup coordinates"),
     ],
 )
 def test_complete_uk_geography_output_rejects_fallback_metadata(
@@ -286,6 +282,10 @@ def test_uk_constituency_output_lists_only_published_seats(
     for record in records:
         change = published[record["constituency_code"]]
         assert record["constituency_name"].startswith("Seat ")
+        # policyengine.py's lookup still has x and y columns; sim-api no
+        # longer sends an area's map position.
+        assert "x" not in record
+        assert "y" not in record
         assert record["average_household_income_change"] == change.average
         assert record["relative_household_income_change"] == change.relative
         assert record["disclosure_tier"] == change.tier
@@ -322,12 +322,30 @@ def test_uk_local_authority_output_uses_detected_boundary_metadata(
             "Cumberland",
             "Westmorland and Furness",
         }
-        assert isinstance(record["x"], int)
-        assert isinstance(record["y"], int)
+        assert "x" not in record
+        assert "y" not in record
         assert record["average_household_income_change"] < 0
         assert record["population"] == (
             uk_disclosure.level("local_authority")[code].population
         )
+
+
+def test_uk_area_outputs_serialize_without_x_or_y(
+    uk_disclosure, constituency_lookup
+) -> None:
+    constituencies = simulation_output_geographic.build_uk_constituency_impact(
+        "uk", uk_disclosure
+    )
+    authorities = simulation_output_geographic.build_uk_local_authority_impact(
+        "uk", uk_disclosure, uk_local_authority_metadata=LAD23
+    )
+
+    assert constituencies is not None
+    assert authorities is not None
+    for output in (constituencies, authorities):
+        records = output.model_dump(mode="json")
+        assert records
+        assert all("x" not in record and "y" not in record for record in records)
 
 
 def test_uk_local_authority_output_rejects_code_outside_boundary_version(

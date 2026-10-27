@@ -77,46 +77,23 @@ _BOUNDARY_DEFINITIONS = (
 
 
 @dataclass(frozen=True, slots=True)
-class LocalAuthorityCoordinate:
-    """Integer rendering coordinate for one local authority."""
-
-    x: int
-    y: int
-
-
-@dataclass(frozen=True, slots=True)
-class LocalAuthorityDisplayMetadata:
-    """Display-only metadata attached after authority impacts are calculated."""
-
-    name: str
-    x: int
-    y: int
-
-
-@dataclass(frozen=True, slots=True)
 class UKLocalAuthorityResources:
-    """Validated display names and coordinates for supported boundary versions."""
+    """Validated display names and each supported boundary version's codes.
+
+    ``names`` maps every supported authority code to its display name, and
+    ``codes`` lists the authority codes of each boundary version.
+    """
 
     names: Mapping[str, str]
-    coordinates: Mapping[
-        UKLocalAuthorityBoundaryVersion,
-        Mapping[str, LocalAuthorityCoordinate],
-    ]
+    codes: Mapping[UKLocalAuthorityBoundaryVersion, frozenset[str]]
 
-    def metadata_for(
+    def names_for(
         self,
         boundary_version: UKLocalAuthorityBoundaryVersion,
-    ) -> Mapping[str, LocalAuthorityDisplayMetadata]:
-        """Combine common names with one boundary version's rendering coordinates."""
+    ) -> Mapping[str, str]:
+        """Return the display name of each authority in one boundary version."""
         return MappingProxyType(
-            {
-                code: LocalAuthorityDisplayMetadata(
-                    name=self.names[code],
-                    x=coordinate.x,
-                    y=coordinate.y,
-                )
-                for code, coordinate in self.coordinates[boundary_version].items()
-            }
+            {code: self.names[code] for code in sorted(self.codes[boundary_version])}
         )
 
 
@@ -167,55 +144,39 @@ def _load_names() -> Mapping[str, str]:
     return MappingProxyType(names)
 
 
-def _load_coordinates(filename: str) -> Mapping[str, LocalAuthorityCoordinate]:
-    coordinates: dict[str, LocalAuthorityCoordinate] = {}
-    for row in _rows(filename, ("code", "x", "y")):
+def _load_codes(filename: str) -> frozenset[str]:
+    codes: set[str] = set()
+    for row in _rows(filename, ("code",)):
         code = row["code"]
         _require_code(code, filename)
-        if code in coordinates:
+        if code in codes:
             msg = f"UK local-authority resource {filename!r} repeats {code!r}"
             raise ValueError(msg)
-        try:
-            coordinate = LocalAuthorityCoordinate(x=int(row["x"]), y=int(row["y"]))
-        except ValueError as error:
-            msg = (
-                f"UK local-authority resource {filename!r} has invalid coordinates "
-                f"for {code!r}"
-            )
-            raise ValueError(msg) from error
-        coordinates[code] = coordinate
-    return MappingProxyType(coordinates)
+        codes.add(code)
+    return frozenset(codes)
 
 
 @lru_cache(maxsize=1)
 def load_uk_local_authority_resources() -> UKLocalAuthorityResources:
     """Load and validate every packaged local-authority resource."""
     names = _load_names()
-    lad22 = _load_coordinates("coordinates_lad22.csv")
-    lad23 = _load_coordinates("coordinates_lad23.csv")
-    supported_codes = lad22.keys() | lad23.keys()
-    if names.keys() != supported_codes:
+    lad22 = _load_codes("codes_lad22.csv")
+    lad23 = _load_codes("codes_lad23.csv")
+    if names.keys() != lad22 | lad23:
         msg = (
             "UK local-authority names must exactly cover the supported "
             "boundary versions"
         )
         raise ValueError(msg)
-    if lad22.keys() - lad23.keys() != _LAD22_ONLY_CODES:
-        msg = "LAD22 distinguishing codes do not match its coordinate file"
+    if lad22 - lad23 != _LAD22_ONLY_CODES:
+        msg = "LAD22 distinguishing codes do not match its code file"
         raise ValueError(msg)
-    if lad23.keys() - lad22.keys() != _LAD23_ONLY_CODES:
-        msg = "LAD23 distinguishing codes do not match its coordinate file"
+    if lad23 - lad22 != _LAD23_ONLY_CODES:
+        msg = "LAD23 distinguishing codes do not match its code file"
         raise ValueError(msg)
-    for code in lad22.keys() & lad23.keys():
-        if lad22[code] != lad23[code]:
-            msg = (
-                "UK local-authority coordinate differs between boundary versions "
-                f"for {code!r}"
-            )
-            raise ValueError(msg)
     return UKLocalAuthorityResources(
         names=names,
-        coordinates=MappingProxyType(
+        codes=MappingProxyType(
             {
                 UKLocalAuthorityBoundaryVersion.LAD22: lad22,
                 UKLocalAuthorityBoundaryVersion.LAD23: lad23,

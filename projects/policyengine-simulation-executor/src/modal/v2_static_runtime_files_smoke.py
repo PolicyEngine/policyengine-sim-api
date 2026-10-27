@@ -44,12 +44,8 @@ def smoke_stage12_static_runtime_files() -> dict[str, int | str]:
     resources = load_uk_local_authority_resources()
     return {
         "names": len(resources.names),
-        "lad22_coordinates": len(
-            resources.coordinates[UKLocalAuthorityBoundaryVersion.LAD22]
-        ),
-        "lad23_coordinates": len(
-            resources.coordinates[UKLocalAuthorityBoundaryVersion.LAD23]
-        ),
+        "lad22_codes": len(resources.codes[UKLocalAuthorityBoundaryVersion.LAD22]),
+        "lad23_codes": len(resources.codes[UKLocalAuthorityBoundaryVersion.LAD23]),
         "installed_dataset_boundary_version": (
             validate_installed_uk_local_authority_dataset()
         ),
@@ -62,8 +58,8 @@ def main() -> None:
     observed = smoke_stage12_static_runtime_files.remote()
     expected_counts = {
         "names": 378,
-        "lad22_coordinates": 374,
-        "lad23_coordinates": 361,
+        "lad22_codes": 374,
+        "lad23_codes": 361,
     }
     if {key: observed.get(key) for key in expected_counts} != expected_counts:
         msg = (

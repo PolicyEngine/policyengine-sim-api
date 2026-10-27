@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from policyengine_simulation_contract.macro_output import (
     ConstituencyImpactRecord,
@@ -72,3 +74,85 @@ def test_published_values_stay_required() -> None:
 
 def test_an_empty_area_list_is_valid() -> None:
     assert GeographicImpactOutput.model_validate([]).root == []
+
+
+# Executors built for older policyengine.py versions are never rebuilt, and
+# they keep sending each area's integer map position as x and y. Newer
+# executors send neither.
+CONSTITUENCY_WITHOUT_MAP_POSITION = {
+    **{
+        key: value
+        for key, value in STORED_BEFORE_DISCLOSURE.items()
+        if key not in {"x", "y"}
+    },
+    **DISCLOSURE_FIELDS,
+}
+LOCAL_AUTHORITY_WITHOUT_MAP_POSITION = {
+    "local_authority_code": "E06000063",
+    "local_authority_name": "Cumberland",
+    "average_household_income_change": -150.0,
+    "relative_household_income_change": -0.0026,
+    "population": 120_000.0,
+    **DISCLOSURE_FIELDS,
+}
+AREA_RECORDS_WITHOUT_MAP_POSITION = [
+    pytest.param(
+        ConstituencyImpactRecord, CONSTITUENCY_WITHOUT_MAP_POSITION, id="constituency"
+    ),
+    pytest.param(
+        LocalAuthorityImpactRecord,
+        LOCAL_AUTHORITY_WITHOUT_MAP_POSITION,
+        id="local-authority",
+    ),
+]
+
+
+@pytest.mark.parametrize(("record_type", "payload"), AREA_RECORDS_WITHOUT_MAP_POSITION)
+def test_records_without_a_map_position_validate_and_dump_without_one(
+    record_type: type[ConstituencyImpactRecord | LocalAuthorityImpactRecord],
+    payload: dict[str, object],
+) -> None:
+    record = record_type.model_validate(payload)
+
+    assert record.x is None
+    assert record.y is None
+    assert record.model_dump(mode="python") == payload
+    assert record.model_dump(mode="json") == payload
+    assert json.loads(record.model_dump_json()) == payload
+
+
+@pytest.mark.parametrize(("record_type", "payload"), AREA_RECORDS_WITHOUT_MAP_POSITION)
+def test_records_from_older_executors_keep_their_map_position(
+    record_type: type[ConstituencyImpactRecord | LocalAuthorityImpactRecord],
+    payload: dict[str, object],
+) -> None:
+    sent_by_older_executor = {**payload, "x": 56, "y": -40}
+
+    record = record_type.model_validate(sent_by_older_executor)
+
+    assert (record.x, record.y) == (56, -40)
+    assert record.model_dump(mode="json") == sent_by_older_executor
+
+
+@pytest.mark.parametrize(("record_type", "payload"), AREA_RECORDS_WITHOUT_MAP_POSITION)
+def test_a_null_map_position_is_left_out_of_the_dump(
+    record_type: type[ConstituencyImpactRecord | LocalAuthorityImpactRecord],
+    payload: dict[str, object],
+) -> None:
+    record = record_type.model_validate({**payload, "x": None, "y": None})
+
+    assert record.model_dump(mode="json") == payload
+    assert json.loads(record.model_dump_json()) == payload
+
+
+def test_an_area_list_without_map_positions_dumps_without_them() -> None:
+    payload = [CONSTITUENCY_WITHOUT_MAP_POSITION, LOCAL_AUTHORITY_WITHOUT_MAP_POSITION]
+
+    output = GeographicImpactOutput.model_validate(payload)
+
+    assert [type(record) for record in output.root] == [
+        ConstituencyImpactRecord,
+        LocalAuthorityImpactRecord,
+    ]
+    assert output.model_dump(mode="json") == payload
+    assert json.loads(output.model_dump_json()) == payload

@@ -44,6 +44,10 @@ LOCAL_AREA_BREAKDOWN_RESULT = {
 }
 
 
+def _without_x_and_y(record: dict[str, object]) -> dict[str, object]:
+    return {key: value for key, value in record.items() if key not in {"x", "y"}}
+
+
 def expected_bundle(
     country: str,
     model_version: str,
@@ -1010,6 +1014,68 @@ class TestSubmitSimulationEndpoint:
         assert response.status_code == 200
         assert response.json()["status"] == "complete"
         assert response.json()["result"] == LOCAL_AREA_BREAKDOWN_RESULT
+
+    @pytest.mark.parametrize(
+        "map_position",
+        [
+            pytest.param({}, id="left-out"),
+            pytest.param({"x": None, "y": None}, id="null"),
+        ],
+    )
+    def test__given_breakdown_records_without_x_and_y__then_json_has_no_x_or_y(
+        self, mock_modal, client: TestClient, map_position: dict[str, None]
+    ):
+        # Executors built for the current policyengine.py version send no
+        # x or y on UK area records; the JSON must not invent null keys.
+        constituency = _without_x_and_y(
+            LOCAL_AREA_BREAKDOWN_RESULT["constituency_impact"][0]
+        )
+        local_authority = {
+            "local_authority_code": "E06000063",
+            "local_authority_name": "Cumberland",
+            "average_household_income_change": -120.0,
+            "relative_household_income_change": -0.002,
+            "population": 120000.0,
+            "disclosure_tier": "approximate",
+            "average_household_income_change_lower": -160.0,
+            "average_household_income_change_upper": -80.0,
+            "relative_household_income_change_lower": -0.003,
+            "relative_household_income_change_upper": -0.001,
+        }
+        submit_response = client.post(
+            "/simulate/economy/comparison",
+            json={"country": "uk", "scope": "macro", "region": "uk", "reform": {}},
+        )
+        mock_modal["func"].last_call.result = {
+            **LOCAL_AREA_BREAKDOWN_RESULT,
+            "constituency_impact": [{**constituency, **map_position}],
+            "local_authority_impact": [{**local_authority, **map_position}],
+        }
+
+        response = client.get(f"/jobs/{submit_response.json()['job_id']}")
+
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["constituency_impact"] == [constituency]
+        assert result["local_authority_impact"] == [local_authority]
+
+    def test__given_national_records_without_x_and_y__then_json_has_no_x_or_y(
+        self, mock_modal, client: TestClient
+    ):
+        constituency = _without_x_and_y(
+            LOCAL_AREA_BREAKDOWN_RESULT["constituency_impact"][0]
+        )
+        submit_response = client.post(
+            "/simulate/economy/comparison",
+            json={"country": "uk", "scope": "macro", "region": "uk", "reform": {}},
+        )
+        call = mock_modal["func"].last_call
+        call.result = {**call.result, "constituency_impact": [constituency]}
+
+        response = client.get(f"/jobs/{submit_response.json()['job_id']}")
+
+        assert response.status_code == 200
+        assert response.json()["result"]["constituency_impact"] == [constituency]
 
     def test__given_running_job__then_polling_returns_202(
         self, mock_modal, client: TestClient

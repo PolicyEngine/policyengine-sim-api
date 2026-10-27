@@ -213,8 +213,8 @@ def test_v2_static_runtime_file_smoke_uses_exact_uk_worker_image(monkeypatch) ->
     )
     assert smoke.smoke_stage12_static_runtime_files() == {
         "names": 378,
-        "lad22_coordinates": 374,
-        "lad23_coordinates": 361,
+        "lad22_codes": 374,
+        "lad23_codes": 361,
         "installed_dataset_boundary_version": "lad22",
     }
 

@@ -289,8 +289,6 @@ def _constituency_impact_record() -> ConstituencyImpactRecord:
     return ConstituencyImpactRecord(
         constituency_code="E14000530",
         constituency_name="Birmingham, Ladywood",
-        x=34,
-        y=-42,
         average_household_income_change=10.0,
         relative_household_income_change=0.01,
         population=1000.0,
@@ -301,8 +299,6 @@ def _local_authority_impact_record() -> LocalAuthorityImpactRecord:
     return LocalAuthorityImpactRecord(
         local_authority_code="E06000001",
         local_authority_name="Hartlepool",
-        x=63,
-        y=-19,
         average_household_income_change=12.0,
         relative_household_income_change=0.02,
         population=900.0,
