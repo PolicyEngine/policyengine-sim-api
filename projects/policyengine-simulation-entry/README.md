@@ -41,7 +41,9 @@ Auth0 permission:
 | `GET /internal/stage12/reports/{evaluation_id}` | `stage12:operate` |
 
 `GET /health`, `GET /ready`, `GET /versions`, `GET /versions/{kind}` and
-`POST /ping` stay public.
+`POST /ping` stay public. `GET /health` and `POST /ping` are answered by the
+entrypoint itself: `/ping` returns the request's `value` plus one as
+`incremented`, as the old gateway does, without calling it.
 
 A caller holds a permission when it appears in the token's `permissions` claim
 (Auth0 RBAC). For a client-credentials (machine) token, an entry in its

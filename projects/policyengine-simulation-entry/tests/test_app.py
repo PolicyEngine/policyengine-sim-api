@@ -819,15 +819,57 @@ def test_budget_window_routes_use_original_batch_id(client, backend):
     assert backend.requests[-1].path == "/budget-window-jobs/batch-123"
 
 
-def test_versions_and_ping_are_public_proxy_routes(client, backend):
+def test_versions_are_public_proxy_routes(client, backend):
     backend.responses[("GET", "/versions/us")] = response(
         200,
         {"latest": "1.2.3"},
     )
-    backend.responses[("POST", "/ping")] = response(200, {"incremented": 2})
 
     assert client.get("/versions/us").json() == {"latest": "1.2.3"}
-    assert client.post("/ping", json={"value": 1}).json() == {"incremented": 2}
+    assert backend.requests[-1].path == "/versions/us"
+
+
+@pytest.mark.parametrize("value", [-3, 0, 1, 2**70])
+def test_ping_is_answered_by_the_entrypoint_itself(client, backend, value):
+    # The old gateway's /ping returns the request's value plus one; the
+    # entrypoint now gives that answer without calling it.
+    result = client.post("/ping", json={"value": value})
+
+    assert result.status_code == 200
+    assert result.json() == {"incremented": value + 1}
+    assert result.headers["content-type"] == "application/json"
+    assert "x-policyengine-simulation-backend" not in result.headers
+    assert backend.requests == []
+
+
+def test_ping_answers_while_the_old_gateway_is_unavailable():
+    class UnavailableBackend(FakeBackend):
+        @override
+        async def request(self, *args, **kwargs):
+            msg = "unavailable"
+            raise BackendUnavailableError(msg)
+
+    app = create_app(
+        settings=make_settings(),
+        backend=UnavailableBackend(),
+        auth_dependency=lambda: None,
+    )
+
+    from fastapi.testclient import TestClient
+
+    with TestClient(app) as test_client:
+        result = test_client.post("/ping", json={"value": 41})
+
+    assert result.status_code == 200
+    assert result.json() == {"incremented": 42}
+
+
+@pytest.mark.parametrize("body", [{}, {"value": "one"}, {"value": 1.5}])
+def test_ping_rejects_a_body_without_an_integer_value(client, backend, body):
+    result = client.post("/ping", json=body)
+
+    assert result.status_code == 422
+    assert backend.requests == []
 
 
 def test_request_id_is_propagated_logged_and_returned(
