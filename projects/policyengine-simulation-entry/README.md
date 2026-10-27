@@ -48,6 +48,16 @@ reports when its call ends, and the outcome is recorded then
 (`DEPLOYMENT.md`, "Recording run outcomes"). Without the simulation database
 or that environment, the routes answer 503.
 
+A household report compares the household under a baseline and an optional
+reform. `POST /v2/household-reports` creates it and starts its first run;
+`POST /v2/household-reports/{report_id}/runs` starts another run of it, with
+the report's own household and policies; `GET /v2/household-reports/{report_id}`
+returns it with its newest run and that run's two calculations. Each report
+run joins a run of each simulation, reused like any calculation's, and one
+Modal call computes the runs that still need computing, so a new report's
+two households are calculated together. A report run has failed when either
+calculation failed and succeeded when both did.
+
 ## Caller authentication and permissions
 
 Protected routes accept Auth0 RS256 access tokens issued by
@@ -63,6 +73,9 @@ Auth0 permission:
 | `GET /budget-window-jobs/{batch_job_id}` | `simulation:read` |
 | `POST /v2/household-calculations` | `simulation:submit` |
 | `GET /v2/household-calculations/{calculation_id}` | `simulation:read` |
+| `POST /v2/household-reports` | `simulation:submit` |
+| `POST /v2/household-reports/{report_id}/runs` | `simulation:submit` |
+| `GET /v2/household-reports/{report_id}` | `simulation:read` |
 | `POST /internal/stage12/reports` | `stage12:operate` |
 | `GET /internal/stage12/reports/{evaluation_id}` | `stage12:operate` |
 

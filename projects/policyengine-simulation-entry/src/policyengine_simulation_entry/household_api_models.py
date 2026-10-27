@@ -41,7 +41,10 @@ from pydantic import (
 )
 
 if TYPE_CHECKING:
-    from policyengine_simulation_persistence import HouseholdCalculation
+    from policyengine_simulation_persistence import (
+        HouseholdCalculation,
+        HouseholdReport,
+    )
 
 PolicyParameters = Annotated[
     dict[ParameterPath, dict[ParameterPeriod, ParameterValue]],
@@ -99,31 +102,26 @@ class HouseholdCalculationOptions(StrictRouteModel):
         return stored
 
 
-class HouseholdCalculationSubmission(StrictRouteModel):
-    """One household under one policy, to calculate for a catalog version and year.
+PolicyEngineVersion = Annotated[str, Field(min_length=1, max_length=255)]
+Year = Annotated[int, Field(ge=FIRST_YEAR, le=LAST_YEAR)]
+
+
+class StoredHouseholdInputs(StrictRouteModel):
+    """A stored household and the catalog version to calculate it on.
 
     ``catalog_version_id`` is the Public API's catalog version and
     ``policyengine_version`` the PolicyEngine.py version it was published
     from, which picks the household function. ``household`` is the stored
     household in the situation shape, without axes (they are an option);
     ``spm`` is its saved SPM choice, omitted when it has none, so the
-    bundle's certified defaults apply. A calculation submitted again reuses
-    its run while it is unfinished or once it succeeded, unless ``force``.
+    bundle's certified defaults apply.
     """
 
-    country: CountryId
     catalog_version_id: UUID
-    policyengine_version: Annotated[str, Field(min_length=1, max_length=255)]
-    year: Annotated[int, Field(ge=FIRST_YEAR, le=LAST_YEAR)]
+    policyengine_version: PolicyEngineVersion
     household_id: UUID
     household: HouseholdDocument
     spm: JsonValue = None
-    policy: HouseholdPolicyInput = Field(default_factory=HouseholdPolicyInput)
-    options: HouseholdCalculationOptions = Field(
-        default_factory=HouseholdCalculationOptions
-    )
-    force: bool = False
-    trigger: RunTrigger = RunTrigger.INITIAL
 
     @field_validator("household")
     @classmethod
@@ -141,15 +139,82 @@ class HouseholdCalculationSubmission(StrictRouteModel):
         """Whether the household has a saved SPM choice to calculate with."""
         return "spm" in self.model_fields_set
 
+
+class HouseholdCalculationSubmission(StoredHouseholdInputs):
+    """One household under one policy, to calculate for a catalog version and year.
+
+    A calculation submitted again reuses its run while it is unfinished or
+    once it succeeded, unless ``force``.
+    """
+
+    country: CountryId
+    year: Year
+    policy: HouseholdPolicyInput = Field(default_factory=HouseholdPolicyInput)
+    options: HouseholdCalculationOptions = Field(
+        default_factory=HouseholdCalculationOptions
+    )
+    force: bool = False
+    trigger: RunTrigger = RunTrigger.INITIAL
+
     def simulation_definition(self) -> NewSimulation:
         """Return the household simulation this calculation runs."""
-        return NewSimulation(
-            kind=SimulationKind.HOUSEHOLD,
-            country=self.country,
-            household_id=self.household_id,
-            policy_id=self.policy.policy_id,
-            options=self.options.stored(),
+        return household_simulation_definition(
+            self, self.country, self.policy, self.options
         )
+
+
+class HouseholdReportSubmission(StoredHouseholdInputs):
+    """A household report to create: the household under a baseline and a reform.
+
+    ``reform`` is omitted for a report of the baseline alone. Both policies
+    are calculated with the same ``options``, in one Modal call when neither
+    has a run to reuse. The report's first run starts at once.
+    """
+
+    country: CountryId
+    year: Year
+    baseline: HouseholdPolicyInput = Field(default_factory=HouseholdPolicyInput)
+    reform: HouseholdPolicyInput | None = None
+    options: HouseholdCalculationOptions = Field(
+        default_factory=HouseholdCalculationOptions
+    )
+    force: bool = False
+    trigger: RunTrigger = RunTrigger.INITIAL
+
+    def simulation_definition(self, policy: HouseholdPolicyInput) -> NewSimulation:
+        """Return the household simulation of one of the report's policies."""
+        return household_simulation_definition(self, self.country, policy, self.options)
+
+
+class HouseholdReportRunSubmission(StoredHouseholdInputs):
+    """Another run of a stored household report, on a catalog version.
+
+    The household and both policies must be the report's own: the Public API
+    sends their contents again, because the Simulation Entrypoint cannot
+    read them. The runs are reused while unfinished or once they succeeded,
+    unless ``force``.
+    """
+
+    baseline: HouseholdPolicyInput = Field(default_factory=HouseholdPolicyInput)
+    reform: HouseholdPolicyInput | None = None
+    force: bool = False
+    trigger: RunTrigger = RunTrigger.MANUAL
+
+
+def household_simulation_definition(
+    inputs: StoredHouseholdInputs,
+    country: str,
+    policy: HouseholdPolicyInput,
+    options: HouseholdCalculationOptions,
+) -> NewSimulation:
+    """Return the household simulation of ``inputs`` under ``policy``."""
+    return NewSimulation(
+        kind=SimulationKind.HOUSEHOLD,
+        country=country,
+        household_id=inputs.household_id,
+        policy_id=policy.policy_id,
+        options=options.stored(),
+    )
 
 
 class HouseholdCalculationResult(StrictRouteModel):
@@ -253,6 +318,81 @@ class HouseholdCalculationResponse(StrictRouteModel):
                     message=run.error_message or "",
                     detail=run.error_detail,
                 )
+            ),
+        )
+
+
+def household_report_status(report: HouseholdReport) -> RunStatus | None:
+    """Return a household report run's status, from its simulation runs.
+
+    It has failed when either run failed and succeeded when both did;
+    otherwise it is the less advanced of the two. None before the first run.
+    """
+    statuses = {
+        calculation.run.status
+        for calculation in (report.baseline, report.reform)
+        if calculation is not None
+    }
+    if not statuses:
+        return None
+    if RunStatus.FAILED in statuses:
+        return RunStatus.FAILED
+    for status in (RunStatus.PENDING, RunStatus.DISPATCHING, RunStatus.RUNNING):
+        if status in statuses:
+            return status
+    return RunStatus.SUCCEEDED
+
+
+class HouseholdReportResponse(StrictRouteModel):
+    """A household report with one of its runs, and that run's two calculations.
+
+    The run is the report's newest, unless the response answers the request
+    that started another. ``status`` is the run's status: failed when either
+    calculation failed, succeeded when both did, and otherwise the less
+    advanced of the two. The run fields are null before the first run;
+    ``reform`` is null for a report of the baseline alone.
+    """
+
+    report_id: UUID
+    country: str
+    year: int
+    household_id: UUID | None
+    baseline_simulation_id: UUID
+    reform_simulation_id: UUID | None
+    report_run_id: UUID | None
+    catalog_version_id: UUID | None
+    trigger: RunTrigger | None
+    status: RunStatus | None
+    baseline: HouseholdCalculationResponse | None
+    reform: HouseholdCalculationResponse | None
+
+    @classmethod
+    def from_report(cls, report: HouseholdReport) -> Self:
+        """Describe a stored household report and one of its runs."""
+        report_run = report.report_run
+        baseline = (
+            None
+            if report.baseline is None
+            else HouseholdCalculationResponse.from_calculation(report.baseline)
+        )
+        return cls(
+            report_id=report.report.id,
+            country=report.report.country,
+            year=report.report.year,
+            household_id=None if baseline is None else baseline.household_id,
+            baseline_simulation_id=report.report.baseline_simulation_id,
+            reform_simulation_id=report.report.reform_simulation_id,
+            report_run_id=None if report_run is None else report_run.id,
+            catalog_version_id=(
+                None if report_run is None else report_run.tax_benefit_model_version_id
+            ),
+            trigger=None if report_run is None else report_run.trigger,
+            status=household_report_status(report),
+            baseline=baseline,
+            reform=(
+                None
+                if report.reform is None
+                else HouseholdCalculationResponse.from_calculation(report.reform)
             ),
         )
 

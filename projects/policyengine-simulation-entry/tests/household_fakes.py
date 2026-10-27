@@ -17,6 +17,10 @@ from policyengine_simulation_contract.stage12_manifest import publish_v2_manifes
 from policyengine_simulation_entry.household_workers import ManifestHouseholdWorkers
 from policyengine_simulation_persistence import (
     HouseholdCalculation,
+    HouseholdReport,
+    ReportKind,
+    ReportRecord,
+    ReportRunRecord,
     RunStatus,
     SimulationKind,
     SimulationRecord,
@@ -29,6 +33,8 @@ from stage12_fixtures import worker
 if TYPE_CHECKING:
     from policyengine_simulation_persistence import (
         HouseholdOutput,
+        NewReport,
+        NewReportRun,
         NewSimulation,
         NewSimulationRun,
         RunTrigger,
@@ -61,6 +67,8 @@ class FakeHouseholdStore:
         self.simulations: dict[UUID, SimulationRecord] = {}
         self.setups: dict[UUID, RunSetup] = {}
         self.outputs: dict[UUID, HouseholdOutput] = {}
+        self.reports: dict[UUID, ReportRecord] = {}
+        self.report_runs: list[ReportRunRecord] = []
         # Households the Public API does not have: creating their simulations
         # breaks a foreign key.
         self.unknown_households: set[UUID] = set()
@@ -177,6 +185,88 @@ class FakeHouseholdStore:
             simulation=self.simulations[run.simulation_id],
             output=(
                 self.outputs.get(run_id) if run.status is RunStatus.SUCCEEDED else None
+            ),
+        )
+
+    def get_simulation(self, simulation_id: UUID) -> SimulationRecord | None:
+        """Return the simulation with this ID, or None."""
+        return self.simulations.get(simulation_id)
+
+    def create_report(self, new_report: NewReport) -> ReportRecord:
+        """Keep a new household report."""
+        report = ReportRecord(
+            id=uuid4(),
+            kind=ReportKind(new_report.kind),
+            country=new_report.country,
+            baseline_simulation_id=new_report.baseline_simulation_id,
+            reform_simulation_id=new_report.reform_simulation_id,
+            year=new_report.year,
+            options=dict(new_report.options),
+            legacy_report_id=None,
+            created_at=self.clock(),
+        )
+        self.reports[report.id] = report
+        return report
+
+    def get_report(self, report_id: UUID) -> ReportRecord | None:
+        """Return the household report with this ID, or None."""
+        return self.reports.get(report_id)
+
+    def create_report_run(self, new_report_run: NewReportRun) -> ReportRunRecord:
+        """Keep a report run joining two of the fake's runs."""
+        baseline = self.setups[new_report_run.baseline_simulation_run_id]
+        report_run = ReportRunRecord(
+            id=uuid4(),
+            report_id=new_report_run.report_id,
+            report_kind=ReportKind.HOUSEHOLD,
+            tax_benefit_model_version_id=baseline.catalog_version_id,
+            year=baseline.year,
+            baseline_simulation_run_id=new_report_run.baseline_simulation_run_id,
+            reform_simulation_run_id=new_report_run.reform_simulation_run_id,
+            trigger=new_report_run.trigger,
+            comparison_status=None,
+            comparison_modal_call_id=None,
+            comparison_error_code=None,
+            comparison_error_message=None,
+            comparison_error_detail=None,
+            comparison_check_count=0,
+            comparison_dispatched_at=None,
+            comparison_next_check_at=None,
+            comparison_completed_at=None,
+            created_at=self.clock(),
+            updated_at=self.clock(),
+        )
+        self.report_runs.append(report_run)
+        return report_run
+
+    def read_report(
+        self, report_id: UUID, *, report_run_id: UUID | None = None
+    ) -> HouseholdReport | None:
+        """Return a report with a run (its newest unless named) and both runs."""
+        report = self.reports.get(report_id)
+        if report is None:
+            return None
+        runs = [
+            report_run
+            for report_run in self.report_runs
+            if report_run.report_id == report_id
+            and report_run_id in {None, report_run.id}
+        ]
+        if not runs and report_run_id is not None:
+            return None
+        report_run = runs[-1] if runs else None
+        return HouseholdReport(
+            report=report,
+            report_run=report_run,
+            baseline=(
+                None
+                if report_run is None
+                else self.read_calculation(report_run.baseline_simulation_run_id)
+            ),
+            reform=(
+                None
+                if report_run is None or report_run.reform_simulation_run_id is None
+                else self.read_calculation(report_run.reform_simulation_run_id)
             ),
         )
 

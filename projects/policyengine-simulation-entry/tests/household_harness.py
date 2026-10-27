@@ -110,13 +110,13 @@ class Harness:
         """Read a calculation."""
         return asyncio.run(self.service.read(run_id))
 
-    def report_call_ended(self, run_id: UUID) -> None:
+    def report_call_ended(self, *run_ids: UUID) -> None:
         """Deliver the call's report that it ended, as report_call_ended does."""
-        call_id = self.transitions.runs[run_id].modal_call_id
+        call_id = self.transitions.runs[run_ids[0]].modal_call_id
         assert call_id is not None
         asyncio.run(
             self.recorder.record_reported_call(
-                CallEndedReport(modal_call_id=call_id, simulation_run_ids=(run_id,))
+                CallEndedReport(modal_call_id=call_id, simulation_run_ids=run_ids)
             )
         )
 

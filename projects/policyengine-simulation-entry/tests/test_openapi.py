@@ -27,12 +27,15 @@ class OpenAPIDocument(TypedDict):
     components: OpenAPIComponents
 
 
-# The v2 household calculation routes, which only the entrypoint serves.
+# The v2 household routes, which only the entrypoint serves.
 HOUSEHOLD_ROUTES = {
     ("POST", "/v2/household-calculations"): "submit_household_calculation",
     ("GET", "/v2/household-calculations/{calculation_id}"): (
         "get_household_calculation"
     ),
+    ("POST", "/v2/household-reports"): "submit_household_report",
+    ("POST", "/v2/household-reports/{report_id}/runs"): "run_household_report",
+    ("GET", "/v2/household-reports/{report_id}"): "get_household_report",
 }
 # The schemas only the household routes use.
 HOUSEHOLD_SCHEMAS = {
@@ -45,6 +48,9 @@ HOUSEHOLD_SCHEMAS = {
     "HouseholdDocument",
     "HouseholdGroup",
     "HouseholdPolicyInput",
+    "HouseholdReportResponse",
+    "HouseholdReportRunSubmission",
+    "HouseholdReportSubmission",
     "HouseholdRouteError",
     "RunStatus",
     "RunTrigger",
