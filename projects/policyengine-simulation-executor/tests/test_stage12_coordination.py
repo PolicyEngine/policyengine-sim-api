@@ -16,7 +16,10 @@ from policyengine_simulation_contract.stage12_execution import (
 from policyengine_simulation_executor.stage12_runtime import (
     CoordinatorDependencies,
     CoordinatorInvocation,
+    coordinated_simulations,
     coordination,
+    parent_claim,
+    report_coordination,
 )
 from test_stage12_runtime import (
     BASELINE_ID,
@@ -64,8 +67,11 @@ class FixedClock(datetime):
 
 @pytest.fixture
 def fixed_clock(monkeypatch):
-    monkeypatch.setattr(coordination, "datetime", FixedClock)
-    monkeypatch.setattr(coordination, "uuid4", lambda: PLACEHOLDER_ID)
+    # Every module that reads the clock while it coordinates a report.
+    monkeypatch.setattr(coordinated_simulations, "datetime", FixedClock)
+    monkeypatch.setattr(parent_claim, "datetime", FixedClock)
+    monkeypatch.setattr(report_coordination, "datetime", FixedClock)
+    monkeypatch.setattr(report_coordination, "uuid4", lambda: PLACEHOLDER_ID)
 
 
 class TracingRuntime:
@@ -414,7 +420,7 @@ def test_default_output_plan_resolver_measures_its_own_stages(monkeypatch):
             resolved.append(report.evaluation_id)
         return _output_plan()
 
-    monkeypatch.setattr(coordination, "resolve_report_output_plan", resolve)
+    monkeypatch.setattr(report_coordination, "resolve_report_output_plan", resolve)
 
     coordinate_report_impl(
         _report().model_dump(mode="json"),
