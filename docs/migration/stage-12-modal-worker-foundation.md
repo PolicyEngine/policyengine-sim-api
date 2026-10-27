@@ -286,8 +286,8 @@ use the existing GCS lookup and are not changed by this path.
 
 This resource ownership is temporary. A future boundary version must add its
 codes to the common names file, add a distinct code file, and register a typed
-detector definition. Map positions are now the front end's to draw from its
-own layout files, and Stage 14 or later work should remove these temporary
+detector definition. Results carry no map positions, which the app draws from
+its own layout files, and Stage 14 or later work should remove these temporary
 executor resources when the authoritative v2 report architecture supersedes
 Stage 12.
 
