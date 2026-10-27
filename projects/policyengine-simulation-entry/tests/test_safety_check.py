@@ -32,14 +32,34 @@ class _OnePass:
         return self.result
 
 
-def _run(environment, recorder):
+class _Telemetry:
+    """Stands in for the observability runtime the job starts and shuts down."""
+
+    def __init__(self) -> None:
+        self.environments = []
+        self.shut_down = False
+
+    def start(self, environment):
+        self.environments.append(environment)
+        return self
+
+    def shutdown(self) -> None:
+        self.shut_down = True
+
+
+def _run(environment, recorder, telemetry=None):
     built_for = []
 
     def build(database_url):
         built_for.append(database_url)
         return recorder
 
-    status = safety_check.main(environment=environment, build_recorder=build)
+    telemetry = telemetry or _Telemetry()
+    status = safety_check.main(
+        environment=environment,
+        build_recorder=build,
+        start_observability=telemetry.start,
+    )
     return status, built_for
 
 
@@ -62,9 +82,23 @@ def test_the_pass_is_logged_with_what_it_found(caplog) -> None:
     (record,) = [
         record for record in caplog.records if record.message == "safety_check_pass"
     ]
-    assert record.checked == 4
-    assert record.succeeded == 1
-    assert record.abandoned == 2
+    # The observability log handler keeps only these attributes of a record.
+    assert record.policyengine_attributes["checked"] == 4
+    assert record.policyengine_attributes["succeeded"] == 1
+    assert record.policyengine_attributes["abandoned"] == 2
+
+
+def test_the_job_logs_through_the_observability_runtime_and_shuts_it_down() -> None:
+    telemetry = _Telemetry()
+
+    _run(
+        {"SIMULATION_DATABASE_URL": DATABASE_URL, "APP_ENVIRONMENT": "production"},
+        _OnePass(RecordingPass()),
+        telemetry,
+    )
+
+    assert telemetry.environments == ["production"]
+    assert telemetry.shut_down
 
 
 def test_an_execution_without_the_database_url_fails_without_a_pass() -> None:
