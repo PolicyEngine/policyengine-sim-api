@@ -29,6 +29,10 @@ import sys
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Protocol
 
+from policyengine_simulation_observability.observability import (
+    init_process_observability,
+)
+
 from policyengine_simulation_entry.modal_calls import OWN_PROCESS_SIGNALS
 from policyengine_simulation_entry.simulation_database import SimulationDatabase
 
@@ -42,6 +46,23 @@ logger = logging.getLogger(__name__)
 EXIT_PASSED = 0
 EXIT_PASS_FAILED = 1
 EXIT_NOT_CONFIGURED = 2
+
+
+class Telemetry(Protocol):
+    """The observability runtime's part the job uses."""
+
+    def shutdown(self) -> None:
+        """Flush and stop telemetry."""
+        ...
+
+
+def _start_observability(environment: str) -> Telemetry:
+    return init_process_observability(
+        service_name="policyengine-simulation-safety-check",
+        service_role="simulation_safety_check",
+        platform="google_cloud_run",
+        environment=environment,
+    )
 
 
 class DueOutcomeRecorder(Protocol):
@@ -60,13 +81,25 @@ def main(
     *,
     environment: Mapping[str, str] | None = None,
     build_recorder: Callable[[str], DueOutcomeRecorder] = _database_recorder,
+    start_observability: Callable[[str], Telemetry] = _start_observability,
 ) -> int:
     """Run one pass and return the process exit status.
 
-    Only a signal to this process propagates; any other error fails the
+    Logs go through the observability runtime, as the web service's do. Only
+    a signal to this process propagates; any other error fails the
     execution, and the next scheduled execution tries again.
     """
     values = os.environ if environment is None else environment
+    telemetry = start_observability(values.get("APP_ENVIRONMENT", "local"))
+    try:
+        return _run_pass(values, build_recorder)
+    finally:
+        telemetry.shutdown()
+
+
+def _run_pass(
+    values: Mapping[str, str], build_recorder: Callable[[str], DueOutcomeRecorder]
+) -> int:
     database_url = values.get("SIMULATION_DATABASE_URL", "")
     if not database_url:
         logger.error("safety_check_not_configured")
@@ -81,10 +114,13 @@ def main(
             "safety_check_pass_failed", extra={"error_type": type(error).__name__}
         )
         return EXIT_PASS_FAILED
-    logger.info("safety_check_pass", extra=asdict(recording))
+    # The observability log handler keeps a record's policyengine_attributes.
+    logger.info(
+        "safety_check_pass", extra={"policyengine_attributes": asdict(recording)}
+    )
     return EXIT_PASSED
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.getLogger().setLevel(logging.INFO)
     sys.exit(main())
